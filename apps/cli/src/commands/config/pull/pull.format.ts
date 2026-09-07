@@ -1,6 +1,7 @@
 import type { ConfigChange, ConfigChangeSet, ConfigFormat } from "@supabase/config";
 
 import { legacySanitizeInlineName } from "../../../command-internal/legacy-http-errors.ts";
+import { legacyConfigPathKey } from "../config.paths.ts";
 import {
   LEGACY_CONFIG_CLASS_LABELS,
   legacyConfigChangePayloadEntry,
@@ -77,10 +78,6 @@ export interface LegacyConfigPullContext {
   readonly destination: LegacyConfigPullDestination;
 }
 
-function pathKey(path: ReadonlyArray<string>): string {
-  return JSON.stringify(path);
-}
-
 /** The destination-echo line, printed to stderr before any network call —
  * shares `config diff`'s target-naming phrase so the two commands read the
  * same target the same way. */
@@ -129,14 +126,14 @@ function buildChangeStatus(
       : undefined;
   for (const write of plan.writes) {
     status.set(
-      pathKey(write.change.path),
+      legacyConfigPathKey(write.change.path),
       writeSkipReason === undefined
         ? { written: true }
         : { written: false, reason: writeSkipReason },
     );
   }
   for (const skip of plan.skipped) {
-    status.set(pathKey(skip.change.path), { written: false, reason: skip.reason });
+    status.set(legacyConfigPathKey(skip.change.path), { written: false, reason: skip.reason });
   }
   return status;
 }
@@ -216,10 +213,10 @@ function changeMarker(
   writePaths: ReadonlySet<string>,
   skipReasonByPath: ReadonlyMap<string, LegacyConfigPullSkipReason>,
 ): string {
-  if (writePaths.has(pathKey(change.path))) {
+  if (writePaths.has(legacyConfigPathKey(change.path))) {
     return "write";
   }
-  const reason = skipReasonByPath.get(pathKey(change.path));
+  const reason = skipReasonByPath.get(legacyConfigPathKey(change.path));
   if (reason === undefined || reason === change.class) {
     return "not pulled";
   }
@@ -246,9 +243,9 @@ export function legacyRenderConfigPullText(
   projectRef: string,
   configPath: string,
 ): string {
-  const writePaths = new Set(plan.writes.map((write) => pathKey(write.change.path)));
+  const writePaths = new Set(plan.writes.map((write) => legacyConfigPathKey(write.change.path)));
   const skipReasonByPath = new Map(
-    plan.skipped.map((skip) => [pathKey(skip.change.path), skip.reason] as const),
+    plan.skipped.map((skip) => [legacyConfigPathKey(skip.change.path), skip.reason] as const),
   );
 
   const lines: Array<string> = [];
@@ -404,7 +401,9 @@ export function legacyConfigPullPayload(
   const status = buildChangeStatus(plan, outcome);
   const written = writtenCount(plan, outcome);
   const documentPathByKey = new Map(
-    plan.writes.map((write) => [pathKey(write.change.path), write.documentPath] as const),
+    plan.writes.map(
+      (write) => [legacyConfigPathKey(write.change.path), write.documentPath] as const,
+    ),
   );
   // A block-only run (`plan.createdTable` set, no value writes) still WROTE —
   // the new block itself — even though `written` (a count of VALUE writes)
@@ -429,9 +428,9 @@ export function legacyConfigPullPayload(
     wrote,
     scope: { present: scope.present, missing: scope.missing },
     changes: changeSet.changes.map((change) => {
-      const entry = status.get(pathKey(change.path));
+      const entry = status.get(legacyConfigPathKey(change.path));
       const changeWritten = entry?.written ?? false;
-      const documentPath = documentPathByKey.get(pathKey(change.path));
+      const documentPath = documentPathByKey.get(legacyConfigPathKey(change.path));
       return {
         ...legacyConfigChangePayloadEntry(change),
         written: changeWritten,

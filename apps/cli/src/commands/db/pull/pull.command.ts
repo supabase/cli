@@ -12,10 +12,9 @@ const config = {
     Argument.withDescription("Optional name for the migration file."),
     Argument.optional,
   ),
-  // `--declarative` and the deprecated `--use-pg-delta` both bind to the same
-  // declarative-output mode in Go (`cmd/db.go:464-465`); both are mutually
-  // exclusive with `--diff-engine`. Modelled as `Option` so the mutex tracks
-  // pflag `Changed`.
+  // `--declarative` and the deprecated `--use-pg-delta` both select declarative
+  // export and are mutually exclusive with `--diff-engine`. Optional so the
+  // mutex tracks whether the flag was passed.
   declarative: Flag.boolean("declarative").pipe(
     Flag.withDescription(
       "Replace the declarative schema tree from the selected database instead of creating a migration; migration history is not updated.",
@@ -24,9 +23,8 @@ const config = {
   ),
   usePgDelta: Flag.boolean("use-pg-delta").pipe(
     Flag.withDescription("Use pg-delta to pull declarative schema."),
-    // Go marks this deprecated (`cmd/db.go:466`); Effect V4 has no
-    // `Flag.withDeprecated`, so it is hidden and the handler emits the
-    // deprecation line to stderr, matching cobra's behaviour.
+    // Hidden: Effect V4 has no `Flag.withDeprecated`; the handler prints
+    // cobra's deprecation line.
     Flag.withHidden,
     Flag.optional,
   ),

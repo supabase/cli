@@ -4,7 +4,6 @@ import { classifySqlFiles } from "@supabase/pg-delta/frontends";
 import { Output } from "../../../shared/output/output.service.ts";
 import { legacyBold, legacyYellow } from "../../../command-internal/legacy-colors.ts";
 import { legacyWalkSqlFiles } from "../../../command-internal/legacy-glob.ts";
-import type { LegacyDeclarativeOutput } from "../../../command-internal/legacy-pgdelta.ts";
 import { LegacyDeclarativeWriteError } from "./legacy-pgdelta.errors.ts";
 import { LegacyReadPgDeltaExportManifest } from "./legacy-pgdelta-files.ts";
 import type {
@@ -13,11 +12,6 @@ import type {
 } from "./legacy-pgdelta-engine.service.ts";
 
 const EXPORT_MANIFEST_FILE = ".pgdelta-export.json";
-
-type LegacyDeclarativeWriteOutput = LegacyDeclarativeOutput | LegacyPgDeltaDeclarativeExportResult;
-type LegacyPgDeltaNextDeclarativeOutput = LegacyPgDeltaDeclarativeExportResult & {
-  readonly manifest: LegacyPgDeltaExportManifest;
-};
 
 function legacyDeclarativeWriteError(message: string): LegacyDeclarativeWriteError {
   return new LegacyDeclarativeWriteError({ message });
@@ -29,20 +23,11 @@ function legacyDeclarativeWriteError(message: string): LegacyDeclarativeWriteErr
  */
 export interface LegacyDeclarativeWriteResult {
   /**
-   * Pre-existing `.sql` files the next writer preserved because no export
-   * manifest claimed ownership of them — see
-   * {@link legacyPreservedUnmanagedDeclarativeFilesWarning}. Always empty for the
-   * legacy writer, which wipes the directory outright.
+   * Pre-existing `.sql` files the writer preserved because no export manifest
+   * claimed ownership of them — see
+   * {@link legacyPreservedUnmanagedDeclarativeFilesWarning}.
    */
   readonly preservedUnmanagedFiles: ReadonlyArray<string>;
-}
-
-const NO_PRESERVED_FILES: LegacyDeclarativeWriteResult = { preservedUnmanagedFiles: [] };
-
-function isNextDeclarativeOutput(
-  output: LegacyDeclarativeWriteOutput,
-): output is LegacyPgDeltaNextDeclarativeOutput {
-  return "manifest" in output && output.manifest !== undefined;
 }
 
 function safeDeclarativeExportName(path: Path.Path, name: string): string {
@@ -88,48 +73,28 @@ const readManagedDeclarativeSqlFiles = Effect.fnUntraced(function* (
   return files;
 });
 
-const writeLegacyDeclarativeSchemas = Effect.fnUntraced(function* (
+/**
+ * Materializes pg-delta declarative export output under the declarative dir
+ * using the export manifest's ownership and file classification: only stale
+ * files owned by the previous export are removed, unchanged files are not
+ * rewritten, unmanaged files are preserved, and the reserved root `_custom/`
+ * tree is never read as managed output or deleted. Returns which unmanaged
+ * files that preservation kept, so the caller can warn (see
+ * {@link legacyWarnPreservedUnmanagedDeclarativeFiles}).
+ *
+ * Go also updates `[db.migrations] schema_paths` afterwards, but only when
+ * pg-delta is *disabled* in config (`if utils.IsPgDeltaEnabled() { return nil }`).
+ * `db schema declarative generate/sync` force-enable pg-delta, so that branch is
+ * unreachable for them; `db pull --declarative` does NOT force-enable it, so the
+ * pull caller invokes `legacyUpdateDeclarativeSchemaPathsConfig` (below) when
+ * config pg-delta is disabled. Keeping the config edit at the caller leaves this
+ * writer a pure file-materializer shared unchanged by generate/sync.
+ */
+export const legacyWriteDeclarativeSchemas = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   declarativeDir: string,
-  output: LegacyDeclarativeWriteOutput,
-) {
-  yield* fs
-    .remove(declarativeDir, { recursive: true })
-    .pipe(
-      Effect.catchTag("PlatformError", (error) =>
-        error.reason._tag === "NotFound"
-          ? Effect.void
-          : Effect.fail(
-              legacyDeclarativeWriteError(
-                `failed to clean declarative schema directory: ${error.message}`,
-              ),
-            ),
-      ),
-    );
-  yield* fs.makeDirectory(declarativeDir, { recursive: true });
-
-  for (const file of output.files) {
-    const name = "name" in file ? file.name : file.path;
-    const rel = yield* Effect.try({
-      try: () => safeDeclarativeExportName(path, name),
-      catch: (error) =>
-        error instanceof LegacyDeclarativeWriteError
-          ? error
-          : legacyDeclarativeWriteError(String(error)),
-    });
-    const targetPath = path.join(declarativeDir, rel);
-    yield* fs.makeDirectory(path.dirname(targetPath), { recursive: true });
-    yield* fs.writeFileString(targetPath, file.sql);
-  }
-  return NO_PRESERVED_FILES;
-});
-
-const writeNextDeclarativeSchemas = Effect.fnUntraced(function* (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  declarativeDir: string,
-  output: LegacyPgDeltaNextDeclarativeOutput,
+  output: LegacyPgDeltaDeclarativeExportResult,
 ) {
   const proposed = yield* Effect.forEach(output.files, (file) =>
     Effect.try({
@@ -292,35 +257,6 @@ export const legacyWarnPreservedUnmanagedDeclarativeFiles = Effect.fnUntraced(fu
     legacyPreservedUnmanagedDeclarativeFilesWarning(dir, written.preservedUnmanagedFiles),
     "stderr",
   );
-});
-
-/**
- * Materializes pg-delta declarative export output under the declarative dir.
- * Legacy-engine output keeps Go's wipe-and-rewrite behavior. Next-engine output
- * uses pg-delta's manifest ownership and file classification: only stale files
- * owned by the previous export are removed, unchanged files are not rewritten,
- * unmanaged files are preserved, and the reserved root `_custom/` tree is never
- * read as managed output or deleted. Returns which unmanaged files that preservation
- * kept, so the caller can warn (see
- * {@link legacyWarnPreservedUnmanagedDeclarativeFiles}).
- *
- * Go also updates `[db.migrations] schema_paths` afterwards, but only when
- * pg-delta is *disabled* in config (`if utils.IsPgDeltaEnabled() { return nil }`).
- * `db schema declarative generate/sync` force-enable pg-delta, so that branch is
- * unreachable for them; `db pull --declarative` does NOT force-enable it, so the
- * pull caller invokes `legacyUpdateDeclarativeSchemaPathsConfig` (below) when
- * config pg-delta is disabled. Keeping the config edit at the caller leaves this
- * writer a pure file-materializer shared unchanged by generate/sync.
- */
-export const legacyWriteDeclarativeSchemas = Effect.fnUntraced(function* (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  declarativeDir: string,
-  output: LegacyDeclarativeWriteOutput,
-) {
-  return yield* isNextDeclarativeOutput(output)
-    ? writeNextDeclarativeSchemas(fs, path, declarativeDir, output)
-    : writeLegacyDeclarativeSchemas(fs, path, declarativeDir, output);
 });
 
 // Go's `schemaPathsPattern` (`internal/db/declarative/declarative.go:59`):

@@ -20,11 +20,6 @@ import { Effect, FileSystem, Option, Result, Schema, SchemaIssue } from "effect"
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import {
-  legacyParentNotLinkedMessage,
-  legacyParentRefInvalidMessage,
-  legacyParentRefTypoHint,
-} from "../../../command-internal/legacy-parent-project-ref.ts";
 import { legacyConfigFileHasUncommittedChanges } from "../../../command-internal/legacy-git-status.ts";
 import {
   legacySanitizeInlineName,
@@ -38,8 +33,17 @@ import { legacyResolveYes, LegacyOutputFlag } from "../../../shared/legacy/globa
 import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
+import {
+  legacyConfigDeepSetAtPath,
+  legacyConfigIsRecord,
+  legacyConfigPathKey,
+} from "../config.paths.ts";
 import { legacyLoadLocalConfig, legacyRelativeConfigPath } from "../config.load.ts";
-import { legacyResolveConfigTarget, type LegacyConfigTarget } from "../config.target.ts";
+import {
+  legacyConfigTargetErrorsFor,
+  legacyResolveConfigTarget,
+  type LegacyConfigTarget,
+} from "../config.target.ts";
 import {
   legacyConfigApiScope,
   legacyConfigRenderPath,
@@ -60,7 +64,6 @@ import {
   type LegacyConfigPullOutcome,
 } from "./pull.format.ts";
 import {
-  deepSetAtPath,
   legacyConfigPullEnvVariableAtPath,
   legacyConfigPullFamilyRootForPath,
   legacyDropConfigPullUnvalidatableFamilies,
@@ -127,24 +130,14 @@ const mapBranchResolveError = mapLegacyHttpError({
   statusMessage: legacyUnexpectedStatusMessage,
 });
 
-/** Error construction for `legacyResolveConfigTarget` (`../config.target.ts`),
- * keeping `config pull`'s own tagged error classes and message wording
- * (mirrors `config diff`'s `configTargetErrors`). */
-const configTargetErrors = {
-  notLinked: (target: string) =>
-    new LegacyConfigPullBranchNotLinkedError({ message: legacyParentNotLinkedMessage(target) }),
-  parentRefInvalid: (target: string) =>
-    new LegacyConfigPullParentRefInvalidError({ message: legacyParentRefInvalidMessage(target) }),
-  branchNotFound: (target: string) =>
-    new LegacyConfigPullBranchNotFoundError({
-      message: `Branch "${legacySanitizeInlineName(target)}" not found. Run \`supabase branches list\` to see available branches.${legacyParentRefTypoHint(target)}`,
-    }),
-  branchNotReady: (target: string) =>
-    new LegacyConfigPullBranchNotReadyError({
-      message: `Branch "${legacySanitizeInlineName(target)}" has no project ref yet. Wait for it to finish provisioning, then retry.`,
-    }),
-  mapResolveError: mapBranchResolveError,
-};
+/** Error construction for `legacyResolveConfigTarget` (`../config.target.ts`), keeping
+ *  `config pull`'s own tagged error classes; the message wording is shared there. */
+const configTargetErrors = legacyConfigTargetErrorsFor({
+  notLinked: LegacyConfigPullBranchNotLinkedError,
+  parentRefInvalid: LegacyConfigPullParentRefInvalidError,
+  branchNotFound: LegacyConfigPullBranchNotFoundError,
+  branchNotReady: LegacyConfigPullBranchNotReadyError,
+});
 
 /**
  * The collision message (`LegacyConfigPullRemoteLabelCollisionError`) —
@@ -216,14 +209,6 @@ function legacyConfigPullRefusalRemediation(reason: ConfigEditRefusalReason): st
   }
 }
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function pathKey(path: ReadonlyArray<string>): string {
-  return JSON.stringify(path);
-}
-
 /**
  * Plan §1.9's convergence check — run once the fixpoint expansion
  * (`legacyExpandConfigPullChangeSet`, `pull.plan.ts`) has settled, and BEFORE
@@ -277,9 +262,11 @@ function legacyConfigPullDefectAndUnpushableCheck(
   if (plan.writes.length === 0) {
     return Effect.succeed(plan);
   }
-  const writtenPathKeys = new Set(plan.writes.map((write) => pathKey(write.change.path)));
+  const writtenPathKeys = new Set(
+    plan.writes.map((write) => legacyConfigPathKey(write.change.path)),
+  );
   const stillDrifting = residual.changes.filter((change) =>
-    writtenPathKeys.has(pathKey(change.path)),
+    writtenPathKeys.has(legacyConfigPathKey(change.path)),
   );
   if (stillDrifting.length > 0) {
     return new LegacyConfigPullPlanDefectError({
@@ -292,7 +279,7 @@ function legacyConfigPullDefectAndUnpushableCheck(
   }
 
   const unpushableWarnings: ReadonlyArray<LegacyConfigPullWarning> = residual.unmanaged
-    .filter((path) => writtenPathKeys.has(pathKey(path)))
+    .filter((path) => writtenPathKeys.has(legacyConfigPathKey(path)))
     .map((path) => ({ kind: "unpushable", path }));
 
   return Effect.succeed(
@@ -317,12 +304,12 @@ function legacyConfigPullValidationDocument(
   projectRef: string,
 ): Record<string, unknown> {
   const withWrites = writes.reduce(
-    (document, write) => deepSetAtPath(document, write.documentPath, write.value),
+    (document, write) => legacyConfigDeepSetAtPath(document, write.documentPath, write.value),
     rawDocument,
   );
   return createdTable === undefined
     ? withWrites
-    : deepSetAtPath(withWrites, [...createdTable, "project_id"], projectRef);
+    : legacyConfigDeepSetAtPath(withWrites, [...createdTable, "project_id"], projectRef);
 }
 
 /**
@@ -341,8 +328,8 @@ function legacyConfigPullChangeRelativeValue(
   if (destination.kind === "root") {
     return document;
   }
-  const remotes = isRecord(document) ? document["remotes"] : undefined;
-  return isRecord(remotes) ? remotes[destination.label] : undefined;
+  const remotes = legacyConfigIsRecord(document) ? document["remotes"] : undefined;
+  return legacyConfigIsRecord(remotes) ? remotes[destination.label] : undefined;
 }
 
 /**
@@ -418,7 +405,7 @@ function legacyConfigPullFamiliesForChangePaths(
   >();
   for (const changePath of changePaths) {
     const root = legacyConfigPullFamilyRootForPath(changePath, relativeValidation);
-    const key = pathKey(root);
+    const key = legacyConfigPathKey(root);
     const envVariable = legacyConfigPullEnvVariableAtPath(changePath, relativeRaw);
     const field: LegacyConfigPullMissingField = {
       path: changePath,
@@ -426,9 +413,12 @@ function legacyConfigPullFamiliesForChangePaths(
     };
     const existing = families.get(key);
     if (existing === undefined) {
-      families.set(key, { root, missingFields: new Map([[pathKey(changePath), field]]) });
+      families.set(key, {
+        root,
+        missingFields: new Map([[legacyConfigPathKey(changePath), field]]),
+      });
     } else {
-      existing.missingFields.set(pathKey(changePath), field);
+      existing.missingFields.set(legacyConfigPathKey(changePath), field);
     }
   }
   return [...families.values()].map((family) => ({
@@ -459,7 +449,7 @@ function decodeConfigPullValidation(
 }
 
 /**
- * The change-path keys ({@link pathKey}) that already fail
+ * The change-path keys ({@link legacyConfigPathKey}) that already fail
  * {@link decodeCliConfigDocumentForValidationEffect} in `rawDocument` AS IT
  * SITS ON DISK RIGHT NOW — before this pull's own writes are projected onto
  * it. {@link legacyValidateConfigPullPlan} excludes every one of these from
@@ -488,7 +478,7 @@ const legacyConfigPullPreExistingFailingChangePathKeys = Effect.fnUntraced(funct
       rawDecoded.failure,
       input.destination.kind === "remote",
     )) {
-      keys.add(pathKey(path));
+      keys.add(legacyConfigPathKey(path));
     }
   }
   if (input.destination.kind === "remote") {
@@ -500,7 +490,7 @@ const legacyConfigPullPreExistingFailingChangePathKeys = Effect.fnUntraced(funct
     });
     if (Result.isFailure(mergedDecoded)) {
       for (const path of legacyConfigPullSchemaIssueChangePaths(mergedDecoded.failure, false)) {
-        keys.add(pathKey(path));
+        keys.add(legacyConfigPathKey(path));
       }
     }
   }
@@ -594,7 +584,9 @@ const legacyValidateConfigPullPlan = Effect.fnUntraced(function* (input: {
         ? legacyConfigPullSchemaIssueChangePaths(mergedDecoded.failure, false)
         : [];
     const allChangePaths = [...rawChangePaths, ...mergedChangePaths];
-    const newChangePaths = allChangePaths.filter((path) => !preExisting.has(pathKey(path)));
+    const newChangePaths = allChangePaths.filter(
+      (path) => !preExisting.has(legacyConfigPathKey(path)),
+    );
 
     if (allChangePaths.length > 0 && newChangePaths.length === 0) {
       // Every attributable failure traces back to a problem that already
@@ -820,9 +812,11 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
     diffProjectConfig({ local: loaded, remote }),
   );
 
-  const data = isRecord(responseJson) ? responseJson["data"] : undefined;
+  const data = legacyConfigIsRecord(responseJson) ? responseJson["data"] : undefined;
   const scope = legacyConfigApiScope(
-    isRecord(data) && isRecord(data["attributes"]) ? data["attributes"] : {},
+    legacyConfigIsRecord(data) && legacyConfigIsRecord(data["attributes"])
+      ? data["attributes"]
+      : {},
   );
   yield* output.raw(legacyConfigScopeLine(scope), "stderr");
 
@@ -1083,8 +1077,12 @@ export const legacyConfigPull = Effect.fn("legacy.config.pull")(function* (
     const source = yield* legacyOpenConfigPullSource();
 
     // 4. Resolve the pull target — hoisted into `legacyResolveConfigTarget`
-    // (`../config.target.ts`, shared with `config diff`, CLI-2064).
-    const { ref, branch } = yield* legacyResolveConfigTarget(requested, configTargetErrors);
+    // (`../config.target.ts`, shared with `config diff`/`config push`, CLI-2064).
+    const { ref, branch } = yield* legacyResolveConfigTarget(
+      requested,
+      configTargetErrors,
+      mapBranchResolveError,
+    );
     resolvedRef = ref;
 
     yield* legacyRunConfigPull({

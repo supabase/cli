@@ -5,8 +5,6 @@ import type {
   LegacyPgConnInput,
 } from "../../../command-internal/legacy-db-connection.service.ts";
 import type { LegacyPgDeltaContext } from "../../../command-internal/legacy-pgdelta.ts";
-import type { LegacySetupInputs } from "../../../command-internal/legacy-pgdelta.cache.ts";
-import type { LegacyPgDeltaImplementation } from "../../../command-internal/legacy-pgdelta-next-flag.ts";
 import type { LegacyMigrationTransactionMode } from "../../../command-internal/legacy-migration-file.ts";
 import type { LegacyDbTomlValues } from "../../../command-internal/legacy-db-config.toml-read.ts";
 import {
@@ -17,9 +15,9 @@ import {
 
 export interface LegacyPgDeltaDatabaseEndpoint {
   readonly kind: "database";
-  /** URL/reference used by the legacy edge-runtime implementation. */
+  /** Postgres connection URL; parsed when `connection` is absent. */
   readonly ref: string;
-  /** Full parsed connection, preferred by the next implementation. */
+  /** Full parsed connection, preferred over parsing `ref`. */
   readonly connection?: LegacyPgConnInput;
   readonly connectOptions: LegacyDbConnectOptions;
 }
@@ -139,15 +137,13 @@ export interface LegacyPgDeltaDatabaseDiffInput extends LegacyPgDeltaCommonInput
 }
 
 interface LegacyPgDeltaDeclarativeExportInput extends LegacyPgDeltaCommonInput {
-  /** Workflow-owned empty shadow used only by the legacy declarative exporter. */
-  readonly source?: LegacyPgDeltaDatabaseEndpoint;
   readonly target: LegacyPgDeltaDatabaseEndpoint;
-  readonly noCache: boolean;
 }
 
 export interface LegacyPgDeltaDeclarativeExportResult {
   readonly files: ReadonlyArray<LegacyPgDeltaSqlFile>;
-  readonly manifest?: LegacyPgDeltaExportManifest;
+  /** Ownership metadata the declarative writer records alongside the files. */
+  readonly manifest: LegacyPgDeltaExportManifest;
 }
 
 export interface LegacyPgDeltaDeclarativePlanInput extends LegacyPgDeltaCommonInput {
@@ -156,7 +152,6 @@ export interface LegacyPgDeltaDeclarativePlanInput extends LegacyPgDeltaCommonIn
   readonly noCache: boolean;
   /** Already-loaded config used by native shadow/catalog provisioning. */
   readonly toml: LegacyDbTomlValues;
-  readonly setupInputs: LegacySetupInputs;
 }
 
 interface LegacyPgDeltaDeclarativePlanResult extends LegacyPgDeltaDiffResult {
@@ -185,7 +180,6 @@ export class LegacyPgDeltaEngineError extends Data.TaggedError("LegacyPgDeltaEng
 }
 
 export interface LegacyPgDeltaEngineShape {
-  readonly implementation: LegacyPgDeltaImplementation;
   readonly diffExplicit: (
     input: LegacyPgDeltaExplicitDiffInput,
   ) => Effect.Effect<LegacyPgDeltaDiffResult, LegacyPgDeltaEngineError>;
