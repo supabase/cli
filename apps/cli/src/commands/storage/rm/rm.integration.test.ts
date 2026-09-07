@@ -1,10 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option } from "effect";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach } from "vitest";
 
 import { setupLegacyStorage } from "../../../../tests/helpers/legacy-storage.ts";
 import { LEGACY_VALID_REF, useLegacyTempWorkdir } from "../../../../tests/helpers/legacy-mocks.ts";
 import { legacyStorageRm } from "./rm.handler.ts";
+
+function writeAncestorConfig(root: string, toml: string): void {
+  const dir = join(root, "supabase");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "config.toml"), toml);
+}
 
 const BUCKET = "/storage/v1/bucket";
 const DELETE_OBJECT = (bucket: string) => `/storage/v1/object/${bucket}`;
@@ -655,6 +663,91 @@ describe("legacy storage rm", () => {
       expect(linkedCache.cached).toBe(false);
     });
   });
+
+  it.live(
+    "does not delete anything when --workdir names a config-less subdirectory of a real ancestor project",
+    () => {
+      // CLI-2285 regression, destructive-command variant: the ancestor
+      // project's config.toml declares a non-default [api] port — if this
+      // silently climbed to it, `storage rm -r` would target whatever
+      // (possibly running) local stack that ancestor points at. An EXPLICIT
+      // --workdir must hard-fail before the gateway is ever built, so no
+      // DELETE is ever issued.
+      writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
+      const sub = join(tmp.current, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const { layer, requests } = setupLegacyStorage(sub, {
+        local: true,
+        yes: true,
+        explicitWorkdir: true,
+        routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyStorageRm({
+          files: ["ss:///private/a.pdf"],
+          recursive: false,
+          linked: true,
+          local: true,
+          projectRef: Option.none(),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("LegacyStorageMissingProjectConfigError");
+        expect(requests.some((r) => r.method === "DELETE")).toBe(false);
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live(
+    "a defaulted workdir with no project anywhere still proceeds using the embedded default config",
+    () => {
+      // Mirrors the regression above with explicitWorkdir flipped: a
+      // DEFAULTED workdir must keep its established tolerant fallback
+      // (`legacyLoadStorageConfig`'s `decodeDefaultCliConfig({})` branch)
+      // rather than hard-failing — the deletion still proceeds.
+      const { layer, requests } = setupLegacyStorage(tmp.current, {
+        local: true,
+        yes: true,
+        routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyStorageRm({
+          files: ["ss:///private/a.pdf"],
+          recursive: false,
+          linked: true,
+          local: true,
+          projectRef: Option.none(),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(requests.some((r) => r.method === "DELETE")).toBe(true);
+      });
+    },
+  );
+
+  it.live(
+    "an explicit --workdir naming a directory that does not exist at all fails before any credential resolution",
+    () => {
+      const missing = join(tmp.current, "does-not-exist");
+      const { layer, requests } = setupLegacyStorage(missing, {
+        local: true,
+        yes: true,
+        explicitWorkdir: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyStorageRm({
+          files: ["ss:///private/a.pdf"],
+          recursive: false,
+          linked: true,
+          local: true,
+          projectRef: Option.none(),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("LegacyStorageWorkdirError");
+        expect(JSON.stringify(exit)).toContain("failed to change workdir: chdir");
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
 
   it.live("emits a { deleted, buckets_deleted } result in stream-json mode", () => {
     const { layer, out } = setupLegacyStorage(tmp.current, {

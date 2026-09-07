@@ -88,6 +88,19 @@ function resolveProfile(
  * fallback) operates on a real directory name, not a relative-path fragment
  * like `.` (which would sanitize to an empty project id and build a bare,
  * all-projects-matching Docker label filter).
+ *
+ * The returned `explicit` flag is what lets JSON-capable config loads
+ * (`config diff`/`config push`/`config pull`/`gen types`/etc — sites that do
+ * NOT pass `tomlOnly: true`) skip the second ancestor search that
+ * `@supabase/config`'s `loadCliConfig`/`findCliProjectPaths` would otherwise
+ * perform by default. It is true iff this function used the flag/env value
+ * verbatim without climbing.
+ *
+ * `legacyPflagWorkdirValue` (`command-internal/legacy-pflag-reconcile.ts`) is
+ * a similar-looking pflag-semantics predicate used for a different purpose
+ * (SSO/dotenv precedence) and deliberately handles a changed-but-empty
+ * `--workdir=` differently (treats it as explicit-but-falls-through-to-walk-up,
+ * never to env) — the two are intentionally NOT unified.
  */
 function resolveWorkdir(
   flagValue: Option.Option<string>,
@@ -95,24 +108,24 @@ function resolveWorkdir(
   cwd: string,
   configTomlExists: (path: string) => Effect.Effect<boolean>,
   path: Path.Path,
-): Effect.Effect<string> {
+): Effect.Effect<{ readonly workdir: string; readonly explicit: boolean }> {
   return Effect.gen(function* () {
     if (Option.isSome(flagValue) && flagValue.value.length > 0) {
-      return path.resolve(cwd, flagValue.value);
+      return { workdir: path.resolve(cwd, flagValue.value), explicit: true };
     }
     if (envValue !== undefined && envValue.length > 0) {
-      return path.resolve(cwd, envValue);
+      return { workdir: path.resolve(cwd, envValue), explicit: true };
     }
     let current = cwd;
     // Walk up until we hit a directory containing supabase/config.toml or the FS root.
     while (true) {
       const candidate = path.join(current, "supabase", "config.toml");
       if (yield* configTomlExists(candidate)) {
-        return current;
+        return { workdir: current, explicit: false };
       }
       const parent = path.dirname(current);
       if (parent === current) {
-        return cwd;
+        return { workdir: cwd, explicit: false };
       }
       current = parent;
     }
@@ -169,7 +182,7 @@ export const legacyCliSettingsLayer = Layer.unwrap(
             ? Option.none<string>()
             : Option.some(rawProjectId);
 
-        const workdir = yield* resolveWorkdir(
+        const { workdir, explicit: explicitWorkdir } = yield* resolveWorkdir(
           workdirFlag,
           env["SUPABASE_WORKDIR"],
           runtimeInfo.cwd,
@@ -188,6 +201,7 @@ export const legacyCliSettingsLayer = Layer.unwrap(
           accessToken,
           projectId,
           workdir,
+          explicitWorkdir,
           userAgent,
         });
       }),

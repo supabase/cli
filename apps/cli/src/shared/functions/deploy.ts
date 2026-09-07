@@ -2372,6 +2372,12 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     const configFunctions = yield* inferFunctionsManifest({
       cwd: dependencies.projectRoot,
       config: deployConfig,
+      // Matches `loadFunctionsCliConfig`'s own options above (`search: false,
+      // tomlOnly: true` for the legacy shell): no ancestor directory is
+      // searched past `dependencies.projectRoot` for EITHER load, so they can
+      // never resolve two different projects (same rationale as
+      // `start.handler.ts`'s equivalent call).
+      search: dependencies.goConfigCompat === undefined,
     });
     const configDeclaredFunctions = deployConfig?.functions ?? {};
     const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);

@@ -39,6 +39,23 @@ interface LegacyCliSettingsShape {
   readonly accessToken: Option.Option<Redacted.Redacted<string>>;
   readonly projectId: Option.Option<string>;
   readonly workdir: string;
+  /**
+   * Whether {@link workdir} came from an explicit `--workdir`/`SUPABASE_WORKDIR`
+   * (used exactly as given) rather than the default ancestor walk-up. True iff
+   * the resolution did NOT climb.
+   *
+   * Config loads that accept `supabase/config.json` must pass
+   * `search: legacyShouldSearchAncestors(cliSettings)` to
+   * `loadCliConfig`/`findCliProjectPaths`/`findCliProjectRoot` — see
+   * `legacyShouldSearchAncestors` (`command-internal/legacy-workdir-search.ts`)
+   * for the full rule and why callers that also pass `tomlOnly: true` instead
+   * pass `search: false` unconditionally. A load that also tolerates a `null`
+   * result carries a paired obligation for that rule's 4th point: hard-fail
+   * when `explicitWorkdir` is true unless it's one of the documented
+   * exceptions — see `legacyMissingProjectConfigMessage`/
+   * `legacyRequireExplicitWorkdirProject` (`command-internal/legacy-workdir-project.ts`).
+   */
+  readonly explicitWorkdir: boolean;
   readonly userAgent: string;
 }
 

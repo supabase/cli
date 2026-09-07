@@ -13,11 +13,14 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { legacyBold } from "../../../command-internal/legacy-colors.ts";
+import { legacyShouldSearchAncestors } from "../../../command-internal/legacy-workdir-search.ts";
+import { legacyValidateWorkdirIsDirectory } from "../../../command-internal/legacy-workdir-validation.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import type { LegacyFunctionsNewFlags } from "./new.command.ts";
 import {
   LegacyFunctionsNewFileExistsError,
   LegacyFunctionsNewInvalidSlugError,
+  LegacyFunctionsNewWorkdirError,
   LegacyFunctionsNewWriteError,
   mapLegacyFunctionsNewWriteError,
 } from "./new.errors.ts";
@@ -90,10 +93,14 @@ const listExistingFunctionSlugs = Effect.fnUntraced(function* (workdir: string) 
   return slugs;
 });
 
-const resolveTemplateInputs = Effect.fnUntraced(function* (workdir: string, slug: string) {
-  const loaded = yield* loadCliConfig(workdir, { goViperCompat: true }).pipe(
-    Effect.orElseSucceed(() => null),
-  );
+const resolveTemplateInputs = Effect.fnUntraced(function* (
+  cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
+  slug: string,
+) {
+  const loaded = yield* loadCliConfig(cliSettings.workdir, {
+    goViperCompat: true,
+    search: legacyShouldSearchAncestors(cliSettings),
+  }).pipe(Effect.orElseSucceed(() => null));
   const port = loaded?.config.api.port ?? DEFAULT_LOCAL_API_PORT;
   const publishableKey = loaded?.config.auth.publishable_key ?? defaultPublishableKey;
   return {
@@ -177,6 +184,10 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
   const tty = yield* Tty;
 
   yield* Effect.gen(function* () {
+    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
+      Effect.mapError((error) => new LegacyFunctionsNewWorkdirError({ message: error.message })),
+    );
+
     const invalidSlugMessage = validateFunctionSlugMessage(flags.functionName);
     if (invalidSlugMessage !== undefined) {
       return yield* Effect.fail(
@@ -219,7 +230,7 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
       );
     }
 
-    const templateInputs = yield* resolveTemplateInputs(cliSettings.workdir, flags.functionName);
+    const templateInputs = yield* resolveTemplateInputs(cliSettings, flags.functionName);
     yield* fs
       .writeFileString(entrypointPath, renderLegacyFunctionsNewEntrypoint(authMode, templateInputs))
       .pipe(

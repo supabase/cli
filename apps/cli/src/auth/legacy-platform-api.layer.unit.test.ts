@@ -42,6 +42,7 @@ function mockCliSettings(opts: {
       opts.accessToken === undefined ? Option.none() : Option.some(Redacted.make(opts.accessToken)),
     projectId: Option.none(),
     workdir: "/tmp",
+    explicitWorkdir: false,
     userAgent: opts.userAgent ?? "SupabaseCLI/0.0.0-dev",
   });
 }

@@ -1718,6 +1718,97 @@ describe("legacy functions deploy", () => {
     );
   });
 
+  it.live(
+    "does not treat an ancestor project's deno.json as this project's own import map when --workdir names a config-less subdirectory of it",
+    () => {
+      // CLI-2285: `inferFunctionsManifest`'s filesystem discovery previously
+      // climbed independently of the config load — no `search` option meant
+      // the package default (always climbing), regardless of `goConfigCompat`,
+      // while the config load (`loadFunctionsCliConfig`) has always used
+      // `search: false` for the legacy shell. Before this fix, a function
+      // directory with no `deno.json` of its own would still be reported as
+      // HAVING one — borrowed from an unrelated ANCESTOR project's own
+      // `deno.json` — because the manifest's filesystem walk climbed to find
+      // the ancestor's project root even though the config load never did.
+      // The resulting (wrong) import map path is then re-anchored under THIS
+      // project's own supabase dir, where no such file exists — failing the
+      // deploy outright with a spurious file-not-found, instead of correctly
+      // deploying the function with no import map.
+      const nestedWorkdir = join(tempRoot.current, "nested");
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi({
+        handler: (request) => {
+          if (request.method === "GET") {
+            return Effect.succeed(legacyJsonResponse(request, 200, []));
+          }
+          if (request.url.endsWith("/functions/deploy")) {
+            return Effect.succeed(
+              legacyJsonResponse(request, 201, {
+                id: "function-id",
+                slug: "hello-world",
+                name: "hello-world",
+                status: "ACTIVE",
+                version: 2,
+                created_at: 1_687_423_025_152,
+                updated_at: 1_687_423_025_152,
+                verify_jwt: true,
+                import_map: false,
+                entrypoint_path: "functions/hello-world/index.ts",
+              }),
+            );
+          }
+          return Effect.succeed(legacyJsonResponse(request, 404, { error: "not found" }));
+        },
+      });
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliSettings: mockLegacyCliSettings({ workdir: nestedWorkdir }),
+          runtimeInfo: mockRuntimeInfo({ cwd: nestedWorkdir }),
+        }),
+        Layer.succeed(LegacyYesFlag, false),
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        // Ancestor project: a real config.toml plus a real function with
+        // BOTH an entrypoint and a deno.json.
+        yield* Effect.tryPromise(() =>
+          writeCliConfig(tempRoot.current, 'project_id = "ancestor-project"\n'),
+        );
+        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+        // The sub-project actually deployed has its OWN entrypoint, but
+        // deliberately no deno.json of its own.
+        yield* Effect.tryPromise(() =>
+          mkdir(join(nestedWorkdir, "supabase", "functions", "hello-world"), {
+            recursive: true,
+          }),
+        );
+        yield* Effect.tryPromise(() =>
+          writeFile(
+            join(nestedWorkdir, "supabase", "functions", "hello-world", "index.ts"),
+            "Deno.serve(() => new Response())\n",
+          ),
+        );
+
+        yield* legacyFunctionsDeploy(baseFlags);
+
+        const deployRequest = api.requests.find(
+          (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
+        );
+        expect(deployRequest).toBeDefined();
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+        ),
+      );
+    },
+  );
+
   describe("docker-not-running warning styling (Go parity: deploy.go:60; only WARNING: is styled)", () => {
     it.live("wraps only the WARNING token, not the rest of the fallback line", () => {
       // Calls the shared `deployFunctions` with a marker `styleWarning` instead

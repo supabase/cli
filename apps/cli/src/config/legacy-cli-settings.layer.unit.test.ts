@@ -390,6 +390,10 @@ describe("legacyCliSettingsLayer", () => {
     Effect.gen(function* () {
       const config = yield* LegacyCliSettings;
       expect(config.workdir).toBe("/flag/workdir");
+      // An explicit non-empty --workdir is used verbatim — CLI-2285: this is
+      // what lets `legacyShouldSearchAncestors` skip the second, un-Go-like
+      // ancestor climb inside `loadCliConfig`.
+      expect(config.explicitWorkdir).toBe(true);
     }).pipe(
       Effect.provide(
         makeLayer({
@@ -405,9 +409,43 @@ describe("legacyCliSettingsLayer", () => {
     Effect.gen(function* () {
       const config = yield* LegacyCliSettings;
       expect(config.workdir).toBe("/env/workdir");
+      expect(config.explicitWorkdir).toBe(true);
     }).pipe(
       Effect.provide(makeLayer({ env: { SUPABASE_WORKDIR: "/env/workdir" }, cwd: tempRoot })),
     ),
+  );
+
+  // A --workdir flag present but set to the EMPTY string is treated as
+  // absent here (distinct from `legacyPflagWorkdirValue`'s handling of the
+  // same input elsewhere), so a non-empty SUPABASE_WORKDIR still wins and is
+  // still explicit.
+  it.effect(
+    "an empty --workdir flag falls through to SUPABASE_WORKDIR env, which is still explicit",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* LegacyCliSettings;
+        expect(config.workdir).toBe("/env/workdir");
+        expect(config.explicitWorkdir).toBe(true);
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            workdirFlag: Option.some(""),
+            env: { SUPABASE_WORKDIR: "/env/workdir" },
+            cwd: tempRoot,
+          }),
+        ),
+      ),
+  );
+
+  // With no env either, the same empty --workdir flag falls all the way
+  // through to the ancestor walk-up, which is the defaulted (non-explicit)
+  // path.
+  it.effect("an empty --workdir flag with no env falls through to the walk-up", () =>
+    Effect.gen(function* () {
+      const config = yield* LegacyCliSettings;
+      expect(config.workdir).toBe(tempRoot);
+      expect(config.explicitWorkdir).toBe(false);
+    }).pipe(Effect.provide(makeLayer({ workdirFlag: Option.some(""), cwd: tempRoot }))),
   );
 
   // Every later reader of the resolved workdir — including the
@@ -456,6 +494,9 @@ describe("legacyCliSettingsLayer", () => {
     return Effect.gen(function* () {
       const config = yield* LegacyCliSettings;
       expect(config.workdir).toBe(projectRoot);
+      // The ancestor climb found a config.toml — this resolution is the
+      // defaulted walk-up, not an explicit --workdir/SUPABASE_WORKDIR.
+      expect(config.explicitWorkdir).toBe(false);
     }).pipe(Effect.provide(makeLayer({ cwd: nested })));
   });
 
@@ -463,6 +504,9 @@ describe("legacyCliSettingsLayer", () => {
     Effect.gen(function* () {
       const config = yield* LegacyCliSettings;
       expect(config.workdir).toBe(tempRoot);
+      // The climb never found a config.toml and fell back to cwd unchanged —
+      // still the defaulted path, not an explicit workdir.
+      expect(config.explicitWorkdir).toBe(false);
     }).pipe(Effect.provide(makeLayer({ cwd: tempRoot }))),
   );
 

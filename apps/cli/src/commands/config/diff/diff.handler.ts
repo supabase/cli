@@ -5,10 +5,11 @@ import {
 } from "@supabase/config/effect";
 import { remoteNameForProjectRef } from "@supabase/config/internal";
 import { operationDefinitions } from "@supabase/api/effect";
-import { Effect, Option } from "effect";
+import { Effect, FileSystem, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
+import { legacyValidateWorkdirIsDirectory } from "../../../command-internal/legacy-workdir-validation.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
@@ -45,6 +46,7 @@ import {
   LegacyConfigDiffParentRefInvalidError,
   LegacyConfigDiffReadNetworkError,
   LegacyConfigDiffReadStatusError,
+  LegacyConfigDiffWorkdirError,
 } from "./diff.errors.ts";
 import type { LegacyConfigDiffFlags } from "./diff.command.ts";
 
@@ -74,6 +76,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
   const cliSettings = yield* LegacyCliSettings;
   const processControl = yield* ProcessControl;
   const goOutputFlag = yield* LegacyOutputFlag;
+  const fs = yield* FileSystem.FileSystem;
 
   // An empty `--project-ref` value is absent, mirroring the resolver's own rule.
   const requested = Option.filter(flags.projectRef, (value) => value.length > 0);
@@ -87,7 +90,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
   // message shapes; only this family's own tagged error class is local.
   const loadLocalConfig = (projectRef: string | undefined) =>
     legacyLoadLocalConfig(
-      cliSettings.workdir,
+      cliSettings,
       projectRef,
       (message) => new LegacyConfigDiffLoadConfigError({ message }),
     );
@@ -112,6 +115,15 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
           "the -o/--output flag is not supported by config diff; use --output-format json|stream-json instead.",
       });
     }
+
+    // 1.5. The resolved `--workdir`/`SUPABASE_WORKDIR` must exist and be a
+    // directory before anything else runs — distinguishes "the directory
+    // doesn't exist" (`failed to change workdir: chdir …`) from "it exists
+    // but holds no `supabase/` project" (the step-2 load below), and runs
+    // before the config read and every network call.
+    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
+      Effect.mapError((error) => new LegacyConfigDiffWorkdirError({ message: error.message })),
+    );
 
     // 2. Load and validate the local config BEFORE any network call or
     // target resolution (never writes — this command is read-only by

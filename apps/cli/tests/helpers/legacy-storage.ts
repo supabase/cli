@@ -84,6 +84,8 @@ export interface SetupLegacyStorageOptions {
   }>;
   /** When true, `loadProjectRef` fails with `LegacyProjectNotLinkedError`. */
   readonly linkedFails?: boolean;
+  /** cliSettings.explicitWorkdir override — true iff --workdir/SUPABASE_WORKDIR was set verbatim. */
+  readonly explicitWorkdir?: boolean;
 }
 
 /**
@@ -207,7 +209,7 @@ export function setupLegacyStorage(workdir: string, opts: SetupLegacyStorageOpti
     httpLayer,
     telemetry.layer,
     linkedCache.layer,
-    mockLegacyCliSettings({ workdir }),
+    mockLegacyCliSettings({ workdir, explicitWorkdir: opts.explicitWorkdir ?? false }),
     BunServices.layer,
     projectRefLayer,
     Layer.succeed(LegacyPlatformApiFactory, {

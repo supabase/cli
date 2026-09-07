@@ -27,6 +27,10 @@ interface SetupOptions {
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
   /** Piped stdin lines consumed by the non-TTY IDE-settings confirm reads. */
   readonly stdinInput?: string;
+  /** cliSettings.workdir override; defaults to the temp project root. */
+  readonly workdir?: string;
+  /** cliSettings.explicitWorkdir override — true iff --workdir/SUPABASE_WORKDIR was set verbatim. */
+  readonly explicitWorkdir?: boolean;
 }
 
 function setup(options: SetupOptions = {}) {
@@ -35,7 +39,11 @@ function setup(options: SetupOptions = {}) {
     promptConfirmResponses: options.promptConfirmResponses,
   });
   const telemetry = mockLegacyTelemetryStateTracked();
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
+  const workdir = options.workdir ?? tempRoot.current;
+  const cliSettings = mockLegacyCliSettings({
+    workdir,
+    explicitWorkdir: options.explicitWorkdir ?? false,
+  });
   const layer = Layer.mergeAll(
     BunServices.layer,
     out.layer,
@@ -49,7 +57,7 @@ function setup(options: SetupOptions = {}) {
     Layer.succeed(LegacyYesFlag, options.yes ?? false),
     Layer.succeed(CliArgs, { args: [] }),
   );
-  return { layer, out, telemetry, workdir: tempRoot.current };
+  return { layer, out, telemetry, workdir };
 }
 
 function exitTag(exit: Exit.Exit<unknown, unknown>): string | undefined {
@@ -342,4 +350,27 @@ describe("legacy functions new integration", () => {
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "fails without scaffolding anything when --workdir names a directory that does not exist at all",
+    () => {
+      // Before this fix, a typo'd --workdir would have silently created a
+      // fresh supabase/functions/... tree (plus a new config.toml) at the
+      // wrong path — the critical safety assertion here is that NOTHING was
+      // scaffolded once the workdir check fails first.
+      const badWorkdir = join(tempRoot.current, "does-not-exist");
+      const { layer, telemetry } = setup({ workdir: badWorkdir, explicitWorkdir: true });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacyFunctionsNew({ functionName: "hello-world", auth: "apikey" }),
+        );
+        expect(exitTag(exit)).toBe("LegacyFunctionsNewWorkdirError");
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit)).toContain("failed to change workdir: chdir");
+        }
+        expect(existsSync(join(badWorkdir, "supabase"))).toBe(false);
+        expect(telemetry.flushed).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });

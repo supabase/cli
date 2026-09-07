@@ -9,6 +9,7 @@ import { legacyResolveYesWithProjectEnv } from "../shared/legacy/global-flags.ts
 import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { legacyBold, legacyYellow } from "./legacy-colors.ts";
 import { legacyLoadProjectEnv } from "./legacy-db-config.toml-read.ts";
+import { legacyShouldSearchAncestors } from "./legacy-workdir-search.ts";
 import { legacyPromptYesNo } from "../shared/legacy/legacy-prompt-yes-no.ts";
 import {
   legacyResolveStorageCredentials,
@@ -188,7 +189,9 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   // when the caller already supplied `resolvedConfig` — see that option's doc
   // comment above.
   const loadOptions: InternalLoadCliConfigOptions =
-    projectRef !== "" ? { projectRef, goViperCompat: true } : { goViperCompat: true };
+    projectRef !== ""
+      ? { projectRef, goViperCompat: true, search: legacyShouldSearchAncestors(cliSettings) }
+      : { goViperCompat: true, search: legacyShouldSearchAncestors(cliSettings) };
   const loaded =
     opts.resolvedConfig !== undefined
       ? null
@@ -206,6 +209,11 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   // into the no-op short-circuit; `--linked` + no-config falls through to the
   // remote path so auth/project/API failures surface. `resolvedConfig` (when
   // given) always wins over a `null` `loaded` — see that option's doc comment.
+  // The standalone `seed buckets` command now rejects an explicit-but-project-less
+  // workdir in its own handler (`buckets.handler.ts`,
+  // `legacyRequireExplicitWorkdirProject`) before ever reaching this function, so
+  // this fallback is reached only for a DEFAULTED workdir, or a `resolvedConfig`
+  // caller (`start`/`db reset`, which never load config here at all).
   const config =
     opts.resolvedConfig?.config ??
     (loaded === null ? legacyDecodeDefaultCliConfig({}) : loaded.config);
