@@ -8,10 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  actionability,
-  ErrorActionabilityId,
-} from "../../shared/telemetry/error-actionability.ts";
+import { actionability, ErrorActionabilityId } from "../../shared/telemetry/error-actionability.ts";
 import { legacyConfigTargetErrorsFor, legacyMintConfigTargetErrors } from "./config.target.ts";
 
 const PREFIX = "LegacyConfigTestMint";
