@@ -53,6 +53,9 @@ const listenBackend = (server: ReturnType<typeof createHttpServer>) =>
     () => closeServer(server),
   ).pipe(Effect.as(server));
 
+const uniquePort = (stackId: string, offset: number): number =>
+  42_000 + (Number.parseInt(stackId.slice(0, 6), 16) % 7_000) + offset;
+
 const request = (port: number, path = "/rest/v1/items", method = "GET", host = "127.0.0.1") =>
   Effect.callback<{ readonly status: number; readonly body: string }, Error>((resume) => {
     const client = requestHttp({ host, port, path, method }, (response: IncomingMessage) => {
@@ -342,7 +345,29 @@ describe("Supervisor ingress", () => {
         const compiled = yield* compileStack({
           projectRoot: root,
           runtime: { kind: "native" },
-          config: { capabilities: { rest: {} } },
+          config: {
+            capabilities: {
+              rest: {},
+              auth: { enabled: false },
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              functions: { enabled: false },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+              pooler: { enabled: false },
+            },
+            listeners: {
+              api: { port: uniquePort(stackId, 0) },
+              database: { port: uniquePort(stackId, 1) },
+              pooler: { enabled: false },
+              studio: { enabled: false },
+              mailUi: { enabled: false },
+              smtp: { enabled: false },
+              pop3: { enabled: false },
+              functionsInspector: { enabled: false },
+            },
+          },
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
         yield* store.initialize(stackId, {
@@ -359,9 +384,9 @@ describe("Supervisor ingress", () => {
           desiredLifecycle: "running",
           definition: compiled.definition,
           ports: [
-            { field: "api", port: 55433, intent: "automatic" },
-            { field: "database", port: 55436, intent: "automatic" },
-            { field: "pooler", port: 55437, intent: "automatic" },
+            { field: "api", port: uniquePort(stackId, 0), intent: "automatic" },
+            { field: "database", port: uniquePort(stackId, 1), intent: "automatic" },
+            { field: "pooler", port: uniquePort(stackId, 2), intent: "automatic" },
           ] as const,
           privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
             ...binding,
@@ -449,7 +474,9 @@ describe("Supervisor ingress", () => {
           runtime: { kind: "native" as const },
           desiredLifecycle: "running" as const,
           definition: compiled.definition,
-          ports: [{ field: "database", port: 55434, intent: "automatic" }] as const,
+          ports: [
+            { field: "database", port: uniquePort(stackId, 1), intent: "automatic" },
+          ] as const,
           privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
             ...binding,
             port: 30200 + index,
@@ -554,7 +581,7 @@ describe("Supervisor ingress", () => {
           runtime: { kind: "native" as const },
           desiredLifecycle: "running" as const,
           definition: compiled.definition,
-          ports: [{ field: "api", port: 55435, intent: "automatic" }] as const,
+          ports: [{ field: "api", port: uniquePort(stackId, 0), intent: "automatic" }] as const,
           privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
             ...binding,
             port: 30300 + index,

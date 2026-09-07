@@ -1,9 +1,12 @@
-import { SUPERVISOR_DISPATCH_SENTINEL } from "../supervisor/Launcher.ts";
-import { runSupervisorProcess } from "../entrypoints/supervisor-node.ts";
-import { NATIVE_PROCESS_DISPATCH_SENTINEL } from "../runtime/NativeProcess.ts";
-import { runNativeLauncher } from "../runtime/native-launcher.ts";
+import {
+  NATIVE_PROCESS_DISPATCH_SENTINEL,
+  SUPERVISOR_DISPATCH_SENTINEL,
+} from "./dispatch-markers.ts";
 
-export { NATIVE_PROCESS_DISPATCH_SENTINEL } from "../runtime/NativeProcess.ts";
+export {
+  NATIVE_PROCESS_DISPATCH_SENTINEL,
+  SUPERVISOR_DISPATCH_SENTINEL,
+} from "./dispatch-markers.ts";
 
 /**
  * Supported process-entrypoint seam for embedders such as the CLI binary.
@@ -12,7 +15,9 @@ export { NATIVE_PROCESS_DISPATCH_SENTINEL } from "../runtime/NativeProcess.ts";
  */
 export const runSupervisorProcessIfDispatched = (argv: ReadonlyArray<string>): Promise<boolean> => {
   if (argv[0] !== SUPERVISOR_DISPATCH_SENTINEL) return Promise.resolve(false);
-  return runSupervisorProcess(argv.slice(1)).then(() => true);
+  return import("../entrypoints/supervisor-node.ts")
+    .then(({ runSupervisorProcess }) => runSupervisorProcess(argv.slice(1)))
+    .then(() => true);
 };
 
 /**
@@ -22,6 +27,7 @@ export const runSupervisorProcessIfDispatched = (argv: ReadonlyArray<string>): P
  */
 export const runNativeProcessIfDispatched = (argv: ReadonlyArray<string>): Promise<boolean> => {
   if (argv[0] !== NATIVE_PROCESS_DISPATCH_SENTINEL) return Promise.resolve(false);
-  runNativeLauncher();
-  return Promise.resolve(true);
+  return import("../runtime/native-launcher.ts")
+    .then(({ runNativeLauncher }) => runNativeLauncher())
+    .then(() => true);
 };

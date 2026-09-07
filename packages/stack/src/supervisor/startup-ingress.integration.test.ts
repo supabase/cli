@@ -28,6 +28,11 @@ import { makeSupervisor, type SupervisorRuntime } from "./Supervisor.ts";
 import type { RuntimeDriver } from "../runtime/RuntimeDriver.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { StackLogEntry } from "../public/Logs.ts";
+import type { StackError } from "../public/Errors.ts";
+import type { HostListener } from "../state/PortCoordinator.ts";
+
+const uniquePort = (stackId: string): number =>
+  42_000 + (Number.parseInt(stackId.slice(0, 6), 16) % 7_000);
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
@@ -110,8 +115,7 @@ describe("startup ingress", () => {
           Context.add(Path.Path, path),
           Context.add(Crypto.Crypto, crypto),
         );
-        const listenerBound =
-          yield* Deferred.make<import("../state/PortCoordinator.ts").HostListener>();
+        const listenerBound = yield* Deferred.make<HostListener, StackError>();
         const startEntered = yield* Deferred.make<void>();
         const releaseStart = yield* Deferred.make<void>();
         const activationCalls = yield* Ref.make(0);
@@ -195,7 +199,22 @@ describe("startup ingress", () => {
           runtime,
         });
         const starting = yield* Effect.forkChild(
-          supervisor.start({ config: { listeners: { api: { enabled: true } } } }),
+          supervisor
+            .start({
+              config: {
+                listeners: {
+                  api: { port: uniquePort(stackId) },
+                  database: { enabled: false },
+                  pooler: { enabled: false },
+                  studio: { enabled: false },
+                  mailUi: { enabled: false },
+                  smtp: { enabled: false },
+                  pop3: { enabled: false },
+                  functionsInspector: { enabled: false },
+                },
+              },
+            })
+            .pipe(Effect.tapCause((cause) => Deferred.failCause(listenerBound, cause))),
         );
         const listener = yield* Deferred.await(listenerBound);
         if (listener.binding.kind !== "http") return yield* Effect.die("API listener is not HTTP");
