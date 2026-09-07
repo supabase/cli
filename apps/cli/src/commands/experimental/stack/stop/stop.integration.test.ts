@@ -10,9 +10,18 @@ import {
   StackIdSchema,
   StackNotFoundError,
   StackOwnershipConflictError,
+  StackRuntimeMismatchError,
+  StackStateFormatUnsupportedError,
   StackStateInvalidError,
+  StackUpgradeRequiredError,
 } from "@supabase/stack/effect";
-import type { EffectStack, StackStatus, StackStopError } from "@supabase/stack/effect";
+import type {
+  EffectStack,
+  OpenStackError,
+  StackDiscoveryError,
+  StackStatus,
+  StackStopError,
+} from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { mockLegacyCliSettings } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -50,8 +59,8 @@ function setup(opts: {
   root: string;
   found?: { id: string; name?: string };
   stop?: () => Effect.Effect<void, StackStopError>;
-  openFailure?: StackNotFoundError;
-  findFailure?: InvalidStackIdentityError;
+  openFailure?: OpenStackError;
+  findFailure?: StackDiscoveryError;
 }) {
   const out = mockOutput();
   const state = {
@@ -304,6 +313,70 @@ describe("experimental stack stop", () => {
       const failure = yield* legacyExperimentalStackStop(flags()).pipe(Effect.flip);
       expect(failure.reason).toBe("lifecycle");
       expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
+    }).pipe(
+      Effect.provide(setupResult.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("classifies persisted state format failures as invalid config", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-format-"));
+    const setupResult = setup({
+      root,
+      found: { id: "8".repeat(64) },
+      openFailure: new StackStateFormatUnsupportedError({
+        format: "future",
+        message: "Unsupported stack state format",
+      }),
+    });
+    return Effect.gen(function* () {
+      const failure = yield* legacyExperimentalStackStop(flags()).pipe(Effect.flip);
+      expect(failure.reason).toBe("invalid-config");
+      expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
+      expect(setupResult.state.stopCalls).toBe(0);
+      expect(setupResult.out.messages.some((message) => message.type === "success")).toBe(false);
+    }).pipe(
+      Effect.provide(setupResult.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("classifies stack upgrade requirements as lifecycle failures", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-upgrade-"));
+    const setupResult = setup({
+      root,
+      found: { id: "9".repeat(64) },
+      openFailure: new StackUpgradeRequiredError({
+        expectedRelease: "next",
+        actualRelease: "current",
+        message: "Stack upgrade required",
+      }),
+    });
+    return Effect.gen(function* () {
+      const failure = yield* legacyExperimentalStackStop(flags()).pipe(Effect.flip);
+      expect(failure.reason).toBe("lifecycle");
+      expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
+      expect(setupResult.state.stopCalls).toBe(0);
+      expect(setupResult.out.messages.some((message) => message.type === "success")).toBe(false);
+    }).pipe(
+      Effect.provide(setupResult.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("classifies an unknown stack error as unknown actionability", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-runtime-"));
+    const setupResult = setup({
+      root,
+      found: { id: "a".repeat(64) },
+      openFailure: new StackRuntimeMismatchError({ message: "Runtime mismatch" }),
+    });
+    return Effect.gen(function* () {
+      const failure = yield* legacyExperimentalStackStop(flags()).pipe(Effect.flip);
+      expect(failure.reason).toBe("unknown");
+      expect(failure[ErrorActionabilityId]).toEqual(actionability.unknown);
+      expect(setupResult.state.stopCalls).toBe(0);
+      expect(setupResult.out.messages.some((message) => message.type === "success")).toBe(false);
     }).pipe(
       Effect.provide(setupResult.layer),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
