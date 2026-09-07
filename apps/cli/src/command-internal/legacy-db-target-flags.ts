@@ -97,6 +97,12 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "network-id",
   "dns-resolver",
   "agent",
+  // The CLI library's built-in `--log-level` is deliberately not listed: an
+  // argv giving it a flag-shaped value fails the real parse before any
+  // scanner here runs, so nothing can mis-consume around it (issue #6482
+  // registered it only where positional counting depends on it). The
+  // `--completions` action prints and exits before any handler runs, so
+  // these scans never see it either.
   // Every other value-consuming flag declared directly across commands/
   // (CLI-1896 review follow-up — see the doc comment above).
   "add-domains",

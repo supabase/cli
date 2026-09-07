@@ -51,6 +51,40 @@ describe("legacyRespondToComplete", () => {
     expect(result?.candidates.map((c) => c.name)).toContain("--debug");
   });
 
+  it("offers the built-in --log-level flag like --help shows it", () => {
+    const result = legacyRespondToComplete(legacyRoot, ["__complete", "--log"]);
+    expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+    expect(result?.candidates.map((c) => c.name)).toContain("--log-level");
+  });
+
+  it("offers the built-in --wizard flag and keeps completing after it", () => {
+    const offered = legacyRespondToComplete(legacyRoot, ["__complete", "--wiz"]);
+    expect(offered?.candidates.map((c) => c.name)).toContain("--wizard");
+
+    // A boolean built-in must not poison the line or consume the next token.
+    const after = legacyRespondToComplete(legacyRoot, ["__complete", "--wizard", ""]);
+    expect(after?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+    expect(after?.candidates.map((c) => c.name)).toContain("branches");
+  });
+
+  it("offers the built-in --completions flag and keeps completing after its shell value", () => {
+    const offered = legacyRespondToComplete(legacyRoot, ["__complete", "--comp"]);
+    expect(offered?.candidates.map((c) => c.name)).toContain("--completions");
+
+    const after = legacyRespondToComplete(legacyRoot, ["__complete", "--completions", "bash", ""]);
+    expect(after?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+    expect(after?.candidates.map((c) => c.name)).toContain("branches");
+
+    // An invalid shell value still poisons the line, matching the real parse.
+    const invalid = legacyRespondToComplete(legacyRoot, [
+      "__complete",
+      "--completions",
+      "powershell",
+      "",
+    ]);
+    expect(invalid).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
+  });
+
   it("offers an ancestor's shared flag (Command.withSharedFlags) from a resolved leaf command", () => {
     // `--no-cache` is declared once on the `db schema declarative` group via
     // Command.withSharedFlags (declarative.shared.ts) and must be visible from
@@ -112,6 +146,29 @@ describe("legacyRespondToComplete", () => {
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "-o", "json", ""]);
       expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
       expect(result?.candidates.map((c) => c.name)).toContain("migration");
+    });
+
+    it("lists subcommands after the built-in --log-level and its value", () => {
+      // `--log-level error ""` used to return zero candidates: the built-in
+      // never entered the in-scope flag set, so the strict flag walk treated
+      // it like an unknown flag and poisoned the line (issue #6482). An
+      // invalid value must still poison it, matching the real parse.
+      const result = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "--log-level",
+        "error",
+        "",
+      ]);
+      expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
+      expect(result?.candidates.map((c) => c.name)).toContain("sso");
+
+      const invalid = legacyRespondToComplete(legacyRoot, [
+        "__complete",
+        "--log-level",
+        "bogus",
+        "",
+      ]);
+      expect(invalid).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
     });
 
     it("still resolves and lists subcommands when the global flag appears before the group", () => {
@@ -1326,12 +1383,13 @@ describe("legacyCollectInScopeFlags", () => {
     // resolved command's own set — TWO separately-sorted runs, not one
     // merged alphabetical list: `db dump -` lists --agent, --create-ticket,
     // --debug, ... alphabetically, THEN a second alphabetical run starting
-    // --data-only, --db-url, --dry-run, ....
+    // --completions (the built-ins join the own block), --data-only,
+    // --db-url, --dry-run, ....
     const { commandChain } = legacyResolveCommandPath(legacyRoot, ["db", "dump"]);
     const names = legacyCollectInScopeFlags(legacyRoot, commandChain).map((flag) => flag.name);
 
     const inheritedEnd = names.indexOf("yes"); // last inherited flag, alphabetically
-    const ownStart = names.indexOf("data-only"); // first own/local flag, alphabetically
+    const ownStart = names.indexOf("completions"); // first own flag, alphabetically (a built-in)
     expect(inheritedEnd).toBeGreaterThanOrEqual(0);
     expect(ownStart).toBeGreaterThan(inheritedEnd);
 
