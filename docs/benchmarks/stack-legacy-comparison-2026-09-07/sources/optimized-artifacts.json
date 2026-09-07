@@ -1,0 +1,596 @@
+{
+  "native": [
+    {
+      "service": "postgres",
+      "version": "17.6.1.168",
+      "target": "darwin-arm64",
+      "sha256": "5cb14f85c598ebe2f4eece2823fa63d3ce8cabc812164d1a069d7dea571466af",
+      "bytes": 101725412,
+      "variant": "baseline",
+      "sourceCommit": "87ea6eacbf8766b9d93c07e68c07b23fd97b5d8f"
+    },
+    {
+      "service": "postgres",
+      "version": "17.6.1.168",
+      "target": "linux-arm64",
+      "sha256": "437938be83a215dc086b9e57342df452766b5b1e84b1792237848fcaf381e516",
+      "bytes": 76962783,
+      "variant": "baseline",
+      "sourceCommit": "87ea6eacbf8766b9d93c07e68c07b23fd97b5d8f"
+    },
+    {
+      "service": "postgrest",
+      "version": "v16.2",
+      "target": "darwin-arm64",
+      "sha256": "5c54d464653b99c1c7d5e2f195354f57fd73b3eb267aa933d5a511e201b4a78d",
+      "bytes": 13145572,
+      "variant": "baseline",
+      "sourceCommit": "47ef77b88091ceeb570992dc775b8292b9c45907"
+    },
+    {
+      "service": "postgrest",
+      "version": "v16.2",
+      "target": "linux-arm64",
+      "sha256": "b2062b99941e52e970261190b0a67f59c492dcc2081827a48a7363184a2f6a5d",
+      "bytes": 4583671,
+      "variant": "baseline",
+      "sourceCommit": null
+    },
+    {
+      "service": "auth",
+      "version": "v2.196.0",
+      "target": "darwin-arm64",
+      "sha256": "47d241dced37712547b32f3b61c6eee9a0ad1ec975e3043386dcd791f72e93dc",
+      "bytes": 9949773,
+      "variant": "baseline",
+      "sourceCommit": "0204331ca41a5b49f076b6fa3dc6c0d20b996590"
+    },
+    {
+      "service": "auth",
+      "version": "v2.196.0",
+      "target": "linux-arm64",
+      "sha256": "62eeab247c3e2647df78d408db54d3658b5c2a7a8815f26f07ab0521689ee651",
+      "bytes": 9441560,
+      "variant": "baseline",
+      "sourceCommit": "0204331ca41a5b49f076b6fa3dc6c0d20b996590"
+    },
+    {
+      "service": "realtime",
+      "version": "v2.134.5",
+      "target": "darwin-arm64",
+      "sha256": "c1d9d19dff38c948c88a0b51eb7c24470c80b9c86fbce0cac9f376b15565c42b",
+      "bytes": 12515559,
+      "variant": "baseline",
+      "sourceCommit": "18e4c2fb227091fe615c1ab8db2e9de19034bdd8"
+    },
+    {
+      "service": "realtime",
+      "version": "v2.134.5",
+      "target": "linux-arm64",
+      "sha256": "41e91da6f783407424581afbad02b6179f5cbb5d9e7f16cf8b7052459ddafc02",
+      "bytes": 17055386,
+      "variant": "baseline",
+      "sourceCommit": "18e4c2fb227091fe615c1ab8db2e9de19034bdd8"
+    },
+    {
+      "service": "storage",
+      "version": "v1.73.0",
+      "target": "darwin-arm64",
+      "sha256": "2c0b965928976435583bec46e03150ee90a52b1fb19a9b169da1a5c398924893",
+      "bytes": 37895069,
+      "variant": "baseline",
+      "sourceCommit": "c015666ee13ee29faab50cf76ac513d73bdb6bfc"
+    },
+    {
+      "service": "storage",
+      "version": "v1.73.0",
+      "target": "linux-arm64",
+      "sha256": "24842c8095c91f2e7e164a0aa3ccf834a6be700ae1ec95bf8fb7f2def42abd44",
+      "bytes": 36142111,
+      "variant": "baseline",
+      "sourceCommit": "c015666ee13ee29faab50cf76ac513d73bdb6bfc"
+    },
+    {
+      "service": "edge-runtime",
+      "version": "v1.76.2",
+      "target": "darwin-arm64",
+      "sha256": "11cfb6503105980c4e7bd33d99288ff4fd42098d852a03564008fb0c8bac8663",
+      "bytes": 41889430,
+      "variant": "baseline",
+      "sourceCommit": "db47af5264be7a6e649d9488cc4f3f0da16ff875"
+    },
+    {
+      "service": "edge-runtime",
+      "version": "v1.76.2",
+      "target": "linux-arm64",
+      "sha256": "495ab7695fd0278f9044beb5d6aa634cdbe4823713bf8f212c2c99d84ddf5240",
+      "bytes": 32465744,
+      "variant": "baseline",
+      "sourceCommit": "db47af5264be7a6e649d9488cc4f3f0da16ff875"
+    },
+    {
+      "service": "studio",
+      "version": "2026.09.04-sha-5a67366",
+      "target": "darwin-arm64",
+      "sha256": "242d9663ddb4dbe7cbe35104d73952928f4c9ae2bd29a401a55b0e424ff0efb1",
+      "bytes": 79916226,
+      "variant": "baseline",
+      "sourceCommit": "5a673668cb115ac2f3a27d8cbd6952bd99dc139b"
+    },
+    {
+      "service": "studio",
+      "version": "2026.09.04-sha-5a67366",
+      "target": "linux-arm64",
+      "sha256": "f83d5f29a34209682f704138b29969f3012e02c108b4dfcbcca52ae34881965a",
+      "bytes": 78963453,
+      "variant": "baseline",
+      "sourceCommit": "5a673668cb115ac2f3a27d8cbd6952bd99dc139b"
+    },
+    {
+      "service": "pgmeta",
+      "version": "v0.99.0",
+      "target": "darwin-arm64",
+      "sha256": "eaf8f08c4cbe222dd3ae84b22ce39e579ec9e41473b79b4b768497e9f5ad4fcd",
+      "bytes": 42415178,
+      "variant": "baseline",
+      "sourceCommit": "f380cc5be21edef4e77d9838c732d1f20af0b3c0"
+    },
+    {
+      "service": "pgmeta",
+      "version": "v0.99.0",
+      "target": "linux-arm64",
+      "sha256": "5965d0527d5133d9722bb47599e4b32989afe22123f6a7588289c58dacdf91d7",
+      "bytes": 41751085,
+      "variant": "baseline",
+      "sourceCommit": "f380cc5be21edef4e77d9838c732d1f20af0b3c0"
+    },
+    {
+      "service": "mailpit",
+      "version": "v1.30.2",
+      "target": "darwin-arm64",
+      "sha256": "498d7a08a4155449e4327354ee8128212b326da1e10d92c8a01de8fc0985382b",
+      "bytes": 8103296,
+      "variant": "baseline",
+      "sourceCommit": null
+    },
+    {
+      "service": "mailpit",
+      "version": "v1.30.2",
+      "target": "linux-arm64",
+      "sha256": "7a85e2521680d4ad2800a00a83cab9898927e8ea7177a4cd9530fa1fb535d8de",
+      "bytes": 7851942,
+      "variant": "baseline",
+      "sourceCommit": null
+    },
+    {
+      "service": "analytics",
+      "version": "v1.50.9",
+      "target": "darwin-arm64",
+      "sha256": "d788f7d4afbf7803bdf3395807ea760b23fc3ecd0fc25571d5fcb468e5cc6551",
+      "bytes": 34976698,
+      "variant": "baseline",
+      "sourceCommit": "e830940c872b75ac4d1db933cfc9b3a7b8031699"
+    },
+    {
+      "service": "analytics",
+      "version": "v1.50.9",
+      "target": "linux-arm64",
+      "sha256": "b691b899a1efde794c4d4d587dc22baca6a400a28b2da1fd8aa308edbae28dd6",
+      "bytes": 40279068,
+      "variant": "baseline",
+      "sourceCommit": "e830940c872b75ac4d1db933cfc9b3a7b8031699"
+    },
+    {
+      "service": "pooler",
+      "version": "v2.9.12",
+      "target": "darwin-arm64",
+      "sha256": "d350bea25dc1ca15256fe191a40f3dbcb4c68d9b2a692f18fa8560a034eec218",
+      "bytes": 24595273,
+      "variant": "baseline",
+      "sourceCommit": "e8719d9ac5a43604c46d2d9e15bb34c76dea8f12"
+    },
+    {
+      "service": "pooler",
+      "version": "v2.9.12",
+      "target": "linux-arm64",
+      "sha256": "7c0bf0921a0d812f3625515da0d0982a967d85b3e4e9b6e32082a0d34a69f8c5",
+      "bytes": 29876683,
+      "variant": "baseline",
+      "sourceCommit": "e8719d9ac5a43604c46d2d9e15bb34c76dea8f12"
+    },
+    {
+      "service": "postgres",
+      "version": "15.14.1.168",
+      "target": "darwin-arm64",
+      "sha256": "bdd700715333e7c829f4bad36636a351c6a2e77e1be6d2836bf858494327a360",
+      "bytes": 118913785,
+      "variant": "baseline",
+      "sourceCommit": "87ea6eacbf8766b9d93c07e68c07b23fd97b5d8f"
+    },
+    {
+      "service": "postgres",
+      "version": "15.14.1.168",
+      "target": "linux-arm64",
+      "sha256": "0f5b79c8edc0ad6bfb41b6c436a4d637a3af9ba00a75cb0f0a95850995368301",
+      "bytes": 86637489,
+      "variant": "baseline",
+      "sourceCommit": "87ea6eacbf8766b9d93c07e68c07b23fd97b5d8f"
+    },
+    {
+      "service": "postgres",
+      "version": "17.6.1.168",
+      "target": "darwin-arm64",
+      "sha256": "90bbbfe3bc2f3eb1c40c77fd22efede08ad603fc32f260ff1f29f37228a1b0be",
+      "bytes": 106953154,
+      "variant": "optimized",
+      "sourceCommit": "87ea6eacbf8766b9d93c07e68c07b23fd97b5d8f"
+    },
+    {
+      "service": "postgres",
+      "version": "17.6.1.168",
+      "target": "linux-arm64",
+      "sha256": "8b908a4e062320a7d3378b72c0107d0f6a19bf48632a5a03169de06a5cacc9ef",
+      "bytes": 78701690,
+      "variant": "optimized",
+      "sourceCommit": "87ea6eacbf8766b9d93c07e68c07b23fd97b5d8f"
+    },
+    {
+      "service": "postgrest",
+      "version": "v16.2",
+      "target": "darwin-arm64",
+      "sha256": "2fc3109f2add5a3be25f920ce1225506702996ad4f3d9d3d91c697079495e3fc",
+      "bytes": 13147516,
+      "variant": "optimized",
+      "sourceCommit": "47ef77b88091ceeb570992dc775b8292b9c45907"
+    },
+    {
+      "service": "postgrest",
+      "version": "v16.2",
+      "target": "linux-arm64",
+      "sha256": "24923c6d2f1987061b1032baededdc0f89f9fc1465725635fc32c345c8a2f965",
+      "bytes": 4584996,
+      "variant": "optimized",
+      "sourceCommit": null
+    },
+    {
+      "service": "auth",
+      "version": "v2.196.0",
+      "target": "darwin-arm64",
+      "sha256": "350869236fe2a09be5e148041a8e0b9f57b765c31b17d5cfcf0a0d9eef581491",
+      "bytes": 9951776,
+      "variant": "optimized",
+      "sourceCommit": "0204331ca41a5b49f076b6fa3dc6c0d20b996590"
+    },
+    {
+      "service": "auth",
+      "version": "v2.196.0",
+      "target": "linux-arm64",
+      "sha256": "4e92133bb2840f5a018be1f151ba2b685b19ab9c253999f9cbb28fc40615c42d",
+      "bytes": 9443426,
+      "variant": "optimized",
+      "sourceCommit": "0204331ca41a5b49f076b6fa3dc6c0d20b996590"
+    },
+    {
+      "service": "realtime",
+      "version": "v2.134.5",
+      "target": "darwin-arm64",
+      "sha256": "b95920ab8376ce2bd94b59a064d8f6f470bc48903023672c5dc6ad01fe64b9f9",
+      "bytes": 12648108,
+      "variant": "optimized",
+      "sourceCommit": "18e4c2fb227091fe615c1ab8db2e9de19034bdd8"
+    },
+    {
+      "service": "realtime",
+      "version": "v2.134.5",
+      "target": "linux-arm64",
+      "sha256": "19760802d7052507527d0897acb615cfbf645ebee8475a7ae77a2c3598c3f303",
+      "bytes": 17290921,
+      "variant": "optimized",
+      "sourceCommit": "18e4c2fb227091fe615c1ab8db2e9de19034bdd8"
+    },
+    {
+      "service": "storage",
+      "version": "v1.73.0",
+      "target": "darwin-arm64",
+      "sha256": "0367856214baeedef8a319f874bbcca8e1f3864c199bef944a2c55d332d93759",
+      "bytes": 38492936,
+      "variant": "optimized",
+      "sourceCommit": "c015666ee13ee29faab50cf76ac513d73bdb6bfc"
+    },
+    {
+      "service": "storage",
+      "version": "v1.73.0",
+      "target": "linux-arm64",
+      "sha256": "8aeb4ee7bd47171df4796e394fa19c9f072c4113e4d0e9f403c124955b5a8ddf",
+      "bytes": 36798824,
+      "variant": "optimized",
+      "sourceCommit": "c015666ee13ee29faab50cf76ac513d73bdb6bfc"
+    },
+    {
+      "service": "edge-runtime",
+      "version": "v1.76.2",
+      "target": "darwin-arm64",
+      "sha256": "fa8f530b4f7ecc9891800d6fb7f476a0bbef0d9880c8b0be05078c79c03a0daf",
+      "bytes": 41893750,
+      "variant": "optimized",
+      "sourceCommit": "db47af5264be7a6e649d9488cc4f3f0da16ff875"
+    },
+    {
+      "service": "edge-runtime",
+      "version": "v1.76.2",
+      "target": "linux-arm64",
+      "sha256": "3cd2ece0c06aa8b51763ec1002ae9a902baf2cbef90e35f22869073bf14d3ae1",
+      "bytes": 32465717,
+      "variant": "optimized",
+      "sourceCommit": "db47af5264be7a6e649d9488cc4f3f0da16ff875"
+    },
+    {
+      "service": "studio",
+      "version": "2026.09.04-sha-5a67366",
+      "target": "darwin-arm64",
+      "sha256": "d3d973047753a35f997bd987dd68d8986728ce6e8ec9cbfab59fce8a464345e9",
+      "bytes": 81066613,
+      "variant": "optimized",
+      "sourceCommit": "5a673668cb115ac2f3a27d8cbd6952bd99dc139b"
+    },
+    {
+      "service": "studio",
+      "version": "2026.09.04-sha-5a67366",
+      "target": "linux-arm64",
+      "sha256": "426e6a547860f194b7a116a2d0175017b08544dda01edea999919a306d2f33b5",
+      "bytes": 79941134,
+      "variant": "optimized",
+      "sourceCommit": "5a673668cb115ac2f3a27d8cbd6952bd99dc139b"
+    },
+    {
+      "service": "pgmeta",
+      "version": "v0.99.0",
+      "target": "darwin-arm64",
+      "sha256": "6422d91d3d1e4be091c233f42119535742d6dec42c10a6b2f7516ed66bf97a19",
+      "bytes": 42583611,
+      "variant": "optimized",
+      "sourceCommit": "f380cc5be21edef4e77d9838c732d1f20af0b3c0"
+    },
+    {
+      "service": "pgmeta",
+      "version": "v0.99.0",
+      "target": "linux-arm64",
+      "sha256": "816fb50e504fb211d2161fceee4a08fd5e139f5667fa35fccfffcbd5beb5ba1b",
+      "bytes": 41918879,
+      "variant": "optimized",
+      "sourceCommit": "f380cc5be21edef4e77d9838c732d1f20af0b3c0"
+    },
+    {
+      "service": "mailpit",
+      "version": "v1.30.2",
+      "target": "darwin-arm64",
+      "sha256": "d0591d84524d1b470e209e2cb793091d3dc490de4206ea17621669b3eb920967",
+      "bytes": 8104329,
+      "variant": "optimized",
+      "sourceCommit": null
+    },
+    {
+      "service": "mailpit",
+      "version": "v1.30.2",
+      "target": "linux-arm64",
+      "sha256": "65ed87e66ad705ca1a5b2c7123d902587682a2981a8176d75929fa912d3b5f1f",
+      "bytes": 7850483,
+      "variant": "optimized",
+      "sourceCommit": null
+    },
+    {
+      "service": "analytics",
+      "version": "v1.50.9",
+      "target": "darwin-arm64",
+      "sha256": "1bc71521f0a867962909c7035f0b23ea14b666ceb0f3ae3a4ab07948db4a8cca",
+      "bytes": 35185536,
+      "variant": "optimized",
+      "sourceCommit": "e830940c872b75ac4d1db933cfc9b3a7b8031699"
+    },
+    {
+      "service": "analytics",
+      "version": "v1.50.9",
+      "target": "linux-arm64",
+      "sha256": "b33d56f0f44c21c8da132413e2dccfedc1211dfa8f44a9bb91a93654a7a87431",
+      "bytes": 40572461,
+      "variant": "optimized",
+      "sourceCommit": "e830940c872b75ac4d1db933cfc9b3a7b8031699"
+    },
+    {
+      "service": "pooler",
+      "version": "v2.9.12",
+      "target": "darwin-arm64",
+      "sha256": "bbca6e3d3a31aaa6b522c1f4d56aa1c672cde5c715e47d742bd6aca327a0599c",
+      "bytes": 24786810,
+      "variant": "optimized",
+      "sourceCommit": "e8719d9ac5a43604c46d2d9e15bb34c76dea8f12"
+    },
+    {
+      "service": "pooler",
+      "version": "v2.9.12",
+      "target": "linux-arm64",
+      "sha256": "1738a59e8326f80f5eed8a8a89b928c4a89008d8b7f87c8f9cbfcea64b4ceea4",
+      "bytes": 30066542,
+      "variant": "optimized",
+      "sourceCommit": "e8719d9ac5a43604c46d2d9e15bb34c76dea8f12"
+    },
+    {
+      "service": "postgres",
+      "version": "15.14.1.168",
+      "target": "darwin-arm64",
+      "sha256": "dce57a31d05d2b74f60c2edf1fcf3086953e56e4930f5981910c8283afe06bd5",
+      "bytes": 124038863,
+      "variant": "optimized",
+      "sourceCommit": "87ea6eacbf8766b9d93c07e68c07b23fd97b5d8f"
+    },
+    {
+      "service": "postgres",
+      "version": "15.14.1.168",
+      "target": "linux-arm64",
+      "sha256": "bbffb26401bfaae78092584babb39980b249af51e1504c1ea47ce3adb8777841",
+      "bytes": 88542620,
+      "variant": "optimized",
+      "sourceCommit": "87ea6eacbf8766b9d93c07e68c07b23fd97b5d8f"
+    }
+  ],
+  "dockerVariants": [
+    {
+      "service": "postgres",
+      "version": "17.6.1.168",
+      "base": "localhost:5567/baseline/postgres:17.6.1.168",
+      "variant": "localhost:5567/optimized/postgres:17.6.1.168",
+      "id": "sha256:90333726041f9c1c13e2ad8e2cf3e5fd40ddf1c872a2459b0143f768a62eed80",
+      "digests": [
+        "localhost:5567/optimized/postgres@sha256:026f47345dc36a536101ed08ae14b94cfe5a9a5519eec46471c531362cab1bd3"
+      ],
+      "files": [
+        "/opt/postgres/bin/supabase-postgres-start",
+        "/opt/postgres/share/supabase-cli/bin/supabase-postgres-init.sh",
+        "/opt/postgres/share/supabase-cli/migrations/migrate.sh"
+      ]
+    },
+    {
+      "service": "postgrest",
+      "version": "v16.2",
+      "base": "localhost:5567/baseline/postgrest:v16.2",
+      "variant": "localhost:5567/optimized/postgrest:v16.2",
+      "id": "sha256:767812f32e49383370877de15b520495dd3e1377cd9fdc3c3336a688f0abed62",
+      "digests": [
+        "ghcr.io/supabase/cli/postgrest@sha256:c71d6fd63012f0c9073938c4463d8e3329f3fb7a39dff3c5f45d0a520b44e4a1",
+        "localhost:5567/baseline/postgrest@sha256:6a272265da6a2c7254aa6986412d83f9018fa0450299a79dd9700e92581c4ba0",
+        "localhost:5567/optimized/postgrest@sha256:6a272265da6a2c7254aa6986412d83f9018fa0450299a79dd9700e92581c4ba0"
+      ],
+      "files": []
+    },
+    {
+      "service": "auth",
+      "version": "v2.196.0",
+      "base": "localhost:5567/baseline/auth:v2.196.0",
+      "variant": "localhost:5567/optimized/auth:v2.196.0",
+      "id": "sha256:6d59825ca98f577546c1f1e45627a17ca77efb4e6f4a326db2e4098613b347c1",
+      "digests": [
+        "ghcr.io/supabase/cli/auth@sha256:b5f9ae99d12b036c675eb2bd781e71e71f9360c4eaca8136333d246279696f12",
+        "localhost:5567/baseline/auth@sha256:b1234d7d1e093778543317624a7977d9c98ac9f7b8a4ca4f12bb6451f66a4b64",
+        "localhost:5567/optimized/auth@sha256:b1234d7d1e093778543317624a7977d9c98ac9f7b8a4ca4f12bb6451f66a4b64"
+      ],
+      "files": []
+    },
+    {
+      "service": "realtime",
+      "version": "v2.134.5",
+      "base": "localhost:5567/baseline/realtime:v2.134.5",
+      "variant": "localhost:5567/optimized/realtime:v2.134.5",
+      "id": "sha256:2ac6963a7299dbf6d069dc60f9dd5e26dbde50dc4404d19a856abb5387d1af9c",
+      "digests": [
+        "localhost:5567/optimized/realtime@sha256:d2776de14492405b7ba687410e409bc97b3eb6e825f95b884b6c8c997f0ff968"
+      ],
+      "files": ["/app/bin/prepare"]
+    },
+    {
+      "service": "storage",
+      "version": "v1.73.0",
+      "base": "localhost:5567/baseline/storage:v1.73.0",
+      "variant": "localhost:5567/optimized/storage:v1.73.0",
+      "id": "sha256:adbaf2d26c93079fe47902bfa87c578eaceacae34226fc776ac906c84fba671a",
+      "digests": [
+        "ghcr.io/supabase/cli/storage@sha256:c645e251ecdb393b370413697f5a5ed48c853d1c068c4698fece8d2914f5d8aa",
+        "localhost:5567/baseline/storage@sha256:4148716b1882b546684f904785b56a36c0715fdf33ae7ba6138013d031e0fa85",
+        "localhost:5567/optimized/storage@sha256:4148716b1882b546684f904785b56a36c0715fdf33ae7ba6138013d031e0fa85"
+      ],
+      "files": []
+    },
+    {
+      "service": "edge-runtime",
+      "version": "v1.76.2",
+      "base": "localhost:5567/baseline/edge-runtime:v1.76.2",
+      "variant": "localhost:5567/optimized/edge-runtime:v1.76.2",
+      "id": "sha256:5b660ff5c4084b14ff1e009cc71e1c2340ef7fa006459b14468aa6bf0e28ea58",
+      "digests": [
+        "ghcr.io/supabase/cli/edge-runtime@sha256:d659e783b91e1dd6c476ecfa80a36e729e17bb579e6114b976362c4ea4c2d190",
+        "localhost:5567/baseline/edge-runtime@sha256:8b0437e320a4427cea08bf722705a0cc1bded6565408a28a5295d076443e128c",
+        "localhost:5567/optimized/edge-runtime@sha256:8b0437e320a4427cea08bf722705a0cc1bded6565408a28a5295d076443e128c"
+      ],
+      "files": []
+    },
+    {
+      "service": "studio",
+      "version": "2026.09.04-sha-5a67366",
+      "base": "localhost:5567/baseline/studio:2026.09.04-sha-5a67366",
+      "variant": "localhost:5567/optimized/studio:2026.09.04-sha-5a67366",
+      "id": "sha256:67cb584bd33302933e5fdf432f6a24960e8bb78cc461327d7e00845a1246dab8",
+      "digests": [
+        "ghcr.io/supabase/cli/studio@sha256:b33221c99519400d648b98e0c31004f8897104c3970d0ef169392c3f3d22c22c",
+        "localhost:5567/baseline/studio@sha256:799d41a75ace1407b83fc2f06d3f2d5754f682f079748ce03d7845778f1c9bce",
+        "localhost:5567/optimized/studio@sha256:799d41a75ace1407b83fc2f06d3f2d5754f682f079748ce03d7845778f1c9bce"
+      ],
+      "files": []
+    },
+    {
+      "service": "pgmeta",
+      "version": "v0.99.0",
+      "base": "localhost:5567/baseline/pgmeta:v0.99.0",
+      "variant": "localhost:5567/optimized/pgmeta:v0.99.0",
+      "id": "sha256:14daf9c092d5fed1dc53774e6d628edcdf823d53e60c9b3145dffb927e853e44",
+      "digests": [
+        "ghcr.io/supabase/cli/pgmeta@sha256:efe57d66dafa2921f7c1af3283e40432dd66eba190ea84d3d9d1eda629c64ff0",
+        "localhost:5567/baseline/pgmeta@sha256:9f3872b6f13ca0e9698010ee57c49585b07ddb3533487eff40d55bd5b18f484c",
+        "localhost:5567/optimized/pgmeta@sha256:9f3872b6f13ca0e9698010ee57c49585b07ddb3533487eff40d55bd5b18f484c"
+      ],
+      "files": []
+    },
+    {
+      "service": "mailpit",
+      "version": "v1.30.2",
+      "base": "localhost:5567/baseline/mailpit:v1.30.2",
+      "variant": "localhost:5567/optimized/mailpit:v1.30.2",
+      "id": "sha256:82e20cb567b0cc4f9551c59a1eb629705d55600ab6bdc1fe303598fc6689ab97",
+      "digests": [
+        "axllent/mailpit@sha256:37a38e48e9338cd7e89dfeb487f37b02ebfcd9cb23111bed2d345e79d37d6dd6",
+        "ghcr.io/supabase/cli/mailpit@sha256:37a38e48e9338cd7e89dfeb487f37b02ebfcd9cb23111bed2d345e79d37d6dd6",
+        "localhost:5567/baseline/mailpit@sha256:8006dfe5b51bf046b7799ec00cb9a530bbdc2c094796f2e90f19ccdf13e5e9bd",
+        "localhost:5567/optimized/mailpit@sha256:8006dfe5b51bf046b7799ec00cb9a530bbdc2c094796f2e90f19ccdf13e5e9bd",
+        "public.ecr.aws/supabase/mailpit@sha256:37a38e48e9338cd7e89dfeb487f37b02ebfcd9cb23111bed2d345e79d37d6dd6"
+      ],
+      "files": []
+    },
+    {
+      "service": "analytics",
+      "version": "v1.50.9",
+      "base": "localhost:5567/baseline/analytics:v1.50.9",
+      "variant": "localhost:5567/optimized/analytics:v1.50.9",
+      "id": "sha256:f5ac5c7e8703301d1c428fd1a93bee2986a9091bd796b88892caaf027b2f86d8",
+      "digests": [
+        "ghcr.io/supabase/cli/analytics@sha256:5a1bc151a4e53f84012a1b459db9e64bdd72945b115633896e8df004861c988f",
+        "localhost:5567/baseline/analytics@sha256:8e247c9ed9780ab1309e160080f71c274d99fe9b6e12d2d90cbafad467cd6025",
+        "localhost:5567/optimized/analytics@sha256:8e247c9ed9780ab1309e160080f71c274d99fe9b6e12d2d90cbafad467cd6025"
+      ],
+      "files": []
+    },
+    {
+      "service": "pooler",
+      "version": "v2.9.12",
+      "base": "localhost:5567/baseline/pooler:v2.9.12",
+      "variant": "localhost:5567/optimized/pooler:v2.9.12",
+      "id": "sha256:aa8d19df2fb9ae048761efce4e5088c1054457423d4106bd29433342111a77ce",
+      "digests": [
+        "localhost:5567/optimized/pooler@sha256:5c881f87c2c233d2a3dd10779d69d842fb8df4d679e7cd21e70307a194d65f60"
+      ],
+      "files": ["/app/lib/supavisor-2.9.12/ebin/Elixir.Supavisor.Application.beam"]
+    },
+    {
+      "service": "postgres",
+      "version": "15.14.1.168",
+      "base": "localhost:5567/baseline/postgres:15.14.1.168",
+      "variant": "localhost:5567/optimized/postgres:15.14.1.168",
+      "id": "sha256:07c5380928b0da044a9c68dbd9b50cd855fec2b67c5972dad48d2f1bee81db0b",
+      "digests": [
+        "localhost:5567/optimized/postgres@sha256:e42b5f7e28ff4436634f6d6c4172756bc6244b3553e3d6820140ea248361e72c"
+      ],
+      "files": [
+        "/opt/postgres/bin/supabase-postgres-start",
+        "/opt/postgres/share/supabase-cli/bin/supabase-postgres-init.sh",
+        "/opt/postgres/share/supabase-cli/migrations/migrate.sh"
+      ]
+    }
+  ]
+}

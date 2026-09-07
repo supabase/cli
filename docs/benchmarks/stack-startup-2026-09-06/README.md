@@ -4,6 +4,8 @@
 
 Proposed stack package ([PR #6440](https://github.com/supabase/cli/pull/6440), `1944456f2`) compared with the released Supabase CLI **2.116.0**. The new stack was measured through its programmatic API, before CLI integration.
 
+See the [updated legacy comparison](../stack-legacy-comparison-2026-09-07/README.md) for the latest optimized-stack measurements against this report's legacy baseline.
+
 The measurements show two useful improvements: getting a working database sooner, and reducing startup time when all enabled services are needed.
 
 - **3.4–6.4× faster cached Docker startup with the new default mode**, across Ubuntu and macOS. That saves **21–32 seconds per start** in these measurements.

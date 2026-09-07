@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 580" role="img" aria-labelledby="title desc">
+<title id="title">macOS hot startup</title><desc id="desc">New default = database ready · new eager = full stack ready · cached artifacts · seconds (lower is better)</desc>
+<rect width="100%" height="100%" fill="#111c1c"/>
+<style>text{font-family:Inter,Arial,sans-serif;fill:#eef8f5} .muted{fill:#9bb5ae} .grid{stroke:#34504b;stroke-width:1} .axis{stroke:#72918a;stroke-width:1.5} .legacy{fill:#586864} .new{fill:#3ecf8e} .value{font-size:20px;font-weight:700} .label{font-size:17px;font-weight:600}</style>
+<text x="100" y="42" font-size="30" font-weight="700" fill="#eef8f5">macOS hot startup</text>
+<text x="100" y="70" font-size="16" class="muted">New default = database ready</text>
+<text x="100" y="94" font-size="16" class="muted">new eager = full stack ready · cached artifacts · seconds (lower is better)</text>
+<rect x="100" y="112" width="18" height="18" class="legacy"/><text x="125" y="127" font-size="15" fill="#eef8f5">Legacy CLI 2.116.0</text>
+<rect x="325" y="112" width="18" height="18" class="new"/><text x="350" y="127" font-size="15" fill="#eef8f5">Optimized stack</text>
+<line x1="100" y1="480.0" x2="1065" y2="480.0" class="grid"/>
+<text x="86" y="486.0" text-anchor="end" font-size="14" class="muted" fill="#9bb5ae">0</text>
+<line x1="100" y1="398.8" x2="1065" y2="398.8" class="grid"/>
+<text x="86" y="404.8" text-anchor="end" font-size="14" class="muted" fill="#9bb5ae">11</text>
+<line x1="100" y1="317.5" x2="1065" y2="317.5" class="grid"/>
+<text x="86" y="323.5" text-anchor="end" font-size="14" class="muted" fill="#9bb5ae">23</text>
+<line x1="100" y1="236.2" x2="1065" y2="236.2" class="grid"/>
+<text x="86" y="242.2" text-anchor="end" font-size="14" class="muted" fill="#9bb5ae">34</text>
+<line x1="100" y1="155.0" x2="1065" y2="155.0" class="grid"/>
+<text x="86" y="161.0" text-anchor="end" font-size="14" class="muted" fill="#9bb5ae">45</text>
+<line x1="100" y1="480" x2="1065" y2="480" class="axis"/>
+<rect x="147.7" y="209.2" width="65.1" height="270.8" rx="8" class="legacy"/>
+<text x="180.2" y="199.2" text-anchor="middle" class="value" fill="#eef8f5">37.8</text>
+<rect x="228.4" y="464.4" width="65.1" height="15.6" rx="8" class="new"/>
+<text x="261.0" y="454.4" text-anchor="middle" class="value" fill="#eef8f5">2.2 (17.4×)</text>
+<text x="220.6" y="522" text-anchor="middle" class="label" fill="#eef8f5">Native default</text>
+<text x="220.6" y="548" text-anchor="middle" font-size="14" class="muted" fill="#9bb5ae">seconds</text>
+<rect x="388.9" y="209.2" width="65.1" height="270.8" rx="8" class="legacy"/>
+<text x="421.5" y="199.2" text-anchor="middle" class="value" fill="#eef8f5">37.8</text>
+<rect x="469.7" y="406.1" width="65.1" height="73.9" rx="8" class="new"/>
+<text x="502.3" y="396.1" text-anchor="middle" class="value" fill="#eef8f5">10.3 (3.7×)</text>
+<text x="461.9" y="522" text-anchor="middle" class="label" fill="#eef8f5">Native eager</text>
+<text x="461.9" y="548" text-anchor="middle" font-size="14" class="muted" fill="#9bb5ae">seconds</text>
+<rect x="630.2" y="209.2" width="65.1" height="270.8" rx="8" class="legacy"/>
+<text x="662.7" y="199.2" text-anchor="middle" class="value" fill="#eef8f5">37.8</text>
+<rect x="710.9" y="457.1" width="65.1" height="22.9" rx="8" class="new"/>
+<text x="743.5" y="447.1" text-anchor="middle" class="value" fill="#eef8f5">3.2 (11.8×)</text>
+<text x="703.1" y="522" text-anchor="middle" class="label" fill="#eef8f5">Docker default</text>
+<text x="703.1" y="548" text-anchor="middle" font-size="14" class="muted" fill="#9bb5ae">seconds</text>
+<rect x="871.4" y="209.2" width="65.1" height="270.8" rx="8" class="legacy"/>
+<text x="904.0" y="199.2" text-anchor="middle" class="value" fill="#eef8f5">37.8</text>
+<rect x="952.2" y="401.4" width="65.1" height="78.6" rx="8" class="new"/>
+<text x="984.8" y="391.4" text-anchor="middle" class="value" fill="#eef8f5">11.0 (3.4×)</text>
+<text x="944.4" y="522" text-anchor="middle" class="label" fill="#eef8f5">Docker eager</text>
+<text x="944.4" y="548" text-anchor="middle" font-size="14" class="muted" fill="#9bb5ae">seconds</text>
+</svg>

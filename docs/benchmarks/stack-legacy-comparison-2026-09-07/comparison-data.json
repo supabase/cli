@@ -1,0 +1,121 @@
+{
+  "provenance": {
+    "legacy": "CLI 2.116.0 historical campaign 2026-09-05/06",
+    "optimized": "1944456f2 + local optimization patch, 2026-09-07",
+    "sourceFiles": ["benchmark-data.json", "process-memory-data.json", "samples.json"]
+  },
+  "rows": [
+    {
+      "platform": "macOS",
+      "runtime": "Native",
+      "mode": "default",
+      "legacyHot": 37.79976,
+      "optimizedHot": 2.17271,
+      "speedup": 17.39751738612148,
+      "legacyRestart": 25.727220000000003,
+      "optimizedRestart": 0.53899,
+      "legacyRss": 2561.125,
+      "optimizedRss": 262.203125,
+      "legacyPss": 1741.2802734375,
+      "optimizedPss": null
+    },
+    {
+      "platform": "macOS",
+      "runtime": "Native",
+      "mode": "eager",
+      "legacyHot": 37.79976,
+      "optimizedHot": 10.318,
+      "speedup": 3.663477418104284,
+      "legacyRestart": 25.727220000000003,
+      "optimizedRestart": 6.9036599999999995,
+      "legacyRss": 3297.68359375,
+      "optimizedRss": 2944.15625,
+      "legacyPss": 1943.505859375,
+      "optimizedPss": null
+    },
+    {
+      "platform": "macOS",
+      "runtime": "Docker",
+      "mode": "default",
+      "legacyHot": 37.79976,
+      "optimizedHot": 3.19502,
+      "speedup": 11.830836739676121,
+      "legacyRestart": 25.727220000000003,
+      "optimizedRestart": 1.15804,
+      "legacyRss": 2561.125,
+      "optimizedRss": 371.52734375,
+      "legacyPss": 1741.2802734375,
+      "optimizedPss": null
+    },
+    {
+      "platform": "macOS",
+      "runtime": "Docker",
+      "mode": "eager",
+      "legacyHot": 37.79976,
+      "optimizedHot": 10.971770000000001,
+      "speedup": 3.445183411609977,
+      "legacyRestart": 25.727220000000003,
+      "optimizedRestart": 7.828060000000001,
+      "legacyRss": 3297.68359375,
+      "optimizedRss": 3961.09765625,
+      "legacyPss": 1943.505859375,
+      "optimizedPss": null
+    },
+    {
+      "platform": "Ubuntu 22.04",
+      "runtime": "Native",
+      "mode": "default",
+      "legacyHot": 30.26525,
+      "optimizedHot": 3.27435,
+      "speedup": 9.243132224716357,
+      "legacyRestart": 25.585009999999997,
+      "optimizedRestart": 0.36754000000000003,
+      "legacyRss": 2625.5078125,
+      "optimizedRss": 285.91015625,
+      "legacyPss": 1806.30859375,
+      "optimizedPss": 180.2529296875
+    },
+    {
+      "platform": "Ubuntu 22.04",
+      "runtime": "Native",
+      "mode": "eager",
+      "legacyHot": 30.26525,
+      "optimizedHot": 7.2158500000000005,
+      "speedup": 4.19427371688713,
+      "legacyRestart": 25.585009999999997,
+      "optimizedRestart": 4.624899999999999,
+      "legacyRss": 3264.11328125,
+      "optimizedRss": 3392.98046875,
+      "legacyPss": 1925.4375,
+      "optimizedPss": 2107.4150390625
+    },
+    {
+      "platform": "Ubuntu 22.04",
+      "runtime": "Docker",
+      "mode": "default",
+      "legacyHot": 30.26525,
+      "optimizedHot": 2.5651100000000002,
+      "speedup": 11.798811746864656,
+      "legacyRestart": 25.585009999999997,
+      "optimizedRestart": 0.70957,
+      "legacyRss": 2625.5078125,
+      "optimizedRss": 320.60546875,
+      "legacyPss": 1806.30859375,
+      "optimizedPss": 210.2001953125
+    },
+    {
+      "platform": "Ubuntu 22.04",
+      "runtime": "Docker",
+      "mode": "eager",
+      "legacyHot": 30.26525,
+      "optimizedHot": 11.406139999999999,
+      "speedup": 2.6534173699428556,
+      "legacyRestart": 25.585009999999997,
+      "optimizedRestart": 7.32578,
+      "legacyRss": 3264.11328125,
+      "optimizedRss": 3623.7578125,
+      "legacyPss": 1925.4375,
+      "optimizedPss": 2164.390625
+    }
+  ]
+}

@@ -1,0 +1,464 @@
+diff --git a/nix/images/default.nix b/nix/images/default.nix
+index 84798ba..d9fff38 100644
+--- a/nix/images/default.nix
++++ b/nix/images/default.nix
+@@ -307,6 +307,12 @@ let
+         case "${cfg.rootfsMode}" in
+           auth)
+             copy_tree bin/auth usr/local/bin/auth
++            if [ -e "${root}/bin/.auth-wrapped" ]; then
++              copy_tree bin/.auth-wrapped usr/local/bin/.auth-wrapped
++            fi
++            if [ -e "${root}/bin/.runtime-env.sh" ]; then
++              copy_tree bin/.runtime-env.sh usr/local/bin/.runtime-env.sh
++            fi
+             mkdir -p "$out/usr/local/bin"
+             ln -s auth "$out/usr/local/bin/gotrue"
+             ;;
+diff --git a/nix/packages.nix b/nix/packages.nix
+index d53a1fc..c082436 100644
+--- a/nix/packages.nix
++++ b/nix/packages.nix
+@@ -30,6 +30,19 @@ let
+       }
+     else
+       null;
++  # Only services whose packaged launcher contract intentionally mirrors the
++  # image runtime profile receive these defaults. Some runtime.env files are
++  # smoke-test inputs rather than production defaults (for example Mailpit).
++  runtimeProfileServices = [
++    "analytics"
++    "auth"
++    "pgmeta"
++    "pooler"
++    "postgrest"
++    "realtime"
++    "storage"
++    "studio"
++  ];
+   requireReleaseSource =
+     if releaseSource != null then
+       releaseSource
+@@ -44,6 +57,51 @@ let
+         inherit system;
+         overlays = [ (import rust-overlay) ];
+       };
++      inherit (pkgs) lib;
++      runtimeEnvFile = "${toString ../services}/${releaseService}/runtime.env";
++      useRuntimeProfile = lib.elem releaseService runtimeProfileServices;
++      runtimeEnvAssignments =
++        if useRuntimeProfile && builtins.pathExists runtimeEnvFile then
++          map
++            (
++              line:
++              let
++                match = builtins.match "([A-Za-z_][A-Za-z0-9_]*)=(.*)" line;
++              in
++              if match == null then
++                throw "invalid runtime.env entry in ${runtimeEnvFile}: ${line}"
++              else
++                {
++                  name = builtins.elemAt match 0;
++                  value = builtins.elemAt match 1;
++                }
++            )
++            (
++              lib.filter
++                (line: line != "" && !(lib.hasPrefix "#" line))
++                (lib.splitString "\n" (builtins.readFile runtimeEnvFile))
++            )
++        else
++          [ ];
++      runtimeProfile =
++        if runtimeEnvAssignments == [ ] then
++          null
++        else
++          pkgs.writeText "${releaseService}-runtime-env.sh" (
++            ''
++              #!/bin/sh
++              # Defaults shared with the derived image's runtime.env. A set
++              # variable, including an explicitly empty value, always wins.
++            ''
++            + lib.concatMapStrings (
++              entry:
++              ''
++                if [ -z "''${${entry.name}+x}" ]; then
++                  export ${entry.name}=${lib.escapeShellArg entry.value}
++                fi
++              ''
++            ) runtimeEnvAssignments
++          );
+       common = {
+         inherit pkgs;
+         serviceVersion = releaseVersion;
+@@ -253,6 +311,7 @@ let
+               nativeBuildInputs = with pkgs; [
+                 bash
+                 coreutils
++                file
+                 findutils
+                 gawk
+                 gnugrep
+@@ -264,6 +323,48 @@ let
+               cp -a ${selected}/. "$out/"
+               chmod -R u+w "$out"
+               ${pkgs.bash}/bin/bash ${../.}/scripts/prune-runtime-tree.sh "$out"
++              ${lib.optionalString (runtimeProfile != null) ''
++                install -m 0644 ${runtimeProfile} "$out/bin/.runtime-env.sh"
++
++                # Source the same defaults used by image assembly from every
++                # shell launcher. Keep this as a small in-place wrapper so
++                # release scripts retain their normal argument and signal
++                # behavior.
++                for launcher in "$out"/bin/*; do
++                  [ -f "$launcher" ] || continue
++                  [ "$(basename "$launcher")" = ".runtime-env.sh" ] && continue
++                  first_line="$(head -n 1 "$launcher" 2>/dev/null || true)"
++                  case "$first_line" in
++                    '#!'*'/sh'*) ;;
++                    *) continue ;;
++                  esac
++                  grep -q 'SLIM_RUNTIME_PROFILE=' "$launcher" 2>/dev/null && continue
++                  temporary="$(mktemp "$launcher.runtime-env.XXXXXX")"
++                  printf '%s\n' "$first_line" >"$temporary"
++                  cat ${../nix/source-runtime-env.sh} >>"$temporary"
++                  tail -n +2 "$launcher" >>"$temporary"
++                  chmod 0755 "$temporary"
++                  mv -f "$temporary" "$launcher"
++                done
++
++                # Auth and PostgREST are direct binaries rather than shell
++                # releases. Give them the same profile through a thin wrapper;
++                # the image assembly copies the hidden real binary alongside
++                # it. Other direct binaries have no runtime.env profile.
++                entrypoint="$out/bin/${releaseService}"
++                if [ -x "$entrypoint" ] && file "$entrypoint" 2>/dev/null | grep -Eq 'ELF|Mach-O'; then
++                  mv "$entrypoint" "$out/bin/.${releaseService}-wrapped"
++                  cat >"$entrypoint" <<'WRAPPER'
++              #!/bin/sh
++              SLIM_RUNTIME_PROFILE="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)/.runtime-env.sh"
++              if [ -r "$SLIM_RUNTIME_PROFILE" ]; then
++                . "$SLIM_RUNTIME_PROFILE"
++              fi
++              exec "$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)/.${releaseService}-wrapped" "$@"
++              WRAPPER
++                  chmod 0755 "$entrypoint"
++                fi
++              ''}
+             '';
+       probes =
+         if releaseService == "realtime" then
+diff --git a/services/pooler/nix/default.nix b/services/pooler/nix/default.nix
+index 0931165..ac64d67 100644
+--- a/services/pooler/nix/default.nix
++++ b/services/pooler/nix/default.nix
+@@ -137,6 +137,13 @@ let
+     mixEnv = "prod";
+     mixFodDeps = mixDeps;
+ 
++    # Start the internal shard listeners before public listeners and the HTTP
++    # endpoint. Tenant activation can query these listeners immediately after
++    # the endpoint reports healthy.
++    postPatch = ''
++      patch -p1 < ${../nix/startup-order.patch}
++    '';
++
+     # bindgenHook wires libclang + the C standard header search paths that
+     # pg_query's bindgen needs on Linux (darwin finds them through the system
+     # toolchain; the hook is Linux-only so the darwin derivation is
+diff --git a/services/postgres/nix/packages/postgres-portable.nix b/services/postgres/nix/packages/postgres-portable.nix
+index 38d96a2..a46bb56 100644
+--- a/services/postgres/nix/packages/postgres-portable.nix
++++ b/services/postgres/nix/packages/postgres-portable.nix
+@@ -61,11 +61,14 @@ let
+     name = "cli-migration-bundle";
+     src = "${upstream}/migrations/db";
+     dontPatchShebangs = true;
++    nativeBuildInputs = [ pkgs.patch ];
+     installPhase = ''
+       mkdir -p $out/share/supabase-cli/migrations
+       cp -r init-scripts $out/share/supabase-cli/migrations/
+       cp -r migrations $out/share/supabase-cli/migrations/
+       cp migrate.sh $out/share/supabase-cli/migrations/
++      ${pkgs.patch}/bin/patch $out/share/supabase-cli/migrations/migrate.sh \
++        < ${./migrate-batch.patch}
+       chmod +x $out/share/supabase-cli/migrations/migrate.sh
+ 
+       # Add pgbouncer schema (same as Docker build does)
+@@ -82,6 +85,7 @@ let
+     name = "cli-config-bundle";
+     src = configDir;
+     dontPatchShebangs = true;
++    nativeBuildInputs = [ pkgs.patch ];
+     installPhase = ''
+       mkdir -p $out/share/supabase-cli/config/conf.d
+       mkdir -p $out/share/supabase-cli/bin
+@@ -201,10 +205,12 @@ let
+       chmod +x $cfg/pgsodium_getkey.sh
+       chmod +x $out/share/supabase-cli/bin/supabase-postgres-init.sh
+ 
+-      # Patch the init script (two anchored edits; each asserted below):
++      # Patch the init script (the pwfile replacement is anchored to the
++      # pinned upstream script; each resulting contract is asserted below):
+       #  1. source stage-shared-config.sh after the config templates are
+       #     copied into PGDATA;
+-      #  2. initdb with the docker.io image's locale flags
++      #  2. initdb with the docker.io image's locale flags and a temporary
++      #     password file
+       #     (POSTGRES_INITDB_ARGS there: --allow-group-access
+       #     --locale-provider=icu --encoding=UTF-8 --icu-locale=en_US.UTF-8).
+       #     PostgreSQL enters the pinned bundled glibc through its launcher,
+@@ -213,17 +219,24 @@ let
+       #     the Nix dockerTools image; stage-shared-config.sh probes and falls back to
+       #     'C' only if the selected runtime cannot resolve the locale.
+       init=$out/share/supabase-cli/bin/supabase-postgres-init.sh
++      sed -i \
++        -e 's|--encoding=UTF8 \\\|--encoding=UTF-8 \\\|' \
++        -e 's|--locale=C \\\|--locale-provider=icu --icu-locale=en_US.UTF-8 --allow-group-access \\\|' \
++        $init
++      ${pkgs.patch}/bin/patch "$init" < ${./postgres-init-pwfile.patch}
+       sed -i \
+         -e '/pg_ident.conf.template/a\	. "$BUNDLE_DIR/share/supabase-cli/bin/stage-shared-config.sh"' \
+-        -e 's|--encoding=UTF8 \\|--encoding=UTF-8 \\|' \
+-        -e 's|--locale=C \\|--locale-provider=icu --icu-locale=en_US.UTF-8 --allow-group-access \\|' \
+         $init
+-      for want in "stage-shared-config.sh" "icu-locale=en_US.UTF-8"; do
+-        grep -q "$want" $init || {
++      for want in "stage-shared-config.sh" "icu-locale=en_US.UTF-8" "--pwfile="; do
++        grep -q -- "$want" $init || {
+           echo "init-script patch anchor missing: $want" >&2
+           exit 1
+         }
+       done
++      if grep -q "postgres_setup_password\|--single.*ALTER USER" $init; then
++        echo "init script still boots PostgreSQL for the bootstrap password" >&2
++        exit 1
++      fi
+       bash -n $init
+     '';
+   };
+diff --git a/services/postgres/nix/packages/postgres-start.sh b/services/postgres/nix/packages/postgres-start.sh
+index 9c91f5c..88bd595 100755
+--- a/services/postgres/nix/packages/postgres-start.sh
++++ b/services/postgres/nix/packages/postgres-start.sh
+@@ -96,7 +96,9 @@ start_temp_server() {
+       echo "supabase-postgres: temporary server did not become ready" >&2
+       return 1
+     fi
+-    sleep 1
++    # pg_isready is already the bounded readiness check; a short retry keeps
++    # startup responsive without changing ownership of the foreground child.
++    sleep 0.05
+   done
+ }
+ 
+diff --git a/services/realtime/overlay/prepare.sh b/services/realtime/overlay/prepare.sh
+index e6b1ca3..d96295e 100755
+--- a/services/realtime/overlay/prepare.sh
++++ b/services/realtime/overlay/prepare.sh
+@@ -6,9 +6,9 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)"
+ export ERL_CRASH_DUMP="${ERL_CRASH_DUMP:-/tmp/erl_crash.dump}"
+ 
+ echo "Running Realtime migrations"
+-"$SCRIPT_DIR/migrate"
+-
+ if [ "${SEED_SELF_HOST:-}" = true ]; then
+-  echo "Seeding selfhosted Realtime"
+-  "$SCRIPT_DIR/realtime" eval 'Realtime.Release.seeds(Realtime.Repo)'
++  echo "Migrating and seeding selfhosted Realtime"
++  exec "$SCRIPT_DIR/realtime" eval 'Realtime.Release.migrate(); Realtime.Release.seeds(Realtime.Repo)'
+ fi
++
++exec "$SCRIPT_DIR/migrate"
+diff --git a/sources/pooler b/sources/pooler
+--- a/sources/pooler
++++ b/sources/pooler
+@@ -1 +1 @@
+-Subproject commit 231620f5685e41650c477da6eb15fc39d960d1ba
++Subproject commit 231620f5685e41650c477da6eb15fc39d960d1ba-dirty
+diff --git a/nix/source-runtime-env.sh b/nix/source-runtime-env.sh
+new file mode 100644
+index 0000000..0c91969
+--- /dev/null
++++ b/nix/source-runtime-env.sh
+@@ -0,0 +1,6 @@
++# Source the profile next to the current launcher. This file is inserted
++# after a launcher shebang by the native runtime derivation.
++SLIM_RUNTIME_PROFILE="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)/.runtime-env.sh"
++if [ -r "$SLIM_RUNTIME_PROFILE" ]; then
++  . "$SLIM_RUNTIME_PROFILE"
++fi
+diff --git a/services/pooler/nix/startup-order.patch b/services/pooler/nix/startup-order.patch
+new file mode 100644
+index 0000000..6cfaa6f
+--- /dev/null
++++ b/services/pooler/nix/startup-order.patch
+@@ -0,0 +1,32 @@
++diff --git a/lib/supavisor/application.ex b/lib/supavisor/application.ex
++index 3388042..b3bbac3 100644
++--- a/lib/supavisor/application.ex
+++++ b/lib/supavisor/application.ex
++@@ -59,14 +59,14 @@ defmodule Supavisor.Application do
++       |> build_shards(:transaction)
++ 
++     proxy_ports =
++-      [
+++      session_shards ++ transaction_shards ++ [
++         {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
++          %{mode: :transaction, local: false}, Supavisor.ClientHandler},
++         {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session),
++          %{mode: :session, local: false}, Supavisor.ClientHandler},
++         {:pg_proxy, Application.get_env(:supavisor, :proxy_port), %{mode: :proxy, local: false},
++          Supavisor.ClientHandler}
++-      ] ++ session_shards ++ transaction_shards
+++      ]
++ 
++     ranch_listeners =
++       for {key, port, opts, handler} <- proxy_ports do
++@@ -133,9 +133,7 @@ defmodule Supavisor.Application do
++         },
++         Supavisor.Vault,
++ 
++-        # Start the Endpoint (http/https)
++-        SupavisorWeb.Endpoint
++-      ] ++ ranch_listeners
+++      ] ++ ranch_listeners ++ [SupavisorWeb.Endpoint]
++ 
++     Logger.warning("metrics_disabled is #{inspect(@metrics_disabled)}")
++ 
+diff --git a/services/postgres/nix/packages/migrate-batch.patch b/services/postgres/nix/packages/migrate-batch.patch
+new file mode 100644
+index 0000000..88c3955
+--- /dev/null
++++ b/services/postgres/nix/packages/migrate-batch.patch
+@@ -0,0 +1,41 @@
++--- migrate.sh
+++++ migrate.sh
++@@ -38,17 +38,29 @@
++   end if;
++ end \$\$
++ EOSQL
++-	# run init scripts as postgres user
++-	for sql in "$db"/init-scripts/*.sql; do
++-		echo "$0: running $sql"
++-		psql -v ON_ERROR_STOP=1 --no-password --no-psqlrc -U postgres -f "$sql"
++-	done
+++	run_sql_files() {
+++		role="$1"
+++		directory="$2"
+++		shift 2
+++		set --
+++		for sql in "$directory"/*.sql; do
+++			[ -f "$sql" ] || continue
+++			echo "$0: running $sql"
+++			set -- "$@" -f "$sql"
+++		done
+++		[ "$#" -gt 0 ] || return 0
+++		psql -v ON_ERROR_STOP=1 --no-password --no-psqlrc -U "$role" "$@"
+++	}
+++
+++	# The migration files were audited for session-sensitive psql commands:
+++	# they contain no \connect or \set, and no session-level SET outside a
+++	# transaction/function body. Keep each filename as its own -f argument so
+++	# psql preserves source context while one client process handles the
+++	# ordered group.
+++	run_sql_files postgres "$db/init-scripts"
++ 	psql -v ON_ERROR_STOP=1 --no-password --no-psqlrc -U postgres -c "ALTER USER supabase_admin WITH PASSWORD '$PGPASSWORD'"
++ 	# run migrations as super user - postgres user demoted in post-setup
++-	for sql in "$db"/migrations/*.sql; do
++-		echo "$0: running $sql"
++-		psql -v ON_ERROR_STOP=1 --no-password --no-psqlrc -U supabase_admin -f "$sql"
++-	done
+++	run_sql_files supabase_admin "$db/migrations"
++ else
++ 	psql -v ON_ERROR_STOP=1 --no-password --no-psqlrc -U supabase_admin <<EOSQL
++   create role postgres superuser login password '$PGPASSWORD';
+diff --git a/services/postgres/nix/packages/postgres-init-pwfile.patch b/services/postgres/nix/packages/postgres-init-pwfile.patch
+new file mode 100644
+index 0000000..26b9b19
+--- /dev/null
++++ b/services/postgres/nix/packages/postgres-init-pwfile.patch
+@@ -0,0 +1,83 @@
++--- supabase-postgres-init.sh
+++++ supabase-postgres-init.sh
++@@ -44,13 +44,42 @@
++ 	# Create PGDATA directory if it doesn't exist
++ 	mkdir -p "$PGDATA"
++ 
++-	# Run initdb
++-	"$PGBIN/initdb" \
++-		-D "$PGDATA" \
++-		-U "$POSTGRES_USER" \
++-		--encoding=UTF-8 \
++-		--locale-provider=icu --icu-locale=en_US.UTF-8 --allow-group-access \
+++	# Let initdb set the bootstrap password directly. Keep the temporary file
+++	# outside PGDATA so initdb still sees an empty data directory.
+++	initdb_args=(
+++		-D "$PGDATA"
+++		-U "$POSTGRES_USER"
+++		--encoding=UTF-8
+++		--locale-provider=icu
+++		--icu-locale=en_US.UTF-8
+++		--allow-group-access
++ 		--no-instructions
+++	)
+++	password_file=""
+++	cleanup_password_file() {
+++		[ -z "$password_file" ] || rm -f "$password_file"
+++	}
+++	cleanup_password_file_on_signal() {
+++		exit 143
+++	}
+++	if [ -n "$POSTGRES_PASSWORD" ]; then
+++		password_file="$(mktemp "${TMPDIR:-/tmp}/supabase-initdb-password.XXXXXX")"
+++		(umask 077 && printf '%s\n' "$POSTGRES_PASSWORD" >"$password_file")
+++		chmod 0600 "$password_file"
+++		initdb_args+=("--pwfile=$password_file")
+++		trap cleanup_password_file EXIT
+++		trap cleanup_password_file_on_signal HUP INT TERM
+++	fi
+++	if "$PGBIN/initdb" "${initdb_args[@]}"; then
+++		:
+++	else
+++		status=$?
+++		cleanup_password_file
+++		trap - EXIT HUP INT TERM
+++		return "$status"
+++	fi
+++	cleanup_password_file
+++	trap - EXIT HUP INT TERM
++ 
++ 	postgres_note "Database initialized"
++ }
++@@ -80,23 +109,6 @@
++ EOF
++ 
++ 	postgres_note "Configuration files set up"
++-}
++-
++-# Set password for superuser using single-user mode
++-postgres_setup_password() {
++-	if [ -n "$POSTGRES_PASSWORD" ]; then
++-		postgres_note "Setting password for user: $POSTGRES_USER"
++-
++-		# Use single-user mode to set password before server starts
++-		# This allows us to use scram-sha-256 authentication
++-		# Must specify 'postgres' database as the target database
++-		# -j flag allows natural multi-line SQL (terminated by semicolon + empty line)
++-		"$PGBIN/postgres" --single -j -D "$PGDATA" postgres <<-EOSQL
++-			ALTER USER "$POSTGRES_USER" WITH PASSWORD '$POSTGRES_PASSWORD';
++-		EOSQL
++-
++-		postgres_note "Password set successfully"
++-	fi
++ }
++ 
++ # Create additional database if specified and different from default
++@@ -162,7 +174,6 @@
++ 
++ 	postgres_setup_db
++ 	postgres_setup_config
++-	postgres_setup_password
++ 	postgres_create_db
++ 
++ 	# Process any initialization scripts in standard location

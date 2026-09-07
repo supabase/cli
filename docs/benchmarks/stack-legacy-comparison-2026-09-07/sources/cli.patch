@@ -1,0 +1,1428 @@
+diff --git a/docs/adr/0017-simplified-managed-stack-architecture.md b/docs/adr/0017-simplified-managed-stack-architecture.md
+index 2675fb28d..2621e4554 100644
+--- a/docs/adr/0017-simplified-managed-stack-architecture.md
++++ b/docs/adr/0017-simplified-managed-stack-architecture.md
+@@ -79,7 +79,12 @@ Podman is supported only on local Linux hosts. Persisted state records the
+ resolved exact engine. Capability releases and
+ workload artifacts are persisted as exact version pins (including their
+ concrete native release and container image) rather than ranges or floating
+-tags.
++tags. Services with derived low-memory image profiles inherit those same
++service-level `runtime.env` defaults in native artifacts, and explicit process
++environment values take precedence. Smoke-only environment files are excluded
++from packaged profiles. The artifact release is the boundary for service
++startup defaults; the stack package owns runtime selection and lifecycle around
++the selected artifact.
+ 
+ Read-only discovery never acquires ownership. Owner metadata points to a Unix
+ domain socket on POSIX or a named pipe on Windows, and the ownership lock is the
+@@ -128,6 +133,12 @@ decompression already uses Bun's native worker pool, while archive listing and
+ extraction run in subprocesses. Revisit this only if measurement identifies a
+ CPU-bound bottleneck.
+ 
++Packaged first boot preserves the artifact's ordered, same-role PostgreSQL
++script groups and initializes the database password before migrations;
++Realtime's combined configuration evaluation remains owned by its artifact.
++The stack package batches its own PostgreSQL bootstrap round trips and releases
++the one-shot bundler helper after each build.
++
+ Live status exposes the current session's artifact preparation through its artifacts array. Entries
+ identify the workload and capability and move through `queued`, `preparing`, `downloading`,
+ `ready`, and `failed`; the latter carries an actionable error for a later retry. `preparing`
+@@ -141,10 +152,13 @@ caller-owned preparation. It receives the same phase values, including `ready` w
+ available while its capability remains dormant. The callback's transfer is local to that invocation
+ and is not reconstructed by a separate status request.
+ 
+-Within a lifecycle operation, dependency-ready workloads start concurrently,
+-with at most four starts in flight; each wave completes before its dependants
+-start. Container setup is serialized through resource registration; readiness
+-checks and long-lived followers run outside that setup boundary.
++Within a lifecycle operation, workloads start as soon as their dependencies
++complete, with at most four active starts. Dependency waits do not consume a
++start permit. Selected artifact preparation runs concurrently with this launch;
++each workload joins its own shared preparation before resolution. Container
++setup serializes only exact shared-network and volume identity establishment;
++image pulls, startup migrations, container creation, readiness checks, and
++long-lived followers run outside that setup boundary.
+ 
+ Native workloads use a two-minute readiness budget because a cold process can
+ spend more than 30 seconds loading shared libraries before serving requests.
+diff --git a/packages/stack/src/functions/serve-main-bundler.ts b/packages/stack/src/functions/serve-main-bundler.ts
+index d44455147..b93c3c727 100644
+--- a/packages/stack/src/functions/serve-main-bundler.ts
++++ b/packages/stack/src/functions/serve-main-bundler.ts
+@@ -1,23 +1,27 @@
+ // oxlint-disable effecttsgo/async-function -- esbuild's public API is Promise-based.
+ import { fileURLToPath } from "node:url";
+-import { build } from "esbuild";
++import { build, stop } from "esbuild";
+ 
+ /** Absolute path to the stack-owned Edge Runtime main service template. */
+ export const serveMainEntrypoint = fileURLToPath(new URL("./serve.main.ts", import.meta.url));
+ 
+ /** Produces one offline ES module with jose and path helpers inlined. */
+ export async function bundleServeMainTemplate(): Promise<string> {
+-  const result = await build({
+-    entryPoints: [serveMainEntrypoint],
+-    bundle: true,
+-    format: "esm",
+-    platform: "browser",
+-    minify: true,
+-    write: false,
+-    legalComments: "none",
+-    logLevel: "silent",
+-  });
+-  const output = result.outputFiles[0]?.text;
+-  if (output === undefined) throw new Error("esbuild produced no functions bootstrap output");
+-  return output;
++  try {
++    const result = await build({
++      entryPoints: [serveMainEntrypoint],
++      bundle: true,
++      format: "esm",
++      platform: "browser",
++      minify: true,
++      write: false,
++      legalComments: "none",
++      logLevel: "silent",
++    });
++    const output = result.outputFiles[0]?.text;
++    if (output === undefined) throw new Error("esbuild produced no functions bootstrap output");
++    return output;
++  } finally {
++    await stop();
++  }
+ }
+diff --git a/packages/stack/src/model/DatabaseBootstrap.ts b/packages/stack/src/model/DatabaseBootstrap.ts
+index 8135caa3c..6877f20b5 100644
+--- a/packages/stack/src/model/DatabaseBootstrap.ts
++++ b/packages/stack/src/model/DatabaseBootstrap.ts
+@@ -51,12 +51,12 @@ export interface DatabaseTransaction {
+     statement: string,
+     parameters?: ReadonlyArray<DatabaseSqlValue>,
+   ) => Effect.Effect<void, DatabaseBootstrapError>;
+-  readonly setRolePassword: (
+-    role: DatabaseBootstrapRole,
++  readonly setRolePasswords: (
++    roles: ReadonlyArray<DatabaseBootstrapRole>,
+     password: Redacted.Redacted<string>,
+   ) => Effect.Effect<void, DatabaseBootstrapError>;
+-  readonly setDatabaseSetting: (
+-    setting: DatabaseBootstrapSetting,
++  readonly setDatabaseSettings: (
++    settings: ReadonlyArray<DatabaseBootstrapSetting>,
+   ) => Effect.Effect<void, DatabaseBootstrapError>;
+ }
+ 
+@@ -96,41 +96,25 @@ export const runDatabaseBootstrap = (
+       yield* transaction
+         .execute(REALTIME_SCHEMA_STATEMENT)
+         .pipe(Effect.mapError((error) => statementError(error, REALTIME_SCHEMA_STATEMENT)));
+-      for (const role of DATABASE_BOOTSTRAP_ROLES) {
+-        yield* transaction.setRolePassword(role, options.databasePassword).pipe(
+-          Effect.mapError(
+-            (error) =>
+-              new DatabaseBootstrapError({
+-                message: `Unable to configure internal database role ${role}`,
+-                ...(error.retryable === undefined ? {} : { retryable: error.retryable }),
+-              }),
+-          ),
+-        );
+-      }
+-      yield* transaction
+-        .setDatabaseSetting({
+-          name: "app.settings.jwt_secret",
+-          value: options.jwtSecret,
+-        })
+-        .pipe(
+-          Effect.mapError(
+-            (error) =>
+-              new DatabaseBootstrapError({
+-                message: "Unable to configure database JWT secret",
+-                ...(error.retryable === undefined ? {} : { retryable: error.retryable }),
+-              }),
+-          ),
+-        );
++      yield* transaction.setRolePasswords(DATABASE_BOOTSTRAP_ROLES, options.databasePassword).pipe(
++        Effect.mapError(
++          (error) =>
++            new DatabaseBootstrapError({
++              message: "Unable to configure internal database roles",
++              ...(error.retryable === undefined ? {} : { retryable: error.retryable }),
++            }),
++        ),
++      );
+       yield* transaction
+-        .setDatabaseSetting({
+-          name: "app.settings.jwt_exp",
+-          value: options.jwtExpiry,
+-        })
++        .setDatabaseSettings([
++          { name: "app.settings.jwt_secret", value: options.jwtSecret },
++          { name: "app.settings.jwt_exp", value: options.jwtExpiry },
++        ])
+         .pipe(
+           Effect.mapError(
+             (error) =>
+               new DatabaseBootstrapError({
+-                message: "Unable to configure database JWT expiry",
++                message: "Unable to configure database settings",
+                 ...(error.retryable === undefined ? {} : { retryable: error.retryable }),
+               }),
+           ),
+diff --git a/packages/stack/src/model/database-bootstrap.integration.test.ts b/packages/stack/src/model/database-bootstrap.integration.test.ts
+index 221ea0f23..599eaa3b4 100644
+--- a/packages/stack/src/model/database-bootstrap.integration.test.ts
++++ b/packages/stack/src/model/database-bootstrap.integration.test.ts
+@@ -63,33 +63,46 @@ const makeSession = (options: { readonly failOnce?: "role" | "setting" } = {}) =
+                   if (statement.includes("ALTER SCHEMA _realtime OWNER TO postgres;"))
+                     yield* Effect.sync(() => pending.schemaOwners.set("_realtime", "postgres"));
+                 }),
+-              setRolePassword: (role: string, password: Redacted.Redacted<string>) =>
++              setRolePasswords: (
++                roles: ReadonlyArray<string>,
++                password: Redacted.Redacted<string>,
++              ) =>
+                 Effect.gen(function* () {
+-                  yield* Effect.sync(() => operations.push(`ALTER ROLE ${role} PASSWORD`));
++                  yield* Effect.sync(() =>
++                    roles.forEach((role) => operations.push(`ALTER ROLE ${role} PASSWORD`)),
++                  );
+                   if (shouldFail("role"))
+                     return yield* new DatabaseBootstrapError({
+                       message: "role failed secret-password",
+                     });
+-                  yield* Effect.sync(() => pending.passwords.set(role, Redacted.value(password)));
++                  yield* Effect.sync(() =>
++                    roles.forEach((role) => pending.passwords.set(role, Redacted.value(password))),
++                  );
+                 }),
+-              setDatabaseSetting: (setting: {
+-                readonly name: string;
+-                readonly value: Redacted.Redacted<string> | number;
+-              }) =>
++              setDatabaseSettings: (
++                settings: ReadonlyArray<{
++                  readonly name: string;
++                  readonly value: Redacted.Redacted<string> | number;
++                }>,
++              ) =>
+                 Effect.gen(function* () {
+                   yield* Effect.sync(() =>
+-                    operations.push(`ALTER DATABASE postgres SET ${setting.name}`),
++                    settings.forEach((setting) =>
++                      operations.push(`ALTER DATABASE postgres SET ${setting.name}`),
++                    ),
+                   );
+                   if (shouldFail("setting"))
+                     return yield* new DatabaseBootstrapError({
+                       message: "setting failed secret-jwt",
+                     });
+                   yield* Effect.sync(() =>
+-                    pending.settings.set(
+-                      setting.name,
+-                      typeof setting.value === "number"
+-                        ? setting.value
+-                        : Redacted.value(setting.value),
++                    settings.forEach((setting) =>
++                      pending.settings.set(
++                        setting.name,
++                        typeof setting.value === "number"
++                          ? setting.value
++                          : Redacted.value(setting.value),
++                      ),
+                     ),
+                   );
+                 }),
+diff --git a/packages/stack/src/runtime/ContainerRuntime.ts b/packages/stack/src/runtime/ContainerRuntime.ts
+index 9c633dc3d..d94284705 100644
+--- a/packages/stack/src/runtime/ContainerRuntime.ts
++++ b/packages/stack/src/runtime/ContainerRuntime.ts
+@@ -260,8 +260,8 @@ export const makeContainerRuntime = (
+     const parentScope = yield* Scope.Scope;
+     const runtimeScope = yield* Scope.fork(parentScope, "parallel");
+     const registration = yield* Semaphore.make(1);
+-    // Serialize setup through resource registration so concurrent workloads cannot both create
+-    // the shared network. Readiness and long-lived followers run after this permit is released.
++    // Serialize only exact shared-network (and volume identity) establishment. Resolution,
++    // image pulls, startup migrations, container creation, and readiness run outside this gate.
+     const setup = yield* Semaphore.make(1);
+     const resources = new Map<string, ContainerRuntimeResource>();
+     const startGuards = new Map<string, Ref.Ref<boolean>>();
+@@ -573,135 +573,143 @@ export const makeContainerRuntime = (
+         const existing = resources.get(resourceKey(key));
+         if (existing !== undefined && existing.state === "running")
+           return { ...key, state: "ready" } satisfies ObservedWorkload;
+-        const setupResult = yield* setup.withPermit(
+-          Effect.gen(function* () {
+-            if (existing !== undefined && existing.state !== "running") {
+-              existing.stopRequested = true;
+-              yield* stopLogs(existing);
+-              yield* stopExitWatcher(existing);
+-              if (existing.state === "failed")
+-                yield* withEngine(key, options.engine.stopContainer(existing.container));
+-              resources.delete(resourceKey(key));
+-            }
+-            const initialResolution = yield* resolved;
+-            yield* guard;
+-            const initialPublications = initialResolution.publications ?? [];
+-            if (initialPublications.some((publication) => !isValidPublication(publication)))
+-              return yield* toDriverError(
+-                key,
+-                new Error("Container publications must use valid loopback host ports"),
+-              );
+-            const initialVolumeRequest = initialResolution.volume;
+-            if (initialVolumeRequest !== undefined && initialVolumeRequest.target.length === 0)
+-              return yield* toDriverError(key, new Error("Container volume mapping is invalid"));
+-            yield* withEngine(key, options.engine.preflight);
+-            const entries = yield* withEngine(key, options.engine.listResources(key.stackId));
+-            const existingExact = entries.find(
+-              (entry) => entry.kind === "workload" && sameWorkloadIdentity(entry.labels, labels),
++        const setupResult = yield* Effect.gen(function* () {
++          if (existing !== undefined && existing.state !== "running") {
++            existing.stopRequested = true;
++            yield* stopLogs(existing);
++            yield* stopExitWatcher(existing);
++            if (existing.state === "failed")
++              yield* withEngine(key, options.engine.stopContainer(existing.container));
++            resources.delete(resourceKey(key));
++          }
++          const initialResolution = yield* resolved;
++          yield* guard;
++          const initialPublications = initialResolution.publications ?? [];
++          if (initialPublications.some((publication) => !isValidPublication(publication)))
++            return yield* toDriverError(
++              key,
++              new Error("Container publications must use valid loopback host ports"),
+             );
+-            const namedCollision = entries.find(
+-              (entry) => entry.kind === "workload" && entry.name === nameFor(key, "workload"),
++          const initialVolumeRequest = initialResolution.volume;
++          if (initialVolumeRequest !== undefined && initialVolumeRequest.target.length === 0)
++            return yield* toDriverError(key, new Error("Container volume mapping is invalid"));
++          yield* withEngine(key, options.engine.preflight);
++          const entries = yield* withEngine(key, options.engine.listResources(key.stackId));
++          const existingExact = entries.find(
++            (entry) => entry.kind === "workload" && sameWorkloadIdentity(entry.labels, labels),
++          );
++          const namedCollision = entries.find(
++            (entry) => entry.kind === "workload" && entry.name === nameFor(key, "workload"),
++          );
++          const collision =
++            namedCollision !== undefined && isWorkloadResource(namedCollision)
++              ? namedCollision
++              : undefined;
++          if (
++            existingExact === undefined &&
++            namedCollision !== undefined &&
++            (collision === undefined ||
++              collision.labels.stackId !== key.stackId ||
++              collision.labels.workloadId !== key.workloadId ||
++              collision.labels.role !== "workload")
++          )
++            return yield* toDriverError(
++              key,
++              new Error("Container name is owned by another workload"),
+             );
+-            const collision =
+-              namedCollision !== undefined && isWorkloadResource(namedCollision)
+-                ? namedCollision
+-                : undefined;
+-            if (
+-              existingExact === undefined &&
+-              namedCollision !== undefined &&
+-              (collision === undefined ||
+-                collision.labels.stackId !== key.stackId ||
+-                collision.labels.workloadId !== key.workloadId ||
+-                collision.labels.role !== "workload")
+-            )
+-              return yield* toDriverError(
+-                key,
+-                new Error("Container name is owned by another workload"),
+-              );
+ 
+-            const exactNetwork = entries
+-              .filter(isNetworkResource)
+-              .find((entry) => sameNetworkIdentity(entry.labels, networkLabels));
+-            const namedNetworkCollision = entries.find(
+-              (entry) => entry.kind === "network" && entry.name === networkName,
+-            );
+-            const networkCollision =
+-              namedNetworkCollision !== undefined && isNetworkResource(namedNetworkCollision)
+-                ? namedNetworkCollision
+-                : undefined;
+-            if (
+-              exactNetwork === undefined &&
+-              namedNetworkCollision !== undefined &&
+-              (networkCollision === undefined || networkCollision.labels.stackId !== key.stackId)
+-            )
+-              return yield* toDriverError(
++          // A new owner never adopts a durable container. Remove any exact identity first;
++          // lifecycle ownership has already fenced the stack before this activation.
++          if (existingExact !== undefined) {
++            if (existingExact.state === "running")
++              yield* withEngine(key, options.engine.stopContainer(existingExact.id));
++            yield* withEngine(key, options.engine.removeContainer(existingExact.id));
++          }
++          yield* withEngine(key, options.engine.inspectImage(artifact.image)).pipe(
++            Effect.flatMap((inspected) =>
++              inspected.present
++                ? Effect.void
++                : withEngine(key, options.engine.pullImage(artifact.image)),
++            ),
++          );
++          yield* guard;
++
++          const networkResource = yield* setup.withPermit(
++            Effect.gen(function* () {
++              const networkEntries = yield* withEngine(
+                 key,
+-                new Error("Container network name is owned by another stack"),
++                options.engine.listResources(key.stackId),
++              );
++              const exactNetwork = networkEntries
++                .filter(isNetworkResource)
++                .find((entry) => sameNetworkIdentity(entry.labels, networkLabels));
++              const namedNetworkCollision = networkEntries.find(
++                (entry) => entry.kind === "network" && entry.name === networkName,
++              );
++              const networkCollision =
++                namedNetworkCollision !== undefined && isNetworkResource(namedNetworkCollision)
++                  ? namedNetworkCollision
++                  : undefined;
++              if (
++                exactNetwork === undefined &&
++                namedNetworkCollision !== undefined &&
++                (networkCollision === undefined || networkCollision.labels.stackId !== key.stackId)
++              )
++                return yield* toDriverError(
++                  key,
++                  new Error("Container network name is owned by another stack"),
++                );
++              if (exactNetwork === undefined && networkCollision !== undefined)
++                yield* withEngine(key, options.engine.removeNetwork(networkCollision.id));
++              return (
++                exactNetwork ??
++                (yield* withEngine(
++                  key,
++                  options.engine.createNetwork({ name: networkName, labels: networkLabels }),
++                ))
+               );
++            }),
++          );
+ 
+-            // A new owner never adopts a durable container. Remove any exact identity first;
+-            // lifecycle ownership has already fenced the stack before this activation.
+-            if (existingExact !== undefined) {
+-              if (existingExact.state === "running")
+-                yield* withEngine(key, options.engine.stopContainer(existingExact.id));
+-              yield* withEngine(key, options.engine.removeContainer(existingExact.id));
+-            }
+-            yield* withEngine(key, options.engine.inspectImage(artifact.image)).pipe(
+-              Effect.flatMap((inspected) =>
+-                inspected.present
+-                  ? Effect.void
+-                  : withEngine(key, options.engine.pullImage(artifact.image)),
+-              ),
++          if (options.onNetworkReady !== undefined) yield* options.onNetworkReady(networkResource);
++          // Resolve after the shared network is established so every concurrent caller observes
++          // the final host route, including callers whose initial preflight raced this setup.
++          const resolution =
++            options.resolveWorkload === undefined
++              ? yield* Effect.succeed<ContainerWorkloadResolution>({})
++              : yield* options.resolveWorkload(key, workload);
++          yield* guard;
++          const requestedPublications = resolution.publications ?? [];
++          if (requestedPublications.some((publication) => !isValidPublication(publication)))
++            return yield* toDriverError(
++              key,
++              new Error("Container publications must use valid loopback host ports"),
+             );
+-            yield* guard;
+-
+-            if (exactNetwork === undefined && networkCollision !== undefined)
+-              yield* withEngine(key, options.engine.removeNetwork(networkCollision.id));
+-            const networkResource =
+-              exactNetwork ??
+-              (yield* withEngine(
+-                key,
+-                options.engine.createNetwork({ name: networkName, labels: networkLabels }),
+-              ));
+-
+-            const routeChanged =
+-              options.onNetworkReady === undefined
+-                ? false
+-                : yield* options.onNetworkReady(networkResource);
+-            const resolution = routeChanged
+-              ? yield* options.resolveWorkload === undefined
+-                  ? Effect.succeed<ContainerWorkloadResolution>({})
+-                  : options.resolveWorkload(key, workload)
+-              : initialResolution;
+-            yield* guard;
+-            const requestedPublications = resolution.publications ?? [];
+-            if (requestedPublications.some((publication) => !isValidPublication(publication)))
+-              return yield* toDriverError(
+-                key,
+-                new Error("Container publications must use valid loopback host ports"),
+-              );
+-            const publications = requestedPublications.filter(isValidPublication);
+-            const volumeRequest = resolution.volume;
+-            if (volumeRequest !== undefined && volumeRequest.target.length === 0)
+-              return yield* toDriverError(key, new Error("Container volume mapping is invalid"));
+-            const volumeSpec =
+-              volumeRequest === undefined ? undefined : volumeSpecFor(key, volumeRequest);
+-            const exactVolume =
+-              volumeSpec === undefined
+-                ? undefined
+-                : entries.find(
+-                    (entry) =>
+-                      entry.kind === "volume" &&
+-                      entry.name === volumeSpec.name &&
+-                      sameLabels(entry.labels, volumeSpec.labels),
+-                  );
+-            if (volumeSpec !== undefined) {
+-              const volume = volumeSpec;
+-              if (exactVolume === undefined) {
+-                const sameLabel = entries.find(
++          const publications = requestedPublications.filter(isValidPublication);
++          const volumeRequest = resolution.volume;
++          if (volumeRequest !== undefined && volumeRequest.target.length === 0)
++            return yield* toDriverError(key, new Error("Container volume mapping is invalid"));
++          const volumeSpec =
++            volumeRequest === undefined ? undefined : volumeSpecFor(key, volumeRequest);
++          if (volumeSpec !== undefined) {
++            const volume = volumeSpec;
++            yield* setup.withPermit(
++              Effect.gen(function* () {
++                const volumeEntries = yield* withEngine(
++                  key,
++                  options.engine.listResources(key.stackId),
++                );
++                const exactVolume = volumeEntries.find(
++                  (entry) =>
++                    entry.kind === "volume" &&
++                    entry.name === volume.name &&
++                    sameLabels(entry.labels, volume.labels),
++                );
++                if (exactVolume !== undefined) return;
++                const sameLabel = volumeEntries.find(
+                   (entry) => entry.kind === "volume" && sameLabels(entry.labels, volume.labels),
+                 );
+-                const sameName = entries.find(
++                const sameName = volumeEntries.find(
+                   (entry) => entry.kind === "volume" && entry.name === volume.name,
+                 );
+                 if (sameLabel !== undefined || sameName !== undefined)
+@@ -709,107 +717,99 @@ export const makeContainerRuntime = (
+                     key,
+                     new Error("Container volume identity collision"),
+                   );
+-              }
+-            }
+-
+-            if (volumeSpec !== undefined) {
+-              const volume = volumeSpec;
+-              if (exactVolume === undefined)
+                 yield* withEngine(key, options.engine.createVolume(volume));
+-            }
++              }),
++            );
++          }
+ 
+-            if (collision !== undefined && collision.id !== existingExact?.id) {
+-              if (collision.state === "running")
+-                yield* withEngine(key, options.engine.stopContainer(collision.id));
+-              yield* withEngine(key, options.engine.removeContainer(collision.id));
+-            }
++          if (collision !== undefined && collision.id !== existingExact?.id) {
++            if (collision.state === "running")
++              yield* withEngine(key, options.engine.stopContainer(collision.id));
++            yield* withEngine(key, options.engine.removeContainer(collision.id));
++          }
+ 
+-            for (const startup of resolution.startup ?? [])
+-              yield* runStartupProcess(key, workload, startup, {
+-                artifact,
+-                network: networkResource,
+-                resolution,
+-                ...(volumeRequest === undefined ? {} : { volumeRequest }),
+-              });
+-            yield* guard;
++          for (const startup of resolution.startup ?? [])
++            yield* runStartupProcess(key, workload, startup, {
++              artifact,
++              network: networkResource,
++              resolution,
++              ...(volumeRequest === undefined ? {} : { volumeRequest }),
++            });
++          yield* guard;
+ 
+-            const container = yield* withEngine(
+-              key,
+-              options.engine.createContainer({
+-                name: nameFor(key, "workload"),
+-                image: artifact.image,
+-                labels,
+-                network: networkResource.id,
+-                mounts: resolution.mounts ?? [],
+-                publications,
+-                volumeMounts:
+-                  volumeRequest === undefined ? [] : [volumeMountFor(key, volumeRequest)],
+-                role: "workload",
+-                ...(resolution.envFile === undefined ? {} : { envFile: resolution.envFile }),
+-                ...(resolution.networkAliases === undefined
+-                  ? {}
+-                  : { networkAliases: resolution.networkAliases }),
+-                ...(resolution.entrypoint === undefined
+-                  ? {}
+-                  : { entrypoint: resolution.entrypoint }),
+-                ...(resolution.command === undefined ? {} : { command: resolution.command }),
+-              } satisfies ContainerContainerSpec),
+-            );
+-            if (resolution.bootstrap !== undefined) {
+-              const copied = yield* Effect.exit(
+-                withEngine(
+-                  key,
+-                  options.engine.copyToContainer(
+-                    container.id,
+-                    resolution.bootstrap.source,
+-                    resolution.bootstrap.destination,
+-                  ),
++          const container = yield* withEngine(
++            key,
++            options.engine.createContainer({
++              name: nameFor(key, "workload"),
++              image: artifact.image,
++              labels,
++              network: networkResource.id,
++              mounts: resolution.mounts ?? [],
++              publications,
++              volumeMounts: volumeRequest === undefined ? [] : [volumeMountFor(key, volumeRequest)],
++              role: "workload",
++              ...(resolution.envFile === undefined ? {} : { envFile: resolution.envFile }),
++              ...(resolution.networkAliases === undefined
++                ? {}
++                : { networkAliases: resolution.networkAliases }),
++              ...(resolution.entrypoint === undefined ? {} : { entrypoint: resolution.entrypoint }),
++              ...(resolution.command === undefined ? {} : { command: resolution.command }),
++            } satisfies ContainerContainerSpec),
++          );
++          if (resolution.bootstrap !== undefined) {
++            const copied = yield* Effect.exit(
++              withEngine(
++                key,
++                options.engine.copyToContainer(
++                  container.id,
++                  resolution.bootstrap.source,
++                  resolution.bootstrap.destination,
+                 ),
+-              );
+-              if (Exit.isFailure(copied)) {
+-                const removed = yield* Effect.exit(
+-                  withEngine(key, options.engine.removeContainer(container.id)),
+-                );
+-                const cleanupCause = Exit.isFailure(removed) ? removed.cause : Cause.empty;
+-                return yield* Effect.failCause(
+-                  cleanupCause.reasons.length === 0
+-                    ? copied.cause
+-                    : Cause.combine(copied.cause, cleanupCause),
+-                );
+-              }
+-            }
+-            yield* guard;
+-            yield* withEngine(key, options.engine.startContainer(container.id));
+-            const registered = yield* Effect.uninterruptibleMask((restore) =>
+-              restore(
+-                Effect.gen(function* () {
+-                  yield* guard;
+-                  const failure = yield* Deferred.make<never, RuntimeDriverError>();
+-                  yield* guard;
+-                  const createdResource: ContainerRuntimeResource = {
+-                    key,
+-                    workload,
+-                    container: container.id,
+-                    state: "starting",
+-                    failure,
+-                    stopRequested: false,
+-                  };
+-                  resources.set(resourceKey(key), createdResource);
+-                  return createdResource;
+-                }),
+-              ).pipe(Effect.exit),
++              ),
+             );
+-            if (Exit.isFailure(registered)) {
+-              const cleanup = yield* cleanupStartedContainer(key, container.id).pipe(Effect.exit);
++            if (Exit.isFailure(copied)) {
++              const removed = yield* Effect.exit(
++                withEngine(key, options.engine.removeContainer(container.id)),
++              );
++              const cleanupCause = Exit.isFailure(removed) ? removed.cause : Cause.empty;
+               return yield* Effect.failCause(
+-                Exit.isFailure(cleanup)
+-                  ? Cause.combine(registered.cause, cleanup.cause)
+-                  : registered.cause,
++                cleanupCause.reasons.length === 0
++                  ? copied.cause
++                  : Cause.combine(copied.cause, cleanupCause),
+               );
+             }
+-            return { resource: registered.value, resolution, container };
+-          }),
+-        );
++          }
++          yield* guard;
++          yield* withEngine(key, options.engine.startContainer(container.id));
++          const registered = yield* Effect.uninterruptibleMask((restore) =>
++            restore(
++              Effect.gen(function* () {
++                yield* guard;
++                const failure = yield* Deferred.make<never, RuntimeDriverError>();
++                yield* guard;
++                const createdResource: ContainerRuntimeResource = {
++                  key,
++                  workload,
++                  container: container.id,
++                  state: "starting",
++                  failure,
++                  stopRequested: false,
++                };
++                resources.set(resourceKey(key), createdResource);
++                return createdResource;
++              }),
++            ).pipe(Effect.exit),
++          );
++          if (Exit.isFailure(registered)) {
++            const cleanup = yield* cleanupStartedContainer(key, container.id).pipe(Effect.exit);
++            return yield* Effect.failCause(
++              Exit.isFailure(cleanup)
++                ? Cause.combine(registered.cause, cleanup.cause)
++                : registered.cause,
++            );
++          }
++          return { resource: registered.value, resolution, container };
++        });
+         const { resource, resolution, container } = setupResult;
+         const postRegistration = Effect.gen(function* () {
+           yield* attachLogs(resource, "all");
+diff --git a/packages/stack/src/runtime/PostgresDatabaseSession.ts b/packages/stack/src/runtime/PostgresDatabaseSession.ts
+index 79f173c68..35822292f 100644
+--- a/packages/stack/src/runtime/PostgresDatabaseSession.ts
++++ b/packages/stack/src/runtime/PostgresDatabaseSession.ts
+@@ -3,7 +3,6 @@ import { Context, Duration, Effect, Layer, Predicate, Redacted, Schema, Scope }
+ import { isSqlError, type SqlError } from "effect/unstable/sql/SqlError";
+ import {
+   DatabaseBootstrapError,
+-  type DatabaseBootstrapSetting,
+   type DatabaseSession,
+   type DatabaseSqlValue,
+   type DatabaseTransaction,
+@@ -93,17 +92,24 @@ export const makeDatabaseSessionFromSqlClient = (
+ 
+   const transaction: DatabaseTransaction = {
+     execute: executeWith,
+-    setRolePassword: (role, password) =>
+-      generated("SELECT format('ALTER ROLE %I PASSWORD %L', $1::text, $2::text) AS statement", [
+-        role,
+-        Redacted.value(password),
+-      ]),
+-    setDatabaseSetting: (setting: DatabaseBootstrapSetting) => {
+-      const value =
+-        setting.name === "app.settings.jwt_secret" ? Redacted.value(setting.value) : setting.value;
++    setRolePasswords: (roles, password) => {
++      const placeholders = roles.map((_, index) => `$${index + 2}::text`).join(", ");
+       return generated(
+-        "SELECT format('ALTER DATABASE postgres SET %I TO %L', $1::text, $2::text) AS statement",
+-        [setting.name, value],
++        `SELECT string_agg(format('ALTER ROLE %I PASSWORD %L', role, $1::text), E';\\n') AS statement FROM unnest(ARRAY[${placeholders}]::text[]) AS role`,
++        [Redacted.value(password), ...roles],
++      );
++    },
++    setDatabaseSettings: (settings) => {
++      const values = settings
++        .map((_, index) => `($${index * 2 + 1}::text, $${index * 2 + 2}::text)`)
++        .join(", ");
++      const parameters = settings.flatMap((setting) => [
++        setting.name,
++        setting.name === "app.settings.jwt_secret" ? Redacted.value(setting.value) : setting.value,
++      ]);
++      return generated(
++        `SELECT string_agg(format('ALTER DATABASE postgres SET %I TO %L', name, value), E';\\n') AS statement FROM (VALUES ${values}) AS settings(name, value)`,
++        parameters,
+       );
+     },
+   };
+diff --git a/packages/stack/src/runtime/ProductionRuntime.ts b/packages/stack/src/runtime/ProductionRuntime.ts
+index ba37d07d8..d6809a48a 100644
+--- a/packages/stack/src/runtime/ProductionRuntime.ts
++++ b/packages/stack/src/runtime/ProductionRuntime.ts
+@@ -15,7 +15,7 @@ import {
+   Semaphore,
+ } from "effect";
+ import { ChildProcessSpawner } from "effect/unstable/process";
+-import { eagerCapabilities, type PlannedWorkload } from "../model/ExecutionPlan.ts";
++import { type PlannedWorkload } from "../model/ExecutionPlan.ts";
+ import { rebuildExecutionPlan, type StackDefinition } from "../model/Compiler.ts";
+ import {
+   makeFunctionsBootstrapOwner,
+@@ -52,7 +52,6 @@ import type { SupervisorRuntime } from "../supervisor/Supervisor.ts";
+ import {
+   makeProductionRuntimeArtifactPreparer,
+   type RuntimeArtifactPreparationProgress,
+-  type RuntimeArtifactPreparationProgressListener,
+   type PreparedWorkloadArtifact,
+   type RuntimeArtifactPreparer,
+ } from "../preparation/RuntimeArtifacts.ts";
+@@ -560,27 +559,23 @@ export const makeProductionRuntime = (
+             : Effect.fail(driverError(key, "Persisted runtime changed while owner was active")),
+         ),
+       );
+-    const prepareOne = (
+-      runtime: StackRuntime,
+-      workload: PlannedWorkload,
+-      onProgress?: RuntimeArtifactPreparationProgressListener,
+-    ) => {
++    const prepareOne = (runtime: StackRuntime, workload: PlannedWorkload) => {
+       return Effect.suspend(() => {
+         const key = artifactKey(runtime, workload);
+         const cached = artifacts.get(key);
+         return cached === undefined
+           ? Effect.sync(() =>
+-              onProgress?.({
++              recordPreparationProgress({
+                 workloadId: workload.id,
+                 capability: workload.capability,
+                 state: "preparing",
+               }),
+             ).pipe(
+-              Effect.andThen(preparer.prepare(runtime, workload, onProgress)),
++              Effect.andThen(preparer.prepare(runtime, workload, recordPreparationProgress)),
+               Effect.tap((prepared) =>
+                 Effect.sync(() => {
+                   artifacts.set(key, prepared);
+-                  onProgress?.({
++                  recordPreparationProgress({
+                     workloadId: workload.id,
+                     capability: workload.capability,
+                     state: "ready",
+@@ -589,7 +584,7 @@ export const makeProductionRuntime = (
+               ),
+               Effect.tapError((error) =>
+                 Effect.sync(() =>
+-                  onProgress?.({
++                  recordPreparationProgress({
+                     workloadId: workload.id,
+                     capability: workload.capability,
+                     state: "failed",
+@@ -601,11 +596,7 @@ export const makeProductionRuntime = (
+           : Effect.succeed(cached);
+       });
+     };
+-    const prepare = (
+-      runtime: StackRuntime,
+-      workload: PlannedWorkload,
+-      onProgress?: RuntimeArtifactPreparationProgressListener,
+-    ) =>
++    const prepare = (runtime: StackRuntime, workload: PlannedWorkload) =>
+       Effect.gen(function* () {
+         const key = artifactKey(runtime, workload);
+         const joined = yield* Effect.uninterruptible(
+@@ -615,7 +606,7 @@ export const makeProductionRuntime = (
+               if (existing !== undefined) return existing;
+               const scope = preparationScope ?? (preparationScope = yield* Scope.make("parallel"));
+               let fiber: Fiber.Fiber<PreparedWorkloadArtifact, StackError> | undefined;
+-              const owner = prepareOne(runtime, workload, onProgress).pipe(
++              const owner = prepareOne(runtime, workload).pipe(
+                 Effect.ensuring(
+                   Effect.sync(() => {
+                     if (preparationInFlight.get(key) === fiber) preparationInFlight.delete(key);
+@@ -630,12 +621,8 @@ export const makeProductionRuntime = (
+         );
+         return yield* Fiber.join(joined);
+       });
+-    const prepareArtifacts = (
+-      runtime: StackRuntime,
+-      workloads: ReadonlyArray<PlannedWorkload>,
+-      onProgress?: RuntimeArtifactPreparationProgressListener,
+-    ) =>
+-      Effect.forEach(workloads, (workload) => prepare(runtime, workload, onProgress), {
++    const prepareArtifacts = (runtime: StackRuntime, workloads: ReadonlyArray<PlannedWorkload>) =>
++      Effect.forEach(workloads, (workload) => prepare(runtime, workload), {
+         concurrency: 4,
+       });
+     const prepareFor = (
+@@ -647,7 +634,7 @@ export const makeProductionRuntime = (
+           selected.has(workload.capability),
+         );
+         for (const workload of workloads) queuePreparation(workload);
+-        yield* prepareArtifacts(input.state.runtime, workloads, recordPreparationProgress);
++        yield* prepareArtifacts(input.state.runtime, workloads);
+       });
+     const logPreparationFailure = (message: string): Effect.Effect<void> =>
+       logs.append({ source: "supervisor", stream: "internal", message }).pipe(Effect.ignore);
+@@ -669,7 +656,7 @@ export const makeProductionRuntime = (
+         yield* Effect.forEach(
+           workloads,
+           (workload) =>
+-            prepare(persisted.runtime, workload, recordPreparationProgress).pipe(
++            prepare(persisted.runtime, workload).pipe(
+               Effect.catch((error) =>
+                 logPreparationFailure(
+                   `Background preparation failed for ${workload.id}: ${error.message}`,
+@@ -831,12 +818,6 @@ export const makeProductionRuntime = (
+             pathService.join(paths.data, "database", "postmaster.pid"),
+           );
+         }
+-        const eager = eagerCapabilities(input.plan);
+-        const eagerWorkloads = input.plan.workloads.filter((workload) =>
+-          eager.has(workload.capability),
+-        );
+-        for (const workload of eagerWorkloads) queuePreparation(workload);
+-        yield* prepareArtifacts(input.state.runtime, eagerWorkloads, recordPreparationProgress);
+       });
+ 
+     const activate = (
+@@ -995,6 +976,9 @@ export const makeProductionRuntime = (
+                     key,
+                     `Unknown runtime specification for ${workload.id}`,
+                   );
++                yield* prepare(fresh.runtime, workload).pipe(
++                  Effect.mapError((error) => mapDriverError(key, error)),
++                );
+                 yield* readinessDeadlineFor(fresh, workload).pipe(
+                   Effect.mapError((error) => mapDriverError(key, error)),
+                 );
+diff --git a/packages/stack/src/runtime/container-runtime.integration.test.ts b/packages/stack/src/runtime/container-runtime.integration.test.ts
+index a8f5e6f2f..deda6457a 100644
+--- a/packages/stack/src/runtime/container-runtime.integration.test.ts
++++ b/packages/stack/src/runtime/container-runtime.integration.test.ts
+@@ -588,6 +588,77 @@ describe("container runtime", () => {
+     }),
+   );
+ 
++  it.live("runs independent startup migrations concurrently after sharing the network", () =>
++    Effect.gen(function* () {
++      const state: FakeContainerState = {
++        resources: [],
++        imagePresent: true,
++        calls: [],
++        createdSpecs: [],
++        nextId: 1,
++      };
++      const firstEntered = yield* Deferred.make<void>();
++      const secondEntered = yield* Deferred.make<void>();
++      const releaseMigrations = yield* Deferred.make<void>();
++      const migrationIds = new Map<string, string>();
++      const base = fakeContainerEngine(state);
++      const runtime = yield* makeContainerRuntime({
++        engine: {
++          ...base,
++          createContainer: (spec) =>
++            Effect.gen(function* () {
++              const resource = yield* base.createContainer(spec);
++              const command = spec.command?.[0];
++              if (command === "first" || command === "second")
++                migrationIds.set(resource.id, command);
++              return resource;
++            }),
++          waitContainer: (resourceId) => {
++            const migration = migrationIds.get(resourceId);
++            if (migration === undefined) return base.waitContainer(resourceId);
++            return Effect.gen(function* () {
++              yield* Deferred.succeed(
++                migration === "first" ? firstEntered : secondEntered,
++                undefined,
++              );
++              yield* Deferred.await(releaseMigrations);
++              return 0;
++            });
++          },
++        },
++        ownerSessionId: "owner-session",
++        resolveWorkload: (workloadKey) =>
++          Effect.succeed({
++            startup: [
++              {
++                entrypoint: "/usr/local/bin/migrate",
++                command: [workloadKey.workloadId === "database:database" ? "first" : "second"],
++              },
++            ],
++          }),
++      });
++      const secondKey = { ...key, workloadId: "rest:rest" };
++      const secondWorkload = {
++        ...workload(),
++        id: secondKey.workloadId,
++        capability: "rest" as const,
++      };
++      const first = yield* Effect.forkChild(runtime.start(key, workload()), {
++        startImmediately: true,
++      });
++      const second = yield* Effect.forkChild(runtime.start(secondKey, secondWorkload), {
++        startImmediately: true,
++      });
++      yield* Deferred.await(firstEntered);
++      yield* Deferred.await(secondEntered);
++      yield* Deferred.succeed(releaseMigrations, undefined);
++      expect(yield* Fiber.join(first)).toEqual({ ...key, state: "ready" });
++      expect(yield* Fiber.join(second)).toEqual({ ...secondKey, state: "ready" });
++      expect(state.calls.filter((call) => call.startsWith("create-network"))).toHaveLength(1);
++      yield* runtime.cleanup({ stackId, destroy: true });
++    }),
++  );
++
+   it.live("interrupts a setup blocked on shared network creation during cleanup", () =>
+     Effect.gen(function* () {
+       const state: FakeContainerState = {
+diff --git a/packages/stack/src/runtime/postgres-database-session.integration.test.ts b/packages/stack/src/runtime/postgres-database-session.integration.test.ts
+index a407af4d6..2127b0613 100644
+--- a/packages/stack/src/runtime/postgres-database-session.integration.test.ts
++++ b/packages/stack/src/runtime/postgres-database-session.integration.test.ts
+@@ -182,8 +182,14 @@ describe("Postgres database session", () => {
+         unsafe: (sql, params = []) =>
+           Effect.sync(() => {
+             calls.push({ sql, params });
+-            if (sql.startsWith("SELECT format"))
+-              return [{ statement: "ALTER ROLE postgres PASSWORD 'database-secret'" }];
++            if (sql.startsWith("SELECT string_agg"))
++              return [
++                {
++                  statement: sql.includes("ALTER ROLE")
++                    ? "ALTER ROLE postgres PASSWORD 'database-secret'"
++                    : "ALTER DATABASE postgres SET app.settings.jwt_secret TO 'jwt-secret'; ALTER DATABASE postgres SET app.settings.jwt_exp TO '3600'",
++                },
++              ];
+             return [];
+           }),
+         withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+@@ -191,27 +197,23 @@ describe("Postgres database session", () => {
+       const session = makeDatabaseSessionFromSqlClient(client);
+       yield* session.transaction((transaction) =>
+         Effect.gen(function* () {
+-          yield* transaction.setRolePassword("postgres", Redacted.make("database-secret"));
+-          yield* transaction.setDatabaseSetting({
+-            name: "app.settings.jwt_secret",
+-            value: Redacted.make("jwt-secret"),
+-          });
+-          yield* transaction.setDatabaseSetting({ name: "app.settings.jwt_exp", value: 3600 });
++          yield* transaction.setRolePasswords(["postgres"], Redacted.make("database-secret"));
++          yield* transaction.setDatabaseSettings([
++            { name: "app.settings.jwt_secret", value: Redacted.make("jwt-secret") },
++            { name: "app.settings.jwt_exp", value: 3600 },
++          ]);
+         }),
+       );
+       expect(calls[0]).toEqual({
+-        sql: "SELECT format('ALTER ROLE %I PASSWORD %L', $1::text, $2::text) AS statement",
+-        params: ["postgres", "database-secret"],
++        sql: "SELECT string_agg(format('ALTER ROLE %I PASSWORD %L', role, $1::text), E';\\n') AS statement FROM unnest(ARRAY[$2::text]::text[]) AS role",
++        params: ["database-secret", "postgres"],
+       });
+       expect(calls[1]?.sql).toContain("ALTER ROLE postgres PASSWORD");
+       expect(calls[2]).toEqual({
+-        sql: "SELECT format('ALTER DATABASE postgres SET %I TO %L', $1::text, $2::text) AS statement",
+-        params: ["app.settings.jwt_secret", "jwt-secret"],
+-      });
+-      expect(calls[4]).toEqual({
+-        sql: "SELECT format('ALTER DATABASE postgres SET %I TO %L', $1::text, $2::text) AS statement",
+-        params: ["app.settings.jwt_exp", 3600],
++        sql: "SELECT string_agg(format('ALTER DATABASE postgres SET %I TO %L', name, value), E';\\n') AS statement FROM (VALUES ($1::text, $2::text), ($3::text, $4::text)) AS settings(name, value)",
++        params: ["app.settings.jwt_secret", "jwt-secret", "app.settings.jwt_exp", 3600],
+       });
++      expect(calls[3]?.sql).toContain("ALTER DATABASE postgres SET app.settings.jwt_secret");
+     }),
+   );
+ 
+@@ -219,7 +221,7 @@ describe("Postgres database session", () => {
+     Effect.gen(function* () {
+       const client: DatabaseSqlClient = {
+         unsafe: (sql) =>
+-          sql.startsWith("SELECT format")
++          sql.startsWith("SELECT string_agg")
+             ? Effect.succeed([{ statement: "ALTER ROLE postgres PASSWORD 'database-secret'" }])
+             : Effect.fail(
+                 new SqlError({
+@@ -233,7 +235,7 @@ describe("Postgres database session", () => {
+       };
+       const result = yield* makeDatabaseSessionFromSqlClient(client)
+         .transaction((transaction) =>
+-          transaction.setRolePassword("postgres", Redacted.make("database-secret")),
++          transaction.setRolePasswords(["postgres"], Redacted.make("database-secret")),
+         )
+         .pipe(Effect.exit);
+       expect(Exit.isFailure(result)).toBe(true);
+diff --git a/packages/stack/src/runtime/production-runtime.integration.test.ts b/packages/stack/src/runtime/production-runtime.integration.test.ts
+index 50debf1f2..40b943b00 100644
+--- a/packages/stack/src/runtime/production-runtime.integration.test.ts
++++ b/packages/stack/src/runtime/production-runtime.integration.test.ts
+@@ -990,7 +990,7 @@ describe("production runtime", () => {
+       ).pipe(Effect.provide(NodeServices.layer)),
+   );
+ 
+-  it.live("reports eager artifact progress while preflight is waiting for a pull", () =>
++  it.live("reports artifact progress while launch preparation is waiting for a pull", () =>
+     Effect.scoped(
+       Effect.gen(function* () {
+         const fs = yield* FileSystem.FileSystem;
+@@ -1076,15 +1076,24 @@ describe("production runtime", () => {
+           secrets: resolved.persisted,
+           plan: compiled.executionPlan,
+         };
+-        const preflight = yield* Effect.forkChild(runtime.preflight(input), {
++        yield* runtime.preflight(input);
++        const launching = yield* Effect.forkChild(
++          runtime.driver.start({ stackId, workloadId: database.id }, database),
++          { startImmediately: true },
++        );
++        yield* Deferred.await(pullStarted);
++        expect(yield* runtime.artifacts).toEqual([
++          expect.objectContaining({ workloadId: database.id, state: "downloading" }),
++        ]);
++        const preparing = yield* Effect.forkChild(runtime.prepare(input, new Set(["database"])), {
+           startImmediately: true,
+         });
+-        yield* Deferred.await(pullStarted);
+         expect(yield* runtime.artifacts).toEqual([
+           expect.objectContaining({ workloadId: database.id, state: "downloading" }),
+         ]);
++        yield* Fiber.interrupt(launching);
+         yield* Deferred.succeed(release, undefined);
+-        yield* Fiber.join(preflight);
++        yield* Fiber.join(preparing);
+         expect(yield* runtime.artifacts).toEqual([
+           expect.objectContaining({ workloadId: database.id, state: "ready" }),
+         ]);
+@@ -2005,6 +2014,17 @@ describe("production runtime", () => {
+           plan: compiled.executionPlan,
+         });
+         expect(yield* fs.exists(functionsRoot)).toBe(false);
++        expect(prepared).toEqual([]);
++        yield* runtime.prepare(
++          {
++            stackId,
++            state: current.value,
++            definition: compiled.definition,
++            secrets,
++            plan: compiled.executionPlan,
++          },
++          new Set(["database"]),
++        );
+         expect(prepared).toEqual(["database:database"]);
+         yield* runtime.driver.cleanup({ stackId, destroy: false });
+       }),
+diff --git a/packages/stack/src/supervisor/SessionLauncher.ts b/packages/stack/src/supervisor/SessionLauncher.ts
+index 4c0050ac0..8f996d930 100644
+--- a/packages/stack/src/supervisor/SessionLauncher.ts
++++ b/packages/stack/src/supervisor/SessionLauncher.ts
+@@ -1,4 +1,4 @@
+-import { Cause, Effect, Exit, Ref } from "effect";
++import { Cause, Deferred, Effect, Exit, Ref, Semaphore } from "effect";
+ import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
+ import type { StackId } from "../public/StackId.ts";
+ import {
+@@ -13,7 +13,7 @@ interface SessionWorkload {
+ }
+ 
+ export interface SessionLauncher {
+-  /** Starts the supplied dependency closure in dependency-ready waves. */
++  /** Starts the supplied dependency closure as dependencies complete. */
+   readonly launch: (plan: ExecutionPlan) => Effect.Effect<SessionLaunch, RuntimeDriverError>;
+   /** Stops and removes every workload started in this session in reverse order. */
+   readonly stop: Effect.Effect<void, RuntimeDriverError>;
+@@ -41,9 +41,13 @@ const combine = (
+ ): Cause.Cause<RuntimeDriverError> =>
+   cleanup.reasons.length === 0 ? primary : Cause.combine(primary, cleanup);
+ 
++const joinExit = <A, E>(result: Exit.Exit<A, E>): Effect.Effect<A, E> =>
++  Exit.isSuccess(result) ? Effect.succeed(result.value) : Effect.failCause(result.cause);
++
+ /**
+  * Owns only the workloads started by the current Supervisor session. A launch starts
+- * dependency-ready waves and a failure cleans that attempt's resources.
++ * dependency-ready workloads as soon as their prerequisites complete and a failure cleans
++ * that attempt's resources.
+  */
+ export const makeSessionLauncher = (options: {
+   readonly stackId: StackId;
+@@ -80,40 +84,80 @@ export const makeSessionLauncher = (options: {
+           workload,
+         }));
+         const ready = new Set((yield* Ref.get(session)).map(({ key }) => key.workloadId));
+-        let remaining = planEntries.filter((entry) => !ready.has(entry.workload.id));
+-        let outcome: Exit.Exit<void, RuntimeDriverError> = Exit.succeed(undefined);
+-        while (remaining.length > 0 && Exit.isSuccess(outcome)) {
+-          const wave = remaining.filter((entry) =>
+-            entry.workload.dependencies.every((dependency) => ready.has(dependency)),
+-          );
+-          if (wave.length === 0) {
+-            outcome = Exit.fail(
+-              new RuntimeDriverError({
+-                message: "No workload is ready to start; dependencies are unsatisfied",
+-                stackId: options.stackId,
+-              }),
++        const remaining = planEntries.filter((entry) => !ready.has(entry.workload.id));
++        const unresolved = new Set(remaining.map((entry) => entry.workload.id));
++        const graphReady = new Set(ready);
++        // Reject cycles before creating fibers that would otherwise wait forever.
++        while (unresolved.size > 0) {
++          const completed = [...unresolved].filter((id) => {
++            const entry = planEntries.find((candidate) => candidate.workload.id === id);
++            return (
++              entry !== undefined &&
++              entry.workload.dependencies.every((dependency) => graphReady.has(dependency))
+             );
+-            break;
+-          }
+-          outcome = yield* Effect.exit(
+-            Effect.forEach(
+-              wave,
+-              (entry) =>
+-                Effect.gen(function* () {
+-                  // Record the resource immediately before starting it. This includes an
+-                  // in-flight start when a sibling fails, without treating queued work as owned.
+-                  attempted.push(entry);
+-                  yield* options.driver.start(entry.key, entry.workload);
+-                }),
+-              { concurrency: START_CONCURRENCY, discard: true },
+-            ),
+-          );
+-          if (Exit.isSuccess(outcome)) {
+-            for (const entry of wave) ready.add(entry.workload.id);
+-            yield* Ref.update(session, (current) => [...current, ...wave]);
+-            remaining = remaining.filter((entry) => !ready.has(entry.workload.id));
++          });
++          if (completed.length === 0) {
++            const failure = new RuntimeDriverError({
++              message: "No workload is ready to start; dependencies are unsatisfied",
++              stackId: options.stackId,
++            });
++            const cleaned = yield* cleanup(attempted).pipe(Effect.exit);
++            yield* Ref.set(cleanupProven, Exit.isSuccess(cleaned));
++            if (Exit.isFailure(cleaned))
++              return yield* Effect.failCause(combine(Cause.fail(failure), cleaned.cause));
++            return yield* failure;
+           }
++          completed.forEach((id) => unresolved.delete(id));
++          completed.forEach((id) => graphReady.add(id));
+         }
++        const startPermit = yield* Semaphore.make(START_CONCURRENCY);
++        const completions = new Map<
++          string,
++          Deferred.Deferred<Exit.Exit<void, RuntimeDriverError>, never>
++        >();
++        for (const entry of remaining)
++          completions.set(
++            entry.workload.id,
++            yield* Deferred.make<Exit.Exit<void, RuntimeDriverError>>(),
++          );
++        const startOne = (entry: SessionWorkload): Effect.Effect<void, RuntimeDriverError> => {
++          const startBody = Effect.gen(function* () {
++            yield* Effect.forEach(
++              entry.workload.dependencies,
++              (dependency) => {
++                if (ready.has(dependency)) return Effect.void;
++                const completion = completions.get(dependency);
++                if (completion === undefined)
++                  return Effect.fail(
++                    new RuntimeDriverError({
++                      message: `Dependency ${dependency} is not part of the launch plan`,
++                      stackId: options.stackId,
++                      workloadId: entry.workload.id,
++                    }),
++                  );
++                return Deferred.await(completion).pipe(Effect.flatMap(joinExit));
++              },
++              { discard: true },
++            );
++            yield* startPermit.withPermit(
++              Effect.gen(function* () {
++                // Record only once a start permit is held: queued dependency work is not owned.
++                attempted.push(entry);
++                yield* options.driver.start(entry.key, entry.workload);
++              }),
++            );
++            yield* Ref.update(session, (current) => [...current, entry]);
++          });
++          return Effect.gen(function* () {
++            const result = yield* Effect.exit(startBody);
++            const completion = completions.get(entry.workload.id);
++            if (completion !== undefined) yield* Deferred.succeed(completion, result);
++            return yield* joinExit(result);
++          });
++        };
++        const outcome = yield* Effect.exit(
++          Effect.forEach(remaining, startOne, { concurrency: "unbounded", discard: true }),
++        );
+         if (Exit.isSuccess(outcome)) {
+           const rollback = Effect.gen(function* () {
+             const result = yield* cleanup(attempted).pipe(Effect.exit);
+diff --git a/packages/stack/src/supervisor/Supervisor.ts b/packages/stack/src/supervisor/Supervisor.ts
+index 3b7c99ba9..9b941f383 100644
+--- a/packages/stack/src/supervisor/Supervisor.ts
++++ b/packages/stack/src/supervisor/Supervisor.ts
+@@ -384,11 +384,18 @@ export const makeSupervisor = (
+         if (session === "fresh") yield* resetForSession(input);
+         const selected = selectedOverride ?? (yield* Ref.get(active));
+         const plan = activeExecutionPlan(input.plan, selected);
+-        yield* runtime.prepare(input, selected);
+         const reservation = yield* runtime.ingress.acquire(input);
+-        const launched = yield* launcher
+-          .launch(plan)
+-          .pipe(Effect.mapError(mapRuntimeError), Effect.exit);
++        const preparedAndLaunched = yield* Effect.all(
++          [
++            runtime.prepare(input, selected),
++            launcher.launch(plan).pipe(Effect.mapError(mapRuntimeError)),
++          ],
++          { concurrency: 2 },
++        ).pipe(
++          Effect.map(([, launched]) => launched),
++          Effect.exit,
++        );
++        const launched = preparedAndLaunched;
+         if (Exit.isFailure(launched)) {
+           const closed = reservation.fresh
+             ? yield* runtime.ingress.close.pipe(Effect.mapError(mapRuntimeError), Effect.exit)
+diff --git a/packages/stack/src/supervisor/session-launcher.integration.test.ts b/packages/stack/src/supervisor/session-launcher.integration.test.ts
+index a0d2f3e25..45b6e68a5 100644
+--- a/packages/stack/src/supervisor/session-launcher.integration.test.ts
++++ b/packages/stack/src/supervisor/session-launcher.integration.test.ts
+@@ -110,6 +110,43 @@ describe("session launcher", () => {
+     }),
+   );
+ 
++  it.live("starts a dependant when its own prerequisite completes", () =>
++    Effect.gen(function* () {
++      const databaseEntered = yield* Deferred.make<void>();
++      const mailEntered = yield* Deferred.make<void>();
++      const releaseMail = yield* Deferred.make<void>();
++      const restEntered = yield* Deferred.make<void>();
++      const database = workload("database:database");
++      const mail = workload("mail:mail");
++      const rest = workload("rest:rest", [database.id]);
++      const driver: RuntimeDriver = {
++        observe: () => Effect.succeed([]),
++        start: (_key, current) =>
++          Effect.gen(function* () {
++            if (current.id === database.id) yield* Deferred.succeed(databaseEntered, undefined);
++            if (current.id === mail.id) {
++              yield* Deferred.succeed(mailEntered, undefined);
++              yield* Deferred.await(releaseMail);
++            }
++            if (current.id === rest.id) yield* Deferred.succeed(restEntered, undefined);
++            return ready(current);
++          }),
++        stop: () => Effect.void,
++        remove: () => Effect.void,
++        cleanup: () => Effect.void,
++      };
++      const launcher = yield* makeSessionLauncher({ stackId, driver });
++      const launching = yield* Effect.forkChild(launcher.launch(plan([database, mail, rest])), {
++        startImmediately: true,
++      });
++      yield* Deferred.await(databaseEntered);
++      yield* Deferred.await(mailEntered);
++      yield* Deferred.await(restEntered);
++      yield* Deferred.succeed(releaseMail, undefined);
++      yield* Fiber.join(launching);
++    }),
++  );
++
+   it.live("interrupts and removes an in-flight native workload when a sibling fails", () =>
+     withPlatform(
+       Effect.gen(function* () {
+diff --git a/packages/stack/src/supervisor/supervisor.integration.test.ts b/packages/stack/src/supervisor/supervisor.integration.test.ts
+index 9bdf43914..e9c5a620b 100644
+--- a/packages/stack/src/supervisor/supervisor.integration.test.ts
++++ b/packages/stack/src/supervisor/supervisor.integration.test.ts
+@@ -115,6 +115,9 @@ const makeFixture = (
+     readonly prefetchGate?: Deferred.Deferred<void>;
+     readonly prefetchInterrupted?: Deferred.Deferred<void>;
+     readonly prefetchCalls?: Ref.Ref<number>;
++    readonly prepareStarted?: Deferred.Deferred<void>;
++    readonly prepareGate?: Deferred.Deferred<void>;
++    readonly prepareFailure?: boolean;
+     readonly artifactStatuses?: Ref.Ref<ReadonlyArray<ArtifactPreparationStatus>>;
+   } = {},
+ ) =>
+@@ -348,7 +351,17 @@ const makeFixture = (
+             }
+           }
+         }),
+-      prepare: () => Effect.void,
++      prepare: () =>
++        fixtureOptions.prepareStarted === undefined && fixtureOptions.prepareGate === undefined
++          ? Effect.void
++          : Effect.gen(function* () {
++              if (fixtureOptions.prepareStarted !== undefined)
++                yield* Deferred.succeed(fixtureOptions.prepareStarted, undefined);
++              if (fixtureOptions.prepareGate !== undefined)
++                yield* Deferred.await(fixtureOptions.prepareGate);
++              if (fixtureOptions.prepareFailure === true)
++                return yield* new StackRuntimeError({ message: "injected preparation failure" });
++            }),
+       prefetch: (state) => {
+         if (state.definition?.preparation === "on-demand") return Effect.void;
+         return Effect.gen(function* () {
+@@ -695,6 +708,61 @@ describe("Supervisor composition", () => {
+     ),
+   );
+ 
++  it.live("launches workloads while selected preparation is still in flight", () =>
++    run(
++      Effect.gen(function* () {
++        const prepareStarted = yield* Deferred.make<void>();
++        const prepareGate = yield* Deferred.make<void>();
++        const startStarted = yield* Deferred.make<void>();
++        const startGate = yield* Deferred.make<void>();
++        const fixture = yield* makeFixture({
++          prepareStarted,
++          prepareGate,
++          startStarted,
++          startGate,
++        });
++        const starting = yield* Effect.forkChild(fixture.supervisor.start({ config: {} }), {
++          startImmediately: true,
++        });
++        yield* Deferred.await(prepareStarted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
++        yield* Deferred.await(startStarted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
++        yield* Deferred.succeed(startGate, undefined);
++        yield* Deferred.succeed(prepareGate, undefined);
++        const status = yield* Fiber.join(starting);
++        expect(status.lifecycle).toBe("running");
++      }),
++    ),
++  );
++
++  it.live("cleans launched workloads when preparation fails after launch completes", () =>
++    run(
++      Effect.gen(function* () {
++        const prepareStarted = yield* Deferred.make<void>();
++        const prepareGate = yield* Deferred.make<void>();
++        const startFinished = yield* Deferred.make<void>();
++        const fixture = yield* makeFixture({
++          prepareStarted,
++          prepareGate,
++          prepareFailure: true,
++          startFinished,
++        });
++        const starting = yield* Effect.forkChild(
++          fixture.supervisor.start({
++            config: { capabilities: { rest: { activation: "eager" } } },
++          }),
++          { startImmediately: true },
++        );
++        yield* Deferred.await(prepareStarted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
++        yield* Deferred.await(startFinished).pipe(Effect.timeout("5 seconds"), Effect.orDie);
++        yield* Deferred.succeed(prepareGate, undefined);
++        const result = yield* Fiber.join(starting).pipe(Effect.exit);
++        expect(Exit.isFailure(result)).toBe(true);
++        expect(yield* Ref.get(fixture.calls)).toContain("cleanup:stop");
++        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
++      }),
++    ),
++  );
++
+   it.live("keeps accepted start work alive when its caller is interrupted", () =>
+     run(
+       Effect.gen(function* () {

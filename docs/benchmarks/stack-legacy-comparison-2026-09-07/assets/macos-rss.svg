@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 580" role="img" aria-labelledby="title desc">
+<title id="title">macOS stack RSS</title><desc id="desc">Legacy default vs new default · legacy + pooler vs new eager · 30–40 seconds · MiB (lower is better)</desc>
+<rect width="100%" height="100%" fill="#111c1c"/>
+<style>text{font-family:Inter,Arial,sans-serif;fill:#eef8f5} .muted{fill:#9bb5ae} .grid{stroke:#34504b;stroke-width:1} .axis{stroke:#72918a;stroke-width:1.5} .legacy{fill:#586864} .new{fill:#3ecf8e} .value{font-size:20px;font-weight:700} .label{font-size:17px;font-weight:600}</style>
+<text x="100" y="42" font-size="30" font-weight="700" fill="#eef8f5">macOS stack RSS</text>
+<text x="100" y="70" font-size="16" class="muted">Legacy default vs new default</text>
+<text x="100" y="94" font-size="16" class="muted">legacy + pooler vs new eager · 30–40 seconds · MiB (lower is better)</text>
+<rect x="100" y="112" width="18" height="18" class="legacy"/><text x="125" y="127" font-size="15" fill="#eef8f5">Legacy CLI 2.116.0</text>
+<rect x="325" y="112" width="18" height="18" class="new"/><text x="350" y="127" font-size="15" fill="#eef8f5">Optimized stack</text>
+<line x1="100" y1="480.0" x2="1065" y2="480.0" class="grid"/>
+<text x="86" y="486.0" text-anchor="end" font-size="14" class="muted" fill="#9bb5ae">0</text>
+<line x1="100" y1="398.8" x2="1065" y2="398.8" class="grid"/>
+<text x="86" y="404.8" text-anchor="end" font-size="14" class="muted" fill="#9bb5ae">1188</text>
+<line x1="100" y1="317.5" x2="1065" y2="317.5" class="grid"/>
+<text x="86" y="323.5" text-anchor="end" font-size="14" class="muted" fill="#9bb5ae">2377</text>
+<line x1="100" y1="236.2" x2="1065" y2="236.2" class="grid"/>
+<text x="86" y="242.2" text-anchor="end" font-size="14" class="muted" fill="#9bb5ae">3565</text>
+<line x1="100" y1="155.0" x2="1065" y2="155.0" class="grid"/>
+<text x="86" y="161.0" text-anchor="end" font-size="14" class="muted" fill="#9bb5ae">4753</text>
+<line x1="100" y1="480" x2="1065" y2="480" class="axis"/>
+<rect x="147.7" y="304.9" width="65.1" height="175.1" rx="8" class="legacy"/>
+<text x="180.2" y="294.9" text-anchor="middle" class="value" fill="#eef8f5">2561.1</text>
+<rect x="228.4" y="462.1" width="65.1" height="17.9" rx="8" class="new"/>
+<text x="261.0" y="452.1" text-anchor="middle" class="value" fill="#eef8f5">262.2</text>
+<text x="220.6" y="522" text-anchor="middle" class="label" fill="#eef8f5">Native default</text>
+<text x="220.6" y="548" text-anchor="middle" font-size="14" class="muted" fill="#9bb5ae">MiB</text>
+<rect x="388.9" y="254.5" width="65.1" height="225.5" rx="8" class="legacy"/>
+<text x="421.5" y="244.5" text-anchor="middle" class="value" fill="#eef8f5">3297.7</text>
+<rect x="469.7" y="278.7" width="65.1" height="201.3" rx="8" class="new"/>
+<text x="502.3" y="268.7" text-anchor="middle" class="value" fill="#eef8f5">2944.2</text>
+<text x="461.9" y="522" text-anchor="middle" class="label" fill="#eef8f5">Native eager</text>
+<text x="461.9" y="548" text-anchor="middle" font-size="14" class="muted" fill="#9bb5ae">MiB</text>
+<rect x="630.2" y="304.9" width="65.1" height="175.1" rx="8" class="legacy"/>
+<text x="662.7" y="294.9" text-anchor="middle" class="value" fill="#eef8f5">2561.1</text>
+<rect x="710.9" y="454.6" width="65.1" height="25.4" rx="8" class="new"/>
+<text x="743.5" y="444.6" text-anchor="middle" class="value" fill="#eef8f5">371.5</text>
+<text x="703.1" y="522" text-anchor="middle" class="label" fill="#eef8f5">Docker default</text>
+<text x="703.1" y="548" text-anchor="middle" font-size="14" class="muted" fill="#9bb5ae">MiB</text>
+<rect x="871.4" y="254.5" width="65.1" height="225.5" rx="8" class="legacy"/>
+<text x="904.0" y="244.5" text-anchor="middle" class="value" fill="#eef8f5">3297.7</text>
+<rect x="952.2" y="209.2" width="65.1" height="270.8" rx="8" class="new"/>
+<text x="984.8" y="199.2" text-anchor="middle" class="value" fill="#eef8f5">3961.1</text>
+<text x="944.4" y="522" text-anchor="middle" class="label" fill="#eef8f5">Docker eager</text>
+<text x="944.4" y="548" text-anchor="middle" font-size="14" class="muted" fill="#9bb5ae">MiB</text>
+</svg>
