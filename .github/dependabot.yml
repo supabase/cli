@@ -24,6 +24,8 @@ updates:
     schedule:
       interval: "cron"
       cronjob: "0 0 * * *"
+    commit-message:
+      prefix: "chore(cli-go): "
     groups:
       go-minor:
         update-types:
