@@ -251,7 +251,7 @@ This rule is consistent with the repo-wide **Refactoring Policy** ("delete obsol
 
 ### Config validation has one home
 
-Config validation is implemented exactly once: `src/command-internal/legacy-config-validate.ts` (`legacyValidateResolvedConfig`). Both the db/migration loader (`legacy-db-config.toml-read.ts`) and the status/stop resolver (`legacy-local-config-values.ts`) build a `LegacyConfigValidationInput` from their own pipelines and call it — do not add per-command reimplementations of these checks. When a validation branch or message changes, change it there. `legacy-config-validate.parity.unit.test.ts` feeds the same broken configs through both real pipelines and asserts identical error strings; extend it when adding a branch both callers share.
+Config validation is implemented exactly once: `src/command-internal/legacy-config-validate.ts` (`legacyValidateResolvedConfig`). Both the db/migration loader (`legacy-db-config.toml-read.ts`) and the status/stop resolver (`legacy-local-config-values.ts`) build a `LegacyConfigValidationInput` from their own pipelines and call it — do not add per-command reimplementations of these checks. When a validation branch or message changes, change it there. `legacy-config-validate.parity.unit.test.ts` feeds the same broken configs through both real pipelines and asserts identical error strings; extend it when adding a branch both callers share. `content_path` project-root containment (absolute paths, `..` escapes, and in-root symlinks pointing outside all rejected) is part of this same home, enforced inside `legacyResolveEmailTemplateContentPath` — any new consumer of `content_path` resolution gets containment for free and must not re-derive it locally.
 
 ---
 

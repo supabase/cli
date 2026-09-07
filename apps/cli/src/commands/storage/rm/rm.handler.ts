@@ -19,6 +19,7 @@ import {
   legacyStorageIsDir,
 } from "../../../command-internal/legacy-storage-url.ts";
 import {
+  legacyAssertStorageWorkdir,
   legacyConnectStorageGateway,
   legacyLoadStorageConfig,
   legacyParseStorageUrlEffect,
@@ -67,6 +68,8 @@ export const legacyStorageRm = Effect.fn("legacy.storage.rm")(function* (
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
+    yield* legacyAssertStorageWorkdir(cliSettings.workdir);
+
     // Resolve the project ref BEFORE reading the project `.env`: the
     // linked-project ref must be resolved strictly before the config load
     // (the `.env` work). An unlinked workdir must fail fast with the
@@ -92,7 +95,7 @@ export const legacyStorageRm = Effect.fn("legacy.storage.rm")(function* (
     // auto-confirm here too.
     const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
     const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
-    const loaded = yield* legacyLoadStorageConfig(cliSettings.workdir, projectRef);
+    const loaded = yield* legacyLoadStorageConfig(cliSettings, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }

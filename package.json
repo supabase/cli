@@ -2,7 +2,7 @@
   "name": "@supabase/root",
   "private": true,
   "scripts": {
-    "prepare": "effect-tsgo patch --no-typescript --oxlint",
+    "prepare": "effect-tsgo patch --no-typescript --oxlint && husky",
     "build": "pnpm exec turbo run build",
     "generate": "pnpm exec turbo run @supabase/api#generate && pnpm exec turbo run @supabase/docs#generate",
     "test:live": "pnpm exec turbo run supabase#test:live --concurrency=1 --",
@@ -29,9 +29,12 @@
     "cli-release": "bun tools/release/local-release.ts"
   },
   "devDependencies": {
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
     "@effect/tsgo": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
+    "husky": "^9.1.7",
     "knip": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",

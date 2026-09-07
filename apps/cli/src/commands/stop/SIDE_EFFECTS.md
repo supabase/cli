@@ -7,9 +7,10 @@ model (see the CLI-1324 plan's "Critical architectural finding" for why).
 
 ## Files Read
 
-| Path                             | Format | When                                                                       |
-| -------------------------------- | ------ | -------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml` | TOML   | default path only — skipped entirely when `--project-id` or `--all` is set |
+| Path                                                                                               | Format                                                                                | When                                                                                                                                                                                                                                                                                                                                                  |
+| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                                                                   | TOML                                                                                  | default path only — skipped entirely when `--project-id` or `--all` is set                                                                                                                                                                                                                                                                            |
+| `auth.email.template.*` / `auth.email.notification.*` `content_path` (config-relative or absolute) | text (existence/readability only — bytes discarded, used only to validate the config) | default path only, only when `auth.enabled`, for every configured template and every notification with `enabled = true`, as part of `legacyResolveLocalConfigValues`'s own `Config.Validate` pass; the resolved path is CONFINED to the project root (symlinks dereferenced with `realpathSync`) — a path resolving outside it aborts before the read |
 
 ## Files Written
 
@@ -129,8 +130,17 @@ Same payload as `json`, delivered as a `result` NDJSON event.
 ## Notes
 
 - `--project-id` and `--all` are **directory-independent** pure Docker-label filters —
-  neither reads `config.toml`. Only the no-flags default path resolves the project id
+  neither reads `config.toml`, so neither is subject to the `content_path` containment
+  check below; only the no-flags default path resolves the project id
   from `LegacyCliSettings.workdir` (env → config.toml `project_id` → workdir basename).
+- **The default path VALIDATES config, including the `content_path` containment check
+  above, BEFORE any Docker teardown call.** `resolveSearchProjectIdFilter`
+  (`stop.handler.ts`) loads and validates config (`legacyResolveLocalConfigValues`) to
+  resolve the project id filter, and this runs before `legacyDockerRemoveAll` is ever
+  invoked — so a config-validation failure here (a malformed config, or an
+  `auth.email.*.content_path` that resolves outside the project root) fails the command
+  and the running stack is **not** torn down. `--all`/`--project-id` bypass config
+  loading entirely (see the bullet above) and so are unaffected by this failure mode.
 - The hidden `--backup` flag exists only for CLI surface parity with the old Go CLI — it
   has **no effect**. The old Go CLI declared it but never wired its value into anything,
   so it always deleted volumes based on `!noBackup` regardless of `--backup`. The TS port

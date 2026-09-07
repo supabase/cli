@@ -28,6 +28,19 @@ export class LegacyConfigDiffLoadConfigError extends Data.TaggedError(
 }
 
 /**
+ * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
+ * directory (`legacyValidateWorkdirIsDirectory`). Only reachable when the
+ * user explicitly set it — beats the config load and every network call.
+ */
+export class LegacyConfigDiffWorkdirError extends Data.TaggedError("LegacyConfigDiffWorkdirError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+/**
  * The Go-compat global `-o/--output` flag was passed. `config diff` is a
  * net-new TS command with no Go parity contract, so machine output goes
  * through `--output-format` only (per Colum on CLI-2156).

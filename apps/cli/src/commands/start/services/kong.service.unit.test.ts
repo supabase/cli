@@ -1,6 +1,3 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -55,59 +52,24 @@ describe("legacyResolveKongNginxWorkerProcesses", () => {
 });
 
 describe("legacyBuildKongEmailTemplateBind", () => {
-  test("returns undefined for an empty contentPath (start.go:528-530)", () => {
-    expect(
-      legacyBuildKongEmailTemplateBind({ id: "invite", contentPath: "" }, "/work"),
-    ).toBeUndefined();
-  });
+  // Resolution (workdir-relative joins, the notification-specific legacy
+  // supabase/-relative fallback, absolute-path passthrough, containment, and
+  // read-verification) all moved to `start.handler.ts`'s
+  // `resolveKongEmailTemplateMounts` (CLI-2339's Kong-mount hardening pass) —
+  // see that function's own test coverage in `start.integration.test.ts` and
+  // `legacy-config-validate.unit.test.ts`'s `legacyResolveEmailTemplateContentPath`
+  // suite. This function is now a pure formatter over an already-resolved
+  // `mount.resolvedPath`; the remaining tests below only cover that formatting.
 
-  test("resolves a relative contentPath against workdir (start.go:531-538)", () => {
+  test("builds the bind string from an already-resolved resolvedPath (start.go:531-538)", () => {
     expect(
-      legacyBuildKongEmailTemplateBind({ id: "invite", contentPath: "invite.html" }, "/work"),
+      legacyBuildKongEmailTemplateBind({ id: "invite", resolvedPath: "/work/invite.html" }),
     ).toBe("/work/invite.html:/home/kong/templates/email/invite.html:rw");
   });
 
-  test("notification mounts fall back to the legacy supabase-relative file", () => {
-    const workdir = mkdtempSync(join(tmpdir(), "kong-email-bind-"));
-    try {
-      mkdirSync(join(workdir, "supabase", "templates"), { recursive: true });
-      writeFileSync(join(workdir, "supabase", "templates", "n.html"), "<p>x</p>");
-      expect(
-        legacyBuildKongEmailTemplateBind(
-          {
-            id: "password_changed_notification",
-            contentPath: "./templates/n.html",
-            notification: true,
-          },
-          workdir,
-        ),
-      ).toBe(
-        `${join(workdir, "supabase", "templates", "n.html")}:/home/kong/templates/email/password_changed_notification.html:rw`,
-      );
-      // template mounts keep plain workdir resolution even when the file is absent
-      expect(
-        legacyBuildKongEmailTemplateBind(
-          { id: "invite", contentPath: "./templates/n.html" },
-          workdir,
-        ),
-      ).toBe(`${join(workdir, "templates", "n.html")}:/home/kong/templates/email/invite.html:rw`);
-    } finally {
-      rmSync(workdir, { recursive: true, force: true });
-    }
-  });
-
-  test("leaves an absolute contentPath untouched", () => {
+  test("drops the extension when resolvedPath has none", () => {
     expect(
-      legacyBuildKongEmailTemplateBind({ id: "invite", contentPath: "/abs/invite.html" }, "/work"),
-    ).toBe("/abs/invite.html:/home/kong/templates/email/invite.html:rw");
-  });
-
-  test("drops the extension when hostPath has none", () => {
-    expect(
-      legacyBuildKongEmailTemplateBind(
-        { id: "invite_notification", contentPath: "invite" },
-        "/work",
-      ),
+      legacyBuildKongEmailTemplateBind({ id: "invite_notification", resolvedPath: "/work/invite" }),
     ).toBe("/work/invite:/home/kong/templates/email/invite_notification:rw");
   });
 });
@@ -150,7 +112,6 @@ const base: LegacyKongContainerSpecInput = {
   logflareId: "supabase_analytics_proj",
   poolerId: "supabase_pooler_proj",
   nginxWorkerProcesses: "1",
-  workdir: "/work",
 };
 
 describe("legacyBuildKongContainerSpec", () => {
@@ -229,12 +190,15 @@ describe("legacyBuildKongContainerSpec", () => {
   });
 
   test("mounts every resolved email template bind (start.go:544-558)", () => {
+    // Every entry here is already resolved+containment-checked+read-verified by the
+    // caller (`start.handler.ts`'s `resolveKongEmailTemplateMounts`) — there is no
+    // "unconfigured" entry to filter downstream anymore, since the caller omits those
+    // entirely before this input is ever built.
     const spec = legacyBuildKongContainerSpec({
       ...base,
       emailTemplateMounts: [
-        { id: "invite", contentPath: "invite.html" },
-        { id: "confirmation_notification", contentPath: "" },
-        { id: "recovery_notification", contentPath: "/abs/recovery.html" },
+        { id: "invite", resolvedPath: "/work/invite.html" },
+        { id: "recovery_notification", resolvedPath: "/abs/recovery.html" },
       ],
     });
     expect(spec.binds).toEqual([

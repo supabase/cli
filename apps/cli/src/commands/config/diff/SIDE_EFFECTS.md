@@ -39,12 +39,13 @@ All Bearer-authenticated, all read-only.
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                               | Required?                                               |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_PROJECT_ID`   | project ref (flag → this → `.temp/project-ref` → prompt)                                                              | no                                                      |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                  | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | API profile selection                                                                                                 | no                                                      |
-| `env(VAR)` references   | interpolated into `config.toml` values at load; a change on an env-resolved property names the variable in the output | no                                                      |
+| Variable                | Purpose                                                                                                               | Required?                                                                                                                                                                                                                                                                 |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_PROJECT_ID`   | project ref (flag → this → `.temp/project-ref` → prompt)                                                              | no                                                                                                                                                                                                                                                                        |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                  | no (falls back to keyring → `~/.supabase/access-token`)                                                                                                                                                                                                                   |
+| `SUPABASE_PROFILE`      | API profile selection                                                                                                 | no                                                                                                                                                                                                                                                                        |
+| `SUPABASE_WORKDIR`      | working directory `supabase/config.toml`/`config.json` is read from (`--workdir` takes priority)                      | no — when unset, the CLI walks up from cwd looking for `supabase/config.toml`; when SET (flag or env) the directory is used exactly as given and **no ancestor is searched**, so a path with no `supabase/` of its own fails instead of loading a parent project's config |
+| `env(VAR)` references   | interpolated into `config.toml` values at load; a change on an env-resolved property names the variable in the output | no                                                                                                                                                                                                                                                                        |
 
 ## Exit Codes
 
@@ -63,18 +64,19 @@ does. Because
 code `0`, a `--exit-code` run that exits `2` on drift suppresses that hook,
 same as any other non-zero exit.
 
-| Code | Condition                                                                                                      |
-| ---- | -------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — including when differences are found, unless `--exit-code` is passed                                 |
-| `2`  | `--exit-code` passed and at least one difference found                                                         |
-| `1`  | the `-o`/`--output` global flag passed (any value — not supported by this command)                             |
-| `1`  | missing or malformed `supabase/config.toml`/`config.json`                                                      |
-| `1`  | branch-name `--project-ref` with no linked parent project (`LegacyConfigDiffBranchNotLinkedError`)             |
-| `1`  | branch-name `--project-ref` with a corrupt/invalid linked parent ref (`LegacyConfigDiffParentRefInvalidError`) |
-| `1`  | unknown branch (branch-name `--project-ref` 404, `LegacyConfigDiffBranchNotFoundError`)                        |
-| `1`  | resolved branch has no project ref yet — still provisioning (`LegacyConfigDiffBranchNotReadyError`)            |
-| `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref                                       |
-| `1`  | remote config read failure (network, 401/403/404, or other unexpected status)                                  |
+| Code | Condition                                                                                                                                                                                                                                                            |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — including when differences are found, unless `--exit-code` is passed                                                                                                                                                                                       |
+| `2`  | `--exit-code` passed and at least one difference found                                                                                                                                                                                                               |
+| `1`  | the `-o`/`--output` global flag passed (any value — not supported by this command)                                                                                                                                                                                   |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`LegacyConfigDiffWorkdirError`) — beats the config read and every network call                                                                                                           |
+| `1`  | missing or malformed `supabase/config.toml`/`config.json` (`LegacyConfigDiffLoadConfigError`) — a missing file suggests `supabase init` only for a DEFAULTED workdir; with an explicit workdir the message names the resolved path instead and never suggests `init` |
+| `1`  | branch-name `--project-ref` with no linked parent project (`LegacyConfigDiffBranchNotLinkedError`)                                                                                                                                                                   |
+| `1`  | branch-name `--project-ref` with a corrupt/invalid linked parent ref (`LegacyConfigDiffParentRefInvalidError`)                                                                                                                                                       |
+| `1`  | unknown branch (branch-name `--project-ref` 404, `LegacyConfigDiffBranchNotFoundError`)                                                                                                                                                                              |
+| `1`  | resolved branch has no project ref yet — still provisioning (`LegacyConfigDiffBranchNotReadyError`)                                                                                                                                                                  |
+| `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref                                                                                                                                                                                             |
+| `1`  | remote config read failure (network, 401/403/404, or other unexpected status)                                                                                                                                                                                        |
 
 ## Output
 
@@ -139,6 +141,7 @@ and emit nothing.
 ## Notes
 
 - Run from the project root (or pass `--workdir`); `config.toml` is read relative to it.
+  An explicit `--workdir`/`SUPABASE_WORKDIR` is never climbed past — see the `SUPABASE_WORKDIR` row above.
 - **Local operand per target (ADR 0018/0022):** when the resolved target ref matches a
   `[remotes.<name>]` block's `project_id`, the local side is that branch's merged
   effective config; otherwise the base config. The echoed scope line always says which.

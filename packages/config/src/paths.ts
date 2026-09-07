@@ -96,7 +96,10 @@ export const findCliProjectPaths = Effect.fnUntraced(function* (
   }
 });
 
-export const findCliProjectRoot = Effect.fnUntraced(function* (cwd: string) {
-  const paths = yield* findCliProjectPaths(cwd);
+export const findCliProjectRoot = Effect.fnUntraced(function* (
+  cwd: string,
+  options?: FindCliProjectPathsOptions,
+) {
+  const paths = yield* findCliProjectPaths(cwd, options);
   return paths?.projectRoot ?? null;
 });
