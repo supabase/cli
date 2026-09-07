@@ -176,17 +176,12 @@ describe("db schema declarative sync (e2e)", () => {
       );
       expect(converged.exitCode, commandFailure(converged)).toBe(0);
       expect(`${converged.stdout}${converged.stderr}`).toContain("No schema changes found");
-    },
-  );
 
-  test(
-    "renames a cron job and drops a pgmq queue declared in the tree",
-    { timeout: SCENARIO_TIMEOUT_MS },
-    async () => {
-      const projectDir = project?.dir;
-      if (projectDir === undefined) throw new Error("declarative sync project was not initialized");
+      // Extension-managed objects on the converged tree (CLI-2282). The global
+      // e2e afterEach tears the stack project down after every test, so this
+      // continues in the same test rather than a second one.
       const jobsPath = path.join(projectDir, "supabase", "schemas", "jobs.sql");
-      const sync = (name: string) =>
+      const runSync = (name: string) =>
         runSupabase(
           ["db", "schema", "declarative", "sync", "--no-apply", "--name", name, "--experimental"],
           {
@@ -200,7 +195,7 @@ describe("db schema declarative sync (e2e)", () => {
       // file a sync added rather than only the last one.
       const syncAndReadSql = async (name: string) => {
         const before = new Set(migrationFiles(projectDir));
-        const result = await sync(name);
+        const result = await runSync(name);
         expect(result.exitCode, commandFailure(result)).toBe(0);
         const added = migrationFiles(projectDir).filter((file) => !before.has(file));
         expect(added.length, "sync did not write a migration").toBeGreaterThan(0);
