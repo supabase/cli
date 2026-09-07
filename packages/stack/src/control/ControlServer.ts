@@ -629,8 +629,21 @@ export const makeControlClient = (
           },
         );
         const fiber = yield* Effect.forkChild(read);
+        // A connection can fail before NodeSocket runs the onOpen hook. Join the
+        // reader alongside writer readiness so that failure cannot strand this
+        // handshake on an unresolved Deferred.
+        const readerReady = Fiber.join(fiber).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new MaintenanceProtocolError({
+                message: "Control connection closed",
+                reason: "transport",
+              }),
+            ),
+          ),
+        );
         // NodeSocket opens its writer as part of runRaw's onOpen hook.
-        const write = yield* Deferred.await(writerReady);
+        const write = yield* Effect.raceFirst(Deferred.await(writerReady), readerReady);
         yield* write(
           encodePreface({
             kind: "maintenance",

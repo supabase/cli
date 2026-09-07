@@ -1,6 +1,7 @@
 import { NodeServices, NodeSocket } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  Cause,
   Crypto,
   Deferred,
   Effect,
@@ -15,6 +16,7 @@ import {
 } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
+import * as Socket from "effect/unstable/socket/Socket";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
 import { CAPABILITY_NAMES } from "../public/Capability.ts";
 import type { StackStatus } from "../public/Status.ts";
@@ -258,6 +260,28 @@ const makeDestroyRequestFrame = (): Effect.Effect<Uint8Array, MaintenanceProtoco
   });
 
 describe("control transport", () => {
+  it.live("fails maintenance requests when the control endpoint is unavailable", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-control-dead-" });
+        const endpoint: ControlEndpoint = { kind: "unix", path: path.join(root, "missing.sock") };
+        const client = makeControlClient(endpoint, {
+          stackId: "a".repeat(64),
+          ownerSessionId: "dead-owner",
+        });
+        const result = yield* client.stop().pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const failure = Cause.findErrorOption(result.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure)) expect(failure.value).toBeInstanceOf(Socket.SocketError);
+        }
+      }),
+    ),
+  );
+
   it.live("accepts unknown maintenance stack error tags for forward compatibility", () =>
     withServer(
       ({ endpoint, stackId, ownerSessionId }) =>

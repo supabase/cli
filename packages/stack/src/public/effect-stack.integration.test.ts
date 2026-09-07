@@ -168,6 +168,75 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
   ).pipe(Effect.provide(NodeServices.layer));
 
 describe("Effect stack lifecycle handoff", () => {
+  it.live("reclaims a stale owner after a failed maintenance connection", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-effect-stack-dead-owner-",
+        });
+        const liveEndpoint = { kind: "unix" as const, path: path.join(root, "live.sock") };
+        const deadEndpoint = { kind: "unix" as const, path: path.join(root, "dead.sock") };
+        const liveOwnerSessionId = "live-owner-session";
+        const deadOwner = {
+          format: "supabase-stack-owner-v1" as const,
+          stackId,
+          endpoint: deadEndpoint,
+          ownerSessionId: "dead-owner-session",
+          leasePort: 45_001,
+          rpcRelease: STACK_RPC_RELEASE,
+        };
+        const liveOwner = {
+          ...deadOwner,
+          endpoint: liveEndpoint,
+          ownerSessionId: liveOwnerSessionId,
+        };
+        const ownerScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(ownerScope, Exit.void));
+        const liveStopCalls = yield* Ref.make(0);
+        yield* startControlServer({
+          endpoint: liveEndpoint,
+          stackId,
+          ownerSessionId: liveOwnerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+          rpcHandlers: {
+            status: () => Effect.succeed(runningStatus),
+            credentials: () => Effect.succeed(credentials),
+            start: () => Effect.succeed(runningStatus),
+            destroy: () => Effect.void,
+            logs: () => emptyLogs(),
+          },
+          maintenanceHandlers: {
+            probe: Effect.succeed({
+              ok: true,
+              op: "probe",
+              stackId,
+              ownerSessionId: liveOwnerSessionId,
+              rpcRelease: STACK_RPC_RELEASE,
+            }),
+            stop: Ref.update(liveStopCalls, (calls) => calls + 1).pipe(
+              Effect.andThen(Effect.succeed({ ok: true, op: "stop" } as const)),
+            ),
+          },
+          onShutdownReady: Scope.close(ownerScope, Exit.void),
+        }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+        const launchCalls = yield* Ref.make(0);
+        const stack = yield* makeTestHandle(stackId, {
+          resolveOwner: (launch) =>
+            launch
+              ? Ref.update(launchCalls, (calls) => calls + 1).pipe(
+                  Effect.as(Option.some({ owner: liveOwner, launched: true })),
+                )
+              : Effect.succeed(Option.some({ owner: deadOwner, launched: false })),
+        });
+        yield* stack.stop();
+        expect(yield* Ref.get(launchCalls)).toBe(1);
+        expect(yield* Ref.get(liveStopCalls)).toBe(1);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.live("preserves stop cleanup error identity through maintenance transport", () =>
     Effect.scoped(
       Effect.gen(function* () {
