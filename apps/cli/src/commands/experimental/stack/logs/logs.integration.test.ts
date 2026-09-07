@@ -123,6 +123,7 @@ function setup(opts: {
     mockLegacyCliSettings({ workdir: opts.root }),
     Layer.succeed(LegacyExperimentalStackApi, {
       createStack: () => Effect.die("must not create"),
+      listStacks: () => Effect.succeed([]),
       findStack: (query) =>
         opts.findFailure === undefined
           ? Effect.succeed(query.name === "missing" ? Option.none() : Option.some(descriptor))
