@@ -382,7 +382,7 @@ describe("experimental stack logs", () => {
         Effect.flip,
         Effect.provide(upgrade.layer),
       );
-      expect(busyFailure.suggestion).toContain("retry");
+      expect(busyFailure.suggestion).toContain("status to inspect ownership");
       expect(upgradeFailure.suggestion).toContain("compatible stack version");
     }).pipe(
       Effect.ensuring(

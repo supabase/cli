@@ -34,9 +34,14 @@ const logsError = (error: unknown): LegacyExperimentalStackLogsError => {
             reason: "lifecycle" as const,
             suggestion: "Run supabase experimental stack start before reading logs.",
           })),
-          Match.tag("StackOwnershipConflictError", "StackLifecycleConflictError", () => ({
+          Match.tag("StackOwnershipConflictError", () => ({
             reason: "lifecycle" as const,
-            suggestion: "The stack owner is busy or shutting down; retry shortly.",
+            suggestion:
+              "Run supabase experimental stack status to inspect ownership; retry if the stack is shutting down.",
+          })),
+          Match.tag("StackLifecycleConflictError", () => ({
+            reason: "lifecycle" as const,
+            suggestion: "The stack owner is shutting down; retry shortly.",
           })),
           Match.tag("StackUpgradeRequiredError", () => ({
             reason: "lifecycle" as const,
