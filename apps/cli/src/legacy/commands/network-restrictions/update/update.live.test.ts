@@ -1,3 +1,4 @@
+import { V1GetNetworkRestrictionsOutput } from "@supabase/api/effect";
 import { Schema } from "effect";
 import { expect } from "vitest";
 
@@ -18,6 +19,8 @@ type LiveRun = Awaited<ReturnType<LiveCli>>;
 // plus two proof polls that can each run 102s (a 60s deadline that still
 // finishes an in-flight 20s attempt, waits the 2s interval and runs one last
 // 20s attempt), 444s in all, on top of the workspace fixture's own 60s init.
+// The real bound this ceiling has to fit inside is the 20-minute Live E2E
+// step budget that every serially-run live file shares.
 // Once a test has timed out its fixtures are disposed, so a late restore
 // cannot take effect and the shared project stays locked down.
 const EXIT_TIMEOUT_MS = 60_000;
@@ -40,16 +43,9 @@ const TEST_CIDRS: AllowedCidrs = { v4: ["203.0.113.0/24"], v6: ["2001:db8::/32"]
 // defaults; ADR 0022 treats them as the platform's unconfigured state.
 const ALLOW_ALL_CIDRS: AllowedCidrs = { v4: ["0.0.0.0/0"], v6: ["::/0"] };
 
-const NetworkRestrictions = Schema.Struct({
-  config: Schema.Struct({
-    dbAllowedCidrs: Schema.optionalKey(Schema.Array(Schema.String)),
-    dbAllowedCidrsV6: Schema.optionalKey(Schema.Array(Schema.String)),
-  }),
-  status: Schema.Literals(["stored", "applied"]),
-});
-
 interface Posture {
   readonly cidrs: AllowedCidrs;
+  readonly configured: boolean;
   readonly applied: boolean;
 }
 
@@ -66,8 +62,9 @@ function describeAttempt(attempt: number, result: LiveRun): string {
   return `\nattempt ${attempt} (exit ${result.exitCode})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`;
 }
 
-// A family the platform leaves absent has nothing to restore, so it reads as
-// `[]` like an explicitly empty one.
+// An absent family reads as `[]` like an explicitly empty one; `configured`
+// records whether any family key was present, which is what separates a
+// never-configured project from one explicitly locked down to block-all.
 async function readPosture(
   cli: LiveCli,
   flags: ReadonlyArray<string>,
@@ -79,18 +76,22 @@ async function readPosture(
   });
   requireLiveSuccess(result, label);
   const payload = requireLiveJson(result, label);
-  if (!Schema.is(NetworkRestrictions)(payload)) {
+  if (!Schema.is(V1GetNetworkRestrictionsOutput)(payload)) {
     throw new Error(
       `${label}: unexpected network-restrictions get payload\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
     );
   }
+  const v4 = payload.config.dbAllowedCidrs;
+  const v6 = payload.config.dbAllowedCidrsV6;
   return {
-    cidrs: {
-      v4: payload.config.dbAllowedCidrs ?? [],
-      v6: payload.config.dbAllowedCidrsV6 ?? [],
-    },
+    cidrs: { v4: v4 ?? [], v6: v6 ?? [] },
+    configured: v4 !== undefined || v6 !== undefined,
     applied: payload.status === "applied",
   };
+}
+
+function sortedCidrs(cidrs: AllowedCidrs): AllowedCidrs {
+  return { v4: [...cidrs.v4].sort(), v6: [...cidrs.v6].sort() };
 }
 
 // get reports `status: "stored"` until a requested allowlist has propagated
@@ -104,12 +105,18 @@ function expectApplied(
   label: string,
 ): Promise<void> {
   return expect
-    .poll(() => readPosture(cli, flags, label, POLL_ATTEMPT_EXIT_TIMEOUT_MS), {
-      interval: PROOF_INTERVAL_MS,
-      timeout: PROOF_TIMEOUT_MS,
-      message: label,
-    })
-    .toEqual({ cidrs, applied: true });
+    .poll(
+      async () => {
+        const posture = await readPosture(cli, flags, label, POLL_ATTEMPT_EXIT_TIMEOUT_MS);
+        return { cidrs: sortedCidrs(posture.cidrs), applied: posture.applied };
+      },
+      {
+        interval: PROOF_INTERVAL_MS,
+        timeout: PROOF_TIMEOUT_MS,
+        message: label,
+      },
+    )
+    .toEqual({ cidrs: sortedCidrs(cidrs), applied: true });
 }
 
 test(
@@ -117,22 +124,20 @@ test(
   { timeout: LIVE_TIMEOUT_MS },
   async ({ cli, project }) => {
     const flags = experimentalProjectLiveFlags(project);
-    const captured = (
-      await readPosture(
-        cli,
-        flags,
-        "network-restrictions get capture for network-restrictions update",
-        EXIT_TIMEOUT_MS,
-      )
-    ).cidrs;
-    // Two empty allowlists (what an unconfigured project reads as) cannot be
-    // posted back: update sends both arrays and an empty one is restrict-all, so
-    // that baseline is restored as allow-all rather than leaving the shared
-    // project locked down for every later live test that reaches the database
-    // directly. Any other capture is restored as read, an empty family beside a
-    // populated one included.
-    const baselineCidrs: AllowedCidrs =
-      captured.v4.length === 0 && captured.v6.length === 0 ? ALLOW_ALL_CIDRS : captured;
+    const captured = await readPosture(
+      cli,
+      flags,
+      "network-restrictions get capture for network-restrictions update",
+      EXIT_TIMEOUT_MS,
+    );
+    // A never-configured project (both family keys absent) has no allowlist to
+    // post back, so that baseline is restored as allow-all rather than leaving
+    // the shared project locked down for every later live test that reaches
+    // the database directly. Any configured capture is restored as read — an
+    // explicitly empty (block-all) allowlist or an absent family beside a
+    // populated one included, since posting an empty family is restrict-all
+    // and therefore a faithful restore.
+    const baselineCidrs: AllowedCidrs = captured.configured ? captured.cidrs : ALLOW_ALL_CIDRS;
     let targetError: unknown;
     const cleanupErrors: Array<unknown> = [];
     try {
@@ -161,6 +166,9 @@ test(
         const restore = () =>
           cli(updateArgs(baselineCidrs, flags), { exitTimeoutMs: EXIT_TIMEOUT_MS });
         const first = await restore();
+        if (first.exitCode !== 0) {
+          console.warn("network-restrictions update restore retrying" + describeAttempt(1, first));
+        }
         const restored = first.exitCode === 0 ? first : await restore();
         if (restored.exitCode !== 0) {
           cleanupErrors.push(

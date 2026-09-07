@@ -131,9 +131,10 @@ export function requireLiveJson(
 ): unknown {
   try {
     return JSON.parse(result.stdout);
-  } catch {
+  } catch (error) {
     throw new Error(
       `${command} did not print JSON\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      { cause: error },
     );
   }
 }

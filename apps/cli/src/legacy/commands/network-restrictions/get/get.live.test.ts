@@ -1,3 +1,5 @@
+import { V1GetNetworkRestrictionsOutput } from "@supabase/api/effect";
+import { Schema } from "effect";
 import { expect } from "vitest";
 
 import {
@@ -6,6 +8,8 @@ import {
   test,
 } from "../../../../../tests/helpers/live.ts";
 
+// Sibling tests mutate the shared project's allowlist, so the golden path pins
+// the payload against the generated contract rather than a concrete config.
 test("reads the network restrictions of the target project", async ({ cli, project }) => {
   const result = await cli([
     "network-restrictions",
@@ -15,9 +19,9 @@ test("reads the network restrictions of the target project", async ({ cli, proje
     "json",
   ]);
   expect(result.exitCode, result.stderr).toBe(0);
-  expect(requireLiveJson(result, "network-restrictions get"), result.stdout).toMatchObject({
-    entitlement: expect.stringMatching(/^(?:allowed|disallowed)$/u),
-    config: expect.any(Object),
-    status: expect.stringMatching(/^(?:stored|applied)$/u),
-  });
+  const payload = requireLiveJson(result, "network-restrictions get");
+  expect(
+    Schema.is(V1GetNetworkRestrictionsOutput)(payload),
+    `unexpected network-restrictions get payload\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  ).toBe(true);
 });
