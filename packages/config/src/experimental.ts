@@ -78,11 +78,11 @@ export const experimental = Schema.Struct({
   pgdelta: Schema.optionalKey(
     Schema.Struct({
       enabled: Schema.Boolean.annotate({
-        default: false,
+        default: true,
         description:
-          "Use pg-delta as the schema diff engine for db diff / db pull / db remote commit. Set false to fall back to the legacy migra engine.",
+          "Use pg-delta as the schema diff engine for db diff / db pull / db remote commit (the default). Set false to fall back to the legacy migra engine.",
         tags,
-      }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+      }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(true))),
       declarative_schema_path: Schema.optionalKey(
         Schema.String.annotate({
           description: "Directory under supabase/ where declarative schema files are written.",

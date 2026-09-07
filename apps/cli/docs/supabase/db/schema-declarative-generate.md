@@ -8,4 +8,4 @@ The bundled pg-delta engine writes one directory per schema at the root of that 
 
 Emitted SQL uses the same default format as `db pull` (uppercase keywords, indent 2, width 180, column-aligned). Override with `[experimental.pgdelta] format_options`, or set `format_options = "null"` for raw statements.
 
-Requires `--experimental` flag or `[experimental.pgdelta] enabled = true` in config.
+pg-delta is on by default. The command is closed only when `[experimental.pgdelta] enabled = false` and `--experimental` is omitted.

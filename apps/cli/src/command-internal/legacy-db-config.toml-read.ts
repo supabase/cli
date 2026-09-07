@@ -44,14 +44,6 @@ type EnvLookup = (name: string) => string | undefined;
  */
 export interface LegacyDbTomlValues {
   readonly projectEnv: Readonly<Record<string, string>>;
-  /**
-   * Resolves a `SUPABASE_*` env var with Go's precedence: shell env (non-empty)
-   * wins, then the loaded project `.env*` files (non-empty), else undefined.
-   * Go writes project `.env` into the process env before viper's `AutomaticEnv`
-   * reads these, so handlers must consult both
-   * rather than `process.env` alone (e.g. `SUPABASE_EXPERIMENTAL_PG_DELTA`).
-   */
-  readonly envLookup: (name: string) => string | undefined;
   readonly apiSchemas: ReadonlyArray<string>;
   /** `[db] port`, default 54322 (`packages/config/src/db.ts`). */
   readonly port: number;
@@ -188,7 +180,7 @@ export interface LegacyBaselineTomlConfig {
 
 /** The `[experimental.pgdelta]` subtree. */
 export interface LegacyPgDeltaTomlConfig {
-  /** `[experimental.pgdelta] enabled`, default false. `IsPgDeltaEnabled`. */
+  /** `[experimental.pgdelta] enabled`, default true. `IsPgDeltaEnabled`. */
   readonly enabled: boolean;
   /**
    * `[experimental.pgdelta] declarative_schema_path`, resolved to a
@@ -1749,7 +1741,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // Go decodes this bool via `strconv.ParseBool` (mapstructure weakly typed), so `"1"`
   // counts as true and a malformed value (`SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=maybe`)
   // aborts the load. The env override wins (viper AutomaticEnv), then the TOML bool, then
-  // an `env(VAR)` string, defaulting to false when absent.
+  // an `env(VAR)` string, defaulting to true when absent: pg-delta is the default
+  // diff engine, and only an explicit `enabled = false` opts back into migra.
   let enabled: boolean;
   if (enabledEnv !== undefined) {
     // The AutomaticEnv override is decoded through `LoadEnvHook`, so an `env(VAR)`
@@ -1781,7 +1774,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     }
     enabled = parsed;
   } else {
-    enabled = false;
+    enabled = true;
   }
 
   const declarativeSchemaPathRaw = pgDeltaRaw?.["declarative_schema_path"];
@@ -2657,7 +2650,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
 
   const values: LegacyDbTomlValues = {
     projectEnv,
-    envLookup: envOverride,
     apiSchemas,
     port,
     shadowPort,

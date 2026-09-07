@@ -88,7 +88,6 @@ of this command's own target resolve, ahead of the differ container.
 | `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                                                                                                                                 | no        |
 | `SUPABASE_HOME`                                                                       | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                                                                           | no        |
 | `SUPABASE_SHADOW_CACHE`                                                               | shadow baseline cache; on by default, opt-out (`0`/`false`); the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes)                                 | no        |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta engine                                                                                                                                                                                               | no        |
 | `PGDELTA_DEBUG`                                                                       | pg-delta debug capture                                                                                                                                                                                              | no        |
 | `SUPABASE_SSL_DEBUG`                                                                  | migra SSL debug logging                                                                                                                                                                                             | no        |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                    | overrides the differ's / shadow's image registry (shell **or** project `.env`, applied for the run via `legacyApplyProjectEnv`, matching `db push`/`db pull`/`db dump`)                                             | no        |
@@ -97,10 +96,9 @@ of this command's own target resolve, ahead of the differ container.
 `SUPABASE_DB_HEALTH_TIMEOUT` all apply to `--use-pgadmin` too — its shadow is provisioned
 through the same primitives.
 
-`SUPABASE_EXPERIMENTAL_PG_DELTA` is **read, no effect** on the pgadmin path: the pg-delta
-engine-selection lookup (`legacyShouldUsePgDelta`) runs unconditionally, before the
-`--use-pgadmin` branch, but the pgadmin branch is chosen first and never consults the
-resulting `useDelta` value.
+The historical `SUPABASE_EXPERIMENTAL_PG_DELTA` opt-in env var is **no longer read**:
+pg-delta is the default engine, and the explicit `[experimental.pgdelta] enabled = false`
+config rollback is authoritative.
 
 `SUPABASE_INTERNAL_IMAGE_REGISTRY` applies to the differ's own image resolution too. The
 docker-run layer's resolver (`legacy-docker-run.layer.ts`) is built once, statically, with
@@ -179,9 +177,10 @@ transaction metadata.
 
 ## Notes / Delegation
 
-- `--use-migra` (default), `--use-pgadmin`, `--use-pg-schema`, `--use-pg-delta` are a
-  mutually-exclusive engine group; `--db-url` / `--linked` / `--local` are a
-  mutually-exclusive target group (default `--local`).
+- `--use-migra`, `--use-pgadmin`, `--use-pg-schema`, `--use-pg-delta` are a
+  mutually-exclusive engine group (pg-delta is the default when none is passed);
+  `--db-url` / `--linked` / `--local` are a mutually-exclusive target group
+  (default `--local`).
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
   command) overrides ONLY the linked-ref resolution `LegacyProjectRefResolver`
   performs (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) — unlike
@@ -302,7 +301,7 @@ Given that, the flag is now deprecated rather than ported:
 
 - A TS-only stderr deprecation warning is printed immediately before delegating
   (both text and machine `--output-format` modes — diagnostics stay stderr-only,
-  the CLI-1546 rule): `"--use-pg-schema" is deprecated. Use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.`
+  the CLI-1546 rule): `"--use-pg-schema" is deprecated. Use the default pg-delta engine or the migra engine (--use-migra) instead.`
   The warning text intentionally does not promise a removal timeline.
 - This is **additive** to (printed before) Go's own pre-existing "experimental"
   warning (`cmd/db.go:121`, unchanged): `--use-pg-schema flag is experimental and may not include all entities, such as views and grants.` The delegated child

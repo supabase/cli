@@ -5,25 +5,25 @@ export const legacySchemaPathsTransitionWarning =
   "WARNING: [db.migrations].schema_paths no longer changes the migrations baseline used by db diff or migration-style db pull. These commands always compare local migrations with the selected database. Use `supabase db schema declarative sync` to compare declarative schema files.\n";
 
 /**
- * Whether pg-delta is the active default engine. Mirrors `shouldUsePgDelta`:
- * `utils.IsPgDeltaEnabled() || usePgDelta || viper.GetBool("EXPERIMENTAL_PG_DELTA")`.
- * The three inputs are the resolved config flag (`[experimental.pgdelta].enabled`),
- * the command's `--use-pg-delta` flag, and the `SUPABASE_EXPERIMENTAL_PG_DELTA`
- * env var.
+ * Whether pg-delta is the active default engine. pg-delta is on unless the project
+ * explicitly rolls back with `[experimental.pgdelta] enabled = false`; the command's
+ * `--use-pg-delta` flag is a per-run opt-in that overrides that rollback. The historical
+ * `SUPABASE_EXPERIMENTAL_PG_DELTA` opt-in env var is intentionally not an input: now
+ * that pg-delta is the default it adds nothing when the config is on, and honoring a
+ * stale opt-in would silently defeat the documented config rollback.
  */
 export function legacyShouldUsePgDelta(inputs: {
   readonly configEnabled: boolean;
   readonly usePgDeltaFlag: boolean;
-  readonly envEnabled: boolean;
 }): boolean {
-  return inputs.configEnabled || inputs.usePgDeltaFlag || inputs.envEnabled;
+  return inputs.configEnabled || inputs.usePgDeltaFlag;
 }
 
 /**
  * Reports whether `db diff` should run in pg-delta mode. Mirrors Go's
  * `resolveDiffEngine`: an explicit `--use-migra`,
  * `--use-pgadmin`, or `--use-pg-schema` is an authoritative rollback that clears
- * pg-delta mode; `--use-migra` defaults to true so only an explicit pass
+ * pg-delta mode. `--use-migra` is off unless passed, so only an explicit pass
  * (`useMigraChanged`) counts as opting out.
  */
 export function legacyResolveDiffEngine(inputs: {
