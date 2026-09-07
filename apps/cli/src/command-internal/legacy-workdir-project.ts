@@ -83,7 +83,7 @@ export const legacyMissingProjectConfigMessageEffect = Effect.fnUntraced(functio
  * their own command-specific error type, matching the established pattern
  * for `LegacyWorkdirValidationError`.
  */
-export class LegacyWorkdirProjectMissingError extends Data.TaggedError(
+class LegacyWorkdirProjectMissingError extends Data.TaggedError(
   "LegacyWorkdirProjectMissingError",
 )<{
   readonly message: string;

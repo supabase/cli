@@ -1340,6 +1340,70 @@ describe("legacy start integration", () => {
         expect(child.spawned).toEqual([]);
       }).pipe(Effect.provide(layer));
     });
+
+    it.live(
+      "rejects an out-of-root auth.email.template content_path before any Docker work, even with auth disabled",
+      () => {
+        // `auth.enabled = false` skips `legacyResolveLocalConfigValues`'s own
+        // `readAuthEmailTemplateContent` gate, but Kong mounts every configured template
+        // unconditionally (`buildKongEmailTemplateMounts`, regardless of `auth.enabled`) — the
+        // eager pre-Docker containment pass added to `start.handler.ts` (CLI-2339) is what closes
+        // that gap, resolving+checking every template/enabled-notification `content_path` before
+        // `create` is ever spawned.
+        const { layer, child } = setup({
+          configContents:
+            'project_id = "demo"\n[auth]\nenabled = false\n[auth.email.template.invite]\ncontent_path = "/etc/hosts"\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            // The thrown message echoes the DECLARED content_path value (quoted), not the
+            // fully-canonicalized target — see `legacyResolveEmailTemplateContentPath`'s own doc
+            // comment for why (a deliberate recon-leak mitigation).
+            expect(serialized).toContain(
+              'Invalid config for auth.email.template.invite.content_path: \\"/etc/hosts\\" resolves outside the project root',
+            );
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "fails on a missing (but in-root) auth.email.template content_path before any Docker work, even with auth disabled",
+      () => {
+        // `auth.enabled = false` skips `legacy-local-config-values.ts`'s own gated
+        // `readAuthEmailTemplateContent` read entirely — this content_path resolves IN-ROOT
+        // (passes containment cleanly), so the only thing that can still catch a missing file
+        // here is the read-verification `resolveKongEmailTemplateMounts` added in `start.
+        // handler.ts` (CLI-2339's Kong-mount hardening pass). Without it, this would have
+        // reached `docker create` with a bind-mount source that doesn't exist on disk.
+        const { layer, workdir, child } = setup({
+          configContents:
+            'project_id = "demo"\n[auth]\nenabled = false\n[auth.email.template.invite]\ncontent_path = "./templates/missing.html"\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain(
+              "Invalid config for auth.email.template.invite.content_path:",
+            );
+            // Distinguishes this from the containment-rejection test above: this content_path
+            // never escapes the project root at all, so a regression back to "no read-
+            // verification" would have this test's exit succeed instead of fail.
+            expect(serialized).not.toContain("resolves outside the project root");
+          }
+          expect(existsSync(join(workdir, "templates", "missing.html"))).toBe(false);
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   describe("happy path", () => {

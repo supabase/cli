@@ -251,7 +251,7 @@ This rule is consistent with the repo-wide **Refactoring Policy** ("delete obsol
 
 ### Config validation has one home
 
-Config validation is implemented exactly once: `src/command-internal/legacy-config-validate.ts` (`legacyValidateResolvedConfig`). Both the db/migration loader (`legacy-db-config.toml-read.ts`) and the status/stop resolver (`legacy-local-config-values.ts`) build a `LegacyConfigValidationInput` from their own pipelines and call it — do not add per-command reimplementations of these checks. When a validation branch or message changes, change it there. `legacy-config-validate.parity.unit.test.ts` feeds the same broken configs through both real pipelines and asserts identical error strings; extend it when adding a branch both callers share.
+Config validation is implemented exactly once: `src/command-internal/legacy-config-validate.ts` (`legacyValidateResolvedConfig`). Both the db/migration loader (`legacy-db-config.toml-read.ts`) and the status/stop resolver (`legacy-local-config-values.ts`) build a `LegacyConfigValidationInput` from their own pipelines and call it — do not add per-command reimplementations of these checks. When a validation branch or message changes, change it there. `legacy-config-validate.parity.unit.test.ts` feeds the same broken configs through both real pipelines and asserts identical error strings; extend it when adding a branch both callers share. `content_path` project-root containment (absolute paths, `..` escapes, and in-root symlinks pointing outside all rejected) is part of this same home, enforced inside `legacyResolveEmailTemplateContentPath` — any new consumer of `content_path` resolution gets containment for free and must not re-derive it locally.
 
 ---
 
@@ -383,7 +383,7 @@ export class LegacyThingMissingError extends Data.TaggedError("LegacyThingMissin
 - **An instance-dependent getter must stay valid when its fields are absent** — the drift guard evaluates it against a field-less probe.
 - **A plain `Error` subclass (no `_tag`) also declares its fingerprint identifier**: `static readonly [ErrorActionabilityFingerprintId] = "<ExportName>"`, matching the export name exactly. Tagged errors skip this — their fingerprint comes from the tag. The static identifier is what keeps `error:` fingerprints stable in minified release builds, where `constructor.name` is renamed.
 
-**Errors defined outside `apps/cli/src`** (`@supabase/stack`, `@supabase/config`, `@supabase/process-compose`, `@supabase/api`, `effect`) cannot carry a declaration. Add a structural adapter keyed by `_tag` to `externalActionabilityByTag` in that same module, branching on the producer's typed fields.
+**Errors defined outside `apps/cli/src`** (`@supabase/stack`, `@supabase/config`, `@supabase/api`, `effect`) cannot carry a declaration. Add a structural adapter keyed by `_tag` to `externalActionabilityByTag` in that same module, branching on the producer's typed fields.
 
 `error-actionability-coverage.unit.test.ts` enforces this. It scans every `TaggedError("Tag")`, every `*Error("Tag")` factory, and every `class X extends Error` under `apps/cli/src`, and fails when a class is unexported, has no own declaration, or is untagged without its matching static fingerprint identifier. A failure there is the guard working: classify the new error rather than loosening the guard, because `unknown` in production telemetry must mean a genuinely unforeseen failure, not one nobody categorized.
 

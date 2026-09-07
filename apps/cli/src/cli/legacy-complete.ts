@@ -230,8 +230,9 @@ function legacyFlagDescriptorFromParam(param: Param.AnyFlag): LegacyFlagDescript
  * flag-name candidates: `InheritedFlags().VisitAll` (every ancestor's global
  * and shared flags, as ONE pflag-alphabetically-sorted block), followed by
  * `NonInheritedFlags().VisitAll` (the resolved command's own global flags,
- * its own `--help`, root's own `--version`, and its own local flags, as a
- * SECOND, separately-sorted block) — pflag's `FlagSet.VisitAll` walks
+ * its own `--help`, the `--log-level`/`--wizard`/`--completions` built-ins,
+ * root's own `--version`, and its own local flags, as a SECOND,
+ * separately-sorted block) — pflag's `FlagSet.VisitAll` walks
  * `sortedFormalFlags`, which sorts strictly by each flag's canonical long
  * name: `db dump -` lists `--agent`, `--create-ticket`, `--debug`, ...
  * alphabetically, THEN a second alphabetical run starting `--data-only`,
@@ -255,18 +256,8 @@ export function legacyCollectInScopeFlags(
   const finalCommand = commandChain[commandChain.length - 1] ?? root;
   const ancestors = commandChain.slice(0, -1);
 
-  // `GlobalFlag.Completions`/`GlobalFlag.LogLevel` are TS-only framework
-  // additions with no Go/cobra equivalent. They are normally only injected
-  // via `GlobalFlag.BuiltIns` at parse time (never stored on a command's own
-  // `.globalFlags`), so this filter is a defensive guard rather than
-  // something that changes today's output — kept explicit so it stays true
-  // if that ever changes.
   const globalFlagParamsOf = (command: Command.Command.Any): ReadonlyArray<Param.AnyFlag> =>
-    legacyInternalCommand(command)
-      .globalFlags.filter(
-        (entry) => entry !== GlobalFlag.Completions && entry !== GlobalFlag.LogLevel,
-      )
-      .map((entry) => entry.flag);
+    legacyInternalCommand(command).globalFlags.map((entry) => entry.flag);
 
   const inheritedParams: Array<Param.AnyFlag> = [
     ...ancestors.flatMap(globalFlagParamsOf),
@@ -275,6 +266,16 @@ export function legacyCollectInScopeFlags(
   const ownParams: Array<Param.AnyFlag> = [
     ...globalFlagParamsOf(finalCommand),
     GlobalFlag.Help.flag,
+    // The built-ins `--log-level`, `--wizard`, and `--completions` are part
+    // of every resolved command's real flag set (`GlobalFlag.BuiltIns`, shown
+    // in `--help`), so the strict flag walk must resolve them or a typed
+    // `--log-level error` poisons the whole line like an unknown flag
+    // (issue #6482). Unlike `--help`/root `--version`, whose short-circuit
+    // below ends the completion request, these three keep the line
+    // completing normally.
+    GlobalFlag.LogLevel.flag,
+    GlobalFlag.Wizard.flag,
+    GlobalFlag.Completions.flag,
     // Cobra's `InitDefaultVersionFlag` only registers `--version`, and only on
     // the root command (gated on `c.Version != ""`, and non-persistent) — it
     // is never inherited by subcommands the way `--help` is.

@@ -15,9 +15,9 @@ import { legacyPgDeltaNextShadowLayer } from "./legacy-pgdelta-next-shadow.layer
 import { legacyDeclarativeSeamLayer } from "./legacy-pgdelta.seam.layer.ts";
 
 /** The in-process pg-delta engine — the only implementation. */
-export const legacyPgDeltaEngineLayer = legacyPgDeltaNextEngineLayer;
+const legacyPgDeltaEngineLayer = legacyPgDeltaNextEngineLayer;
 
-export const legacyPgDeltaCliSettingsRuntimeLayer = legacyCliSettingsLayer.pipe(
+const legacyPgDeltaCliSettingsRuntimeLayer = legacyCliSettingsLayer.pipe(
   Layer.provide(legacyDebugLoggerLayer),
 );
 

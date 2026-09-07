@@ -39,9 +39,7 @@ const config = {
 
 export type LegacyConfigPullFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// Exported so integration tests can drive the exact wiring
-// `Command.withHandler` uses below (same precedent as `legacyConfigDiffHandler`).
-export const legacyConfigPullHandler = (flags: LegacyConfigPullFlags) =>
+const legacyConfigPullHandler = (flags: LegacyConfigPullFlags) =>
   legacyConfigPull(flags).pipe(
     // `--project-ref` accepts branch names here (CLI-2167 vocabulary), so its
     // value is only safe to log verbatim when it is actually ref-shaped — a

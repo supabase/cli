@@ -17,7 +17,7 @@ import {
   defaultPublishableKey,
   defaultSecretKey,
   edgeRuntimeNofileUlimit,
-} from "@supabase/stack/effect";
+} from "../stack-constants.ts";
 import {
   createHmac,
   createPrivateKey,

@@ -27,9 +27,7 @@ type Spawner = ChildProcessSpawner["Service"];
  * their string `_tag`, never by importing the classes themselves. The classes
  * are exported so the exhaustive telemetry guard can verify their declarations.
  */
-export class LegacyDockerRemoveAllListError extends Data.TaggedError(
-  "LegacyDockerRemoveAllListError",
-)<{
+class LegacyDockerRemoveAllListError extends Data.TaggedError("LegacyDockerRemoveAllListError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -37,9 +35,7 @@ export class LegacyDockerRemoveAllListError extends Data.TaggedError(
   }
 }
 
-export class LegacyDockerRemoveAllStopError extends Data.TaggedError(
-  "LegacyDockerRemoveAllStopError",
-)<{
+class LegacyDockerRemoveAllStopError extends Data.TaggedError("LegacyDockerRemoveAllStopError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -47,7 +43,7 @@ export class LegacyDockerRemoveAllStopError extends Data.TaggedError(
   }
 }
 
-export class LegacyDockerRemoveAllContainerPruneError extends Data.TaggedError(
+class LegacyDockerRemoveAllContainerPruneError extends Data.TaggedError(
   "LegacyDockerRemoveAllContainerPruneError",
 )<{
   readonly message: string;
@@ -57,7 +53,7 @@ export class LegacyDockerRemoveAllContainerPruneError extends Data.TaggedError(
   }
 }
 
-export class LegacyDockerRemoveAllVolumePruneError extends Data.TaggedError(
+class LegacyDockerRemoveAllVolumePruneError extends Data.TaggedError(
   "LegacyDockerRemoveAllVolumePruneError",
 )<{
   readonly message: string;
@@ -67,7 +63,7 @@ export class LegacyDockerRemoveAllVolumePruneError extends Data.TaggedError(
   }
 }
 
-export class LegacyDockerRemoveAllNetworkPruneError extends Data.TaggedError(
+class LegacyDockerRemoveAllNetworkPruneError extends Data.TaggedError(
   "LegacyDockerRemoveAllNetworkPruneError",
 )<{
   readonly message: string;

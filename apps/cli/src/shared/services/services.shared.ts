@@ -227,7 +227,7 @@ export interface ServiceFetchConfig {
 }
 
 /** @public */
-export class ServiceVersionNotFoundError extends Data.TaggedError("ServiceVersionNotFoundError")<{
+class ServiceVersionNotFoundError extends Data.TaggedError("ServiceVersionNotFoundError")<{
   readonly service: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

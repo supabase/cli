@@ -50,7 +50,6 @@
  */
 
 import * as nodePath from "node:path";
-import { legacyResolveNotificationContentPath } from "../../../command-internal/legacy-config-validate.ts";
 
 import type { LegacyStartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
 import { legacyEnvOrDefault } from "../lib/legacy-env-or-default.ts";
@@ -135,41 +134,44 @@ export interface LegacyKongEmailTemplateMount {
    * per-mount path.
    */
   readonly id: string;
-  /** `tmpl.ContentPath` — empty means "not configured" (no bind emitted). */
-  readonly contentPath: string;
   /**
-   * Notification mounts resolve through
-   * `legacyResolveNotificationContentPath` so the bind targets the same file
-   * config validation accepted (including the legacy `supabase/`-relative
-   * fallback); template mounts keep plain workdir resolution.
+   * Absolute HOST path, already resolved, containment-checked, AND
+   * read-verified by the caller (`start.handler.ts`'s
+   * `resolveKongEmailTemplateMounts`, via `legacyResolveEmailTemplateContentPath`
+   * plus a discarded `readFileSync`) — never a raw, unresolved
+   * `content_path`. There is no "not configured" sentinel here: the caller
+   * omits an entry entirely instead of including one with an empty path.
+   */
+  readonly resolvedPath: string;
+  /**
+   * `true` for a mount derived from an ENABLED `auth.email.notification.*`
+   * entry (vs a `auth.email.template.*` entry) — caller-side bookkeeping
+   * only; this module no longer branches on it, since resolution (including
+   * the notification-specific legacy `supabase/`-relative fallback) already
+   * happened upstream, once, before `resolvedPath` was set.
    */
   readonly notification?: boolean;
 }
 
 /**
- * Resolves `contentPath` to an absolute HOST path (relative to the process's
- * own working directory, the same project-root base used while validating
- * `content_path`), joins it onto the fixed in-container email-template
- * directory as `<id><ext-of-hostPath>` (POSIX — the container is always
- * Linux regardless of the host OS, hence `nodePath.posix.join`, not the
- * platform-dependent `nodePath.join`), and formats the `rw` bind. Returns
- * `undefined` for an empty `contentPath` (no bind appended).
+ * Formats one email-template bind mount: joins `mount.resolvedPath` onto the
+ * fixed in-container email-template directory as `<id><ext-of-resolvedPath>`
+ * (POSIX — the container is always Linux regardless of the host OS, hence
+ * `nodePath.posix.join`, not the platform-dependent `nodePath.join`), and
+ * formats the `rw` bind.
+ *
+ * A pure formatter over an already-validated path — it makes no containment
+ * or existence claims of its own. `start.handler.ts` resolves, confines to
+ * the project root, and read-verifies every mount's `resolvedPath` exactly
+ * once, before any Docker work runs (see
+ * `LegacyKongEmailTemplateMount.resolvedPath`'s doc comment).
  */
-export function legacyBuildKongEmailTemplateBind(
-  mount: LegacyKongEmailTemplateMount,
-  workdir: string,
-): string | undefined {
-  if (mount.contentPath.length === 0) return undefined;
-  const hostPath = mount.notification
-    ? legacyResolveNotificationContentPath(workdir, mount.contentPath)
-    : nodePath.isAbsolute(mount.contentPath)
-      ? mount.contentPath
-      : nodePath.resolve(workdir, mount.contentPath);
+export function legacyBuildKongEmailTemplateBind(mount: LegacyKongEmailTemplateMount): string {
   const dockerPath = nodePath.posix.join(
     LEGACY_KONG_NGINX_EMAIL_TEMPLATE_DIR,
-    `${mount.id}${nodePath.extname(hostPath)}`,
+    `${mount.id}${nodePath.extname(mount.resolvedPath)}`,
   );
-  return `${hostPath}:${dockerPath}:rw`;
+  return `${mount.resolvedPath}:${dockerPath}:rw`;
 }
 
 const LEGACY_KONG_ENTRYPOINT_HEAD =
@@ -250,11 +252,6 @@ export interface LegacyKongContainerSpecInput {
    */
   readonly nginxWorkerProcesses: string;
   /**
-   * `LegacyCliSettings.workdir` — used to resolve any relative
-   * {@link emailTemplateMounts} `contentPath` to an absolute host path.
-   */
-  readonly workdir: string;
-  /**
    * Every `config.auth.email.template.*`/enabled
    * `config.auth.email.notification.*` entry the caller has already
    * gathered — see {@link LegacyKongEmailTemplateMount}'s doc comment for
@@ -288,9 +285,9 @@ export function legacyBuildKongContainerSpec(
     queryToken: legacyBuildKongQueryToken(input.apiKeys),
   });
 
-  const binds = (input.emailTemplateMounts ?? [])
-    .map((mount) => legacyBuildKongEmailTemplateBind(mount, input.workdir))
-    .filter((bind): bind is string => bind !== undefined);
+  const binds = (input.emailTemplateMounts ?? []).map((mount) =>
+    legacyBuildKongEmailTemplateBind(mount),
+  );
 
   const dockerPort = input.apiTlsEnabled ? 8443 : 8000;
 

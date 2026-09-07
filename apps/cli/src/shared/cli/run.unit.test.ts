@@ -39,6 +39,17 @@ describe("extractCommandPath", () => {
     ).toEqual(["functions", "serve"]);
   });
 
+  it("skips the built-in --log-level flag and its value", () => {
+    expect(extractCommandPath(["--log-level", "error", "functions", "serve"])).toEqual([
+      "functions",
+      "serve",
+    ]);
+  });
+
+  it("skips the built-in --completions flag and its shell value", () => {
+    expect(extractCommandPath(["--completions", "bash", "--version"])).toEqual([]);
+  });
+
   it("treats --flag=value as a single token", () => {
     expect(extractCommandPath(["--output-format=json", "functions", "serve"])).toEqual([
       "functions",
@@ -525,6 +536,10 @@ describe("hasRootVersionFlag", () => {
     [["--profile", "-v"], false],
     [["--profile=x", "-v"], false],
     [["-o", "-v"], false],
+    // `--completions` consumes its shell value, so the root `--version`
+    // behind it stays a version request (issue #6482 built-in registration).
+    [["--completions", "bash", "--version"], true],
+    [["--completions", "--version"], false],
     [["db", "reset", "--version", "20240101000000"], false],
     [["migration", "squash", "--version", "x"], false],
     [["branches", "-v"], false],
@@ -532,5 +547,9 @@ describe("hasRootVersionFlag", () => {
     [[], false],
   ])("%j -> %s", (args, expected) => {
     expect(hasRootVersionFlag(args as ReadonlyArray<string>)).toBe(expected);
+  });
+
+  it("hasRootHelpOrVersionFlag sees the root --version behind --completions and its value", () => {
+    expect(hasRootHelpOrVersionFlag(["--completions", "bash", "--version"])).toBe(true);
   });
 });

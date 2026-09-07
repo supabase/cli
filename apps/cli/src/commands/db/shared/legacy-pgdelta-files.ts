@@ -13,7 +13,7 @@ import type {
 
 const EXPORT_MANIFEST_FILE = ".pgdelta-export.json";
 
-export class LegacyPgDeltaFilesError extends Data.TaggedError("LegacyPgDeltaFilesError")<{
+class LegacyPgDeltaFilesError extends Data.TaggedError("LegacyPgDeltaFilesError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

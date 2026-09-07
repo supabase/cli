@@ -137,6 +137,23 @@ export async function removeStorageLiveObject(
   }
 }
 
+/** Exact cleanup for branches live tests by name or ref; deleting an already-removed branch is tolerated. */
+export async function removeLiveBranch(
+  cli: LiveFixtures["cli"],
+  project: LiveProject,
+  branch: string,
+): Promise<void> {
+  const removed = await cli(["branches", "delete", branch, "--project-ref", project.ref, "--yes"]);
+  if (
+    removed.exitCode !== 0 &&
+    !/not found|does not exist|status 404\b/i.test(`${removed.stdout}\n${removed.stderr}`)
+  ) {
+    throw new Error(
+      `branches delete cleanup for ${branch} failed (exit ${removed.exitCode})\n${removed.stdout}\n${removed.stderr}`,
+    );
+  }
+}
+
 /** Flags for experimental-gated live tests that address the shared project by
  * ref rather than linking it (contrast `storageLiveFlags`). */
 export function experimentalProjectLiveFlags(project: LiveProject): ReadonlyArray<string> {
@@ -216,6 +233,50 @@ export async function expectPostgresConfigLiveOverride(
   };
   if (Object.is(await read(), expected)) return;
   await expect.poll(read, { interval: 2_000, timeout: 60_000, message: label }).toBe(expected);
+}
+
+/**
+ * Waits until `branches list` shows no non-default branch on the live project.
+ * `branches delete` returns before the platform finishes tearing the branch
+ * down, and `branches disable` is refused ("Please delete all non-default
+ * branches before disabling branching.") while any non-default branch still
+ * exists, so a caller that needs an empty branching setup does one fail-fast
+ * read and then polls the list (2s apart, 120s deadline, each attempt bounded).
+ */
+export async function awaitLiveBranchesRemoved(
+  cli: LiveFixtures["cli"],
+  project: LiveProject,
+): Promise<void> {
+  const label = "branches list while awaiting branch removal";
+  const read = async (): Promise<ReadonlyArray<string>> => {
+    const listed = await cli(
+      ["branches", "list", "--output", "json", "--project-ref", project.ref],
+      { exitTimeoutMs: 20_000 },
+    );
+    requireCliSuccess(listed, label);
+    let branches: unknown;
+    try {
+      branches = JSON.parse(listed.stdout);
+    } catch {
+      branches = undefined;
+    }
+    if (!Array.isArray(branches)) {
+      throw new Error(
+        `${label}: unexpected branches list payload\nstdout:\n${listed.stdout}\nstderr:\n${listed.stderr}`,
+      );
+    }
+    return branches
+      .filter((branch: { is_default: boolean }) => !branch.is_default)
+      .map((branch: { name: string }) => branch.name);
+  };
+  if ((await read()).length === 0) return;
+  await expect
+    .poll(read, {
+      interval: 2_000,
+      timeout: 120_000,
+      message: "non-default preview branches still exist",
+    })
+    .toEqual([]);
 }
 
 /**
