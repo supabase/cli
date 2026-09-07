@@ -3,7 +3,7 @@
  */
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -23,11 +23,16 @@ const emptyEmail = {
 
 describe("legacyLoadAuthEmailContent", () => {
   let workdir = "";
+  let outsideDir = "";
 
   afterEach(() => {
     if (workdir.length > 0) {
       rmSync(workdir, { recursive: true, force: true });
       workdir = "";
+    }
+    if (outsideDir.length > 0) {
+      rmSync(outsideDir, { recursive: true, force: true });
+      outsideDir = "";
     }
   });
 
@@ -36,6 +41,17 @@ describe("legacyLoadAuthEmailContent", () => {
     const supabaseDir = join(workdir, "supabase");
     mkdirSync(supabaseDir, { recursive: true });
     return { cwd: workdir, supabaseDir };
+  }
+
+  /**
+   * Writes a real file outside `cwd`, in a sibling tmpdir, so a containment
+   * test proves the escape check fires rather than a missing-file error.
+   */
+  function setupOutsideFile(): string {
+    outsideDir = mkdtempSync(join(tmpdir(), "auth-email-content-outside-"));
+    const outsideFile = join(outsideDir, "secret.html");
+    writeFileSync(outsideFile, "<p>Outside</p>");
+    return outsideFile;
   }
 
   it("loads templates and notifications from the same project-root base", () => {
@@ -175,5 +191,109 @@ describe("legacyLoadAuthEmailContent", () => {
         },
       }),
     ).toThrow(/^Invalid config for auth\.email\.template\.invite\.content_path:/);
+  });
+
+  it("rejects an absolute template content_path outside the project root", () => {
+    const { cwd } = setup();
+    const outsideFile = setupOutsideFile();
+
+    expect(() =>
+      legacyLoadAuthEmailContent(cwd, {
+        ...emptyEmail,
+        template: {
+          invite: {
+            subject: "You are invited",
+            content_path: outsideFile,
+          },
+        },
+      }),
+    ).toThrow(
+      /^Invalid config for auth\.email\.template\.invite\.content_path: resolves outside the project root$/,
+    );
+  });
+
+  it("rejects an absolute notification content_path outside the project root", () => {
+    const { cwd } = setup();
+    const outsideFile = setupOutsideFile();
+
+    expect(() =>
+      legacyLoadAuthEmailContent(cwd, {
+        ...emptyEmail,
+        notification: {
+          password_changed: {
+            enabled: true,
+            subject: "Password changed",
+            content_path: outsideFile,
+          },
+        },
+      }),
+    ).toThrow(
+      /^Invalid config for auth\.email\.notification\.password_changed\.content_path: resolves outside the project root$/,
+    );
+  });
+
+  it("rejects a relative template content_path that escapes the project root via ..", () => {
+    const { cwd } = setup();
+    const outsideFile = setupOutsideFile();
+    const escapePath = relative(cwd, outsideFile);
+
+    expect(() =>
+      legacyLoadAuthEmailContent(cwd, {
+        ...emptyEmail,
+        template: {
+          invite: {
+            subject: "You are invited",
+            content_path: escapePath,
+          },
+        },
+      }),
+    ).toThrow(
+      /^Invalid config for auth\.email\.template\.invite\.content_path: resolves outside the project root$/,
+    );
+  });
+
+  it("rejects a relative notification content_path that escapes the project root via ..", () => {
+    const { cwd } = setup();
+    const outsideFile = setupOutsideFile();
+    const escapePath = relative(cwd, outsideFile);
+
+    expect(() =>
+      legacyLoadAuthEmailContent(cwd, {
+        ...emptyEmail,
+        notification: {
+          password_changed: {
+            enabled: true,
+            subject: "Password changed",
+            content_path: escapePath,
+          },
+        },
+      }),
+    ).toThrow(
+      /^Invalid config for auth\.email\.notification\.password_changed\.content_path: resolves outside the project root$/,
+    );
+  });
+
+  it("does not raise the containment error for a template content_path resolving to exactly the project root", () => {
+    const { cwd } = setup();
+
+    let thrown: unknown;
+    try {
+      legacyLoadAuthEmailContent(cwd, {
+        ...emptyEmail,
+        template: {
+          invite: {
+            subject: "You are invited",
+            content_path: ".",
+          },
+        },
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    expect(message).not.toMatch(/resolves outside the project root/);
+    expect(message).toMatch(/^Invalid config for auth\.email\.template\.invite\.content_path:/);
   });
 });
