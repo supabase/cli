@@ -46,10 +46,13 @@ const stopError = (error: unknown): LegacyExperimentalStackStopError => {
           ),
           Match.tag(
             "InvalidStackConfigError",
+            "InvalidStackIdentityError",
+            "StackStateFormatUnsupportedError",
             "InvalidProjectRootError",
             "StackStateInvalidError",
             () => ({ reason: "invalid-config" as const }),
           ),
+          Match.tag("StackUpgradeRequiredError", () => ({ reason: "lifecycle" as const })),
           Match.orElse(() => ({ reason: "unknown" as const })),
         );
   return new LegacyExperimentalStackStopError({
@@ -59,7 +62,7 @@ const stopError = (error: unknown): LegacyExperimentalStackStopError => {
   });
 };
 
-const stoppedPayload = (id: StackDescriptor["id"]) => ({ id, lifecycle: "stopped" });
+const stoppedPayload = (id: StackDescriptor["id"]) => ({ found: true, id, lifecycle: "stopped" });
 
 export const legacyExperimentalStackStop = Effect.fn("legacy.experimental.stack.stop")(function* (
   flags: LegacyExperimentalStackStopFlags,
@@ -113,7 +116,7 @@ export const legacyExperimentalStackStop = Effect.fn("legacy.experimental.stack.
   const stopping = yield* output.task(`Stopping stack ${target.id}...`);
   yield* stack.stop().pipe(
     Effect.tapError((error) => stopping.fail(error.message)),
-    Effect.tap(() => stopping.succeed("Stack stopped.")),
+    Effect.tap(() => stopping.clear()),
     Effect.mapError(stopError),
   );
   if (output.format === "text") yield* output.raw(`Stack ${target.id} stopped.\n`);

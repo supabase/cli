@@ -4,7 +4,10 @@ import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-c
 import { legacyExperimentalStackStop } from "./stop.handler.ts";
 
 const config = {
-  stack: Flag.string("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
+  stack: Flag.string("stack").pipe(
+    Flag.withDescription("Stop the stack with this name (defaults to the current project stack)."),
+    Flag.optional,
+  ),
   stackId: Flag.string("stack-id").pipe(
     Flag.withDescription("Stop an existing stack by id."),
     Flag.optional,
@@ -14,6 +17,12 @@ const config = {
 export const legacyExperimentalStackStopCommand = Command.make("stop", config).pipe(
   Command.withDescription("Stop a managed local Supabase stack while preserving its data."),
   Command.withShortDescription("Stop a managed local stack"),
+  Command.withExamples([
+    {
+      command: "supabase experimental stack stop --stack feature-a",
+      description: "Stop the existing feature-a stack",
+    },
+  ]),
   Command.withHandler((flags) =>
     legacyExperimentalStackStop(flags).pipe(
       withLegacyCommandInstrumentation({ flags, config }),

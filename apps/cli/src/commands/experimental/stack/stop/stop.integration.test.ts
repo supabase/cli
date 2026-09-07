@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Stream } from "effect";
-import { StackIdSchema, StackStateInvalidError } from "@supabase/stack/effect";
+import { StackIdSchema, StackNotFoundError, StackStateInvalidError } from "@supabase/stack/effect";
 import type { EffectStack, StackStatus, StackStopError } from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { mockLegacyCliSettings } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -41,13 +41,14 @@ function setup(opts: {
   root: string;
   found?: { id: string; name?: string };
   stop?: () => Effect.Effect<void, StackStopError>;
+  openFailure?: StackNotFoundError;
 }) {
   const out = mockOutput();
   const state = {
     findInputs: [] as Array<{ projectRoot: string; name?: string }>,
     openedIds: [] as string[],
     stopCalls: 0,
-    retainedRows: ["retained-row"],
+    destroyCalled: false,
   };
   const id = opts.found?.id ?? "a".repeat(64);
   const stack = {
@@ -62,7 +63,10 @@ function setup(opts: {
         Effect.sync(() => {
           state.stopCalls += 1;
         })),
-    destroy: () => Effect.die("must not destroy"),
+    destroy: () =>
+      Effect.sync(() => {
+        state.destroyCalled = true;
+      }),
     logs: () => Effect.die("unused"),
     followLogs: () => Stream.empty,
   } satisfies EffectStack;
@@ -86,11 +90,13 @@ function setup(opts: {
           state.findInputs.push(input);
           return descriptor === undefined ? Option.none() : Option.some(descriptor);
         }),
-      openStack: (stackId) =>
-        Effect.sync(() => {
+      openStack: (stackId) => {
+        if (opts.openFailure !== undefined) return Effect.fail(opts.openFailure);
+        return Effect.sync(() => {
           state.openedIds.push(stackId);
           return stack;
-        }),
+        });
+      },
       inspectStack: () => Effect.die("must not inspect"),
     }),
     BunServices.layer,
@@ -111,7 +117,6 @@ describe("experimental stack stop", () => {
       expect(setupResult.state.openedIds).toEqual(["a".repeat(64)]);
       expect(setupResult.state.stopCalls).toBe(1);
       expect(setupResult.out.stdoutText).toContain("stopped");
-      expect(setupResult.out.messages.some((message) => message.type === "success")).toBe(true);
     }).pipe(
       Effect.provide(setupResult.layer),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
@@ -130,16 +135,52 @@ describe("experimental stack stop", () => {
     }).pipe(Effect.provide(setupResult.layer));
   });
 
-  it.effect("stops an already stopped stack repeatedly while retaining its data", () => {
+  it.effect("stops an already stopped stack repeatedly without destroying data", () => {
     const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-repeat-"));
     const setupResult = setup({ root, found: { id: "d".repeat(64) } });
     return Effect.gen(function* () {
       yield* legacyExperimentalStackStop(flags());
       yield* legacyExperimentalStackStop(flags());
       expect(setupResult.state.stopCalls).toBe(2);
-      expect(setupResult.state.retainedRows).toEqual(["retained-row"]);
+      expect(setupResult.state.destroyCalled).toBe(false);
     }).pipe(
       Effect.provide(setupResult.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("classifies an addressed missing stack as actionable flags", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-open-missing-"));
+    const setupResult = setup({
+      root,
+      found: { id: "e".repeat(64) },
+      openFailure: new StackNotFoundError({ message: "Stack state was not found" }),
+    });
+    return Effect.gen(function* () {
+      const failure = yield* legacyExperimentalStackStop(
+        flags({ stackId: Option.some("e".repeat(64)) }),
+      ).pipe(Effect.flip);
+      expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
+      expect(setupResult.state.stopCalls).toBe(0);
+    }).pipe(
+      Effect.provide(setupResult.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("emits a self-describing JSON stopped result", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-json-"));
+    const setupResult = setup({ root, found: { id: "f".repeat(64) } });
+    const output = mockOutput({ format: "json" });
+    return Effect.gen(function* () {
+      yield* legacyExperimentalStackStop(flags());
+      expect(output.messages.find((message) => message.type === "success")?.data).toEqual({
+        found: true,
+        id: "f".repeat(64),
+        lifecycle: "stopped",
+      });
+    }).pipe(
+      Effect.provide(Layer.mergeAll(setupResult.layer, output.layer)),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });
