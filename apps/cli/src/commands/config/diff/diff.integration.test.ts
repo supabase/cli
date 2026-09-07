@@ -13,6 +13,7 @@ import {
 import { legacyV2ProjectConfigResponse } from "../../../../tests/helpers/legacy-config-fixtures.ts";
 import {
   buildLegacyTestRuntime,
+  LEGACY_DEFAULT_API_URL,
   LEGACY_VALID_REF,
   legacyJsonResponse,
   legacyTransportFailure,
@@ -691,20 +692,24 @@ describe("legacy config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a 404 on the config read names the sanitized ref and suggests projects list", () => {
-    const { layer } = setup({
-      toml: 'project_id = "test"\n',
-      v2: { status: 404, body: { message: "not found" } },
-    });
-    return Effect.gen(function* () {
-      const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("LegacyConfigDiffReadStatusError");
-      expect(rendered).toContain(LEGACY_VALID_REF);
-      expect(rendered).toContain("supabase projects list");
-    }).pipe(Effect.provide(layer));
-  });
+  it.live(
+    "a 404 on the config read names the sanitized ref, suggests projects list, and hedges the api host",
+    () => {
+      const { layer } = setup({
+        toml: 'project_id = "test"\n',
+        v2: { status: 404, body: { message: "not found" } },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyConfigDiffReadStatusError");
+        expect(rendered).toContain(`Could not read configuration for project ${LEGACY_VALID_REF}`);
+        expect(rendered).toContain("supabase projects list");
+        expect(rendered).toContain(LEGACY_DEFAULT_API_URL);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("other config-read statuses keep the generic unexpected-status message", () => {
     const { layer } = setup({

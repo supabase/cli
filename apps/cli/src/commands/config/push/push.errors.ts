@@ -42,7 +42,7 @@ interface StatusErrorArgs {
   readonly message: string;
 }
 
-/** TOML parse failure (rewraps the packages/config parse error). Aborts before any network call. */
+/** Local config file missing or unparseable. Aborts before any network call. */
 export class LegacyConfigPushLoadConfigError extends Data.TaggedError(
   "LegacyConfigPushLoadConfigError",
 )<MessageOnlyArgs> {

@@ -1,6 +1,5 @@
 import { dirname } from "node:path";
 import { fromApiProjectConfig, fromConfigDocument } from "@supabase/config";
-import { loadCliConfig } from "@supabase/config/internal";
 import { diffProjectConfig, findCliProjectRoot, type ConfigChange } from "@supabase/config/effect";
 import { operationDefinitions } from "@supabase/api/effect";
 import { Clock, Effect, FileSystem, Option, Path } from "effect";
@@ -33,6 +32,7 @@ import {
 import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { legacyCollectDotenvPrivateKeys } from "../../../command-internal/legacy-vault-decrypt.ts";
 import { legacyConfigApiScope, legacyConfigScopeLine } from "../config.format.ts";
+import { legacyLoadLocalConfig } from "../config.load.ts";
 import { legacyConfigProjectConfigTry } from "../config.project-config.ts";
 import {
   legacyConfigReadStatusMessage,
@@ -245,32 +245,17 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // above.
     //
     // NOTE (CLI-1489): `config push` needs the fully decoded config (every
-    // service subset), so it uses `loadCliConfig` rather than the tolerant
-    // `legacy-db-config.toml-read.ts` subtree reader. `loadCliConfig` raises
-    // `CliConfigParseError` on `env(...)` refs over numeric/bool fields.
-    // A duplicate `project_id` across remotes surfaces an established error
-    // message.
-    const loaded = yield* loadCliConfig(cliSettings.workdir, {
-      projectRef: ref,
-      goViperCompat: true,
-    }).pipe(
-      Effect.catchTag(
-        "CliConfigParseError",
-        (cause) =>
-          new LegacyConfigPushLoadConfigError({
-            message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
-          }),
-      ),
-      Effect.catchTag(
-        "DuplicateRemoteProjectIdError",
-        (cause) => new LegacyConfigPushLoadConfigError({ message: cause.message }),
-      ),
+    // service subset), so it uses `legacyLoadLocalConfig` (`../config.load.ts`,
+    // shared with `config diff`/`config pull`) rather than the tolerant
+    // `legacy-db-config.toml-read.ts` subtree reader. That helper raises
+    // `CliConfigParseError` on `env(...)` refs over numeric/bool fields, and
+    // owns the parse/duplicate-remote/missing-file message shapes — only
+    // this family's own tagged error class is local.
+    const loaded = yield* legacyLoadLocalConfig(
+      cliSettings.workdir,
+      ref,
+      (message) => new LegacyConfigPushLoadConfigError({ message }),
     );
-    if (loaded === null) {
-      return yield* new LegacyConfigPushLoadConfigError({
-        message: "failed to read supabase/config.toml: file not found",
-      });
-    }
     // Printed from inside config load, before any command output.
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(
@@ -416,7 +401,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
       return yield* new LegacyConfigPushConfigReadStatusError({
         status: response.status,
         body,
-        message: legacyConfigReadStatusMessage(response.status, body, ref),
+        message: legacyConfigReadStatusMessage(response.status, body, ref, cliSettings.apiUrl),
       });
     }
     const responseJson = yield* response.json.pipe(

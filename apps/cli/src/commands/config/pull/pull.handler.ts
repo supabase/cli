@@ -10,7 +10,6 @@ import {
 import {
   applyConfigEdits,
   decodeCliConfigDocumentForValidationEffect,
-  loadCliConfig,
   writeCliConfigDocumentText,
   type ConfigEdit,
   type ConfigEditRefusalReason,
@@ -39,6 +38,7 @@ import { legacyResolveYes, LegacyOutputFlag } from "../../../shared/legacy/globa
 import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
+import { legacyLoadLocalConfig, legacyRelativeConfigPath } from "../config.load.ts";
 import { legacyResolveConfigTarget, type LegacyConfigTarget } from "../config.target.ts";
 import {
   legacyConfigApiScope,
@@ -631,39 +631,19 @@ const legacyValidateConfigPullPlan = Effect.fnUntraced(function* (input: {
  * factory rather than a shared closure so both `legacyOpenConfigPullSource`
  * (steps 2-3) and `legacyRunConfigPull` (step 6's conditional reload) get
  * their own, independently testable copy without threading `cliSettings`
- * through {@link LegacyConfigPullInput}. */
+ * through {@link LegacyConfigPullInput}. `legacyLoadLocalConfig`
+ * (`../config.load.ts`, shared with `config diff`/`config push`) owns the
+ * parse/duplicate-remote/missing-file message shapes; only this family's own
+ * tagged error class is local. */
 function makeConfigLoader(cliSettings: { readonly workdir: string }) {
-  // `cause.path` is anchored under the workdir; render it relative so the
-  // message reads `supabase/config.json` like the family's other messages,
-  // regardless of invocation cwd (mirrors `config diff`).
   const relativeConfigPath = (path: string): string =>
-    path.startsWith(cliSettings.workdir)
-      ? path.slice(cliSettings.workdir.length).replace(/^[/\\]/, "")
-      : path;
+    legacyRelativeConfigPath(cliSettings.workdir, path);
 
   const loadLocalConfig = (projectRef: string | undefined) =>
-    loadCliConfig(cliSettings.workdir, { projectRef, goViperCompat: true }).pipe(
-      Effect.catchTag(
-        "CliConfigParseError",
-        (cause) =>
-          new LegacyConfigPullLoadConfigError({
-            message: `failed to parse ${relativeConfigPath(cause.path)}: ${String(cause.cause)}`,
-          }),
-      ),
-      Effect.catchTag(
-        "DuplicateRemoteProjectIdError",
-        (cause) => new LegacyConfigPullLoadConfigError({ message: cause.message }),
-      ),
-      Effect.flatMap((loaded) =>
-        loaded === null
-          ? Effect.fail(
-              new LegacyConfigPullLoadConfigError({
-                message:
-                  "failed to read supabase/config.toml or supabase/config.json: file not found. Run `supabase init` to create one.",
-              }),
-            )
-          : Effect.succeed(loaded),
-      ),
+    legacyLoadLocalConfig(
+      cliSettings.workdir,
+      projectRef,
+      (message) => new LegacyConfigPullLoadConfigError({ message }),
     );
 
   return { relativeConfigPath, loadLocalConfig };
@@ -817,7 +797,7 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
     return yield* new LegacyConfigPullReadStatusError({
       status: response.status,
       body,
-      message: legacyConfigReadStatusMessage(response.status, body, ref),
+      message: legacyConfigReadStatusMessage(response.status, body, ref, cliSettings.apiUrl),
     });
   }
   const responseJson = yield* response.json.pipe(

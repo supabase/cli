@@ -13,6 +13,7 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
+  LEGACY_DEFAULT_API_URL,
   LEGACY_VALID_REF,
   legacyJsonResponse,
   legacyStatusCodeFailure,
@@ -879,7 +880,14 @@ otp_expiry = 120
       const cases: ReadonlyArray<{ status: number; expect: ReadonlyArray<string> }> = [
         { status: 401, expect: ["Authentication failed", "supabase login"] },
         { status: 403, expect: ["Access denied for project", REF] },
-        { status: 404, expect: [`Project ${REF} not found`, "supabase projects list"] },
+        {
+          status: 404,
+          expect: [
+            `Could not read configuration for project ${REF} (404)`,
+            "supabase projects list",
+            LEGACY_DEFAULT_API_URL,
+          ],
+        },
         { status: 500, expect: [`unexpected status 500: {"message":"boom"}`] },
       ];
       return Effect.gen(function* () {
