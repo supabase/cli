@@ -4,10 +4,12 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Stream } from "effect";
+import { CliOutput, Command } from "effect/unstable/cli";
 import {
   InvalidStackIdentityError,
   StackIdSchema,
   StackNotFoundError,
+  StackOwnershipConflictError,
   StackStateInvalidError,
 } from "@supabase/stack/effect";
 import type { EffectStack, StackStatus, StackStopError } from "@supabase/stack/effect";
@@ -19,11 +21,13 @@ import {
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
 import { LegacyExperimentalStackApi } from "../stack.shared.ts";
+import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 import {
   legacyExperimentalStackStop,
   legacyValidateExperimentalStackStopTarget,
 } from "./stop.handler.ts";
 import { LegacyExperimentalStackStopError } from "./stop.errors.ts";
+import { legacyExperimentalStackStopCommand } from "./stop.command.ts";
 
 const status = (id: string): StackStatus => ({
   id: StackIdSchema.make(id),
@@ -289,6 +293,23 @@ describe("experimental stack stop", () => {
     );
   });
 
+  it.effect("classifies an ownership conflict as a lifecycle failure", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-conflict-"));
+    const setupResult = setup({
+      root,
+      found: { id: "7".repeat(64) },
+      stop: () => Effect.fail(new StackOwnershipConflictError({ message: "stack is owned" })),
+    });
+    return Effect.gen(function* () {
+      const failure = yield* legacyExperimentalStackStop(flags()).pipe(Effect.flip);
+      expect(failure.reason).toBe("lifecycle");
+      expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
+    }).pipe(
+      Effect.provide(setupResult.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
   it.effect("rejects the legacy output flag with actionable guidance", () => {
     const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-output-"));
     const setupResult = setup({ root });
@@ -301,6 +322,21 @@ describe("experimental stack stop", () => {
         Layer.mergeAll(setupResult.layer, Layer.succeed(LegacyOutputFlag, Option.some("json"))),
       ),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+});
+
+describe("experimental stack stop parser", () => {
+  it.live("parses a named existing stack", () => {
+    let parsed: Option.Option<string> | undefined;
+    const command = legacyExperimentalStackStopCommand.pipe(
+      Command.withHandler((flags) => Effect.sync(() => (parsed = flags.stack))),
+    );
+    return Effect.gen(function* () {
+      yield* Command.runWith(command, { version: "0.0.0-test" })(["--stack", "feature-a"]);
+      expect(parsed).toEqual(Option.some("feature-a"));
+    }).pipe(
+      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
     );
   });
 });

@@ -13,11 +13,14 @@ prevent stopping an addressed stack.
 
 No project files, credentials, or runtime configuration files are written. The package owns
 the supervisor teardown and state transition; the CLI does not remove containers, volumes,
-or stack state itself.
+or stack state itself. If persisted state says the stack is running but its owner is
+unreachable, the package may launch a short-lived Supervisor to arbitrate teardown before
+returning. That process is package-owned and is not managed directly by the CLI.
 
 ## Output and telemetry
 
 Text mode reports the selected stack and stopped outcome. Structured modes include the selected
 stack id and stopped outcome. If no current stack exists, the command succeeds with an explicit
-no-stack result. Standard command instrumentation records command metadata; stack data and
-credentials are not emitted as telemetry properties.
+no-stack result. Exit status is `0` for a successful stop or no current stack, `1` for a
+missing named stack or any typed stop failure. Standard command instrumentation records command
+metadata; stack data and credentials are not emitted as telemetry properties.
