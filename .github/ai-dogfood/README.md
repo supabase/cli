@@ -13,8 +13,15 @@ Two maintainer comments:
 | `/ai-review`             | Code review only. No CLI execution, no staging token.             |
 | `/ai-dogfood-and-review` | GPT 5.6-luna dogfood, then `/ai-review` with the report attached. |
 
-Shadow mode: `workflow_dispatch` or an exact `/ai-dogfood-and-review` comment.
-No `pull_request` auto trigger.
+Shadow mode (safe flow): `workflow_dispatch` or an exact `/ai-dogfood-and-review`
+comment. No `pull_request` auto trigger.
+
+**Pre-merge debug (temporary):** this workflow file is not on the default branch
+yet, so dispatch and comments cannot start it. PR **#6495** currently triggers
+on `pull_request` so we can exercise the pipeline against itself: trusted
+scripts come from the PR head, and the chained `ai-review.yml` dispatch targets
+this branch. Remove the `pull_request` trigger and restore default-branch trust
+before merge.
 
 ## Why
 
@@ -71,9 +78,9 @@ never does. Containment, not proof of isolation:
   are renamed aside before `pnpm install`.
 - Codex uses `safety-strategy: drop-sudo` (same as review) but **cannot** use
   review's `sandbox: read-only`: it must write scratch files, talk to
-  `api.supabase.green`, and drive Docker. v1 uses `workspace-write`. If `db
-start` cannot run under that sandbox, fall back to `danger-full-access` and
-  document it here — never silently reuse `read-only`.
+  `api.supabase.green`, and drive Docker. Legacy `workspace-write` blocks
+  outbound network and the Docker socket, so v1 uses `danger-full-access`.
+  Never silently reuse `read-only`.
 - A malicious same-repo PR can still abuse the staging token once the CLI
   runs. The wrapper, fork ban, maintainer trigger, unique project prefix, and
   always-on sweep are the blast-radius limits. Treat artifacts and the posted
@@ -99,4 +106,5 @@ Prompts, schemas, and scripts come from a **trusted ref**: the default
 branch on `/ai-dogfood-and-review` comments, or the branch selected in the
 Actions UI on `workflow_dispatch` (same-repo only, matching live-e2e).
 Comment-triggered runs therefore only pick up this pipeline after it lands
-on `develop`. Dispatch from the feature branch to iterate before merge.
+on `develop`. Until then, the #6495 `pull_request` debug trigger (see above)
+is the way to iterate; revert it before merge.

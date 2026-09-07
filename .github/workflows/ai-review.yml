@@ -377,6 +377,9 @@ jobs:
           working-directory: ${{ github.workspace }}
           safety-strategy: drop-sudo
           sandbox: read-only
+          # Dogfood dispatches this workflow as github-actions[bot]; without
+          # this the action's write-access check fails the Codex jobs.
+          allow-bots: true
 
       - name: Validate Codex findings
         run: bun .github/scripts/ai-review/post-review.ts validate-findings /tmp/ai-review/codex-findings.json
@@ -558,6 +561,7 @@ jobs:
           working-directory: ${{ github.workspace }}
           safety-strategy: drop-sudo
           sandbox: read-only
+          allow-bots: true
 
       - name: Validate merged review
         working-directory: trusted
