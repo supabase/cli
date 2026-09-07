@@ -69,6 +69,7 @@ import {
   discoverFunctionSlugs,
   type DockerBind,
   formatDockerBind,
+  pruneRedundantDockerBinds,
   dockerWorkdirLabel,
   rawFunctionConfigRecord,
   resolveFunctionConfigs,
@@ -1733,7 +1734,13 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       );
     }
 
-    const binds = [...functionBinds.values()];
+    const aggregatedBinds = [...functionBinds.values()];
+    // Pruned so the `docker cp` bootstrap below never sees a file bind nested
+    // inside a read-only parent bind. The workdir gate below reads the
+    // UNPRUNED aggregate on purpose — a pruned bind's container path still
+    // exists through its covering parent, so do not collapse the gate onto
+    // `binds`.
+    const binds = pruneRedundantDockerBinds(aggregatedBinds);
 
     yield* ensureDockerNamedVolume(edgeRuntimeCacheVolume(projectId).name, projectId);
     yield* ensureDockerNetwork(networkMode, projectId);
@@ -1819,7 +1826,9 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         networkMode,
         "--network-alias",
         "edge_runtime",
-        ...(hasBindUnder(binds, containerProjectRoot) ? ["--workdir", containerProjectRoot] : []),
+        ...(hasBindUnder(aggregatedBinds, containerProjectRoot)
+          ? ["--workdir", containerProjectRoot]
+          : []),
         "--ulimit",
         nofile.arg,
         "--label",

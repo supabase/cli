@@ -324,6 +324,34 @@ export function formatDockerBind(bind: DockerBind) {
   return `${bind.hostPath}:${bind.containerPath}:${bind.mode}`;
 }
 
+/**
+ * Drops every bind another bind already supplies verbatim: same mode, host
+ * path strictly beneath the other's, container path at the same relative
+ * offset. The import walker and import-map target enumeration routinely emit
+ * such pairs, and Docker rejects `docker cp` into a created container whose
+ * config nests a file bind inside a read-only parent bind
+ * (supabase/supabase#50088). A bind that overrides its parent's source, mode,
+ * or container mapping is never collapsed.
+ */
+export function pruneRedundantDockerBinds(
+  binds: ReadonlyArray<DockerBind>,
+): ReadonlyArray<DockerBind> {
+  const isCovered = (child: DockerBind) => {
+    const childHost = toSlash(child.hostPath);
+    return binds.some((parent) => {
+      if (parent.mode !== child.mode) {
+        return false;
+      }
+      const parentHost = toSlash(parent.hostPath);
+      return (
+        childHost.startsWith(`${parentHost}/`) &&
+        child.containerPath === `${parent.containerPath}${childHost.slice(parentHost.length)}`
+      );
+    });
+  };
+  return binds.filter((bind) => !isCovered(bind));
+}
+
 function dockerNpmEnv(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<string> {
   return dockerNpmEnvNames.flatMap((name) => {
     const value = env[name];

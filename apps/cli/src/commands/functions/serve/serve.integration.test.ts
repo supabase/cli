@@ -1315,6 +1315,182 @@ describe("legacy functions serve integration", () => {
     });
   });
 
+  it.live(
+    "mounts a workspace package once when functions import the directory and its files",
+    () => {
+      deployMockState.runHandler = (command, args) => {
+        if (command !== "docker") {
+          throw new Error(`unexpected process: ${command}`);
+        }
+        if (args[0] === "container" && (args[1] === "inspect" || args[1] === "rm")) {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
+          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+        }
+        if (args[0] === "exec") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected docker args: ${args.join(" ")}`);
+      };
+
+      const childSpawner = mockDockerLogSpawner([
+        {
+          exitCode: 1,
+          stderr: "overlapping bind logs failed",
+        },
+      ]);
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() => mkdir(join(tempRoot.current, ".git"), { recursive: true }));
+        yield* Effect.promise(() =>
+          writeCliConfig(
+            [
+              'project_id = "test-project"',
+              "[functions.hello]",
+              'entrypoint = "./functions/hello/index.ts"',
+              'import_map = "./functions/hello/deno.json"',
+              "",
+            ].join("\n"),
+          ),
+        );
+        yield* Effect.promise(() =>
+          writeProjectFile("packages/orm/index.ts", 'export * from "./core/foo.ts";\n'),
+        );
+        yield* Effect.promise(() =>
+          writeProjectFile("packages/orm/core/foo.ts", 'export const foo = "foo";\n'),
+        );
+        yield* Effect.promise(() =>
+          writeFunctionFile(
+            "hello",
+            "index.ts",
+            [
+              'import { foo } from "@proj/orm/core/foo.ts";',
+              'import "@proj/orm/index.ts";',
+              "Deno.serve(() => new Response(foo))",
+              "",
+            ].join("\n"),
+          ),
+        );
+        yield* Effect.promise(() =>
+          writeFunctionFile(
+            "hello",
+            "deno.json",
+            JSON.stringify({
+              imports: {
+                "@proj/orm/": "../../../packages/orm/",
+              },
+            }),
+          ),
+        );
+
+        const { layer } = setupServe({ childSpawner });
+        const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+          Effect.provide(layer),
+          Effect.flip,
+        );
+
+        expect(error).toBeInstanceOf(Error);
+        if (error instanceof Error) {
+          expect(error.message).toContain("overlapping bind logs failed");
+        }
+
+        const dockerCreate = deployMockState.runCalls.find(
+          (call) => call.command === "docker" && call.args[0] === "create",
+        );
+        expect(dockerCreate).toBeDefined();
+        if (dockerCreate === undefined) {
+          throw new Error("expected docker create invocation");
+        }
+        const bindValues = extractFlagValues(dockerCreate.args, "-v");
+        const resolvedOrmDir = realpathSync(join(tempRoot.current, "packages", "orm"));
+        expect(bindValues.some((value) => value.startsWith(`${resolvedOrmDir}:`))).toBe(true);
+        expect(bindValues.filter((value) => value.startsWith(`${resolvedOrmDir}/`))).toEqual([]);
+      });
+    },
+  );
+
+  it.live("keeps --workdir when an import-map ancestor mount absorbs every project bind", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && (args[1] === "inspect" || args[1] === "rm")) {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
+        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+      }
+      if (args[0] === "exec") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    const childSpawner = mockDockerLogSpawner([
+      {
+        exitCode: 1,
+        stderr: "ancestor mount logs failed",
+      },
+    ]);
+
+    return Effect.gen(function* () {
+      const realRoot = realpathSync(tempRoot.current);
+      const projectDir = join(realRoot, "apps", "api");
+      const functionDir = join(projectDir, "supabase", "functions", "hello");
+      yield* Effect.promise(async () => {
+        await mkdir(join(realRoot, ".git"), { recursive: true });
+        await mkdir(functionDir, { recursive: true });
+        await mkdir(join(realRoot, "apps", "shared"), { recursive: true });
+        await writeFile(
+          join(projectDir, "supabase", "config.toml"),
+          [
+            'project_id = "test-project"',
+            "[functions.hello]",
+            'entrypoint = "./functions/hello/index.ts"',
+            'import_map = "./functions/hello/deno.json"',
+            "",
+          ].join("\n"),
+        );
+        await writeFile(join(realRoot, "apps", "shared", "index.ts"), 'export const s = "s";\n');
+        await writeFile(
+          join(functionDir, "index.ts"),
+          ['import { s } from "~/shared/index.ts";', "Deno.serve(() => new Response(s))", ""].join(
+            "\n",
+          ),
+        );
+        await writeFile(
+          join(functionDir, "deno.json"),
+          JSON.stringify({ imports: { "~/": "../../../../" } }),
+        );
+      });
+
+      const { layer } = setupServe({ workdir: projectDir, childSpawner });
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toContain("ancestor mount logs failed");
+      }
+
+      const dockerCreate = deployMockState.runCalls.find(
+        (call) => call.command === "docker" && call.args[0] === "create",
+      );
+      expect(dockerCreate).toBeDefined();
+      if (dockerCreate === undefined) {
+        throw new Error("expected docker create invocation");
+      }
+      const appsDir = join(realRoot, "apps");
+      const bindValues = extractFlagValues(dockerCreate.args, "-v");
+      expect(bindValues.some((value) => value.startsWith(`${appsDir}:`))).toBe(true);
+      expect(bindValues.filter((value) => value.startsWith(`${appsDir}/`))).toEqual([]);
+      expect(extractFlagValues(dockerCreate.args, "--workdir")).toEqual([toDockerPath(projectDir)]);
+    });
+  });
+
   it.live("leaves the existing container alone when create loses a name conflict", () => {
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {
