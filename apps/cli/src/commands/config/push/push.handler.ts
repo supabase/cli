@@ -24,6 +24,9 @@ import {
   mapLegacyHttpError,
   sanitizeLegacyErrorBody,
 } from "../../../command-internal/legacy-http-errors.ts";
+import { legacyRequireExplicitWorkdirProject } from "../../../command-internal/legacy-workdir-project.ts";
+import { legacyShouldSearchAncestors } from "../../../command-internal/legacy-workdir-search.ts";
+import { legacyValidateWorkdirIsDirectory } from "../../../command-internal/legacy-workdir-validation.ts";
 import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { legacyCollectDotenvPrivateKeys } from "../../../command-internal/legacy-vault-decrypt.ts";
 import { legacyConfigApiScope, legacyConfigScopeLine } from "../config.format.ts";
@@ -75,6 +78,7 @@ import {
   LegacyConfigPushSslEnforcementUpdateStatusError,
   LegacyConfigPushStorageUpdateNetworkError,
   LegacyConfigPushStorageUpdateStatusError,
+  LegacyConfigPushWorkdirError,
 } from "./push.errors.ts";
 import {
   legacyConfigPushBranchPromptLabel,
@@ -161,33 +165,6 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   const telemetryState = yield* LegacyTelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  // `--yes` OR `SUPABASE_YES`. `config push` imports `supabase/.env` before
-  // the confirmation prompt reads the yes flag, so a `SUPABASE_YES` set only
-  // in `supabase/.env` auto-confirms. Resolve against the project env, not
-  // just the flag + shell env. Load it from the resolved project root
-  // (walking up, same as `loadCliConfig` below and the workdir change
-  // before config load), so a push from a subdirectory still reads the
-  // project root's `supabase/.env`.
-  // Resolved against `cliSettings.workdir` — the same root the project-ref
-  // resolver and the linked-project cache use — so `--workdir ../other`
-  // pushes `../other`'s config.toml, never the invoking directory's file to
-  // another root's linked project.
-  const projectRoot = (yield* findCliProjectRoot(cliSettings.workdir)) ?? cliSettings.workdir;
-  const projectEnv = yield* legacyLoadProjectEnv(fs, path, projectRoot);
-  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
-  // dotenvx private keys for decrypting `encrypted:` secrets, from the shell
-  // + project env — same source/precedence as `legacy-db-config.toml-read.ts`
-  // (`process.env` wins over `supabase/.env`).
-  const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({ ...projectEnv, ...process.env });
-  // Only reached by `legacyAssertDecryptableSecrets` below for an `env(VAR)` literal that
-  // survives `loaded.document`'s own (`@supabase/config`) interpolation pass unresolved — i.e.
-  // when this wider env source resolves `VAR` but `@supabase/config`'s
-  // narrower one (`supabase/.env`/`.env.local` only) didn't. Practically
-  // unreachable in the same narrow way the CLI-1489 comment below already documents for
-  // non-secret fields; kept for parity with the shared function's other caller
-  // (`legacy-db-config.toml-read.ts`, whose pre-interpolation document relies on this).
-  const secretEnvLookup = (name: string): string | undefined =>
-    process.env[name] ?? projectEnv[name];
 
   // `--project-ref` accepts a project ref, or the name (or UUID) of a branch
   // of the linked project — `link`'s/`config diff`'s settled vocabulary
@@ -203,6 +180,69 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   let resolvedRef: string | undefined;
 
   yield* Effect.gen(function* () {
+    // 0. The resolved `--workdir`/`SUPABASE_WORKDIR` must exist and be a
+    // directory before anything else touches it. The project-root probe,
+    // project-env load, and private-key collection immediately below used to
+    // run BEFORE this check, in the outer function body — harmless for a
+    // missing directory (`legacyLoadProjectEnv` tolerates `NotFound`), but not
+    // for a `--workdir` that names a regular FILE: `legacyLoadProjectEnv`
+    // does not tolerate ENOTDIR, so it surfaced a confusing
+    // "failed to read environment file: ..." error instead of this one, and
+    // it did so OUTSIDE the `Effect.ensuring(telemetryState.flush)` wrapper
+    // below. Moved here so both failure shapes are caught by the same check,
+    // and telemetry flushes for either one.
+    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
+      Effect.mapError((error) => new LegacyConfigPushWorkdirError({ message: error.message })),
+    );
+
+    // `--yes` OR `SUPABASE_YES`. `config push` imports `supabase/.env` before
+    // the confirmation prompt reads the yes flag, so a `SUPABASE_YES` set only
+    // in `supabase/.env` auto-confirms. Resolve against the project env, not
+    // just the flag + shell env. Load it from the resolved project root
+    // (climbing only when `cliSettings.workdir` was defaulted, same as
+    // `loadCliConfig` below — an explicit `--workdir`/`SUPABASE_WORKDIR` is
+    // authoritative and never climbs, see `legacyShouldSearchAncestors`), so a
+    // push from a subdirectory of a defaulted workdir still reads the project
+    // root's `supabase/.env`.
+    // Resolved against `cliSettings.workdir` — the same root the project-ref
+    // resolver and the linked-project cache use — so `--workdir ../other`
+    // pushes `../other`'s config.toml, never the invoking directory's file to
+    // another root's linked project.
+    const projectRoot =
+      (yield* findCliProjectRoot(cliSettings.workdir, {
+        search: legacyShouldSearchAncestors(cliSettings),
+      })) ?? cliSettings.workdir;
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, projectRoot);
+    const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
+    // dotenvx private keys for decrypting `encrypted:` secrets, from the shell
+    // + project env — same source/precedence as `legacy-db-config.toml-read.ts`
+    // (`process.env` wins over `supabase/.env`).
+    const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({ ...projectEnv, ...process.env });
+    // Only reached by `legacyAssertDecryptableSecrets` below for an `env(VAR)` literal that
+    // survives `loaded.document`'s own (`@supabase/config`) interpolation pass unresolved — i.e.
+    // when this wider env source resolves `VAR` but `@supabase/config`'s
+    // narrower one (`supabase/.env`/`.env.local` only) didn't. Practically
+    // unreachable in the same narrow way the CLI-1489 comment below already documents for
+    // non-secret fields; kept for parity with the shared function's other caller
+    // (`legacy-db-config.toml-read.ts`, whose pre-interpolation document relies on this).
+    const secretEnvLookup = (name: string): string | undefined =>
+      process.env[name] ?? projectEnv[name];
+
+    // 0.5. An explicit `--workdir`/`SUPABASE_WORKDIR` that holds no project
+    // fails HERE, before target resolution burns a branch-name/UUID lookup's
+    // network round trip — a pure `fs.exists` probe with no schema decode,
+    // so it does not touch the "only ONE decode may ever run" invariant step
+    // 2 below relies on. A DEFAULTED workdir is untouched (today, `config
+    // push` in a config-less directory with no linked project fails with the
+    // not-linked error from step 1, not a config error) — deliberately kept,
+    // since making this check unconditional would be an established-behavior
+    // change outside this fix's scope. Message is identical to the step-2
+    // `loaded === null` branch below (same builder), so the user-visible
+    // failure text is unchanged, only earlier in time.
+    yield* legacyRequireExplicitWorkdirProject(cliSettings).pipe(
+      Effect.mapError((error) => new LegacyConfigPushLoadConfigError({ message: error.message })),
+    );
+
     // 1. Resolve the push target. `--project-ref` accepts a project ref, or
     // the name (or UUID) of a branch of the linked project (CLI-2167/CLI-2289) —
     // `legacyResolveConfigTarget` (`../config.target.ts`, Hoist Before You
@@ -241,9 +281,12 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // `loadCliConfig` raises `CliConfigParseError` on `env(...)` refs over
     // numeric/bool fields; `legacyLoadLocalConfig` catches it (and a
     // duplicate-remote/missing-file failure) and converts it to this
-    // family's own tagged error via the shared message shapes.
+    // family's own tagged error via the shared message shapes — including
+    // the ancestor-search decision (`legacyShouldSearchAncestors`), so an
+    // explicit `--workdir`/`SUPABASE_WORKDIR` with no project here never
+    // silently falls back to an ancestor project's config (CLI-2285).
     const loaded = yield* legacyLoadLocalConfig(
-      cliSettings.workdir,
+      cliSettings,
       ref,
       (message) => new LegacyConfigPushLoadConfigError({ message }),
     );

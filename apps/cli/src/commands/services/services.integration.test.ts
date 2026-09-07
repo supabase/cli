@@ -68,6 +68,7 @@ function setup(
           accessToken: Option.none(),
           projectId: Option.none(),
           workdir: opts.workdir ?? process.cwd(),
+          explicitWorkdir: false,
           userAgent: "SupabaseCLI/test",
         }),
       ),

@@ -30,7 +30,11 @@ import {
   legacyGoUrlParse,
   legacySplitBucketPrefix,
 } from "../../../command-internal/legacy-storage-url.ts";
-import { legacyConnectStorageGateway, legacyLoadStorageConfig } from "../storage.frame.ts";
+import {
+  legacyAssertStorageWorkdir,
+  legacyConnectStorageGateway,
+  legacyLoadStorageConfig,
+} from "../storage.frame.ts";
 import { LegacyStorageConfigError } from "../../../command-internal/legacy-storage-credentials.errors.ts";
 import {
   LegacyStorageCopyBetweenBucketsError,
@@ -82,6 +86,8 @@ export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
+    yield* legacyAssertStorageWorkdir(cliSettings.workdir);
+
     // `--project-ref` never implies `--linked` and must not be silently
     // discarded on the local target — see push.handler.ts's identical guard
     // (db push) for the full TS-only rationale.
@@ -96,7 +102,7 @@ export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
 
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
     linkedRef = projectRef;
-    const loaded = yield* legacyLoadStorageConfig(cliSettings.workdir, projectRef);
+    const loaded = yield* legacyLoadStorageConfig(cliSettings, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }

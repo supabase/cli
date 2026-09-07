@@ -1,6 +1,6 @@
 import { CliConfigSchema, type CliConfig } from "@supabase/config/effect";
 import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
-import { Effect, Schema } from "effect";
+import { Effect, FileSystem, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import {
@@ -17,7 +17,15 @@ import {
   legacyParseStorageUrl,
 } from "../../command-internal/legacy-storage-url.ts";
 import { LegacyStorageConfigError } from "../../command-internal/legacy-storage-credentials.errors.ts";
-import { LegacyStorageInvalidUrlError, LegacyStorageUrlParseError } from "./storage.errors.ts";
+import { legacyMissingProjectConfigMessageEffect } from "../../command-internal/legacy-workdir-project.ts";
+import { legacyShouldSearchAncestors } from "../../command-internal/legacy-workdir-search.ts";
+import { legacyValidateWorkdirIsDirectory } from "../../command-internal/legacy-workdir-validation.ts";
+import {
+  LegacyStorageInvalidUrlError,
+  LegacyStorageMissingProjectConfigError,
+  LegacyStorageUrlParseError,
+  LegacyStorageWorkdirError,
+} from "./storage.errors.ts";
 
 /**
  * Shared plumbing for the four `storage` subcommands. Each handler resolves the
@@ -37,17 +45,29 @@ interface LegacyLoadedStorageConfig {
 /**
  * Load `supabase/config.toml`: a parse failure aborts
  * (`LegacyStorageConfigError`); a missing file falls back to the embedded
- * defaults. When a `[remotes.<name>]` block matches the linked ref,
- * `appliedRemote` carries its name so the caller can print the
- * `Loading config override:` line.
+ * defaults — EXCEPT for a LOCAL target (`projectRef === ""`) with an
+ * explicitly-set `--workdir`/`SUPABASE_WORKDIR`, where it hard-fails instead
+ * (`LegacyStorageMissingProjectConfigError`): the embedded default `api.port`
+ * could otherwise retarget a local `storage rm -r` (or any other operation)
+ * at a different, possibly running, local stack. A REMOTE target
+ * (`--project-ref`/`--linked`) never hard-fails on this, explicit workdir or
+ * not: `legacyResolveStorageCredentials` doesn't read `config` at all on that
+ * path (Management API credentials only), so a config-less workdir poses no
+ * such risk there — it would only cost the (cosmetic) `[remotes.*]` override
+ * line. A DEFAULTED workdir keeps the established tolerant fallback either
+ * way. When a `[remotes.<name>]` block matches the linked ref, `appliedRemote`
+ * carries its name so the caller can print the `Loading config override:`
+ * line.
  */
 export const legacyLoadStorageConfig = Effect.fnUntraced(function* (
-  workdir: string,
+  cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
   projectRef: string,
 ) {
   const loadOptions: InternalLoadCliConfigOptions =
-    projectRef !== "" ? { projectRef, goViperCompat: true } : { goViperCompat: true };
-  const loaded = yield* loadCliConfig(workdir, loadOptions).pipe(
+    projectRef !== ""
+      ? { projectRef, goViperCompat: true, search: legacyShouldSearchAncestors(cliSettings) }
+      : { goViperCompat: true, search: legacyShouldSearchAncestors(cliSettings) };
+  const loaded = yield* loadCliConfig(cliSettings.workdir, loadOptions).pipe(
     Effect.catchTag(
       "CliConfigParseError",
       (cause) =>
@@ -57,6 +77,11 @@ export const legacyLoadStorageConfig = Effect.fnUntraced(function* (
     ),
   );
   if (loaded === null) {
+    if (cliSettings.explicitWorkdir && projectRef === "") {
+      return yield* new LegacyStorageMissingProjectConfigError({
+        message: yield* legacyMissingProjectConfigMessageEffect(cliSettings),
+      });
+    }
     return {
       config: decodeDefaultCliConfig({}),
       document: undefined,
@@ -68,6 +93,20 @@ export const legacyLoadStorageConfig = Effect.fnUntraced(function* (
     document: loaded.document,
     appliedRemote: loaded.appliedRemote,
   } satisfies LegacyLoadedStorageConfig;
+});
+
+/**
+ * Validates the resolved `--workdir`/`SUPABASE_WORKDIR` exists and is a
+ * directory (`legacyValidateWorkdirIsDirectory`), mapping into the shared
+ * `LegacyStorageWorkdirError` — hoisted here (rather than duplicated across
+ * `ls`/`mv`/`rm`/`cp`) since `ls`/`mv` don't otherwise need `FileSystem` in
+ * scope.
+ */
+export const legacyAssertStorageWorkdir = Effect.fnUntraced(function* (workdir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  yield* legacyValidateWorkdirIsDirectory(workdir, fs).pipe(
+    Effect.mapError((error) => new LegacyStorageWorkdirError({ message: error.message })),
+  );
 });
 
 /**

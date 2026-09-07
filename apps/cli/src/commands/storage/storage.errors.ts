@@ -202,3 +202,32 @@ export class LegacyStorageMutuallyExclusiveFlagsError extends Data.TaggedError(
     return actionability.provideFlags;
   }
 }
+
+/**
+ * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
+ * directory (`legacyValidateWorkdirIsDirectory`). Only reachable when the
+ * user explicitly set it — beats every other guard in `ls`/`mv`/`rm`/`cp`.
+ */
+export class LegacyStorageWorkdirError extends Data.TaggedError("LegacyStorageWorkdirError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+/**
+ * An explicit `--workdir`/`SUPABASE_WORKDIR` holds no project config —
+ * raised instead of silently falling back to the embedded default config,
+ * whose default `api.port` could otherwise point the operation at a
+ * different, possibly running, local stack.
+ */
+export class LegacyStorageMissingProjectConfigError extends Data.TaggedError(
+  "LegacyStorageMissingProjectConfigError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}

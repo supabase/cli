@@ -42,3 +42,33 @@ export class LegacySeedMutuallyExclusiveFlagsError extends Data.TaggedError(
     return actionability.provideFlags;
   }
 }
+
+/**
+ * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
+ * directory (`legacyValidateWorkdirIsDirectory`). Only reachable when the
+ * user explicitly set it — beats the `--project-ref` guard and every
+ * network call.
+ */
+export class LegacySeedWorkdirError extends Data.TaggedError("LegacySeedWorkdirError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+/**
+ * An explicit `--workdir`/`SUPABASE_WORKDIR` holds no project config —
+ * raised instead of silently falling back to the embedded default (empty)
+ * bucket configuration, which would authenticate and seed nothing while
+ * still exiting 0.
+ */
+export class LegacySeedMissingProjectConfigError extends Data.TaggedError(
+  "LegacySeedMissingProjectConfigError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}

@@ -52,6 +52,7 @@ function makeCliSettings(workdir = "/nonexistent-workdir") {
     accessToken: Option.none(),
     projectId: Option.none(),
     workdir,
+    explicitWorkdir: false,
     userAgent: "test",
   });
 }

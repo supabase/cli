@@ -27,6 +27,7 @@ import {
   sanitizeLegacyErrorBody,
 } from "../../../command-internal/legacy-http-errors.ts";
 import { LEGACY_BRANCH_UUID_PATTERN } from "../../../command-internal/legacy-ref-patterns.ts";
+import { legacyValidateWorkdirIsDirectory } from "../../../command-internal/legacy-workdir-validation.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveYes, LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
@@ -95,6 +96,7 @@ import {
   LegacyConfigPullUncommittedChangesError,
   LegacyConfigPullUnsupportedLayoutError,
   LegacyConfigPullValidationFailedError,
+  LegacyConfigPullWorkdirError,
   LegacyConfigPullWriteError,
 } from "./pull.errors.ts";
 import type { LegacyConfigPullFlags } from "./pull.command.ts";
@@ -623,17 +625,23 @@ const legacyValidateConfigPullPlan = Effect.fnUntraced(function* (input: {
  * factory rather than a shared closure so both `legacyOpenConfigPullSource`
  * (steps 2-3) and `legacyRunConfigPull` (step 6's conditional reload) get
  * their own, independently testable copy without threading `cliSettings`
- * through {@link LegacyConfigPullInput}. `legacyLoadLocalConfig`
- * (`../config.load.ts`, shared with `config diff`/`config push`) owns the
- * parse/duplicate-remote/missing-file message shapes; only this family's own
- * tagged error class is local. */
-function makeConfigLoader(cliSettings: { readonly workdir: string }) {
+ * through {@link LegacyConfigPullInput}. Narrowed to `workdir` +
+ * `explicitWorkdir` (rather than the full `LegacyCliSettings` shape) since
+ * that's all `legacyLoadLocalConfig` (`../config.load.ts`, shared with
+ * `config diff`/`config push`) needs — it owns the parse/duplicate-remote/
+ * missing-file message shapes and the ancestor-search decision
+ * (`legacyShouldSearchAncestors`); only this family's own tagged error class
+ * is local. */
+function makeConfigLoader(cliSettings: {
+  readonly workdir: string;
+  readonly explicitWorkdir: boolean;
+}) {
   const relativeConfigPath = (path: string): string =>
     legacyRelativeConfigPath(cliSettings.workdir, path);
 
   const loadLocalConfig = (projectRef: string | undefined) =>
     legacyLoadLocalConfig(
-      cliSettings.workdir,
+      cliSettings,
       projectRef,
       (message) => new LegacyConfigPullLoadConfigError({ message }),
     );
@@ -1043,6 +1051,8 @@ export const legacyConfigPull = Effect.fn("legacy.config.pull")(function* (
 ) {
   const goOutputFlag = yield* LegacyOutputFlag;
   const yes = yield* legacyResolveYes;
+  const cliSettings = yield* LegacyCliSettings;
+  const fs = yield* FileSystem.FileSystem;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
 
@@ -1068,6 +1078,14 @@ export const legacyConfigPull = Effect.fn("legacy.config.pull")(function* (
           "the -o/--output flag is not supported by config pull; use --output-format json|stream-json instead.",
       });
     }
+
+    // 1.5. The resolved `--workdir`/`SUPABASE_WORKDIR` must exist and be a
+    // directory before the base config source is opened — distinguishes
+    // "the directory doesn't exist" from "it exists but holds no
+    // `supabase/` project" (the step 2-3 load below).
+    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
+      Effect.mapError((error) => new LegacyConfigPullWorkdirError({ message: error.message })),
+    );
 
     // 2-3. Open the base config source (load with NO `[remotes.*]` overlay,
     // paired with its on-disk text) BEFORE any network call or target

@@ -210,6 +210,7 @@ function setup(
   opts: {
     readonly workdir?: string;
     readonly skipConfig?: boolean;
+    readonly explicitWorkdir?: boolean;
     readonly projectId?: Option.Option<string>;
     readonly format?: "text" | "json" | "stream-json";
     readonly goOutput?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
@@ -347,6 +348,7 @@ function setup(
     api,
     cliSettings: mockLegacyCliSettings({
       workdir,
+      explicitWorkdir: opts.explicitWorkdir ?? false,
       projectId: opts.projectId ?? Option.none(),
     }),
     telemetry: telemetry.layer,
@@ -765,6 +767,187 @@ describe("legacy gen types", () => {
           method: "generateTypescriptTypes",
           input: { ref: LEGACY_VALID_REF, included_schemas: "public,auth,storage" },
         });
+      });
+    },
+  );
+
+  it.live(
+    "fails instead of picking up an ancestor project's configured api schemas when --workdir names a subdirectory with no config of its own",
+    () => {
+      // CLI-2285 regression: an explicit --workdir is authoritative and must
+      // never let the schema-resolution config load climb past it — the
+      // ancestor (root) genuinely declares [api].schemas and the
+      // subdirectory genuinely has no supabase/ of its own. Silently falling
+      // back to the built-in "public" default (dropping the ancestor's
+      // schemas without a hint) would write a wrong types file at exit 0, so
+      // this now hard-fails before any network call instead.
+      const root = mkdtempSync(join(tmpdir(), "supabase-gen-types-ancestor-"));
+      writeConfig(
+        root,
+        ['project_id = "demo"', "", "[api]", 'schemas = ["ancestor_only"]'].join("\n"),
+      );
+      const sub = join(root, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const { layer, api } = setup({
+        workdir: sub,
+        skipConfig: true,
+        explicitWorkdir: true,
+        projectId: Option.some(LEGACY_VALID_REF),
+        projectTypes: "ok",
+      });
+
+      return Effect.gen(function* () {
+        const exit = yield* legacyGenTypes(
+          defaultFlags({ projectId: Option.some(LEGACY_VALID_REF) }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain(
+            "--workdir/SUPABASE_WORKDIR is used exactly as given and no ancestor directory is searched",
+          );
+        }
+        expect(api.requests).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live(
+    "a defaulted workdir still picks up an ancestor project's configured api schemas from a subdirectory",
+    () => {
+      // Complements the regression above: a DEFAULTED (unset) --workdir must
+      // keep climbing so the ancestor's declared [api].schemas still resolves
+      // from a config-less subdirectory — proving the hard-fail fix above
+      // didn't break the legitimate default-climb case.
+      const root = mkdtempSync(join(tmpdir(), "supabase-gen-types-ancestor-"));
+      writeConfig(
+        root,
+        ['project_id = "demo"', "", "[api]", 'schemas = ["ancestor_only"]'].join("\n"),
+      );
+      const sub = join(root, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const { layer, api } = setup({
+        workdir: sub,
+        skipConfig: true,
+        explicitWorkdir: false,
+        projectId: Option.some(LEGACY_VALID_REF),
+        projectTypes: "ok",
+      });
+
+      return Effect.gen(function* () {
+        yield* legacyGenTypes(defaultFlags({ projectId: Option.some(LEGACY_VALID_REF) })).pipe(
+          Effect.provide(layer),
+        );
+
+        expect(api.requests[0]).toEqual({
+          method: "generateTypescriptTypes",
+          input: { ref: LEGACY_VALID_REF, included_schemas: "public,ancestor_only" },
+        });
+      });
+    },
+  );
+
+  it.live(
+    "--db-url --schema succeeds on an explicit --workdir with no project of its own, since an explicit schema never needs the config load",
+    () =>
+      Effect.tryPromise({
+        try: () =>
+          withSslProbeServer(async (port) => {
+            // The --db-url branch's config load exists only to fall back to
+            // a declared [api].schemas when --schema is absent — with an
+            // explicit --schema that load's result is unused, so it's
+            // skipped entirely, and a config-less explicit --workdir (here,
+            // a subdirectory of an unrelated ancestor project) must not
+            // fail an invocation that never needed the config.
+            const docker = captureDockerRun();
+            const root = mkdtempSync(join(tmpdir(), "supabase-gen-types-ancestor-"));
+            writeConfig(
+              root,
+              ['project_id = "demo"', "", "[api]", 'schemas = ["ancestor_only"]'].join("\n"),
+            );
+            const sub = join(root, "nested", "dir");
+            mkdirSync(sub, { recursive: true });
+            const { layer } = setup({
+              workdir: sub,
+              skipConfig: true,
+              explicitWorkdir: true,
+              childStdout: ["generated"],
+              onSpawn: docker.onSpawn,
+            });
+
+            await Effect.runPromise(
+              legacyGenTypes(
+                defaultFlags({
+                  dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
+                  schema: ["public"],
+                }),
+              ).pipe(Effect.provide(layer)),
+            );
+
+            // The explicit --schema wins, not the (unreachable) ancestor's
+            // declared schema.
+            expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public")).toBe(true);
+          }),
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      }),
+  );
+
+  it.live(
+    "an explicit --workdir naming a directory that does not exist at all fails before any config load",
+    () => {
+      const missing = join(tmpdir(), "supabase-gen-types-does-not-exist", "nonexistent");
+      const { layer, api } = setup({
+        workdir: missing,
+        skipConfig: true,
+        explicitWorkdir: true,
+        projectId: Option.some(LEGACY_VALID_REF),
+      });
+
+      return Effect.gen(function* () {
+        const exit = yield* legacyGenTypes(
+          defaultFlags({ projectId: Option.some(LEGACY_VALID_REF) }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain("LegacyGenTypesWorkdirError");
+          expect(String(exit.cause)).toContain("failed to change workdir: chdir");
+        }
+        expect(api.requests).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live(
+    "surfaces a real error message when supabase/config.toml is malformed, not the raw CliConfigParseError tag",
+    () => {
+      // CLI-2285 Round 3: `loadConfigForRef` now catches `CliConfigParseError`
+      // and maps it to `LegacyGenTypesParseConfigError` with a real message.
+      // Before this fix the raw `CliConfigParseError` tag propagated unmapped,
+      // so an assertion that only checked `Exit.isFailure` would not catch a
+      // re-regression of that leak — the message content itself is the point.
+      const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-malformed-"));
+      writeConfig(workdir, 'project_id = "unterminated\n');
+      const { layer, api } = setup({
+        workdir,
+        skipConfig: true,
+        projectId: Option.some(LEGACY_VALID_REF),
+      });
+
+      return Effect.gen(function* () {
+        const exit = yield* legacyGenTypes(
+          defaultFlags({ projectId: Option.some(LEGACY_VALID_REF) }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const rendered = String(exit.cause);
+          expect(rendered).toContain("LegacyGenTypesParseConfigError");
+          expect(rendered).toContain("failed to parse");
+          expect(rendered).toContain(join("supabase", "config.toml"));
+          expect(rendered).not.toContain("CliConfigParseError");
+        }
+        expect(api.requests).toHaveLength(0);
       });
     },
   );
