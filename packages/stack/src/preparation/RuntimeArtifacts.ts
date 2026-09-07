@@ -38,7 +38,7 @@ export interface PreparedWorkloadArtifact {
 }
 
 export type RuntimeArtifactPreparationProgress = ArtifactPreparationStatus;
-export type RuntimeArtifactPreparationProgressListener = (
+type RuntimeArtifactPreparationProgressListener = (
   progress: RuntimeArtifactPreparationProgress,
 ) => void;
 

@@ -15,7 +15,7 @@ const DATABASE_BOOTSTRAP_ROLES = [
 ] as const;
 type DatabaseBootstrapRole = (typeof DATABASE_BOOTSTRAP_ROLES)[number];
 
-export type DatabaseBootstrapSetting =
+type DatabaseBootstrapSetting =
   | {
       readonly name: "app.settings.jwt_secret";
       readonly value: Redacted.Redacted<string>;
