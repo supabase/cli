@@ -28,7 +28,7 @@ const classifyStackError = (error: StackError) =>
   Match.value(error).pipe(
     Match.tag("StackNotFoundError", () => ({
       reason: "not-found" as const,
-      suggestion: "Run supabase experimental stack start first.",
+      suggestion: "Choose an existing --stack-id, or omit --stack-id to start a new stack.",
     })),
     Match.tag(
       "InvalidStackIdentityError",
@@ -63,11 +63,15 @@ const catchStackError = <A, R>(effect: Effect.Effect<A, StackError, R>) =>
 const readiness = (status: StackStatus | undefined): string => {
   if (status === undefined) return "unknown";
   if (status.lifecycle !== "running") return status.lifecycle;
-  if (status.capabilities.some(({ state }) => state === "failed")) return "failed";
+  if (status.capabilities.some(({ state }) => state === "failed")) return "degraded";
   if (status.capabilities.some(({ state }) => state === "starting")) return "starting";
+  if (status.capabilities.some(({ state }) => state === "stopped")) return "stopped";
   if (status.capabilities.some(({ state }) => state === "dormant")) return "dormant";
   return "ready";
 };
+
+const configUnavailableWarning =
+  "Project configuration could not be loaded; fix it before checking drift.";
 
 const payload = (inspection: StackInspection, configWarning?: string) => ({
   identity: {
@@ -149,7 +153,7 @@ const findDescriptor = (projectRoot: string, name: string | undefined, id: strin
       return yield* new LegacyExperimentalStackStatusError({
         reason: "not-found",
         message: "No managed stack exists for the selected project.",
-        suggestion: "Run supabase experimental stack start first.",
+        suggestion: "Choose an existing --stack-id, or omit --stack-id to start a new stack.",
       });
     return { descriptor: found.value, id: found.value.id, projectRoot: found.value.projectRoot };
   });
@@ -173,9 +177,9 @@ export const legacyExperimentalStackStatus = Effect.fn("legacy.experimental.stac
     );
     const api = yield* LegacyExperimentalStackApi;
     const loaded = yield* legacyLoadStackConfig(target.projectRoot).pipe(
-      Effect.map((config) => ({ config, warning: undefined as string | undefined })),
-      Effect.catchTag("LegacyStackConfigError", (error) =>
-        Effect.succeed({ config: undefined, warning: error.message }),
+      Effect.map((config) => ({ config, warning: undefined })),
+      Effect.catchTag("LegacyStackConfigError", () =>
+        Effect.succeed({ config: undefined, warning: configUnavailableWarning }),
       ),
     );
     const comparison =
@@ -186,10 +190,10 @@ export const legacyExperimentalStackStatus = Effect.fn("legacy.experimental.stac
         : yield* api.inspectStack(target.id, { config: loaded.config }).pipe(
             Effect.map(comparedInspection),
             Effect.catchTags({
-              InvalidStackConfigError: (error) =>
-                Effect.succeed({ inspection: undefined, warning: error.message }),
-              StackVersionUnsupportedError: (error) =>
-                Effect.succeed({ inspection: undefined, warning: error.message }),
+              InvalidStackConfigError: () =>
+                Effect.succeed({ inspection: undefined, warning: configUnavailableWarning }),
+              StackVersionUnsupportedError: () =>
+                Effect.succeed({ inspection: undefined, warning: configUnavailableWarning }),
             }),
             catchStackError,
           );

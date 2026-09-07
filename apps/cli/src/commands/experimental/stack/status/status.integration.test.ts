@@ -7,6 +7,7 @@ import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import {
   InvalidStackConfigError,
+  StackNotFoundError,
   StackIdSchema,
   StackStateFormatUnsupportedError,
   type StackInspection,
@@ -69,6 +70,7 @@ const runStatus = (options: {
   readonly drift?: StackInspection["configDrift"];
   readonly flags?: ReturnType<typeof flags>;
   readonly compareFailure?: "typed" | "defect";
+  readonly missingTarget?: boolean;
   readonly legacyOutput?: boolean;
   readonly outputFormat?: "text" | "json";
 }) => {
@@ -79,7 +81,7 @@ const runStatus = (options: {
     writeFileSync(
       join(projectRoot, "supabase", "config.toml"),
       options.config === "invalid"
-        ? 'project_id = "unterminated\n'
+        ? 'project_id = "ok"\n\n[auth]\njwt_secret = "FAKE_STATUS_SECRET\n'
         : 'project_id = "status-test"\n\n[auth]\njwt_secret = "candidate-secret"\n',
     );
   const descriptor = {
@@ -108,6 +110,8 @@ const runStatus = (options: {
     openStack: () => Effect.die("open must not run"),
     inspectStack: (_stackId, inspectOptions) => {
       inspectInputs.push(inspectOptions);
+      if (options.missingTarget === true)
+        return Effect.fail(new StackNotFoundError({ message: "stack id not found" }));
       if (inspectOptions?.config !== undefined && options.compareFailure === "typed")
         return Effect.fail(new InvalidStackConfigError({ message: "candidate config is invalid" }));
       if (inspectOptions?.config !== undefined && options.compareFailure === "defect")
@@ -208,6 +212,23 @@ describe("experimental stack status", () => {
     );
   });
 
+  it.effect("does not claim ready when a running stack has stopped capabilities", () => {
+    const base = makeStatus(id);
+    const run = runStatus({
+      status: {
+        ...base,
+        capabilities: base.capabilities.map((capability, index) =>
+          index === 0 ? { ...capability, state: "stopped" as const } : capability,
+        ),
+      },
+    });
+    return run.effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => expect(run.out.stdoutText).toContain("Readiness: stopped")),
+      ),
+    );
+  });
+
   it.effect("emits the structured unavailable inspection for missing config", () => {
     const run = runStatus({
       config: "missing",
@@ -257,11 +278,45 @@ describe("experimental stack status", () => {
   it.effect("reports unavailable drift for missing or invalid config and keeps inspection", () => {
     const missing = runStatus({ config: "missing", status: makeStatus(id) });
     const invalid = runStatus({ config: "invalid", status: makeStatus(id) });
-    return Effect.all([missing.effect, invalid.effect]).pipe(
+    const invalidJson = runStatus({
+      config: "invalid",
+      status: makeStatus(id),
+      outputFormat: "json",
+    });
+    return Effect.all([missing.effect, invalid.effect, invalidJson.effect]).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
           expect(missing.out.stdoutText).toContain("Config drift: unavailable");
           expect(invalid.out.stdoutText).toContain("Config drift: unavailable");
+          expect(invalid.out.stdoutText).not.toContain("FAKE_STATUS_SECRET");
+          expect(invalidJson.out.stdoutText).not.toContain("FAKE_STATUS_SECRET");
+          const success = invalidJson.out.messages.find((message) => message.type === "success");
+          expect(success?.data).not.toEqual(
+            expect.objectContaining({ message: expect.stringContaining("FAKE_STATUS_SECRET") }),
+          );
+        }),
+      ),
+    );
+  });
+
+  it.effect("gives actionable guidance when an explicit stack id is missing", () => {
+    const run = runStatus({
+      flags: flags(Option.none(), Option.some(id)),
+      missingTarget: true,
+    });
+    return run.effect.pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const error = Cause.findErrorOption(exit.cause);
+            expect(Option.isSome(error)).toBe(true);
+            if (Option.isSome(error)) {
+              expect(error.value.suggestion).toContain("existing --stack-id");
+              expect(error.value[ErrorActionabilityId]).toEqual(actionability.provideFlags);
+            }
+          }
         }),
       ),
     );
