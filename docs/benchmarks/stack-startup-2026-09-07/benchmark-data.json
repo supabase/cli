@@ -1,0 +1,4958 @@
+{
+  "metadata": {
+    "artifactBarrier": "Memory sampling waits until background artifact preparation finishes; default startup ends at database readiness.",
+    "catalog": {
+      "artifacts": [
+        {
+          "archives": [
+            {
+              "bytes": 101725934,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "postgres-17.6.1.168-darwin-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "/usr/lib/libSystem.B.dylib",
+                  "/System/Library/Frameworks"
+                ],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [
+                  "postgres",
+                  "-D",
+                  "/etc/postgresql"
+                ],
+                "entrypoint": [
+                  "/usr/local/bin/docker-entrypoint.sh"
+                ],
+                "libc": null,
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {},
+                "nix_flake": ".",
+                "nix_release": {
+                  "hashes": {},
+                  "service": "postgres",
+                  "source": {},
+                  "sourceCommit": "87ea6eacbf8766b9d93c07e68c07b23fd97b5d8f",
+                  "sourceRepository": "https://github.com/supabase/postgres",
+                  "version": "17.6.1.168"
+                },
+                "nix_runtime": "/nix/store/ca8ilxwm0g3h27rfkj3lsa54z2ap776n-postgres-runtime",
+                "nix_system": "aarch64-darwin",
+                "os_floor": {
+                  "floor": "14.0",
+                  "kind": "macos",
+                  "offender": "bin/.pg_ctl-wrapped",
+                  "scanned": 217
+                },
+                "platform": "darwin/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.0,
+                  "runtime_rss_bytes": 69124096,
+                  "runtime_rss_mib": 65.9,
+                  "samples": 3,
+                  "settle_seconds": 60
+                },
+                "sbom": "postgres-17.6.1.168-darwin-arm64.sbom.spdx.json",
+                "service": "postgres",
+                "size": {
+                  "archive_bytes": 101725934,
+                  "archive_mib": 97.0,
+                  "rootfs_bytes": 463216640,
+                  "rootfs_mib": 441.8
+                },
+                "source_commit": "87ea6eacbf8766b9d93c07e68c07b23fd97b5d8f",
+                "source_dir": "sources/postgres",
+                "source_ref": "87ea6eacbf8766b9d93c07e68c07b23fd97b5d8f",
+                "target": "darwin-arm64",
+                "upstream_image": "supabase/postgres:17.6.1.168",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/supabase/postgres",
+                "version": "17.6.1.168"
+              },
+              "manifestSha256": "6a862dacbd72b88782000159a7f6e88ec0f51584c8dae82c1a70ab01bb995b80",
+              "name": "postgres-17.6.1.168-darwin-arm64.tar.zst",
+              "sha256": "bd00ee6060c357837091c36c786cac47af5fb3a23313c31b8689ad3d7ab605fd",
+              "target": "darwin-arm64",
+              "updatedAt": "2026-09-07T07:50:09Z"
+            },
+            {
+              "bytes": 76963122,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "postgres-17.6.1.168-linux-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "ld-linux",
+                  "libc",
+                  "libdl",
+                  "libpthread",
+                  "libm",
+                  "libresolv",
+                  "librt"
+                ],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [
+                  "postgres",
+                  "-D",
+                  "/etc/postgresql"
+                ],
+                "entrypoint": [
+                  "/usr/local/bin/docker-entrypoint.sh"
+                ],
+                "image": {
+                  "builder": "nix-dockerTools",
+                  "bytes": 350088139,
+                  "gzip_bytes": 108714177,
+                  "gzip_mib": 103.7,
+                  "mib": 333.9,
+                  "tag": "local/postgres:17.6.1.168-linux-arm64"
+                },
+                "libc": "glibc",
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {},
+                "nix_flake": ".",
+                "nix_release": {
+                  "hashes": {},
+                  "service": "postgres",
+                  "source": {},
+                  "sourceCommit": "87ea6eacbf8766b9d93c07e68c07b23fd97b5d8f",
+                  "sourceRepository": "https://github.com/supabase/postgres",
+                  "version": "17.6.1.168"
+                },
+                "nix_runtime": "/nix/store/xw7dppj9i5rnzsvxsr5m2kkffqyns263-postgres-runtime",
+                "nix_system": "aarch64-linux",
+                "os_floor": {
+                  "bundled_glibc": true,
+                  "floor": null,
+                  "kind": "glibc",
+                  "offender": null,
+                  "scanned": 498
+                },
+                "platform": "linux/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.0,
+                  "runtime_rss_bytes": 83641412,
+                  "runtime_rss_mib": 79.8,
+                  "samples": 3,
+                  "settle_seconds": 60
+                },
+                "sbom": "postgres-17.6.1.168-linux-arm64.sbom.spdx.json",
+                "service": "postgres",
+                "size": {
+                  "archive_bytes": 76963122,
+                  "archive_mib": 73.4,
+                  "rootfs_bytes": 352518144,
+                  "rootfs_mib": 336.2
+                },
+                "source_commit": "87ea6eacbf8766b9d93c07e68c07b23fd97b5d8f",
+                "source_dir": "sources/postgres",
+                "source_ref": "87ea6eacbf8766b9d93c07e68c07b23fd97b5d8f",
+                "target": "linux-arm64",
+                "upstream_image": "supabase/postgres:17.6.1.168",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/supabase/postgres",
+                "version": "17.6.1.168"
+              },
+              "manifestSha256": "20d6159aa27f0eb99f6061775d785ec3e3c6e48e465d2d6210cbba6c783548e8",
+              "name": "postgres-17.6.1.168-linux-arm64.tar.zst",
+              "sha256": "21618c04a668a9a4f9b34b042019a5108b23c6c42bd56ed76e0687335df516f5",
+              "target": "linux-arm64",
+              "updatedAt": "2026-09-07T07:50:10Z"
+            }
+          ],
+          "id": "database:database",
+          "image": "ghcr.io/supabase/cli/postgres:17.6.1.168@sha256:936536bb1f97bcab0e30f58613545f8a75676c185c5eb5b86d8f8b33ca3063a1",
+          "imageDigest": "sha256:936536bb1f97bcab0e30f58613545f8a75676c185c5eb5b86d8f8b33ca3063a1",
+          "imageManifest": {
+            "manifests": [
+              {
+                "digest": "sha256:2d4aff6d90044b443935d136543e3d89c8a5cc243ff736596fac8c9cb5163757",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "amd64",
+                  "os": "linux"
+                },
+                "size": 530
+              },
+              {
+                "digest": "sha256:74ec7e869de399e50f7c3b422ca35b3fb77fc9826a9e01c6587acb0a704a7ae7",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "arm64",
+                  "os": "linux"
+                },
+                "size": 530
+              }
+            ],
+            "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+            "schemaVersion": 2
+          },
+          "releaseUrl": "https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.168",
+          "service": "postgres",
+          "version": "17.6.1.168"
+        },
+        {
+          "archives": [
+            {
+              "bytes": 13159621,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "postgrest-v16.2-darwin-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "/usr/lib/libSystem.B.dylib",
+                  "/usr/lib/libz.1.dylib",
+                  "/usr/lib/libiconv.2.dylib",
+                  "/usr/lib/libffi.dylib",
+                  "/usr/lib/libcharset.1.dylib"
+                ],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [
+                  "/bin/postgrest"
+                ],
+                "entrypoint": [],
+                "libc": null,
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {},
+                "nix_flake": ".",
+                "nix_release": {
+                  "assetHash": "sha256-SSvcLmUEgSu9EOoNj9atoYmthsFlzgwS4RzjRyR8XD0=",
+                  "assetUrl": "https://github.com/PostgREST/postgrest/releases/download/v16.2/postgrest-v16.2-macos-aarch64.tar.xz",
+                  "hashes": {},
+                  "service": "postgrest",
+                  "source": {},
+                  "sourceCommit": "47ef77b88091ceeb570992dc775b8292b9c45907",
+                  "sourceRepository": "https://github.com/PostgREST/postgrest",
+                  "version": "v16.2"
+                },
+                "nix_runtime": "/nix/store/y8lc8il9z7f8y4ww71bd00s731161rzd-postgrest-runtime",
+                "nix_system": "aarch64-darwin",
+                "os_floor": {
+                  "floor": "14.0",
+                  "kind": "macos",
+                  "offender": "bin/.postgrest-wrapped",
+                  "scanned": 10
+                },
+                "platform": "darwin/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.0,
+                  "runtime_rss_bytes": 58507264,
+                  "runtime_rss_mib": 55.8,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "postgrest-v16.2-darwin-arm64.sbom.spdx.json",
+                "service": "postgrest",
+                "size": {
+                  "archive_bytes": 13159621,
+                  "archive_mib": 12.5,
+                  "rootfs_bytes": 81719296,
+                  "rootfs_mib": 77.9
+                },
+                "source_commit": "47ef77b88091ceeb570992dc775b8292b9c45907",
+                "source_dir": "sources/postgrest",
+                "source_ref": "v16.2",
+                "target": "darwin-arm64",
+                "upstream_image": "postgrest/postgrest:v16.2",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/PostgREST/postgrest",
+                "version": "v16.2"
+              },
+              "manifestSha256": "7786edb3c4b7bda3211b25e75896c1c101d3ed0c90dda5b285656a069ad1aa2f",
+              "name": "postgrest-v16.2-darwin-arm64.tar.zst",
+              "sha256": "2aa250e5b8b627768bd2e65da7973cecba8c2764d03d3f45faa9c2e0a5fec193",
+              "target": "darwin-arm64",
+              "updatedAt": "2026-09-07T07:42:16Z"
+            },
+            {
+              "bytes": 4584074,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "postgrest-v16.2-linux-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "ld-linux",
+                  "libc",
+                  "libdl",
+                  "libpthread",
+                  "libm",
+                  "libresolv",
+                  "librt"
+                ],
+                "auto_elf_binaries": [
+                  "/bin/postgrest"
+                ],
+                "auto_elf_deps": true,
+                "base_image": "scratch",
+                "build_backend": "image",
+                "cmd": [
+                  "/bin/postgrest"
+                ],
+                "entrypoint": [],
+                "excluded_file_classes": [
+                  "sourcemaps",
+                  "debug-symbols",
+                  "tests",
+                  "docs",
+                  "examples",
+                  "package-manager-caches",
+                  "Next tracing manifests"
+                ],
+                "image": {
+                  "builder": "nix-dockerTools",
+                  "bytes": 22093635,
+                  "gzip_bytes": 7087495,
+                  "gzip_mib": 6.8,
+                  "mib": 21.1,
+                  "tag": "local/postgrest:v16.2-linux-arm64"
+                },
+                "include_paths": [
+                  "/bin/postgrest"
+                ],
+                "libc": "glibc",
+                "licenses": "share/licenses",
+                "os_floor": {
+                  "bundled_glibc": false,
+                  "floor": null,
+                  "kind": "glibc",
+                  "offender": null,
+                  "scanned": 1
+                },
+                "platform": "linux/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.07,
+                  "runtime_rss_bytes": 8395248,
+                  "runtime_rss_mib": 8.0,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "postgrest-v16.2-linux-arm64.sbom.spdx.json",
+                "service": "postgrest",
+                "size": {
+                  "archive_bytes": 4584074,
+                  "archive_mib": 4.4,
+                  "rootfs_bytes": 20508672,
+                  "rootfs_mib": 19.6
+                },
+                "smoke_command": "scripts/smoke.sh postgrest --artifact /home/runner/work/slim-services/slim-services/artifacts/postgrest/v16.2/linux-arm64/rootfs",
+                "source_image": "postgrest/postgrest:v16.2",
+                "split_bundled_glibc": true,
+                "target": "linux-arm64",
+                "version": "v16.2"
+              },
+              "manifestSha256": "be8232e8331b8f7bb9a01b6f72c708c90012b6a832e31d48bd378faa97f9b217",
+              "name": "postgrest-v16.2-linux-arm64.tar.zst",
+              "sha256": "ffa38a2aecf4bbdbd80bab3da13ab616fbf0a926ee4039834b234ecdd5940bb6",
+              "target": "linux-arm64",
+              "updatedAt": "2026-09-07T07:42:17Z"
+            }
+          ],
+          "id": "rest:rest",
+          "image": "ghcr.io/supabase/cli/postgrest:v16.2",
+          "imageDigest": "sha256:0878f80fe6ffa88f12cab4c176cc9068f161c72f3edcfaa96d9719e40865bdf2",
+          "imageManifest": {
+            "manifests": [
+              {
+                "digest": "sha256:84225c4cdfd5026466701ccc65c2b16eb22345dd29835937e1ecbf46f0a3ecf1",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "amd64",
+                  "os": "linux"
+                },
+                "size": 528
+              },
+              {
+                "digest": "sha256:2002994c20b63afec58547b4e36f5791829287969c1b75d65b795f84ac4df6f2",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "arm64",
+                  "os": "linux"
+                },
+                "size": 528
+              }
+            ],
+            "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+            "schemaVersion": 2
+          },
+          "releaseUrl": "https://github.com/supabase/slim-services/releases/tag/postgrest-v16.2",
+          "service": "postgrest",
+          "version": "v16.2"
+        },
+        {
+          "archives": [
+            {
+              "bytes": 9940900,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "auth-v2.196.0-darwin-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "/usr/lib/libSystem.B.dylib",
+                  "/System/Library/Frameworks"
+                ],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [
+                  "gotrue"
+                ],
+                "entrypoint": [],
+                "libc": null,
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {
+                  "go_toolchain_hash": "sha256-77h/8or5oYjQU2711C5j3VK6gmPNc0Spk8xI3RHe22o=",
+                  "vendor_hash": "sha256-wAV0WhsAbwsYtat+HZeoeBpRdOnBH2BzV7LEMMylSBw="
+                },
+                "nix_flake": ".",
+                "nix_release": {
+                  "hashes": {
+                    "go_toolchain_hash": "sha256-77h/8or5oYjQU2711C5j3VK6gmPNc0Spk8xI3RHe22o=",
+                    "vendor_hash": "sha256-wAV0WhsAbwsYtat+HZeoeBpRdOnBH2BzV7LEMMylSBw="
+                  },
+                  "service": "auth",
+                  "source": {},
+                  "sourceCommit": "0204331ca41a5b49f076b6fa3dc6c0d20b996590",
+                  "sourceRepository": "https://github.com/supabase/auth",
+                  "version": "v2.196.0"
+                },
+                "nix_runtime": "/nix/store/clg7p203qsadny7ai53h6qqba3jrnh84-auth-runtime",
+                "nix_system": "aarch64-darwin",
+                "os_floor": {
+                  "floor": "12.0",
+                  "kind": "macos",
+                  "offender": "bin/.auth-wrapped",
+                  "scanned": 1
+                },
+                "platform": "darwin/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.0,
+                  "runtime_rss_bytes": 30769152,
+                  "runtime_rss_mib": 29.3,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "auth-v2.196.0-darwin-arm64.sbom.spdx.json",
+                "service": "auth",
+                "size": {
+                  "archive_bytes": 9940900,
+                  "archive_mib": 9.5,
+                  "rootfs_bytes": 35512320,
+                  "rootfs_mib": 33.9
+                },
+                "source_commit": "0204331ca41a5b49f076b6fa3dc6c0d20b996590",
+                "source_dir": "sources/auth",
+                "source_ref": "v2.196.0",
+                "target": "darwin-arm64",
+                "upstream_image": "supabase/gotrue:v2.196.0",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/supabase/auth",
+                "version": "v2.196.0"
+              },
+              "manifestSha256": "cd261c07a579ec72549da4f40c6d5d8aa9d2e9dd19a5b995033497633a7b05f0",
+              "name": "auth-v2.196.0-darwin-arm64.tar.zst",
+              "sha256": "00d9e5089f9407f72d3b586ef004b3a5219e1a09cb1b5c11b413c089cef9553e",
+              "target": "darwin-arm64",
+              "updatedAt": "2026-09-07T07:45:43Z"
+            },
+            {
+              "bytes": 9430094,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "auth-v2.196.0-linux-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [
+                  "gotrue"
+                ],
+                "entrypoint": [],
+                "image": {
+                  "builder": "nix-dockerTools",
+                  "bytes": 36466445,
+                  "gzip_bytes": 12922824,
+                  "gzip_mib": 12.3,
+                  "mib": 34.8,
+                  "tag": "local/auth:v2.196.0-linux-arm64"
+                },
+                "libc": "glibc",
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {
+                  "go_toolchain_hash": "sha256-/keJ6SsfMzWGgIZLvocEKJ57tfwgfYBiPDCJNb1pbUk=",
+                  "vendor_hash": "sha256-wAV0WhsAbwsYtat+HZeoeBpRdOnBH2BzV7LEMMylSBw="
+                },
+                "nix_flake": ".",
+                "nix_release": {
+                  "hashes": {
+                    "go_toolchain_hash": "sha256-/keJ6SsfMzWGgIZLvocEKJ57tfwgfYBiPDCJNb1pbUk=",
+                    "vendor_hash": "sha256-wAV0WhsAbwsYtat+HZeoeBpRdOnBH2BzV7LEMMylSBw="
+                  },
+                  "service": "auth",
+                  "source": {},
+                  "sourceCommit": "0204331ca41a5b49f076b6fa3dc6c0d20b996590",
+                  "sourceRepository": "https://github.com/supabase/auth",
+                  "version": "v2.196.0"
+                },
+                "nix_runtime": "/nix/store/0026hv7w0mvl5a9izrqji8xfxkd20g1x-auth-runtime",
+                "nix_system": "aarch64-linux",
+                "os_floor": {
+                  "bundled_glibc": false,
+                  "floor": null,
+                  "kind": "glibc",
+                  "offender": null,
+                  "scanned": 1
+                },
+                "platform": "linux/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.43,
+                  "runtime_rss_bytes": 9696531,
+                  "runtime_rss_mib": 9.2,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "auth-v2.196.0-linux-arm64.sbom.spdx.json",
+                "service": "auth",
+                "size": {
+                  "archive_bytes": 9430094,
+                  "archive_mib": 9.0,
+                  "rootfs_bytes": 34312192,
+                  "rootfs_mib": 32.7
+                },
+                "source_commit": "0204331ca41a5b49f076b6fa3dc6c0d20b996590",
+                "source_dir": "sources/auth",
+                "source_ref": "v2.196.0",
+                "target": "linux-arm64",
+                "upstream_image": "supabase/gotrue:v2.196.0",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/supabase/auth",
+                "version": "v2.196.0"
+              },
+              "manifestSha256": "bd59b5c88e42f075a3a7bd8690774b9f38ac50bb1d51a127b5140b0fa2017e1a",
+              "name": "auth-v2.196.0-linux-arm64.tar.zst",
+              "sha256": "5fc11aa1552b770e559066d6936fbc9521b0be444f36ce8b59db0ac8aa18247d",
+              "target": "linux-arm64",
+              "updatedAt": "2026-09-07T07:45:44Z"
+            }
+          ],
+          "id": "auth:auth",
+          "image": "ghcr.io/supabase/cli/auth:v2.196.0",
+          "imageDigest": "sha256:570efcfd1568341103f39a2503400d7ee470dcf90bbf8934e6aa9df1b9785fc6",
+          "imageManifest": {
+            "manifests": [
+              {
+                "digest": "sha256:0f9a25c9128451b76b903d8c1d349c0eaacc10a97314824230b18d9973522a5d",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "amd64",
+                  "os": "linux"
+                },
+                "size": 529
+              },
+              {
+                "digest": "sha256:facf8595594f904676c32b23ccb03e11b9e7e8a651aabe8ba5c5715a97d5c132",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "arm64",
+                  "os": "linux"
+                },
+                "size": 529
+              }
+            ],
+            "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+            "schemaVersion": 2
+          },
+          "releaseUrl": "https://github.com/supabase/slim-services/releases/tag/auth-v2.196.0",
+          "service": "auth",
+          "version": "v2.196.0"
+        },
+        {
+          "archives": [
+            {
+              "bytes": 12514334,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "realtime-v2.134.5-darwin-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "/usr/lib/libSystem.B.dylib",
+                  "/System/Library/Frameworks"
+                ],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [
+                  "/app/bin/server"
+                ],
+                "entrypoint": [
+                  "/usr/bin/tini",
+                  "-s",
+                  "-g",
+                  "--",
+                  "/usr/bin/sh",
+                  "/app/entry.sh"
+                ],
+                "libc": null,
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {
+                  "mix_deps_hash": "sha256-c0jAotYPJ1b/8zoT7kRYKHc9cXJqUB7T9dxp7GnUpCk="
+                },
+                "nix_flake": ".",
+                "nix_release": {
+                  "hashes": {
+                    "mix_deps_hash": "sha256-c0jAotYPJ1b/8zoT7kRYKHc9cXJqUB7T9dxp7GnUpCk="
+                  },
+                  "service": "realtime",
+                  "source": {},
+                  "sourceCommit": "18e4c2fb227091fe615c1ab8db2e9de19034bdd8",
+                  "sourceRepository": "https://github.com/supabase/realtime",
+                  "version": "v2.134.5"
+                },
+                "nix_runtime": "/nix/store/il03srp03yql5ighibwl4yld84rn1sdb-realtime-runtime",
+                "nix_system": "aarch64-darwin",
+                "os_floor": {
+                  "floor": "11.3",
+                  "kind": "macos",
+                  "offender": "dylib/libc++abi.1.0.dylib",
+                  "scanned": 32
+                },
+                "platform": "darwin/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.1,
+                  "runtime_rss_bytes": 230211584,
+                  "runtime_rss_mib": 219.5,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "realtime-v2.134.5-darwin-arm64.sbom.spdx.json",
+                "service": "realtime",
+                "size": {
+                  "archive_bytes": 12514334,
+                  "archive_mib": 11.9,
+                  "rootfs_bytes": 50847744,
+                  "rootfs_mib": 48.5
+                },
+                "source_commit": "18e4c2fb227091fe615c1ab8db2e9de19034bdd8",
+                "source_dir": "sources/realtime",
+                "source_ref": "v2.134.5",
+                "target": "darwin-arm64",
+                "upstream_image": "supabase/realtime:v2.134.5",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/supabase/realtime",
+                "version": "v2.134.5"
+              },
+              "manifestSha256": "72184a20d3b5440992e7e03a38a381624fc61f0da5584805f0ecb0c69b6ee299",
+              "name": "realtime-v2.134.5-darwin-arm64.tar.zst",
+              "sha256": "ca4b9b351eea5cc101813f058b5e1193102112df80e177a5a6379dbbccf4dbd2",
+              "target": "darwin-arm64",
+              "updatedAt": "2026-09-07T09:52:40Z"
+            },
+            {
+              "bytes": 17065854,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "realtime-v2.134.5-linux-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "ld-linux",
+                  "libc",
+                  "libdl",
+                  "libpthread",
+                  "libm",
+                  "libresolv",
+                  "librt"
+                ],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [
+                  "/app/bin/server"
+                ],
+                "entrypoint": [
+                  "/usr/bin/tini",
+                  "-s",
+                  "-g",
+                  "--",
+                  "/usr/bin/sh",
+                  "/app/entry.sh"
+                ],
+                "image": {
+                  "builder": "nix-dockerTools",
+                  "bytes": 77617562,
+                  "gzip_bytes": 25202696,
+                  "gzip_mib": 24.0,
+                  "mib": 74.0,
+                  "tag": "local/realtime:v2.134.5-linux-arm64"
+                },
+                "libc": "glibc",
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {
+                  "mix_deps_hash": "sha256-c0jAotYPJ1b/8zoT7kRYKHc9cXJqUB7T9dxp7GnUpCk="
+                },
+                "nix_flake": ".",
+                "nix_release": {
+                  "hashes": {
+                    "mix_deps_hash": "sha256-c0jAotYPJ1b/8zoT7kRYKHc9cXJqUB7T9dxp7GnUpCk="
+                  },
+                  "service": "realtime",
+                  "source": {},
+                  "sourceCommit": "18e4c2fb227091fe615c1ab8db2e9de19034bdd8",
+                  "sourceRepository": "https://github.com/supabase/realtime",
+                  "version": "v2.134.5"
+                },
+                "nix_runtime": "/nix/store/8lrm2zy6az8qcw259nrpmsdyqahjic63-realtime-runtime",
+                "nix_system": "aarch64-linux",
+                "os_floor": {
+                  "bundled_glibc": true,
+                  "floor": null,
+                  "kind": "glibc",
+                  "offender": null,
+                  "scanned": 304
+                },
+                "platform": "linux/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.12,
+                  "runtime_rss_bytes": 186401860,
+                  "runtime_rss_mib": 177.8,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "realtime-v2.134.5-linux-arm64.sbom.spdx.json",
+                "service": "realtime",
+                "size": {
+                  "archive_bytes": 17065854,
+                  "archive_mib": 16.3,
+                  "rootfs_bytes": 87506944,
+                  "rootfs_mib": 83.5
+                },
+                "source_commit": "18e4c2fb227091fe615c1ab8db2e9de19034bdd8",
+                "source_dir": "sources/realtime",
+                "source_ref": "v2.134.5",
+                "target": "linux-arm64",
+                "upstream_image": "supabase/realtime:v2.134.5",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/supabase/realtime",
+                "version": "v2.134.5"
+              },
+              "manifestSha256": "24af6f16601859b0a9911e68dbf0e5c886f4de1cb397de2ee0738fa608c2067e",
+              "name": "realtime-v2.134.5-linux-arm64.tar.zst",
+              "sha256": "3919fe443e0782803d61ed24e1d41aac33d5bb84e815c92b7b46946126ca2103",
+              "target": "linux-arm64",
+              "updatedAt": "2026-09-07T09:52:42Z"
+            }
+          ],
+          "id": "realtime:realtime",
+          "image": "ghcr.io/supabase/cli/realtime:v2.134.5@sha256:7fb53cc6987085d739c7d161608505ed138d1895df884c3bdc2147cef444138a",
+          "imageDigest": "sha256:7fb53cc6987085d739c7d161608505ed138d1895df884c3bdc2147cef444138a",
+          "imageManifest": {
+            "manifests": [
+              {
+                "digest": "sha256:273ba0cdccba36fff97304122346da52b0b0d8c8886858cc30b0d37ff590230b",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "amd64",
+                  "os": "linux"
+                },
+                "size": 529
+              },
+              {
+                "digest": "sha256:8b586b5478a2f40d0d7e1b92fad15e1d377f22786587b383b0d2abd3dd28e3c0",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "arm64",
+                  "os": "linux"
+                },
+                "size": 529
+              }
+            ],
+            "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+            "schemaVersion": 2
+          },
+          "releaseUrl": "https://github.com/supabase/slim-services/releases/tag/realtime-v2.134.5",
+          "service": "realtime",
+          "version": "v2.134.5"
+        },
+        {
+          "archives": [
+            {
+              "bytes": 37901056,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "storage-v1.73.0-darwin-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "/usr/lib/libSystem.B.dylib",
+                  "/System/Library/Frameworks"
+                ],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [
+                  "/slim-runtime/bin/storage"
+                ],
+                "entrypoint": [],
+                "libc": null,
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {
+                  "npm_deps_hash": "sha256-LnpfCVtK4o9kwiQ3eX/TQbZ11qp0VF/Ji+rGnhN83vY=",
+                  "npm_tool_hash": "sha256-5nmFDmY7FvXxRu5CXQ6w40QsHSvaPVE7v9fIH17l2zg=",
+                  "tools_deps_hash": "sha256-bWXwLRjb4G7kHgHhgeoCJkIP9xGKnYezshdxnWs0b9o="
+                },
+                "nix_flake": ".",
+                "nix_release": {
+                  "hashes": {
+                    "npm_deps_hash": "sha256-LnpfCVtK4o9kwiQ3eX/TQbZ11qp0VF/Ji+rGnhN83vY=",
+                    "npm_tool_hash": "sha256-5nmFDmY7FvXxRu5CXQ6w40QsHSvaPVE7v9fIH17l2zg=",
+                    "tools_deps_hash": "sha256-bWXwLRjb4G7kHgHhgeoCJkIP9xGKnYezshdxnWs0b9o="
+                  },
+                  "nodeMajor": 24,
+                  "npmVersion": "11.12.1",
+                  "service": "storage",
+                  "source": {},
+                  "sourceCommit": "c015666ee13ee29faab50cf76ac513d73bdb6bfc",
+                  "sourceRepository": "https://github.com/supabase/storage",
+                  "version": "v1.73.0"
+                },
+                "nix_runtime": "/nix/store/9ssga0wxpxi52c94m90rcvhb8nal5agv-storage-runtime",
+                "nix_system": "aarch64-darwin",
+                "os_floor": {
+                  "floor": "13.5",
+                  "kind": "macos",
+                  "offender": "app/node_modules/fs-xattr/build/Release/xattr.node",
+                  "scanned": 15
+                },
+                "platform": "darwin/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.0,
+                  "runtime_rss_bytes": 302219264,
+                  "runtime_rss_mib": 288.2,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "storage-v1.73.0-darwin-arm64.sbom.spdx.json",
+                "service": "storage",
+                "size": {
+                  "archive_bytes": 37901056,
+                  "archive_mib": 36.1,
+                  "rootfs_bytes": 156667904,
+                  "rootfs_mib": 149.4
+                },
+                "source_commit": "c015666ee13ee29faab50cf76ac513d73bdb6bfc",
+                "source_dir": "sources/storage",
+                "source_ref": "v1.73.0",
+                "target": "darwin-arm64",
+                "upstream_image": "supabase/storage-api:v1.73.0",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/supabase/storage",
+                "version": "v1.73.0"
+              },
+              "manifestSha256": "acc2834f3b7513309051d16b070e04cb01939e13776086d4ade1dd3c409150e5",
+              "name": "storage-v1.73.0-darwin-arm64.tar.zst",
+              "sha256": "e3421f27571b48518fcb3cebcc32bb6828dcee4fc4d99a6cfe5ea27a77cc4058",
+              "target": "darwin-arm64",
+              "updatedAt": "2026-09-07T07:50:49Z"
+            },
+            {
+              "bytes": 36140552,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "storage-v1.73.0-linux-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "ld-linux",
+                  "libc",
+                  "libdl",
+                  "libpthread",
+                  "libm",
+                  "libresolv",
+                  "librt"
+                ],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [
+                  "/slim-runtime/bin/storage"
+                ],
+                "entrypoint": [],
+                "image": {
+                  "builder": "nix-dockerTools",
+                  "bytes": 160747217,
+                  "gzip_bytes": 51540549,
+                  "gzip_mib": 49.2,
+                  "mib": 153.3,
+                  "tag": "local/storage:v1.73.0-linux-arm64"
+                },
+                "libc": "glibc",
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {
+                  "npm_deps_hash": "sha256-LnpfCVtK4o9kwiQ3eX/TQbZ11qp0VF/Ji+rGnhN83vY=",
+                  "npm_tool_hash": "sha256-5nmFDmY7FvXxRu5CXQ6w40QsHSvaPVE7v9fIH17l2zg=",
+                  "tools_deps_hash": "sha256-bWXwLRjb4G7kHgHhgeoCJkIP9xGKnYezshdxnWs0b9o="
+                },
+                "nix_flake": ".",
+                "nix_release": {
+                  "hashes": {
+                    "npm_deps_hash": "sha256-LnpfCVtK4o9kwiQ3eX/TQbZ11qp0VF/Ji+rGnhN83vY=",
+                    "npm_tool_hash": "sha256-5nmFDmY7FvXxRu5CXQ6w40QsHSvaPVE7v9fIH17l2zg=",
+                    "tools_deps_hash": "sha256-bWXwLRjb4G7kHgHhgeoCJkIP9xGKnYezshdxnWs0b9o="
+                  },
+                  "nodeMajor": 24,
+                  "npmVersion": "11.12.1",
+                  "service": "storage",
+                  "source": {},
+                  "sourceCommit": "c015666ee13ee29faab50cf76ac513d73bdb6bfc",
+                  "sourceRepository": "https://github.com/supabase/storage",
+                  "version": "v1.73.0"
+                },
+                "nix_runtime": "/nix/store/hzmd5599cgn2i1q8rn3qlbr0rv80q8jw-storage-runtime",
+                "nix_system": "aarch64-linux",
+                "os_floor": {
+                  "bundled_glibc": true,
+                  "floor": null,
+                  "kind": "glibc",
+                  "offender": null,
+                  "scanned": 283
+                },
+                "platform": "linux/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 3.73,
+                  "runtime_rss_bytes": 223381640,
+                  "runtime_rss_mib": 213.0,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "storage-v1.73.0-linux-arm64.sbom.spdx.json",
+                "service": "storage",
+                "size": {
+                  "archive_bytes": 36140552,
+                  "archive_mib": 34.5,
+                  "rootfs_bytes": 161378304,
+                  "rootfs_mib": 153.9
+                },
+                "source_commit": "c015666ee13ee29faab50cf76ac513d73bdb6bfc",
+                "source_dir": "sources/storage",
+                "source_ref": "v1.73.0",
+                "target": "linux-arm64",
+                "upstream_image": "supabase/storage-api:v1.73.0",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/supabase/storage",
+                "version": "v1.73.0"
+              },
+              "manifestSha256": "0c4308008696d9df137082f54ccb83cf488aa2d482a077863db848f6e7ba4481",
+              "name": "storage-v1.73.0-linux-arm64.tar.zst",
+              "sha256": "d6d9541811484db3d89febfd9e33c4161f25003ea60b3b95ab22d8d244158a4c",
+              "target": "linux-arm64",
+              "updatedAt": "2026-09-07T07:50:51Z"
+            }
+          ],
+          "id": "storage:storage",
+          "image": "ghcr.io/supabase/cli/storage:v1.73.0@sha256:69590a75f916837641976d4018e5ead7c7d2c2305312d9bfb06d86aec8fb1cdd",
+          "imageDigest": "sha256:69590a75f916837641976d4018e5ead7c7d2c2305312d9bfb06d86aec8fb1cdd",
+          "imageManifest": {
+            "manifests": [
+              {
+                "digest": "sha256:8867758e40bb9aa17a53f01b76a0db87c1ef012df58ac93e394bc1d8732cc227",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "amd64",
+                  "os": "linux"
+                },
+                "size": 529
+              },
+              {
+                "digest": "sha256:d063549c7a94ad66cdb0ca6de5bea69585f3435f49d37a93e9880c6656f6fddc",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "arm64",
+                  "os": "linux"
+                },
+                "size": 529
+              }
+            ],
+            "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+            "schemaVersion": 2
+          },
+          "releaseUrl": "https://github.com/supabase/slim-services/releases/tag/storage-v1.73.0",
+          "service": "storage",
+          "version": "v1.73.0"
+        },
+        {
+          "archives": [
+            {
+              "bytes": 41889430,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "edge-runtime-v1.76.2-darwin-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "/usr/lib/libSystem.B.dylib",
+                  "/System/Library/Frameworks"
+                ],
+                "base_image": "gcr.io/distroless/base-debian13",
+                "build_backend": "nix",
+                "cmd": [],
+                "entrypoint": [
+                  "/bin/.edge-runtime-wrapped"
+                ],
+                "excluded_file_classes": [
+                  "sourcemaps",
+                  "debug-symbols",
+                  "tests",
+                  "docs",
+                  "examples",
+                  "package-manager-caches",
+                  "Next tracing manifests"
+                ],
+                "host_nix_system": "aarch64-darwin",
+                "libc": null,
+                "licenses": "share/licenses",
+                "mix_deps_hash": null,
+                "nix_attr": "edge-runtime",
+                "nix_build_command_template": "",
+                "nix_build_mode": "flake",
+                "nix_copy_paths": [],
+                "nix_derived_hashes": {
+                  "cargo_hash": "sha256-LBQ9/PE10qGoWe9g4U8w3YQqxZSFf8vjXjLzrl585S0=",
+                  "v8_archive_hash": "sha256-VYWg+9WekcHBJWEq49eAAVpc6g/PPaoZDm/j2DKNQLY=",
+                  "v8_binding_hash": "sha256-ytcUCd4V1MQkinakmT3rJsdow1RLVWrGqtMjava4BaU="
+                },
+                "nix_flake": "./sources/edge-runtime",
+                "nix_flake_for_build": "/private/var/folders/g3/pffjr_y96bq06blnkf72x_hw0000gn/T/slim-images-edge-runtime-darwin-arm64.hOFwYa/src",
+                "nix_installable": "/private/var/folders/g3/pffjr_y96bq06blnkf72x_hw0000gn/T/slim-images-edge-runtime-darwin-arm64.hOFwYa/src#packages.aarch64-darwin.edge-runtime",
+                "nix_output_kind": "rootfs",
+                "nix_package_overlay": "services/edge-runtime/nix/edge-runtime.nix",
+                "nix_package_overlay_dest": "nix/edge-runtime.nix",
+                "nix_runner": "local",
+                "nix_source_args": {},
+                "nix_system": "aarch64-darwin",
+                "os_floor": {
+                  "floor": "14.0",
+                  "kind": "macos",
+                  "offender": "bin/.edge-runtime-wrapped",
+                  "scanned": 89
+                },
+                "platform": "darwin/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.0,
+                  "runtime_rss_bytes": 61308928,
+                  "runtime_rss_mib": 58.5,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "edge-runtime-v1.76.2-darwin-arm64.sbom.spdx.json",
+                "service": "edge-runtime",
+                "size": {
+                  "archive_bytes": 41889430,
+                  "archive_mib": 39.9,
+                  "rootfs_bytes": 169283584,
+                  "rootfs_mib": 161.4
+                },
+                "smoke_command": "scripts/smoke.sh edge-runtime --artifact /Users/runner/work/slim-services/slim-services/artifacts/edge-runtime/v1.76.2/darwin-arm64/rootfs",
+                "source_commit": "db47af5264be7a6e649d9488cc4f3f0da16ff875",
+                "source_dir": "sources/edge-runtime",
+                "source_ref": "v1.76.2",
+                "target": "darwin-arm64",
+                "upstream_image": "supabase/edge-runtime:v1.76.2",
+                "upstream_source": null,
+                "upstream_source_repository": null,
+                "version": "v1.76.2"
+              },
+              "manifestSha256": "d434236157b8161b24ac4cb040807e288c54b638f54a602e963bf94523fafa9b",
+              "name": "edge-runtime-v1.76.2-darwin-arm64.tar.zst",
+              "sha256": "11cfb6503105980c4e7bd33d99288ff4fd42098d852a03564008fb0c8bac8663",
+              "target": "darwin-arm64",
+              "updatedAt": "2026-09-02T12:56:21Z"
+            },
+            {
+              "bytes": 32465744,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "edge-runtime-v1.76.2-linux-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "ld-linux",
+                  "libc",
+                  "libdl",
+                  "libpthread",
+                  "libm",
+                  "libresolv",
+                  "librt"
+                ],
+                "base_image": "gcr.io/distroless/base-debian13",
+                "build_backend": "nix",
+                "cmd": [],
+                "entrypoint": [
+                  "/bin/.edge-runtime-wrapped"
+                ],
+                "excluded_file_classes": [
+                  "sourcemaps",
+                  "debug-symbols",
+                  "tests",
+                  "docs",
+                  "examples",
+                  "package-manager-caches",
+                  "Next tracing manifests"
+                ],
+                "host_nix_system": "aarch64-linux",
+                "image": {
+                  "bytes": 159080527,
+                  "gzip_bytes": 55822473,
+                  "gzip_mib": 53.2,
+                  "mib": 151.7,
+                  "tag": "local/edge-runtime:v1.76.2-linux-arm64"
+                },
+                "libc": "glibc",
+                "licenses": "share/licenses",
+                "mix_deps_hash": null,
+                "nix_attr": "edge-runtime",
+                "nix_build_command_template": "",
+                "nix_build_mode": "flake",
+                "nix_copy_paths": [],
+                "nix_derived_hashes": {
+                  "cargo_hash": "sha256-LBQ9/PE10qGoWe9g4U8w3YQqxZSFf8vjXjLzrl585S0=",
+                  "v8_archive_hash": "sha256-8YupKkWyFn8oZ+RbEzcigdgwvIRjzE5GW7OSnmkIYHU=",
+                  "v8_binding_hash": "sha256-sq8JII71BvnI43jNMm5yCj8WgGQ1K9n7AcOCJsfklRQ="
+                },
+                "nix_flake": "./sources/edge-runtime",
+                "nix_flake_for_build": "/tmp/slim-images-edge-runtime-linux-arm64.wTZIAP/src",
+                "nix_installable": "/tmp/slim-images-edge-runtime-linux-arm64.wTZIAP/src#packages.aarch64-linux.edge-runtime",
+                "nix_output_kind": "rootfs",
+                "nix_package_overlay": "services/edge-runtime/nix/edge-runtime.nix",
+                "nix_package_overlay_dest": "nix/edge-runtime.nix",
+                "nix_runner": "local",
+                "nix_source_args": {},
+                "nix_system": "aarch64-linux",
+                "os_floor": {
+                  "bundled_glibc": false,
+                  "floor": "2.35",
+                  "kind": "glibc",
+                  "offender": "lib/libgcc_s.so.1",
+                  "scanned": 2
+                },
+                "platform": "linux/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.01,
+                  "runtime_rss_bytes": 19618856,
+                  "runtime_rss_mib": 18.7,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "edge-runtime-v1.76.2-linux-arm64.sbom.spdx.json",
+                "service": "edge-runtime",
+                "size": {
+                  "archive_bytes": 32465744,
+                  "archive_mib": 31.0,
+                  "rootfs_bytes": 123338752,
+                  "rootfs_mib": 117.6
+                },
+                "smoke_command": "scripts/smoke.sh edge-runtime --artifact /home/runner/work/slim-services/slim-services/artifacts/edge-runtime/v1.76.2/linux-arm64/rootfs",
+                "source_commit": "db47af5264be7a6e649d9488cc4f3f0da16ff875",
+                "source_dir": "sources/edge-runtime",
+                "source_ref": "v1.76.2",
+                "target": "linux-arm64",
+                "upstream_image": "supabase/edge-runtime:v1.76.2",
+                "upstream_source": null,
+                "upstream_source_repository": null,
+                "version": "v1.76.2"
+              },
+              "manifestSha256": "b2c176296cdf9825558102f4455fe2a075a96379c6aa91505d012d1f0b86a032",
+              "name": "edge-runtime-v1.76.2-linux-arm64.tar.zst",
+              "sha256": "495ab7695fd0278f9044beb5d6aa634cdbe4823713bf8f212c2c99d84ddf5240",
+              "target": "linux-arm64",
+              "updatedAt": "2026-09-02T12:56:22Z"
+            }
+          ],
+          "id": "functions:edge-runtime",
+          "image": "ghcr.io/supabase/cli/edge-runtime:v1.76.2",
+          "imageDigest": "sha256:d659e783b91e1dd6c476ecfa80a36e729e17bb579e6114b976362c4ea4c2d190",
+          "imageManifest": {
+            "manifests": [
+              {
+                "digest": "sha256:d654c956833863994e3daffb6975ef4daaa75164ce9c0aec4bf206f07c1ba255",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "amd64",
+                  "os": "linux"
+                },
+                "size": 4699
+              },
+              {
+                "digest": "sha256:606f328868fca68a108f86aaaf10709484a266af190c660600d18cb2768762d9",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "arm64",
+                  "os": "linux"
+                },
+                "size": 4699
+              }
+            ],
+            "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+            "schemaVersion": 2
+          },
+          "releaseUrl": "https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.76.2",
+          "service": "edge-runtime",
+          "version": "v1.76.2"
+        },
+        {
+          "archives": [
+            {
+              "bytes": 79866342,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "studio-2026.09.04-sha-5a67366-darwin-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "/usr/lib/libSystem.B.dylib",
+                  "/System/Library/Frameworks"
+                ],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [
+                  "/node/bin/node",
+                  "apps/studio/server.js"
+                ],
+                "entrypoint": [
+                  "/slim-runtime/bin/studio"
+                ],
+                "libc": null,
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {
+                  "pnpm_deps_hash": "sha256-yGf4XCHsDGTW4It6dsDF4BErbuaxjiWGvyi9BkQ8b+0=",
+                  "pnpm_tool_hash": "sha256-EAErV9I7lnO8U0Fo/1axrGVbpKJzf/N/bZ0ZpVFEr6o=",
+                  "turbo_tool_hash": "sha256-E3mY3tuF6X6qxo6AEid/6c4ZNAm8//Z2aTdsgSQXQho="
+                },
+                "nix_flake": ".",
+                "nix_release": {
+                  "hashes": {
+                    "pnpm_deps_hash": "sha256-yGf4XCHsDGTW4It6dsDF4BErbuaxjiWGvyi9BkQ8b+0=",
+                    "pnpm_tool_hash": "sha256-EAErV9I7lnO8U0Fo/1axrGVbpKJzf/N/bZ0ZpVFEr6o=",
+                    "turbo_tool_hash": "sha256-E3mY3tuF6X6qxo6AEid/6c4ZNAm8//Z2aTdsgSQXQho="
+                  },
+                  "nodeMajor": 22,
+                  "pnpmVersion": "11.13.1",
+                  "service": "studio",
+                  "source": {},
+                  "sourceCommit": "5a673668cb115ac2f3a27d8cbd6952bd99dc139b",
+                  "sourceRepository": "https://github.com/supabase/supabase",
+                  "studioFramework": "next",
+                  "version": "2026.09.04-sha-5a67366"
+                },
+                "nix_runtime": "/nix/store/h0s2q2zghp60ghn4kdq3dk5sqiaxzs7w-studio-runtime",
+                "nix_system": "aarch64-darwin",
+                "os_floor": {
+                  "floor": "11.3",
+                  "kind": "macos",
+                  "offender": "node/dylib/libsqlite3.0.dylib",
+                  "scanned": 16
+                },
+                "platform": "darwin/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.0,
+                  "runtime_rss_bytes": 337756160,
+                  "runtime_rss_mib": 322.1,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "studio-2026.09.04-sha-5a67366-darwin-arm64.sbom.spdx.json",
+                "service": "studio",
+                "size": {
+                  "archive_bytes": 79866342,
+                  "archive_mib": 76.2,
+                  "rootfs_bytes": 498270208,
+                  "rootfs_mib": 475.2
+                },
+                "source_commit": "5a673668cb115ac2f3a27d8cbd6952bd99dc139b",
+                "source_dir": "sources/studio",
+                "source_ref": "5a673668cb115ac2f3a27d8cbd6952bd99dc139b",
+                "target": "darwin-arm64",
+                "upstream_image": "supabase/studio:2026.09.04-sha-5a67366",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/supabase/supabase",
+                "version": "2026.09.04-sha-5a67366"
+              },
+              "manifestSha256": "4ab51bfedd29ec95c0731009d3c8b8c752e9d4aeb6b9d6aacc8aff9619cc1eba",
+              "name": "studio-2026.09.04-sha-5a67366-darwin-arm64.tar.zst",
+              "sha256": "f88037eb8aef3c8ef83748eafb99e149655243528a1a4ea11b9229773997bec8",
+              "target": "darwin-arm64",
+              "updatedAt": "2026-09-07T07:59:20Z"
+            },
+            {
+              "bytes": 78962486,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "studio-2026.09.04-sha-5a67366-linux-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "ld-linux",
+                  "libc",
+                  "libdl",
+                  "libpthread",
+                  "libm",
+                  "libresolv",
+                  "librt"
+                ],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [
+                  "/node/bin/node",
+                  "apps/studio/server.js"
+                ],
+                "entrypoint": [
+                  "/slim-runtime/bin/studio"
+                ],
+                "image": {
+                  "builder": "nix-dockerTools",
+                  "bytes": 472182267,
+                  "gzip_bytes": 135073857,
+                  "gzip_mib": 128.8,
+                  "mib": 450.3,
+                  "tag": "local/studio:2026.09.04-sha-5a67366-linux-arm64"
+                },
+                "libc": "glibc",
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {
+                  "pnpm_deps_hash": "sha256-yGf4XCHsDGTW4It6dsDF4BErbuaxjiWGvyi9BkQ8b+0=",
+                  "pnpm_tool_hash": "sha256-EAErV9I7lnO8U0Fo/1axrGVbpKJzf/N/bZ0ZpVFEr6o=",
+                  "turbo_tool_hash": "sha256-fO6QgwO/2P8zcrHK2ntDeKBHa59ZZCAUGIq2Kr3Zmzk="
+                },
+                "nix_flake": ".",
+                "nix_release": {
+                  "hashes": {
+                    "pnpm_deps_hash": "sha256-yGf4XCHsDGTW4It6dsDF4BErbuaxjiWGvyi9BkQ8b+0=",
+                    "pnpm_tool_hash": "sha256-EAErV9I7lnO8U0Fo/1axrGVbpKJzf/N/bZ0ZpVFEr6o=",
+                    "turbo_tool_hash": "sha256-fO6QgwO/2P8zcrHK2ntDeKBHa59ZZCAUGIq2Kr3Zmzk="
+                  },
+                  "nodeMajor": 22,
+                  "pnpmVersion": "11.13.1",
+                  "service": "studio",
+                  "source": {},
+                  "sourceCommit": "5a673668cb115ac2f3a27d8cbd6952bd99dc139b",
+                  "sourceRepository": "https://github.com/supabase/supabase",
+                  "studioFramework": "next",
+                  "version": "2026.09.04-sha-5a67366"
+                },
+                "nix_runtime": "/nix/store/dppbl0jaga9jf3zb1smplhn1xqgi8mqm-studio-runtime",
+                "nix_system": "aarch64-linux",
+                "os_floor": {
+                  "bundled_glibc": true,
+                  "floor": null,
+                  "kind": "glibc",
+                  "offender": null,
+                  "scanned": 284
+                },
+                "platform": "linux/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.25,
+                  "runtime_rss_bytes": 218872763,
+                  "runtime_rss_mib": 208.7,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "studio-2026.09.04-sha-5a67366-linux-arm64.sbom.spdx.json",
+                "service": "studio",
+                "size": {
+                  "archive_bytes": 78962486,
+                  "archive_mib": 75.3,
+                  "rootfs_bytes": 534458368,
+                  "rootfs_mib": 509.7
+                },
+                "source_commit": "5a673668cb115ac2f3a27d8cbd6952bd99dc139b",
+                "source_dir": "sources/studio",
+                "source_ref": "5a673668cb115ac2f3a27d8cbd6952bd99dc139b",
+                "target": "linux-arm64",
+                "upstream_image": "supabase/studio:2026.09.04-sha-5a67366",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/supabase/supabase",
+                "version": "2026.09.04-sha-5a67366"
+              },
+              "manifestSha256": "5978a92f3e01c5c9b7bd043790cde564b17c3d2b9f66015c5fc2bef8d6707a25",
+              "name": "studio-2026.09.04-sha-5a67366-linux-arm64.tar.zst",
+              "sha256": "7c3c0f3477efff7540c515142eb29da32c505740689028792f4ad2cc29ea0c5a",
+              "target": "linux-arm64",
+              "updatedAt": "2026-09-07T07:59:20Z"
+            }
+          ],
+          "id": "studio:studio",
+          "image": "ghcr.io/supabase/cli/studio:2026.09.04-sha-5a67366@sha256:9823a31668028f1846e87331bc21598d9cd74bcaa1466c72dab58c33c9c82720",
+          "imageDigest": "sha256:9823a31668028f1846e87331bc21598d9cd74bcaa1466c72dab58c33c9c82720",
+          "imageManifest": {
+            "manifests": [
+              {
+                "digest": "sha256:a370b29374db3f8b3cafb96605c1505cd223691adcd8edab5200823198faa347",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "amd64",
+                  "os": "linux"
+                },
+                "size": 530
+              },
+              {
+                "digest": "sha256:a1d04a311d80ebbbdbea8f87707eba8b64e5753b79576e228861358722238b2a",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "arm64",
+                  "os": "linux"
+                },
+                "size": 530
+              }
+            ],
+            "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+            "schemaVersion": 2
+          },
+          "releaseUrl": "https://github.com/supabase/slim-services/releases/tag/studio-2026.09.04-sha-5a67366",
+          "service": "studio",
+          "version": "2026.09.04-sha-5a67366"
+        },
+        {
+          "archives": [
+            {
+              "bytes": 42411092,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "pgmeta-v0.99.0-darwin-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "/usr/lib/libSystem.B.dylib",
+                  "/System/Library/Frameworks"
+                ],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [
+                  "/slim-runtime/bin/pgmeta"
+                ],
+                "entrypoint": [],
+                "libc": null,
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {
+                  "npm_deps_hash": "sha256-oIXl/XmL0p4OrVjVf9OzDomGhlKRMbv5zrinS2T9f8w="
+                },
+                "nix_flake": ".",
+                "nix_release": {
+                  "hashes": {
+                    "npm_deps_hash": "sha256-oIXl/XmL0p4OrVjVf9OzDomGhlKRMbv5zrinS2T9f8w="
+                  },
+                  "nodeMajor": 22,
+                  "service": "pgmeta",
+                  "source": {},
+                  "sourceCommit": "f380cc5be21edef4e77d9838c732d1f20af0b3c0",
+                  "sourceRepository": "https://github.com/supabase/postgres-meta",
+                  "version": "v0.99.0"
+                },
+                "nix_runtime": "/nix/store/8nzx1ycwayfaxyqb5zgikk4d9rcy20dg-pgmeta-runtime",
+                "nix_system": "aarch64-darwin",
+                "os_floor": {
+                  "floor": "11.3",
+                  "kind": "macos",
+                  "offender": "node/dylib/libsqlite3.0.dylib",
+                  "scanned": 19
+                },
+                "platform": "darwin/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.27,
+                  "runtime_rss_bytes": 171551402,
+                  "runtime_rss_mib": 163.6,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "pgmeta-v0.99.0-darwin-arm64.sbom.spdx.json",
+                "service": "pgmeta",
+                "size": {
+                  "archive_bytes": 42411092,
+                  "archive_mib": 40.4,
+                  "rootfs_bytes": 195026944,
+                  "rootfs_mib": 186.0
+                },
+                "source_commit": "f380cc5be21edef4e77d9838c732d1f20af0b3c0",
+                "source_dir": "sources/pgmeta",
+                "source_ref": "v0.99.0",
+                "target": "darwin-arm64",
+                "upstream_image": "supabase/postgres-meta:v0.99.0",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/supabase/postgres-meta",
+                "version": "v0.99.0"
+              },
+              "manifestSha256": "e3cbe65fa7020cec4d0a8ff70ea8c6da73eb8c82997767df26b6f2e6ee6712fa",
+              "name": "pgmeta-v0.99.0-darwin-arm64.tar.zst",
+              "sha256": "5a5a17042d641bdd241ab9f48154b598cccaf201180c7a495174919da54f4c09",
+              "target": "darwin-arm64",
+              "updatedAt": "2026-09-07T07:48:57Z"
+            },
+            {
+              "bytes": 41752558,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "pgmeta-v0.99.0-linux-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "ld-linux",
+                  "libc",
+                  "libdl",
+                  "libpthread",
+                  "libm",
+                  "libresolv",
+                  "librt"
+                ],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [
+                  "/slim-runtime/bin/pgmeta"
+                ],
+                "entrypoint": [],
+                "image": {
+                  "builder": "nix-dockerTools",
+                  "bytes": 198425873,
+                  "gzip_bytes": 61638246,
+                  "gzip_mib": 58.8,
+                  "mib": 189.2,
+                  "tag": "local/pgmeta:v0.99.0-linux-arm64"
+                },
+                "libc": "glibc",
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {
+                  "npm_deps_hash": "sha256-oIXl/XmL0p4OrVjVf9OzDomGhlKRMbv5zrinS2T9f8w="
+                },
+                "nix_flake": ".",
+                "nix_release": {
+                  "hashes": {
+                    "npm_deps_hash": "sha256-oIXl/XmL0p4OrVjVf9OzDomGhlKRMbv5zrinS2T9f8w="
+                  },
+                  "nodeMajor": 22,
+                  "service": "pgmeta",
+                  "source": {},
+                  "sourceCommit": "f380cc5be21edef4e77d9838c732d1f20af0b3c0",
+                  "sourceRepository": "https://github.com/supabase/postgres-meta",
+                  "version": "v0.99.0"
+                },
+                "nix_runtime": "/nix/store/amh8hxjn0wcdlwfdfambpriqns991sx5-pgmeta-runtime",
+                "nix_system": "aarch64-linux",
+                "os_floor": {
+                  "bundled_glibc": true,
+                  "floor": null,
+                  "kind": "glibc",
+                  "offender": null,
+                  "scanned": 287
+                },
+                "platform": "linux/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 3.93,
+                  "runtime_rss_bytes": 124570828,
+                  "runtime_rss_mib": 118.8,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "pgmeta-v0.99.0-linux-arm64.sbom.spdx.json",
+                "service": "pgmeta",
+                "size": {
+                  "archive_bytes": 41752558,
+                  "archive_mib": 39.8,
+                  "rootfs_bytes": 212594688,
+                  "rootfs_mib": 202.7
+                },
+                "source_commit": "f380cc5be21edef4e77d9838c732d1f20af0b3c0",
+                "source_dir": "sources/pgmeta",
+                "source_ref": "v0.99.0",
+                "target": "linux-arm64",
+                "upstream_image": "supabase/postgres-meta:v0.99.0",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/supabase/postgres-meta",
+                "version": "v0.99.0"
+              },
+              "manifestSha256": "de4fcbb1d22e560546560b60324c535fac687050586a99e67d528faac73a1f18",
+              "name": "pgmeta-v0.99.0-linux-arm64.tar.zst",
+              "sha256": "d0f3f59c9f671480bd325b142493e796b514d236794318ffa4cec8a7e7964874",
+              "target": "linux-arm64",
+              "updatedAt": "2026-09-07T07:48:59Z"
+            }
+          ],
+          "id": "studio:pgmeta",
+          "image": "ghcr.io/supabase/cli/pgmeta:v0.99.0@sha256:22d40cf766949cf9bd5183d9d46927a05a63743eb1d41f9e418e9db7d7470b29",
+          "imageDigest": "sha256:22d40cf766949cf9bd5183d9d46927a05a63743eb1d41f9e418e9db7d7470b29",
+          "imageManifest": {
+            "manifests": [
+              {
+                "digest": "sha256:8e75912503c8aaf8a72146a030486b3865d2a2e978ad42008d2bc45f3f67b17b",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "amd64",
+                  "os": "linux"
+                },
+                "size": 529
+              },
+              {
+                "digest": "sha256:a6edfaab20f80964c409dfc1aec2ebfa4e3e77e0bd59c127f8e7b00c023d912a",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "arm64",
+                  "os": "linux"
+                },
+                "size": 529
+              }
+            ],
+            "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+            "schemaVersion": 2
+          },
+          "releaseUrl": "https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.99.0",
+          "service": "pgmeta",
+          "version": "v0.99.0"
+        },
+        {
+          "archives": [
+            {
+              "bytes": 8103296,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "mailpit-v1.30.2-darwin-arm64.tar.zst",
+                "archive_on_build": false,
+                "archive_sha256": "498d7a08a4155449e4327354ee8128212b326da1e10d92c8a01de8fc0985382b",
+                "artifact_source": "upstream-release-archive",
+                "assumed_host_libs": [
+                  "/usr/lib/libSystem.B.dylib",
+                  "/System/Library/Frameworks"
+                ],
+                "build_mode": "upstream-archive",
+                "cmd": [
+                  "/bin/mailpit"
+                ],
+                "entrypoint": [],
+                "libc": null,
+                "licenses": "share/licenses",
+                "os_floor": {
+                  "floor": "12.0",
+                  "kind": "macos",
+                  "offender": "bin/mailpit",
+                  "scanned": 1
+                },
+                "platform": "darwin/arm64",
+                "portable": true,
+                "provenance": {
+                  "installed_members": {
+                    "LICENSE": {
+                      "destination": "share/licenses/mailpit/LICENSE",
+                      "destination_sha256": "9dade1b3ace5dd6c36ca58eef466ae7dd9afe52bfb978deffa44645f6f0a2aa9",
+                      "source_sha256": "9dade1b3ace5dd6c36ca58eef466ae7dd9afe52bfb978deffa44645f6f0a2aa9"
+                    },
+                    "README.md": {
+                      "destination": "share/doc/mailpit/README.md",
+                      "destination_sha256": "21e25814c9502db02d110e32f50c9a3a2a345e1da01f74bad552c5ea136a4889",
+                      "source_sha256": "21e25814c9502db02d110e32f50c9a3a2a345e1da01f74bad552c5ea136a4889"
+                    },
+                    "mailpit": {
+                      "destination": "bin/mailpit",
+                      "destination_sha256": "5a10eaa5b5b371bba6232e1568bcf967819cf592de7f10806cd63b203c41c923",
+                      "source_sha256": "5a10eaa5b5b371bba6232e1568bcf967819cf592de7f10806cd63b203c41c923"
+                    }
+                  },
+                  "kind": "repackaged-upstream-release",
+                  "normalized_archive": {
+                    "name": "mailpit-v1.30.2-darwin-arm64.tar.zst",
+                    "sha256": "498d7a08a4155449e4327354ee8128212b326da1e10d92c8a01de8fc0985382b"
+                  },
+                  "repository": "axllent/mailpit",
+                  "upstream_asset": {
+                    "name": "mailpit-darwin-arm64.tar.gz",
+                    "sha256": "05b92a4b804c34b0f6e665a482a1141be64256f500ecf23a204c2084a27a248b",
+                    "url": "https://github.com/axllent/mailpit/releases/download/v1.30.2/mailpit-darwin-arm64.tar.gz"
+                  },
+                  "version": "v1.30.2"
+                },
+                "runtime": {
+                  "idle_cpu_pct": 0.0,
+                  "runtime_rss_bytes": 25427968,
+                  "runtime_rss_mib": 24.2,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "runtime_requires": null,
+                "sbom": "mailpit-v1.30.2-darwin-arm64.sbom.spdx.json",
+                "service": "mailpit",
+                "size": {
+                  "archive_bytes": 8103296,
+                  "archive_mib": 7.7,
+                  "rootfs_bytes": 26103808,
+                  "rootfs_mib": 24.9
+                },
+                "smoke_command": "scripts/smoke.sh mailpit --artifact /Users/runner/work/slim-services/slim-services/artifacts/mailpit/v1.30.2/darwin-arm64/rootfs",
+                "target": "darwin-arm64",
+                "version": "v1.30.2"
+              },
+              "manifestSha256": "53e28dc643271ed26fd60cc2158b0d80c817460a9854f8d46710308d0644c37d",
+              "name": "mailpit-v1.30.2-darwin-arm64.tar.zst",
+              "sha256": "498d7a08a4155449e4327354ee8128212b326da1e10d92c8a01de8fc0985382b",
+              "target": "darwin-arm64",
+              "updatedAt": "2026-09-04T17:32:42Z"
+            },
+            {
+              "bytes": 7851942,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "mailpit-v1.30.2-linux-arm64.tar.zst",
+                "archive_on_build": false,
+                "archive_sha256": "7a85e2521680d4ad2800a00a83cab9898927e8ea7177a4cd9530fa1fb535d8de",
+                "artifact_source": "upstream-release-archive",
+                "assumed_host_libs": [
+                  "ld-linux",
+                  "libc",
+                  "libdl",
+                  "libpthread",
+                  "libm",
+                  "libresolv",
+                  "librt"
+                ],
+                "build_mode": "upstream-archive",
+                "cmd": [
+                  "/bin/mailpit"
+                ],
+                "entrypoint": [],
+                "libc": "glibc",
+                "licenses": "share/licenses",
+                "os_floor": {
+                  "bundled_glibc": false,
+                  "floor": null,
+                  "kind": "glibc",
+                  "offender": null,
+                  "scanned": 1
+                },
+                "platform": "linux/arm64",
+                "portable": true,
+                "provenance": {
+                  "installed_members": {
+                    "LICENSE": {
+                      "destination": "share/licenses/mailpit/LICENSE",
+                      "destination_sha256": "9dade1b3ace5dd6c36ca58eef466ae7dd9afe52bfb978deffa44645f6f0a2aa9",
+                      "source_sha256": "9dade1b3ace5dd6c36ca58eef466ae7dd9afe52bfb978deffa44645f6f0a2aa9"
+                    },
+                    "README.md": {
+                      "destination": "share/doc/mailpit/README.md",
+                      "destination_sha256": "21e25814c9502db02d110e32f50c9a3a2a345e1da01f74bad552c5ea136a4889",
+                      "source_sha256": "21e25814c9502db02d110e32f50c9a3a2a345e1da01f74bad552c5ea136a4889"
+                    },
+                    "mailpit": {
+                      "destination": "bin/mailpit",
+                      "destination_sha256": "85561194848024763b8d279c01ab4d8ae6cf7047cc59cae17b393767dc07841d",
+                      "source_sha256": "85561194848024763b8d279c01ab4d8ae6cf7047cc59cae17b393767dc07841d"
+                    }
+                  },
+                  "kind": "repackaged-upstream-release",
+                  "normalized_archive": {
+                    "name": "mailpit-v1.30.2-linux-arm64.tar.zst",
+                    "sha256": "7a85e2521680d4ad2800a00a83cab9898927e8ea7177a4cd9530fa1fb535d8de"
+                  },
+                  "repository": "axllent/mailpit",
+                  "upstream_asset": {
+                    "name": "mailpit-linux-arm64.tar.gz",
+                    "sha256": "b159574f32e527f34624e5683f79859258360179268a8fac0f3030f74ca6bb96",
+                    "url": "https://github.com/axllent/mailpit/releases/download/v1.30.2/mailpit-linux-arm64.tar.gz"
+                  },
+                  "version": "v1.30.2"
+                },
+                "runtime": {
+                  "idle_cpu_pct": 0.0,
+                  "runtime_rss_bytes": 23175168,
+                  "runtime_rss_mib": 22.1,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "runtime_requires": "glibc",
+                "sbom": "mailpit-v1.30.2-linux-arm64.sbom.spdx.json",
+                "service": "mailpit",
+                "size": {
+                  "archive_bytes": 7851942,
+                  "archive_mib": 7.5,
+                  "rootfs_bytes": 25825280,
+                  "rootfs_mib": 24.6
+                },
+                "smoke_command": "scripts/smoke.sh mailpit --artifact /home/runner/work/slim-services/slim-services/artifacts/mailpit/v1.30.2/linux-arm64/rootfs",
+                "target": "linux-arm64",
+                "version": "v1.30.2"
+              },
+              "manifestSha256": "248c823b1ddbcb73f11ebb16ef13dece4a662c06dcd0cc3fdfd2901a90ac7c06",
+              "name": "mailpit-v1.30.2-linux-arm64.tar.zst",
+              "sha256": "7a85e2521680d4ad2800a00a83cab9898927e8ea7177a4cd9530fa1fb535d8de",
+              "target": "linux-arm64",
+              "updatedAt": "2026-09-04T17:32:43Z"
+            }
+          ],
+          "id": "mail:mail",
+          "image": "ghcr.io/supabase/cli/mailpit:v1.30.2",
+          "imageDigest": "sha256:37a38e48e9338cd7e89dfeb487f37b02ebfcd9cb23111bed2d345e79d37d6dd6",
+          "imageManifest": {
+            "manifests": [
+              {
+                "digest": "sha256:56b1604f0624577991044e599cd3377a3d0a1265c3afdca3f1a552494134c563",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "platform": {
+                  "architecture": "386",
+                  "os": "linux"
+                },
+                "size": 864
+              },
+              {
+                "digest": "sha256:f0b0ed33c8cf53aac0dd004abbe245c83420a7ae44914e25178f7791dec5723a",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "platform": {
+                  "architecture": "amd64",
+                  "os": "linux"
+                },
+                "size": 864
+              },
+              {
+                "digest": "sha256:60ae914dde3ad75aaf153c65cdf4a4e76cb2b89abc3720f37340c2cc8271a2f7",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "platform": {
+                  "architecture": "arm64",
+                  "os": "linux"
+                },
+                "size": 864
+              },
+              {
+                "annotations": {
+                  "vnd.docker.reference.digest": "sha256:56b1604f0624577991044e599cd3377a3d0a1265c3afdca3f1a552494134c563",
+                  "vnd.docker.reference.type": "attestation-manifest"
+                },
+                "digest": "sha256:8d5c54b528fe08e0bc8243ccd924aa7364b619d5c837da3bc7780f246660f2b6",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "platform": {
+                  "architecture": "unknown",
+                  "os": "unknown"
+                },
+                "size": 565
+              },
+              {
+                "annotations": {
+                  "vnd.docker.reference.digest": "sha256:f0b0ed33c8cf53aac0dd004abbe245c83420a7ae44914e25178f7791dec5723a",
+                  "vnd.docker.reference.type": "attestation-manifest"
+                },
+                "digest": "sha256:55903f8b68182428e05f97fc1fa8668c0aa66e60c7a9765929a2e0427a7d1221",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "platform": {
+                  "architecture": "unknown",
+                  "os": "unknown"
+                },
+                "size": 565
+              },
+              {
+                "annotations": {
+                  "vnd.docker.reference.digest": "sha256:60ae914dde3ad75aaf153c65cdf4a4e76cb2b89abc3720f37340c2cc8271a2f7",
+                  "vnd.docker.reference.type": "attestation-manifest"
+                },
+                "digest": "sha256:94de8d193f0f9cff8bbf2d0a1a12ffd11f2dd469c2e077578f83299e6479b68a",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "platform": {
+                  "architecture": "unknown",
+                  "os": "unknown"
+                },
+                "size": 565
+              }
+            ],
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "schemaVersion": 2
+          },
+          "releaseUrl": "https://github.com/supabase/slim-services/releases/tag/mailpit-v1.30.2",
+          "service": "mailpit",
+          "version": "v1.30.2"
+        },
+        {
+          "archives": [
+            {
+              "bytes": 34975235,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "analytics-v1.50.9-darwin-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "/usr/lib/libSystem.B.dylib",
+                  "/System/Library/Frameworks"
+                ],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [],
+                "entrypoint": [
+                  "/usr/bin/tini",
+                  "-s",
+                  "-g",
+                  "--",
+                  "/usr/bin/sh",
+                  "/opt/app/rel/logflare/entry.sh"
+                ],
+                "libc": null,
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {
+                  "explorer_nif_hash": "sha256-j/rDocQwi54kitSKXRhNuow8rBMRDDFadj/CnQ1CNh0=",
+                  "mix_deps_hash": "sha256-Gz8EX8Nff37l6JddTBxVwK5CdIu0L1KqtnQuTyC1ncU=",
+                  "sql_fmt_nif_hash": "sha256-XXGjwedKNBmOo7Es3Ik45x0WVphWSz1OOTih66X9nUk="
+                },
+                "nix_flake": ".",
+                "nix_release": {
+                  "hashes": {
+                    "explorer_nif_hash": "sha256-j/rDocQwi54kitSKXRhNuow8rBMRDDFadj/CnQ1CNh0=",
+                    "mix_deps_hash": "sha256-Gz8EX8Nff37l6JddTBxVwK5CdIu0L1KqtnQuTyC1ncU=",
+                    "sql_fmt_nif_hash": "sha256-XXGjwedKNBmOo7Es3Ik45x0WVphWSz1OOTih66X9nUk="
+                  },
+                  "service": "analytics",
+                  "source": {},
+                  "sourceCommit": "e830940c872b75ac4d1db933cfc9b3a7b8031699",
+                  "sourceRepository": "https://github.com/Logflare/logflare",
+                  "version": "v1.50.9"
+                },
+                "nix_runtime": "/nix/store/cdxlrsxyiwj1gpxffqbxgkpkrscn4gz8-analytics-runtime",
+                "nix_system": "aarch64-darwin",
+                "os_floor": {
+                  "floor": "11.3",
+                  "kind": "macos",
+                  "offender": "dylib/libc++abi.1.0.dylib",
+                  "scanned": 39
+                },
+                "platform": "darwin/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.17,
+                  "runtime_rss_bytes": 550649856,
+                  "runtime_rss_mib": 525.1,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "analytics-v1.50.9-darwin-arm64.sbom.spdx.json",
+                "service": "analytics",
+                "size": {
+                  "archive_bytes": 34975235,
+                  "archive_mib": 33.4,
+                  "rootfs_bytes": 147611648,
+                  "rootfs_mib": 140.8
+                },
+                "source_commit": "e830940c872b75ac4d1db933cfc9b3a7b8031699",
+                "source_dir": "sources/analytics",
+                "source_ref": "v1.50.9",
+                "target": "darwin-arm64",
+                "upstream_image": "supabase/logflare:1.50.9",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/Logflare/logflare",
+                "version": "v1.50.9"
+              },
+              "manifestSha256": "612c9dc1760cfacbc120e402518cb8ba31de4bf97cecdf9df03afd79e398d59b",
+              "name": "analytics-v1.50.9-darwin-arm64.tar.zst",
+              "sha256": "ae66d1b012cc10baa51b0359fd4c79abf9a5bc960d483d222aa9e6b0c6adba90",
+              "target": "darwin-arm64",
+              "updatedAt": "2026-09-07T09:55:20Z"
+            },
+            {
+              "bytes": 40278776,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "analytics-v1.50.9-linux-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "ld-linux",
+                  "libc",
+                  "libdl",
+                  "libpthread",
+                  "libm",
+                  "libresolv",
+                  "librt"
+                ],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [],
+                "entrypoint": [
+                  "/usr/bin/tini",
+                  "-s",
+                  "-g",
+                  "--",
+                  "/usr/bin/sh",
+                  "/opt/app/rel/logflare/entry.sh"
+                ],
+                "image": {
+                  "builder": "nix-dockerTools",
+                  "bytes": 166920678,
+                  "gzip_bytes": 58067752,
+                  "gzip_mib": 55.4,
+                  "mib": 159.2,
+                  "tag": "local/analytics:v1.50.9-linux-arm64"
+                },
+                "libc": "glibc",
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {
+                  "explorer_nif_hash": "sha256-qM5Oxezl7BSRGpAC9ZsSFOHNShvLI006B5meRm28P70=",
+                  "mix_deps_hash": "sha256-Gz8EX8Nff37l6JddTBxVwK5CdIu0L1KqtnQuTyC1ncU=",
+                  "sql_fmt_nif_hash": "sha256-n1bAWO8pBWu5lNYxKxv6PwNpu3OM/TICCX3jDtI2OJc="
+                },
+                "nix_flake": ".",
+                "nix_release": {
+                  "hashes": {
+                    "explorer_nif_hash": "sha256-qM5Oxezl7BSRGpAC9ZsSFOHNShvLI006B5meRm28P70=",
+                    "mix_deps_hash": "sha256-Gz8EX8Nff37l6JddTBxVwK5CdIu0L1KqtnQuTyC1ncU=",
+                    "sql_fmt_nif_hash": "sha256-n1bAWO8pBWu5lNYxKxv6PwNpu3OM/TICCX3jDtI2OJc="
+                  },
+                  "service": "analytics",
+                  "source": {},
+                  "sourceCommit": "e830940c872b75ac4d1db933cfc9b3a7b8031699",
+                  "sourceRepository": "https://github.com/Logflare/logflare",
+                  "version": "v1.50.9"
+                },
+                "nix_runtime": "/nix/store/lldqkx1c2q50rrp5d4zqb406lvlwfa1x-analytics-runtime",
+                "nix_system": "aarch64-linux",
+                "os_floor": {
+                  "bundled_glibc": true,
+                  "floor": null,
+                  "kind": "glibc",
+                  "offender": null,
+                  "scanned": 309
+                },
+                "platform": "linux/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.28,
+                  "runtime_rss_bytes": 531907652,
+                  "runtime_rss_mib": 507.3,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "analytics-v1.50.9-linux-arm64.sbom.spdx.json",
+                "service": "analytics",
+                "size": {
+                  "archive_bytes": 40278776,
+                  "archive_mib": 38.4,
+                  "rootfs_bytes": 188948480,
+                  "rootfs_mib": 180.2
+                },
+                "source_commit": "e830940c872b75ac4d1db933cfc9b3a7b8031699",
+                "source_dir": "sources/analytics",
+                "source_ref": "v1.50.9",
+                "target": "linux-arm64",
+                "upstream_image": "supabase/logflare:1.50.9",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/Logflare/logflare",
+                "version": "v1.50.9"
+              },
+              "manifestSha256": "20b4e3ddcd365bec4306212d89c5207bc5d52a8da02425dba7e041a53466c3dd",
+              "name": "analytics-v1.50.9-linux-arm64.tar.zst",
+              "sha256": "3527e4d95657d02327488fbf0278e9d81f3892d086c56fd551e3772f3e98b77e",
+              "target": "linux-arm64",
+              "updatedAt": "2026-09-07T09:55:22Z"
+            }
+          ],
+          "id": "analytics:analytics",
+          "image": "ghcr.io/supabase/cli/analytics:v1.50.9@sha256:7db85cc6cb0cdeb4b71f2fadb49c0f9197bea0492daf7896f6ae69edad76d28e",
+          "imageDigest": "sha256:7db85cc6cb0cdeb4b71f2fadb49c0f9197bea0492daf7896f6ae69edad76d28e",
+          "imageManifest": {
+            "manifests": [
+              {
+                "digest": "sha256:5ab5499748df7b9a891508afe333624d78acf88a784b2764273bee048ff9ef70",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "amd64",
+                  "os": "linux"
+                },
+                "size": 529
+              },
+              {
+                "digest": "sha256:bacbb43626bb789c1550256a769b33710efde53f3d9a2b719daea8967b851740",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "arm64",
+                  "os": "linux"
+                },
+                "size": 529
+              }
+            ],
+            "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+            "schemaVersion": 2
+          },
+          "releaseUrl": "https://github.com/supabase/slim-services/releases/tag/analytics-v1.50.9",
+          "service": "analytics",
+          "version": "v1.50.9"
+        },
+        {
+          "archives": [
+            {
+              "bytes": 24598981,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "pooler-v2.9.12-darwin-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "/usr/lib/libSystem.B.dylib",
+                  "/System/Library/Frameworks"
+                ],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [
+                  "/app/bin/server"
+                ],
+                "entrypoint": [
+                  "/usr/bin/tini",
+                  "-s",
+                  "-g",
+                  "--",
+                  "/usr/bin/sh",
+                  "/app/entry.sh"
+                ],
+                "libc": null,
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {
+                  "mix_deps_hash": "sha256-zIt7Vf8R6xjAu9Y4nXtOdlqTE4RLPaotYJ7l13GyveU="
+                },
+                "nix_flake": ".",
+                "nix_release": {
+                  "hashes": {
+                    "mix_deps_hash": "sha256-zIt7Vf8R6xjAu9Y4nXtOdlqTE4RLPaotYJ7l13GyveU="
+                  },
+                  "service": "pooler",
+                  "source": {},
+                  "sourceCommit": "e8719d9ac5a43604c46d2d9e15bb34c76dea8f12",
+                  "sourceRepository": "https://github.com/supabase/supavisor",
+                  "version": "v2.9.12"
+                },
+                "nix_runtime": "/nix/store/r3lygnpqyq1ffhyh677g9v3yhm7vph89-pooler-runtime",
+                "nix_system": "aarch64-darwin",
+                "os_floor": {
+                  "floor": "11.3",
+                  "kind": "macos",
+                  "offender": "dylib/libc++abi.1.0.dylib",
+                  "scanned": 33
+                },
+                "platform": "darwin/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.03,
+                  "runtime_rss_bytes": 218442410,
+                  "runtime_rss_mib": 208.3,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "pooler-v2.9.12-darwin-arm64.sbom.spdx.json",
+                "service": "pooler",
+                "size": {
+                  "archive_bytes": 24598981,
+                  "archive_mib": 23.5,
+                  "rootfs_bytes": 55037952,
+                  "rootfs_mib": 52.5
+                },
+                "source_commit": "e8719d9ac5a43604c46d2d9e15bb34c76dea8f12",
+                "source_dir": "sources/pooler",
+                "source_ref": "v2.9.12",
+                "target": "darwin-arm64",
+                "upstream_image": "supabase/supavisor:2.9.12",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/supabase/supavisor",
+                "version": "v2.9.12"
+              },
+              "manifestSha256": "45f059c919e1fced0e31b6c824c0d4a5325fad322a9bfcb99179f76e1fb1369b",
+              "name": "pooler-v2.9.12-darwin-arm64.tar.zst",
+              "sha256": "c77e230a5b770569a755eda7c7c5aa2d29972a30ca6e6979f0fa4ab366e57696",
+              "target": "darwin-arm64",
+              "updatedAt": "2026-09-07T09:50:08Z"
+            },
+            {
+              "bytes": 29880047,
+              "manifest": {
+                "arch": "arm64",
+                "archive": "pooler-v2.9.12-linux-arm64.tar.zst",
+                "archive_on_build": false,
+                "assumed_host_libs": [
+                  "ld-linux",
+                  "libc",
+                  "libdl",
+                  "libpthread",
+                  "libm",
+                  "libresolv",
+                  "librt"
+                ],
+                "base_image": "scratch",
+                "build_backend": "nix",
+                "cmd": [
+                  "/app/bin/server"
+                ],
+                "entrypoint": [
+                  "/usr/bin/tini",
+                  "-s",
+                  "-g",
+                  "--",
+                  "/usr/bin/sh",
+                  "/app/entry.sh"
+                ],
+                "image": {
+                  "builder": "nix-dockerTools",
+                  "bytes": 84295544,
+                  "gzip_bytes": 37225114,
+                  "gzip_mib": 35.5,
+                  "mib": 80.4,
+                  "tag": "local/pooler:v2.9.12-linux-arm64"
+                },
+                "libc": "glibc",
+                "licenses": "share/licenses",
+                "nix_attr": "runtime",
+                "nix_derived_hashes": {
+                  "mix_deps_hash": "sha256-zIt7Vf8R6xjAu9Y4nXtOdlqTE4RLPaotYJ7l13GyveU="
+                },
+                "nix_flake": ".",
+                "nix_release": {
+                  "hashes": {
+                    "mix_deps_hash": "sha256-zIt7Vf8R6xjAu9Y4nXtOdlqTE4RLPaotYJ7l13GyveU="
+                  },
+                  "service": "pooler",
+                  "source": {},
+                  "sourceCommit": "e8719d9ac5a43604c46d2d9e15bb34c76dea8f12",
+                  "sourceRepository": "https://github.com/supabase/supavisor",
+                  "version": "v2.9.12"
+                },
+                "nix_runtime": "/nix/store/8qhy5kvpq32ymlm4zkcma395z9j19ci8-pooler-runtime",
+                "nix_system": "aarch64-linux",
+                "os_floor": {
+                  "bundled_glibc": true,
+                  "floor": null,
+                  "kind": "glibc",
+                  "offender": null,
+                  "scanned": 305
+                },
+                "platform": "linux/arm64",
+                "portable": true,
+                "runtime": {
+                  "idle_cpu_pct": 0.08,
+                  "runtime_rss_bytes": 172805324,
+                  "runtime_rss_mib": 164.8,
+                  "samples": 3,
+                  "settle_seconds": 10
+                },
+                "sbom": "pooler-v2.9.12-linux-arm64.sbom.spdx.json",
+                "service": "pooler",
+                "size": {
+                  "archive_bytes": 29880047,
+                  "archive_mib": 28.5,
+                  "rootfs_bytes": 92508160,
+                  "rootfs_mib": 88.2
+                },
+                "source_commit": "e8719d9ac5a43604c46d2d9e15bb34c76dea8f12",
+                "source_dir": "sources/pooler",
+                "source_ref": "v2.9.12",
+                "target": "linux-arm64",
+                "upstream_image": "supabase/supavisor:2.9.12",
+                "upstream_source": null,
+                "upstream_source_repository": "https://github.com/supabase/supavisor",
+                "version": "v2.9.12"
+              },
+              "manifestSha256": "8007006b46b2b86baf9ab083f748153cc57c9a8faee4114683ddade04ffe2ed1",
+              "name": "pooler-v2.9.12-linux-arm64.tar.zst",
+              "sha256": "bdeb1362925cbdb1f5fc0bb6674ce116873263f59d1239e67799873c8566d889",
+              "target": "linux-arm64",
+              "updatedAt": "2026-09-07T09:50:10Z"
+            }
+          ],
+          "id": "pooler:pooler",
+          "image": "ghcr.io/supabase/cli/pooler:v2.9.12@sha256:12bb9dcb7ddace79bee173ccb7327c6646af2236679f3bd932a86b3a06479aac",
+          "imageDigest": "sha256:12bb9dcb7ddace79bee173ccb7327c6646af2236679f3bd932a86b3a06479aac",
+          "imageManifest": {
+            "manifests": [
+              {
+                "digest": "sha256:4e598242c14b67072edb67a6b35377f5aed6f278aa5baabea50ac911466dd716",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "amd64",
+                  "os": "linux"
+                },
+                "size": 529
+              },
+              {
+                "digest": "sha256:eb616e88952ecb6a93aa0fb8f80d10e34568a27f560830f97160b3fc51f830d4",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "platform": {
+                  "architecture": "arm64",
+                  "os": "linux"
+                },
+                "size": 529
+              }
+            ],
+            "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+            "schemaVersion": 2
+          },
+          "releaseUrl": "https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.12",
+          "service": "pooler",
+          "version": "v2.9.12"
+        }
+      ],
+      "catalogSha256": "f6971b72fd45e8f8fc1c102d6cb949630b65fb4937eb2a5a5cc2ebaa09de5c4d"
+    },
+    "commit": "95c5ab8be71988d244dfa4537db8e454a0bf2e84",
+    "date": "2026-09-07",
+    "environment": "Apple M3 macOS ARM64 host (macOS 26.6.2, 8 CPU, 24 GiB) + Ubuntu 22.04.5 LTS ARM64 VM (3 CPU, 8 GiB cgroup limit, Docker 29.1.3); Docker backend used for both platform clients via SSH Unix-socket forwarding; normal desktop activity",
+    "legacyImages": {
+      "legacy": [
+        "public.ecr.aws/supabase/edge-runtime:v1.74.3",
+        "public.ecr.aws/supabase/gotrue:v2.196.0",
+        "public.ecr.aws/supabase/kong:2.8.1",
+        "public.ecr.aws/supabase/logflare:1.50.4",
+        "public.ecr.aws/supabase/mailpit:v1.30.2",
+        "public.ecr.aws/supabase/postgres-meta:v0.98.0",
+        "public.ecr.aws/supabase/postgres:17.6.1.165",
+        "public.ecr.aws/supabase/postgrest:v16.1",
+        "public.ecr.aws/supabase/realtime:v2.129.3",
+        "public.ecr.aws/supabase/storage-api:v1.70.3",
+        "public.ecr.aws/supabase/studio:2026.08.17-sha-0c1da8f",
+        "public.ecr.aws/supabase/vector:0.53.0-alpine"
+      ],
+      "legacy-pooler": [
+        "public.ecr.aws/supabase/edge-runtime:v1.74.3",
+        "public.ecr.aws/supabase/gotrue:v2.196.0",
+        "public.ecr.aws/supabase/kong:2.8.1",
+        "public.ecr.aws/supabase/logflare:1.50.4",
+        "public.ecr.aws/supabase/mailpit:v1.30.2",
+        "public.ecr.aws/supabase/postgres-meta:v0.98.0",
+        "public.ecr.aws/supabase/postgres:17.6.1.165",
+        "public.ecr.aws/supabase/postgrest:v16.1",
+        "public.ecr.aws/supabase/realtime:v2.129.3",
+        "public.ecr.aws/supabase/storage-api:v1.70.3",
+        "public.ecr.aws/supabase/studio:2026.08.17-sha-0c1da8f",
+        "public.ecr.aws/supabase/supavisor:2.9.7",
+        "public.ecr.aws/supabase/vector:0.53.0-alpine"
+      ]
+    },
+    "legacyVersion": "2.116.0",
+    "pullRequest": "6440",
+    "pullRequestUrl": "https://github.com/supabase/cli/pull/6440",
+    "sourceProvenance": [
+      "benchmark-data.json"
+    ]
+  },
+  "observations": {
+    "memory": [
+      {
+        "actualOffsetMs": 31298.63066700002,
+        "case": "legacy-default",
+        "platform": "macos",
+        "pssMiB": 1678.986328125,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 2500.4296875,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 36243.400792,
+        "case": "legacy-default",
+        "platform": "macos",
+        "pssMiB": 1679.4716796875,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 2502.41796875,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 41107.11287500002,
+        "case": "legacy-default",
+        "platform": "macos",
+        "pssMiB": 1672.201171875,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 2498.43359375,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 31448.440833999994,
+        "case": "legacy-default",
+        "platform": "macos",
+        "pssMiB": 1721.779296875,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 2504.66796875,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 36243.644625,
+        "case": "legacy-default",
+        "platform": "macos",
+        "pssMiB": 1679.2236328125,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 2463.30078125,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 41170.509542,
+        "case": "legacy-default",
+        "platform": "macos",
+        "pssMiB": 1680.8896484375,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 2471.484375,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 31227.172833000004,
+        "case": "legacy-default",
+        "platform": "macos",
+        "pssMiB": 1749.318359375,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 2566.125,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 36066.924625,
+        "case": "legacy-default",
+        "platform": "macos",
+        "pssMiB": 1749.9755859375,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 2567.375,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 41092.294958,
+        "case": "legacy-default",
+        "platform": "macos",
+        "pssMiB": 1759.62890625,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 2579.04296875,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 32130.058833000003,
+        "case": "legacy-pooler",
+        "platform": "macos",
+        "pssMiB": 1933.9765625,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 3291.296875,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 36741.496875,
+        "case": "legacy-pooler",
+        "platform": "macos",
+        "pssMiB": 1939.58984375,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 3297.5625,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 43096.709667,
+        "case": "legacy-pooler",
+        "platform": "macos",
+        "pssMiB": 1944.427734375,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 3306.0625,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 32275.850166999997,
+        "case": "legacy-pooler",
+        "platform": "macos",
+        "pssMiB": 1861.3662109375,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 3210.28125,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 36668.597375,
+        "case": "legacy-pooler",
+        "platform": "macos",
+        "pssMiB": 1861.7646484375,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 3211.2578125,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 41816.853124999994,
+        "case": "legacy-pooler",
+        "platform": "macos",
+        "pssMiB": 1822.02734375,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 3103.05078125,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 31423.81700000001,
+        "case": "legacy-pooler",
+        "platform": "macos",
+        "pssMiB": 1918.302734375,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 3266.55859375,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 36567.43887500001,
+        "case": "legacy-pooler",
+        "platform": "macos",
+        "pssMiB": 1918.576171875,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 3267.15234375,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 41132.83750000001,
+        "case": "legacy-pooler",
+        "platform": "macos",
+        "pssMiB": 1919.6435546875,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 3275.0625,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 30959.73458299999,
+        "case": "docker-default",
+        "platform": "macos",
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 378.1796875,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 35817.593833,
+        "case": "docker-default",
+        "platform": "macos",
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 378.1796875,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 40787.66512499999,
+        "case": "docker-default",
+        "platform": "macos",
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 378.1796875,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 31453.451291,
+        "case": "docker-default",
+        "platform": "macos",
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 379.97265625,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 35861.587541,
+        "case": "docker-default",
+        "platform": "macos",
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 379.97265625,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 40785.960125,
+        "case": "docker-default",
+        "platform": "macos",
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 379.97265625,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 30830.317834,
+        "case": "docker-default",
+        "platform": "macos",
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 382.14453125,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 35792.324875,
+        "case": "docker-default",
+        "platform": "macos",
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 382.14453125,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 40800.688667,
+        "case": "docker-default",
+        "platform": "macos",
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 382.14453125,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 31442.437375,
+        "case": "docker-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 3250.79296875,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 36293.700666,
+        "case": "docker-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 3250.1796875,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 41168.806040999996,
+        "case": "docker-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 3253.08203125,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 31202.435000000012,
+        "case": "docker-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 3282.14453125,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 36236.25741600001,
+        "case": "docker-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 3279.71484375,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 41205.61600000001,
+        "case": "docker-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 3266.28125,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 31332.767083,
+        "case": "docker-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 3245.3984375,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 36132.104250000004,
+        "case": "docker-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 3253.1796875,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 41132.54141600001,
+        "case": "docker-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 3253.85546875,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 30184.995792,
+        "case": "native-default",
+        "platform": "macos",
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 255.375,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 35229.910791999995,
+        "case": "native-default",
+        "platform": "macos",
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 255.390625,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 40237.562584,
+        "case": "native-default",
+        "platform": "macos",
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 257.828125,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 30210.989625000002,
+        "case": "native-default",
+        "platform": "macos",
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 261.453125,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 35234.709625,
+        "case": "native-default",
+        "platform": "macos",
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 261.46875,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 40225.199958,
+        "case": "native-default",
+        "platform": "macos",
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 263.90625,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 30229.857749999996,
+        "case": "native-default",
+        "platform": "macos",
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 258.421875,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 35224.528333,
+        "case": "native-default",
+        "platform": "macos",
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 258.4375,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 40224.502457999995,
+        "case": "native-default",
+        "platform": "macos",
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 260.875,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 30340.118292000014,
+        "case": "native-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 1640.0625,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 35249.034375,
+        "case": "native-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 1646.359375,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 40253.325958999994,
+        "case": "native-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 1648.328125,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 30292.196042000003,
+        "case": "native-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 1555.84375,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 35218.726917,
+        "case": "native-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 863.8125,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 40208.687874999996,
+        "case": "native-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 861.375,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 30258.639459000005,
+        "case": "native-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 2626.265625,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 35241.48145900001,
+        "case": "native-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 2635.296875,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 40255.473917,
+        "case": "native-eager",
+        "platform": "macos",
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 2642.4375,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 31023.983846000017,
+        "case": "legacy-default",
+        "platform": "linux",
+        "pssMiB": 1591.2099609375,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 2377.0390625,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 35801.25293700001,
+        "case": "legacy-default",
+        "platform": "linux",
+        "pssMiB": 1591.728515625,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 2378.7890625,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 40823.118429000024,
+        "case": "legacy-default",
+        "platform": "linux",
+        "pssMiB": 1592.2900390625,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 2385.04296875,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 30743.590419000007,
+        "case": "legacy-default",
+        "platform": "linux",
+        "pssMiB": 1678.130859375,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 2490.62890625,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 35669.349832,
+        "case": "legacy-default",
+        "platform": "linux",
+        "pssMiB": 1678.701171875,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 2491.53515625,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 40689.38196200001,
+        "case": "legacy-default",
+        "platform": "linux",
+        "pssMiB": 1684.640625,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 2502.1640625,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 30740.227676999995,
+        "case": "legacy-default",
+        "platform": "linux",
+        "pssMiB": 1669.4375,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 2487.00390625,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 35678.868715,
+        "case": "legacy-default",
+        "platform": "linux",
+        "pssMiB": 1669.673828125,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 2487.74609375,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 40664.681043,
+        "case": "legacy-default",
+        "platform": "linux",
+        "pssMiB": 1670.521484375,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 2489.10546875,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 31246.644499000016,
+        "case": "legacy-pooler",
+        "platform": "linux",
+        "pssMiB": 1824.119140625,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 3175.25,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 35843.724015000014,
+        "case": "legacy-pooler",
+        "platform": "linux",
+        "pssMiB": 1825.6396484375,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 3183.6796875,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 41494.78908000002,
+        "case": "legacy-pooler",
+        "platform": "linux",
+        "pssMiB": 1808.8740234375,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 3104.90625,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 31644.916826,
+        "case": "legacy-pooler",
+        "platform": "linux",
+        "pssMiB": 1969.8388671875,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 3330.3671875,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 36207.85951000001,
+        "case": "legacy-pooler",
+        "platform": "linux",
+        "pssMiB": 1928.703125,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 3289.8828125,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 42339.732001,
+        "case": "legacy-pooler",
+        "platform": "linux",
+        "pssMiB": 1929.6298828125,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 3291.24609375,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 31344.232438000006,
+        "case": "legacy-pooler",
+        "platform": "linux",
+        "pssMiB": 1946.462890625,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 3297.1640625,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 35928.288811999984,
+        "case": "legacy-pooler",
+        "platform": "linux",
+        "pssMiB": 1835.607421875,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 3121.69140625,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 40736.29919399999,
+        "case": "legacy-pooler",
+        "platform": "linux",
+        "pssMiB": 1845.5771484375,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 3142.35546875,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 30697.764743,
+        "case": "docker-default",
+        "platform": "linux",
+        "pssMiB": 216.4228515625,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 326.24609375,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 35519.210392,
+        "case": "docker-default",
+        "platform": "linux",
+        "pssMiB": 216.4228515625,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 326.24609375,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 40573.82690000001,
+        "case": "docker-default",
+        "platform": "linux",
+        "pssMiB": 216.4228515625,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 326.24609375,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 30512.191819,
+        "case": "docker-default",
+        "platform": "linux",
+        "pssMiB": 219.560546875,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 329.98828125,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 35522.343698000004,
+        "case": "docker-default",
+        "platform": "linux",
+        "pssMiB": 219.060546875,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 329.48828125,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 40504.686705,
+        "case": "docker-default",
+        "platform": "linux",
+        "pssMiB": 219.060546875,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 329.48828125,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 30547.815063,
+        "case": "docker-default",
+        "platform": "linux",
+        "pssMiB": 216.0654296875,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 326.1953125,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 35516.926955999996,
+        "case": "docker-default",
+        "platform": "linux",
+        "pssMiB": 216.0654296875,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 326.1953125,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 40656.905935,
+        "case": "docker-default",
+        "platform": "linux",
+        "pssMiB": 216.0654296875,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 326.1953125,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 30979.711171000003,
+        "case": "docker-eager",
+        "platform": "linux",
+        "pssMiB": 2182.5693359375,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 3172.83984375,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 36074.00459700001,
+        "case": "docker-eager",
+        "platform": "linux",
+        "pssMiB": 2133.681640625,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 3123.32421875,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 40669.39078700001,
+        "case": "docker-eager",
+        "platform": "linux",
+        "pssMiB": 2134.134765625,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 3123.80859375,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 30812.763075999996,
+        "case": "docker-eager",
+        "platform": "linux",
+        "pssMiB": 2091.599609375,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 3090.86328125,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 35683.08901599999,
+        "case": "docker-eager",
+        "platform": "linux",
+        "pssMiB": 2089.8115234375,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 3089.10546875,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 40678.051155,
+        "case": "docker-eager",
+        "platform": "linux",
+        "pssMiB": 2090.3974609375,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 3089.72265625,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 30805.439322000006,
+        "case": "docker-eager",
+        "platform": "linux",
+        "pssMiB": 2106.3076171875,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 3095.31640625,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 35706.512353,
+        "case": "docker-eager",
+        "platform": "linux",
+        "pssMiB": 2104.2001953125,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 3095.0625,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 40651.157277000006,
+        "case": "docker-eager",
+        "platform": "linux",
+        "pssMiB": 2104.6220703125,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 3095.515625,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 30200.759503999998,
+        "case": "native-default",
+        "platform": "linux",
+        "pssMiB": 179.5458984375,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 287.10546875,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 35080.915127,
+        "case": "native-default",
+        "platform": "linux",
+        "pssMiB": 179.09375,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 286.74609375,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 40073.860973,
+        "case": "native-default",
+        "platform": "linux",
+        "pssMiB": 179.66796875,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 289.30078125,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 30053.369063000002,
+        "case": "native-default",
+        "platform": "linux",
+        "pssMiB": 183.333984375,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 290.7578125,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 35067.390778,
+        "case": "native-default",
+        "platform": "linux",
+        "pssMiB": 183.041015625,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 290.46484375,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 40056.645082,
+        "case": "native-default",
+        "platform": "linux",
+        "pssMiB": 183.7841796875,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 293.1875,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 30081.260134999997,
+        "case": "native-default",
+        "platform": "linux",
+        "pssMiB": 180.2998046875,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 286.8515625,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 35065.942553,
+        "case": "native-default",
+        "platform": "linux",
+        "pssMiB": 179.82421875,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 286.4375,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 40059.285612,
+        "case": "native-default",
+        "platform": "linux",
+        "pssMiB": 180.390625,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 288.9296875,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 30112.149275,
+        "case": "native-eager",
+        "platform": "linux",
+        "pssMiB": 2126.1181640625,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 2928.2890625,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 35098.179099999994,
+        "case": "native-eager",
+        "platform": "linux",
+        "pssMiB": 2122.705078125,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 2935.3828125,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 40102.215123999995,
+        "case": "native-eager",
+        "platform": "linux",
+        "pssMiB": 2122.1357421875,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 2948.4375,
+        "sample": 1
+      },
+      {
+        "actualOffsetMs": 30199.920990000002,
+        "case": "native-eager",
+        "platform": "linux",
+        "pssMiB": 2102.6240234375,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 2906.2890625,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 35118.615424,
+        "case": "native-eager",
+        "platform": "linux",
+        "pssMiB": 2097.7216796875,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 2911.9765625,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 40330.215264,
+        "case": "native-eager",
+        "platform": "linux",
+        "pssMiB": 2098.560546875,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 2924.7265625,
+        "sample": 2
+      },
+      {
+        "actualOffsetMs": 30251.14666,
+        "case": "native-eager",
+        "platform": "linux",
+        "pssMiB": 2111.0673828125,
+        "requestedOffsetMs": 30000.0,
+        "rssMiB": 2917.03515625,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 35087.011522,
+        "case": "native-eager",
+        "platform": "linux",
+        "pssMiB": 2107.2646484375,
+        "requestedOffsetMs": 35000.0,
+        "rssMiB": 2924.890625,
+        "sample": 3
+      },
+      {
+        "actualOffsetMs": 40111.445348,
+        "case": "native-eager",
+        "platform": "linux",
+        "pssMiB": 2107.69921875,
+        "requestedOffsetMs": 40000.0,
+        "rssMiB": 2934.37109375,
+        "sample": 3
+      }
+    ],
+    "restarts": [
+      {
+        "case": "legacy",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 27.09217,
+        "success": true
+      },
+      {
+        "case": "legacy",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 26.82998,
+        "success": true
+      },
+      {
+        "case": "legacy",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 26.354290000000002,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 28.5487,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 27.713990000000003,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 26.73153,
+        "success": true
+      },
+      {
+        "case": "dockerDefault",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 3.81029,
+        "success": true
+      },
+      {
+        "case": "dockerDefault",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 4.55834,
+        "success": true
+      },
+      {
+        "case": "dockerDefault",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 2.97494,
+        "success": true
+      },
+      {
+        "case": "dockerEager",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 11.689309999999999,
+        "success": true
+      },
+      {
+        "case": "dockerEager",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 10.95011,
+        "success": true
+      },
+      {
+        "case": "dockerEager",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 11.56916,
+        "success": true
+      },
+      {
+        "case": "nativeDefault",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 0.5921000000000001,
+        "success": true
+      },
+      {
+        "case": "nativeDefault",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 0.57237,
+        "success": true
+      },
+      {
+        "case": "nativeDefault",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 0.57836,
+        "success": true
+      },
+      {
+        "case": "nativeEager",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 13.74619,
+        "success": true
+      },
+      {
+        "case": "nativeEager",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 12.26996,
+        "success": true
+      },
+      {
+        "case": "nativeEager",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 11.94415,
+        "success": true
+      },
+      {
+        "case": "legacy",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 24.82122,
+        "success": true
+      },
+      {
+        "case": "legacy",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 25.36952,
+        "success": true
+      },
+      {
+        "case": "legacy",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 24.99615,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 36.78214,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 30.92727,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 36.42952,
+        "success": true
+      },
+      {
+        "case": "dockerDefault",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 3.1818299999999997,
+        "success": true
+      },
+      {
+        "case": "dockerDefault",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 2.1567800000000004,
+        "success": true
+      },
+      {
+        "case": "dockerDefault",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 2.05467,
+        "success": true
+      },
+      {
+        "case": "dockerEager",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 17.90226,
+        "success": true
+      },
+      {
+        "case": "dockerEager",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 10.62462,
+        "success": true
+      },
+      {
+        "case": "dockerEager",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 10.52582,
+        "success": true
+      },
+      {
+        "case": "nativeDefault",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 0.60691,
+        "success": true
+      },
+      {
+        "case": "nativeDefault",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 0.42058,
+        "success": true
+      },
+      {
+        "case": "nativeDefault",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 0.42994,
+        "success": true
+      },
+      {
+        "case": "nativeEager",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 5.23075,
+        "success": true
+      },
+      {
+        "case": "nativeEager",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 7.491020000000001,
+        "success": true
+      },
+      {
+        "case": "nativeEager",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 6.29665,
+        "success": true
+      }
+    ],
+    "startup": [
+      {
+        "case": "legacy",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 93.13844999999999,
+        "success": true
+      },
+      {
+        "case": "legacy",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 99.05436999999999,
+        "success": true
+      },
+      {
+        "case": "legacy",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 89.91119,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 150.94681,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 113.41789999999999,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 114.97305,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 33562.81,
+          "barrierWaitMs": 22727.82
+        },
+        "case": "dockerDefault",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 10.70043,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 33219.1,
+          "barrierWaitMs": 22609.8
+        },
+        "case": "dockerDefault",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 10.49208,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 37534.39,
+          "barrierWaitMs": 25271.87
+        },
+        "case": "dockerDefault",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 12.18319,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 31589.82,
+          "barrierWaitMs": 80.4
+        },
+        "artifactsPreparedObservedSeconds": 15.87091,
+        "case": "dockerEager",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 31.38249,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 24441.2,
+          "barrierWaitMs": 125.81
+        },
+        "artifactsPreparedObservedSeconds": 17.860599999999998,
+        "case": "dockerEager",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 24.04596,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 31612.79,
+          "barrierWaitMs": 105.66
+        },
+        "artifactsPreparedObservedSeconds": 21.177979999999998,
+        "case": "dockerEager",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 31.37462,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 47706.77,
+          "barrierWaitMs": 23001.4
+        },
+        "case": "nativeDefault",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 24.64593,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 48814.42,
+          "barrierWaitMs": 25093.19
+        },
+        "case": "nativeDefault",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 23.63858,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 49517.03,
+          "barrierWaitMs": 24809.91
+        },
+        "case": "nativeDefault",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 24.63994,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 79335.21,
+          "barrierWaitMs": 3.02
+        },
+        "artifactsPreparedObservedSeconds": 21.13321,
+        "case": "nativeEager",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 79.30208,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 85478.04,
+          "barrierWaitMs": 7.21
+        },
+        "artifactsPreparedObservedSeconds": 22.543080000000003,
+        "case": "nativeEager",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 85.39544000000001,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 83411.51,
+          "barrierWaitMs": 1.52
+        },
+        "artifactsPreparedObservedSeconds": 23.943189999999998,
+        "case": "nativeEager",
+        "mode": "cold",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 83.29066999999999,
+        "success": true
+      },
+      {
+        "case": "legacy",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 31.26875,
+        "success": true
+      },
+      {
+        "case": "legacy",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 30.4272,
+        "success": true
+      },
+      {
+        "case": "legacy",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 29.63481,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 30.64755,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 30.72848,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 29.09905,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 8840.44,
+          "barrierWaitMs": 2698.87
+        },
+        "case": "dockerDefault",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 6.0185699999999995,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 8508.2,
+          "barrierWaitMs": 2798.67
+        },
+        "case": "dockerDefault",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 5.5993699999999995,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 10067.58,
+          "barrierWaitMs": 2889.49
+        },
+        "case": "dockerDefault",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 7.07303,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 15529.12,
+          "barrierWaitMs": 87.03
+        },
+        "artifactsPreparedObservedSeconds": 2.36033,
+        "case": "dockerEager",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 15.31192,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 17656.35,
+          "barrierWaitMs": 102.09
+        },
+        "artifactsPreparedObservedSeconds": 2.94542,
+        "case": "dockerEager",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 17.44938,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 15858.56,
+          "barrierWaitMs": 80.09
+        },
+        "artifactsPreparedObservedSeconds": 2.26032,
+        "case": "dockerEager",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 15.683879999999998,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 3471.89,
+          "barrierWaitMs": 2.09
+        },
+        "case": "nativeDefault",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 3.4159200000000003,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 3187.66,
+          "barrierWaitMs": 2.01
+        },
+        "case": "nativeDefault",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 3.0851599999999997,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 2650.33,
+          "barrierWaitMs": 2.67
+        },
+        "case": "nativeDefault",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 2.5909899999999997,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 17675.43,
+          "barrierWaitMs": 3.44
+        },
+        "artifactsPreparedObservedSeconds": 0.91979,
+        "case": "nativeEager",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 1,
+        "seconds": 17.64828,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 19128.27,
+          "barrierWaitMs": 2.07
+        },
+        "artifactsPreparedObservedSeconds": 1.2464300000000001,
+        "case": "nativeEager",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 2,
+        "seconds": 19.10334,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 15753.78,
+          "barrierWaitMs": 1.84
+        },
+        "artifactsPreparedObservedSeconds": 0.72462,
+        "case": "nativeEager",
+        "mode": "hot",
+        "platform": "macos",
+        "sample": 3,
+        "seconds": 15.63686,
+        "success": true
+      },
+      {
+        "case": "legacy",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 105.01776,
+        "success": true
+      },
+      {
+        "case": "legacy",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 92.84189,
+        "success": true
+      },
+      {
+        "case": "legacy",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 80.30912,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 117.52686,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 117.38992999999999,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 115.98230000000001,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 33140.77,
+          "barrierWaitMs": 22608.64
+        },
+        "case": "dockerDefault",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 10.46331,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 32052.49,
+          "barrierWaitMs": 22245.61
+        },
+        "case": "dockerDefault",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 9.760959999999999,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 31088.74,
+          "barrierWaitMs": 20906.1
+        },
+        "case": "dockerDefault",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 10.09376,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 24919.07,
+          "barrierWaitMs": 46.17
+        },
+        "artifactsPreparedObservedSeconds": 18.49223,
+        "case": "dockerEager",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 24.75323,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 30451.81,
+          "barrierWaitMs": 58.12
+        },
+        "artifactsPreparedObservedSeconds": 15.974200000000002,
+        "case": "dockerEager",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 30.220779999999998,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 23656.82,
+          "barrierWaitMs": 49.84
+        },
+        "artifactsPreparedObservedSeconds": 19.12444,
+        "case": "dockerEager",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 23.52964,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 25222.52,
+          "barrierWaitMs": 17552.68
+        },
+        "case": "nativeDefault",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 7.63392,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 20243.47,
+          "barrierWaitMs": 14211.02
+        },
+        "case": "nativeDefault",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 6.0048900000000005,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 21772.65,
+          "barrierWaitMs": 15869.14
+        },
+        "case": "nativeDefault",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 5.7869399999999995,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 19259.28,
+          "barrierWaitMs": 2.77
+        },
+        "artifactsPreparedObservedSeconds": 11.048020000000001,
+        "case": "nativeEager",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 19.138939999999998,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 15733.28,
+          "barrierWaitMs": 3.12
+        },
+        "artifactsPreparedObservedSeconds": 9.38387,
+        "case": "nativeEager",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 15.66025,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 16649.48,
+          "barrierWaitMs": 2.79
+        },
+        "artifactsPreparedObservedSeconds": 11.33433,
+        "case": "nativeEager",
+        "mode": "cold",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 16.565549999999998,
+        "success": true
+      },
+      {
+        "case": "legacy",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 29.56701,
+        "success": true
+      },
+      {
+        "case": "legacy",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 29.672220000000003,
+        "success": true
+      },
+      {
+        "case": "legacy",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 28.99682,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 40.905989999999996,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 49.4923,
+        "success": true
+      },
+      {
+        "case": "legacyEager",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 37.92308,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 6684.26,
+          "barrierWaitMs": 2262.59
+        },
+        "case": "dockerDefault",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 4.35192,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 9206.75,
+          "barrierWaitMs": 2212.04
+        },
+        "case": "dockerDefault",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 6.94122,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 5768.77,
+          "barrierWaitMs": 2247.41
+        },
+        "case": "dockerDefault",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 3.4731300000000003,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 16230.82,
+          "barrierWaitMs": 65.65
+        },
+        "artifactsPreparedObservedSeconds": 1.77402,
+        "case": "dockerEager",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 15.97962,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 13966.65,
+          "barrierWaitMs": 65.53
+        },
+        "artifactsPreparedObservedSeconds": 1.73014,
+        "case": "dockerEager",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 13.76947,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 14562.36,
+          "barrierWaitMs": 59.06
+        },
+        "artifactsPreparedObservedSeconds": 1.75458,
+        "case": "dockerEager",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 14.41399,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 2772.36,
+          "barrierWaitMs": 3.58
+        },
+        "case": "nativeDefault",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 2.66864,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 5596.54,
+          "barrierWaitMs": 8.76
+        },
+        "case": "nativeDefault",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 5.54946,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 3695.96,
+          "barrierWaitMs": 3.89
+        },
+        "case": "nativeDefault",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 3.6477199999999996,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 8779.3,
+          "barrierWaitMs": 6.98
+        },
+        "artifactsPreparedObservedSeconds": 0.32006999999999997,
+        "case": "nativeEager",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 1,
+        "seconds": 8.733030000000001,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 8807.18,
+          "barrierWaitMs": 6.05
+        },
+        "artifactsPreparedObservedSeconds": 0.31801999999999997,
+        "case": "nativeEager",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 2,
+        "seconds": 8.77593,
+        "success": true
+      },
+      {
+        "artifactBarrier": {
+          "artifactReadyMs": 12000.26,
+          "barrierWaitMs": 2.09
+        },
+        "artifactsPreparedObservedSeconds": 0.31874,
+        "case": "nativeEager",
+        "mode": "hot",
+        "platform": "linux",
+        "sample": 3,
+        "seconds": 11.92497,
+        "success": true
+      }
+    ]
+  },
+  "processMemory": {
+    "cases": {
+      "linux": {
+        "docker-default": {
+          "metrics": {
+            "pssMiB": {
+              "median": 216.4228515625,
+              "rangeMiB": [
+                216.0654296875,
+                219.060546875
+              ]
+            },
+            "rssMiB": {
+              "median": 326.24609375,
+              "rangeMiB": [
+                326.1953125,
+                329.48828125
+              ]
+            }
+          }
+        },
+        "docker-eager": {
+          "metrics": {
+            "pssMiB": {
+              "median": 2104.6220703125,
+              "rangeMiB": [
+                2090.3974609375,
+                2134.134765625
+              ]
+            },
+            "rssMiB": {
+              "median": 3095.31640625,
+              "rangeMiB": [
+                3089.72265625,
+                3123.80859375
+              ]
+            }
+          }
+        },
+        "legacy-default": {
+          "metrics": {
+            "pssMiB": {
+              "median": 1669.673828125,
+              "rangeMiB": [
+                1591.728515625,
+                1678.701171875
+              ]
+            },
+            "rssMiB": {
+              "median": 2487.74609375,
+              "rangeMiB": [
+                2378.7890625,
+                2491.53515625
+              ]
+            }
+          }
+        },
+        "legacy-pooler": {
+          "metrics": {
+            "pssMiB": {
+              "median": 1845.5771484375,
+              "rangeMiB": [
+                1824.119140625,
+                1929.6298828125
+              ]
+            },
+            "rssMiB": {
+              "median": 3175.25,
+              "rangeMiB": [
+                3142.35546875,
+                3291.24609375
+              ]
+            }
+          }
+        },
+        "native-default": {
+          "metrics": {
+            "pssMiB": {
+              "median": 180.2998046875,
+              "rangeMiB": [
+                179.5458984375,
+                183.333984375
+              ]
+            },
+            "rssMiB": {
+              "median": 287.10546875,
+              "rangeMiB": [
+                286.8515625,
+                290.7578125
+              ]
+            }
+          }
+        },
+        "native-eager": {
+          "metrics": {
+            "pssMiB": {
+              "median": 2107.69921875,
+              "rangeMiB": [
+                2098.560546875,
+                2122.705078125
+              ]
+            },
+            "rssMiB": {
+              "median": 2924.890625,
+              "rangeMiB": [
+                2911.9765625,
+                2935.3828125
+              ]
+            }
+          }
+        }
+      },
+      "macos": {
+        "docker-default": {
+          "metrics": {
+            "rssMiB": {
+              "median": 379.97265625,
+              "rangeMiB": [
+                378.1796875,
+                382.14453125
+              ]
+            }
+          }
+        },
+        "docker-eager": {
+          "metrics": {
+            "rssMiB": {
+              "median": 3253.1796875,
+              "rangeMiB": [
+                3250.79296875,
+                3279.71484375
+              ]
+            }
+          }
+        },
+        "legacy-default": {
+          "metrics": {
+            "rssMiB": {
+              "median": 2500.4296875,
+              "rangeMiB": [
+                2471.484375,
+                2567.375
+              ]
+            }
+          }
+        },
+        "legacy-pooler": {
+          "metrics": {
+            "rssMiB": {
+              "median": 3267.15234375,
+              "rangeMiB": [
+                3210.28125,
+                3297.5625
+              ]
+            }
+          }
+        },
+        "native-default": {
+          "metrics": {
+            "rssMiB": {
+              "median": 258.4375,
+              "rangeMiB": [
+                255.390625,
+                261.46875
+              ]
+            }
+          }
+        },
+        "native-eager": {
+          "metrics": {
+            "rssMiB": {
+              "median": 1646.359375,
+              "rangeMiB": [
+                863.8125,
+                2635.296875
+              ]
+            }
+          }
+        }
+      }
+    },
+    "observations": {
+      "snapshots": 108,
+      "starts": 36,
+      "windowSeconds": "30\u201340"
+    }
+  },
+  "setupFailures": [
+    {
+      "case": "legacy",
+      "cellId": "macos/cold/legacy/1",
+      "mode": "cold",
+      "platform": "macos",
+      "reason": "The harness forwarded Docker socket used a different absolute path from the VM daemon socket; legacy Vector bind-mounted an unavailable socket and failed to connect. Excluded from performance and product reliability statistics.",
+      "sample": 1,
+      "status": "setup-invalid"
+    },
+    {
+      "case": "legacy",
+      "cellId": "macos/cold/legacy/3",
+      "mode": "cold",
+      "platform": "macos",
+      "reason": "Discarded as a precaution: a 1\u20132 second local synthetic report render overlapped this timed run. The replacement sample completed successfully without concurrent validation work.",
+      "sample": 3,
+      "status": "setup-invalid"
+    },
+    {
+      "case": "new-container-default",
+      "cellId": "ubuntu-22.04/cold/new-container-default/1",
+      "mode": "cold",
+      "platform": "ubuntu-22.04",
+      "reason": "Prepared Linux source checkout was accidentally removed by a validation fixture cleanup. Restored the same commit; no stack startup timer began.",
+      "sample": 1,
+      "status": "setup-failed"
+    }
+  ],
+  "startup": {
+    "linux": {
+      "dockerDefault": {
+        "cached": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 4.35192,
+          "rangeSeconds": [
+            3.4731300000000003,
+            6.94122
+          ],
+          "successes": 3
+        },
+        "cold": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 10.09376,
+          "rangeSeconds": [
+            9.760959999999999,
+            10.46331
+          ],
+          "successes": 3
+        }
+      },
+      "dockerEager": {
+        "cached": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 14.41399,
+          "rangeSeconds": [
+            13.76947,
+            15.97962
+          ],
+          "successes": 3
+        },
+        "cold": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 24.75323,
+          "rangeSeconds": [
+            23.52964,
+            30.220779999999998
+          ],
+          "successes": 3
+        }
+      },
+      "legacy": {
+        "cached": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 29.56701,
+          "rangeSeconds": [
+            28.99682,
+            29.672220000000003
+          ],
+          "successes": 3
+        },
+        "cold": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 92.84189,
+          "rangeSeconds": [
+            80.30912,
+            105.01776
+          ],
+          "successes": 3
+        }
+      },
+      "legacyEager": {
+        "cached": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 40.905989999999996,
+          "rangeSeconds": [
+            37.92308,
+            49.4923
+          ],
+          "successes": 3
+        },
+        "cold": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 117.38992999999999,
+          "rangeSeconds": [
+            115.98230000000001,
+            117.52686
+          ],
+          "successes": 3
+        }
+      },
+      "nativeDefault": {
+        "cached": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 3.6477199999999996,
+          "rangeSeconds": [
+            2.66864,
+            5.54946
+          ],
+          "successes": 3
+        },
+        "cold": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 6.0048900000000005,
+          "rangeSeconds": [
+            5.7869399999999995,
+            7.63392
+          ],
+          "successes": 3
+        }
+      },
+      "nativeEager": {
+        "cached": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 8.77593,
+          "rangeSeconds": [
+            8.733030000000001,
+            11.92497
+          ],
+          "successes": 3
+        },
+        "cold": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 16.565549999999998,
+          "rangeSeconds": [
+            15.66025,
+            19.138939999999998
+          ],
+          "successes": 3
+        }
+      },
+      "restarts": {
+        "attempts": 18,
+        "dockerDefault": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 2.1567800000000004,
+          "rangeSeconds": [
+            2.05467,
+            3.1818299999999997
+          ],
+          "successes": 3
+        },
+        "dockerEager": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 10.62462,
+          "rangeSeconds": [
+            10.52582,
+            17.90226
+          ],
+          "successes": 3
+        },
+        "failures": 0,
+        "legacy": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 24.99615,
+          "rangeSeconds": [
+            24.82122,
+            25.36952
+          ],
+          "successes": 3
+        },
+        "legacyEager": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 36.42952,
+          "rangeSeconds": [
+            30.92727,
+            36.78214
+          ],
+          "successes": 3
+        },
+        "medianSeconds": 9.008420000000001,
+        "nativeDefault": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 0.42994,
+          "rangeSeconds": [
+            0.42058,
+            0.60691
+          ],
+          "successes": 3
+        },
+        "nativeEager": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 6.29665,
+          "rangeSeconds": [
+            5.23075,
+            7.491020000000001
+          ],
+          "successes": 3
+        },
+        "rangeSeconds": [
+          0.42058,
+          36.78214
+        ],
+        "successes": 18
+      }
+    },
+    "macos": {
+      "dockerDefault": {
+        "cached": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 6.0185699999999995,
+          "rangeSeconds": [
+            5.5993699999999995,
+            7.07303
+          ],
+          "successes": 3
+        },
+        "cold": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 10.70043,
+          "rangeSeconds": [
+            10.49208,
+            12.18319
+          ],
+          "successes": 3
+        }
+      },
+      "dockerEager": {
+        "cached": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 15.683879999999998,
+          "rangeSeconds": [
+            15.31192,
+            17.44938
+          ],
+          "successes": 3
+        },
+        "cold": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 31.37462,
+          "rangeSeconds": [
+            24.04596,
+            31.38249
+          ],
+          "successes": 3
+        }
+      },
+      "legacy": {
+        "cached": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 30.4272,
+          "rangeSeconds": [
+            29.63481,
+            31.26875
+          ],
+          "successes": 3
+        },
+        "cold": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 93.13844999999999,
+          "rangeSeconds": [
+            89.91119,
+            99.05436999999999
+          ],
+          "successes": 3
+        }
+      },
+      "legacyEager": {
+        "cached": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 30.64755,
+          "rangeSeconds": [
+            29.09905,
+            30.72848
+          ],
+          "successes": 3
+        },
+        "cold": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 114.97305,
+          "rangeSeconds": [
+            113.41789999999999,
+            150.94681
+          ],
+          "successes": 3
+        }
+      },
+      "nativeDefault": {
+        "cached": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 3.0851599999999997,
+          "rangeSeconds": [
+            2.5909899999999997,
+            3.4159200000000003
+          ],
+          "successes": 3
+        },
+        "cold": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 24.63994,
+          "rangeSeconds": [
+            23.63858,
+            24.64593
+          ],
+          "successes": 3
+        }
+      },
+      "nativeEager": {
+        "cached": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 17.64828,
+          "rangeSeconds": [
+            15.63686,
+            19.10334
+          ],
+          "successes": 3
+        },
+        "cold": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 83.29066999999999,
+          "rangeSeconds": [
+            79.30208,
+            85.39544000000001
+          ],
+          "successes": 3
+        }
+      },
+      "restarts": {
+        "attempts": 18,
+        "dockerDefault": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 3.81029,
+          "rangeSeconds": [
+            2.97494,
+            4.55834
+          ],
+          "successes": 3
+        },
+        "dockerEager": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 11.56916,
+          "rangeSeconds": [
+            10.95011,
+            11.689309999999999
+          ],
+          "successes": 3
+        },
+        "failures": 0,
+        "legacy": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 26.82998,
+          "rangeSeconds": [
+            26.354290000000002,
+            27.09217
+          ],
+          "successes": 3
+        },
+        "legacyEager": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 27.713990000000003,
+          "rangeSeconds": [
+            26.73153,
+            28.5487
+          ],
+          "successes": 3
+        },
+        "medianSeconds": 11.81673,
+        "nativeDefault": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 0.57836,
+          "rangeSeconds": [
+            0.57237,
+            0.5921000000000001
+          ],
+          "successes": 3
+        },
+        "nativeEager": {
+          "attempts": 3,
+          "failures": 0,
+          "medianSeconds": 12.26996,
+          "rangeSeconds": [
+            11.94415,
+            13.74619
+          ],
+          "successes": 3
+        },
+        "rangeSeconds": [
+          0.57237,
+          28.5487
+        ],
+        "successes": 18
+      }
+    }
+  }
+}

@@ -4,7 +4,7 @@
 
 Proposed stack package ([PR #6440](https://github.com/supabase/cli/pull/6440), `1944456f2`) compared with the released Supabase CLI **2.116.0**. The new stack was measured through its programmatic API, before CLI integration.
 
-See the [updated legacy comparison](../stack-legacy-comparison-2026-09-07/README.md) for the latest optimized-stack measurements against this report's legacy baseline.
+See the [latest benchmark report](../stack-startup-2026-09-07/README.md) for fresh measurements against the released CLI, including the pooler-enabled eager baseline.
 
 The measurements show two useful improvements: getting a working database sooner, and reducing startup time when all enabled services are needed.
 

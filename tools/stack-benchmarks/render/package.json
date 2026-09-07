@@ -1,0 +1,9 @@
+{
+  "name": "stack-benchmark-report-renderer",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@resvg/resvg-js": "2.6.2"
+  },
+  "packageManager": "pnpm@11.19.0"
+}

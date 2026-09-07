@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "campaignId": "fullstackbenchmarkreport",
+  "source": {
+    "revision": "95c5ab8be71988d244dfa4537db8e454a0bf2e84",
+    "hostPath": "",
+    "linuxPath": ""
+  },
+  "legacy": {
+    "version": "2.116.0",
+    "hostPath": "",
+    "linuxPath": ""
+  },
+  "harness": {
+    "hostPath": "",
+    "linuxPath": ""
+  },
+  "platforms": ["macos", "ubuntu-22.04"],
+  "runtimes": ["native", "container"],
+  "cases": [
+    "legacy",
+    "new-container-default",
+    "new-container-eager",
+    "new-native-default",
+    "new-native-eager",
+    "legacy-pooler"
+  ],
+  "samples": 3,
+  "memoryOffsetsSeconds": [30, 35, 40],
+  "modes": {
+    "cold": { "samplesPerCase": 3 },
+    "hot": {
+      "samplesPerCase": 3,
+      "newRetainedRestart": true,
+      "legacyRetainedRestart": true,
+      "memoryOnly": true
+    }
+  }
+}
