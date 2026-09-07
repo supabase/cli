@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { CliOutput, Command } from "effect/unstable/cli";
 import {
   InvalidStackConfigError,
   StackIdSchema,
@@ -20,6 +21,8 @@ import {
 } from "../../../../shared/telemetry/error-actionability.ts";
 import { LegacyExperimentalStackApi } from "../stack.shared.ts";
 import { legacyExperimentalStackStatus } from "./status.handler.ts";
+import { legacyExperimentalStackStatusCommand } from "./status.command.ts";
+import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 
 const id = StackIdSchema.make("a".repeat(64));
 const capabilityNames = [
@@ -149,6 +152,17 @@ describe("experimental stack status", () => {
     },
   );
 
+  it.effect("forwards a named stack target with the settings project root", () => {
+    const run = runStatus({ flags: flags(Option.some("feature-a")), status: makeStatus(id) });
+    return run.effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(run.findInputs).toEqual([{ projectRoot: run.root, name: "feature-a" }]);
+        }),
+      ),
+    );
+  });
+
   it.effect("uses the persisted project root for an explicit id from another cwd", () => {
     const run = runStatus({ flags: flags(Option.none(), Option.some(id)), status: makeStatus(id) });
     return run.effect.pipe(
@@ -156,6 +170,22 @@ describe("experimental stack status", () => {
         Effect.sync(() => {
           expect(run.inspectInputs).toHaveLength(2);
           expect(run.inspectInputs[1]).toEqual({ config: expect.any(Object) });
+        }),
+      ),
+    );
+  });
+
+  it.effect("reuses the explicit id inspection when config is missing", () => {
+    const run = runStatus({
+      config: "missing",
+      flags: flags(Option.none(), Option.some(id)),
+      status: makeStatus(id),
+    });
+    return run.effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(run.inspectInputs).toHaveLength(1);
+          expect(run.inspectInputs[0]).toBeUndefined();
         }),
       ),
     );
@@ -244,6 +274,23 @@ describe("experimental stack status", () => {
           }
         }),
       ),
+    );
+  });
+
+  it.live("parses stack name and stack id through the command", () => {
+    let parsed: { stack: Option.Option<string>; stackId: Option.Option<string> } | undefined;
+    const command = legacyExperimentalStackStatusCommand.pipe(
+      Command.withHandler((parsedFlags) =>
+        Effect.sync(() => {
+          parsed = { stack: parsedFlags.stack, stackId: parsedFlags.stackId };
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      yield* Command.runWith(command, { version: "0.0.0-test" })(["--stack", "feature-a"]);
+      expect(parsed).toEqual({ stack: Option.some("feature-a"), stackId: Option.none() });
+    }).pipe(
+      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
     );
   });
 });
