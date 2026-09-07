@@ -1,5 +1,11 @@
-import { Effect, Option } from "effect";
-import { isStackId, type StackInspection, type StackStatus } from "@supabase/stack/effect";
+import { Effect, Match, Option } from "effect";
+import {
+  isStackError,
+  isStackId,
+  type StackError,
+  type StackInspection,
+  type StackStatus,
+} from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
@@ -17,6 +23,42 @@ const validateFlags = (flags: LegacyExperimentalStackStatusFlags) =>
         }),
       )
     : Effect.void;
+
+const classifyStackError = (error: StackError) =>
+  Match.value(error).pipe(
+    Match.tag("StackNotFoundError", () => ({
+      reason: "not-found" as const,
+      suggestion: "Run supabase experimental stack start first.",
+    })),
+    Match.tag(
+      "InvalidStackIdentityError",
+      "InvalidProjectRootError",
+      "InvalidStackConfigError",
+      "StackVersionUnsupportedError",
+      "StackStateInvalidError",
+      "StackStateFormatUnsupportedError",
+      "StackUpgradeRequiredError",
+      "StackSecretMismatchError",
+      "InvalidJwtSigningMaterialError",
+      () => ({ reason: "invalid-config" as const }),
+    ),
+    Match.orElse(() => ({
+      reason: "runtime" as const,
+      suggestion: "Retry the command and use --debug if the stack state remains unavailable.",
+    })),
+  );
+
+const mapStackError = (error: StackError) => {
+  const classification = classifyStackError(error);
+  return new LegacyExperimentalStackStatusError({
+    ...classification,
+    message: error.message,
+    cause: error,
+  });
+};
+
+const catchStackError = <A, R>(effect: Effect.Effect<A, StackError, R>) =>
+  effect.pipe(Effect.catchIf(isStackError, (error) => Effect.fail(mapStackError(error))));
 
 const readiness = (status: StackStatus | undefined): string => {
   if (status === undefined) return "unknown";
@@ -48,6 +90,13 @@ const payload = (inspection: StackInspection, configWarning?: string) => ({
       message: configWarning ?? "Configuration was not compared.",
     } as const),
 });
+
+const comparedInspection = (
+  inspection: StackInspection,
+): {
+  readonly inspection: StackInspection;
+  readonly warning?: string;
+} => ({ inspection });
 
 const render = (inspection: StackInspection, configWarning?: string): string => {
   const descriptor = inspection.descriptor;
@@ -85,14 +134,16 @@ const findDescriptor = (projectRoot: string, name: string | undefined, id: strin
           reason: "flags",
           message: "--stack-id must be a lowercase SHA-256 stack id",
         });
-      const inspection = yield* api.inspectStack(id);
+      const inspection = yield* catchStackError(api.inspectStack(id));
       return {
         descriptor: inspection.descriptor,
         id,
         projectRoot: inspection.descriptor.projectRoot,
       };
     }
-    const found = yield* api.findStack({ projectRoot, ...(name === undefined ? {} : { name }) });
+    const found = yield* catchStackError(
+      api.findStack({ projectRoot, ...(name === undefined ? {} : { name }) }),
+    );
     if (Option.isNone(found))
       return yield* new LegacyExperimentalStackStatusError({
         reason: "not-found",
@@ -128,24 +179,20 @@ export const legacyExperimentalStackStatus = Effect.fn("legacy.experimental.stac
     );
     const comparison =
       loaded.config === undefined
-        ? yield* api.inspectStack(target.id).pipe(
-            Effect.map((inspection) => ({
-              inspection,
-              warning: undefined as string | undefined,
-            })),
-          )
+        ? yield* catchStackError(api.inspectStack(target.id)).pipe(Effect.map(comparedInspection))
         : yield* api.inspectStack(target.id, { config: loaded.config }).pipe(
-            Effect.map((inspection) => ({ inspection, warning: undefined as string | undefined })),
+            Effect.map(comparedInspection),
             Effect.catchTags({
               InvalidStackConfigError: (error) =>
                 Effect.succeed({ inspection: undefined, warning: error.message }),
               StackVersionUnsupportedError: (error) =>
                 Effect.succeed({ inspection: undefined, warning: error.message }),
             }),
+            catchStackError,
           );
     const inspection =
       comparison.inspection === undefined
-        ? yield* api.inspectStack(target.id)
+        ? yield* catchStackError(api.inspectStack(target.id))
         : comparison.inspection;
     const inspectionWarning = loaded.warning ?? comparison.warning;
     if (output.format === "text") yield* output.raw(render(inspection, inspectionWarning));

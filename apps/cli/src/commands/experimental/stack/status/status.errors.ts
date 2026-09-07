@@ -9,11 +9,12 @@ export class LegacyExperimentalStackStatusError extends Data.TaggedError(
   "LegacyExperimentalStackStatusError",
 )<{
   readonly message: string;
-  readonly reason: "flags" | "not-found" | "invalid-config";
+  readonly reason: "flags" | "not-found" | "invalid-config" | "runtime";
   readonly suggestion?: string;
   readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return this.reason === "flags" ? actionability.provideFlags : actionability.invalidConfig;
+    if (this.reason === "flags" || this.reason === "not-found") return actionability.provideFlags;
+    return this.reason === "runtime" ? actionability.externalNetwork : actionability.invalidConfig;
   }
 }

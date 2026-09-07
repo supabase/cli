@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import {
   InvalidStackConfigError,
   StackIdSchema,
@@ -14,6 +14,10 @@ import {
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { mockLegacyCliSettings } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
+import {
+  actionability,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 import { LegacyExperimentalStackApi } from "../stack.shared.ts";
 import { legacyExperimentalStackStatus } from "./status.handler.ts";
 
@@ -229,7 +233,17 @@ describe("experimental stack status", () => {
       Effect.exit,
     );
     return effect.pipe(
-      Effect.tap((exit) => Effect.sync(() => expect(Exit.isFailure(exit)).toBe(true))),
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const error = Cause.findErrorOption(exit.cause);
+            expect(Option.isSome(error)).toBe(true);
+            if (Option.isSome(error))
+              expect(error.value[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
+          }
+        }),
+      ),
     );
   });
 });
