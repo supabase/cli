@@ -4,11 +4,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const srcDir = fileURLToPath(new URL("../..", import.meta.url));
-const legacyDir = path.join(srcDir, "legacy");
 const sharedDir = path.join(srcDir, "shared");
-const legacyCommandsDir = path.join(legacyDir, "commands");
-const legacyDbBootstrapDir = path.join(legacyDir, "shared", "db-bootstrap");
-const legacyCliDir = path.join(legacyDir, "cli");
+const legacyCommandsDir = path.join(srcDir, "commands");
+const legacyDbBootstrapDir = path.join(srcDir, "command-internal", "db-bootstrap");
+const legacyCliDir = path.join(srcDir, "cli");
 const concernSlices = [
   path.join(sharedDir, "auth"),
   path.join(sharedDir, "config"),
@@ -95,7 +94,7 @@ describe("code structure", () => {
     expect(violations).toEqual([]);
   });
 
-  it("keeps legacy/shared/db-bootstrap independent from legacy commands", () => {
+  it("keeps command-internal/db-bootstrap independent from legacy commands", () => {
     const violations: Array<string> = [];
 
     for (const filePath of walk(legacyDbBootstrapDir).filter(isSourceFile)) {

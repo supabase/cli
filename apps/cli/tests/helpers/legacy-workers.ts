@@ -8,15 +8,15 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
-import { LegacyCliSettings } from "../../src/legacy/config/legacy-cli-settings.service.ts";
-import { LegacyProjectRefResolver } from "../../src/legacy/config/legacy-project-ref.service.ts";
+import { LegacyPlatformApi } from "../../src/auth/legacy-platform-api.service.ts";
+import { LegacyCliSettings } from "../../src/config/legacy-cli-settings.service.ts";
+import { LegacyProjectRefResolver } from "../../src/config/legacy-project-ref.service.ts";
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import { LegacyOutputFlag, LegacyYesFlag } from "../../src/shared/legacy/global-flags.ts";
 import { randomLayer } from "../../src/shared/runtime/random.layer.ts";
-import { LegacyProjectNotLinkedError } from "../../src/legacy/config/legacy-project-ref.errors.ts";
+import { LegacyProjectNotLinkedError } from "../../src/config/legacy-project-ref.errors.ts";
 import { mockLegacyLinkedProjectCacheLayer } from "./legacy-mocks.ts";
-import { LegacyTelemetryState } from "../../src/legacy/telemetry/legacy-telemetry-state.service.ts";
+import { LegacyTelemetryState } from "../../src/telemetry/legacy-telemetry-state.service.ts";
 import { mockOutput, mockProcessControl, mockRuntimeInfo, mockTty } from "./mocks.ts";
 
 /**

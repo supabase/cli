@@ -11,7 +11,7 @@ describe("release-minified error fingerprints", () => {
     const errorModule = resolve(import.meta.dirname, "../functions/delete.errors.ts");
     const plainErrorModule = resolve(
       import.meta.dirname,
-      "../../legacy/shared/legacy-config-validate.ts",
+      "../../command-internal/legacy-config-validate.ts",
     );
     const classifierModule = resolve(import.meta.dirname, "error-actionability.ts");
 

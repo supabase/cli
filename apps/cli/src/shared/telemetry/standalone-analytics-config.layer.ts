@@ -11,7 +11,7 @@ import { ttyLayer } from "../runtime/tty.layer.ts";
  * `Analytics`-capturing effect OUTSIDE `runCli`'s own composed layer tree
  * (`shared/cli/run.ts` already wires the equivalent of this inline for every
  * command run via its own `cliSettingsLayerFor`/`cliProjectContextLayerFor`
- * helpers). The one caller today is `legacy/cli/legacy-complete.ts`'s
+ * helpers). The one caller today is `cli/legacy-complete.ts`'s
  * `__complete`/`__completeNoDesc` telemetry capture, which fires before
  * `runCli` ever bootstraps.
  *

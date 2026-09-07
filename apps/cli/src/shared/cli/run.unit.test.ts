@@ -2,9 +2,9 @@ import { Cause } from "effect";
 import { CliError, Command } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 
-import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
-import { legacyMigrationCommand } from "../../legacy/commands/migration/migration.command.ts";
-import { legacySsoCommand } from "../../legacy/commands/sso/sso.command.ts";
+import { legacyBranchesCommand } from "../../commands/branches/branches.command.ts";
+import { legacyMigrationCommand } from "../../commands/migration/migration.command.ts";
+import { legacySsoCommand } from "../../commands/sso/sso.command.ts";
 import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
 import {
   classifyParseErrorConsoleOutput,

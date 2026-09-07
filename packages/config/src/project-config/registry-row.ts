@@ -223,7 +223,7 @@ export function expectBoolean(value: unknown, apiPath: ReadonlyArray<string>): b
 /**
  * Clamps a signed API integer to the unsigned domain the config schema
  * expects. Replicates the legacy shell's `intToUint`
- * (`apps/cli/src/legacy/shared/legacy-size-units.ts`), applied by the sync
+ * (`apps/cli/src/command-internal/legacy-size-units.ts`), applied by the sync
  * mappers to every uint-typed field pulled from the API.
  */
 export function clampToUint(value: number): number {

@@ -1,14 +1,14 @@
 // Docker orchestration primitives shared by `deploy.ts` and `download.ts`
 // (the `functions` command family root, `src/shared/functions/`) — plus
-// `serve.ts` (same family) and `legacy/shared/db-bootstrap/container-lifecycle.ts`
+// `serve.ts` (same family) and `command-internal/db-bootstrap/container-lifecycle.ts`
 // (a different family, reaching in for the generic `isUserDefinedDockerNetwork`
 // predicate), both of which already imported these primitives from `deploy.ts`
 // before this file existed.
 import { resolve } from "node:path";
 import { Effect, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
-import { legacyMakeDockerImageResolver } from "../../legacy/shared/legacy-docker-image-resolve.ts";
+import { spawnContainerCli } from "../../command-internal/legacy-container-cli.ts";
+import { legacyMakeDockerImageResolver } from "../../command-internal/legacy-docker-image-resolve.ts";
 import { DENO1_EDGE_RUNTIME_VERSION } from "./functions.shared.ts";
 
 const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;

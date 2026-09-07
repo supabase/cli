@@ -4,7 +4,7 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerTag } from "effect/unstable/process/ChildProcessSpawner";
 
-import { legacyMakeDockerImageResolver } from "../../src/legacy/shared/legacy-docker-image-resolve.ts";
+import { legacyMakeDockerImageResolver } from "../../src/command-internal/legacy-docker-image-resolve.ts";
 
 type Spawner = ChildProcessSpawnerTag["Service"];
 

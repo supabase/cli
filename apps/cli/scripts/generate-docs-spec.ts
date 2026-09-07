@@ -13,12 +13,9 @@
  */
 import path from "node:path";
 import process from "node:process";
-import { legacyReadDocsContent } from "../src/legacy/docs/legacy-docs-spec.content.ts";
-import {
-  legacyBuildDocsSpec,
-  legacyStringifyDocsSpec,
-} from "../src/legacy/docs/legacy-docs-spec.ts";
-import { legacyRoot } from "../src/legacy/cli/root.ts";
+import { legacyReadDocsContent } from "../src/docs/legacy-docs-spec.content.ts";
+import { legacyBuildDocsSpec, legacyStringifyDocsSpec } from "../src/docs/legacy-docs-spec.ts";
+import { legacyRoot } from "../src/cli/root.ts";
 
 function resolveVersion(): string {
   const argument = process.argv[2];
