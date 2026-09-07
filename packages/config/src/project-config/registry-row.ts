@@ -131,6 +131,16 @@ export interface ProjectConfigMappingRow {
    * string"`. Documentation-only — never read at runtime.
    */
   readonly unit?: string;
+  /**
+   * A property with a legitimate DIFFERENT correct value for the local stack
+   * than the hosted project — pulling the hosted value into the config ROOT
+   * silently reconfigures `supabase start` (e.g. a hosted `db.major_version`
+   * or SMTP host has no business overwriting the local dev stack's own
+   * setting), so `config pull` warns before overwriting one at root. Writes
+   * into `[remotes.*]` blocks are unaffected — those are scoped to the
+   * remote project by construction and never feed `supabase start`.
+   */
+  readonly dualScope?: boolean;
 }
 
 /**

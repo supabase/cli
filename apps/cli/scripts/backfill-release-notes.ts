@@ -21,7 +21,7 @@
 //   --apply  Update the GitHub Release body via `gh release edit`.
 //            Without it, raw markdown notes are printed to stdout.
 import { $ } from "bun";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -47,6 +47,37 @@ const repoRoot = (await $`git rev-parse --show-toplevel`.text()).trim();
 const cliDir = path.join(repoRoot, "apps/cli");
 
 const rootPkg = JSON.parse(await readFile(path.join(cliDir, "package.json"), "utf8"));
+
+function releasePluginSpecifier(plugin: unknown): string | undefined {
+  if (typeof plugin === "string") return plugin;
+  if (Array.isArray(plugin) && typeof plugin[0] === "string") return plugin[0];
+  return undefined;
+}
+
+async function copyLocalReleasePlugins(clone: string): Promise<void> {
+  const plugins = Array.isArray(rootPkg.release?.plugins) ? rootPkg.release.plugins : [];
+  const historicalCliDir = path.join(clone, "apps/cli");
+
+  for (const plugin of plugins) {
+    const specifier = releasePluginSpecifier(plugin);
+    if (!specifier || path.isAbsolute(specifier) || !specifier.startsWith(".")) continue;
+
+    const sourcePath = path.resolve(cliDir, specifier);
+    const relativePath = path.relative(cliDir, sourcePath);
+    if (
+      relativePath === ".." ||
+      relativePath.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relativePath)
+    ) {
+      throw new Error(`Local release plugin must stay inside apps/cli: ${specifier}`);
+    }
+
+    const destinationPath = path.join(historicalCliDir, relativePath);
+    await mkdir(path.dirname(destinationPath), { recursive: true });
+    await copyFile(sourcePath, destinationPath);
+  }
+}
+
 const repoField = rootPkg.repository?.url ?? rootPkg.repository ?? "";
 const repoUrl = `${String(repoField)
   .replace(/^git\+/, "")
@@ -163,6 +194,7 @@ try {
   const clonePkg = JSON.parse(await readFile(clonePkgPath, "utf8"));
   clonePkg.release = rootPkg.release;
   await writeFile(clonePkgPath, `${JSON.stringify(clonePkg, null, 2)}\n`);
+  await copyLocalReleasePlugins(clone);
 
   // semantic-release runs `git ls-remote <repositoryUrl> <branch>` and
   // silently exits with "behind remote" when the remote tip differs from

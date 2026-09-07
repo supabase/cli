@@ -92,9 +92,10 @@ declared in config.toml)`, env-resolved values append `(from env VAR, …)`),
 then a summary count line — `No config differences found.` when clean —
 followed by a `Note: N block(s) … not returned by the API and … not compared:
 …` line when the response omitted a block entirely, a `Note: … (masked by the
-API): …` line when the file sets masked secrets, and a `Note: … cannot be
-pushed and … not compared: …` line for declared properties push cannot
-communicate. Every non-constant string (path segments, env-var names,
+API): …` line when the file sets masked secrets, and a `Note: … is not
+managed while its section is disabled and … not compared: …` line for
+declared properties whose containing feature is switched off. Every
+non-constant string (path segments, env-var names,
 remotes/branch names) is sanitized against control characters before
 rendering.
 

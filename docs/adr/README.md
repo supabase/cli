@@ -63,6 +63,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0020 | [Config Naming Vocabulary](0020-config-naming-vocabulary.md)                                                   | accepted   |
 | 0021 | [ProjectConfig Convergence Semantics](0021-projectconfig-convergence-semantics.md)                             | accepted   |
 | 0022 | [Config Diff Classification and Managed Surface](0022-config-diff-classification-and-managed-surface.md)       | accepted   |
+| 0023 | [Config Pull Write Strategy and Scope Resolution](0023-config-pull-write-strategy-and-scope-resolution.md)     | accepted   |
 
 ## Template
 

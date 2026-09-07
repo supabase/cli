@@ -5,7 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
-import { darwinBinariesForShell, MACOS_IDENTIFIERS } from "./macos-signing.ts";
+import { darwinBinaries, MACOS_IDENTIFIERS } from "./macos-signing.ts";
 
 const MUSL_TARGETS = [
   {
@@ -25,13 +25,15 @@ const LINUX_PKG_FORMATS = ["deb", "rpm", "apk"] as const;
 const { values } = parseArgs({
   options: {
     version: { type: "string" },
-    shell: { type: "string", default: "next" },
+    shell: { type: "string", default: "legacy" },
   },
 });
 
 const shell = values.shell;
-if (shell !== "legacy" && shell !== "next") {
-  console.error(`Invalid --shell value: ${String(shell)}. Expected "legacy" or "next".`);
+if (shell !== "legacy") {
+  console.error(
+    `Invalid --shell value: ${String(shell)}. The "next" shell was removed; only "legacy" is supported.`,
+  );
   process.exit(1);
 }
 const root = path.resolve(import.meta.dir, "../../..");
@@ -40,7 +42,7 @@ const packageVersion = JSON.parse(await readFile(packageJsonPath, "utf8")) as { 
 const version = values.version ?? packageVersion.version;
 if (!version) {
   console.error(
-    "Usage: pnpm exec bun apps/cli/scripts/build.ts [--version <npm-version>] --shell <legacy|next>",
+    "Usage: pnpm exec bun apps/cli/scripts/build.ts [--version <npm-version>] [--shell legacy]",
   );
   process.exit(1);
 }
@@ -216,13 +218,13 @@ function resolveSignMode(): SignMode {
   return "off";
 }
 
-async function signDarwinBinaries(mode: SignMode, shell: "legacy" | "next") {
+async function signDarwinBinaries(mode: SignMode) {
   if (mode === "off") {
     return;
   }
 
   const darwinTargets = TARGETS.filter((target) => target.bunTarget.startsWith("bun-darwin"));
-  const binaries = darwinBinariesForShell(shell);
+  const binaries = darwinBinaries();
 
   for (const target of darwinTargets) {
     const binDir = path.join(root, "packages", target.pkg, "bin");
@@ -262,8 +264,10 @@ async function archiveTarget(target: (typeof TARGETS)[number]) {
   console.log(`[${target.pkg}] Creating archive ${target.archive}...`);
 
   if (target.archive.endsWith(".zip")) {
-    const files = [path.join(binDir, `supabase${target.ext}`)];
-    if (shell === "legacy") files.push(path.join(binDir, `supabase-go${target.ext}`));
+    const files = [
+      path.join(binDir, `supabase${target.ext}`),
+      path.join(binDir, `supabase-go${target.ext}`),
+    ];
     await $`zip -j ${archivePath} ${files}`;
 
     // setup-cli and other download clients always fetch a .tar.gz, including on
@@ -271,13 +275,11 @@ async function archiveTarget(target: (typeof TARGETS)[number]) {
     // tar.gz alongside the .zip so those clients keep working. See #5257.
     const tarArchive = target.archive.replace(/\.zip$/, ".tar.gz");
     const tarArchivePath = path.join(distDir, tarArchive);
-    const tarFiles = [`supabase${target.ext}`];
-    if (shell === "legacy") tarFiles.push(`supabase-go${target.ext}`);
+    const tarFiles = [`supabase${target.ext}`, `supabase-go${target.ext}`];
     console.log(`[${target.pkg}] Creating archive ${tarArchive}...`);
     await $`tar -czf ${tarArchivePath} -C ${binDir} ${tarFiles}`;
   } else {
-    const files = [`supabase${target.ext}`];
-    if (shell === "legacy") files.push(`supabase-go${target.ext}`);
+    const files = [`supabase${target.ext}`, `supabase-go${target.ext}`];
     await $`tar -czf ${archivePath} -C ${binDir} ${files}`;
   }
 }
@@ -304,21 +306,19 @@ async function buildMuslBinaries() {
         `--outfile=${outfile}`,
       ]);
 
-      if (shell === "legacy") {
-        // Go binary is CGO_ENABLED=0 (fully static), so the glibc Linux build works on
-        // musl too. Copy it from the matching glibc package so the published musl npm
-        // package contains the supabase-go binary that LegacyGoProxy resolves to.
-        const glibcTarget = TARGETS.find(
-          (candidate) => "nfpmArch" in candidate && candidate.nfpmArch === target.nfpmArch,
-        );
-        if (!glibcTarget) {
-          throw new Error(`No glibc Linux target found for musl arch ${target.nfpmArch}`);
-        }
-        const src = path.join(root, "packages", glibcTarget.pkg, "bin", "supabase-go");
-        const dst = path.join(binDir, "supabase-go");
-        console.log(`[${target.pkg}] Copying Go binary from ${glibcTarget.pkg}...`);
-        await copyFile(src, dst);
+      // Go binary is CGO_ENABLED=0 (fully static), so the glibc Linux build works on
+      // musl too. Copy it from the matching glibc package so the published musl npm
+      // package contains the supabase-go binary that LegacyGoProxy resolves to.
+      const glibcTarget = TARGETS.find(
+        (candidate) => "nfpmArch" in candidate && candidate.nfpmArch === target.nfpmArch,
+      );
+      if (!glibcTarget) {
+        throw new Error(`No glibc Linux target found for musl arch ${target.nfpmArch}`);
       }
+      const src = path.join(root, "packages", glibcTarget.pkg, "bin", "supabase-go");
+      const dst = path.join(binDir, "supabase-go");
+      console.log(`[${target.pkg}] Copying Go binary from ${glibcTarget.pkg}...`);
+      await copyFile(src, dst);
 
       console.log(`[${target.pkg}] Done.`);
     }),
@@ -344,13 +344,8 @@ async function buildLinuxPackages(version: string) {
       // reference supabase-go from the glibc dir where it was built.
       const contents: Array<{ src: string; dst: string }> = [
         { src: path.join(binDir, "supabase"), dst: "/usr/bin/supabase" },
+        { src: path.join(glibcBinDir, "supabase-go"), dst: "/usr/bin/supabase-go" },
       ];
-      if (shell === "legacy") {
-        contents.push({
-          src: path.join(glibcBinDir, "supabase-go"),
-          dst: "/usr/bin/supabase-go",
-        });
-      }
 
       const nfpmConfig: Record<string, unknown> = {
         name: "supabase",
@@ -420,17 +415,15 @@ console.log(`Building ${shell} CLI for ${TARGETS.length} targets...\n`);
 
 await Promise.all(TARGETS.map(buildTarget));
 
-if (shell === "legacy") {
-  console.log("\nCompiling Go CLI for all targets...");
-  await Promise.all(TARGETS.map(buildGoTarget));
-}
+console.log("\nCompiling Go CLI for all targets...");
+await Promise.all(TARGETS.map(buildGoTarget));
 
 // Sign macOS binaries before archiving so every channel (npm platform
 // packages, Homebrew, GitHub Release archives, checksums) ships the signed
 // bytes. Must run before archiveTarget / buildLinuxPackages / generateChecksums.
 const signMode = resolveSignMode();
 console.log(`\nSigning macOS binaries (mode: ${signMode})...`);
-await signDarwinBinaries(signMode, shell);
+await signDarwinBinaries(signMode);
 
 await mkdir(distDir, { recursive: true });
 await Promise.all(TARGETS.map(archiveTarget));

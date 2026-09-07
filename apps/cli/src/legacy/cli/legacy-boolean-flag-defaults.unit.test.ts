@@ -20,6 +20,10 @@ import { legacyRoot } from "./root.ts";
  * `boolean`. The flag only misbehaves when a real invocation omits it, which is
  * precisely the invocation no handler test makes — so the guard walks the
  * command tree instead of waiting for a command to be exercised end to end.
+ *
+ * `experimental workers push --no-wait` is the flag that prompted it: it first
+ * shipped with neither closer, which made a plain
+ * `supabase experimental workers push` fail to parse at all.
  */
 
 /**

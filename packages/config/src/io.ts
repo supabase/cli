@@ -1,4 +1,5 @@
-import { Console, Effect, FileSystem, Path, Redacted, Schema } from "effect";
+import { randomBytes } from "node:crypto";
+import { Console, Effect, FileSystem, Path, Predicate, Redacted, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { CliConfigSchema, RemotesSchema, type CliConfig } from "./base.ts";
 import {
@@ -16,6 +17,7 @@ import {
   DuplicateRemoteProjectIdError,
   InvalidRemoteProjectIdError,
   CliConfigParseError,
+  CliConfigWriteError,
 } from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
 import { findCliProjectPaths } from "./paths.ts";
@@ -126,6 +128,53 @@ const checkDuplicateRemoteProjectIds = Effect.fnUntraced(function* (
   }
 });
 
+/**
+ * Extracts `project_id` for every `[remotes.<name>]` block, in document
+ * order, reading a missing field as `""` (Go's `viper.GetString`). Shared by
+ * every reader of raw `remotes.*.project_id` values so there is exactly one
+ * place that defines what counts as a remote's `project_id` — this backs
+ * {@link remoteNameForProjectRef} below and, at the config-load call site,
+ * `applyRemoteOverride`'s match. Returns `[]` for anything that isn't a
+ * `remotes` table (including `undefined`).
+ */
+export function remoteProjectIdEntries(
+  remotes: unknown,
+): ReadonlyArray<{ readonly name: string; readonly projectId: string }> {
+  if (!isObject(remotes)) {
+    return [];
+  }
+  return Object.entries(remotes).map(([name, remote]) => ({
+    name,
+    projectId:
+      isObject(remote) && typeof remote["project_id"] === "string" ? remote["project_id"] : "",
+  }));
+}
+
+/**
+ * The name of the `[remotes.<name>]` block whose `project_id` equals
+ * `projectRef`, or `undefined` when none matches — including when
+ * `projectRef` itself is `undefined`, which never matches a remote, even one
+ * that itself omits `project_id` (which reads as `""`). This is the exact
+ * raw-literal match {@link applyRemoteOverride} runs during config load: Go's
+ * `loadFromFile` selection loop reads viper's raw string values, before
+ * `LoadEnvHook` ever resolves `env(...)` (`apps/cli-go/pkg/config/config.go:
+ * 596-611`, `decode_hooks.go:13-26`). A caller deciding WHERE to write a value
+ * for a given `projectRef` (e.g. `config pull`'s scope resolution) must call
+ * this against `LoadedCliConfig.rawDocument?.["remotes"]`, never
+ * `LoadedCliConfig.document`, for the same reason — an
+ * `[remotes.x] project_id = "env(REF)"` that resolves to `REF` must not match
+ * a caller-supplied, already-resolved `REF`.
+ */
+export function remoteNameForProjectRef(
+  remotes: unknown,
+  projectRef: string | undefined,
+): string | undefined {
+  if (projectRef === undefined) {
+    return undefined;
+  }
+  return remoteProjectIdEntries(remotes).find((entry) => entry.projectId === projectRef)?.name;
+}
+
 /** Go's project-ref pattern (`apps/cli-go/pkg/config/config.go:558`): exactly 20
  * lowercase ASCII letters. */
 const REMOTE_PROJECT_ID_PATTERN = /^[a-z]{20}$/;
@@ -181,6 +230,10 @@ const checkRemoteProjectIdFormat = Effect.fnUntraced(function* (remotes: Record<
  * post-decode `c.Remotes`, mirrored here as the already-interpolated
  * `remotes` subtree) is used only for {@link checkRemoteProjectIdFormat} — see
  * its doc comment for why that check needs the resolved value instead.
+ *
+ * The match itself is {@link remoteNameForProjectRef}, exported for callers
+ * that need the same raw-literal rule against a previously loaded
+ * `LoadedCliConfig.rawDocument` without reloading the file.
  */
 const applyRemoteOverride = Effect.fnUntraced(function* (
   rawDocument: Record<string, unknown>,
@@ -200,11 +253,7 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
     yield* checkDuplicateRemoteProjectIds(remotes);
     yield* checkRemoteProjectIdFormat(interpolatedRemotes ?? remotes);
   }
-  const name = Object.entries(remotes).find(([, remote]) => {
-    const projectId =
-      isObject(remote) && typeof remote["project_id"] === "string" ? remote["project_id"] : "";
-    return projectRef !== undefined && projectId === projectRef;
-  })?.[0];
+  const name = remoteNameForProjectRef(remotes, projectRef);
   if (name === undefined) {
     return {
       document: rawDocument,
@@ -468,6 +517,115 @@ function parseCliConfig(
   });
 }
 
+export interface DecodeCliConfigDocumentForValidationEffectOptions {
+  /**
+   * The config file path `document` would be written to (or was read from) —
+   * the same `<projectRoot>/supabase/config.{toml,json}` shape
+   * {@link loadCliConfigFile} takes as its own `filePath`. Used for two
+   * things, exactly like that function: locating the project's
+   * `.env`/`.env.local` files (two directories up from `path`) to resolve
+   * `env(VAR)` references, and attaching to a decode failure's
+   * `CliConfigParseError.path`/`.format`. This function never reads or
+   * writes `path` itself.
+   */
+  readonly path: string;
+  readonly format: ConfigFormat;
+  readonly goViperCompat?: boolean;
+  /**
+   * When set, merges the `[remotes.<remoteName>]` block of `document`'s own
+   * `remotes` map over the root — the same `mergeRemoteSubtree`/
+   * `withDbSeedDisabled` merge {@link applyRemoteOverride} runs for a matched
+   * remote — before decoding, so the merged subtree is checked against the
+   * root's business rules (`decodeCliConfig`, checks ENABLED) rather than the
+   * `disableChecks: true` treatment an unselected `[remotes.*]` block gets
+   * from {@link parseCliConfig}. A name that doesn't match any block under
+   * `document.remotes` is a no-op: `document` decodes exactly as it would
+   * with this option omitted.
+   */
+  readonly remoteName?: string;
+}
+
+/**
+ * Merges the `[remotes.<remoteName>]` block of `document`'s own `remotes` map
+ * over `document` itself, mirroring {@link applyRemoteOverride}'s merge for a
+ * MATCHED remote (same `mergeRemoteSubtree`/`withDbSeedDisabled` helpers) —
+ * except the caller already knows which remote it wants merged (no
+ * `project_id` match against a `projectRef` needed). Returns `document`
+ * unchanged, with `appliedRemote: undefined`, when `remoteName` is omitted or
+ * doesn't match any block under `document.remotes`.
+ */
+function mergeSelectedRemoteForValidation(
+  document: Record<string, unknown>,
+  remoteName: string | undefined,
+): { readonly document: Record<string, unknown>; readonly appliedRemote: string | undefined } {
+  const remotes = document["remotes"];
+  if (remoteName === undefined || !isObject(remotes) || !Object.hasOwn(remotes, remoteName)) {
+    return { document, appliedRemote: undefined };
+  }
+  const remoteSubtree = remotes[remoteName];
+  let merged = isObject(remoteSubtree)
+    ? mergeRemoteSubtree(document, remoteSubtree)
+    : { ...document };
+  if (!(isObject(remoteSubtree) && remoteSetsDbSeedEnabled(remoteSubtree))) {
+    merged = withDbSeedDisabled(merged);
+  }
+  delete merged["remotes"];
+  return { document: merged, appliedRemote: remoteName };
+}
+
+/**
+ * Decodes `document` — a full, raw `CliConfig` document shape (`remotes`
+ * intact), the same shape {@link loadCliConfigFile} parses off disk — through
+ * exactly the env-resolution + `[remotes.*]`-merge + schema-decode pipeline
+ * that function runs, without touching the filesystem for a raw TOML/JSON
+ * parse (the caller already holds a parsed/assembled document). Unlike a
+ * caller-supplied env map, `env(VAR)` references are resolved the SAME way
+ * {@link loadCliConfigFile} resolves them for a real load: `.env`/`.env.local`
+ * under `options.path`'s project directory, layered under the current
+ * process's own environment (`loadCliProjectEnvironment`). `options.remoteName`
+ * (see {@link mergeSelectedRemoteForValidation}) additionally lets a caller
+ * validate the document as it would decode with one `[remotes.*]` block
+ * selected, rather than only ever as the unselected base document.
+ *
+ * Written for `config pull` (CLI-2064): before writing, it projects its own
+ * planned edits onto the base document and decodes the result here to
+ * confirm the file it is about to write still loads — a written file
+ * `loadCliConfig` cannot parse would brick every subsequent command until
+ * hand-edited. No new decode logic: this composes the same private
+ * `loadCliProjectEnvironment` → `interpolateEnvReferencesAgainstSchema` →
+ * `normalizeDeprecatedExternalProviders` → `parseCliConfig` steps
+ * {@link loadCliConfigFile} itself runs (plus the remote-merge helper above,
+ * itself built from {@link loadCliConfigFile}'s own `applyRemoteOverride`
+ * building blocks), minus the raw parse that doesn't apply to an
+ * already-in-memory document.
+ */
+export const decodeCliConfigDocumentForValidationEffect = Effect.fnUntraced(function* (
+  document: Record<string, unknown>,
+  options: DecodeCliConfigDocumentForValidationEffectOptions,
+) {
+  const path = yield* Path.Path;
+  const projectRoot = path.dirname(path.dirname(options.path));
+  const cliProjectEnv = yield* loadCliProjectEnvironment({
+    cwd: projectRoot,
+    baseEnv: process.env,
+  });
+  const goViperCompat = options.goViperCompat ?? false;
+
+  const { document: documentForDecode, appliedRemote } = mergeSelectedRemoteForValidation(
+    document,
+    options.remoteName,
+  );
+
+  const interpolated = interpolateEnvReferencesAgainstSchema(
+    documentForDecode,
+    cliProjectEnv?.values ?? {},
+    CliConfigSchema,
+    { goViperCompat },
+  );
+  const { document: normalizedForDecode } = normalizeDeprecatedExternalProviders(interpolated);
+  return yield* parseCliConfig(normalizedForDecode, options.format, options.path, appliedRemote);
+});
+
 export const configJsonPath = Effect.fnUntraced(function* (cwd: string) {
   const path = yield* Path.Path;
   const project = yield* findCliProjectPaths(cwd);
@@ -638,7 +796,10 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
     config,
     schemaRef: getSchemaRef(document),
     ignoredPaths: [],
+    rawText: content,
     document: isObject(normalizedForDecode) ? normalizedForDecode : undefined,
+    rawDocument: isObject(normalized) ? normalized : undefined,
+    interpolatedRemotes,
     appliedRemote,
     removedDeprecatedExternalProviders: removedProviders,
     valueOrigins,
@@ -745,4 +906,61 @@ export const saveCliConfig = Effect.fnUntraced(function* (options: SaveCliConfig
     schemaRef,
     ignoredPaths: [],
   } satisfies LoadedCliConfig;
+});
+
+/**
+ * Fallback mode for a freshly created config file, when no existing file's
+ * mode is available to copy — matches the `0644` a plain `touch`/`install`
+ * produces under the common `022` umask.
+ */
+const DEFAULT_CLI_CONFIG_FILE_MODE = 0o644;
+
+/**
+ * Atomically replaces `filePath`'s content with `content`: writes a fresh
+ * temp file in the SAME directory, CREATED with the target's current mode
+ * already applied (falling back to {@link DEFAULT_CLI_CONFIG_FILE_MODE} when
+ * the target doesn't exist yet), then `rename`s over the target. The mode is
+ * passed straight to `writeFileString`'s own `open()` rather than applied via
+ * a separate `chmod` afterward, so a restrictively-permissioned file (e.g.
+ * `0600`) is never briefly world/group-visible at whatever the process umask
+ * would otherwise leave behind between the write and the chmod. Unlike
+ * {@link writeFileAtomic} (used by `saveCliConfig`'s full-document
+ * regeneration, which dies on any platform failure), this surfaces a typed
+ * {@link CliConfigWriteError} — `config pull`'s surgical edit
+ * (`applyConfigEdits`/`config-edit.ts`) needs to react to a write failure
+ * (e.g. render it in a machine payload) rather than crash. The temp file is
+ * removed on any failure — and, harmlessly, on success too, since by then it
+ * no longer exists at that path (the `remove` failure there is ignored
+ * either way).
+ */
+export const writeCliConfigDocumentText = Effect.fnUntraced(function* (
+  filePath: string,
+  content: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const tmpPath = `${filePath}.tmp.${Date.now()}.${randomBytes(3).toString("hex")}`;
+
+  yield* Effect.gen(function* () {
+    const mode = yield* fs.stat(filePath).pipe(
+      Effect.map((info) => info.mode & 0o7777),
+      Effect.catchTag("PlatformError", (error) =>
+        Predicate.isTagged(error.reason, "NotFound")
+          ? Effect.succeed(DEFAULT_CLI_CONFIG_FILE_MODE)
+          : Effect.fail(error),
+      ),
+    );
+    yield* fs.writeFileString(tmpPath, content, { mode });
+    yield* fs.rename(tmpPath, filePath);
+  }).pipe(
+    Effect.ensuring(fs.remove(tmpPath).pipe(Effect.ignore)),
+    Effect.catchTag("PlatformError", (cause) =>
+      Effect.fail(
+        new CliConfigWriteError({
+          path: filePath,
+          cause,
+          message: `Failed to write ${filePath}: ${cause.message}`,
+        }),
+      ),
+    ),
+  );
 });

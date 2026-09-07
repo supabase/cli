@@ -297,6 +297,7 @@ const expectedPureGraphFiles = [
   "base.ts",
   "errors.ts",
   "config-document.ts",
+  "config-diff.ts",
   "functions-manifest-model.ts",
   "sparse.ts",
   "schema-metadata.ts",
@@ -403,6 +404,7 @@ describe("src/index.ts export surface", () => {
         "attachApiResponse",
         "cliConfigValueSourceAt",
         "comparableProjectConfigPaths",
+        "diffProjectConfig",
         "edgeFunctionDenoConfigFileName",
         "edgeFunctionEntrypointFileName",
         "edgeFunctionsDirectoryName",
@@ -445,6 +447,7 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
         "comparableProjectConfigPaths",
         "configJsonPath",
         "configTomlPath",
+        "diffProjectConfig",
         "edgeFunctionDenoConfigFileName",
         "edgeFunctionEntrypointFileName",
         "edgeFunctionsDirectoryName",
@@ -511,14 +514,20 @@ describe("src/internal.ts export surface", () => {
     expect(Object.keys(internalEntrypoint).sort()).toMatchInlineSnapshot(`
       [
         "AUTH_HOOK_NAMES",
+        "CliConfigWriteError",
         "ENV_CAPTURE_REGEX",
-        "diffProjectConfig",
+        "applyConfigEdits",
+        "decodeCliConfigDocumentForValidationEffect",
+        "dualScopeProjectConfigPaths",
         "loadCliConfig",
         "projectConfigApiBlockKeys",
         "projectConfigMappingRows",
+        "remoteNameForProjectRef",
+        "remoteProjectIdEntries",
         "resolveCliConfigSubtree",
         "resolveCliConfigValue",
         "unmappedSecretApiPaths",
+        "writeCliConfigDocumentText",
       ]
     `);
   });

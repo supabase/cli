@@ -1,0 +1,5 @@
+# pnpm 12 parses patch files with a Rust patch parser that rejects a carriage
+# return in the `---`/`+++` header lines. Git for Windows checks text files out
+# with CRLF by default, which broke `pnpm install` on the Windows release
+# smoke-test. Keep patch files LF everywhere.
+patches/*.patch text eol=lf

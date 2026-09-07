@@ -1,27 +1,25 @@
-import type { ConfigChangeSet } from "@supabase/config/internal";
+import type { ConfigChangeSet } from "@supabase/config";
 import { describe, expect, test } from "vitest";
 
-import {
-  legacyConfigDiffScope,
-  legacyConfigDiffScopeLine,
-  legacyConfigDiffSummaryMessage,
-} from "./diff.format.ts";
+import { legacyConfigApiScope, legacyConfigScopeLine } from "../config.format.ts";
+import { legacyConfigDiffSummaryMessage, legacyRenderConfigDiffText } from "./diff.format.ts";
 
 const EMPTY_CHANGE_SET: ConfigChangeSet = {
   changes: [],
   masked: [],
   unmanaged: [],
   counts: { update: 0, remote_only: 0, local_only: 0, total: 0 },
+  absencePolicy: "absent-is-hands-off",
 };
 
-describe("legacyConfigDiffScope", () => {
+describe("legacyConfigApiScope", () => {
   test("lists record blocks the response carried, dropping non-records and empty records", () => {
     // An EMPTY block record is how a permission-truncated response most
     // plausibly reports a block it could not read — claiming it was
     // "compared" while all its keys render (not returned) would be false,
     // and with --exit-code that is a permanently red CI no file edit fixes.
     expect(
-      legacyConfigDiffScope({
+      legacyConfigApiScope({
         api: { max_rows: 5 },
         auth: {},
         database: null,
@@ -35,10 +33,10 @@ describe("legacyConfigDiffScope", () => {
   });
 });
 
-describe("legacyConfigDiffScopeLine", () => {
+describe("legacyConfigScopeLine", () => {
   test("calls out blocks the response did not return", () => {
     expect(
-      legacyConfigDiffScopeLine({
+      legacyConfigScopeLine({
         present: ["api", "auth"],
         missing: ["database", "pooler", "realtime", "storage"],
       }),
@@ -47,7 +45,7 @@ describe("legacyConfigDiffScopeLine", () => {
 
   test("an empty response scope renders (none)", () => {
     expect(
-      legacyConfigDiffScopeLine({
+      legacyConfigScopeLine({
         present: [],
         missing: ["api", "auth", "database", "pooler", "realtime", "storage"],
       }),
@@ -98,5 +96,59 @@ describe("legacyConfigDiffSummaryMessage", () => {
       "No config differences found. 1 block was not returned by the API and was not compared: storage. " +
         "1 credential value not compared (masked by the API): auth.external.github.secret.",
     );
+  });
+});
+
+describe("legacyRenderConfigDiffText", () => {
+  // Pins the exact byte shape once the per-change loop moved to
+  // `legacyConfigRenderChangeLines` (`../config.format.ts`, shared with
+  // `config push`): one blank line between change blocks, one blank line
+  // between the last change block and the counts line, no blank line before
+  // the `Note:` lines.
+  test("byte-identical after the per-change renderer moved to config.format.ts", () => {
+    const changeSet: ConfigChangeSet = {
+      changes: [
+        { path: ["api", "max_rows"], class: "update", declared: true, local: 500, remote: 1000 },
+        {
+          path: ["auth", "site_url"],
+          class: "remote_only",
+          declared: false,
+          local: undefined,
+          remote: "https://example.com",
+        },
+      ],
+      masked: [["auth", "external", "github", "secret"]],
+      unmanaged: [["auth", "oauth_server", "enabled"]],
+      counts: { update: 1, remote_only: 1, local_only: 0, total: 2 },
+      absencePolicy: "absent-is-hands-off",
+    };
+    expect(legacyRenderConfigDiffText(changeSet, { present: ["api", "auth"], missing: [] })).toBe(
+      "api.max_rows [update]\n" +
+        "  local:  500\n" +
+        "  remote: 1000\n" +
+        "\n" +
+        "auth.site_url [remote-only]\n" +
+        "  local:  (unset)\n" +
+        '  remote: "https://example.com"\n' +
+        "\n" +
+        "2 differences found (1 update, 1 remote-only, 0 local-only).\n" +
+        "Note: 1 credential value not compared (masked by the API): auth.external.github.secret\n" +
+        "Note: 1 declared property is not part of the current comparison and was not compared: auth.oauth_server.enabled\n",
+    );
+  });
+
+  test("no differences renders the empty-state line with no leading blank", () => {
+    expect(
+      legacyRenderConfigDiffText(
+        {
+          changes: [],
+          masked: [],
+          unmanaged: [],
+          counts: { update: 0, remote_only: 0, local_only: 0, total: 0 },
+          absencePolicy: "absent-is-hands-off",
+        },
+        { present: ["api"], missing: [] },
+      ),
+    ).toBe("No config differences found.\n");
   });
 });

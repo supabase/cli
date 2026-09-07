@@ -14,6 +14,7 @@ import { LegacyProjectNotLinkedError } from "../../../../config/legacy-project-r
 import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
 import {
   NoWorkersToDeployError,
+  UnknownWorkerExposureError,
   UnknownWorkerRuntimeError,
   UnknownWorkerSizeError,
   WorkerBuildFailedError,
@@ -45,6 +46,10 @@ function flags(overrides: Partial<LegacyWorkersPushFlags> = {}): LegacyWorkersPu
   return {
     names: ["api"],
     instances: Option.none(),
+    exposure: Option.none(),
+    // Mirrors the command default: a push waits for the build, and only the
+    // scenarios that are about the early return opt out of it.
+    noWait: false,
     projectRef: Option.none(),
     ...overrides,
   };
@@ -156,7 +161,80 @@ describe("legacy workers push", () => {
       expect(out.stdoutText).toContain("Deployed Worker api");
       expect(out.stdoutText).toContain("Runtime");
       expect(out.stdoutText).toContain(`https://${WORKERS_PROJECT_REF}.supabase.co/workers/v1/api`);
+      expect(out.stdoutText).toContain("v1");
+      // The build settled, so there is nothing left to follow up on.
+      expect(out.stderrText).not.toContain("supabase experimental workers status api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("returns once the deploy is accepted when --no-wait is passed", () => {
+    const repo = project();
+    const { layer, out, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push({ noWait: true });
+
+      expect(http.routeKeys).toEqual([
+        `POST ${workersRoute("/api/uploads")}`,
+        "PUT /deploy-context/api.tar.gz",
+        `POST ${workersRoute("/api/deploy")}`,
+      ]);
+
+      expect(out.stdoutText).toContain("Deployed Worker api");
+      // No image exists yet, so the row is dropped rather than rendered empty.
+      expect(out.stdoutText).not.toContain("Image");
+      expect(out.stderrText).toContain("supabase experimental workers status api");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // `V2DeployAWorkerOutput` permits a terminal state on the deploy response
+  // itself, and that verdict is this deploy's. A poll on top of it can only
+  // contradict it — `awaitWorkerBuild` reads a post-deploy 404 as "still
+  // building", so an already-settled deploy would burn the poll budget and
+  // surface as a timeout instead of the answer the platform already gave.
+  describe("honours a terminal deploy response instead of polling", () => {
+    const settledOnDeploy = (repoDir: string, state: "active" | "failed") =>
+      setupLegacyWorkers({
+        workdir: repoDir,
+        routes: routes({
+          [`POST ${workersRoute("/api/deploy")}`]: {
+            status: 202,
+            body: {
+              data: workerResource({
+                name: "api",
+                runtime: "node",
+                buildState: state,
+                ...(state === "active" ? { imageVersion: "v1" } : {}),
+              }),
+            },
+          },
+        }),
+      });
+
+    it.live("reports a deploy that came back already active", () => {
+      const repo = project();
+      const { layer, out, http } = settledOnDeploy(repo.dir, "active");
+
+      return Effect.gen(function* () {
+        yield* push();
+
+        expect(http.routeKeys).not.toContain(`GET ${workersRoute("/api")}`);
+        expect(out.stdoutText).toContain("Deployed Worker api");
+        expect(out.stdoutText).toContain("v1");
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+
+    it.live("fails on a deploy that came back already failed", () => {
+      const repo = project();
+      const { layer, http } = settledOnDeploy(repo.dir, "failed");
+
+      return Effect.gen(function* () {
+        const error = yield* push().pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkerBuildFailedError);
+        expect(http.routeKeys).not.toContain(`GET ${workersRoute("/api")}`);
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
   });
 
   it.live("omits the runtime for a Dockerfile worker and builds from the uploaded context", () => {
@@ -289,6 +367,196 @@ describe("legacy workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // The whole point of recording it: every deploy sends a complete spec, so a
+  // worker deliberately made private has to stay private across pushes rather
+  // than being re-exposed by the next one.
+  it.live("keeps a worker private when config records it that way", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "private"\n`,
+    });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push();
+
+      const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
+      expect(JSON.parse(deploy?.body ?? "{}").data.attributes.spec.exposure).toBe("private");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Hand-written config, so the casing is the user's own — `PRIVATE` plainly
+  // means `private`, and the canonical form is what gets sent.
+  it.live("reads a recorded exposure case-insensitively", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "PRIVATE"\n`,
+    });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push();
+
+      const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
+      expect(JSON.parse(deploy?.body ?? "{}").data.attributes.spec.exposure).toBe("private");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("lets --exposure override the recorded exposure for one deploy", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "private"\n`,
+    });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push({ exposure: Option.some("public") });
+
+      const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
+      expect(JSON.parse(deploy?.body ?? "{}").data.attributes.spec.exposure).toBe("public");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // `[workers.*] exposure` is a plain string in the config schema, so a typo
+  // reaches the handler. Coercing it to the default would deploy a `privat`
+  // worker to the whole internet — refused before anything is packaged instead.
+  it.live("names the exposures on offer when config records one it does not know", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "privat"\n`,
+    });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(UnknownWorkerExposureError);
+      expect((error as UnknownWorkerExposureError).detail).toContain("privat");
+      expect((error as UnknownWorkerExposureError).suggestion).toContain("public, private");
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The blank case, which reads as "not recorded" if the config reader collapses
+  // it: absent means the `public` default, so a worker whose config plainly
+  // tried to say something would go to the whole internet. Refused like any
+  // other value the CLI does not recognize.
+  it.live("refuses a blank recorded exposure instead of defaulting it to public", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = ""\n`,
+    });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(UnknownWorkerExposureError);
+      // Named as blank rather than as an unknown `""`, which reads like a
+      // parser quirk instead of an empty key.
+      expect((error as UnknownWorkerExposureError).detail).toContain("blank exposure");
+      expect((error as UnknownWorkerExposureError).suggestion).toContain("public, private");
+      // Nothing was packaged, uploaded or deployed — least of all publicly.
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // `--exposure` decides one deploy and nothing writes it down. Every deploy
+  // sends a complete spec, so a worker taken off the internet by the flag goes
+  // back on it at the next bare push — quietly, unless the run says so.
+  describe("says when --exposure will not outlive the deploy", () => {
+    const pushWith = (config: string, exposure: "public" | "private") => {
+      const repo = project({ "supabase/config.toml": config });
+      const { layer, out } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+      return { repo, layer, out, run: () => push({ exposure: Option.some(exposure) }) };
+    };
+
+    it.live("nudges when the config records nothing", () => {
+      const { repo, layer, out, run } = pushWith(
+        `project_id = "demo"\n\n[workers.api]\nruntime = "node"\n`,
+        "private",
+      );
+
+      return Effect.gen(function* () {
+        yield* run();
+
+        expect(out.stderrText).toContain("records no exposure for api");
+        // The exact line to set, the way the runtime guess names its own.
+        expect(out.stderrText).toContain('[workers.api] exposure = "private"');
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+
+    it.live("nudges when the config records the opposite", () => {
+      const { repo, layer, out, run } = pushWith(
+        `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "public"\n`,
+        "private",
+      );
+
+      return Effect.gen(function* () {
+        yield* run();
+
+        expect(out.stderrText).toContain('records exposure = "public"');
+        expect(out.stderrText).toContain('exposure = "private"');
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+
+    // A recorded value the CLI cannot read is not `chosen` either: the next bare
+    // push refuses rather than deploying, which is still not what this run did.
+    it.live("nudges when the config records something it cannot read", () => {
+      const { repo, layer, out, run } = pushWith(
+        `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "privat"\n`,
+        "private",
+      );
+
+      return Effect.gen(function* () {
+        yield* run();
+
+        expect(out.stderrText).toContain('records exposure = "privat"');
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+
+    // Nothing drifts, so nothing to say — the flag restated what the config
+    // already holds, case-insensitively.
+    it.live("stays quiet when the config already agrees", () => {
+      const { repo, layer, out, run } = pushWith(
+        `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "PRIVATE"\n`,
+        "private",
+      );
+
+      return Effect.gen(function* () {
+        yield* run();
+
+        expect(out.stderrText).not.toContain("applies to this deploy only");
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+
+    // The same non-drift, reached the other way: no recorded exposure and a flag
+    // naming the default a bare push would have picked anyway.
+    it.live("stays quiet when the flag restates the default", () => {
+      const { repo, layer, out, run } = pushWith(
+        `project_id = "demo"\n\n[workers.api]\nruntime = "node"\n`,
+        "public",
+      );
+
+      return Effect.gen(function* () {
+        yield* run();
+
+        expect(out.stderrText).not.toContain("applies to this deploy only");
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+  });
+
+  // The flag is the authority for the deploy it runs, so an unrecognized
+  // recorded value it replaces is moot rather than fatal.
+  it.live("lets --exposure stand in for an exposure config records badly", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "privat"\n`,
+    });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push({ exposure: Option.some("private") });
+
+      const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
+      expect(JSON.parse(deploy?.body ?? "{}").data.attributes.spec.exposure).toBe("private");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("polls until the build leaves `building`", () => {
     const repo = project();
     const { layer, http } = setupLegacyWorkers({
@@ -372,10 +640,10 @@ describe("legacy workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Every deploy this CLI sends asks for public exposure, but the accepted spec
-  // is the platform's answer, not the request echoed back. A worker it did not
-  // expose has no URL to print, and inventing one from the ref would name an
-  // address that does not resolve.
+  // The accepted spec is the platform's answer, not the request echoed back — so
+  // a worker the platform did not expose has no URL to print even when the deploy
+  // asked for `public`, and inventing one from the ref would name an address
+  // that does not resolve.
   it.live("omits the URL for a worker the platform did not expose publicly", () => {
     const repo = project();
     const { layer, out } = setupLegacyWorkers({
@@ -457,6 +725,19 @@ describe("legacy workers push", () => {
       });
     const withRef = { projectRef: Option.some(WORKERS_PROJECT_REF) };
 
+    it.live("in the still-building trailer under --no-wait", () => {
+      const repo = project();
+      const { layer, out } = unlinked(repo.dir);
+
+      return Effect.gen(function* () {
+        yield* push({ ...withRef, noWait: true });
+
+        expect(out.stderrText).toContain(
+          `supabase experimental workers status api --project-ref ${WORKERS_PROJECT_REF}`,
+        );
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+
     it.live("in the failed-build retry suggestion", () => {
       const repo = project();
       const { layer } = unlinked(repo.dir, {
@@ -501,23 +782,13 @@ describe("legacy workers push", () => {
     // noise on a command that already resolves to the right project.
     it.live("but leaves it off when the link supplied the ref", () => {
       const repo = project();
-      const { layer } = setupLegacyWorkers({
-        workdir: repo.dir,
-        routes: routes({
-          [`GET ${workersRoute("/api")}`]: {
-            status: 200,
-            body: { data: workerResource({ name: "api", buildState: "failed" }) },
-          },
-        }),
-      });
+      const { layer, out } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
 
       return Effect.gen(function* () {
-        const error = yield* push().pipe(Effect.flip);
+        yield* push({ noWait: true });
 
-        expect((error as WorkerBuildFailedError).suggestion).toContain(
-          "supabase experimental workers push api",
-        );
-        expect((error as WorkerBuildFailedError).suggestion).not.toContain("--project-ref");
+        expect(out.stderrText).toContain("supabase experimental workers status api");
+        expect(out.stderrText).not.toContain("--project-ref");
       }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
     });
   });
@@ -1065,6 +1336,48 @@ describe("legacy workers push", () => {
       expect(http.routeKeys).not.toContain(`POST ${workersRoute("/web/deploy")}`);
       // No summary either — nothing finished.
       expect(out.stdoutText).not.toContain("Deployed 2 Workers");
+      // Nothing was left running: a waiting run has no build in flight to name.
+      expect(out.stderrText).not.toContain("Still building");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // `runCli` drains success trailers only on exit code 0, so a later failure
+  // discards the follow-up hint for a build that is still running — and the
+  // failure does nothing to stop that build. The failure path has to say so.
+  it.live("names the builds a failed --no-wait run left running", () => {
+    const repo = project({
+      "supabase/config.toml":
+        `project_id = "demo"\n\n[workers.api]\nruntime = "node"\n` +
+        `\n[workers.web]\nruntime = "node"\n\n[workers.zap]\nruntime = "node"\n`,
+      "supabase/workers/web/index.js": "export default {};\n",
+      "supabase/workers/zap/index.js": "export default {};\n",
+    });
+    const { layer, out, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: routes({
+        // The upload slot points at one URL for every worker, so `web` reuses
+        // the `PUT` the default routes already stub.
+        [`POST ${workersRoute("/web/uploads")}`]: { status: 201, body: uploadSlot },
+        [`POST ${workersRoute("/web/deploy")}`]: {
+          status: 202,
+          body: { data: workerResource({ name: "web", runtime: "node", buildState: "failed" }) },
+        },
+      }),
+    });
+
+    return Effect.gen(function* () {
+      // Alphabetical: `api` is accepted, `web` fails, `zap` is never reached.
+      const error = yield* push({ names: [], noWait: true }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerBuildFailedError);
+      expect(out.stderrText).toContain("Still building: api");
+      expect(out.stderrText).toContain("Not attempted: zap");
+      // In flight before never started: one is a thing to follow, the other a
+      // thing to re-run.
+      expect(out.stderrText.indexOf("Still building")).toBeLessThan(
+        out.stderrText.indexOf("Not attempted"),
+      );
+      expect(http.routeKeys).not.toContain(`POST ${workersRoute("/zap/deploy")}`);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -1133,6 +1446,115 @@ describe("legacy workers push", () => {
           instances: 1,
           build_state: "active",
           image_version: "v1",
+          url: `https://${WORKERS_PROJECT_REF}.supabase.co/workers/v1/api`,
+        },
+      ]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // `image_version` is optional-but-permitted on the deploy response, so a
+  // re-push of a worker that is already serving can echo the image it is
+  // serving now — the previous build's. Reporting that beside `State building`
+  // names an image this deploy did not produce.
+  describe("does not report the previous image while a re-push is still building", () => {
+    const rePush = (repoDir: string, format?: "json") =>
+      setupLegacyWorkers({
+        workdir: repoDir,
+        ...(format === undefined ? {} : { format }),
+        routes: routes({
+          [`POST ${workersRoute("/api/deploy")}`]: {
+            status: 202,
+            body: {
+              data: workerResource({
+                name: "api",
+                runtime: "node",
+                buildState: "building",
+                // The worker was already live, so the platform echoes the image
+                // it is still serving.
+                imageVersion: "v7",
+              }),
+            },
+          },
+        }),
+      });
+
+    it.live("leaves the Image row out of the details block", () => {
+      const repo = project();
+      const { layer, out } = rePush(repo.dir);
+
+      return Effect.gen(function* () {
+        yield* push({ noWait: true });
+
+        expect(out.stdoutText).toContain("Deployed Worker api");
+        expect(out.stdoutText).not.toContain("v7");
+        expect(out.stdoutText).not.toContain("Image");
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+
+    it.live("omits image_version from the payload a script reads", () => {
+      const repo = project();
+      const { layer, out } = rePush(repo.dir, "json");
+
+      return Effect.gen(function* () {
+        yield* push({ noWait: true });
+
+        const success = out.messages.findLast(
+          (message) => message.type === "success" && message.data !== undefined,
+        );
+        // Whole-payload rather than a missing-key assertion: beside
+        // `build_state: "building"`, an `image_version` reads as this build's.
+        expect(success?.data?.["workers"]).toEqual([
+          {
+            worker_name: "api",
+            runtime: "node",
+            size: "2gb-1vcpu",
+            exposure: "public",
+            instances: 1,
+            build_state: "building",
+            url: `https://${WORKERS_PROJECT_REF}.supabase.co/workers/v1/api`,
+          },
+        ]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+
+    it.live("still reports the image once the build has settled", () => {
+      const repo = project();
+      const { layer, out } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+      return Effect.gen(function* () {
+        yield* push();
+
+        // The mirror case: blanking is tied to `building`, not to re-pushes.
+        expect(out.stdoutText).toContain("v1");
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+  });
+
+  // Under `--no-wait` the payload reports the accepted deploy rather than a
+  // finished one: the build has not produced an image, and saying `active`
+  // would tell a script the worker is already serving.
+  it.live("reports the build as still running in json mode under --no-wait", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      format: "json",
+      routes: routes(),
+    });
+
+    return Effect.gen(function* () {
+      yield* push({ noWait: true });
+
+      const success = out.messages.findLast(
+        (message) => message.type === "success" && message.data !== undefined,
+      );
+      expect(success?.data?.["workers"]).toEqual([
+        {
+          worker_name: "api",
+          runtime: "node",
+          size: "2gb-1vcpu",
+          exposure: "public",
+          instances: 1,
+          build_state: "building",
           url: `https://${WORKERS_PROJECT_REF}.supabase.co/workers/v1/api`,
         },
       ]);

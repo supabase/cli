@@ -54,6 +54,7 @@ export {
 } from "./sparse.ts";
 export {
   type CliConfigWithRawPresence,
+  type ConfigAbsencePolicy,
   type ProjectConfig,
   type ReadonlyJsonValue,
   type ToProjectConfigSource,
@@ -66,3 +67,11 @@ export {
   unmappedApiFields,
 } from "./project-config/project-config.ts";
 export { ProjectConfigSchema, toProjectConfigJsonSchema } from "./project-config/project-schema.ts";
+export {
+  type ConfigChange,
+  type ConfigChangeClass,
+  type ConfigChangeCounts,
+  type ConfigChangeSet,
+  type DiffProjectConfigOptions,
+  diffProjectConfig,
+} from "./config-diff.ts";

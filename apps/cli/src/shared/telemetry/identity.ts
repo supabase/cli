@@ -40,22 +40,6 @@ export const resolveIdentity = Effect.fnUntraced(function* (configDir: string) {
   };
 });
 
-export const saveDistinctId = Effect.fnUntraced(function* (configDir: string, distinctId: string) {
-  const identity = yield* resolveIdentity(configDir);
-  const config = yield* readTelemetryConfig(configDir);
-  const nextConfig: TelemetryConfig = {
-    consent: Option.match(config, {
-      onNone: () => "granted",
-      onSome: (value) => value.consent,
-    }),
-    device_id: identity.deviceId,
-    session_id: identity.sessionId,
-    session_last_active: Date.now(),
-    distinct_id: distinctId,
-  };
-  yield* writeTelemetryConfig(nextConfig, configDir);
-});
-
 /**
  * True when `~/.supabase/` will not survive this invocation (CI runners,
  * Docker, `npx supabase`), detected heuristically. Identity stitching
@@ -99,8 +83,7 @@ export function makeTelemetryIdentity(persisted: string | undefined): TelemetryI
 /**
  * Logout-only: forget the user AND rotate the device id, severing the link
  * between this device and the logged-out user's person graph. A later login
- * as a different account then aliases a fresh device. Transient failure
- * paths use clearDistinctId, which keeps the device id.
+ * as a different account then aliases a fresh device.
  */
 export const resetIdentity = Effect.fnUntraced(function* (configDir: string) {
   const identity = yield* resolveIdentity(configDir);
@@ -111,21 +94,6 @@ export const resetIdentity = Effect.fnUntraced(function* (configDir: string) {
       onSome: (value) => value.consent,
     }),
     device_id: crypto.randomUUID(),
-    session_id: identity.sessionId,
-    session_last_active: Date.now(),
-  };
-  yield* writeTelemetryConfig(nextConfig, configDir);
-});
-
-export const clearDistinctId = Effect.fnUntraced(function* (configDir: string) {
-  const identity = yield* resolveIdentity(configDir);
-  const config = yield* readTelemetryConfig(configDir);
-  const nextConfig: TelemetryConfig = {
-    consent: Option.match(config, {
-      onNone: () => "granted",
-      onSome: (value) => value.consent,
-    }),
-    device_id: identity.deviceId,
     session_id: identity.sessionId,
     session_last_active: Date.now(),
   };

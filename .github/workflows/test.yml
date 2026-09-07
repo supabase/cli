@@ -178,10 +178,10 @@ jobs:
         run: go build -o supabase-go .
         working-directory: apps/cli-go
 
-      # The ts-legacy/ts-next harnesses invoke `node apps/cli/dist/supabase.js`
-      # with `SUPABASE_CLI_BINARY_OVERRIDE` pointing at the compiled per-shell
-      # binary in `apps/cli/dist/`. Build the CLI explicitly before invoking
-      # every package-local e2e suite.
+      # The ts-legacy harness invokes `node apps/cli/dist/supabase.js` with
+      # `SUPABASE_CLI_BINARY_OVERRIDE` pointing at the compiled legacy binary
+      # in `apps/cli/dist/`. Build the CLI explicitly before invoking every
+      # package-local e2e suite.
       - name: Build CLI
         run: pnpm exec turbo run supabase#build
 

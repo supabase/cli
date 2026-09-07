@@ -19,6 +19,8 @@ const defaultEnableSignup = false;
 const defaultEnableConfirmations = false;
 const defaultTemplate = "Your code is {{ .Code }}";
 const defaultMaxFrequency = "5s";
+const defaultOtpLength = 6;
+const defaultOtpExpiry = 60;
 const defaultTwilio = {};
 const defaultTwilioEnabled = false;
 const defaultTwilioAccountSid = "";
@@ -168,6 +170,18 @@ export const sms = Schema.Struct({
     tags,
     links: [links.auth],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxFrequency))),
+  otp_length: Schema.Number.annotate({
+    default: defaultOtpLength,
+    description: "Number of characters used in the SMS OTP.",
+    tags,
+    links: [links.auth],
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultOtpLength))),
+  otp_expiry: Schema.Number.annotate({
+    default: defaultOtpExpiry,
+    description: "Number of seconds before the SMS OTP expires.",
+    tags,
+    links: [links.auth],
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultOtpExpiry))),
   twilio: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultTwilioEnabled,
@@ -187,6 +201,13 @@ export const sms = Schema.Struct({
       tags,
       links: [links.phoneLogin("Twilio")],
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultTwilioMessageServiceSid))),
+    content_sid: Schema.optionalKey(
+      Schema.String.annotate({
+        description: "The content SID of a WhatsApp/Messaging Content Template for the Twilio API.",
+        tags,
+        links: [links.phoneLogin("Twilio")],
+      }),
+    ),
     auth_token: Schema.optionalKey(
       secret({
         examples: ["env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"],

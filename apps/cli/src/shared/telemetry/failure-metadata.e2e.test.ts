@@ -47,26 +47,27 @@ describe("failed command telemetry", () => {
     capturedEvents.length = 0;
   });
 
-  // Legacy auth-gate failures abort during runtime-layer construction, before
-  // the instrumented handler runs, and deliberately keep their existing
-  // no-event behavior — so the legacy case exercises an in-handler failure.
+  // Both cases exercise the legacy shell (the only remaining shell). The
+  // `branches list` case needs a syntactically valid access token so the
+  // Management API auth gate builds successfully and the failure happens
+  // in-handler, during project-ref resolution, rather than at the auth gate
+  // (which deliberately keeps its existing no-event behavior).
   test.each([
     {
-      entrypoint: "next" as const,
       args: ["branches", "list"],
       command: "branches list",
+      accessToken: "sbp_0000000000000000000000000000000000000000",
       expected: {
         error_kind: "user_actionable",
         error_category: "project_not_linked",
-        error_fingerprint: "tag:ProjectNotLinkedError",
+        error_fingerprint: "tag:LegacyProjectNotLinkedError",
         has_suggestion: true,
         suggestion_type: "link_project",
         suggested_command: "supabase link",
       },
-      rawErrors: ["No project is linked in this directory."],
+      rawErrors: ["Cannot find project ref. Have you run supabase link?"],
     },
     {
-      entrypoint: "legacy" as const,
       args: [
         "db",
         "query",
@@ -75,6 +76,7 @@ describe("failed command telemetry", () => {
         "select 1",
       ],
       command: "db query",
+      accessToken: "",
       expected: {
         error_kind: "user_actionable",
         error_category: "db_connection",
@@ -84,11 +86,11 @@ describe("failed command telemetry", () => {
       },
       rawErrors: ["failed to connect", "127.0.0.1", "select 1"],
     },
-  ])("emits sanitized metadata from the compiled $entrypoint shell", async (testCase) => {
+  ])("emits sanitized metadata from the compiled legacy shell ($command)", async (testCase) => {
     const result = await runSupabase(testCase.args, {
-      entrypoint: testCase.entrypoint,
+      entrypoint: "legacy",
       env: {
-        SUPABASE_ACCESS_TOKEN: "",
+        SUPABASE_ACCESS_TOKEN: testCase.accessToken,
         SUPABASE_TELEMETRY_DISABLED: "0",
         DO_NOT_TRACK: "0",
         SUPABASE_TELEMETRY_POSTHOG_KEY: "phc_failure_metadata_e2e",

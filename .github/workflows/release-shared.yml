@@ -16,7 +16,7 @@ on:
         required: true
         type: string
       channel:
-        description: semantic-release channel name (alpha | beta | stable)
+        description: semantic-release channel name (beta | stable)
         required: true
         type: string
       prerelease:
@@ -462,8 +462,8 @@ jobs:
   # Once the raw semantic-release block is in the release body, ask Claude to
   # rewrite it into user-centric notes and open a PR for human approval. Stable
   # releases only on this path — prereleases keep the raw body. Non-blocking so
-  # an LLM hiccup never gates a published release; reviewers can propose beta/
-  # alpha notes manually from the Actions tab (workflow_dispatch).
+  # an LLM hiccup never gates a published release; reviewers can propose beta
+  # notes manually from the Actions tab (workflow_dispatch).
   propose-release-notes:
     uses: ./.github/workflows/propose-release-notes.yml
     needs: backfill-release-notes
@@ -611,7 +611,7 @@ jobs:
   #
   # Depends on the publish jobs only via `needs` for ordering; the `if`
   # uses `always() && needs.publish.result == 'success'` so the smoke still
-  # runs when publish-homebrew / publish-scoop are skipped (alpha) or fail.
+  # runs when publish-homebrew / publish-scoop are skipped or fail.
   # The reusable workflow can also be dispatched manually against any
   # already-published version when debugging setup-cli regressions.
   setup-cli-smoke:
@@ -627,7 +627,7 @@ jobs:
   # signal that would have caught CLI v2.107.0 (mismatched brew/scoop sha256s).
   #
   # Only runs when brew/scoop were published (beta/stable) and both pushes
-  # succeeded — alpha publishes neither channel and is covered by the GitHub
+  # succeeded. A channel that skipped brew/scoop entirely is covered by the GitHub
   # Release download path in setup-cli-smoke. Like setup-cli-smoke, it runs last
   # and does not gate the rest of the channel: by the time it runs the manifests
   # are already live, so a failure surfaces as a red post-release signal.

@@ -41,6 +41,24 @@ const worker = Schema.Struct({
       links,
     }),
   ),
+  exposure: Schema.optionalKey(
+    // A plain string, like `runtime` and `size`: the Management API takes
+    // `spec.exposure` as an unconstrained string, and the CLI names the values it
+    // accepts when it reads one it does not know. Constraining it here would
+    // report a config that a newer CLI understands as unloadable.
+    Schema.String.annotate({
+      description: dedent`
+        How the worker is reached: \`public\` gives it an internet-facing URL,
+        \`private\` keeps it reachable only from inside the project. Every deploy
+        sends a complete spec, so the value recorded here is what keeps a private
+        worker private; \`--exposure\` overrides it for one deploy. Defaults to
+        \`public\`.
+      `,
+      examples: ["private"],
+      tags,
+      links,
+    }),
+  ),
   instances: Schema.optionalKey(
     // Bounded to match `spec.instances` in the Management API's input schema. A
     // value that gets past here is dropped rather than sent, so leaving it

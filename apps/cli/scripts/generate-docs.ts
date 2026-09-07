@@ -2,9 +2,9 @@ import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "@supabase/config";
-import { nextRoot } from "../src/next/cli/root.ts";
-import { collectCommands, getHelpDoc } from "../src/next/docs/command-docs.ts";
-import { formatHelpDocAsMarkdown } from "../src/next/docs/markdown-formatter.ts";
+import { legacyRoot } from "../src/legacy/cli/root.ts";
+import { collectCommands, getHelpDoc } from "../src/shared/cli/command-docs.ts";
+import { formatHelpDocAsMarkdown } from "../src/shared/cli/markdown-formatter.ts";
 
 const BINARY_NAME = "supabase";
 const defaultContentDir = path.resolve(import.meta.dir, "../../../apps/docs/content/docs/commands");
@@ -15,7 +15,7 @@ const contentDir = process.argv[2]
   : defaultContentDir;
 
 function generateCommandDocs() {
-  const leaves = collectCommands(nextRoot, [BINARY_NAME]).filter(
+  const leaves = collectCommands(legacyRoot, [BINARY_NAME]).filter(
     ({ command, commandPath }) => commandPath.length > 1 && command.subcommands.length === 0,
   );
 

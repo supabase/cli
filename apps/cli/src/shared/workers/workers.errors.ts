@@ -96,6 +96,15 @@ export class UnknownWorkerSizeError extends Data.TaggedError("UnknownWorkerSizeE
   }
 }
 
+export class UnknownWorkerExposureError extends Data.TaggedError("UnknownWorkerExposureError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 export class WorkerDirectoryExistsError extends Data.TaggedError("WorkerDirectoryExistsError")<{
   readonly detail: string;
   readonly suggestion: string;
@@ -261,5 +270,51 @@ export class WorkerDeleteConfirmationRequiredError extends Data.TaggedError(
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
+  }
+}
+
+/**
+ * The logs query itself failed.
+ *
+ * The analytics endpoint can answer **HTTP 200** with a populated `error` field,
+ * so this is not reachable from a status code alone. It also covers the server's
+ * 30-second query timeout, which arrives as a non-2xx.
+ *
+ * Classified apart from {@link WorkersApiUnexpectedStatusError} on purpose: the
+ * SQL is this CLI's, not the user's input, so a rejected query means a projection
+ * or a filter here is wrong. Its own fingerprint keeps that visible in telemetry
+ * instead of grouped with transport noise from every other Workers route.
+ */
+export class WorkerLogsQueryFailedError extends Data.TaggedError("WorkerLogsQueryFailedError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.apiStatus, fingerprint_suffix: "query" };
+  }
+}
+
+/** The project has exhausted its log query allowance (402). */
+export class WorkerLogsUsageExceededError extends Data.TaggedError("WorkerLogsUsageExceededError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.planLimit, fingerprint_suffix: "plan_limit" };
+  }
+}
+
+/**
+ * The analytics endpoints allow 10 requests per 60 seconds, which `--follow`
+ * polls against — so 429 is an ordinary outcome here rather than an edge case,
+ * and it gets its own error so the suggestion can name the poll interval as the
+ * thing to slow down.
+ */
+export class WorkerLogsRateLimitedError extends Data.TaggedError("WorkerLogsRateLimitedError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_status" };
   }
 }

@@ -4,18 +4,14 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const srcDir = fileURLToPath(new URL("../..", import.meta.url));
-const nextDir = path.join(srcDir, "next");
 const legacyDir = path.join(srcDir, "legacy");
 const sharedDir = path.join(srcDir, "shared");
-const nextCommandsDir = path.join(nextDir, "commands");
 const legacyCommandsDir = path.join(legacyDir, "commands");
 const legacyDbBootstrapDir = path.join(legacyDir, "shared", "db-bootstrap");
-const nextCliDir = path.join(nextDir, "cli");
 const legacyCliDir = path.join(legacyDir, "cli");
-const nextDocsDir = path.join(nextDir, "docs");
 const concernSlices = [
-  path.join(nextDir, "auth"),
-  path.join(nextDir, "config"),
+  path.join(sharedDir, "auth"),
+  path.join(sharedDir, "config"),
   path.join(sharedDir, "output"),
   path.join(sharedDir, "runtime"),
   path.join(sharedDir, "telemetry"),
@@ -66,57 +62,9 @@ describe("code structure", () => {
       for (const filePath of walk(sliceDir).filter(isSourceFile)) {
         for (const specifier of extractRelativeImports(filePath)) {
           const resolved = resolveImport(filePath, specifier);
-          if (
-            resolved.startsWith(nextCommandsDir) ||
-            resolved.startsWith(legacyCommandsDir) ||
-            resolved.startsWith(nextCliDir) ||
-            resolved.startsWith(legacyCliDir)
-          ) {
+          if (resolved.startsWith(legacyCommandsDir) || resolved.startsWith(legacyCliDir)) {
             violations.push(`${path.relative(srcDir, filePath)} -> ${specifier}`);
           }
-        }
-      }
-    }
-
-    expect(violations).toEqual([]);
-  });
-
-  it("keeps next docs independent from cli and commands", () => {
-    const violations: Array<string> = [];
-
-    for (const filePath of walk(nextDocsDir).filter(isSourceFile)) {
-      for (const specifier of extractRelativeImports(filePath)) {
-        const resolved = resolveImport(filePath, specifier);
-        if (
-          resolved.startsWith(nextCliDir) ||
-          resolved.startsWith(legacyCliDir) ||
-          resolved.startsWith(nextCommandsDir) ||
-          resolved.startsWith(legacyCommandsDir)
-        ) {
-          violations.push(`${path.relative(srcDir, filePath)} -> ${specifier}`);
-        }
-      }
-    }
-
-    expect(violations).toEqual([]);
-  });
-
-  it("prevents next commands from importing other next command internals", () => {
-    const violations: Array<string> = [];
-
-    for (const filePath of walk(nextCommandsDir).filter(isSourceFile)) {
-      const relativeFile = path.relative(nextCommandsDir, filePath);
-      const currentCommand = relativeFile.split(path.sep)[0];
-      for (const specifier of extractRelativeImports(filePath)) {
-        const resolved = resolveImport(filePath, specifier);
-        if (!resolved.startsWith(nextCommandsDir)) {
-          continue;
-        }
-
-        const relativeTarget = path.relative(nextCommandsDir, resolved);
-        const targetCommand = relativeTarget.split(path.sep)[0];
-        if (targetCommand !== currentCommand) {
-          violations.push(`${path.relative(srcDir, filePath)} -> ${specifier}`);
         }
       }
     }
@@ -155,26 +103,6 @@ describe("code structure", () => {
         const resolved = resolveImport(filePath, specifier);
         if (resolved.startsWith(legacyCommandsDir)) {
           violations.push(`${path.relative(srcDir, filePath)} -> ${specifier}`);
-        }
-      }
-    }
-
-    expect(violations).toEqual([]);
-  });
-
-  it("prevents next and legacy from importing each other", () => {
-    const violations: Array<string> = [];
-
-    for (const [shellDir, otherShellDir] of [
-      [nextDir, legacyDir],
-      [legacyDir, nextDir],
-    ] as const) {
-      for (const filePath of walk(shellDir).filter(isSourceFile)) {
-        for (const specifier of extractRelativeImports(filePath)) {
-          const resolved = resolveImport(filePath, specifier);
-          if (resolved.startsWith(otherShellDir)) {
-            violations.push(`${path.relative(srcDir, filePath)} -> ${specifier}`);
-          }
         }
       }
     }

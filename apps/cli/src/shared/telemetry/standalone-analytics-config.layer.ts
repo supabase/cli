@@ -1,6 +1,6 @@
 import { Layer } from "effect";
-import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
-import { cliProjectContextLayer } from "../../next/config/cli-project-context.layer.ts";
+import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
+import { cliProjectContextLayer } from "../config/cli-project-context.layer.ts";
 import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
 import { ttyLayer } from "../runtime/tty.layer.ts";
 

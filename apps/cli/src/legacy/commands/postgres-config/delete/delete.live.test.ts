@@ -1,7 +1,8 @@
 import { expect } from "vitest";
 
 import {
-  postgresConfigLiveFlags,
+  expectPostgresConfigLiveOverride,
+  experimentalProjectLiveFlags,
   removePostgresConfigLiveOverride,
   requireLiveSuccess,
   test,
@@ -12,7 +13,7 @@ import {
 // assertion cannot be satisfied by the pre-seed state. Teardown removes the
 // seeded key only when the test did not already prove it gone.
 test("removes the test-seeded override and get proves it is gone", async ({ cli, project }) => {
-  const flags = postgresConfigLiveFlags(project);
+  const flags = experimentalProjectLiveFlags(project);
   let targetError: unknown;
   const cleanupErrors: Array<unknown> = [];
   let cleanupNeeded = true;
@@ -26,11 +27,13 @@ test("removes the test-seeded override and get proves it is gone", async ({ cli,
       "--no-restart",
     ]);
     requireLiveSuccess(seeded, "postgres-config update setup for postgres-config delete");
-    const before = await cli(["postgres-config", "get", ...flags, "-o", "json"]);
-    requireLiveSuccess(before, "postgres-config get seed proof for postgres-config delete");
-    expect(before.stdout, before.stderr).not.toBe("");
-    const seededConfig = JSON.parse(before.stdout) as Record<string, unknown>;
-    expect(seededConfig["maintenance_work_mem"], before.stdout).toBe("16MB");
+    await expectPostgresConfigLiveOverride(
+      cli,
+      project,
+      "maintenance_work_mem",
+      "16MB",
+      "postgres-config get seed proof for postgres-config delete",
+    );
 
     const removed = await cli([
       "postgres-config",
@@ -47,11 +50,13 @@ test("removes the test-seeded override and get proves it is gone", async ({ cli,
     const remaining = JSON.parse(removed.stdout) as Record<string, unknown>;
     expect(remaining["maintenance_work_mem"], removed.stdout).toBeUndefined();
 
-    const proof = await cli(["postgres-config", "get", ...flags, "-o", "json"]);
-    requireLiveSuccess(proof, "postgres-config get proof for postgres-config delete");
-    expect(proof.stdout, proof.stderr).not.toBe("");
-    const config = JSON.parse(proof.stdout) as Record<string, unknown>;
-    expect(config["maintenance_work_mem"], proof.stdout).toBeUndefined();
+    await expectPostgresConfigLiveOverride(
+      cli,
+      project,
+      "maintenance_work_mem",
+      undefined,
+      "postgres-config get proof for postgres-config delete",
+    );
     cleanupNeeded = false;
   } catch (error) {
     targetError = error;

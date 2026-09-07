@@ -1,7 +1,6 @@
-import type { ApiClient, V1ListAllBranchesOutput } from "@supabase/api/effect";
+import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { Duration, Effect, FileSystem, Option, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import { LegacyPlatformApi } from "../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
@@ -21,6 +20,7 @@ import {
   PropLinkedVia,
   PropParentProjectRef,
 } from "../../../shared/telemetry/event-catalog.ts";
+import { legacyClassifyProjectLookupError } from "../../shared/legacy-branch-target.ts";
 import {
   type LegacyCachedLinkedProject,
   legacyParentNotLinkedMessage,
@@ -31,11 +31,7 @@ import {
 } from "../../shared/legacy-parent-project-ref.ts";
 import { legacyDashboardUrl } from "../../shared/legacy-profile.ts";
 import { legacyMapTenantApiKeysError } from "../../shared/legacy-get-tenant-api-keys.ts";
-import {
-  legacySanitizeInlineName,
-  mapLegacyHttpError,
-  sanitizeLegacyErrorBody,
-} from "../../shared/legacy-http-errors.ts";
+import { legacySanitizeInlineName, mapLegacyHttpError } from "../../shared/legacy-http-errors.ts";
 import { legacyLinkServicesCore } from "../../shared/legacy-link-services-core.ts";
 import { legacyExtractServiceKeys } from "../../shared/legacy-tenant-keys.ts";
 import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
@@ -56,7 +52,6 @@ import {
 } from "./link.errors.ts";
 import type { LegacyLinkFlags } from "./link.command.ts";
 
-type LegacyLinkProject = Effect.Success<ReturnType<ApiClient["v1"]["getProject"]>>;
 type LegacyLinkBranches = typeof V1ListAllBranchesOutput.Type;
 type LegacyLinkBranch = LegacyLinkBranches[number];
 
@@ -70,45 +65,13 @@ interface LegacyLinkBranchResolution {
 
 // Classify a `getProject` failure: a 404 means the project is a branch (resolve
 // to `None`, link continues); any other status surfaces the body; transport
-// failures surface a network error. Mirrors `checkRemoteProjectStatus`
-// (`link.go:240-253`).
-const classifyProjectError = (
-  cause: unknown,
-): Effect.Effect<
-  Option.Option<LegacyLinkProject>,
-  LegacyLinkProjectStatusError | LegacyLinkProjectStatusNetworkError
-> => {
-  if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
-    const status = cause.response.status;
-    if (status === 404) {
-      return Effect.succeedNone;
-    }
-    return cause.response.text.pipe(
-      Effect.orElseSucceed(() => ""),
-      // Cap + strip control chars, matching `mapLegacyHttpError`'s defence-in-depth
-      // so an oversized / control-char body can't bloat JSON output or inject ANSI.
-      Effect.map(sanitizeLegacyErrorBody),
-      Effect.flatMap((body) =>
-        Effect.fail(
-          new LegacyLinkProjectStatusError({
-            status,
-            body,
-            message: `Unexpected error retrieving remote project status: ${body}`,
-          }),
-        ),
-      ),
-    );
-  }
-  // Everything else: a transport `HttpClientError` (no response) is a network
-  // failure; a non-`HttpClientError` (the generated client's `SchemaError`
-  // rejecting the response body) is an API response problem.
-  return Effect.fail(
-    new LegacyLinkProjectStatusNetworkError({
-      message: `failed to retrieve remote project status: ${String(cause)}`,
-      decode: !HttpClientError.isHttpClientError(cause),
-    }),
-  );
-};
+// failures surface a network error.
+const classifyProjectError = legacyClassifyProjectLookupError({
+  statusError: LegacyLinkProjectStatusError,
+  networkError: LegacyLinkProjectStatusNetworkError,
+  statusMessage: (_status, body) => `Unexpected error retrieving remote project status: ${body}`,
+  networkMessage: (cause) => `failed to retrieve remote project status: ${String(cause)}`,
+});
 
 type WriteTempFile = (filePath: string, content: string) => Effect.Effect<void, PlatformError>;
 
@@ -117,8 +80,8 @@ const mapApiKeysError = legacyMapTenantApiKeysError({
   statusError: LegacyLinkAuthTokenError,
 });
 
-// Same reasoning + duration as `legacy-linked-state.ts`'s status-lookup bound
-// (`LEGACY_LINKED_STATE_LOOKUP_TIMEOUT`) — duplicated locally rather than
+// Same reasoning + duration as `legacy-branch-target.ts`'s branch-lookup bound
+// (`LEGACY_BRANCH_LOOKUP_TIMEOUT`) — duplicated locally rather than
 // shared across two otherwise-unrelated modules: the best-effort 404-path
 // stale-cache correlation lookup below must not let an otherwise-successful
 // `link` silently stall ~6 minutes at the very end on the generated client's

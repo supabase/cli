@@ -37,6 +37,39 @@ export interface LoadedCliConfig {
    */
   readonly document?: Record<string, unknown>;
   /**
+   * The raw document as parsed from disk: pre-`env()`-interpolation, pre-
+   * `[remotes.*]`-merge, but post-`[inbucket]`→`[local_smtp]` normalization
+   * (see `normalizeDeprecatedSMTPSections`). Unlike {@link document}, whose
+   * `remotes` key has already been merged/stripped by `applyRemoteOverride`,
+   * `remotes` (when present) is still intact here. A caller deciding WHERE to
+   * write a value — e.g. matching a `[remotes.*]` block by its literal
+   * `project_id` via `remoteNameForProjectRef` (`./io.ts`) — must use this,
+   * never {@link document}: the loader itself matches `[remotes.*]` against
+   * the raw literal, before `env(...)` resolution (see `applyRemoteOverride`'s
+   * doc comment). Present whenever the file parsed to an object.
+   */
+  readonly rawDocument?: Record<string, unknown>;
+  /**
+   * The exact file text {@link loadCliConfigFile} parsed `rawDocument`/`config`
+   * from — present whenever the file was read (both `.toml` and `.json`).
+   * Lets a caller that needs to edit the file (e.g. `config pull`'s surgical
+   * `applyConfigEdits`) use this as its write-baseline instead of re-reading
+   * the file a second time, so the plan it computed against and the bytes it
+   * edits can never diverge out from under it. `undefined` from
+   * `saveCliConfig`, which regenerates the file's content rather than parsing
+   * existing text.
+   */
+  readonly rawText?: string;
+  /**
+   * The already-`env()`-interpolated `remotes` subtree — the same map
+   * `checkRemoteProjectIdFormat` (`./io.ts`) validates a remote's resolved
+   * `project_id` against. Lets a caller read a remote's EFFECTIVE
+   * `project_id` (e.g. to display it) without re-running interpolation
+   * itself. Present whenever a `remotes` table exists in the document,
+   * regardless of whether any block matched `projectRef`.
+   */
+  readonly interpolatedRemotes?: Record<string, unknown>;
+  /**
    * Name of the `[remotes.<name>]` block whose subtree was merged over the base
    * config because its `project_id` matched the requested `projectRef`.
    * `undefined` when no `projectRef` was requested or none matched.
