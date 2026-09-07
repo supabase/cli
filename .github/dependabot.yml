@@ -43,9 +43,8 @@ updates:
       interval: "cron"
       cronjob: "0 0 * * *"
     commit-message:
-      prefix: "fix"
-      prefix-development: "chore"
-      include: "scope"
+      prefix: "fix(misc): "
+      prefix-development: "chore(misc): "
     groups:
       npm-major:
         patterns:
@@ -58,7 +57,7 @@ updates:
       interval: "cron"
       cronjob: "0 0 * * *"
     commit-message:
-      prefix: "fix(docker): "
+      prefix: "fix(misc): "
     groups:
       docker-minor:
         update-types:
