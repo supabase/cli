@@ -1,6 +1,17 @@
-import { Cause, Crypto, Effect, Exit, FileSystem, Option, Path, Scope, Schema } from "effect";
+import {
+  Cause,
+  Crypto,
+  Effect,
+  Exit,
+  FileSystem,
+  Option,
+  Path,
+  Queue,
+  Scope,
+  Schema,
+} from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
-import type { Server as HttpServer } from "node:http";
+import type { IncomingMessage, Server as HttpServer, ServerResponse } from "node:http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import type { Server as NetServer } from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
@@ -48,10 +59,35 @@ export interface HostListener {
 
 export interface HostListenerConnections {
   readonly sockets: Set<Duplex>;
+  /** Release the pre-adoption connection capture without resuming socket reads. */
+  readonly release?: () => void;
+}
+
+export type HostListenerHttpEvent =
+  | {
+      readonly _tag: "request";
+      readonly request: IncomingMessage;
+      readonly response: ServerResponse;
+    }
+  | {
+      readonly _tag: "upgrade";
+      readonly request: IncomingMessage;
+      readonly socket: Duplex;
+      readonly head: Buffer;
+    };
+
+export interface HostListenerHttpEvents {
+  readonly queue: Queue.Queue<HostListenerHttpEvent>;
+  /** Stop capturing events; queued events remain available for gateway adoption. */
+  readonly detach: () => void;
 }
 
 type HostListenerBinding =
-  | { readonly kind: "http"; readonly server: HttpServer }
+  | {
+      readonly kind: "http";
+      readonly server: HttpServer;
+      readonly pendingEvents?: HostListenerHttpEvents;
+    }
   | { readonly kind: "tcp"; readonly server: NetServer; readonly allowHalfOpen: true };
 
 interface PortPlanOptions {

@@ -96,6 +96,12 @@ interface LogDocument {
   readonly entries: ReadonlyArray<StackLogEntry>;
 }
 
+interface LoadedLogDocument {
+  readonly document: LogDocument;
+  /** The source ended with a discarded, incomplete JSONL record. */
+  readonly repairRequired: boolean;
+}
+
 const emptyDocument = (): LogDocument => ({
   nextCursor: 1,
   entries: [],
@@ -161,7 +167,7 @@ const validateDocument = (
 const readDocument = (
   fs: FileSystem.FileSystem,
   path: string,
-): Effect.Effect<LogDocument, LogStoreError> => {
+): Effect.Effect<LoadedLogDocument, LogStoreError> => {
   const parse = (text: string, sourcePath: string) => {
     const rawLines = text.split(/\r?\n/);
     // A process crash can leave one unterminated tail after an append. Keep all complete JSONL
@@ -184,7 +190,12 @@ const readDocument = (
             ),
           1,
         );
-        return validateDocument(sourcePath, { nextCursor, entries });
+        return validateDocument(sourcePath, { nextCursor, entries }).pipe(
+          Effect.map((document) => ({
+            document,
+            repairRequired: !hasCompleteTail && text.length > 0,
+          })),
+        );
       }),
     );
   };
@@ -198,7 +209,7 @@ const readDocument = (
             Effect.flatMap((text) => parse(text, `${path}.1`)),
             Effect.catchTag("PlatformError", (backupError) =>
               Predicate.isTagged(backupError.reason, "NotFound")
-                ? Effect.succeed(emptyDocument())
+                ? Effect.succeed({ document: emptyDocument(), repairRequired: false })
                 : Effect.fail(fileError(path, "Unable to read retained log file", backupError)),
             ),
           )
@@ -214,7 +225,8 @@ export const readRetainedLogs = (
   options?: RetainedLogReadOptions,
 ): Effect.Effect<ReadonlyArray<StackLogEntry>, LogStoreError | InvalidLogCursorError> =>
   Effect.gen(function* () {
-    const document = yield* readDocument(fs, path);
+    const loaded = yield* readDocument(fs, path);
+    const document = loaded.document;
     const maxEntries = validLimit(options?.maxEntries, DEFAULT_LOG_MAX_ENTRIES);
     const maxBytes = validLimit(options?.maxBytes, DEFAULT_LOG_MAX_BYTES);
     if (maxEntries < 1 || maxBytes < 2)
@@ -341,7 +353,7 @@ export const makeLogStore = (
       return yield* fileError(options.path, "Log byte retention limit is too small");
     const knownSecrets = options.knownSecrets ?? [];
     const loaded = yield* readDocument(fs, options.path);
-    const redactedLoaded = redactDocument(loaded, knownSecrets);
+    const redactedLoaded = redactDocument(loaded.document, knownSecrets);
     const boundedLoaded = yield* bounded(
       redactedLoaded.document,
       maxEntries,
@@ -368,7 +380,11 @@ export const makeLogStore = (
             fileError(options.path, "Unable to secure retained logs", error),
           ),
         );
-    if (redactedLoaded.changed || boundedLoaded.document.entries.length !== loaded.entries.length)
+    if (
+      loaded.repairRequired ||
+      redactedLoaded.changed ||
+      boundedLoaded.document.entries.length !== loaded.document.entries.length
+    )
       yield* persist(fs, options.path, boundedLoaded.document.entries);
     const semaphore = yield* Semaphore.make(1);
     const append = (record: LogRecord) =>

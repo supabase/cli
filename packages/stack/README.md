@@ -47,6 +47,24 @@ workload and capability and reports `queued`, `preparing`, `downloading`, `ready
 or destroying, status may retain active preparation until teardown clears it. Once stopped, status
 reports an empty array even when completed artifacts remain in the cache.
 
+The Functions inspector can be exposed through its own loopback listener. Set the Edge Runtime
+mode and enable that listener together; the resulting `functionsInspector` endpoint forwards the
+runtime's `/json/list` and WebSocket inspector paths.
+
+```ts
+await stack.start({
+  config: {
+    capabilities: { functions: { settings: { inspector: { mode: "run", main: true } } } },
+    listeners: { functionsInspector: { enabled: true, address: "127.0.0.1", port: 9223 } },
+  },
+});
+const inspector = (await stack.status()).endpoints.functionsInspector;
+```
+
+Native runtimes bind a private inspector port on loopback. Container runtimes bind port `9229`
+inside the service and publish that private port to the configured loopback listener. Connect your
+debugger through `inspector.url`; the workload's private inspector port stays local to the stack.
+
 Explicit `stack.prepare(...)` accepts a synchronous `onProgress` callback for
 caller-owned preparation. It receives the same phase values, including `ready` when an artifact is
 available while its capability remains dormant. This transfer-local callback is not reconstructed by

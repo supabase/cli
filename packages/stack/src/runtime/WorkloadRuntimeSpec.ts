@@ -26,7 +26,7 @@ export { FUNCTIONS_CONTAINER_ROOT } from "../functions/serve-main-deps.ts";
 type WorkloadRuntimeKind = "native" | "container";
 
 /** Closed set of private ports a workload may expose to the host gateway. */
-type WorkloadBindingName = "primary" | "admin" | "ui" | "smtp" | "pop3";
+type WorkloadBindingName = "primary" | "admin" | "ui" | "smtp" | "pop3" | "inspector";
 
 interface WorkloadBinding {
   readonly containerPort: number;
@@ -38,6 +38,7 @@ interface WorkloadBindings {
   readonly ui?: WorkloadBinding;
   readonly smtp?: WorkloadBinding;
   readonly pop3?: WorkloadBinding;
+  readonly inspector?: WorkloadBinding;
 }
 
 export interface WorkloadBindingIntent {
@@ -447,13 +448,44 @@ const nativeArgsFor = (
 ): ReadonlyArray<string> => {
   if (workload.id === "analytics:vector" && inputs.analytics?.vectorConfigPath !== undefined)
     return ["--config", inputs.analytics.vectorConfigPath];
+  if (workload.id !== "functions:edge-runtime") return args;
+  return args.map((arg) => (arg.startsWith("--main-service=") ? "--main-service=." : arg));
+};
+
+const nativeFunctionsDirectory = (
+  state: PersistedStackState,
+  inputs: WorkloadRuntimeInputs,
+): string => {
   const bootstrapPath = inputs.functions?.bootstrapPath;
-  if (workload.id !== "functions:edge-runtime" || bootstrapPath === undefined) return args;
-  const bootstrapDirectory =
-    bootstrapPath.slice(0, bootstrapPath.lastIndexOf("/")) || bootstrapPath;
-  return args.map((arg) =>
-    arg.startsWith("--main-service=") ? `--main-service=${bootstrapDirectory}` : arg,
-  );
+  if (bootstrapPath === undefined) return functionsRoot(state);
+  return bootstrapPath.slice(0, bootstrapPath.lastIndexOf("/")) || bootstrapPath;
+};
+
+const functionsInspectorArgs = (
+  state: PersistedStackState,
+  runtime: WorkloadRuntimeKind,
+): ReadonlyArray<string> => {
+  const configuredMode = valueAt(state, "functions", "inspector.mode");
+  const inspectorSettings = state.definition?.capabilities.functions.settings.inspector;
+  const inspectorRequested =
+    isRecord(inspectorSettings) || state.definition?.listeners.functionsInspector.enabled === true;
+  const mode =
+    configuredMode === "run" || configuredMode === "brk" || configuredMode === "wait"
+      ? configuredMode
+      : inspectorRequested
+        ? "run"
+        : "";
+  if (mode !== "run" && mode !== "brk" && mode !== "wait") return [];
+  const port =
+    runtime === "container" ? 9229 : privatePortFor(state, "functions:edge-runtime", "inspector");
+  if (port === undefined)
+    throw new Error("Functions inspector private port assignment is required");
+  const address = runtime === "container" ? "0.0.0.0" : "127.0.0.1";
+  const flag = mode === "brk" ? "--inspect-brk" : mode === "wait" ? "--inspect-wait" : "--inspect";
+  return [
+    `${flag}=${address}:${port}`,
+    ...(valueAt(state, "functions", "inspector.main") === "true" ? ["--inspect-main"] : []),
+  ];
 };
 
 const nativeProcessFor = (
@@ -477,7 +509,10 @@ const nativeProcessFor = (
     executable:
       executablePath === undefined ? artifactRoot : artifactPath(artifactRoot, executablePath),
     args: nativeArgs,
-    cwd: spec.cwd?.(state, workload) ?? state.identity.projectRoot,
+    cwd:
+      workload.id === "functions:edge-runtime"
+        ? nativeFunctionsDirectory(state, inputs)
+        : (spec.cwd?.(state, workload) ?? state.identity.projectRoot),
     ...(workload.id === "database:database"
       ? { gracefulStopSignal: "SIGINT", gracefulStopTimeout: "15 seconds" }
       : {}),
@@ -1044,13 +1079,14 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     readiness: { protocol: "http", path: "/health" },
   },
   "functions:edge-runtime": {
-    bindings: { primary: { containerPort: 9000 } },
+    bindings: { primary: { containerPort: 9000 }, inspector: { containerPort: 9229 } },
     cwd: functionsRoot,
-    args: (state, _workload, port) => [
+    args: (state, _workload, port, runtime = "native") => [
       "start",
       `--main-service=${functionsRoot(state)}`,
       `--port=${port}`,
       `--policy=${valueAt(state, "functions", "edge_runtime.policy")}`,
+      ...functionsInspectorArgs(state, runtime),
     ],
     env: (state, workload, port, runtime = "native", inputs = {}) => ({
       ...common(workload, port),
@@ -1071,6 +1107,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       `--main-service=${FUNCTIONS_BOOTSTRAP_CONTAINER_PATH}`,
       `--port=${port}`,
       `--policy=${valueAt(state, "functions", "edge_runtime.policy")}`,
+      ...functionsInspectorArgs(state, "container"),
     ],
     containerMounts: (state) => [
       { source: functionsRoot(state), target: FUNCTIONS_CONTAINER_ROOT, readOnly: true },
@@ -1263,6 +1300,7 @@ const WORKLOAD_BINDING_NAMES: ReadonlyArray<WorkloadBindingName> = [
   "ui",
   "smtp",
   "pop3",
+  "inspector",
 ];
 
 const declaredBindings = (
@@ -1319,7 +1357,8 @@ export const runtimeSpecFor = (workload: PlannedWorkload): WorkloadRuntimeSpec |
     spec.bindings.admin ??
     spec.bindings.ui ??
     spec.bindings.smtp ??
-    spec.bindings.pop3;
+    spec.bindings.pop3 ??
+    spec.bindings.inspector;
   if (primary === undefined) return undefined;
   return {
     ...spec,

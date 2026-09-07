@@ -271,4 +271,76 @@ describe("observability", () => {
       }),
     ),
   );
+
+  it.live("repairs a valid unterminated final record before the next append", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-log-tail-" });
+        const logPath = path.join(root, "logs.json");
+        const firstStore = yield* makeLogStore({ path: logPath });
+        yield* firstStore.append({ source: "auth", stream: "stdout", message: "first" });
+        const complete = yield* fs.readFileString(logPath);
+        yield* fs.writeFileString(logPath, complete.slice(0, -1));
+
+        expect((yield* readRetainedLogs(fs, logPath)).map((entry) => entry.message)).toEqual([
+          "first",
+        ]);
+        expect(yield* fs.readFileString(logPath)).toBe(complete.slice(0, -1));
+
+        const repairedStore = yield* makeLogStore({ path: logPath });
+        yield* repairedStore.append({ source: "rest", stream: "stdout", message: "second" });
+        const reopened = yield* makeLogStore({ path: logPath });
+        expect((yield* reopened.read()).map((entry) => entry.message)).toEqual(["first", "second"]);
+      }),
+    ),
+  );
+
+  it.live(
+    "repairs a torn tail before the next append and preserves recovery for the next owner",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-log-recovery-",
+          });
+          const logPath = path.join(root, "logs.json");
+          const first = yield* makeLogStore({ path: logPath });
+          const before = yield* first.append({
+            source: "supervisor",
+            stream: "internal",
+            message: "before crash",
+          });
+          yield* fs.writeFileString(logPath, '{"cursor":{"opaque":"v1_2"},"timestamp":', {
+            flag: "a",
+          });
+
+          const readonlyBefore = yield* fs.readFileString(logPath);
+          expect(yield* readRetainedLogs(fs, logPath)).toHaveLength(1);
+          expect(yield* fs.readFileString(logPath)).toBe(readonlyBefore);
+
+          const recovered = yield* makeLogStore({ path: logPath });
+          expect((yield* recovered.read()).map((entry) => entry.message)).toEqual(["before crash"]);
+          const after = yield* recovered.append({
+            source: "supervisor",
+            stream: "internal",
+            message: "after restart",
+          });
+          expect(after.cursor.opaque).toBe("v1_2");
+          expect((yield* readRetainedLogs(fs, logPath)).map((entry) => entry.message)).toEqual([
+            "before crash",
+            "after restart",
+          ]);
+
+          const nextOwner = yield* makeLogStore({ path: logPath });
+          expect((yield* nextOwner.read()).map((entry) => entry.cursor.opaque)).toEqual([
+            before.cursor.opaque,
+            after.cursor.opaque,
+          ]);
+        }),
+      ),
+  );
 });

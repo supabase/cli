@@ -1,4 +1,4 @@
-import { Cause, Data, Effect, Exit, FiberSet, Option, Scope } from "effect";
+import { Cause, Data, Effect, Exit, FiberSet, Option, Queue, Scope } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import {
   createServer,
@@ -23,7 +23,11 @@ import type {
   PreparedGatewayRoute,
 } from "./Gateway.ts";
 import { GatewayRouteNotFoundError, isGatewayProxyRoute } from "./Gateway.ts";
-import type { HostListener } from "../state/PortCoordinator.ts";
+import type {
+  HostListener,
+  HostListenerHttpEvent,
+  HostListenerHttpEvents,
+} from "../state/PortCoordinator.ts";
 
 class GatewayBackendError extends Data.TaggedError("GatewayBackendError")<{
   readonly cause?: unknown;
@@ -64,13 +68,23 @@ const hopByHop = new Set([
   "upgrade",
 ]);
 
+const gatewayCorsHeaders = new Set([
+  "access-control-allow-origin",
+  "access-control-allow-methods",
+  "access-control-allow-headers",
+]);
+
 const requestView = (request: IncomingMessage): GatewayRouteRequest => ({
   path: request.url ?? "/",
   method: request.method,
   headers: request.headers,
 });
 
-const setCors = (response: ServerResponse, options: HttpGatewayOptions) => {
+const setCors = (
+  response: ServerResponse,
+  options: HttpGatewayOptions,
+  requestedHeaders?: string | string[],
+) => {
   response.setHeader(
     "access-control-allow-origin",
     options.cors?.["access-control-allow-origin"] ?? "*",
@@ -81,7 +95,9 @@ const setCors = (response: ServerResponse, options: HttpGatewayOptions) => {
   );
   response.setHeader(
     "access-control-allow-headers",
-    options.cors?.["access-control-allow-headers"] ?? "authorization,content-type",
+    options.cors?.["access-control-allow-headers"] ??
+      requestedHeaders ??
+      "authorization,apikey,content-type,x-client-info",
   );
   for (const [name, value] of Object.entries(options.cors ?? {})) response.setHeader(name, value);
 };
@@ -254,10 +270,13 @@ const proxy = (
         if (
           headerValue !== undefined &&
           !hopByHop.has(name.toLowerCase()) &&
-          !name.toLowerCase().startsWith("access-control-")
+          !gatewayCorsHeaders.has(name.toLowerCase())
         )
           response.setHeader(name, headerValue);
       }
+      // Keep the gateway's CORS policy authoritative while retaining backend exposure metadata
+      // such as Content-Range. Explicit options.cors values override both defaults and upstream.
+      setCors(response, options);
       value.pipe(response);
     };
 
@@ -319,7 +338,11 @@ const handleRequest = (
   runFork: <A, E>(effect: Effect.Effect<A, E>) => Fiber<A, E>,
 ): void => {
   const view = requestView(request);
-  setCors(response, options);
+  setCors(
+    response,
+    options,
+    request.method === "OPTIONS" ? request.headers["access-control-request-headers"] : undefined,
+  );
   const route = routeFor(view, options.routes);
   if (request.method === "OPTIONS") {
     if (route !== undefined && !isGatewayProxyRoute(route)) {
@@ -421,6 +444,12 @@ const handleUpgrade = (
     socket.destroy();
     return;
   }
+  // Observe EOF on a paused upgrade without consuming any queued protocol bytes. The observer is
+  // removed before the backend tunnel starts so it cannot interfere with flowing-mode piping.
+  const onSocketReadable = () => {
+    socket.read(0);
+  };
+  socket.on("readable", onSocketReadable);
   const activation = resolveProxyRequest(request, view, route, options).pipe(
     Effect.flatMap(({ backend, path, headers }) =>
       Effect.callback<void, GatewayBackendError>((resume) => {
@@ -454,6 +483,8 @@ const handleUpgrade = (
         const onSocketEnd = () => target.end();
         const onTargetEnd = () => socket.end();
         const onConnect = () => {
+          removePreConnectCancellation();
+          socket.off("readable", onSocketReadable);
           target.write(writeUpgrade(request, path, headers));
           if (head.byteLength > 0) target.write(head);
           socket.pipe(target, { end: false });
@@ -462,6 +493,7 @@ const handleUpgrade = (
           target.once("end", onTargetEnd);
         };
         const cleanup = () => {
+          socket.off("readable", onSocketReadable);
           target.off("error", onTargetError);
           target.off("connect", onConnect);
           target.off("close", onTargetClose);
@@ -483,11 +515,52 @@ const handleUpgrade = (
       }),
     ),
   );
+  const onSocketClose = () => fiber.interruptUnsafe();
+  const onSocketEnd = () => fiber.interruptUnsafe();
+  const onSocketError = () => fiber.interruptUnsafe();
+  const onRequestAborted = () => fiber.interruptUnsafe();
+  const removePreConnectCancellation = () => {
+    socket.off("end", onSocketEnd);
+    request.off("aborted", onRequestAborted);
+  };
   const fiber = runFork(activation);
+  socket.once("close", onSocketClose);
+  socket.once("end", onSocketEnd);
+  socket.once("error", onSocketError);
+  request.once("aborted", onRequestAborted);
+  const removeSocketCancellation = () => {
+    socket.off("readable", onSocketReadable);
+    removePreConnectCancellation();
+    socket.off("close", onSocketClose);
+    socket.off("error", onSocketError);
+  };
+  fiber.addObserver(removeSocketCancellation);
   fiber.addObserver((exit) => {
     if (Exit.isFailure(exit)) socket.destroy();
   });
 };
+
+const drainPendingEvents = (
+  events: HostListenerHttpEvents,
+  onRequest: (request: IncomingMessage, response: ServerResponse) => void,
+  onUpgrade: (request: IncomingMessage, socket: Duplex, head: Buffer) => void,
+): Effect.Effect<void> =>
+  Effect.suspend(() =>
+    Queue.poll(events.queue).pipe(
+      Effect.flatMap((event) => {
+        if (Option.isNone(event)) return Effect.void;
+        return Effect.sync(() => {
+          const value: HostListenerHttpEvent = event.value;
+          if (value._tag === "request") {
+            if (!value.request.destroyed && !value.response.destroyed)
+              onRequest(value.request, value.response);
+          } else if (!value.socket.destroyed) {
+            onUpgrade(value.request, value.socket, value.head);
+          }
+        }).pipe(Effect.andThen(drainPendingEvents(events, onRequest, onUpgrade)));
+      }),
+    ),
+  );
 
 /** Start an HTTP gateway, optionally adopting an already-bound native server. */
 export const makeHttpGateway = (
@@ -502,6 +575,11 @@ export const makeHttpGateway = (
       options.listener?.binding?.kind === "http" ? options.listener.binding.server : createServer();
     if (options.listener !== undefined && !server.listening)
       return yield* new GatewayActivationError({ message: "Gateway listener is not bound" });
+    // Cold workload activation may take longer than Node/Bun's default request and headers
+    // timeouts. The gateway owns cancellation through the request/socket lifecycle instead.
+    server.requestTimeout = 0;
+    server.headersTimeout = 0;
+    server.timeout = 0;
     const active =
       options.listener === undefined ? new Set<Duplex>() : options.listener.connections.sockets;
     const connectionHandler = (socket: Duplex) => trackSocket(active, socket);
@@ -548,10 +626,23 @@ export const makeHttpGateway = (
       return yield* new GatewayActivationError({
         message: "Gateway listener did not expose an endpoint",
       });
+    const pendingEvents =
+      options.listener?.binding.kind === "http"
+        ? options.listener.binding.pendingEvents
+        : undefined;
+    if (pendingEvents !== undefined) {
+      pendingEvents.detach();
+      yield* drainPendingEvents(pendingEvents, requestHandler, upgradeHandler);
+    }
+    if (options.listener !== undefined) options.listener.connections.release?.();
     const closeOperation = Effect.gen(function* () {
       server.off("request", requestHandler);
       server.off("upgrade", upgradeHandler);
       server.off("connection", connectionHandler);
+      if (pendingEvents !== undefined) {
+        pendingEvents.detach();
+        yield* Queue.shutdown(pendingEvents.queue);
+      }
       yield* FiberSet.clear(fibers);
       for (const socket of active) socket.destroy();
       if (options.listener !== undefined) yield* options.listener.close;

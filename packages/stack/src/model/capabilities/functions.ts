@@ -26,7 +26,9 @@ const EdgeRuntimeSettingsSchema = Schema.Struct({
 });
 
 export const FunctionsInspectorSettingsSchema = Schema.Struct({
+  /** Expose the Edge Runtime inspector as run, break-on-start, or wait-for-debugger. */
   mode: Schema.optionalKey(Schema.Literals(["run", "brk", "wait"] as const)),
+  /** Also create an inspector for the main worker. */
   main: Schema.optionalKey(Schema.Boolean),
 });
 export type FunctionsInspectorSettings = Schema.Schema.Type<

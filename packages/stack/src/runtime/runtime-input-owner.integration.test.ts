@@ -359,6 +359,7 @@ describe("runtime input owner", () => {
           privatePorts: [
             { workloadId: "database:database", binding: "primary", port: 30_001 },
             { workloadId: "functions:edge-runtime", binding: "primary", port: 30_002 },
+            { workloadId: "functions:edge-runtime", binding: "inspector", port: 30_004 },
             { workloadId: "studio:studio", binding: "primary", port: 30_003 },
           ],
         };

@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Exit, Fiber } from "effect";
+import { Deferred, Effect, Exit, Fiber, Option, Queue } from "effect";
 import { GatewayActivationError } from "../public/Errors.ts";
 import { connect as connectNet, createServer, type Server, type Socket } from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
@@ -341,6 +341,164 @@ describe("stack gateway", () => {
         expect(released).toBe(true);
         expect(releaseCalls).toBe(1);
         expect(prebound.listening).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("holds an HTTP request until an adopted listener is ready", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const backend = createHttpServer((request, response) => {
+          const chunks: Buffer[] = [];
+          request.on("data", (chunk: Buffer) => chunks.push(chunk));
+          request.once("end", () => {
+            response.setHeader("access-control-allow-origin", "https://backend.example");
+            response.setHeader("access-control-expose-headers", "content-range");
+            response.setHeader("content-range", "0-0/1");
+            response.end(Buffer.concat(chunks));
+          });
+        });
+        yield* Effect.callback<void, Error>((resume) => {
+          backend.once("error", (error) => resume(Effect.fail(error)));
+          backend.listen(0, "127.0.0.1", () => resume(Effect.void));
+        });
+        const backendAddress = backend.address();
+        if (typeof backendAddress !== "object" || backendAddress === null) return;
+        const listener = yield* bindHostListener("127.0.0.1", 0, "api");
+        if (listener.binding.kind !== "http") return;
+        const listenerAddress = listener.binding.server.address();
+        if (typeof listenerAddress !== "object" || listenerAddress === null) return;
+        const clientReady = yield* Deferred.make<void>();
+        const getClientReady = yield* Deferred.make<void>();
+        const activationStarted = yield* Deferred.make<void>();
+        const releaseActivation = yield* Deferred.make<void>();
+        const responseReady = yield* Deferred.make<{
+          readonly status: number;
+          readonly body: Buffer;
+          readonly expose: string | undefined;
+          readonly range: string | undefined;
+          readonly origin: string | undefined;
+        }>();
+        const getResponseReady = yield* Deferred.make<number>();
+        const requestFiber = yield* Effect.forkChild(
+          Effect.callback<void, never>((resume) => {
+            const request = requestHttp(
+              {
+                host: "127.0.0.1",
+                port: listenerAddress.port,
+                path: "/rest/items",
+                method: "POST",
+              },
+              (response) => {
+                const chunks: Buffer[] = [];
+                response.on("data", (chunk: Buffer) => chunks.push(chunk));
+                response.once("end", () => {
+                  Deferred.doneUnsafe(
+                    responseReady,
+                    Effect.succeed({
+                      status: response.statusCode ?? 0,
+                      body: Buffer.concat(chunks),
+                      expose: response.headers["access-control-expose-headers"]?.toString(),
+                      range: response.headers["content-range"]?.toString(),
+                      origin: response.headers["access-control-allow-origin"]?.toString(),
+                    }),
+                  );
+                  resume(Effect.void);
+                });
+              },
+            );
+            request.once("socket", () => {
+              Deferred.doneUnsafe(clientReady, Effect.void);
+            });
+            request.once("error", () => resume(Effect.void));
+            request.end("request-body");
+            return Effect.sync(() => request.destroy());
+          }),
+          { startImmediately: true },
+        );
+        const getRequestFiber = yield* Effect.forkChild(
+          Effect.callback<void, never>((resume) => {
+            const request = requestHttp(
+              { host: "127.0.0.1", port: listenerAddress.port, path: "/rest/items", method: "GET" },
+              (response) => {
+                response.resume();
+                response.once("end", () => {
+                  Deferred.doneUnsafe(getResponseReady, Effect.succeed(response.statusCode ?? 0));
+                  resume(Effect.void);
+                });
+              },
+            );
+            request.once("socket", () => {
+              Deferred.doneUnsafe(getClientReady, Effect.void);
+            });
+            request.once("error", () => resume(Effect.void));
+            request.end();
+            return Effect.sync(() => request.destroy());
+          }),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(clientReady);
+        yield* Deferred.await(getClientReady);
+        const pendingEvents = listener.binding.pendingEvents;
+        if (pendingEvents === undefined) return;
+        const queuedPost = yield* Queue.take(pendingEvents.queue);
+        const queuedGet = yield* Queue.take(pendingEvents.queue);
+        Queue.offerUnsafe(pendingEvents.queue, queuedPost);
+        Queue.offerUnsafe(pendingEvents.queue, queuedGet);
+        const gateway = yield* makeHttpGateway({
+          listener,
+          routes: [{ capability: "rest", match: (request) => request.path === "/rest/items" }],
+          activate: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(activationStarted, undefined);
+              yield* Deferred.await(releaseActivation);
+              return {
+                capability: "rest" as const,
+                endpoint: { host: "127.0.0.1", port: backendAddress.port },
+              };
+            }),
+          cors: { "access-control-allow-origin": "https://gateway.example" },
+        });
+        yield* Deferred.await(activationStarted);
+        expect(Option.isNone(yield* Deferred.poll(responseReady))).toBe(true);
+        yield* Deferred.succeed(releaseActivation, undefined);
+        const result = yield* Deferred.await(responseReady);
+        expect(yield* Deferred.await(getResponseReady)).toBe(200);
+        expect(result.status).toBe(200);
+        expect(result.body.toString()).toBe("request-body");
+        expect(result.expose).toBe("content-range");
+        expect(result.range).toBe("0-0/1");
+        expect(result.origin).toBe("https://gateway.example");
+        const preflight = yield* Effect.callback<
+          Record<string, string | string[] | undefined>,
+          Error
+        >((resume) => {
+          const request = requestHttp(
+            {
+              host: "127.0.0.1",
+              port: listenerAddress.port,
+              path: "/rest/items",
+              method: "OPTIONS",
+              headers: {
+                origin: "https://example.test",
+                "access-control-request-method": "POST",
+                "access-control-request-headers": "apikey,x-client-info",
+              },
+            },
+            (response) => {
+              response.resume();
+              response.once("end", () => resume(Effect.succeed(response.headers)));
+            },
+          );
+          request.once("error", (error) => resume(Effect.fail(error)));
+          request.end();
+          return Effect.sync(() => request.destroy());
+        });
+        expect(preflight["access-control-allow-headers"]?.toString()).toBe("apikey,x-client-info");
+        yield* Fiber.join(requestFiber);
+        yield* Fiber.join(getRequestFiber);
+        yield* gateway.close;
+        yield* closeServer(backend);
       }),
     ),
   );

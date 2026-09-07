@@ -58,6 +58,7 @@ const state: PersistedStackState = {
     { workloadId: "storage:storage", binding: "primary", port: 30_005 },
     { workloadId: "storage:imgproxy", binding: "primary", port: 30_006 },
     { workloadId: "functions:edge-runtime", binding: "primary", port: 30_007 },
+    { workloadId: "functions:edge-runtime", binding: "inspector", port: 30_018 },
     { workloadId: "studio:studio", binding: "primary", port: 30_008 },
     { workloadId: "studio:pgmeta", binding: "primary", port: 30_009 },
     { workloadId: "mail:mail", binding: "ui", port: 30_010 },
@@ -180,9 +181,94 @@ describe("workload runtime catalog", () => {
       expect(intents.filter(({ workloadId }) => workloadId === "mail:mail")).toHaveLength(3);
       expect(
         intents.every(({ binding }) =>
-          ["primary", "admin", "ui", "smtp", "pop3"].includes(binding),
+          ["primary", "admin", "ui", "smtp", "pop3", "inspector"].includes(binding),
         ),
       ).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("starts the Edge Runtime inspector on its private binding", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "native" },
+        config: {
+          capabilities: { functions: { settings: { inspector: { mode: "run" } } } },
+        },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const functions = planned("functions:edge-runtime");
+      const configured: PersistedStackState = {
+        ...state,
+        definition: compiled.definition,
+      };
+      const spec = runtimeSpecFor(functions);
+      expect(spec?.args(configured, functions, 30_007)).toContain("--inspect=127.0.0.1:30018");
+      expect(spec?.privateEndpoint(configured, "inspector", "native")).toEqual({
+        host: "127.0.0.1",
+        port: 30_018,
+      });
+      expect(spec?.containerArgs(configured, functions, 9000)).toContain("--inspect=0.0.0.0:9229");
+      expect(containerResolutionFor(configured, functions)?.publications).toContainEqual({
+        address: "127.0.0.1",
+        hostPort: 30_018,
+        containerPort: 9229,
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("defaults an enabled inspector listener to run mode", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "native" },
+        config: { listeners: { functionsInspector: { enabled: true, port: 9223 } } },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const functions = planned("functions:edge-runtime");
+      const configured: PersistedStackState = {
+        ...state,
+        definition: compiled.definition,
+        ports: [...state.ports, { field: "functionsInspector", port: 9223, intent: "exact" }],
+      };
+      expect(runtimeSpecFor(functions)?.args(configured, functions, 30_007)).toContain(
+        "--inspect=127.0.0.1:30018",
+      );
+      const retainedDisabledPort: PersistedStackState = {
+        ...configured,
+        definition: {
+          ...compiled.definition,
+          listeners: {
+            ...compiled.definition.listeners,
+            functionsInspector: {
+              ...compiled.definition.listeners.functionsInspector,
+              enabled: false,
+            },
+          },
+        },
+        ports: [...state.ports, { field: "functionsInspector", port: 9223, intent: "exact" }],
+      };
+      expect(
+        runtimeSpecFor(functions)?.args(retainedDisabledPort, functions, 30_007),
+      ).not.toContain("--inspect=127.0.0.1:30018");
+
+      const mainOnly = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "native" },
+        config: { capabilities: { functions: { settings: { inspector: { main: true } } } } },
+      }).pipe(Effect.provide(NodeServices.layer));
+      expect(
+        runtimeSpecFor(functions)?.args(
+          { ...configured, definition: mainOnly.definition },
+          functions,
+          30_007,
+        ),
+      ).toEqual([
+        "start",
+        expect.any(String),
+        "--port=30007",
+        "--policy=per_worker",
+        "--inspect=127.0.0.1:30018",
+        "--inspect-main",
+      ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -746,6 +832,8 @@ describe("workload runtime catalog", () => {
           INSPECTOR_MODE: "brk",
           INSPECTOR_MAIN: "true",
         });
+        expect(resolution?.command).toContain("--inspect-brk=0.0.0.0:9229");
+        expect(resolution?.command).toContain("--inspect-main");
         expect(
           Object.keys(resolution?.env ?? {}).some((key) => key.startsWith("FUNCTIONS_FUNCTIONS_")),
         ).toBe(false);
@@ -757,15 +845,25 @@ describe("workload runtime catalog", () => {
           source: "/tmp/functions/4/main.ts",
           destination: "/root",
         });
-        expect(
-          runtimeSpecFor(functions)?.nativeProcess(
-            "/tmp/edge-artifact",
-            configured,
-            functions,
-            9000,
-            { functions: { bootstrapPath: "/tmp/functions/4/main.ts" } },
-          ).args,
-        ).toContain("--main-service=/tmp/functions/4");
+        const nativeResolution = runtimeSpecFor(functions)?.nativeProcess(
+          "/tmp/edge-artifact",
+          configured,
+          functions,
+          9000,
+          { functions: { bootstrapPath: "/tmp/functions/4/main.ts" } },
+        );
+        expect(nativeResolution?.args).toContain("--main-service=.");
+        expect(nativeResolution?.cwd).toBe("/tmp/functions/4");
+        const defaultNativeResolution = runtimeSpecFor(functions)?.nativeProcess(
+          "/tmp/edge-artifact",
+          configured,
+          functions,
+          9000,
+        );
+        expect(defaultNativeResolution?.args).toContain("--main-service=.");
+        expect(defaultNativeResolution?.cwd).toBe(
+          `${state.identity.projectRoot}/supabase/functions`,
+        );
         const studio = runtimeSpecFor(planned("studio:studio"));
         expect(
           studio?.env(configured, planned("studio:studio"), 3000, "container", {

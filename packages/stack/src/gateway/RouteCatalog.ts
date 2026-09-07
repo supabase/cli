@@ -297,7 +297,7 @@ export const routeCatalogFor = (
     else if (route.listener === "mailUi" && route.protocol === "http")
       append(http, route.listener, [directRoute(route.capability, "ui")]);
     else if (route.listener === "functionsInspector" && route.protocol === "http")
-      append(http, route.listener, [directRoute(route.capability)]);
+      append(http, route.listener, [directRoute(route.capability, "inspector")]);
     else if (route.listener === "database" && route.protocol === "tcp")
       append(tcp, route.listener, [directRoute(route.capability, "primary")]);
     else if (route.listener === "pooler" && route.protocol === "tcp")

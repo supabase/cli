@@ -117,6 +117,7 @@ describe("public gateway route catalog", () => {
       );
       expect((catalog.http.get("studio") ?? [])[0]?.match({ path: "/", headers: {} })).toBe(true);
       expect((catalog.http.get("mailUi") ?? [])[0]?.binding).toBe("ui");
+      expect((catalog.http.get("functionsInspector") ?? [])[0]?.binding).toBe("inspector");
       expect((catalog.tcp.get("database") ?? [])[0]?.capability).toBe("database");
       expect((catalog.tcp.get("pooler") ?? [])[0]?.capability).toBe("pooler");
       expect((catalog.tcp.get("smtp") ?? [])[0]?.binding).toBe("smtp");

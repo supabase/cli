@@ -2429,6 +2429,11 @@ describe("production runtime", () => {
                 port: functionsAddress.port,
               },
               {
+                workloadId: "functions:edge-runtime",
+                binding: "inspector",
+                port: functionsAddress.port + 1,
+              },
+              {
                 workloadId: "analytics:analytics",
                 binding: "primary",
                 port: analyticsAddress.port,

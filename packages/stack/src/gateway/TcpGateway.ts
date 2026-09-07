@@ -120,12 +120,14 @@ const handleConnection = (
   runFork: <A, E>(effect: Effect.Effect<A, E>) => Fiber<A, E>,
   active: Set<Duplex>,
 ): void => {
+  source.pause();
   trackSocket(active, source);
   const route = routeFor(options.routes);
   if (route === undefined) {
     source.destroy();
     return;
   }
+  const onPreActivationError = () => source.destroy();
   const view: GatewayRouteRequest = { path: "/", headers: {} };
   const operation = options.activate(route.capability).pipe(
     Effect.flatMap((result) =>
@@ -133,11 +135,21 @@ const handleConnection = (
         ? Effect.succeed(result.endpoint)
         : options.resolveBackend(route, view, result),
     ),
-    Effect.flatMap((backend) => tunnel(source, backend)),
+    Effect.flatMap((backend) => {
+      source.off("error", onPreActivationError);
+      return tunnel(source, backend);
+    }),
   );
+  source.once("error", onPreActivationError);
   // Node invokes this handler outside Effect; use the owner-scoped FiberSet
   // runtime for the exact accepted connection's lifecycle.
   const fiber = runFork(operation);
+  const onSourceClose = () => fiber.interruptUnsafe();
+  source.once("close", onSourceClose);
+  fiber.addObserver(() => {
+    source.off("close", onSourceClose);
+    source.off("error", onPreActivationError);
+  });
   fiber.addObserver((exit) => {
     if (Exit.isFailure(exit)) source.destroy();
   });
@@ -170,6 +182,11 @@ export const makeTcpGateway = (
     const connectionHandler = (socket: Socket) =>
       handleConnection(socket, options, runFork, active);
     server.on("connection", connectionHandler);
+    // A listener may have accepted sockets while it was waiting for gateway adoption. Node emits
+    // `connection` only once, so explicitly hand those sockets to the gateway before resuming them.
+    for (const socket of active) {
+      if (socket instanceof Socket) connectionHandler(socket);
+    }
     if (!server.listening) {
       yield* Effect.callback<void, GatewayActivationError>((resume) => {
         let settled = false;
@@ -206,6 +223,7 @@ export const makeTcpGateway = (
       return yield* new GatewayActivationError({
         message: "Gateway listener did not expose an endpoint",
       });
+    if (options.listener !== undefined) options.listener.connections.release?.();
     const closeOperation = Effect.gen(function* () {
       server.off("connection", connectionHandler);
       yield* FiberSet.clear(fibers);

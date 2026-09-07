@@ -211,10 +211,6 @@ export const makeSupervisor = (
         }
       | { readonly _tag: "ready"; readonly result: ActivationResult }
     >();
-    const ingressActivate = (
-      capability: CapabilityName,
-    ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
-      Deferred.await(activationHandler).pipe(Effect.flatMap((handler) => handler(capability)));
     const initializeActivation = (plan: ExecutionPlan) => Ref.set(active, eagerCapabilities(plan));
     const resetForSession = (input: LifecycleInput) =>
       Effect.gen(function* () {
@@ -284,6 +280,21 @@ export const makeSupervisor = (
       result: LifecycleResult;
     }>;
     const lifecycleActive = yield* Ref.make<ActiveLifecycle | undefined>(undefined);
+    const ingressActivate = (
+      capability: CapabilityName,
+    ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
+      Effect.gen(function* () {
+        // A request can reach the adopted gateway while the owning start operation is still
+        // installing its workloads. Wait for that shared lifecycle result before attempting lazy
+        // activation; otherwise the phase check below would turn a valid cold request into 503.
+        const lifecycle = yield* Ref.get(lifecycleActive);
+        if (lifecycle?.kind === "start") {
+          const started = yield* Deferred.await(lifecycle.result);
+          yield* joinExit(started);
+        }
+        const handler = yield* Deferred.await(activationHandler);
+        return yield* handler(capability);
+      });
     const ensureActivationPhaseAllowed = (): Effect.Effect<
       void,
       GatewayActivationError | StackError
