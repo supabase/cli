@@ -5,6 +5,7 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
+import { legacyMintConfigTargetErrors } from "../config.target.ts";
 
 /**
  * Tagged errors for `supabase config push`.
@@ -57,14 +58,10 @@ export class LegacyConfigPushLoadConfigError extends Data.TaggedError(
 // branches — mirrors `config diff`'s own error set 1:1, under push's own
 // names (`diff.errors.ts`).
 
+const targetErrors = legacyMintConfigTargetErrors("LegacyConfigPush");
+
 /** `--project-ref` named a branch the parent project does not have. */
-export class LegacyConfigPushBranchNotFoundError extends Data.TaggedError(
-  "LegacyConfigPushBranchNotFoundError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidInput;
-  }
-}
+export const LegacyConfigPushBranchNotFoundError = targetErrors.BranchNotFoundError;
 
 /**
  * `--project-ref` named a branch (by name), but no project is linked to
@@ -72,37 +69,19 @@ export class LegacyConfigPushBranchNotFoundError extends Data.TaggedError(
  * `supabase/.temp/linked-project.json`, or `supabase/.temp/project-ref`
  * yielded a candidate.
  */
-export class LegacyConfigPushBranchNotLinkedError extends Data.TaggedError(
-  "LegacyConfigPushBranchNotLinkedError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.projectNotLinked;
-  }
-}
+export const LegacyConfigPushBranchNotLinkedError = targetErrors.BranchNotLinkedError;
 
 /**
  * `--project-ref` named a branch (by name), and a parent-project candidate
  * exists but is not ref-shaped — corrupt or stale linked state.
  */
-export class LegacyConfigPushParentRefInvalidError extends Data.TaggedError(
-  "LegacyConfigPushParentRefInvalidError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.relinkProject;
-  }
-}
+export const LegacyConfigPushParentRefInvalidError = targetErrors.ParentRefInvalidError;
 
 /**
  * The resolved branch has no project ref yet (still provisioning) — guards
  * against an empty/placeholder ref reaching a push target.
  */
-export class LegacyConfigPushBranchNotReadyError extends Data.TaggedError(
-  "LegacyConfigPushBranchNotReadyError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return { ...actionability.apiStatus, fingerprint_suffix: "branch_not_ready" };
-  }
-}
+export const LegacyConfigPushBranchNotReadyError = targetErrors.BranchNotReadyError;
 
 export class LegacyConfigPushBranchResolveNetworkError extends Data.TaggedError(
   "LegacyConfigPushBranchResolveNetworkError",

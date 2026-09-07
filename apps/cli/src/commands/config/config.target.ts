@@ -1,22 +1,31 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, Predicate } from "effect";
+import { Data, Effect, Option } from "effect";
 
 import { LegacyProjectRefResolver } from "../../config/legacy-project-ref.service.ts";
 import {
+  legacyParentNotLinkedMessage,
+  legacyParentRefInvalidMessage,
+  legacyParentRefTypoHint,
   legacyResolveLinkedParentRef,
   legacyResolveParentScopedProjectRef,
 } from "../../command-internal/legacy-parent-project-ref.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { legacyResolveBranchProjectRef } from "../../command-internal/legacy-branch-ref.resolver.ts";
+import { legacySanitizeInlineName } from "../../command-internal/legacy-http-errors.ts";
 import {
   LEGACY_BRANCH_PROJECT_REF_PATTERN,
   LEGACY_BRANCH_UUID_PATTERN,
 } from "../../command-internal/legacy-ref-patterns.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 
 /**
  * The resolved comparison/pull target for the `config` command family
- * (`diff`, `pull`): a project ref, plus the branch name/UUID `--project-ref`
- * carried when it named one — `undefined` for a ref-shaped or
+ * (`diff`, `pull`, `push`): a project ref, plus the branch name/UUID
+ * `--project-ref` carried when it named one — `undefined` for a ref-shaped or
  * linked-fallback target.
  */
 export interface LegacyConfigTarget {
@@ -25,33 +34,123 @@ export interface LegacyConfigTarget {
 }
 
 /**
- * Per-family error construction for {@link legacyResolveConfigTarget}: every
- * caller keeps its own tagged error classes (built with `mapLegacyHttpError`
- * for the network/status pair) so error identities, messages, and
- * actionability stay family-owned — mirrors `LegacyBranchRefResolveMappers`
- * (`legacy-branch-ref.resolver.ts`). Every constructor receives the raw
- * `target` value the user passed, so each family builds its own
- * message text (`legacyParentNotLinkedMessage`, etc.) itself.
+ * Builds the four target-resolution failures {@link legacyResolveConfigTarget} can raise.
+ * One type parameter, not four: every family's builder set is produced by
+ * {@link legacyConfigTargetErrorsFor}, whose return type unions the four minted classes, so
+ * the resolver never has to infer them position-by-position.
  */
-export interface LegacyConfigTargetErrors<A, B, C, D, E> {
+export interface LegacyConfigTargetErrors<TError> {
   /**
    * `target` was named as a branch, but no project is linked to search for
    * branches under — none of `SUPABASE_PROJECT_ID`,
    * `supabase/.temp/linked-project.json`, or `supabase/.temp/project-ref`
    * yielded a candidate.
    */
-  readonly notLinked: (target: string) => A;
+  readonly notLinked: (target: string) => TError;
   /**
    * `target` was named as a branch, and a parent-project candidate exists
    * but is not ref-shaped — corrupt or stale linked state.
    */
-  readonly parentRefInvalid: (target: string) => B;
+  readonly parentRefInvalid: (target: string) => TError;
   /** `target` named a branch the parent project does not have. */
-  readonly branchNotFound: (target: string) => C;
+  readonly branchNotFound: (target: string) => TError;
   /** The resolved branch has no project ref yet (still provisioning). */
-  readonly branchNotReady: (target: string) => D;
-  /** Maps a branch-lookup (`GET`-by-UUID or `FIND`-by-name) transport/status failure. */
-  readonly mapResolveError: (cause: SupabaseApiError) => Effect.Effect<never, E>;
+  readonly branchNotReady: (target: string) => TError;
+}
+
+/** The constructor shape every minted target-error class has. */
+type LegacyConfigTargetErrorClass<E> = new (args: { readonly message: string }) => E;
+
+/**
+ * Mints one `config` command family's four target-resolution error classes from its name
+ * prefix (`"LegacyConfigDiff"`, `"LegacyConfigPull"`, `"LegacyConfigPush"`). The classes
+ * stay per-family so `_tag`, telemetry fingerprint, and actionability remain family-owned
+ * and distinct; only their (identical) definitions live here.
+ *
+ * The tags are template-interpolated, so `error-actionability-coverage.unit.test.ts`'s
+ * static AST scan cannot see them in THIS file — which is why every caller must re-export
+ * each minted class from its own `*.errors.ts` under the family-prefixed name. That file
+ * still declares other string-literal tags, so its coverage `it()` still registers, and the
+ * runtime half of the guard walks `Object.entries(module)` and verifies these four there.
+ */
+export function legacyMintConfigTargetErrors<Prefix extends string>(prefix: Prefix) {
+  class BranchNotFoundError extends Data.TaggedError(`${prefix}BranchNotFoundError`)<{
+    readonly message: string;
+  }> {
+    get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+      return actionability.invalidInput;
+    }
+  }
+  class BranchNotLinkedError extends Data.TaggedError(`${prefix}BranchNotLinkedError`)<{
+    readonly message: string;
+  }> {
+    get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+      return actionability.projectNotLinked;
+    }
+  }
+  class ParentRefInvalidError extends Data.TaggedError(`${prefix}ParentRefInvalidError`)<{
+    readonly message: string;
+  }> {
+    get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+      return actionability.relinkProject;
+    }
+  }
+  class BranchNotReadyError extends Data.TaggedError(`${prefix}BranchNotReadyError`)<{
+    readonly message: string;
+  }> {
+    get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+      return { ...actionability.apiStatus, fingerprint_suffix: "branch_not_ready" };
+    }
+  }
+  return { BranchNotFoundError, BranchNotLinkedError, ParentRefInvalidError, BranchNotReadyError };
+}
+
+/**
+ * Wraps a family's four minted classes as the `errors` bundle
+ * {@link legacyResolveConfigTarget} takes. The message text is identical across every
+ * family that resolves a branch-shaped `--project-ref`, so it lives here rather than being
+ * restated in each handler. Four type parameters purely so the declared return type can
+ * UNION them — the resolver itself then needs only one.
+ */
+export function legacyConfigTargetErrorsFor<
+  TNotLinked,
+  TParentRefInvalid,
+  TBranchNotFound,
+  TBranchNotReady,
+>(classes: {
+  readonly notLinked: LegacyConfigTargetErrorClass<TNotLinked>;
+  readonly parentRefInvalid: LegacyConfigTargetErrorClass<TParentRefInvalid>;
+  readonly branchNotFound: LegacyConfigTargetErrorClass<TBranchNotFound>;
+  readonly branchNotReady: LegacyConfigTargetErrorClass<TBranchNotReady>;
+}): LegacyConfigTargetErrors<TNotLinked | TParentRefInvalid | TBranchNotFound | TBranchNotReady> {
+  return {
+    notLinked: (target) => new classes.notLinked({ message: legacyParentNotLinkedMessage(target) }),
+    parentRefInvalid: (target) =>
+      new classes.parentRefInvalid({ message: legacyParentRefInvalidMessage(target) }),
+    branchNotFound: (target) =>
+      new classes.branchNotFound({
+        message: `Branch "${legacySanitizeInlineName(target)}" not found. Run \`supabase branches list\` to see available branches.${legacyParentRefTypoHint(target)}`,
+      }),
+    branchNotReady: (target) =>
+      new classes.branchNotReady({
+        message: `Branch "${legacySanitizeInlineName(target)}" has no project ref yet. Wait for it to finish provisioning, then retry.`,
+      }),
+  };
+}
+
+/**
+ * What {@link legacyResolveConfigTarget} needs to know about a branch-lookup failure to
+ * decide whether it was a 404. Every family's `mapResolveError` comes from
+ * `mapLegacyHttpError`, whose failure union has exactly ONE arm carrying an HTTP status
+ * (its `statusError` class, `{ status, body, message }`); the transport, request-validation,
+ * and request-body arms carry none, and neither do the parent-ref resolver's failures.
+ * Modelling `status` as optional is what lets that whole union satisfy this bound, and turns
+ * the 404 test below into an ordinary typed field read instead of a `Predicate` duck-type
+ * probe. `_tag` is required only so this is not a weak type.
+ */
+export interface LegacyConfigTargetResolveFailure {
+  readonly _tag: string;
+  readonly status?: number | undefined;
 }
 
 /**
@@ -61,14 +160,17 @@ export interface LegacyConfigTargetErrors<A, B, C, D, E> {
  * refinement passed to `Effect.catchIf`) so its own return type — a union of
  * two different `Effect` instantiations — is inferred directly from this
  * function's body instead of backward through `Effect.catch`'s inference.
+ *
+ * Deliberately NOT baked into `mapResolveError`: `config pull` shares ONE mapper across two
+ * call sites (the branch lookup AND the `/v2/projects/{ref}/config` read — see
+ * `pull.errors.ts`'s `LegacyConfigPullReadNetworkError` doc comment), so folding the 404 rule
+ * into the mapper would misreport a 404 from the unrelated config read as "branch not found".
  */
-function reclassifyBranchNotFoundError<E, C>(
+function reclassifyBranchNotFoundError<E extends LegacyConfigTargetResolveFailure, C>(
   cause: E,
   notFoundError: C,
 ): Effect.Effect<never, C | E> {
-  return Predicate.hasProperty("status")(cause) && cause.status === 404
-    ? Effect.fail(notFoundError)
-    : Effect.fail(cause);
+  return cause.status === 404 ? Effect.fail(notFoundError) : Effect.fail(cause);
 }
 
 /**
@@ -90,9 +192,14 @@ function reclassifyBranchNotFoundError<E, C>(
  * interactive project picker rendering under a live "Resolving branch..."
  * spinner.
  */
-export function legacyResolveConfigTarget<A, B, C, D, E>(
+export function legacyResolveConfigTarget<
+  TError,
+  EResolve extends LegacyConfigTargetResolveFailure,
+>(
   requested: Option.Option<string>,
-  errors: LegacyConfigTargetErrors<A, B, C, D, E>,
+  errors: LegacyConfigTargetErrors<TError>,
+  /** Maps a branch-lookup (`GET`-by-UUID or `FIND`-by-name) transport/status failure. */
+  mapResolveError: (cause: SupabaseApiError) => Effect.Effect<never, EResolve>,
 ) {
   return Effect.gen(function* () {
     const output = yield* Output;
@@ -121,8 +228,8 @@ export function legacyResolveConfigTarget<A, B, C, D, E>(
       const resolving =
         output.format === "text" ? yield* output.task("Resolving branch...") : undefined;
       ref = yield* legacyResolveBranchProjectRef(target, parentRef, {
-        mapGetError: errors.mapResolveError,
-        mapFindError: errors.mapResolveError,
+        mapGetError: mapResolveError,
+        mapFindError: mapResolveError,
       }).pipe(
         Effect.tapError(() => resolving?.fail() ?? Effect.void),
         Effect.catch((cause) =>
