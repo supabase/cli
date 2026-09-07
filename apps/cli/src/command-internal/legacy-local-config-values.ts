@@ -1064,7 +1064,7 @@ export type LegacyResolvedAuthEmail = Omit<
  * `auth.captcha`/`auth.passkey`/`auth.webauthn`/`auth.email.smtp` presence gaps elsewhere in this
  * file. An env override always wins outright when set, regardless of the raw document.
  *
- * This resolves the SAME effective value for both `buildKongEmailTemplateMounts` and
+ * This resolves the SAME effective value for both `resolveKongEmailTemplateMounts` and
  * `resolveGotrueEnvInput` in `start.handler.ts`, which both need the post-override email config.
  */
 export function legacyResolveAuthEmail(

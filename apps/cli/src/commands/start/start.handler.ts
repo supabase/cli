@@ -2,6 +2,7 @@
  * Native TS implementation of `start` — see `SIDE_EFFECTS.md` for the full
  * behavior contract.
  */
+import { readFileSync } from "node:fs";
 import { inferFunctionsManifest } from "@supabase/config/effect";
 import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { Effect, FileSystem, Option, Path, Result } from "effect";
@@ -33,7 +34,9 @@ import { legacyAqua, legacyYellow } from "../../command-internal/legacy-colors.t
 import {
   legacyApiTlsCertReadErrorMessage,
   legacyApiTlsKeyReadErrorMessage,
+  legacyEmailContentPathReadErrorMessage,
   legacyResolveApiTlsPath,
+  legacyResolveEmailTemplateContentPath,
 } from "../../command-internal/legacy-config-validate.ts";
 import { legacyIsContainerNotFoundMessage } from "../../command-internal/legacy-container-cli.ts";
 import { legacyCheckDbToml } from "../../command-internal/legacy-db-config.toml-read.ts";
@@ -353,28 +356,77 @@ function resolveGotrueEnvInput(params: {
 }
 
 /**
- * Kong's email template mounts: every configured template, then every
- * ENABLED notification, suffixed `_notification`.
- *
- * Path resolution happens in the bind builder — see
- * `LegacyKongEmailTemplateMount.notification`.
+ * Read-and-discard existence/readability check for one already-resolved
+ * `content_path` — same pattern as `legacy-local-config-values.ts`'s
+ * `readAuthEmailTemplateContent` and `push.auth-email-content.ts`'s
+ * `readTemplateContent`, reusing their established error message shape.
+ * Closes the gap where a resolved-but-never-read path (e.g. a `content_path`
+ * naming a missing file, only reachable when `auth.enabled = false`) would
+ * otherwise reach Docker unverified — the root-privileged daemon silently
+ * creates a directory at a bind-mounted host path that doesn't exist, so an
+ * unprivileged read here must succeed first.
  */
-function buildKongEmailTemplateMounts(
+function readKongEmailTemplateContent(
+  section: "template" | "notification",
+  name: string,
+  resolvedPath: string,
+): void {
+  try {
+    readFileSync(resolvedPath, "utf8");
+  } catch (cause) {
+    throw new Error(legacyEmailContentPathReadErrorMessage(section, name, cause));
+  }
+}
+
+/**
+ * Kong's email template mounts: every configured template, then every
+ * ENABLED notification, suffixed `_notification`. Resolves, containment-
+ * checks, and read-verifies each `content_path` HERE — once, before any
+ * Docker work — via `legacyResolveEmailTemplateContentPath` (the same check
+ * config validation and `config push` apply) followed by
+ * `readKongEmailTemplateContent`. The resulting `resolvedPath` is what the
+ * caller threads straight into `legacyBuildKongEmailTemplateBind`; nothing
+ * re-derives it later, right before the `docker create` call for Kong
+ * (potentially minutes later, after image pulls/Postgres bring-up/
+ * migrations) — closing the TOCTOU window between an earlier
+ * validation-only pass and Kong's own independent re-resolution.
+ *
+ * Skips (never throws for) an entry whose resolver returns `undefined` — per
+ * its own contract that only happens for an empty/absent `content_path`,
+ * which should be unreachable here since Kong's set is built from configured
+ * entries, but this omits the mount defensively rather than crashing.
+ */
+function resolveKongEmailTemplateMounts(
   email: LegacyResolvedAuthEmail,
+  workdir: string,
 ): ReadonlyArray<LegacyKongEmailTemplateMount> {
-  return [
-    ...Object.entries(email.template).map(([id, template]) => ({
-      id,
+  const mounts: Array<LegacyKongEmailTemplateMount> = [];
+  for (const [id, template] of Object.entries(email.template)) {
+    const resolvedPath = legacyResolveEmailTemplateContentPath({
+      section: "template",
+      name: id,
       contentPath: template.content_path,
-    })),
-    ...Object.entries(email.notification)
-      .filter(([, notification]) => notification.enabled)
-      .map(([id, notification]) => ({
-        id: `${id}_notification`,
-        contentPath: notification.content_path,
-        notification: true,
-      })),
-  ];
+      contentPresent: false,
+      base: workdir,
+    });
+    if (resolvedPath === undefined) continue;
+    readKongEmailTemplateContent("template", id, resolvedPath);
+    mounts.push({ id, resolvedPath });
+  }
+  for (const [id, notification] of Object.entries(email.notification)) {
+    if (!notification.enabled) continue;
+    const resolvedPath = legacyResolveEmailTemplateContentPath({
+      section: "notification",
+      name: id,
+      contentPath: notification.content_path,
+      contentPresent: false,
+      base: workdir,
+    });
+    if (resolvedPath === undefined) continue;
+    readKongEmailTemplateContent("notification", id, resolvedPath);
+    mounts.push({ id: `${id}_notification`, resolvedPath, notification: true });
+  }
+  return mounts;
 }
 
 /**
@@ -456,6 +508,24 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           asRecord(context.loaded?.document?.["auth"]),
           projectEnvValues,
         ),
+      catch: (cause) =>
+        new LegacyStartInvalidConfigError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
+    // Kong mounts every configured template (regardless of `auth.enabled` —
+    // Kong is the stack's mandatory gateway) and every ENABLED notification's
+    // `content_path`, unconditionally. Resolving, containment-checking, AND
+    // read-verifying every path happens exactly ONCE, here, before any Docker
+    // work — not only inside `legacyResolveLocalConfigValues`'s own
+    // `auth.enabled`-gated `readAuthEmailTemplateContent` call. The resulting
+    // `resolvedPath`s are threaded straight into the Kong container-spec
+    // input below instead of being discarded and re-derived later inside
+    // `legacyBuildKongEmailTemplateBind`, which closes the TOCTOU window
+    // between this pass and Kong's `docker create` call (potentially minutes
+    // later, after image pulls/Postgres bring-up/migrations).
+    const kongEmailTemplateMounts = yield* Effect.try({
+      try: () => resolveKongEmailTemplateMounts(resolvedEmail, cliSettings.workdir),
       catch: (cause) =>
         new LegacyStartInvalidConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
@@ -1323,8 +1393,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               logflareId: logflareContainerName,
               poolerId: poolerContainerName,
               nginxWorkerProcesses: legacyResolveKongNginxWorkerProcesses(projectEnvValues),
-              workdir: cliSettings.workdir,
-              emailTemplateMounts: buildKongEmailTemplateMounts(resolvedEmail),
+              emailTemplateMounts: kongEmailTemplateMounts,
             }),
           };
         }

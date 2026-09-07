@@ -1,5 +1,5 @@
-import { statSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import {
   actionability,
@@ -734,12 +734,112 @@ export function legacySigningKeysDecodeErrorMessage(cause: unknown): string {
 // ── email template / notification ──
 
 /**
+ * Whether `candidatePath` resolves inside (or exactly to) `root`. Both
+ * arguments must already be canonicalized (see `canonicalPathForContainment`).
+ * Only rejects a genuine `..` traversal — a same-level sibling whose name
+ * happens to start with two dots (e.g. `..templates`) is a distinct,
+ * in-root path and must not be rejected.
+ */
+function isPathContainedInRoot(root: string, candidatePath: string): boolean {
+  const rel = relative(root, candidatePath);
+  return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
+}
+
+// `readlinkSync` bypasses the OS's own `ELOOP` symlink-cycle detection when
+// manually following a dangling/unsearchable/looping symlink one hop at a
+// time (see `canonicalizeExistingPath` below), so that manual follow needs
+// its own explicit bound.
+const MAX_SYMLINK_FOLLOW_DEPTH = 40;
+
+/**
+ * Canonicalizes `path` when it exists, or returns `undefined` when it
+ * genuinely doesn't — the signal {@link canonicalPathForContainment} needs
+ * to decide whether to keep walking up towards an existing ancestor.
+ *
+ * "Exists" is decided with `lstatSync` (which doesn't itself dereference
+ * `path`), not by whether `realpathSync` succeeded — a dangling symlink, a
+ * symlink whose target directory is unsearchable (`EACCES`), or a symlink
+ * loop (`ELOOP`) all make `realpathSync` throw even though `path` genuinely
+ * exists on disk. Such a symlink is followed one hop by hand
+ * (`readlinkSync`) and its target canonicalized in turn, so the containment
+ * check always sees where the symlink actually points rather than a lexical
+ * guess that ignores it. Anything else existing-but-uncanonicalizable (or a
+ * symlink chain past {@link MAX_SYMLINK_FOLLOW_DEPTH}) is returned as-is —
+ * refusing to vouch for it lexically; the containment check still compares
+ * it honestly, and any subsequent read fails with its own real error.
+ */
+function canonicalizeExistingPath(path: string, depth: number): string | undefined {
+  try {
+    return realpathSync(path);
+  } catch {
+    const entry = lstatSync(path, { throwIfNoEntry: false });
+    if (entry === undefined) return undefined;
+    if (entry.isSymbolicLink() && depth < MAX_SYMLINK_FOLLOW_DEPTH) {
+      const target = readlinkSync(path);
+      return canonicalPathForContainment(
+        isAbsolute(target) ? target : join(dirname(path), target),
+        depth + 1,
+      );
+    }
+    return path;
+  }
+}
+
+/**
+ * Canonicalizes `path` for the containment check, tolerating a path (or an
+ * ancestor of it) that genuinely doesn't exist yet — that's the normal case
+ * for a missing template file, which should surface as a missing-file
+ * error, not a containment error. Walks up to the deepest EXISTING
+ * ancestor, resolves that with `realpathSync` (dereferencing any symlinks
+ * in it — including a symlinked project root itself, e.g. macOS's `/tmp`
+ * -> `/private/tmp`), then re-appends the missing tail lexically. The
+ * walk-up is an iterative loop, not recursion, so it stays correct against
+ * a pathologically long chain of missing ancestors (a stack-depth overflow
+ * was observed around 20,000 components with a naive recursive walk); each
+ * ancestor is still checked via {@link canonicalizeExistingPath}, so an
+ * intermediate dangling/unsearchable/looping symlink is followed rather
+ * than lexically skipped over as if it were an ordinary missing directory.
+ *
+ * A dangling, unsearchable, or looping symlink is never laundered as a
+ * missing tail component — see {@link canonicalizeExistingPath} for how
+ * "exists but can't canonicalize" is told apart from "doesn't exist" and
+ * followed to its real target. Recurses (bounded by `depth`) only to follow
+ * that kind of symlink; the ancestor walk-up itself is iterative.
+ */
+function canonicalPathForContainment(path: string, depth = 0): string {
+  const canonical = canonicalizeExistingPath(path, depth);
+  if (canonical !== undefined) return canonical;
+
+  const tail: string[] = [basename(path)];
+  let current = dirname(path);
+  for (;;) {
+    const ancestorCanonical = canonicalizeExistingPath(current, depth);
+    if (ancestorCanonical !== undefined) {
+      return tail.reduceRight((acc, name) => join(acc, name), ancestorCanonical);
+    }
+    const parent = dirname(current);
+    if (parent === current) {
+      return resolve(tail.reduceRight((acc, name) => join(acc, name), current));
+    }
+    tail.push(basename(current));
+    current = parent;
+  }
+}
+
+/**
  * Pure exclusivity decision + path to read for one template/notification entry. Throws
  * {@link LegacyConfigValidateError} with the exclusivity message when `contentPath === ""` and
- * `contentPresent`. Returns the absolute path to read, or `undefined` when there's nothing to
- * read (both `contentPath` and `content` absent — skip, not an error). `contentPath` set (even
- * when `content` is ALSO set) always wins — "both set" is not rejected, `content_path`
- * silently wins/overwrites.
+ * `contentPresent`. Returns the absolute, canonicalized (symlink-dereferenced) path to read, or
+ * `undefined` when there's nothing to read (both `contentPath` and `content` absent — skip, not
+ * an error). `contentPath` set (even when `content` is ALSO set) always wins — "both set" is not
+ * rejected, `content_path` silently wins/overwrites.
+ *
+ * The resolved candidate and `base` are both canonicalized (`canonicalPathForContainment`) and
+ * the candidate must resolve inside `base` (`isPathContainedInRoot`) — an absolute path, a `..`
+ * escape, or an in-root symlink pointing outside the project root all throw, since every caller
+ * reads or uploads the returned path's bytes. This applies unconditionally to every caller of
+ * this function (config validation, `config push` content loading, `start`'s eager pre-Docker
+ * containment pass) — there is no flag or opt-out.
  *
  * `base` is the caller-resolved project root for both templates and notifications.
  */
@@ -760,10 +860,28 @@ export function legacyResolveEmailTemplateContentPath(args: {
     }
     return undefined;
   }
-  if (args.section === "notification") {
-    return legacyResolveNotificationContentPath(args.base, args.contentPath);
+  const candidate =
+    args.section === "notification"
+      ? legacyResolveNotificationContentPath(args.base, args.contentPath)
+      : isAbsolute(args.contentPath)
+        ? args.contentPath
+        : join(args.base, args.contentPath);
+  const resolvedCanonical = canonicalPathForContainment(candidate);
+  const canonicalBase = canonicalPathForContainment(args.base);
+  if (!isPathContainedInRoot(canonicalBase, resolvedCanonical)) {
+    // Echo the DECLARED value (`args.contentPath`), not `resolvedCanonical` —
+    // the declared value is either what's literally in config.toml or an
+    // env-var override the caller already resolved, both already known to
+    // the user; the fully symlink-dereferenced canonical target is not, and
+    // echoing it back would hand a hostile config a way to probe what an
+    // in-root symlink resolves to on the runner (weak recon, but needless).
+    throw new LegacyConfigValidateError(
+      `Invalid config for auth.email.${args.section}.${args.name}.content_path: ` +
+        `"${args.contentPath}" resolves outside the project root ${args.base} — ` +
+        `move the file inside the project, or use a relative path that stays inside it.`,
+    );
   }
-  return isAbsolute(args.contentPath) ? args.contentPath : join(args.base, args.contentPath);
+  return resolvedCanonical;
 }
 
 /**

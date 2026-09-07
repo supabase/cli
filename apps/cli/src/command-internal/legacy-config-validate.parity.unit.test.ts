@@ -97,6 +97,24 @@ const scenarios: ReadonlyArray<ParityScenario> = [
     message: "Invalid config for auth.email.notification.password_changed.content_path",
   },
   {
+    name: "auth.email.notification content_path resolves outside the project root",
+    toml: [
+      "[auth.email.notification.password_changed]",
+      "enabled = true",
+      'content_path = "/etc/hosts"',
+    ],
+    overrides: {
+      auth: {
+        email: {
+          notification: {
+            password_changed: { enabled: true, content_path: "/etc/hosts" },
+          },
+        },
+      },
+    },
+    message: "resolves outside the project root",
+  },
+  {
     name: "db.port = 0",
     toml: ["[db]", "port = 0"],
     overrides: { db: { port: 0 } },
