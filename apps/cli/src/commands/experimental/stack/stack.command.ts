@@ -6,6 +6,7 @@ import { legacyExperimentalStackStartCommand } from "./start/start.command.ts";
 import { legacyExperimentalStackStopCommand } from "./stop/stop.command.ts";
 import { legacyExperimentalStackStatusCommand } from "./status/status.command.ts";
 import { legacyExperimentalStackListCommand } from "./list/list.command.ts";
+import { legacyExperimentalStackLogsCommand } from "./logs/logs.command.ts";
 import {
   legacyExperimentalStackApiLayer,
   legacyExperimentalStackTargetResolverLayer,
@@ -19,6 +20,7 @@ export const legacyExperimentalStackCommand = Command.make("stack").pipe(
     legacyExperimentalStackStopCommand,
     legacyExperimentalStackStatusCommand,
     legacyExperimentalStackListCommand,
+    legacyExperimentalStackLogsCommand,
   ]),
   Command.provide(legacyExperimentalStackTargetResolverLayer),
   Command.provide(legacyExperimentalStackApiLayer),
