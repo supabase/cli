@@ -139,6 +139,7 @@ const findDescriptor = (projectRoot: string, name: string | undefined, id: strin
         descriptor: inspection.descriptor,
         id,
         projectRoot: inspection.descriptor.projectRoot,
+        inspection,
       };
     }
     const found = yield* catchStackError(
@@ -179,7 +180,9 @@ export const legacyExperimentalStackStatus = Effect.fn("legacy.experimental.stac
     );
     const comparison =
       loaded.config === undefined
-        ? yield* catchStackError(api.inspectStack(target.id)).pipe(Effect.map(comparedInspection))
+        ? target.inspection === undefined
+          ? yield* catchStackError(api.inspectStack(target.id)).pipe(Effect.map(comparedInspection))
+          : { inspection: target.inspection }
         : yield* api.inspectStack(target.id, { config: loaded.config }).pipe(
             Effect.map(comparedInspection),
             Effect.catchTags({
@@ -192,7 +195,7 @@ export const legacyExperimentalStackStatus = Effect.fn("legacy.experimental.stac
           );
     const inspection =
       comparison.inspection === undefined
-        ? yield* catchStackError(api.inspectStack(target.id))
+        ? (target.inspection ?? (yield* catchStackError(api.inspectStack(target.id))))
         : comparison.inspection;
     const inspectionWarning = loaded.warning ?? comparison.warning;
     if (output.format === "text") yield* output.raw(render(inspection, inspectionWarning));

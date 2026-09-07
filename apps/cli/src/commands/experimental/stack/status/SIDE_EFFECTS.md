@@ -16,4 +16,8 @@ paths only; secret values are never emitted.
 
 Text output includes identity, runtime, owner, lifecycle, readiness, endpoints,
 and config drift. JSON output contains the same fields under `identity`, with
-`config_drift` and `config_warning` when available.
+`config_drift` and a warning message in `config_drift` when configuration could
+not be loaded. Drift compares the persisted effective stack definition with the
+configuration-derived candidate, so explicit start policies such as `--eager`
+or `--preparation on-demand` remain visible as intentional policy drift on a
+later status check.
