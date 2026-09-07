@@ -340,6 +340,39 @@ function messageOf(cause: unknown): string {
 }
 
 /**
+ * The canonical `api.port` branch: an enabled API with a port of `0` is
+ * invalid config. Exported so the storage-credentials resolver
+ * (`resolveLocalApiConfig`) shares the exact branch and message instead of
+ * re-implementing them — config validation has one home (see the module
+ * header and `legacy-config-validate.parity.unit.test.ts`).
+ */
+export function legacyValidateApiPort(enabled: boolean, port: number): void {
+  if (enabled && port === 0) {
+    throw new LegacyConfigValidateError("Missing required field in config: api.port");
+  }
+}
+
+/**
+ * The canonical `api.tls` cert/key presence rule: exactly one of the two paths
+ * set is invalid config. Exported for the same single-home reason as
+ * {@link legacyValidateApiPort}; the actual cert/key file reads stay
+ * caller-side I/O.
+ */
+export function legacyValidateApiTlsPresence(
+  certPath: string | undefined,
+  keyPath: string | undefined,
+): void {
+  const hasCert = certPath !== undefined && certPath.length > 0;
+  const hasKey = keyPath !== undefined && keyPath.length > 0;
+  if (hasCert && !hasKey) {
+    throw new LegacyConfigValidateError("Missing required field in config: api.tls.key_path");
+  }
+  if (hasKey && !hasCert) {
+    throw new LegacyConfigValidateError("Missing required field in config: api.tls.cert_path");
+  }
+}
+
+/**
  * Runs every `Config.Validate` branch this module owns (see the module header's table), in
  * Go's exact order, first-failure-wins. Pure — no I/O, no Effect. Callers own their own
  * per-section I/O reads (signing keys, `api.tls` cert/key, email template/notification content)
@@ -355,18 +388,9 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
   // cert/key file reads are caller-side I/O (see legacyResolveApiTlsPath below); this only
   // checks the "exactly one of cert/key set" presence rule.
   if (input.api?.enabled) {
-    if (input.api.port === 0) {
-      throw new LegacyConfigValidateError("Missing required field in config: api.port");
-    }
+    legacyValidateApiPort(input.api.enabled, input.api.port);
     if (input.api.tls.enabled) {
-      const hasCert = input.api.tls.certPath !== undefined && input.api.tls.certPath.length > 0;
-      const hasKey = input.api.tls.keyPath !== undefined && input.api.tls.keyPath.length > 0;
-      if (hasCert && !hasKey) {
-        throw new LegacyConfigValidateError("Missing required field in config: api.tls.key_path");
-      }
-      if (hasKey && !hasCert) {
-        throw new LegacyConfigValidateError("Missing required field in config: api.tls.cert_path");
-      }
+      legacyValidateApiTlsPresence(input.api.tls.certPath, input.api.tls.keyPath);
     }
   }
 

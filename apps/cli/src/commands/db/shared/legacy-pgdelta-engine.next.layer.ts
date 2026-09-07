@@ -233,7 +233,6 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
       });
 
     return LegacyPgDeltaEngine.of({
-      implementation: "next",
       diffExplicit: (input) =>
         Effect.scoped(
           Effect.gen(function* () {

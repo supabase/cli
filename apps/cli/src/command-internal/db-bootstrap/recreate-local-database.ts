@@ -69,13 +69,6 @@
  * NEVER called (Go's `resetDatabase`/`resetDatabase14`/`resetDatabase15` never
  * call it), and no rollback on failure (Go's `cmd/db.go` only wraps `--mode
  * start` in a `DockerRemoveAll` cleanup — the recreate dispatch has none).
- *
- * `pgcache.TryCacheMigrationsCatalog`'s best-effort catalog warmup (part of Go's
- * `SetupLocalDatabase`, reachable from the PG15 path above via
- * `legacyStartSetupLocalDatabase`) IS reached here too — see `db-setup.ts`'s own
- * header for the exact gate/citations. `reset.layers.ts` composes
- * `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer` for it, matching
- * `db start`'s own layer composition (`db/start/start.layers.ts`).
  */
 
 import { Data, Effect, Result, Schedule, type FileSystem, type Path } from "effect";
@@ -95,14 +88,12 @@ import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connectio
 import { LegacyDbExecError, type LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
 import { LEGACY_CLI_PROJECT_LABEL } from "../legacy-docker-ids.ts";
 import type { LegacyDockerRun } from "../legacy-docker-run.service.ts";
-import type { LegacyEdgeRuntimeScript } from "../legacy-edge-runtime-script.service.ts";
 import { legacyMigrateAndSeed } from "../legacy-migrate-and-seed.ts";
 import {
   legacyFormatExecBatchError,
   type LegacyMigrationApplyError,
 } from "../legacy-migration-apply.ts";
 import { legacyErrorMessage } from "../legacy-error-message.ts";
-import type { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import type { LegacyMigrationSeedError } from "../legacy-seed.ts";
 import {
   legacyEnsureNetwork,
@@ -364,8 +355,6 @@ const legacyRecreateLocalDatabase15 = <E>(
   | LegacyDockerRun
   | RuntimeInfo
   | HttpClient.HttpClient
-  | LegacyEdgeRuntimeScript
-  | LegacyPgDeltaSslProbe
   | FileSystem.FileSystem
   | Path.Path
 > =>
@@ -434,8 +423,6 @@ const legacyRecreateLocalDatabase14 = <E>(
   | LegacyDockerRun
   | RuntimeInfo
   | HttpClient.HttpClient
-  | LegacyEdgeRuntimeScript
-  | LegacyPgDeltaSslProbe
   | FileSystem.FileSystem
   | Path.Path
 > =>
@@ -540,8 +527,6 @@ export const legacyRecreateLocalDatabase = <E>(
   | LegacyDockerRun
   | RuntimeInfo
   | HttpClient.HttpClient
-  | LegacyEdgeRuntimeScript
-  | LegacyPgDeltaSslProbe
   | FileSystem.FileSystem
   | Path.Path
 > =>
