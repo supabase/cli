@@ -6,8 +6,8 @@ import { expect } from "vitest";
 import { requireLiveSuccess, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
 
 // Worst case (two pushes, three diffs) stays below the live testTimeout.
-const PUSH_EXIT_TIMEOUT_MS = 90_000;
-const DIFF_EXIT_TIMEOUT_MS = 30_000;
+const PUSH_EXIT_TIMEOUT_MS = 75_000;
+const DIFF_EXIT_TIMEOUT_MS = 20_000;
 
 // Golden path only: a sparse config.toml declaring one property round-trips
 // through push, `config diff` proves convergence, and the restore push is

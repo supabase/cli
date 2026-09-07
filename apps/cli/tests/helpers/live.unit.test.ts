@@ -1,21 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import { requireLiveSuccess, throwWithCleanup } from "./live.ts";
+import { requireCliSuccess } from "./cli.ts";
+import { throwWithCleanup } from "./live.ts";
 
-describe("requireLiveSuccess", () => {
+describe("requireCliSuccess", () => {
   it("passes a zero exit through", () => {
-    expect(() => requireLiveSuccess({ exitCode: 0, stdout: "", stderr: "" }, "cmd")).not.toThrow();
+    expect(() => requireCliSuccess({ exitCode: 0, stdout: "", stderr: "" }, "cmd")).not.toThrow();
   });
 
   it("reports a nonzero exit with the output attached", () => {
-    expect(() => requireLiveSuccess({ exitCode: 2, stdout: "out", stderr: "err" }, "cmd")).toThrow(
+    expect(() => requireCliSuccess({ exitCode: 2, stdout: "out", stderr: "err" }, "cmd")).toThrow(
       /cmd failed \(exit 2\)\nstdout:\nout\nstderr:\nerr/u,
     );
   });
 
   it("names the harness exit bound when the subprocess was SIGKILLed", () => {
     expect(() =>
-      requireLiveSuccess({ exitCode: 1, stdout: "", stderr: "", timedOutAfterMs: 90_000 }, "cmd"),
+      requireCliSuccess({ exitCode: 1, stdout: "", stderr: "", timedOutAfterMs: 90_000 }, "cmd"),
     ).toThrow(/cmd failed \(exit 1; harness SIGKILLed it after 90000ms without exit\)/u);
   });
 });

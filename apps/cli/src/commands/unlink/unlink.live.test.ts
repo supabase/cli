@@ -15,6 +15,8 @@ test("unlinks a linked workspace, leaving no local link state", async ({
 }) => {
   const linked = await cli(["link", "--project-ref", project.ref, "--skip-pooler"]);
   requireLiveSuccess(linked, "link setup for unlink");
+  const cache = join(workspace.path, "supabase", ".temp", "linked-project.json");
+  expect(existsSync(cache), linked.stderr).toBe(true);
 
   const result = await cli(["unlink"]);
   expect(result.exitCode, result.stderr).toBe(0);
