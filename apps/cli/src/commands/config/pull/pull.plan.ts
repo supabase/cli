@@ -12,6 +12,14 @@ import {
   ENV_CAPTURE_REGEX,
 } from "@supabase/config/internal";
 
+import {
+  legacyConfigDeepEqualValue,
+  legacyConfigDeepSetAtPath,
+  legacyConfigIsDeclaredAtPath,
+  legacyConfigIsRecord,
+  legacyConfigPathKey,
+  legacyConfigValueAtPath,
+} from "../config.paths.ts";
 import type { LegacyConfigPullDestination } from "./pull.scope.ts";
 
 /**
@@ -151,56 +159,6 @@ export interface LegacyPlanConfigPullInput {
   readonly projectRef: string;
 }
 
-function pathKey(path: ReadonlyArray<string>): string {
-  return JSON.stringify(path);
-}
-
-function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function valueAtPath(root: unknown, path: ReadonlyArray<string>): unknown {
-  let current: unknown = root;
-  for (const segment of path) {
-    if (!isPlainRecord(current) || !Object.hasOwn(current, segment)) {
-      return undefined;
-    }
-    current = current[segment];
-  }
-  return current;
-}
-
-function isDeclaredAtPath(root: unknown, path: ReadonlyArray<string>): boolean {
-  let current: unknown = root;
-  for (const [index, segment] of path.entries()) {
-    if (!isPlainRecord(current) || !Object.hasOwn(current, segment)) {
-      return false;
-    }
-    if (index < path.length - 1) {
-      current = current[segment];
-    }
-  }
-  return true;
-}
-
-function deepEqualValue(a: unknown, b: unknown): boolean {
-  if (a === b) {
-    return true;
-  }
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return a.length === b.length && a.every((value, index) => deepEqualValue(value, b[index]));
-  }
-  if (isPlainRecord(a) && isPlainRecord(b)) {
-    const aKeys = Object.keys(a);
-    const bKeys = Object.keys(b);
-    return (
-      aKeys.length === bKeys.length &&
-      aKeys.every((key) => Object.hasOwn(b, key) && deepEqualValue(a[key], b[key]))
-    );
-  }
-  return false;
-}
-
 function isConfigEditValue(value: unknown): value is ConfigEditValue {
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
     return true;
@@ -210,7 +168,7 @@ function isConfigEditValue(value: unknown): value is ConfigEditValue {
       (item) => typeof item === "string" || typeof item === "number" || typeof item === "boolean",
     );
   }
-  if (isPlainRecord(value)) {
+  if (legacyConfigIsRecord(value)) {
     return Object.values(value).every((child) => isConfigEditValue(child));
   }
   return false;
@@ -244,7 +202,9 @@ function containsRemoteEnvReference(value: ConfigEditValue): boolean {
   return Object.values(value).some((child) => containsRemoteEnvReference(child));
 }
 
-const dualScopePathKeys: ReadonlySet<string> = new Set(dualScopeProjectConfigPaths.map(pathKey));
+const dualScopePathKeys: ReadonlySet<string> = new Set(
+  dualScopeProjectConfigPaths.map(legacyConfigPathKey),
+);
 
 /**
  * Prefix-aware, mirroring `isComparableProjectConfigPath` — a mapped
@@ -253,7 +213,7 @@ const dualScopePathKeys: ReadonlySet<string> = new Set(dualScopeProjectConfigPat
  */
 function isDualScopePath(path: ReadonlyArray<string>): boolean {
   for (let length = path.length; length >= 1; length--) {
-    if (dualScopePathKeys.has(pathKey(path.slice(0, length)))) {
+    if (dualScopePathKeys.has(legacyConfigPathKey(path.slice(0, length)))) {
       return true;
     }
   }
@@ -328,14 +288,14 @@ export function legacyPlanConfigPull(input: LegacyPlanConfigPullInput): LegacyCo
     if (input.destination.kind !== "remote") {
       continue;
     }
-    const rootValue = valueAtPath(input.rootDocument, write.change.path);
-    if (deepEqualValue(write.value, rootValue)) {
+    const rootValue = legacyConfigValueAtPath(input.rootDocument, write.change.path);
+    if (legacyConfigDeepEqualValue(write.value, rootValue)) {
       warnings.push({ kind: "duplicates_root", path: write.change.path });
     }
     if (
       write.change.class === "remote_only" &&
       Array.isArray(write.value) &&
-      isDeclaredAtPath(input.rootDocument, write.change.path)
+      legacyConfigIsDeclaredAtPath(input.rootDocument, write.change.path)
     ) {
       // Arrays REPLACE wholesale on override, never merge — giving
       // `[remotes.*]` its own copy of a path the config root ALSO declares
@@ -350,32 +310,6 @@ export function legacyPlanConfigPull(input: LegacyPlanConfigPullInput): LegacyCo
       : undefined;
 
   return { writes, skipped, warnings, createdTable };
-}
-
-/**
- * Deep-copies `root`, replacing the value at `path` — shared by the fixpoint
- * expansion below (projecting a round's writes onto `{config, document}`
- * before re-diffing) and `pull.handler.ts`'s schema-validation gate
- * (projecting the plan's writes onto the raw on-disk document shape before
- * decoding it). Never used to produce bytes written to disk — that is
- * `applyConfigEdits`'s job. The exported-shaped overload preserves the
- * input's own type (a deep-set never changes an object's shape, only a leaf
- * value); the implementation itself is intentionally untyped, mirroring
- * `@supabase/config`'s own split between a typed overload contract and a
- * structurally-unverifiable recursive implementation.
- */
-export function deepSetAtPath<T>(root: T, path: ReadonlyArray<string>, value: unknown): T;
-export function deepSetAtPath(root: unknown, path: ReadonlyArray<string>, value: unknown): unknown {
-  if (path.length === 0) {
-    return value;
-  }
-  const head = path[0];
-  if (head === undefined) {
-    return value;
-  }
-  const rest = path.slice(1);
-  const base: Record<string, unknown> = isPlainRecord(root) ? root : {};
-  return { ...base, [head]: deepSetAtPath(base[head], rest, value) };
 }
 
 /**
@@ -480,7 +414,7 @@ export function legacyExpandConfigPullChangeSet(
 ): LegacyConfigPullFixpointResult {
   const seen = new Map<string, ConfigChange>();
   for (const change of input.initialChangeSet.changes) {
-    seen.set(pathKey(change.path), change);
+    seen.set(legacyConfigPathKey(change.path), change);
   }
 
   let config: EffectiveConfig = input.baseConfig;
@@ -490,22 +424,23 @@ export function legacyExpandConfigPullChangeSet(
 
   for (let round = 0; round < LEGACY_CONFIG_PULL_FIXPOINT_ROUND_CAP; round++) {
     const newlyWritable = [...seen.values()].filter(
-      (change) => isWritableChange(change) && !projectedPathKeys.has(pathKey(change.path)),
+      (change) =>
+        isWritableChange(change) && !projectedPathKeys.has(legacyConfigPathKey(change.path)),
     );
     if (newlyWritable.length === 0) {
       break;
     }
     for (const change of newlyWritable) {
-      config = deepSetAtPath(config, change.path, change.remote);
-      document = deepSetAtPath(document, change.path, change.remote);
-      projectedPathKeys.add(pathKey(change.path));
+      config = legacyConfigDeepSetAtPath(config, change.path, change.remote);
+      document = legacyConfigDeepSetAtPath(document, change.path, change.remote);
+      projectedPathKeys.add(legacyConfigPathKey(change.path));
     }
     residual = diffProjectConfig({
       local: { config, document, valueOrigins: input.valueOrigins },
       remote: input.remote,
     });
     for (const change of residual.changes) {
-      const key = pathKey(change.path);
+      const key = legacyConfigPathKey(change.path);
       if (!seen.has(key)) {
         seen.set(key, change);
       }
@@ -544,8 +479,8 @@ export function legacyConfigPullFamilyRootForPath(
 ): ReadonlyArray<string> {
   for (let length = path.length - 1; length >= 1; length--) {
     const candidate = path.slice(0, length);
-    const value = valueAtPath(document, candidate);
-    if (isPlainRecord(value) && Object.hasOwn(value, "enabled")) {
+    const value = legacyConfigValueAtPath(document, candidate);
+    if (legacyConfigIsRecord(value) && Object.hasOwn(value, "enabled")) {
       return candidate;
     }
   }
@@ -562,7 +497,7 @@ export function legacyConfigPullEnvVariableAtPath(
   path: ReadonlyArray<string>,
   document: unknown,
 ): string | undefined {
-  const value = valueAtPath(document, path);
+  const value = legacyConfigValueAtPath(document, path);
   if (typeof value !== "string") {
     return undefined;
   }
@@ -618,7 +553,7 @@ export function legacyDropConfigPullUnvalidatableFamilies(
       writes.push(write);
       continue;
     }
-    const key = pathKey(family.root);
+    const key = legacyConfigPathKey(family.root);
     const bucket = droppedByRoot.get(key);
     if (bucket === undefined) {
       droppedByRoot.set(key, [write]);
@@ -635,7 +570,9 @@ export function legacyDropConfigPullUnvalidatableFamilies(
       .flat()
       .map((write) => ({ change: write.change, reason: "would_invalidate" as const })),
   ];
-  const droppedFamilies = families.filter((family) => droppedByRoot.has(pathKey(family.root)));
+  const droppedFamilies = families.filter((family) =>
+    droppedByRoot.has(legacyConfigPathKey(family.root)),
+  );
   const survivingWarnings = plan.warnings.filter((warning) => {
     const path = warning.path;
     return (
