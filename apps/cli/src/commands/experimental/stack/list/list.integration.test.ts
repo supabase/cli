@@ -102,6 +102,8 @@ describe("experimental stack list", () => {
             expect(run.out.stdoutText).toContain("Desired lifecycle: stopped");
             expect(run.out.stdoutText).not.toContain("Readiness");
             expect(run.out.stdoutText).toContain("/work/z");
+            expect(run.out.stdoutText).toContain(`alpha (${"b".repeat(64)})`);
+            expect(run.out.stdoutText).toContain(`alpha (${"c".repeat(64)})`);
             expect(run.out.stdoutText.indexOf(`alpha (${"b".repeat(64)})`)).toBeLessThan(
               run.out.stdoutText.indexOf(`alpha (${"c".repeat(64)})`),
             );
