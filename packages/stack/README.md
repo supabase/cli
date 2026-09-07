@@ -4,6 +4,10 @@ The local Supabase stack runtime. Its public API is a greenfield,
 Effect-native managed runtime; implementation modules are private to the
 package.
 
+The package runs independently of the CLI and accepts normalized `StackConfig` values;
+it does not load `config.toml`. CLI command wiring, configuration translation, and
+presentation belong to the M5 integration work in separate PRs.
+
 The supported entrypoints are:
 
 - `@supabase/stack` — Promise facade
@@ -79,9 +83,9 @@ Podman is supported only on local Linux hosts and must be selected explicitly; t
 auto-detect container engines.
 
 `createTestStack` gives each test stack a unique temporary project root and identity while sharing
-the managed state root used by ordinary package and CLI callers. Automatic ports therefore
+the managed state root used by ordinary package callers. Automatic ports therefore
 coordinate across all default callers. Helper project roots and identities remain isolated; a
-temporary test stack is excluded from the current CLI project-scoped listing but appears in an
+temporary test stack is excluded from listings scoped to another project root but appears in an
 unfiltered package `listStacks()` result. A failed destroy retains the affected project root and
 managed state for recovery.
 

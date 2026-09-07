@@ -2,6 +2,10 @@ import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import {
+  FUNCTIONS_SERVE_INSPECT_MODES,
+  serveFileWatcherLayer,
+} from "../../../shared/functions/serve.ts";
 import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../command-internal/legacy-debug-logger.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
@@ -10,6 +14,7 @@ import { legacyFunctionsServe } from "./serve.handler.ts";
 
 const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const legacyFunctionsServeRuntimeLayer = Layer.mergeAll(
+  serveFileWatcherLayer,
   cliSettings,
   legacyDebugLoggerLayer,
   legacyTelemetryStateLayer,
@@ -35,7 +40,7 @@ const config = {
     Flag.withDescription("Alias of --inspect-mode brk."),
     Flag.withDefault(false),
   ),
-  inspectMode: Flag.choice("inspect-mode", ["run", "brk", "wait"] as const).pipe(
+  inspectMode: Flag.choice("inspect-mode", FUNCTIONS_SERVE_INSPECT_MODES).pipe(
     Flag.withDescription("Activate inspector capability for debugging."),
     Flag.optional,
   ),

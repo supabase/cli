@@ -12,8 +12,11 @@ exclusive ownership lease only while the stack is running or an admitted
 operation is in flight, while stop-time cleanup remains unproven, or while an
 unproven destroy leaves durable intent `destroying`. Public
 handles communicate with it through same-release Effect RPC and a small
-release-stable maintenance protocol for probe and stop. CLI handlers call this
-facade and do not maintain a second metadata or PID-based liveness path.
+release-stable maintenance protocol for probe and stop. The package runs independently
+of the CLI and accepts normalized `StackConfig` values without reading `config.toml`.
+CLI integration belongs to M5 in separate PRs, including Functions command wiring.
+Future CLI handlers will call this facade without maintaining a second metadata or
+PID-based liveness path.
 
 The public API has two deliberate entrypoints: Effect-native operations are
 available from `@supabase/stack/effect`, while the package root exposes the
@@ -21,10 +24,10 @@ Promise handle and root Promise functions (`createStack`, `openStack`,
 `findStack`, `listStacks`, and `inspectStack`). Test callers use the public
 `createTestStack` helper from `@supabase/stack/testing`; it owns a unique
 temporary project root and exact-identity cleanup through `await using`, while
-using the same managed state root as ordinary package and CLI callers. All
+using the same managed state root as ordinary package callers. All
 default callers therefore coordinate automatic ports through one registry;
 helper project roots and identities remain isolated. Temporary test stacks are
-excluded from the current CLI project-scoped listing because their project roots
+excluded from listings scoped to another project root because their project roots
 differ, but remain visible to unfiltered package `listStacks()`. A failed
 destroy retains its exact project root and managed state for recovery.
 
@@ -211,7 +214,7 @@ Tests follow consumed boundaries:
   traffic, verifies cross-service behavior, then exercises
   stop/start and retained offline observability.
 
-CLI handler integration covers only argument translation, output, telemetry,
+Future CLI handler integration will cover only argument translation, output, telemetry,
 and calls into the stack facade. Private implementation tests are retained only
 where public scenarios cannot make a branch observable.
 

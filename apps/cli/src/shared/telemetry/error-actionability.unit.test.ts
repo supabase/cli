@@ -1,6 +1,5 @@
 import { Cause, Data } from "effect";
 import { describe, expect, it } from "vitest";
-import { StackNotFoundError, StackPreparationError } from "@supabase/stack/effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -20,16 +19,6 @@ describe("error actionability", () => {
     expect(classifyCliErrorActionability(new DeclaredError({ message: "x" })).error_kind).toBe(
       "user_actionable",
     );
-  });
-
-  it("classifies current stack errors through their stable tags", () => {
-    expect(
-      classifyCliErrorActionability(new StackNotFoundError({ message: "missing" })).error_category,
-    ).toBe("invalid_input");
-    expect(
-      classifyCliErrorActionability(new StackPreparationError({ message: "failed" }))
-        .error_category,
-    ).toBeDefined();
   });
 
   it("classifies causes without exposing raw details", () => {

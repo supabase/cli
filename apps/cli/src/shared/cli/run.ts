@@ -3,7 +3,6 @@ import { CliConfigStore } from "@supabase/config/effect";
 import {
   Cause,
   Console,
-  Crypto,
   Effect,
   Exit,
   FileSystem,
@@ -72,7 +71,6 @@ type AllowedRunCliServices =
   | CliProjectHome
   | CliSettings
   | CommandRuntime
-  | Crypto.Crypto
   | FileSystem.FileSystem
   | Path.Path
   | ProcessControl

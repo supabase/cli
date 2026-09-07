@@ -8,7 +8,7 @@ import type { CliError as EffectCliError } from "effect/unstable/cli";
  * `apps/cli/src` exposes a {@link CliErrorActionabilityDeclaration} under the
  * {@link ErrorActionabilityId} symbol (enforced by
  * `error-actionability-coverage.unit.test.ts`). Errors originating outside the
- * CLI workspace (`@supabase/stack`, `@supabase/config`,
+ * CLI workspace (`@supabase/config`,
  * `effect` cli/http) are classified by the
  * structural adapters at the bottom of this module, which are themselves
  * exhaustiveness-checked against those packages' sources.
@@ -107,36 +107,6 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "invalid_url",
   "internal_build",
   "invalid_config",
-  "managed_git_workspace_inside_git_directory",
-  "managed_git_workspace_malformed_metadata",
-  "managed_git_workspace_metadata_inaccessible",
-  "managed_git_workspace_reftable",
-  "managed_checkout_conflict",
-  "managed_copied_branch_conflict",
-  "managed_identity_transition_ownership",
-  "managed_inaccessible_path",
-  "incompatible_managed_registry",
-  "managed_identity",
-  "managed_identity_conflict",
-  "managed_initialization",
-  "managed_control_ownership",
-  "managed_control_bind",
-  "managed_control_transport",
-  "managed_control_protocol",
-  "managed_control_address_conflict",
-  "managed_control_stop_conflict",
-  "managed_control_maintenance_busy",
-  "managed_document",
-  "managed_control_required",
-  "managed_attached",
-  "managed_workspace_repair",
-  "managed_port",
-  "managed_port_change",
-  "managed_port_duplicate_key",
-  "managed_publication_timeout",
-  "managed_recovery",
-  "managed_stack_name",
-  "managed_stack_not_stopped",
   "network",
   "not_found",
   "plan_limit",
@@ -830,83 +800,6 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
     fingerprint_suffix: "request_encoding",
   }),
   SchemaError: () => ({ ...actionability.apiStatus, fingerprint_suffix: "api_response" }),
-
-  InvalidStackIdentityError: () => actionability.invalidInput,
-  InvalidProjectRootError: () => actionability.invalidInput,
-  InvalidStackConfigError: () => actionability.invalidConfig,
-  StackVersionUnsupportedError: () => actionability.invalidConfig,
-  StackNotFoundError: () => actionability.invalidInput,
-  StackOwnershipConflictError: () => actionability.invalidInput,
-  StackRuntimeMismatchError: () => actionability.invalidConfig,
-  StackMustBeStoppedError: () => actionability.stopStack,
-  StackLifecycleConflictError: () => actionability.startStack,
-  StackStateInvalidError: () => actionability.invalidConfig,
-  StackStateFormatUnsupportedError: () => actionability.invalidConfig,
-  StackUpgradeRequiredError: () => actionability.startStack,
-  StackSecretMismatchError: () => actionability.invalidConfig,
-  InvalidJwtSigningMaterialError: () => actionability.invalidConfig,
-  PortUnavailableError: () => actionability.invalidConfig,
-  GatewayActivationError: () => actionability.startStack,
-  StackPreparationError: () => actionability.startStack,
-  ArtifactIntegrityError: () => actionability.externalNetwork,
-  ContainerPullError: () => actionability.externalNetwork,
-  StackRuntimeError: () => actionability.startStack,
-  StackCleanupError: () => actionability.stopStack,
-  ContainerEngineError: () => actionability.dockerNotRunning,
-  StackDestructionError: () => actionability.stopStack,
-  BinaryNotFoundError: () => actionability.invalidConfig,
-  BinaryManifestError: () => actionability.externalNetwork,
-  BinaryRuntimeError: () => actionability.externalNetwork,
-  BinaryHostCompatibilityError: () => actionability.invalidConfig,
-  DownloadError: () => actionability.externalNetwork,
-  ChecksumMismatchError: () => ({
-    ...actionability.externalNetwork,
-    fingerprint_suffix: "asset_checksum",
-  }),
-  DockerPullError: (error) =>
-    error["daemonDown"] === true
-      ? { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" }
-      : { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" },
-  PortAllocationError: () => ({
-    ...actionability.invalidConfig,
-    fingerprint_suffix: "port_allocation",
-  }),
-  StackNotRunningError: () => actionability.startStack,
-  StackRpcProtocolError: () => ({
-    ...actionability.impossibleState,
-    fingerprint_suffix: "daemon_protocol",
-  }),
-  ManagedStackAttachedError: () => ({
-    ...actionability.stopStack,
-    fingerprint_suffix: "managed_attached",
-  }),
-  ManagedWorkspaceRepairConflictError: () => ({
-    ...actionability.invalidInput,
-    fingerprint_suffix: "managed_workspace_repair",
-  }),
-  DaemonStartError: () => actionability.unknown,
-  SupervisorStartError: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "daemon_start",
-  }),
-  // Transport failures retain the existing stack-recovery policy. An HTTP
-  // status or protocol failure came from the CLI-owned daemon itself and is
-  // therefore an internal invariant failure, not user configuration.
-  HttpTransportClientError: (error) => {
-    const reason = readString(error, "reason");
-    if (reason === "protocol") {
-      return { ...actionability.impossibleState, fingerprint_suffix: "daemon_protocol" };
-    }
-    if (reason === "status") {
-      return { ...actionability.impossibleState, fingerprint_suffix: "daemon_status" };
-    }
-    if (reason !== "transport") return actionability.unknown;
-    const path = readString(error, "path");
-    if (path !== undefined && path.startsWith("/start")) {
-      return { ...actionability.startStack, fingerprint_suffix: "daemon_start" };
-    }
-    return { ...actionability.stopStack, fingerprint_suffix: "daemon_transport" };
-  },
 };
 
 /**
