@@ -125,6 +125,7 @@ function handlerLayer(opts: {
       return Effect.succeed(opts.stack);
     },
     findStack: () => Effect.succeed(Option.none()),
+    listStacks: () => Effect.succeed([]),
     openStack: () => {
       opts.onOpen?.();
       return Effect.succeed(opts.stack);
@@ -195,6 +196,7 @@ describe("experimental stack start targeting", () => {
     const api = Layer.succeed(LegacyExperimentalStackApi, {
       createStack: () => Effect.die("unused"),
       findStack: () => Effect.succeed(Option.none()),
+      listStacks: () => Effect.succeed([]),
       openStack: () => Effect.die("unused"),
       inspectStack: () =>
         Effect.succeed({
@@ -514,6 +516,7 @@ describe("experimental stack start targeting", () => {
           return Effect.die("create should not run");
         },
         findStack: () => Effect.succeed(Option.none()),
+        listStacks: () => Effect.succeed([]),
         openStack: () => Effect.die("open should not run"),
         inspectStack: () => Effect.die("inspect should not run"),
       }),

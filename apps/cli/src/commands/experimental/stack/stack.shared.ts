@@ -3,6 +3,7 @@ import {
   createStack,
   findStack,
   inspectStack,
+  listStacks,
   isStackId,
   openStack,
   type StackRuntimePreference,
@@ -74,6 +75,12 @@ export class LegacyExperimentalStackApi extends Context.Service<
       Effect.Success<ReturnType<typeof findStack>>,
       Effect.Error<ReturnType<typeof findStack>>
     >;
+    readonly listStacks: (
+      ...args: Parameters<typeof listStacks>
+    ) => Effect.Effect<
+      Effect.Success<ReturnType<typeof listStacks>>,
+      Effect.Error<ReturnType<typeof listStacks>>
+    >;
     readonly openStack: (
       ...args: Parameters<typeof openStack>
     ) => Effect.Effect<
@@ -107,6 +114,7 @@ export const legacyExperimentalStackApiLayer = Layer.effect(
       createStack: (...args: Parameters<typeof createStack>) =>
         provideServices(createStack(...args)),
       findStack: (...args: Parameters<typeof findStack>) => provideServices(findStack(...args)),
+      listStacks: (...args: Parameters<typeof listStacks>) => provideServices(listStacks(...args)),
       openStack: (...args: Parameters<typeof openStack>) => provideServices(openStack(...args)),
       inspectStack: (...args: Parameters<typeof inspectStack>) =>
         provideServices(inspectStack(...args)),
