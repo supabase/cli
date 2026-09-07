@@ -5,7 +5,7 @@ import { CliArgs } from "../cli/cli-args.service.ts";
 import {
   VALUE_CONSUMING_LONG_FLAGS,
   VALUE_CONSUMING_SHORT_FLAGS,
-} from "../../legacy/shared/legacy-db-target-flags.ts";
+} from "../../command-internal/legacy-db-target-flags.ts";
 import { legacyViperEnvBool, legacyViperEnvBoolWithProjectFallback } from "./legacy-viper-env.ts";
 
 // The Effect CLI hoists global flags out of the token stream before the leaf
@@ -151,7 +151,7 @@ export const LEGACY_GLOBAL_FLAGS = [
 /**
  * Resolves the current value of every global/persistent flag above, keyed by
  * its own CLI flag name (each flag's `.id`, e.g. `debug`, `workdir`). Used by
- * `legacy/telemetry/legacy-command-instrumentation.ts` to mirror Go's
+ * `telemetry/legacy-command-instrumentation.ts` to mirror Go's
  * `changedFlags()` walking `cmd.Parent()`'s `PersistentFlags()` in addition to
  * a command's own flags (`cmd/root_analytics.go:53-76`) — global flags here
  * live in a single Effect-context-wide registry rather than per-ancestor
@@ -162,7 +162,7 @@ export const LEGACY_GLOBAL_FLAGS = [
  * hasn't wired the global-flag context — e.g. a focused unit test — simply
  * gets an empty record instead of a missing-service defect; production always
  * provides every global flag through `Command.withGlobalFlags` at the CLI
- * root (`legacy/cli/root.ts`).
+ * root (`cli/root.ts`).
  *
  * Reads each flag individually (rather than looping `LEGACY_GLOBAL_FLAGS`)
  * because each `Setting<Id, A>` has a distinct value type `A` — a homogeneous
@@ -221,8 +221,8 @@ const argsBeforeOperandTerminator = (args: ReadonlyArray<string>): ReadonlyArray
  * changed `--experimental` (verified against the review finding on CLI-1957: the
  * repository's own argv scanner already documents and handles this exact case for
  * `resolveLegacyDbTargetFlags`/`legacyChangedLinkedLocalFlags`
- * (`legacy/shared/legacy-db-target-flags.ts`) and `extractChangedFlagNames`
- * (`legacy/telemetry/legacy-command-instrumentation.ts`), which this reuses the
+ * (`command-internal/legacy-db-target-flags.ts`) and `extractChangedFlagNames`
+ * (`telemetry/legacy-command-instrumentation.ts`), which this reuses the
  * same `VALUE_CONSUMING_LONG_FLAGS`/`VALUE_CONSUMING_SHORT_FLAGS` registries for,
  * so the three scans can't drift out of sync).
  */
@@ -385,7 +385,7 @@ export const legacyResolveExperimentalWithProjectEnv = (projectEnv: Record<strin
  * occurrence in argv order, so the last one wins: `--debug=false --debug=true` (or a trailing
  * bare `--debug`) is `true` to Go/pflag, not `false` — the Effect parser itself resolves repeats
  * first-wins instead (binary-verified precedent for this exact pflag-vs-Effect divergence:
- * `apps/cli/src/legacy/commands/sso/sso.pflag-reconcile.ts:306-321`). `--debug` is bound to
+ * `apps/cli/src/commands/sso/sso.pflag-reconcile.ts:306-321`). `--debug` is bound to
  * viper the same way as `--yes`/`--experimental` (`apps/cli-go/cmd/root.go:318-334`).
  * {@link legacyYesFlagExplicitlyFalse}/{@link legacyExperimentalFlagExplicitlyFalse} above have
  * the identical `Array.some` "any occurrence is false" gap (review: PRRT_kwDOErm0O86XKYiG) —

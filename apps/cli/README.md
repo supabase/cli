@@ -49,7 +49,7 @@ Phase 0 commands in the legacy shell proxy to the Go CLI binary. To run these co
 For convenience, create a shell alias instead of using `pnpm dev:legacy` directly. For example in `.zshrc`:
 
 ```sh
-alias supabase-dev="bun /absolute/path/to/dx-lab/apps/cli/src/legacy/main.ts"
+alias supabase-dev="bun /absolute/path/to/dx-lab/apps/cli/src/main.ts"
 ```
 
 Then Phase 0 commands resolve the Go binary via PATH automatically:
@@ -106,7 +106,7 @@ The CLI is built on `effect/unstable/cli`.
 Important areas:
 
 - `src/shared/cli/` for shared runner logic, roots, and global flags
-- `src/legacy/commands/` for the legacy command tree
+- `src/commands/` for the legacy command tree
 - `src/shared/output/` for text / JSON / NDJSON output policies
 - `src/shared/runtime/` for TTY, stdin, browser, and process-control services
 - `src/shared/auth/` for login-related services

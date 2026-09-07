@@ -1,0 +1,646 @@
+import type { SupabaseApiError } from "@supabase/api/effect";
+import { Effect, Option, Redacted, Result, Stdio } from "effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+
+import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
+import { LegacyIdentityStitch } from "../../../command-internal/legacy-identity-stitch.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import {
+  cobraMutuallyExclusiveErrorMessage,
+  PERSISTENT_VALUE_FLAG_NAMES,
+  PERSISTENT_VALUE_FLAG_SHORTHANDS,
+  pflagArgvScan,
+} from "../../../shared/cli/cobra-flag-groups.ts";
+import { Output } from "../../../shared/output/output.service.ts";
+import {
+  encodeGoJson,
+  encodeGoStructJsonBody,
+} from "../../../command-internal/legacy-go-output.encoders.ts";
+import {
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
+import { LEGACY_GO_SSO_PROVIDER_RESPONSE } from "../sso.go-payload.ts";
+import {
+  mapLegacyHttpError,
+  sanitizeLegacyErrorBody,
+} from "../../../command-internal/legacy-http-errors.ts";
+import { resolveLegacyAccessToken } from "../../../command-internal/legacy-resolve-token.ts";
+import { legacyAccessTokenForProfile } from "../../../auth/legacy-credentials.layer.ts";
+import { legacyMissingAccessTokenMessage } from "../../../auth/legacy-access-token.ts";
+import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
+import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import {
+  legacyGateResponse,
+  legacySuggestUpgrade,
+} from "../../../command-internal/legacy-upgrade-suggest.ts";
+import {
+  legacyPflagBoolValue,
+  legacyPflagEnumValue,
+  legacyPflagSliceValue,
+  legacyPflagStringValue,
+  legacyResolvePflagProfile,
+  legacyValidatePflagWorkdir,
+} from "../../../command-internal/legacy-pflag-reconcile.ts";
+import {
+  LegacySsoFlagNeedsArgumentError,
+  LegacySsoInvalidFlagValueError,
+  LegacySsoMutexFlagError,
+  LegacySsoUpdateArityError,
+  LegacySsoUpdateAttributeMappingFileError,
+  LegacySsoUpdateMetadataFileError,
+  LegacySsoUpdateNetworkError,
+  LegacySsoUpdateNotFoundError,
+  LegacySsoUpdateUnexpectedStatusError,
+  LegacySsoAccessTokenError,
+  LegacySsoTomlEncodeError,
+} from "../sso.errors.ts";
+import { renderSingleProvider, toLegacySsoProviderView, validateUuid } from "../sso.format.ts";
+import { validateMetadataUrl } from "../sso.metadata-url.ts";
+import {
+  LEGACY_SSO_NAME_ID_FORMATS,
+  readAttributeMappingFile,
+  readMetadataFile,
+} from "../sso.saml.ts";
+import type { LegacySsoUpdateFlags } from "./update.command.ts";
+
+const readMetadata = readMetadataFile({
+  openError: (args) => new LegacySsoUpdateMetadataFileError(args),
+  nonUtf8Error: (args) =>
+    new LegacySsoUpdateMetadataFileError({ message: args.message, reason: "invalid_content" }),
+});
+
+const readAttributeMapping = readAttributeMappingFile({
+  openError: (args) => new LegacySsoUpdateAttributeMappingFileError(args),
+});
+
+const mapGetStatusOrNetwork = mapLegacyHttpError({
+  networkError: LegacySsoUpdateNetworkError,
+  statusError: LegacySsoUpdateUnexpectedStatusError,
+  networkMessage: (cause) => `failed to get sso provider: ${cause}`,
+  statusMessage: (_status, body) => `unexpected error fetching identity provider: ${body}`,
+});
+
+const SSO_UPDATE_COMMAND_PATH = ["sso", "update"] as const;
+
+/**
+ * Three independent mutual-exclusion groups (`metadata-file`/`metadata-url`
+ * plus two 2-element groups sharing `--domains`, not one 3-way group).
+ * Groups are checked in alphabetical order of the joined group key, which
+ * happens to match declaration order here: "domains add-domains" <
+ * "domains remove-domains" < "metadata-file metadata-url" alphabetically.
+ */
+const SSO_UPDATE_MUTEX_GROUPS = [
+  ["domains", "add-domains"],
+  ["domains", "remove-domains"],
+  ["metadata-file", "metadata-url"],
+] as const;
+
+/**
+ * Every value-taking (non-boolean) flag reachable when `sso update` parses:
+ * the command's own (`update.command.ts`) plus the root's persistent value
+ * flags — these tell `pflagArgvScan` which bare tokens consume the next argv
+ * token as their value (and therefore which tokens are pflag-effective
+ * positionals). `--skip-url-validation` is this command's only boolean flag
+ * and is deliberately excluded; booleans never consume a following token.
+ * `sso update` declares no shorthands of its own, so only the persistent
+ * `-o` is mapped.
+ */
+const SSO_UPDATE_SCAN_SPEC = {
+  valueFlagNames: new Set([
+    "project-ref",
+    "domains",
+    "add-domains",
+    "remove-domains",
+    "metadata-file",
+    "metadata-url",
+    "attribute-mapping-file",
+    "name-id-format",
+    ...PERSISTENT_VALUE_FLAG_NAMES,
+  ]),
+  valueFlagShorthands: PERSISTENT_VALUE_FLAG_SHORTHANDS,
+} as const;
+
+const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError) =>
+  Effect.gen(function* () {
+    const mapped = yield* Effect.flip(mapGetStatusOrNetwork(cause));
+    if (mapped._tag === "LegacySsoUpdateUnexpectedStatusError") {
+      const upgradeSuggested = yield* legacySuggestUpgrade({
+        projectRef: ref,
+        featureKey: "auth.saml_2",
+        statusCode: mapped.status,
+        response: legacyGateResponse(cause),
+      });
+      if (mapped.status === 404) {
+        return yield* Effect.fail(
+          new LegacySsoUpdateNotFoundError({
+            message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
+            upgradeSuggested,
+          }),
+        );
+      }
+      return yield* Effect.fail(
+        new LegacySsoUpdateUnexpectedStatusError({
+          status: mapped.status,
+          body: mapped.body,
+          message: mapped.message,
+          upgradeSuggested,
+        }),
+      );
+    }
+    return yield* Effect.fail(mapped);
+  });
+
+interface ExistingDomainItem {
+  readonly domain?: string;
+}
+
+/**
+ * Narrows a raw GET-provider JSON body to the `domains` shape `mergeDomains`
+ * consumes — the untyped counterpart of the generated client's provider
+ * schema, for the reconciled-profile GET path.
+ */
+function extractDomainItems(parsed: unknown): ReadonlyArray<ExistingDomainItem> | undefined {
+  if (parsed === null || typeof parsed !== "object") {
+    return undefined;
+  }
+  const domains = (parsed as Record<string, unknown>)["domains"];
+  if (!Array.isArray(domains)) {
+    return undefined;
+  }
+  return domains.map((item): ExistingDomainItem => {
+    if (item === null || typeof item !== "object") {
+      return {};
+    }
+    const domain = (item as Record<string, unknown>)["domain"];
+    return typeof domain === "string" ? { domain } : {};
+  });
+}
+
+function mergeDomains(
+  existing: ReadonlyArray<ExistingDomainItem> | undefined,
+  add: ReadonlyArray<string>,
+  remove: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  // Seed from current domains, apply removals, then add new entries. Uses a
+  // Set, so iteration order is unspecified; integration tests sort before
+  // asserting. The seed check is nil-ness only, so an empty-string domain
+  // from the GET response is kept, not filtered.
+  const set = new Set<string>();
+  if (existing !== undefined) {
+    for (const item of existing) {
+      if (typeof item.domain === "string") {
+        set.add(item.domain);
+      }
+    }
+  }
+  for (const removeDomain of remove) set.delete(removeDomain);
+  for (const addDomain of add) set.add(addDomain);
+  return Array.from(set);
+}
+
+export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
+  flags: LegacySsoUpdateFlags,
+) {
+  const output = yield* Output;
+  const goOutputFlag = yield* LegacyOutputFlag;
+  const api = yield* LegacyPlatformApi;
+  const httpClient = yield* HttpClient.HttpClient;
+  const cliSettings = yield* LegacyCliSettings;
+  const resolver = yield* LegacyProjectRefResolver;
+  const linkedProjectCache = yield* LegacyLinkedProjectCache;
+  const telemetryState = yield* LegacyTelemetryState;
+  const identityStitch = yield* Effect.serviceOption(LegacyIdentityStitch);
+  const stdio = yield* Stdio.Stdio;
+  const rawArgs = yield* stdio.args;
+
+  yield* Effect.gen(function* () {
+    // Arity validation, then flag-group validation, then the handler body,
+    // and the provider-ID format check runs inside the handler — so an
+    // arity violation must win over a mutex violation, and both must win
+    // over an invalid provider ID. Keep this block ahead of `validateUuid`
+    // below to match that precedence.
+    //
+    // "Set" means the flag was passed at all — not the resulting value.
+    // `--domains`/`--add-domains`/`--remove-domains` all default to `[]`,
+    // so `--domains=` (parses to an empty array) must still count as "set";
+    // gating on `.length > 0` would miss it — the same "changed vs truthy"
+    // gap `functions download`'s `--use-docker` had.
+    //
+    // The scan is pflag-faithful: a bare `--metadata-file --metadata-url` is
+    // pflag consuming `--metadata-url` as `metadata-file`'s (oddly named)
+    // value, not two flags being set — see `pflagArgvScan`.
+    const scan = pflagArgvScan(rawArgs, SSO_UPDATE_COMMAND_PATH, SSO_UPDATE_SCAN_SPEC);
+    const occurrences = scan.occurrences;
+
+    // pflag calls `Value.Set` for every occurrence in argv order, and an
+    // invalid value fails flag parsing before arity/mutex validation and the
+    // handler body — reachable here because the Effect parser resolves
+    // repeated flags first-wins without validating later occurrences
+    // (`--name-id-format=<valid> --name-id-format=bogus` parses here) and
+    // accepts `yes`/`no`, which `strconv.ParseBool` rejects. These checks
+    // precede the missing-value check because a missing value can only
+    // arise at the final argv token, so every recorded occurrence pflag
+    // would reject sits earlier in its sequential walk
+    // (`--skip-url-validation=yes --domains` names the invalid argument, not
+    // the missing one). Flags are checked in declaration order; when a
+    // single argv holds invalid occurrences of BOTH flags, pflag names
+    // whichever comes first in argv — a divergence this fixed order cannot
+    // see, accepted as unreachable through sane usage. The same helpers
+    // yield the pflag-effective (last-occurrence) values the handler acts
+    // on below.
+    const skipUrlValidation = yield* Result.match(
+      legacyPflagBoolValue(occurrences, "skip-url-validation"),
+      {
+        onFailure: (message: string) =>
+          Effect.fail(new LegacySsoInvalidFlagValueError({ message })),
+        onSuccess: Effect.succeed,
+      },
+    );
+    const nameIdFormat = yield* Result.match(
+      legacyPflagEnumValue(occurrences, "name-id-format", LEGACY_SSO_NAME_ID_FORMATS),
+      {
+        onFailure: (message: string) =>
+          Effect.fail(new LegacySsoInvalidFlagValueError({ message })),
+        onSuccess: Effect.succeed,
+      },
+    );
+
+    // Flag parsing fails when a bare value-taking flag is the final token
+    // (`sso update <id> --domains`) — before arity validation, every hook,
+    // and the handler body, so the missing argument is reported even when
+    // the arg count is also wrong (e.g. `sso update a b --domains`). The
+    // Effect parser accepts that argv (the flag parses as unset), so no
+    // GET/PUT may happen here either. Keep this ahead of the arity check.
+    if (scan.missingValueError !== undefined) {
+      return yield* Effect.fail(
+        new LegacySsoFlagNeedsArgumentError({ message: scan.missingValueError }),
+      );
+    }
+
+    // Arity validation counts pflag-effective positionals, which shift away
+    // from what the Effect parser saw whenever pflag consumed a flag token
+    // as a value: `--domains --metadata-url u <id>` is pflag handing
+    // `--metadata-url` to `--domains` and leaving BOTH `u` and `<id>`
+    // positional — the arg count is rejected before any hook, flag
+    // validation, or request. The parser's own arity check can't see this,
+    // so re-count from the scan (gated on `anchored`: an unscoped scan has
+    // no positional information).
+    if (scan.anchored && scan.positionals.length !== 1) {
+      return yield* Effect.fail(
+        new LegacySsoUpdateArityError({
+          message: `accepts 1 arg(s), received ${scan.positionals.length}`,
+        }),
+      );
+    }
+
+    // The effective `--profile`/`SUPABASE_PROFILE` is resolved immediately
+    // before the workdir change, so an unloadable profile loses to an
+    // arity violation but beats the workdir check, the mutex checks, and
+    // any GET/PUT — and a loadable one decides which API host receives
+    // them. Reachable exactly where the scan and the parser disagree (see
+    // `add.handler.ts` and `legacyResolvePflagProfile`); where they agree
+    // this is `none` and the config layer's client/apiUrl below are already
+    // pflag-effective.
+    const reconciledProfile = yield* legacyResolvePflagProfile(scan);
+    const profileApiUrl = Option.map(reconciledProfile, (profile) => profile.apiUrl);
+    // Reconciled-profile credentials, resolved ONCE for the main request and
+    // every auxiliary call (linked-project cache fill, upgrade-gate fallback
+    // GETs): the reconciled profile's credentials apply process-wide.
+    // `undefined` when the scan and the parser agree — every consumer then
+    // resolves from the config-layer services as before.
+    // Reconciled-profile credentials, resolved LAZILY (memoized) so the first
+    // read happens at the request site — the token gate fires AFTER
+    // required/mutex/workdir validation, so a missing or invalid reconciled
+    // token must not pre-empt those errors. Missing → the missing-token
+    // error; invalid → the validation failure propagates. The auxiliary
+    // calls (cache fill, upgrade-gate GETs) use the absorbed variant:
+    // failures skip, best-effort.
+    const reconciledTokenCached = Option.isSome(reconciledProfile)
+      ? yield* Effect.cached(legacyAccessTokenForProfile(reconciledProfile.value.name))
+      : undefined;
+    const reconciledTokenForAux =
+      reconciledTokenCached === undefined
+        ? Effect.succeed<Option.Option<Redacted.Redacted<string>> | undefined>(undefined)
+        : Effect.catch(reconciledTokenCached, () =>
+            Effect.succeed(Option.none<Redacted.Redacted<string>>()),
+          );
+
+    // The effective `--workdir`/`SUPABASE_WORKDIR` is validated after arity
+    // validation and before flag-group validation, so a missing directory
+    // loses to an arity violation but beats a mutex violation and any
+    // GET/PUT (e.g. `sso update a b --workdir /missing` reports the arity
+    // error; `sso update <id> --workdir /missing --domains a --add-domains
+    // b` reports the chdir failure).
+    yield* legacyValidatePflagWorkdir(scan);
+
+    for (const group of SSO_UPDATE_MUTEX_GROUPS) {
+      const changed = group.filter((flagName) => occurrences.has(flagName));
+      if (changed.length > 1) {
+        return yield* Effect.fail(
+          new LegacySsoMutexFlagError({
+            message: cobraMutuallyExclusiveErrorMessage(group, changed),
+          }),
+        );
+      }
+    }
+
+    // Reconcile everything the handler acts on to the pflag-effective values
+    // from the same scan — the Effect parser refuses to consume flag-shaped
+    // tokens as values while pflag consumes them unconditionally, and
+    // resolves repeated flags first-wins while pflag is last-wins, so the
+    // two can disagree on which flags are set and what they hold. See
+    // `add.handler.ts` and `legacy-pflag-reconcile.ts` for the full
+    // rationale. `--name-id-format` and `--skip-url-validation` were
+    // reconciled above, alongside their pflag value validation.
+    const projectRefFlag = legacyPflagStringValue(occurrences, "project-ref");
+    const metadataFile = legacyPflagStringValue(occurrences, "metadata-file");
+    const metadataUrl = legacyPflagStringValue(occurrences, "metadata-url");
+    const attributeMappingFile = legacyPflagStringValue(occurrences, "attribute-mapping-file");
+    const domains = legacyPflagSliceValue(occurrences, "domains", flags.domains);
+    const addDomains = legacyPflagSliceValue(occurrences, "add-domains", flags.addDomains);
+    const removeDomains = legacyPflagSliceValue(occurrences, "remove-domains", flags.removeDomains);
+
+    const providerId = yield* validateUuid(flags.providerId).pipe(
+      Result.match({ onFailure: Effect.fail, onSuccess: Effect.succeed }),
+    );
+
+    const ref = yield* resolver.resolve(projectRefFlag);
+
+    // Effective API base URL: the pflag-reconciled profile's when the scan
+    // and the parser disagreed on `--profile`, the config layer's otherwise.
+    const apiUrl = Option.getOrElse(profileApiUrl, () => cliSettings.apiUrl);
+
+    yield* Effect.gen(function* () {
+      const fetching =
+        output.format === "text" ? yield* output.task("Updating SSO provider...") : undefined;
+
+      // The typed client bakes the layer's apiUrl in at construction, so
+      // when the reconciled profile differs the GET must be issued raw
+      // against the effective host — the GET and PUT must target the same
+      // profile host, and a GET to the layer's host would be a request that
+      // should never happen. The error mapping and the spinner-fail/
+      // suggestion stderr ordering mirror the typed path (`handleGetError`)
+      // exactly.
+      const rawGetProvider = Effect.gen(function* () {
+        const tokenOpt =
+          reconciledTokenCached !== undefined
+            ? yield* Effect.flatMap(reconciledTokenCached, (resolved) =>
+                Option.isSome(resolved)
+                  ? Effect.succeed(resolved)
+                  : Effect.fail(
+                      new LegacySsoAccessTokenError({ message: legacyMissingAccessTokenMessage() }),
+                    ),
+              )
+            : yield* resolveLegacyAccessToken;
+        const request = HttpClientRequest.get(
+          `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
+        ).pipe(
+          Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
+          HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
+        );
+        const response = yield* httpClient.execute(request).pipe(
+          Effect.tapError(() => fetching?.fail() ?? Effect.void),
+          Effect.mapError(
+            (cause) =>
+              new LegacySsoUpdateNetworkError({
+                message: `failed to get sso provider: ${String(cause)}`,
+              }),
+          ),
+        );
+        // Every Management API response is wrapped by the identity stitch;
+        // the typed client stitches via its response transform
+        // (`legacy-platform-api.layer.ts`), so this raw GET must stitch
+        // through the same once-per-command guard — before the status gate,
+        // like the linked-project cache's raw GET. `serviceOption`: absent
+        // outside the real CLI tree (handler-level tests), where no
+        // telemetry runtime exists to stitch into.
+        if (Option.isSome(identityStitch)) {
+          yield* identityStitch.value.stitch(response);
+        }
+        // The body is read up front; the read error surfaces as
+        // `failed to get sso provider: %w`.
+        const rawBody = yield* response.text.pipe(
+          Effect.tapError(() => fetching?.fail() ?? Effect.void),
+          Effect.mapError(
+            (cause) =>
+              new LegacySsoUpdateNetworkError({
+                message: `failed to get sso provider: ${String(cause)}`,
+              }),
+          ),
+        );
+        const contentType = response.headers["content-type"] ?? "";
+        if (response.status === 200 && contentType.includes("json")) {
+          // A 200 JSON body that fails to parse exits with the parse error
+          // before any PUT; detail text is `JSON.parse`'s (documented
+          // micro-divergence).
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(rawBody);
+          } catch (cause) {
+            yield* fetching?.fail() ?? Effect.void;
+            return yield* Effect.fail(
+              new LegacySsoUpdateNetworkError({
+                message: `failed to get sso provider: ${cause instanceof Error ? cause.message : String(cause)}`,
+                decode: true,
+              }),
+            );
+          }
+          return { domains: extractDomainItems(parsed) };
+        }
+        // Non-200 — or a 200 without a JSON content type, which falls into
+        // the same branch: gate check, then 404 / unexpected-status.
+        yield* fetching?.fail() ?? Effect.void;
+        const bodyText = sanitizeLegacyErrorBody(rawBody);
+        const upgradeSuggested = yield* legacySuggestUpgrade({
+          projectRef: ref,
+          featureKey: "auth.saml_2",
+          statusCode: response.status,
+          response,
+          apiUrl,
+          ...(yield* Effect.map(reconciledTokenForAux, (token) =>
+            token !== undefined ? { accessToken: token } : {},
+          )),
+        });
+        if (response.status === 404) {
+          return yield* Effect.fail(
+            new LegacySsoUpdateNotFoundError({
+              message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
+              upgradeSuggested,
+            }),
+          );
+        }
+        return yield* Effect.fail(
+          new LegacySsoUpdateUnexpectedStatusError({
+            status: response.status,
+            body: bodyText,
+            message: `unexpected error fetching identity provider: ${bodyText}`,
+            upgradeSuggested,
+          }),
+        );
+      });
+
+      // Always GETs first, regardless of which flags are set.
+      const existing = yield* Option.isSome(profileApiUrl)
+        ? rawGetProvider
+        : api.v1.getASsoProvider({ ref, provider_id: providerId }).pipe(
+            Effect.tapError(() => fetching?.fail() ?? Effect.void),
+            Effect.catch((cause) => handleGetError(ref, providerId, cause)),
+          );
+
+      const body: Record<string, unknown> = {};
+
+      if (Option.isSome(metadataFile)) {
+        const xml = yield* readMetadata(metadataFile.value);
+        body["metadata_xml"] = xml;
+      } else if (Option.isSome(metadataUrl)) {
+        if (!skipUrlValidation) {
+          yield* validateMetadataUrl(metadataUrl.value).pipe(
+            // Note: single space between cause and `Use`, with a trailing
+            // period — `sso add` uses the same format minus the period.
+            Effect.mapError(
+              (cause) =>
+                new LegacySsoUpdateMetadataFileError({
+                  message: `${cause.message} Use --skip-url-validation to suppress this error.`,
+                  reason: "invalid_url",
+                }),
+            ),
+          );
+        }
+        body["metadata_url"] = metadataUrl.value;
+      }
+
+      if (Option.isSome(attributeMappingFile)) {
+        const mapping = yield* readAttributeMapping(attributeMappingFile.value);
+        body["attribute_mapping"] = mapping;
+      }
+
+      if (domains.length > 0) {
+        body["domains"] = [...domains];
+      } else {
+        // Both domain flags default to a non-nil empty array and are passed
+        // unconditionally, so every `sso update` PUT recomputes and sends
+        // `domains`, even when no domain flag was passed. An empty merged
+        // set serializes as `"domains":[]` — never omitted. Established
+        // output contract.
+        body["domains"] = mergeDomains(existing.domains, addDomains, removeDomains);
+      }
+
+      if (Option.isSome(nameIdFormat)) {
+        body["name_id_format"] = nameIdFormat.value;
+      }
+
+      const tokenOpt =
+        reconciledTokenCached !== undefined
+          ? yield* Effect.flatMap(reconciledTokenCached, (resolved) =>
+              Option.isSome(resolved)
+                ? Effect.succeed(resolved)
+                : Effect.fail(
+                    new LegacySsoAccessTokenError({ message: legacyMissingAccessTokenMessage() }),
+                  ),
+            )
+          : yield* resolveLegacyAccessToken;
+
+      // See `add.handler.ts` for the rationale behind `bearerToken(Redacted)`.
+      const request = HttpClientRequest.put(
+        `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
+      ).pipe(
+        Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
+        HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
+        // See `add.handler.ts` — Go-struct key order required for cli-e2e parity.
+        HttpClientRequest.bodyText(encodeGoStructJsonBody(body), "application/json"),
+      );
+
+      const response = yield* httpClient.execute(request).pipe(
+        Effect.tapError(() => fetching?.fail() ?? Effect.void),
+        Effect.mapError(
+          (cause) =>
+            new LegacySsoUpdateNetworkError({
+              message: `failed to update sso provider: ${String(cause)}`,
+            }),
+        ),
+      );
+
+      if (response.status !== 200) {
+        const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+        // Cap + sanitise to match `mapLegacyHttpError`'s defences — see add handler
+        // for the rationale; the raw-HTTP path must not bypass these.
+        const bodyText = sanitizeLegacyErrorBody(rawBody);
+        const upgradeSuggested = yield* legacySuggestUpgrade({
+          projectRef: ref,
+          featureKey: "auth.saml_2",
+          statusCode: response.status,
+          response,
+          apiUrl,
+          ...(yield* Effect.map(reconciledTokenForAux, (token) =>
+            token !== undefined ? { accessToken: token } : {},
+          )),
+        });
+        yield* fetching?.fail() ?? Effect.void;
+        return yield* Effect.fail(
+          // Reuses the GET error message even for PUT.
+          new LegacySsoUpdateUnexpectedStatusError({
+            status: response.status,
+            body: bodyText,
+            message: `unexpected error fetching identity provider: ${bodyText}`,
+            upgradeSuggested,
+          }),
+        );
+      }
+
+      const parsedJson = yield* response.json.pipe(Effect.orElseSucceed((): unknown => ({})));
+      yield* fetching?.clear() ?? Effect.void;
+
+      const goFmt = Option.getOrUndefined(goOutputFlag);
+
+      if (goFmt === "json") {
+        yield* output.raw(encodeGoJson(parsedJson));
+        return;
+      }
+      if (goFmt === "yaml") {
+        yield* output.raw(encodeLegacyGoYaml(parsedJson, LEGACY_GO_SSO_PROVIDER_RESPONSE));
+        return;
+      }
+      if (goFmt === "toml") {
+        // TOML encode failure wrapping — same pattern as list/show.
+        const toml = yield* Effect.try({
+          try: () => encodeLegacyGoToml(parsedJson, LEGACY_GO_SSO_PROVIDER_RESPONSE),
+          catch: (cause) =>
+            new LegacySsoTomlEncodeError({
+              message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
+            }),
+        });
+        yield* output.raw(toml);
+        return;
+      }
+      if (goFmt === "env") {
+        return;
+      }
+
+      if (output.format === "json" || output.format === "stream-json") {
+        yield* output.success(
+          "",
+          parsedJson !== null && typeof parsedJson === "object"
+            ? (parsedJson as Record<string, unknown>)
+            : { value: parsedJson },
+        );
+        return;
+      }
+
+      yield* output.raw(renderSingleProvider(toLegacySsoProviderView(parsedJson)));
+    }).pipe(
+      // Linked-project cache fill GETs `/v1/projects/{ref}` through the
+      // reconciled host, never the config layer's.
+      Effect.ensuring(
+        // Resolved INSIDE the ensuring effect — the memoized token read must
+        // not run before the handler body (see the token-gate ordering above).
+        Effect.flatMap(reconciledTokenForAux, (token) =>
+          linkedProjectCache.cache(ref, undefined, Option.getOrUndefined(profileApiUrl), token),
+        ),
+      ),
+    );
+  }).pipe(Effect.ensuring(telemetryState.flush));
+});

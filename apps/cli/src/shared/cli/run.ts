@@ -21,7 +21,7 @@ import { Credentials } from "../auth/credentials.service.ts";
 import type { CliProjectHome } from "../config/cli-project-home.service.ts";
 import type { CliSettings } from "../config/cli-settings.service.ts";
 import type { ProjectLinkState } from "../config/project-link-state.service.ts";
-import type { LegacyPlatformApiFactory } from "../../legacy/auth/legacy-platform-api-factory.service.ts";
+import type { LegacyPlatformApiFactory } from "../../auth/legacy-platform-api-factory.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
@@ -129,7 +129,7 @@ const globalFlagsWithValues = new Set([
 // `["db", "start"]` (top-level `db start`) is ALSO deliberately not listed here, for the exact
 // same reason as `start` above: it used to proxy container bootstrap to the hidden Go
 // `db __db-bootstrap --mode start` seam, which held SIGINT/SIGTERM itself, but CLI-1954's
-// native port (`legacy/commands/db/start/start.handler.ts` -> `legacyStartDatabase`) installs
+// native port (`commands/db/start/start.handler.ts` -> `legacyStartDatabase`) installs
 // no signal handling of its own — it relies on the SAME `Effect.onError(() =>
 // legacyRollbackStart(...))` wrapper `supabase start` uses, which only ever fires when this
 // process's own fiber is interrupted (by `Fiber.interrupt` below, or by an ordinary typed
@@ -141,7 +141,7 @@ const globalFlagsWithValues = new Set([
 // held SIGINT/SIGTERM/SIGHUP itself while the Go child recreated the container — the global
 // handler's own `Fiber.interrupt` would otherwise race that child's Docker cleanup and lose
 // its real exit status. CLI-1955 removed that seam entirely: `db reset --local` is now fully
-// native TS (`legacy/shared/db-bootstrap/recreate-local-database.ts`), installing no signal
+// native TS (`command-internal/db-bootstrap/recreate-local-database.ts`), installing no signal
 // handling of its own. Its only remaining Go child is the niche `--experimental` remote
 // delegate, via the SAME `LegacyGoProxy.exec`/`execCapture` every other unlisted legacy
 // command already uses safely alongside this global handler — so `db reset` was removed from
@@ -511,7 +511,7 @@ export type ParseErrorConsoleDisposition = "flush-unchanged" | "drop" | "flush-h
  * library's own lexer, which treats `--` the same way (`internal/lexer.ts`,
  * `argv.indexOf("--")`). Without this cutoff, a command like
  * `migration repair -- 20230101000000 --status` (a required `Flag.choice`,
- * `legacy/commands/migration/repair/repair.command.ts`) would have its
+ * `commands/migration/repair/repair.command.ts`) would have its
  * trailing `--status` positional argument misread as evidence the `--status`
  * flag was given, flipping a genuinely-absent-flag failure (Go: no usage
  * shown) into a "present but missing its value" one (Go: usage shown) — see
