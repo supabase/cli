@@ -105,7 +105,7 @@ const runStatus = (options: {
     createStack: () => Effect.die("create must not run"),
     findStack: (input) => {
       findInputs.push(input);
-      return Effect.succeed(Option.some(descriptor));
+      return Effect.succeed(options.missingTarget ? Option.none() : Option.some(descriptor));
     },
     openStack: () => Effect.die("open must not run"),
     inspectStack: (_stackId, inspectOptions) => {
@@ -289,11 +289,27 @@ describe("experimental stack status", () => {
           expect(missing.out.stdoutText).toContain("Config drift: unavailable");
           expect(invalid.out.stdoutText).toContain("Config drift: unavailable");
           expect(invalid.out.stdoutText).not.toContain("FAKE_STATUS_SECRET");
-          expect(invalidJson.out.stdoutText).not.toContain("FAKE_STATUS_SECRET");
           const success = invalidJson.out.messages.find((message) => message.type === "success");
-          expect(success?.data).not.toEqual(
-            expect.objectContaining({ message: expect.stringContaining("FAKE_STATUS_SECRET") }),
-          );
+          expect(success?.data).toMatchObject({
+            config_drift: {
+              status: "unavailable",
+              message: "Project configuration could not be loaded; fix it before checking drift.",
+            },
+          });
+          expect(JSON.stringify(success?.data)).not.toContain("FAKE_STATUS_SECRET");
+        }),
+      ),
+    );
+  });
+
+  it.effect("points an empty current context to the start command", () => {
+    const run = runStatus({ missingTarget: true });
+    return run.effect.pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.suggestion).toBe("Run supabase experimental stack start first.");
+          expect(run.inspectInputs).toEqual([]);
         }),
       ),
     );
