@@ -9,10 +9,12 @@ import { legacyResolveYesWithProjectEnv } from "../shared/legacy/global-flags.ts
 import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { legacyBold, legacyYellow } from "./legacy-colors.ts";
 import { legacyLoadProjectEnv } from "./legacy-db-config.toml-read.ts";
+import { legacyShouldSearchAncestors } from "./legacy-workdir-search.ts";
 import { legacyPromptYesNo } from "../shared/legacy/legacy-prompt-yes-no.ts";
 import {
   legacyResolveStorageCredentials,
   legacyStorageGatewayFetch,
+  legacyValidateLocalApiOverrides,
 } from "./legacy-storage-credentials.ts";
 import {
   legacyParseFileSizeLimit,
@@ -162,17 +164,23 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
     readonly config: CliConfig;
     readonly document: Record<string, unknown> | undefined;
   };
+  /**
+   * Already-resolved nested project dotenv map, when the caller's own config
+   * resolution walked it (`db reset`'s context, `start`) — same passthrough
+   * idea as `resolvedConfig` above. When omitted (the standalone command),
+   * loaded once below and shared by the `SUPABASE_YES` fallback and the
+   * storage credentials `SUPABASE_API_*` fold.
+   */
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
 }) {
   const output = yield* Output;
   const cliSettings = yield* LegacyCliSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const projectEnvValues =
+    opts.projectEnvValues ?? (yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir));
   // `--yes` OR `SUPABASE_YES`.
-  const yes =
-    opts.yes ??
-    (yield* legacyResolveYesWithProjectEnv(
-      yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir),
-    ));
+  const yes = opts.yes ?? (yield* legacyResolveYesWithProjectEnv(projectEnvValues));
   const { projectRef, emitSummary } = opts;
   const interactive = opts.interactive ?? true;
 
@@ -181,7 +189,9 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   // when the caller already supplied `resolvedConfig` — see that option's doc
   // comment above.
   const loadOptions: InternalLoadCliConfigOptions =
-    projectRef !== "" ? { projectRef, goViperCompat: true } : { goViperCompat: true };
+    projectRef !== ""
+      ? { projectRef, goViperCompat: true, search: legacyShouldSearchAncestors(cliSettings) }
+      : { goViperCompat: true, search: legacyShouldSearchAncestors(cliSettings) };
   const loaded =
     opts.resolvedConfig !== undefined
       ? null
@@ -199,6 +209,11 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   // into the no-op short-circuit; `--linked` + no-config falls through to the
   // remote path so auth/project/API failures surface. `resolvedConfig` (when
   // given) always wins over a `null` `loaded` — see that option's doc comment.
+  // The standalone `seed buckets` command now rejects an explicit-but-project-less
+  // workdir in its own handler (`buckets.handler.ts`,
+  // `legacyRequireExplicitWorkdirProject`) before ever reaching this function, so
+  // this fallback is reached only for a DEFAULTED workdir, or a `resolvedConfig`
+  // caller (`start`/`db reset`, which never load config here at all).
   const config =
     opts.resolvedConfig?.config ??
     (loaded === null ? legacyDecodeDefaultCliConfig({}) : loaded.config);
@@ -239,6 +254,13 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
 
   // Short-circuit: nothing to seed (ref present → never short-circuits).
   if (projectRef === "" && bucketNames.length === 0 && !hasVectorBuckets) {
+    // The `SUPABASE_API_*` override decode belongs to config load, which runs
+    // before the no-op path — a malformed override or invalid `api.port` fails
+    // even with nothing to seed, same as the bucket-name/size validations
+    // above, including the TLS cert/key pairing rule. Validate-only: the
+    // seeding path re-resolves the same fold through
+    // `legacyResolveStorageCredentials`.
+    yield* legacyValidateLocalApiOverrides(config.api, projectEnvValues);
     if (emitSummary && output.format !== "text") {
       yield* output.success("", { ...emptySummary() });
     }
@@ -246,7 +268,11 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   }
 
   // Build the Storage service-gateway client (local or remote).
-  const credentials = yield* legacyResolveStorageCredentials({ projectRef, config });
+  const credentials = yield* legacyResolveStorageCredentials({
+    projectRef,
+    config,
+    projectEnvValues,
+  });
 
   // All gateway operations run with an explicit non-DoH fetch (CA-trusting for
   // local + https, plain `globalThis.fetch` otherwise). The api-keys lookup inside

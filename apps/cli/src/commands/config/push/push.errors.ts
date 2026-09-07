@@ -5,6 +5,7 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
+import { legacyMintConfigTargetErrors } from "../config.target.ts";
 
 /**
  * Tagged errors for `supabase config push`.
@@ -42,12 +43,26 @@ interface StatusErrorArgs {
   readonly message: string;
 }
 
-/** TOML parse failure (rewraps the packages/config parse error). Aborts before any network call. */
+/** Local config file missing or unparseable. Aborts before any network call. */
 export class LegacyConfigPushLoadConfigError extends Data.TaggedError(
   "LegacyConfigPushLoadConfigError",
 )<MessageOnlyArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
+  }
+}
+
+/**
+ * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
+ * directory (`legacyValidateWorkdirIsDirectory`). Only reachable when the
+ * user explicitly set it — beats target resolution, the config load, and
+ * every network call.
+ */
+export class LegacyConfigPushWorkdirError extends Data.TaggedError(
+  "LegacyConfigPushWorkdirError",
+)<MessageOnlyArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }
 
@@ -57,14 +72,13 @@ export class LegacyConfigPushLoadConfigError extends Data.TaggedError(
 // branches — mirrors `config diff`'s own error set 1:1, under push's own
 // names (`diff.errors.ts`).
 
+const targetErrors = legacyMintConfigTargetErrors("LegacyConfigPush");
+
 /** `--project-ref` named a branch the parent project does not have. */
-export class LegacyConfigPushBranchNotFoundError extends Data.TaggedError(
-  "LegacyConfigPushBranchNotFoundError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidInput;
-  }
-}
+export const LegacyConfigPushBranchNotFoundError = targetErrors.BranchNotFoundError;
+export type LegacyConfigPushBranchNotFoundError = InstanceType<
+  typeof LegacyConfigPushBranchNotFoundError
+>;
 
 /**
  * `--project-ref` named a branch (by name), but no project is linked to
@@ -72,37 +86,28 @@ export class LegacyConfigPushBranchNotFoundError extends Data.TaggedError(
  * `supabase/.temp/linked-project.json`, or `supabase/.temp/project-ref`
  * yielded a candidate.
  */
-export class LegacyConfigPushBranchNotLinkedError extends Data.TaggedError(
-  "LegacyConfigPushBranchNotLinkedError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.projectNotLinked;
-  }
-}
+export const LegacyConfigPushBranchNotLinkedError = targetErrors.BranchNotLinkedError;
+export type LegacyConfigPushBranchNotLinkedError = InstanceType<
+  typeof LegacyConfigPushBranchNotLinkedError
+>;
 
 /**
  * `--project-ref` named a branch (by name), and a parent-project candidate
  * exists but is not ref-shaped — corrupt or stale linked state.
  */
-export class LegacyConfigPushParentRefInvalidError extends Data.TaggedError(
-  "LegacyConfigPushParentRefInvalidError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.relinkProject;
-  }
-}
+export const LegacyConfigPushParentRefInvalidError = targetErrors.ParentRefInvalidError;
+export type LegacyConfigPushParentRefInvalidError = InstanceType<
+  typeof LegacyConfigPushParentRefInvalidError
+>;
 
 /**
  * The resolved branch has no project ref yet (still provisioning) — guards
  * against an empty/placeholder ref reaching a push target.
  */
-export class LegacyConfigPushBranchNotReadyError extends Data.TaggedError(
-  "LegacyConfigPushBranchNotReadyError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return { ...actionability.apiStatus, fingerprint_suffix: "branch_not_ready" };
-  }
-}
+export const LegacyConfigPushBranchNotReadyError = targetErrors.BranchNotReadyError;
+export type LegacyConfigPushBranchNotReadyError = InstanceType<
+  typeof LegacyConfigPushBranchNotReadyError
+>;
 
 export class LegacyConfigPushBranchResolveNetworkError extends Data.TaggedError(
   "LegacyConfigPushBranchResolveNetworkError",

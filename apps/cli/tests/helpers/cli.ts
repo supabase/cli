@@ -70,6 +70,8 @@ type RunResult = {
   stdout: string;
   stderr: string;
   exitCode: number;
+  /** Set when the harness exit bound fired and SIGKILLed the process group. */
+  timedOutAfterMs?: number;
 };
 
 const DEFAULT_EXIT_TIMEOUT_MS = 60_000;
@@ -410,8 +412,10 @@ export function spawnSupabase(
       return closeResult;
     }
 
+    let timedOut = false;
     const result = await new Promise<RunResult>((resolve) => {
       const timeout = setTimeout(() => {
+        timedOut = true;
         killProcessGroup(proc.pid!, "SIGKILL");
         try {
           proc.kill("SIGKILL");
@@ -430,7 +434,7 @@ export function spawnSupabase(
     });
 
     disposeOwnHome();
-    return result;
+    return timedOut ? { ...result, timedOutAfterMs: timeoutMs } : result;
   };
 
   return {
@@ -553,12 +557,21 @@ export async function runSupabase(
 }
 
 export function requireCliSuccess(
-  result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string },
+  result: {
+    readonly exitCode: number;
+    readonly stdout: string;
+    readonly stderr: string;
+    readonly timedOutAfterMs?: number;
+  },
   command: string,
 ): void {
   if (result.exitCode !== 0) {
+    const reason =
+      result.timedOutAfterMs === undefined
+        ? `exit ${result.exitCode}`
+        : `exit ${result.exitCode}; harness SIGKILLed it after ${result.timedOutAfterMs}ms without exit`;
     throw new Error(
-      `${command} failed (exit ${result.exitCode})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      `${command} failed (${reason})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
     );
   }
 }

@@ -205,8 +205,7 @@ SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
 Commands currently requiring this — the full proxied surface, nothing else needs a Go binary at all:
 
 - `db diff` (for `--use-pg-schema`)
-- `db pull` (for `--experimental`)
 - `db branch create`, `db branch delete`, `db branch list`, `db branch switch`
-- `db remote changes`, `db remote commit`
+- `db remote changes`
 - `gen keys`
 - `functions download` (for the hidden `--legacy-bundle` flag)

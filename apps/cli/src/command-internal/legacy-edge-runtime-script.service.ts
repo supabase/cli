@@ -24,16 +24,12 @@ export interface LegacyEdgeRuntimeFile {
 export interface LegacyEdgeRuntimeRunOpts {
   /** The `index.ts` program (already version-interpolated for pg-delta). */
   readonly script: string;
-  /** Container env (`KEY` → value); merged with `extraEnv`. */
+  /** Container env (`KEY` → value). */
   readonly env: Readonly<Record<string, string>>;
   /** Volume binds (e.g. the Deno cache volume + `cwd:/workspace`). */
   readonly binds: ReadonlyArray<string>;
   /** Prefix for the failure message, matching `errPrefix`. */
   readonly errPrefix: string;
-  /** Extra files written next to `index.ts` (e.g. `.npmrc`). */
-  readonly extraFiles?: ReadonlyArray<LegacyEdgeRuntimeFile>;
-  /** Extra container env appended after `env` (`WithExtraEnv`). */
-  readonly extraEnv?: Readonly<Record<string, string>>;
   /**
    * Effective `edge_runtime.deno_version` for this run, used to pick the image tag
    * (`1` → the `deno1` image). Lets a caller that has the remote-merged config (e.g.

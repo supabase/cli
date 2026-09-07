@@ -312,10 +312,11 @@ export function makeWorkersProject(files: Readonly<Record<string, string>> = {})
 }
 
 /**
- * `LegacyCliSettings`, trimmed to what the worker commands read: the workdir they
- * treat as the project, and the host their URLs are built on.
+ * `LegacyCliSettings` for the worker commands: the workdir they treat as the
+ * project, and the host their URLs are built on, plus every other field
+ * `LegacyCliSettingsShape` requires.
  */
-const legacyTestCliConfigLayer = (workdir: string) =>
+const legacyTestCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
   Layer.succeed(LegacyCliSettings, {
     profile: "supabase",
     apiUrl: "https://api.supabase.com",
@@ -325,8 +326,9 @@ const legacyTestCliConfigLayer = (workdir: string) =>
     accessToken: Option.some(Redacted.make("sbp_test")),
     projectId: Option.none(),
     workdir,
+    explicitWorkdir,
     userAgent: "supabase",
-  } as unknown as LegacyCliSettings["Service"]);
+  });
 
 /** The resolver, stubbed: `--project-ref` wins, else the linked project. */
 const legacyTestProjectRefLayer = (linked: boolean) =>
@@ -345,6 +347,8 @@ const legacyTestProjectRefLayer = (linked: boolean) =>
 
 export interface WorkersSetupOptions {
   readonly workdir: string;
+  /** cliSettings.explicitWorkdir override — true iff --workdir/SUPABASE_WORKDIR was set verbatim. */
+  readonly explicitWorkdir?: boolean;
   /**
    * The directory the command was invoked from, when it differs from the
    * project — which is what a relative `--source` resolves against.
@@ -432,7 +436,7 @@ export function setupLegacyWorkers(options: WorkersSetupOptions) {
       http.layer,
       mockRuntimeInfo({ cwd: options.cwd ?? options.workdir }),
       mockTty({ stdinIsTty: options.stdinIsTty ?? interactive, stdoutIsTty: interactive }),
-      legacyTestCliConfigLayer(options.workdir),
+      legacyTestCliConfigLayer(options.workdir, options.explicitWorkdir ?? false),
       legacyTestProjectRefLayer(options.linked !== false),
       telemetry.layer,
       mockLegacyLinkedProjectCacheLayer,

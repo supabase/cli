@@ -7,6 +7,7 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import { Output } from "../../../shared/output/output.service.ts";
 import { legacyIterateStoragePaths, legacyIterateStoragePathsAll } from "../storage.iterate.ts";
 import {
+  legacyAssertStorageWorkdir,
   legacyConnectStorageGateway,
   legacyLoadStorageConfig,
   legacyParseStorageUrlEffect,
@@ -33,6 +34,8 @@ export const legacyStorageLs = Effect.fn("legacy.storage.ls")(function* (
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
+    yield* legacyAssertStorageWorkdir(cliSettings.workdir);
+
     // `--project-ref` never implies `--linked` and must not be silently
     // discarded on the local target — see push.handler.ts's identical guard
     // (db push) for the full TS-only rationale.
@@ -53,7 +56,7 @@ export const legacyStorageLs = Effect.fn("legacy.storage.ls")(function* (
 
     // Config is always loaded; a `[remotes.*]` match prints the override
     // line.
-    const loaded = yield* legacyLoadStorageConfig(cliSettings.workdir, projectRef);
+    const loaded = yield* legacyLoadStorageConfig(cliSettings, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }

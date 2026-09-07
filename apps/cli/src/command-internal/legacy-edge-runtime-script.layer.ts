@@ -106,9 +106,9 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
           );
           const port = yield* allocateFreeHostPort;
           const startCmd = legacyBuildEdgeRuntimeStartCmd({ port, debug }).join(" ");
-          const files = [{ name: "index.ts", content: opts.script }, ...(opts.extraFiles ?? [])];
+          const files = [{ name: "index.ts", content: opts.script }];
           const entrypointBody = legacyBuildEdgeRuntimeEntrypoint(files, startCmd);
-          const env = { ...opts.env, ...opts.extraEnv };
+          const env = opts.env;
 
           const result = yield* docker
             .runCapture({

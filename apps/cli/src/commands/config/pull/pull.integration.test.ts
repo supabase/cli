@@ -4,6 +4,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -22,6 +23,7 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
+  LEGACY_DEFAULT_API_URL,
   LEGACY_VALID_REF,
   legacyJsonResponse,
   legacyTransportFailure,
@@ -386,6 +388,10 @@ interface SetupOpts {
   /** Runs as a side effect of every `promptConfirm` call, BEFORE it resolves
    * — simulates a concurrent edit landing while the prompt is on screen. */
   readonly confirmSideEffect?: () => void;
+  /** cliSettings.workdir override (what `--workdir` resolves to); defaults to the temp project root. */
+  readonly workdir?: string;
+  /** cliSettings.explicitWorkdir override — true iff --workdir/SUPABASE_WORKDIR was set verbatim. */
+  readonly explicitWorkdir?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -447,7 +453,8 @@ function setup(opts: SetupOpts = {}) {
       out: { layer: outputLayer },
       api,
       cliSettings: mockLegacyCliSettings({
-        workdir: tempRoot.current,
+        workdir: opts.workdir ?? tempRoot.current,
+        explicitWorkdir: opts.explicitWorkdir ?? false,
         ...(opts.projectId !== undefined
           ? { projectId: opts.projectId }
           : opts.linked === false
@@ -706,7 +713,12 @@ describe("legacy config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("LegacyConfigPullLoadConfigError");
+      const rendered = JSON.stringify(exit);
+      expect(rendered).toContain("LegacyConfigPullLoadConfigError");
+      // A DEFAULTED workdir with no project keeps the established
+      // `supabase init` suggestion — only an EXPLICIT --workdir/SUPABASE_WORKDIR
+      // gets the resolved-path wording (see the CLI-2285 regression below).
+      expect(rendered).toContain("supabase init");
       // The load runs before any network call or target resolution, so the
       // linked-project cache never fires — no ref ever resolved.
       expect(api.requests).toHaveLength(0);
@@ -714,6 +726,63 @@ describe("legacy config pull integration", () => {
       expect(linkedProjectCache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "does not climb to an ancestor project's config when --workdir names a subdirectory with no config of its own",
+    () => {
+      // CLI-2285 regression: an explicit --workdir is authoritative and must
+      // never let `loadCliConfig` climb past it — a `config pull --workdir
+      // ./sub` from a project whose subdirectory has no supabase/ of its
+      // own must not silently overwrite an unrelated PARENT project's
+      // config. The ancestor (tempRoot) genuinely has a valid config.toml
+      // (captured below to prove it is never touched) and the subdirectory
+      // genuinely has none.
+      const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
+      const sub = join(tempRoot.current, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const { layer } = setup({ toml: before, yes: true, workdir: sub, explicitWorkdir: true });
+      const path = configPath();
+      const beforeStat = { mtimeMs: statSync(path).mtimeMs, contents: readFileSync(path, "utf8") };
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyConfigPullLoadConfigError");
+        expect(rendered).toContain("file not found");
+        // An EXPLICIT workdir never gets the ancestor-search-exhausted
+        // `supabase init` hint — it names the resolved directory instead, and
+        // points at the flag/env var that must change.
+        expect(rendered).not.toContain("supabase init");
+        expect(rendered).toContain("--workdir/SUPABASE_WORKDIR");
+        expect(rendered).toContain(sub);
+        // Nothing was written to disk anywhere — the ancestor config file
+        // stays byte-identical and untouched.
+        expect(statSync(path).mtimeMs).toBe(beforeStat.mtimeMs);
+        expect(readFileSync(path, "utf8")).toBe(beforeStat.contents);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "an explicit --workdir naming a directory that does not exist at all fails before any config load",
+    () => {
+      // Distinct from the "exists but holds no project" regression above:
+      // this path was never created, so `legacyValidateWorkdirIsDirectory`
+      // must fail first, and nothing is ever written to disk.
+      const missing = join(tempRoot.current, "does-not-exist");
+      const { layer, api } = setup({ workdir: missing, explicitWorkdir: true });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyConfigPullWorkdirError");
+        expect(rendered).toContain("failed to change workdir: chdir");
+        expect(api.requests).toHaveLength(0);
+        // Nothing was written to disk — the missing directory stays missing.
+        expect(existsSync(missing)).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   // -------------------------------------------------------------------------
   // Scope resolution / --remote-label (CLI-2064 §1.1).
@@ -1808,7 +1877,7 @@ describe("legacy config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a 404 on the config read suggests projects list", () => {
+  it.live("a 404 on the config read suggests projects list and hedges the api host", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 404, body: { message: "not found" } },
@@ -1817,8 +1886,9 @@ describe("legacy config pull integration", () => {
       const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       const rendered = JSON.stringify(exit);
-      expect(rendered).toContain(LEGACY_VALID_REF);
+      expect(rendered).toContain(`Could not read configuration for project ${LEGACY_VALID_REF}`);
       expect(rendered).toContain("supabase projects list");
+      expect(rendered).toContain(LEGACY_DEFAULT_API_URL);
     }).pipe(Effect.provide(layer));
   });
 

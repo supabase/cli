@@ -28,6 +28,7 @@ function mockCliSettings(opts: { workdir: string; projectId?: string }) {
     accessToken: Option.none(),
     projectId: opts.projectId === undefined ? Option.none() : Option.some(opts.projectId),
     workdir: opts.workdir,
+    explicitWorkdir: false,
     userAgent: "SupabaseCLI/0.0.0-dev",
   });
 }

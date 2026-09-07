@@ -113,16 +113,7 @@ const base = vitestTest.extend<LiveFixtures>({
 /** The sole live fixture. The live global setup owns the shared project. */
 export const test = base;
 
-export function requireLiveSuccess(
-  result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string },
-  command: string,
-): void {
-  if (result.exitCode !== 0) {
-    throw new Error(
-      `${command} failed (exit ${result.exitCode})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-    );
-  }
-}
+export { requireCliSuccess as requireLiveSuccess };
 
 /** Flags every storage live test passes: the suite links the shared project
  * and the storage command family is experimental-gated. */
@@ -187,7 +178,7 @@ export async function removePostgresConfigLiveOverride(
     ...experimentalProjectLiveFlags(project),
     "--no-restart",
   ]);
-  requireLiveSuccess(removed, `postgres-config delete cleanup for ${key}`);
+  requireCliSuccess(removed, `postgres-config delete cleanup for ${key}`);
 }
 
 /** Exact-version cleanup for migration live tests; reverting an absent row is a no-op delete. */
@@ -205,7 +196,7 @@ export async function removeLiveMigration(
     "--db-url",
     project.dbUrl,
   ]);
-  requireLiveSuccess(reverted, `migration repair cleanup for ${version}`);
+  requireCliSuccess(reverted, `migration repair cleanup for ${version}`);
 }
 
 /**
@@ -226,7 +217,7 @@ export async function expectPostgresConfigLiveOverride(
       ["postgres-config", "get", ...experimentalProjectLiveFlags(project), "-o", "json"],
       { exitTimeoutMs: 20_000 },
     );
-    requireLiveSuccess(proof, label);
+    requireCliSuccess(proof, label);
     let config: unknown;
     try {
       config = JSON.parse(proof.stdout);

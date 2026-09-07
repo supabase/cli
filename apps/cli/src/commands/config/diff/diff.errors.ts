@@ -5,6 +5,7 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
+import { legacyMintConfigTargetErrors } from "../config.target.ts";
 
 interface NetworkErrorArgs {
   readonly message: string;
@@ -27,6 +28,19 @@ export class LegacyConfigDiffLoadConfigError extends Data.TaggedError(
 }
 
 /**
+ * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
+ * directory (`legacyValidateWorkdirIsDirectory`). Only reachable when the
+ * user explicitly set it — beats the config load and every network call.
+ */
+export class LegacyConfigDiffWorkdirError extends Data.TaggedError("LegacyConfigDiffWorkdirError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+/**
  * The Go-compat global `-o/--output` flag was passed. `config diff` is a
  * net-new TS command with no Go parity contract, so machine output goes
  * through `--output-format` only (per Colum on CLI-2156).
@@ -39,14 +53,13 @@ export class LegacyConfigDiffOutputFlagUnsupportedError extends Data.TaggedError
   }
 }
 
+const targetErrors = legacyMintConfigTargetErrors("LegacyConfigDiff");
+
 /** `--project-ref` named a branch the parent project does not have. */
-export class LegacyConfigDiffBranchNotFoundError extends Data.TaggedError(
-  "LegacyConfigDiffBranchNotFoundError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidInput;
-  }
-}
+export const LegacyConfigDiffBranchNotFoundError = targetErrors.BranchNotFoundError;
+export type LegacyConfigDiffBranchNotFoundError = InstanceType<
+  typeof LegacyConfigDiffBranchNotFoundError
+>;
 
 /**
  * `--project-ref` named a branch (by name), but no project is linked to
@@ -55,39 +68,30 @@ export class LegacyConfigDiffBranchNotFoundError extends Data.TaggedError(
  * yielded a candidate. Mirrors `LegacyLinkBranchNotLinkedError`'s
  * classification (link.errors.ts).
  */
-export class LegacyConfigDiffBranchNotLinkedError extends Data.TaggedError(
-  "LegacyConfigDiffBranchNotLinkedError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.projectNotLinked;
-  }
-}
+export const LegacyConfigDiffBranchNotLinkedError = targetErrors.BranchNotLinkedError;
+export type LegacyConfigDiffBranchNotLinkedError = InstanceType<
+  typeof LegacyConfigDiffBranchNotLinkedError
+>;
 
 /**
  * `--project-ref` named a branch (by name), and a parent-project candidate
  * exists but is not ref-shaped — corrupt or stale linked state. Mirrors
  * `LegacyLinkParentRefInvalidError`'s classification (link.errors.ts).
  */
-export class LegacyConfigDiffParentRefInvalidError extends Data.TaggedError(
-  "LegacyConfigDiffParentRefInvalidError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.relinkProject;
-  }
-}
+export const LegacyConfigDiffParentRefInvalidError = targetErrors.ParentRefInvalidError;
+export type LegacyConfigDiffParentRefInvalidError = InstanceType<
+  typeof LegacyConfigDiffParentRefInvalidError
+>;
 
 /**
  * The resolved branch has no project ref yet (still provisioning) — guards
  * against an empty/placeholder ref reaching `/v2/projects//config`. Mirrors
  * `LegacyLinkBranchNotReadyError`'s classification (link.errors.ts).
  */
-export class LegacyConfigDiffBranchNotReadyError extends Data.TaggedError(
-  "LegacyConfigDiffBranchNotReadyError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return { ...actionability.apiStatus, fingerprint_suffix: "branch_not_ready" };
-  }
-}
+export const LegacyConfigDiffBranchNotReadyError = targetErrors.BranchNotReadyError;
+export type LegacyConfigDiffBranchNotReadyError = InstanceType<
+  typeof LegacyConfigDiffBranchNotReadyError
+>;
 
 export class LegacyConfigDiffBranchResolveNetworkError extends Data.TaggedError(
   "LegacyConfigDiffBranchResolveNetworkError",

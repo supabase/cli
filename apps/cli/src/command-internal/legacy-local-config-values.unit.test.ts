@@ -2670,6 +2670,23 @@ describe("legacyResolveLocalConfigValues", () => {
       );
     });
 
+    it("rejects an absolute template content_path outside the project root", () => {
+      // Proves the shared validator (`legacyResolveEmailTemplateContentPath` in
+      // `legacy-config-validate.ts`) now enforces project-root containment on the
+      // `db`/`migration`/`status`/`stop`/... shared-validation path too, not only inside
+      // `config push`'s own content loader — CLI-2339's centralization.
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { template: { invite: { content_path: "/etc/hosts" } } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+        'Invalid config for auth.email.template.invite.content_path: "/etc/hosts" resolves outside the project root',
+      );
+    });
+
     it("resolves a relative template content_path against the workdir itself, not <workdir>/supabase", () => {
       writeFileSync(join(tempRoot.current, "invite.html"), "<html></html>");
       const config = baseConfig({

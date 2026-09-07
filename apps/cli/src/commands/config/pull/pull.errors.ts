@@ -5,6 +5,7 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
+import { legacyMintConfigTargetErrors } from "../config.target.ts";
 
 interface NetworkErrorArgs {
   readonly message: string;
@@ -27,6 +28,20 @@ export class LegacyConfigPullLoadConfigError extends Data.TaggedError(
 }
 
 /**
+ * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
+ * directory (`legacyValidateWorkdirIsDirectory`). Only reachable when the
+ * user explicitly set it — beats the base config load and every network
+ * call.
+ */
+export class LegacyConfigPullWorkdirError extends Data.TaggedError("LegacyConfigPullWorkdirError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+/**
  * The Go-compat global `-o/--output` flag was passed. `config pull` is a
  * net-new TS command with no Go parity contract, so machine output goes
  * through `--output-format` only (mirrors `config diff`, CLI-2156).
@@ -39,52 +54,42 @@ export class LegacyConfigPullOutputFlagUnsupportedError extends Data.TaggedError
   }
 }
 
+const targetErrors = legacyMintConfigTargetErrors("LegacyConfigPull");
+
 /** `--project-ref` named a branch the parent project does not have. */
-export class LegacyConfigPullBranchNotFoundError extends Data.TaggedError(
-  "LegacyConfigPullBranchNotFoundError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidInput;
-  }
-}
+export const LegacyConfigPullBranchNotFoundError = targetErrors.BranchNotFoundError;
+export type LegacyConfigPullBranchNotFoundError = InstanceType<
+  typeof LegacyConfigPullBranchNotFoundError
+>;
 
 /**
  * `--project-ref` named a branch (by name), but no project is linked to
  * search for branches under. Mirrors `config diff`'s
  * `LegacyConfigDiffBranchNotLinkedError`.
  */
-export class LegacyConfigPullBranchNotLinkedError extends Data.TaggedError(
-  "LegacyConfigPullBranchNotLinkedError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.projectNotLinked;
-  }
-}
+export const LegacyConfigPullBranchNotLinkedError = targetErrors.BranchNotLinkedError;
+export type LegacyConfigPullBranchNotLinkedError = InstanceType<
+  typeof LegacyConfigPullBranchNotLinkedError
+>;
 
 /**
  * `--project-ref` named a branch (by name), and a parent-project candidate
  * exists but is not ref-shaped — corrupt or stale linked state. Mirrors
  * `config diff`'s `LegacyConfigDiffParentRefInvalidError`.
  */
-export class LegacyConfigPullParentRefInvalidError extends Data.TaggedError(
-  "LegacyConfigPullParentRefInvalidError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.relinkProject;
-  }
-}
+export const LegacyConfigPullParentRefInvalidError = targetErrors.ParentRefInvalidError;
+export type LegacyConfigPullParentRefInvalidError = InstanceType<
+  typeof LegacyConfigPullParentRefInvalidError
+>;
 
 /**
  * The resolved branch has no project ref yet (still provisioning). Mirrors
  * `config diff`'s `LegacyConfigDiffBranchNotReadyError`.
  */
-export class LegacyConfigPullBranchNotReadyError extends Data.TaggedError(
-  "LegacyConfigPullBranchNotReadyError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return { ...actionability.apiStatus, fingerprint_suffix: "branch_not_ready" };
-  }
-}
+export const LegacyConfigPullBranchNotReadyError = targetErrors.BranchNotReadyError;
+export type LegacyConfigPullBranchNotReadyError = InstanceType<
+  typeof LegacyConfigPullBranchNotReadyError
+>;
 
 /**
  * A transport failure reading remote state over HTTP — shared by BOTH the

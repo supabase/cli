@@ -66,7 +66,9 @@ export const LegacyDebugFlag = GlobalFlag.setting("debug")({
 
 export const LegacyWorkdirFlag = GlobalFlag.setting("workdir")({
   flag: Flag.string("workdir").pipe(
-    Flag.withDescription("path to a Supabase project directory"),
+    Flag.withDescription(
+      "path to the directory containing your supabase/ folder; used exactly as given, with no ancestor directory search (defaults to searching upward from the current directory)",
+    ),
     Flag.optional,
   ),
 });

@@ -401,6 +401,7 @@ export function mockLegacyLinkedProjectCacheTracked(): {
 
 export function mockLegacyCliSettings(opts: {
   readonly workdir: string;
+  readonly explicitWorkdir?: boolean;
   readonly profile?: string;
   readonly apiUrl?: string;
   readonly projectHost?: string;
@@ -419,6 +420,7 @@ export function mockLegacyCliSettings(opts: {
     accessToken: opts.accessToken ?? Option.some(Redacted.make(LEGACY_VALID_TOKEN)),
     projectId: opts.projectId ?? Option.some(LEGACY_VALID_REF),
     workdir: opts.workdir,
+    explicitWorkdir: opts.explicitWorkdir ?? false,
     userAgent: opts.userAgent ?? LEGACY_DEFAULT_USER_AGENT,
   });
 }

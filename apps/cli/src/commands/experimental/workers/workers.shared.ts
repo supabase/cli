@@ -1,7 +1,8 @@
 import { join } from "node:path";
-import { loadCliConfig } from "@supabase/config/effect";
+import { findCliProjectPaths, loadCliConfig } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Predicate } from "effect";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
+import { legacyShouldSearchAncestors } from "../../../command-internal/legacy-workdir-search.ts";
 import {
   readWorkersSection,
   type WorkerEntry,
@@ -34,20 +35,29 @@ export interface LegacyWorkersProject {
 
 const loadWorkersProject = Effect.fnUntraced(function* (options: { readonly tomlOnly: boolean }) {
   const settings = yield* LegacyCliSettings;
-  const projectRoot = settings.workdir;
+
+  // tomlOnly (the [workers.*] entry writer) keeps `search: false` unconditionally:
+  // it and the workdir's own default resolution probe the same config.toml, so the
+  // second climb is redundant. The JSON-capable read must thread the predicate — the
+  // default workdir resolution only probes config.toml, so a config.json-only project
+  // invoked from a subdirectory relies on this climb to be found at all (CLI-2285).
+  //
+  // `workers new api --workdir ./bare-dir` inside another project is why
+  // `projectRoot` must be DERIVED from this same search rather than always
+  // `settings.workdir`: with an explicit workdir the predicate yields `false`
+  // (see `legacyShouldSearchAncestors`), so `paths` is null and `projectRoot`
+  // falls back to `settings.workdir` exactly as before — that scaffold-into-a-
+  // bare-directory behavior is preserved verbatim. Only a DEFAULTED workdir can
+  // ever climb here, and when it does, `projectRoot` must climb WITH `configPath`
+  // — otherwise a discovered ancestor's `[workers.*]` entries would resolve their
+  // `source` against a non-project directory.
+  const search = options.tomlOnly ? false : legacyShouldSearchAncestors(settings);
+  const paths = yield* findCliProjectPaths(settings.workdir, { search });
+  const projectRoot = paths?.projectRoot ?? settings.workdir;
   const supabaseDir = join(projectRoot, "supabase");
 
-  // `search: false`: `settings.workdir` is already an authoritative project
-  // root — `--workdir`/`SUPABASE_WORKDIR` as given, else the one ancestor walk
-  // Go's `getProjectRoot` performs — so letting the loader climb again resolves
-  // `configPath` to an *ancestor* project while every path derived from
-  // `projectRoot` stays put. `workers new api --workdir ./bare-dir` inside
-  // another project is the case in point: the entry lands in the ancestor's
-  // `config.toml` recording `source = "supabase/workers/api"`, which resolves
-  // against the ancestor root to a directory the scaffold never created.
-  //
-  // `loadCliConfig` returns null when the directory holds no project yet,
-  // which is what lets `workers new` scaffold into a bare one.
+  // `search: false`: the climb (if any) already happened above; reading
+  // `projectRoot`'s own config.toml again must never climb a second time.
   const loaded = yield* loadCliConfig(projectRoot, { tomlOnly: options.tomlOnly, search: false });
   const section = readWorkersSection(loaded?.config.workers);
 

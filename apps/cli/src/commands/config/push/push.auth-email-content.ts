@@ -3,13 +3,19 @@
  * body. Both templates and notifications resolve relative paths from the
  * project root (parent of `supabase/`); notifications additionally fall back
  * to the legacy `supabase/`-relative location when the root-resolved file is
- * missing, so configs written for older scaffolds keep working.
+ * missing, so configs written for older scaffolds keep working. Containment
+ * — confining the resolved path to the project root before it is read, since
+ * the loaded bytes are uploaded to whichever project the config names — is
+ * enforced centrally by `legacyResolveEmailTemplateContentPath` in
+ * `legacy-config-validate.ts`, not locally in this module.
  */
 
 import type { CliConfig } from "@supabase/config";
-import { legacyResolveNotificationContentPath } from "../../../command-internal/legacy-config-validate.ts";
+import {
+  legacyEmailContentPathReadErrorMessage,
+  legacyResolveEmailTemplateContentPath,
+} from "../../../command-internal/legacy-config-validate.ts";
 import { readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
 
 type AuthEmail = CliConfig["auth"]["email"];
 
@@ -29,9 +35,8 @@ const EMPTY_AUTH_EMAIL_CONTENT: LegacyAuthEmailContent = {
 };
 
 /**
- * Reads a template HTML file, wrapping a filesystem error with an
- * `Invalid config for auth.email.<kind>.<name>.content_path: <cause>`
- * message — the CLI's established config-validation error shape.
+ * Reads a template HTML file, wrapping a filesystem error with the CLI's
+ * established config-validation error shape.
  *
  * @param kind - `template` or `notification` (used in the error prefix).
  * @param name - Config key (e.g. `invite`, `password_changed`).
@@ -47,8 +52,7 @@ function readTemplateContent(
   try {
     return readFileSync(resolvedPath, "utf8");
   } catch (cause) {
-    const message = cause instanceof Error ? cause.message : String(cause);
-    throw new Error(`Invalid config for auth.email.${kind}.${name}.content_path: ${message}`);
+    throw new Error(legacyEmailContentPathReadErrorMessage(kind, name, cause));
   }
 }
 
@@ -73,7 +77,17 @@ export function legacyLoadAuthEmailContent(cwd: string, email: AuthEmail): Legac
     if (contentPath.length === 0) {
       continue;
     }
-    const resolved = isAbsolute(contentPath) ? contentPath : join(cwd, contentPath);
+    const resolved = legacyResolveEmailTemplateContentPath({
+      section: "template",
+      name,
+      contentPath,
+      // Already checked contentPath.length > 0 above, so this can never fire.
+      contentPresent: false,
+      base: cwd,
+    });
+    if (resolved === undefined) {
+      continue;
+    }
     template[name] = readTemplateContent("template", name, resolved);
   }
 
@@ -85,7 +99,17 @@ export function legacyLoadAuthEmailContent(cwd: string, email: AuthEmail): Legac
     if (contentPath.length === 0) {
       continue;
     }
-    const resolved = legacyResolveNotificationContentPath(cwd, contentPath);
+    const resolved = legacyResolveEmailTemplateContentPath({
+      section: "notification",
+      name,
+      contentPath,
+      // Already checked contentPath.length > 0 above, so this can never fire.
+      contentPresent: false,
+      base: cwd,
+    });
+    if (resolved === undefined) {
+      continue;
+    }
     notification[name] = readTemplateContent("notification", name, resolved);
   }
 

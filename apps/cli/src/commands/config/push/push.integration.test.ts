@@ -13,6 +13,7 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
+  LEGACY_DEFAULT_API_URL,
   LEGACY_VALID_REF,
   legacyJsonResponse,
   legacyStatusCodeFailure,
@@ -238,6 +239,8 @@ function setup(opts: {
   readonly runtimeCwd?: string;
   /** cliSettings.workdir override (what `--workdir` resolves to); defaults to the temp project root. */
   readonly workdir?: string;
+  /** cliSettings.explicitWorkdir override — true iff --workdir/SUPABASE_WORKDIR was set verbatim. */
+  readonly explicitWorkdir?: boolean;
   /** Analytics mock for tests asserting on captured telemetry events. */
   readonly analytics?: ReturnType<typeof mockAnalytics>;
   // CLI-2168/CLI-2289 — live target-detection probe and branch-name/UUID
@@ -361,6 +364,7 @@ function setup(opts: {
       api,
       cliSettings: mockLegacyCliSettings({
         workdir: opts.workdir ?? tempRoot.current,
+        explicitWorkdir: opts.explicitWorkdir ?? false,
         ...(opts.projectId === undefined ? {} : { projectId: opts.projectId }),
       }),
       runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
@@ -412,13 +416,48 @@ describe("legacy config push integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("aborts on malformed config.toml before any network call", () => {
+  it.live("names supabase/config.toml on malformed config.toml, before any network call", () => {
     const { layer, api } = setup({ toml: "malformed", yes: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
+      const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+        Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+          Effect.succeed(error.message),
+        ),
+      );
+      expect(message).toContain("failed to parse supabase/config.toml:");
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("names supabase/config.json (not config.toml) on a malformed config.json", () => {
+    const dir = join(tempRoot.current, "supabase");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "config.json"), "{not valid json");
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({
+      handler: (request) =>
+        Effect.succeed(legacyJsonResponse(request, 200, { available_addons: [] })),
+    });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      }),
+      mockStdin(true),
+      Layer.succeed(LegacyYesFlag, true),
+    );
+    return Effect.gen(function* () {
+      const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+        Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+          Effect.succeed(error.message),
+        ),
+        Effect.provide(layer),
+      );
+      expect(message).toContain("failed to parse supabase/config.json:");
+      expect(api.requests).toHaveLength(0);
+    });
   });
 
   it.live("merges a matching [remotes.*] block over the base and pushes it", () => {
@@ -653,6 +692,130 @@ max_rows = 1000
     );
   });
 
+  it.live(
+    "does not climb to an ancestor project's config when --workdir names a subdirectory with no config of its own",
+    () => {
+      // CLI-2285 regression: an explicit --workdir is authoritative and must
+      // never let `loadCliConfig`/`findCliProjectRoot` climb past it — a
+      // `config push --workdir ./sub` from a project whose subdirectory has
+      // no supabase/ of its own must not silently push over an unrelated
+      // PARENT project's config. The ancestor (tempRoot) genuinely has a
+      // valid config.toml and the subdirectory genuinely has none.
+      const sub = join(tempRoot.current, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const { layer, api, telemetry } = setup({
+        toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
+        yes: true,
+        workdir: sub,
+        explicitWorkdir: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyConfigPushLoadConfigError");
+        expect(rendered).toContain("file not found");
+        // An EXPLICIT workdir never gets the ancestor-search-exhausted
+        // `supabase init` hint — it names the resolved directory instead, and
+        // points at the flag/env var that must change.
+        expect(rendered).not.toContain("supabase init");
+        expect(rendered).toContain("--workdir/SUPABASE_WORKDIR");
+        expect(rendered).toContain(sub);
+        // A write command failing to load its OWN config must never reach
+        // any of the config-update endpoints it would otherwise PATCH/PUT.
+        expect(api.requests.some((r) => r.method === "PATCH" || r.method === "PUT")).toBe(false);
+        expect(api.requests).toHaveLength(0);
+        expect(telemetry.flushed).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("a defaulted workdir with no project still points at supabase init", () => {
+    // Complements the regression above: the message text for a DEFAULTED
+    // workdir must keep pointing at `supabase init` — only an EXPLICIT
+    // `--workdir`/`SUPABASE_WORKDIR` gets the resolved-path wording.
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({
+      handler: (request) =>
+        Effect.succeed(legacyJsonResponse(request, 200, { available_addons: [] })),
+    });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      }),
+      mockStdin(true),
+      Layer.succeed(LegacyYesFlag, true),
+    );
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const rendered = JSON.stringify(exit);
+      expect(rendered).toContain("LegacyConfigPushLoadConfigError");
+      expect(rendered).toContain("supabase init");
+      expect(api.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "an explicit --workdir naming a directory that does not exist at all fails before target resolution",
+    () => {
+      // Distinct from the "exists but holds no project" regression above:
+      // this path was never created, so `legacyValidateWorkdirIsDirectory`
+      // must fail first, before target resolution or the config load.
+      const missing = join(tempRoot.current, "does-not-exist");
+      const { layer, api } = setup({
+        toml: `project_id = "test"\n`,
+        yes: true,
+        workdir: missing,
+        explicitWorkdir: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyConfigPushWorkdirError");
+        expect(rendered).toContain("failed to change workdir: chdir");
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "an explicit --workdir naming a regular file fails with the workdir error, not a confusing env-file error",
+    () => {
+      // Sibling of the "does not exist" regression above: this path DOES
+      // exist, but as a plain file rather than a directory. Before this fix,
+      // the prologue reads (project-root probe, `supabase/.env` load,
+      // dotenvx private-key collection) ran BEFORE `legacyValidateWorkdirIsDirectory`,
+      // in the outer function body — outside the `Effect.ensuring(telemetryState.flush)`
+      // wrapper below. `legacyLoadProjectEnv` does not tolerate ENOTDIR, so a
+      // `--workdir` naming a file surfaced a confusing "failed to read
+      // environment file: ..." error instead of `LegacyConfigPushWorkdirError`,
+      // and telemetry never flushed for it. Both must be fixed now.
+      const notADirectory = join(tempRoot.current, "not-a-directory");
+      writeFileSync(notADirectory, "");
+      const { layer, api, telemetry } = setup({
+        toml: `project_id = "test"\n`,
+        yes: true,
+        workdir: notADirectory,
+        explicitWorkdir: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyConfigPushWorkdirError");
+        expect(rendered).toContain("failed to change workdir: chdir");
+        expect(rendered).toContain("not a directory");
+        expect(api.requests).toHaveLength(0);
+        expect(telemetry.flushed).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("emits a structured summary in json mode with every payload field", () => {
     const { layer, out } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
@@ -705,7 +868,7 @@ max_rows = 1000
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("aborts with exit 1 when no config.toml exists", () => {
+  it.live("directs a missing config file to supabase init, with exit 1", () => {
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({
       handler: (request) =>
@@ -724,6 +887,14 @@ max_rows = 1000
     return Effect.gen(function* () {
       const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
+      const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+        Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+          Effect.succeed(error.message),
+        ),
+      );
+      expect(message).toBe(
+        "failed to read supabase/config.toml or supabase/config.json: file not found. Run `supabase init` to create one.",
+      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -879,7 +1050,14 @@ otp_expiry = 120
       const cases: ReadonlyArray<{ status: number; expect: ReadonlyArray<string> }> = [
         { status: 401, expect: ["Authentication failed", "supabase login"] },
         { status: 403, expect: ["Access denied for project", REF] },
-        { status: 404, expect: [`Project ${REF} not found`, "supabase projects list"] },
+        {
+          status: 404,
+          expect: [
+            `Could not read configuration for project ${REF} (404)`,
+            "supabase projects list",
+            LEGACY_DEFAULT_API_URL,
+          ],
+        },
         { status: 500, expect: [`unexpected status 500: {"message":"boom"}`] },
       ];
       return Effect.gen(function* () {
@@ -1133,6 +1311,8 @@ function setupService(opts: {
   readonly runtimeCwd?: string;
   /** cliSettings.workdir override (what `--workdir` resolves to); defaults to the temp project root. */
   readonly workdir?: string;
+  /** cliSettings.explicitWorkdir override — true iff --workdir/SUPABASE_WORKDIR was set verbatim. */
+  readonly explicitWorkdir?: boolean;
   /** stdin interactivity; defaults to a TTY so prompt-driven tests reach the confirm. */
   readonly stdinIsTty?: boolean;
   /** Piped (non-TTY) stdin answers, one consumed per confirmation prompt. */
@@ -1160,7 +1340,10 @@ function setupService(opts: {
     buildLegacyTestRuntime({
       out,
       api: { layer: apiMock.layer, httpClientLayer: addonsHttpLayer(opts.addons) },
-      cliSettings: mockLegacyCliSettings({ workdir: opts.workdir ?? tempRoot.current }),
+      cliSettings: mockLegacyCliSettings({
+        workdir: opts.workdir ?? tempRoot.current,
+        explicitWorkdir: opts.explicitWorkdir ?? false,
+      }),
       runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,

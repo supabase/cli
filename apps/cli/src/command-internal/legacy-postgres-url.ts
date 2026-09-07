@@ -1,11 +1,7 @@
 /**
  * Build a `postgresql://` URL from a resolved connection, mirroring Go's
- * `utils.ToPostgresURL`. Used to
- * feed live database endpoints to the pg-delta edge-runtime scripts (SOURCE /
- * TARGET). TLS (`sslmode`) is intentionally omitted — `ToPostgresURL`
- * serializes only `RuntimeParams` (sslmode lives in `pgconn.Config.TLSConfig`,
- * not `RuntimeParams`); pg-delta's SSL is layered on separately by
- * `PreparePgDeltaPostgresRef` for remote endpoints.
+ * `utils.ToPostgresURL`. TLS (`sslmode`) is omitted: `ToPostgresURL`
+ * serializes only `RuntimeParams` (`sslmode` lives on `pgconn.Config.TLSConfig`).
  */
 
 /** Mirrors Go's IPv6 check (`net.ParseIP(host) != nil && ip.To4() == nil`). */
