@@ -3,7 +3,7 @@ import { makeApiClient, type ApiClient } from "@supabase/api/effect";
 import { Data, Duration, Effect, Exit, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { renderGlamourTable } from "../../legacy/output/legacy-glamour-table.ts";
+import { renderGlamourTable } from "../../output/legacy-glamour-table.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -14,6 +14,7 @@ import {
   parseDockerfileServiceImages,
   type DockerfileImageSpec,
 } from "./dockerfile-images.ts";
+import { slimImageForAlias, slimImageForCurrentPin, slimImagesEnabled } from "./slim-images.ts";
 
 export { parseDockerfileServiceImages } from "./dockerfile-images.ts";
 
@@ -38,6 +39,12 @@ export interface LocalServiceImageOptions {
   readonly imageOverrides?: LocalServiceImageOverrides;
   readonly normalizeVersionTags?: boolean;
   readonly serviceVersions?: LocalServiceVersionOverrides;
+  /**
+   * Legacy `.temp` pins only slim-translate when they match the current
+   * Dockerfile tag (unpublished historical slim tags). Next start runs
+   * catalog versions from GHCR, so it leaves this off.
+   */
+  readonly slimCurrentPinOnly?: boolean;
 }
 
 // Mirrors Go's `utils.ProjectRefPattern` (`apps/cli-go/internal/utils/misc.go`).
@@ -47,6 +54,7 @@ export interface LocalServiceImageOptions {
 const PROJECT_REF_PATTERN = /^[a-z]{20}$/;
 
 interface ServiceImageSpec {
+  readonly alias: string;
   readonly image: string;
   readonly remoteService: RemoteServiceName | undefined;
   readonly localService: LocalServiceVersionName;
@@ -91,6 +99,7 @@ function localServiceImagesFromSpecs(
     }
 
     return {
+      alias: service.alias,
       image,
       remoteService: service.remoteService,
       localService: service.localService,
@@ -106,21 +115,25 @@ export function localServiceImagesFromDockerfile(
 
 const LOCAL_SERVICE_IMAGES = localServiceImagesFromSpecs(dockerfileServiceImages);
 
-// Mirrors Go's config image rewrite in `apps/cli-go/pkg/config/config.go`.
-// Major version 13 intentionally falls through to the pg15 image there.
+export const POSTGRES_FALLBACK_IMAGE_PG14 = "supabase/postgres:14.1.0.89";
+/** Flag-off PG13/15 docker.io pin. */
+export const POSTGRES_FALLBACK_IMAGE_PG15 = "supabase/postgres:15.8.1.085";
+/** Published slim PG15 pin; flag-on majors 13/15 slim-translate this, not 15.8. */
+export const POSTGRES_FALLBACK_IMAGE_PG15_SLIM = "supabase/postgres:15.14.1.167";
+
 export function postgresImageForDbMajorVersion(majorVersion: number): string | undefined {
   switch (majorVersion) {
     case 13:
     case 15:
-      return "supabase/postgres:15.8.1.085";
+      return slimImagesEnabled() ? POSTGRES_FALLBACK_IMAGE_PG15_SLIM : POSTGRES_FALLBACK_IMAGE_PG15;
     case 14:
-      return "supabase/postgres:14.1.0.89";
+      return POSTGRES_FALLBACK_IMAGE_PG14;
     default:
       return undefined;
   }
 }
 
-export function replaceImageTag(image: string, tag: string): string {
+function replaceImageTag(image: string, tag: string): string {
   const index = image.lastIndexOf(":");
   if (index === -1) {
     return image;
@@ -141,18 +154,29 @@ function localServiceImagesForOptions(
   options: LocalServiceImageOptions = {},
 ): ReadonlyArray<ServiceImageSpec> {
   const normalizeVersionTags = options.normalizeVersionTags ?? true;
+  const slim = slimImagesEnabled();
   return LOCAL_SERVICE_IMAGES.map((service) => {
-    const baseImage = options.imageOverrides?.[service.localService] ?? service.image;
+    // Explicit overrides are used verbatim; the caller decides slim vs docker.io.
+    const override = options.imageOverrides?.[service.localService];
+    const baseImage = override ?? slimImageForAlias(service.alias, service.image);
     const version = options.serviceVersions?.[service.localService];
     if (version === undefined || version.trim().length === 0) {
       return baseImage === service.image ? service : { ...service, image: baseImage };
     }
+    const pin = normalizeVersionTags
+      ? tagForServiceVersion(service.localService, version)
+      : version;
+    if (override === undefined && slim) {
+      return {
+        ...service,
+        image: options.slimCurrentPinOnly
+          ? slimImageForCurrentPin(service.alias, service.image, pin)
+          : slimImageForAlias(service.alias, replaceImageTag(service.image, pin)),
+      };
+    }
     return {
       ...service,
-      image: replaceImageTag(
-        baseImage,
-        normalizeVersionTags ? tagForServiceVersion(service.localService, version) : version,
-      ),
+      image: replaceImageTag(baseImage, pin),
     };
   });
 }
@@ -282,7 +306,7 @@ const authenticatedRequest = (url: string, accessKey: Redacted.Redacted<string>)
   const request = HttpClientRequest.get(url).pipe(HttpClientRequest.setHeader("apikey", key));
   // New-style `sb_…` keys authenticate via the `apikey` header alone; older JWT
   // keys additionally require a bearer token. Mirrors the conditional auth in
-  // `apps/cli-go/pkg/fetcher/gateway.go` and `legacy/shared/legacy-tenant-versions.ts`.
+  // `apps/cli-go/pkg/fetcher/gateway.go` and `command-internal/legacy-tenant-versions.ts`.
   return key.startsWith("sb_")
     ? request
     : request.pipe(HttpClientRequest.setHeader("Authorization", `Bearer ${key}`));

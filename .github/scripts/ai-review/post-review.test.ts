@@ -20,6 +20,7 @@ import {
   type ReviewIo,
   type ReviewPayload,
   sanitizeFilePath,
+  sanitizeModelText,
   supersededBody,
   truncateReviewBody,
 } from "./post-review.ts";
@@ -935,6 +936,20 @@ describe("sanitizeFilePath", () => {
   });
 });
 
+describe("sanitizeModelText", () => {
+  test("breaks a comment opener that stripping would have re-formed", () => {
+    expect(sanitizeModelText("Forged <!<!---->-- supabase-ai-review:superseded --> marker")).toBe(
+      "Forged <!<\u200B!---->-- supabase-ai-review:superseded --> marker",
+    );
+  });
+
+  test("keeps the zero-width mention and issue-ref breakers intact", () => {
+    expect(sanitizeModelText("<!-- x --> @user #12")).toBe(
+      "<\u200B!-- x --> @<!---->user #<!---->12",
+    );
+  });
+});
+
 describe("redactSecrets", () => {
   test.each([
     ["an Anthropic API key", "sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345"],
@@ -1030,7 +1045,16 @@ describe("post flow via injected ReviewIo", () => {
         if (opts.failSupersede) {
           return Promise.reject(new Error("listReviews failed"));
         }
-        return Promise.resolve(opts.reviews ?? []);
+        // Mirror real GitHub: a review posted earlier in the same run shows
+        // up in later listings as a marker-bearing bot review. The supersede
+        // pass must snapshot BEFORE posting or it would wrap the fresh
+        // review as "superseded" too.
+        const alreadyPosted = postedReviews.map((payload, i) => ({
+          id: 900 + i,
+          body: payload.body,
+          authorLogin: "github-actions[bot]",
+        }));
+        return Promise.resolve([...(opts.reviews ?? []), ...alreadyPosted]);
       },
       listIssueComments: () => {
         calls.push("listIssueComments");
@@ -1107,6 +1131,23 @@ describe("post flow via injected ReviewIo", () => {
     expect(postedReviews).toHaveLength(1);
     expect(postedReviews[0]?.event).toBe("COMMENT");
     expect(calls.indexOf("postReview")).toBeLessThan(calls.indexOf("updateReviewBody"));
+  });
+
+  test("the freshly posted review is never swept into its own supersede pass", async () => {
+    const review = makeMergedReview({ findings: [] });
+    const { io, updatedReviews, updatedComments, postedReviews, calls } = makeReviewIo({
+      diff: SINGLE_HUNK_DIFF,
+    });
+
+    await postConsolidatedReview(io, 42, review, footer);
+
+    // With no prior AI review on the PR, nothing may be wrapped as superseded
+    // — especially not the review this run just posted (which the fake's
+    // listReviews, like real GitHub, includes in post-POST listings).
+    expect(postedReviews).toHaveLength(1);
+    expect(updatedReviews).toEqual([]);
+    expect(updatedComments).toEqual([]);
+    expect(calls.indexOf("listReviews")).toBeLessThan(calls.indexOf("postReview"));
   });
 
   test("a review still posts even when the best-effort supersede fails", async () => {

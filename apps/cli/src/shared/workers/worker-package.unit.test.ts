@@ -203,9 +203,9 @@ describe("packageWorkerDirectory", () => {
     expect(result.fileCount).toBe(0);
   });
 
-  // A file that cannot be read used to be archived as zero bytes, so `push`
-  // reported success for a deploy that shipped an empty file. Failing is the
-  // only honest answer: the archive is the application.
+  // Archiving an unreadable file as zero bytes would report success for a deploy
+  // carrying an empty file. Failing is the only honest answer: the archive is the
+  // application.
   test("fails rather than archiving a file it cannot read as empty", async () => {
     const unreadable = join(dir, "secret.txt");
     writeFileSync(unreadable, "important");

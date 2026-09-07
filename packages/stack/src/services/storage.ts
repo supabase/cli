@@ -72,6 +72,8 @@ export const makeStorageServiceDocker = (opts: DockerStorageOptions): ServiceDef
       STORAGE_S3_REGION: "local",
       GLOBAL_S3_BUCKET: "stub",
       ENABLE_IMAGE_TRANSFORMATION: String(opts.enableImageTransformation),
+      // storage-api prefers this key over ENABLE_IMAGE_TRANSFORMATION (v1.72+).
+      IMAGE_TRANSFORMATION_ENABLED: String(opts.enableImageTransformation),
       IMGPROXY_URL: opts.imgproxyUrl,
       TUS_URL_PATH: "/storage/v1/upload/resumable",
       S3_PROTOCOL_ENABLED: String(opts.s3ProtocolEnabled),

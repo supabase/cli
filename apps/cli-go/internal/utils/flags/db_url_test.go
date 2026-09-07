@@ -117,8 +117,8 @@ func TestResolvePoolerConfigForFallback(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + ref + "/config/database/pooler").
 			Reply(http.StatusOK).
-			JSON([]api.SupavisorConfigResponse{{
-				DatabaseType:     api.SupavisorConfigResponseDatabaseTypePRIMARY,
+			JSON([]api.SupavisorConfigResponseOutput{{
+				DatabaseType:     api.SupavisorConfigResponseOutputDatabaseTypePRIMARY,
 				ConnectionString: poolerURL,
 			}})
 
@@ -137,7 +137,7 @@ func TestResolvePoolerConfigForFallback(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + ref + "/config/database/pooler").
 			Reply(http.StatusOK).
-			JSON([]api.SupavisorConfigResponse{})
+			JSON([]api.SupavisorConfigResponseOutput{})
 
 		_, err := ResolvePoolerConfigForFallback(context.Background(), ref)
 

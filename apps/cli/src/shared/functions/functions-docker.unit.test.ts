@@ -7,6 +7,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   buildFunctionsDockerRunArgs,
   containerArchiveBytes,
+  edgeRuntimeCacheVolume,
   localDockerId,
   resolveDockerNetworkMode,
   runChildProcess,
@@ -208,6 +209,16 @@ describe("buildFunctionsDockerRunArgs", () => {
     expect(args).toContain("--label");
     expect(args).toContain("com.supabase.cli.project=My Weird/Project!!");
     expect(args).toContain("com.docker.compose.project=My Weird/Project!!");
+  });
+});
+
+describe("edgeRuntimeCacheVolume", () => {
+  it("keeps the shared volume at /root/.cache/deno", () => {
+    expect(edgeRuntimeCacheVolume("my-project")).toEqual({
+      name: "supabase_edge_runtime_my-project",
+      containerPath: "/root/.cache/deno",
+      bind: "supabase_edge_runtime_my-project:/root/.cache/deno:rw",
+    });
   });
 });
 

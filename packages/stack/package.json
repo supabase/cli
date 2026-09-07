@@ -17,6 +17,7 @@
       "default": "./src/managed-node.ts"
     },
     "./managed-model": "./src/managed/model.ts",
+    "./versions": "./src/versions.ts",
     "./testing": "./src/testing.ts",
     "./daemon-bun": "./src/daemon-bun.ts"
   },
@@ -40,10 +41,10 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@supabase/supabase-js": "^2.112.3",
+    "@supabase/supabase-js": "^2.112.4",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
-    "@vitest/coverage-istanbul": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

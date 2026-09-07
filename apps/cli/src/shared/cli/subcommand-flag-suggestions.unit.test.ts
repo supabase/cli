@@ -1,7 +1,7 @@
 import { CliError, Command } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
-import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
-import { legacyNetworkRestrictionsCommand } from "../../legacy/commands/network-restrictions/network-restrictions.command.ts";
+import { legacyBranchesCommand } from "../../commands/branches/branches.command.ts";
+import { legacyNetworkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
 import { formatCliErrorsForDisplay } from "./subcommand-flag-suggestions.ts";
 
 const testRoot = Command.make("supabase").pipe(

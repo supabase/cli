@@ -129,7 +129,6 @@ pnpm check:all
 cd apps/cli
 
 pnpm types:check
-pnpm dev:next -- --help
 pnpm run test:unit && pnpm run test:integration
 ```
 

@@ -2,7 +2,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { inject, test as vitestTest } from "vitest";
+import { Predicate } from "effect";
+import pg from "pg";
+import { expect, inject, test as vitestTest } from "vitest";
 
 import { makeTempHome, runSupabase } from "./cli.ts";
 import { LIVE_EXIT_TIMEOUT_MS } from "./live-env.ts";
@@ -119,6 +121,144 @@ export function requireLiveSuccess(
     throw new Error(
       `${command} failed (exit ${result.exitCode})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
     );
+  }
+}
+
+/** Flags every storage live test passes: the suite links the shared project
+ * and the storage command family is experimental-gated. */
+export const storageLiveFlags: ReadonlyArray<string> = ["--linked", "--experimental"];
+
+/**
+ * Best-effort exact-object cleanup for storage live tests: removes one owned
+ * remote object, tolerating an already-removed target so teardown stays
+ * idempotent across the moved/renamed paths a test may leave behind.
+ */
+export async function removeStorageLiveObject(
+  cli: (args: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
+  remote: string,
+): Promise<void> {
+  const removed = await cli(["storage", "rm", remote, "--yes", ...storageLiveFlags]);
+  if (
+    removed.exitCode !== 0 &&
+    !/not found|does not exist/i.test(`${removed.stdout}\n${removed.stderr}`)
+  ) {
+    throw new Error(`storage rm cleanup failed:\n${removed.stdout}\n${removed.stderr}`);
+  }
+}
+
+/** Flags for experimental-gated live tests that address the shared project by
+ * ref rather than linking it (contrast `storageLiveFlags`). */
+export function experimentalProjectLiveFlags(project: LiveProject): ReadonlyArray<string> {
+  return ["--project-ref", project.ref, "--experimental"];
+}
+
+/**
+ * Exact-key cleanup for postgres-config live tests: removes one owned override
+ * without a database restart. Deleting an absent key is a no-op PUT, so the
+ * teardown stays idempotent.
+ */
+export async function removePostgresConfigLiveOverride(
+  cli: (args: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
+  project: LiveProject,
+  key: string,
+): Promise<void> {
+  const removed = await cli([
+    "postgres-config",
+    "delete",
+    "--config",
+    key,
+    ...experimentalProjectLiveFlags(project),
+    "--no-restart",
+  ]);
+  requireLiveSuccess(removed, `postgres-config delete cleanup for ${key}`);
+}
+
+/** Exact-version cleanup for migration live tests; reverting an absent row is a no-op delete. */
+export async function removeLiveMigration(
+  cli: LiveFixtures["cli"],
+  project: LiveProject,
+  version: string,
+): Promise<void> {
+  const reverted = await cli([
+    "migration",
+    "repair",
+    version,
+    "--status",
+    "reverted",
+    "--db-url",
+    project.dbUrl,
+  ]);
+  requireLiveSuccess(reverted, `migration repair cleanup for ${version}`);
+}
+
+/**
+ * Proves a postgres-config write through `get`. The platform can serve a stale
+ * read right after the PUT, so after one fail-fast read the value is polled
+ * (2s apart, 60s deadline, each attempt bounded) until `key` reads `expected`
+ * (`undefined` for no override).
+ */
+export async function expectPostgresConfigLiveOverride(
+  cli: LiveFixtures["cli"],
+  project: LiveProject,
+  key: string,
+  expected: string | undefined,
+  label: string,
+): Promise<void> {
+  const read = async (): Promise<unknown> => {
+    const proof = await cli(
+      ["postgres-config", "get", ...experimentalProjectLiveFlags(project), "-o", "json"],
+      { exitTimeoutMs: 20_000 },
+    );
+    requireLiveSuccess(proof, label);
+    let config: unknown;
+    try {
+      config = JSON.parse(proof.stdout);
+    } catch {
+      config = undefined;
+    }
+    if (!Predicate.isObject(config)) {
+      throw new Error(
+        `${label}: unexpected postgres-config get payload\nstdout:\n${proof.stdout}\nstderr:\n${proof.stderr}`,
+      );
+    }
+    return config[key];
+  };
+  if (Object.is(await read(), expected)) return;
+  await expect.poll(read, { interval: 2_000, timeout: 60_000, message: label }).toBe(expected);
+}
+
+/**
+ * Unique migration version for a live test: a sortable `YYYYMMDDHHMMSS` UTC
+ * stamp plus four random digits, so it always orders after any conventional
+ * timestamp version already in the shared project's migration history.
+ */
+export function liveMigrationVersion(): string {
+  const stamp = new Date()
+    .toISOString()
+    .replaceAll(/[-:TZ.]/gu, "")
+    .slice(0, 14);
+  return `${stamp}${Math.floor(Math.random() * 10_000)
+    .toString()
+    .padStart(4, "0")}`;
+}
+
+/**
+ * Runs one query against the live project over a direct pg connection, so
+ * live assertions can verify database state without invoking another CLI
+ * command.
+ */
+export async function queryLiveDb<T extends Record<string, unknown>>(
+  dbUrl: string,
+  query: string,
+  values?: ReadonlyArray<unknown>,
+): Promise<T[]> {
+  const client = new pg.Client({ connectionString: dbUrl });
+  await client.connect();
+  try {
+    const result = await client.query(query, values === undefined ? undefined : [...values]);
+    return result.rows as T[];
+  } finally {
+    await client.end();
   }
 }
 

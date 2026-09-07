@@ -9,7 +9,7 @@ import { InvalidWorkerSourceError } from "./workers.errors.ts";
  *     config.toml          project config — workers record `[workers.<name>]` here
  *     workers/<name>/      one directory per worker; the name IS the directory
  *
- * This mirrors `supabase/functions/<slug>/` on purpose: `supabase workers` is a
+ * This mirrors `supabase/functions/<slug>/` on purpose: `supabase experimental workers` is a
  * sibling of `supabase functions`, not a separate tool with its own
  * conventions. A worker's name and its directory are the same fact, so
  * `push`/`status`/`delete <name>` needs no separate lookup, and running from

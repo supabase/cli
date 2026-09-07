@@ -1,0 +1,4 @@
+# Scratch tree `tools/config-api-compare.ts` (repo root) extracts the PR base
+# revision's package source into, so tsc resolves dependencies by walking up
+# to this package's own node_modules. Cleaned up on exit; never committed.
+.api-compare/

@@ -18,7 +18,7 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import { legacyPromptYesNo } from "../legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
-import { legacyBold } from "../../legacy/shared/legacy-colors.ts";
+import { legacyBold } from "../../command-internal/legacy-colors.ts";
 import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-env.ts";
 import { findGitRootPath } from "../git/git-root.ts";
 import {
@@ -42,10 +42,10 @@ import {
 } from "./deploy.errors.ts";
 import {
   buildFunctionsDockerRunArgs,
+  edgeRuntimeCacheVolume,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   isDockerRunning,
-  localDockerId,
   resolveDockerNetworkMode,
   resolveEdgeRuntimeVersion,
   resolveFunctionsDockerImage,
@@ -289,7 +289,7 @@ function explicitBooleanFlag(
 
 /**
  * Must stay in sync with `LEGACY_CLI_WORKDIR_LABEL`
- * (`legacy/shared/legacy-docker-ids.ts:95`) — same string literal, kept as a
+ * (`command-internal/legacy-docker-ids.ts:95`) — same string literal, kept as a
  * separate copy here rather than imported to respect the `next`/`legacy`
  * isolation boundary (this file has no Go equivalent for the other two
  * labels either). Read back by `legacyCleanupStartSecrets` so a later
@@ -1231,9 +1231,10 @@ export async function buildDockerBinds(
     },
   ];
   if (process.env["BITBUCKET_CLONE_DIR"] === undefined) {
+    const cacheVolume = edgeRuntimeCacheVolume(projectId);
     binds.unshift({
-      hostPath: localDockerId("edge_runtime", projectId),
-      containerPath: "/root/.cache/deno",
+      hostPath: cacheVolume.name,
+      containerPath: cacheVolume.containerPath,
       mode: "rw",
       externalScope: false,
     });
@@ -1423,6 +1424,10 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
       });
     }
     const outputPath = join(outputDir, "output.eszip");
+    // `edgeRuntimeImage` applies the tag VERBATIM (Go's `replaceImageTag`)
+    // — a `.temp/edge-runtime-version` pin flows through unmodified, `v`
+    // prefix or not (see the helper's doc in `functions.shared.ts`).
+    const rawImage = edgeRuntimeImage(edgeRuntimeVersion);
     const binds = yield* Effect.promise(() =>
       buildDockerBinds(projectId, functionsDir, outputDir, config, {
         onWarning: (message) => Effect.runPromise(output.raw(message, "stderr")),
@@ -1435,15 +1440,9 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     // `PulledEdgeRuntimeImage` is: per-slug matches Go's per-container
     // `DockerStart` exactly, and the first resolve failure aborts the loop,
     // so the only cost is one cached `docker image inspect` per function.
-    const image = yield* resolveFunctionsDockerImage(
-      // `edgeRuntimeImage` applies the tag VERBATIM (Go's `replaceImageTag`)
-      // — a `.temp/edge-runtime-version` pin flows through unmodified, `v`
-      // prefix or not (see the helper's doc in `functions.shared.ts`).
-      edgeRuntimeImage(edgeRuntimeVersion),
-      projectEnvValues,
-    );
+    const image = yield* resolveFunctionsDockerImage(rawImage, projectEnvValues);
     yield* ensureDockerNetwork(networkMode, projectId);
-    yield* ensureDockerNamedVolume(localDockerId("edge_runtime", projectId), projectId);
+    yield* ensureDockerNamedVolume(edgeRuntimeCacheVolume(projectId).name, projectId);
 
     const env: Array<string> = [];
     if (

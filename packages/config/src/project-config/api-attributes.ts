@@ -261,3 +261,15 @@ export const ProjectConfigApiAttributesSchema = Schema.Struct({
 });
 
 export type ProjectConfigApiAttributes = typeof ProjectConfigApiAttributesSchema.Type;
+
+/**
+ * The per-service block keys of the v2 project-config resource's
+ * `data.attributes`, in alphabetical order — derived from the mirror schema's
+ * own key set so consumers never hand-copy the block list (a hand-copied list
+ * reports a newly-learned block "not returned" forever, test-green). The
+ * package owns the response shape; a consumer rendering comparison scope
+ * (CLI-2156's scope line) reads it from here.
+ */
+export const projectConfigApiBlockKeys: ReadonlyArray<string> = Object.keys(
+  ProjectConfigApiAttributesSchema.fields,
+).sort();

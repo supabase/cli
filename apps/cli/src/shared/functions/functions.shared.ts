@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
-import { dockerfileServiceImage } from "../services/dockerfile-images.ts";
+import { dockerfileServiceImageRaw } from "../services/dockerfile-images.ts";
+import { imageTag, slimImageForCurrentPin } from "../services/slim-images.ts";
 
 const functionSlugPattern = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
@@ -27,8 +28,11 @@ export const FUNCTIONS_BUNDLER_MUTEX_GROUP = ["use-api", "use-docker", "legacy-b
 // reads the same source) — sourced from there rather than `@supabase/stack`'s
 // independently-maintained catalog, so a Dockerfile pin bump can never drift
 // from what the `functions` Docker paths resolve.
-const DEFAULT_EDGE_RUNTIME_IMAGE = dockerfileServiceImage("edgeruntime");
-const DEFAULT_EDGE_RUNTIME_TAG = DEFAULT_EDGE_RUNTIME_IMAGE.split(":")[1] ?? "";
+// Go's `deno1` image tag (`pkg/config/constants.go:15`,
+// `supabase/edge-runtime:v1.68.4`) — a full tag, since tags flow verbatim
+// into `edgeRuntimeImage` with no `v` synthesis. Shared with
+// `functions-docker.ts`'s `resolveEdgeRuntimeVersion`, which selects it.
+export const DENO1_EDGE_RUNTIME_VERSION = "v1.68.4";
 
 /**
  * Go: `replaceImageTag(Images.EdgeRuntime, tag)` (`pkg/config/utils.go:81-84`)
@@ -42,10 +46,23 @@ const DEFAULT_EDGE_RUNTIME_TAG = DEFAULT_EDGE_RUNTIME_IMAGE.split(":")[1] ?? "";
  * default above and `resolveEdgeRuntimeVersion`'s deno-1 constant.
  * Single home for the repository too — only the tag half is parameterized,
  * so a `supabase/edge-runtime` rename in the Dockerfile propagates whole.
+ *
+ * `deno_version = 1` is a locked docker.io-only exception (no slim build):
+ * the "tag" it selects is really a whole different image squeezed through
+ * this tag-shaped API, so it bypasses the (possibly slim-rewritten) default
+ * base entirely and returns the full docker.io ref. Flag-off this is
+ * byte-identical to the general path, since the default base is already
+ * docker.io then. The tag check deliberately also catches an explicit
+ * `.temp/edge-runtime-version` pin of this exact tag under the slim flag:
+ * no slim build of it exists either, so docker.io is the only resolvable
+ * image for that tag regardless of WHY it was selected — a separate
+ * deno_version signal would change nothing observable.
  */
 export function edgeRuntimeImage(tag: string): string {
-  const index = DEFAULT_EDGE_RUNTIME_IMAGE.indexOf(":");
-  return DEFAULT_EDGE_RUNTIME_IMAGE.slice(0, index + 1) + tag.trim();
+  if (tag === DENO1_EDGE_RUNTIME_VERSION) {
+    return `supabase/edge-runtime:${DENO1_EDGE_RUNTIME_VERSION}`;
+  }
+  return slimImageForCurrentPin("edgeruntime", dockerfileServiceImageRaw("edgeruntime"), tag);
 }
 
 /**
@@ -62,6 +79,6 @@ export const resolveEdgeRuntimeVersionPin = Effect.fnUntraced(function* (supabas
   ).pipe(
     Effect.map((version) => version.trim()),
     Effect.catch(() => Effect.succeed("")),
-    Effect.map((version) => version || DEFAULT_EDGE_RUNTIME_TAG),
+    Effect.map((version) => version || (imageTag(dockerfileServiceImageRaw("edgeruntime")) ?? "")),
   );
 });

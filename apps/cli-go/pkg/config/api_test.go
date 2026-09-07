@@ -47,7 +47,7 @@ func TestApiDiff(t *testing.T) {
 			MaxRows:         1000,
 		}
 
-		remoteConfig := v1API.PostgrestConfigWithJWTSecretResponse{
+		remoteConfig := v1API.PostgrestConfigWithJWTSecretResponseOutput{
 			DbSchema:          "public",
 			DbExtraSearchPath: "public",
 			MaxRows:           500,
@@ -67,7 +67,7 @@ func TestApiDiff(t *testing.T) {
 			MaxRows:         500,
 		}
 
-		remoteConfig := v1API.PostgrestConfigWithJWTSecretResponse{
+		remoteConfig := v1API.PostgrestConfigWithJWTSecretResponseOutput{
 			DbSchema:          "public",
 			DbExtraSearchPath: "public",
 			MaxRows:           500,
@@ -87,7 +87,7 @@ func TestApiDiff(t *testing.T) {
 			MaxRows:         500,
 		}
 
-		remoteConfig := v1API.PostgrestConfigWithJWTSecretResponse{
+		remoteConfig := v1API.PostgrestConfigWithJWTSecretResponseOutput{
 			DbSchema:          "public, private",
 			DbExtraSearchPath: "extensions, public",
 			MaxRows:           500,
@@ -107,7 +107,7 @@ func TestApiDiff(t *testing.T) {
 			MaxRows:         500,
 		}
 
-		remoteConfig := v1API.PostgrestConfigWithJWTSecretResponse{
+		remoteConfig := v1API.PostgrestConfigWithJWTSecretResponseOutput{
 			DbSchema:          "",
 			DbExtraSearchPath: "",
 			MaxRows:           0,
@@ -127,7 +127,7 @@ func TestApiDiff(t *testing.T) {
 			MaxRows:         500,
 		}
 
-		remoteConfig := v1API.PostgrestConfigWithJWTSecretResponse{
+		remoteConfig := v1API.PostgrestConfigWithJWTSecretResponseOutput{
 			DbSchema:          "public",
 			DbExtraSearchPath: "public",
 			MaxRows:           500,

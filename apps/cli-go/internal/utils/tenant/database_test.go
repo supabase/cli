@@ -22,7 +22,7 @@ func TestGetDatabaseVersion(t *testing.T) {
 	t.Run("retrieves database version successfully", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		mockPostgres := api.V1ProjectWithDatabaseResponse{}
+		mockPostgres := api.V1ProjectWithDatabaseResponseOutput{}
 		mockPostgres.Database.Version = "14.1.0.99"
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + projectRef).
@@ -58,7 +58,7 @@ func TestGetDatabaseVersion(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + projectRef).
 			Reply(http.StatusOK).
-			JSON(api.V1ProjectWithDatabaseResponse{})
+			JSON(api.V1ProjectWithDatabaseResponseOutput{})
 		// Run test
 		version, err := GetDatabaseVersion(context.Background(), projectRef)
 		// Check error

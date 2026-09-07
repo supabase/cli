@@ -504,6 +504,8 @@ describe("docker-backed auxiliary services", () => {
     expect(def.args).toContain("/tmp/supabase/storage:/var/lib/storage");
     expect(def.args).toContain("54331:54331");
     expect(def.dependencies).toEqual(dependencies);
+    expect(def.env?.ENABLE_IMAGE_TRANSFORMATION).toBe("true");
+    expect(def.env?.IMAGE_TRANSFORMATION_ENABLED).toBe("true");
     expect(def.healthCheck?.probe).toEqual(
       expect.objectContaining({ _tag: "Http", port: 54331, path: "/status" }),
     );

@@ -263,6 +263,16 @@ export function sanitizeOpenApiSchema(
       continue;
     }
 
+    if (
+      !inPropertiesMap &&
+      key === "propertyNames" &&
+      isRecord(rawValue) &&
+      Object.keys(rawValue).length === 1 &&
+      rawValue.type === "string"
+    ) {
+      continue;
+    }
+
     if (Array.isArray(rawValue)) {
       sanitized[key] = rawValue.map((entry) =>
         isRecord(entry) ? sanitizeOpenApiSchema(entry) : entry,
@@ -303,7 +313,29 @@ export function sanitizeOpenApiSchema(
     delete sanitized.pattern;
   }
 
+  if (
+    sanitized.nullable === true &&
+    sanitized.type === undefined &&
+    Array.isArray(sanitized.anyOf)
+  ) {
+    const normalized = {
+      ...sanitized,
+      anyOf: [...sanitized.anyOf, { type: "null" }],
+    };
+    delete normalized.nullable;
+    return normalized;
+  }
+
   return sanitized;
+}
+
+function convertSchemaToDraft2020(schema: OpenApiSchema) {
+  const sanitized = sanitizeOpenApiSchema(schema);
+  return (
+    sanitized.$schema === JsonSchema.META_SCHEMA_URI_DRAFT_2020_12
+      ? JsonSchema.fromSchemaDraft2020_12(sanitized)
+      : JsonSchema.fromSchemaOpenApi3_0(sanitized)
+  ).schema;
 }
 
 function containsBinarySchema(schema: OpenApiSchema): boolean {
@@ -764,15 +796,13 @@ function renderSchemaSource(
   const definitions = Object.fromEntries(
     Object.entries(document.components?.schemas ?? {}).map(([name, schema]) => [
       name,
-      normalizeNullableJsonSchema(
-        JsonSchema.fromSchemaOpenApi3_0(sanitizeOpenApiSchema(schema)).schema,
-      ),
+      normalizeNullableJsonSchema(convertSchemaToDraft2020(schema)),
     ]),
   );
 
   const nameMap = schemaEntries.map((entry) => entry.name);
   const schemas = schemaEntries.map((entry) =>
-    normalizeNullableJsonSchema(JsonSchema.fromSchemaOpenApi3_0(entry.schema).schema),
+    normalizeNullableJsonSchema(convertSchemaToDraft2020(entry.schema)),
   );
 
   if (!Arr.isArrayNonEmpty(schemas)) {

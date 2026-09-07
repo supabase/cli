@@ -5,7 +5,7 @@ import {
 import type { WorkerRuntime } from "./worker-runtimes.ts";
 
 /**
- * The starter files `supabase workers new` writes, per runtime — the contents
+ * The starter files `supabase experimental workers new` writes, per runtime — the contents
  * of `./stacks/<runtime>/`, keyed by the name each file is scaffolded as.
  *
  * The content lives there as ordinary files, authored in the language they are

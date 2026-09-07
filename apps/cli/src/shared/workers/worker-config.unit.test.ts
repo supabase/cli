@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
-import { Effect } from "effect";
+import { Effect, Exit } from "effect";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   readWorkersSection,
@@ -16,13 +16,31 @@ describe("readWorkersSection", () => {
   test("reads each worker's recorded dials", () => {
     expect(
       readWorkersSection({
-        api: { runtime: "node", size: "2gb", instances: 4, source: "packages/api" },
+        api: {
+          runtime: "node",
+          size: "2gb",
+          exposure: "private",
+          instances: 4,
+          source: "packages/api",
+        },
         box: { runtime: "sandbox" },
       }),
     ).toEqual({
       workers: {
-        api: { runtime: "node", size: "2gb", instances: 4, source: "packages/api" },
-        box: { runtime: "sandbox", size: undefined, instances: undefined, source: undefined },
+        api: {
+          runtime: "node",
+          size: "2gb",
+          exposure: "private",
+          instances: 4,
+          source: "packages/api",
+        },
+        box: {
+          runtime: "sandbox",
+          size: undefined,
+          exposure: undefined,
+          instances: undefined,
+          source: undefined,
+        },
       },
     });
   });
@@ -30,7 +48,13 @@ describe("readWorkersSection", () => {
   test("drops non-object values so a stray scalar is not read as a worker", () => {
     expect(readWorkersSection({ stray: "oops", api: {} })).toEqual({
       workers: {
-        api: { runtime: undefined, size: undefined, instances: undefined, source: undefined },
+        api: {
+          runtime: undefined,
+          size: undefined,
+          exposure: undefined,
+          instances: undefined,
+          source: undefined,
+        },
       },
     });
   });
@@ -49,6 +73,16 @@ describe("readWorkersSection", () => {
 
   test("keeps a zero instance count, which scales a worker down rather than being absent", () => {
     expect(readWorkersSection({ api: { instances: 0 } }).workers["api"]?.instances).toBe(0);
+  });
+
+  // Unlike the instance count, an unrecognized exposure is kept and carried to
+  // `push`, which names the values it accepts. Dropping it here would deploy the
+  // worker at the default exposure — public — which is the opposite of what a
+  // misspelled `private` was asking for.
+  test("keeps an exposure it does not recognize, for push to refuse by name", () => {
+    expect(readWorkersSection({ api: { exposure: "privat" } }).workers["api"]?.exposure).toBe(
+      "privat",
+    );
   });
 
   test("treats a missing or malformed section as empty", () => {
@@ -75,6 +109,42 @@ describe("planWorkerEntry + commitWorkerEntry", () => {
   /** plan + commit — the pairing `new` performs once it has decided to write. */
   const writeWorkerEntry = (options: Parameters<typeof planWorkerEntry>[0]) =>
     planWorkerEntry(options).pipe(Effect.flatMap(commitWorkerEntry));
+
+  // The re-parse below is a syntax check, not a schema one: `instances = 1.5`
+  // is perfectly valid TOML that the worker schema rejects, so it would reach
+  // the user's config and only fail later, when the loader refuses the file.
+  test.each([
+    ["a fraction", 1.5],
+    ["a negative count", -1],
+    ["a value past the safe integer range", 1e21],
+    ["not a number at all", Number.NaN],
+  ])("refuses %s rather than rendering it", async (_label, instances) => {
+    const exit = await Effect.runPromise(
+      writeWorkerEntry({
+        configPath,
+        name: "api",
+        existingWorkers: {},
+        patch: { runtime: "node", instances },
+      }).pipe(Effect.provide(BunServices.layer), Effect.exit),
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    // Refused before anything reaches disk, the way every other unsafe write is.
+    expect(existsSync(configPath)).toBe(false);
+  });
+
+  test("writes a whole, non-negative count unquoted", async () => {
+    await run(
+      writeWorkerEntry({
+        configPath,
+        name: "api",
+        existingWorkers: {},
+        patch: { runtime: "node", instances: 0 },
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    expect(readFileSync(configPath, "utf8")).toContain("instances = 0");
+  });
 
   test("creates the file when there is none yet", async () => {
     await run(
@@ -217,6 +287,30 @@ describe("planWorkerEntry + commitWorkerEntry", () => {
 
     await run(commitWorkerEntry(write).pipe(Effect.provide(BunServices.layer)));
     expect(readFileSync(configPath, "utf8")).toContain("[workers.api]");
+  });
+});
+
+describe("readWorkersSection blank values", () => {
+  // Absent means the `public` default, so a blank `exposure` must not read as
+  // absent — that would silently widen a worker whose config tried to say
+  // something. `push` refuses the value instead.
+  test("keeps an explicitly blank exposure so push can refuse it", () => {
+    const section = readWorkersSection({ api: { runtime: "node", exposure: "" } });
+
+    expect(section.workers["api"]?.exposure).toBe("");
+  });
+
+  // The mirror: nothing else here widens anything on absence — a missing
+  // runtime is guessed, a missing size defaults, a missing source is the
+  // conventional directory — so blank keeps collapsing to absent for those.
+  test("still folds the other blank dials into absent", () => {
+    const section = readWorkersSection({ api: { runtime: "", size: "", source: "" } });
+
+    expect(section.workers["api"]).toMatchObject({
+      runtime: undefined,
+      size: undefined,
+      source: undefined,
+    });
   });
 });
 
