@@ -5,13 +5,14 @@ Copies objects between local paths and the Storage service. The scheme of `src`/
 
 ## Files Read
 
-| Path                                     | Format     | When                                                               |
-| ---------------------------------------- | ---------- | ------------------------------------------------------------------ |
-| `<workdir>/supabase/config.toml`         | TOML       | always (local creds; `[storage.buckets.*]` for bucket auto-create) |
-| `~/.supabase/access-token`               | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                    |
-| `~/.supabase/<hash>/linked-project.json` | JSON       | linked path, to resolve the project ref                            |
-| local Kong TLS cert/key                  | PEM        | local + `api.enabled` + `api.tls.enabled`                          |
-| upload source files                      | bytes      | upload: sniff (≤512 bytes) + streamed body                         |
+| Path                                          | Format     | When                                                                                  |
+| --------------------------------------------- | ---------- | ------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`              | TOML       | always (local creds; `[storage.buckets.*]` for bucket auto-create)                    |
+| `~/.supabase/access-token`                    | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                                       |
+| `~/.supabase/<hash>/linked-project.json`      | JSON       | linked path, to resolve the project ref                                               |
+| local Kong TLS cert/key                       | PEM        | local + `api.enabled` + `api.tls.enabled`                                             |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | local path, to resolve the `SUPABASE_API_*` overrides for the gateway URL/TLS (#6452) |
+| upload source files                           | bytes      | upload: sniff (≤512 bytes) + streamed body                                            |
 
 ## Files Written
 
@@ -38,7 +39,8 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 ## Environment Variables
 
 `SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_AUTH_JWT_SECRET`, `SUPABASE_ACCESS_TOKEN`,
-`SUPABASE_PROJECT_ID`, `SUPABASE_SERVICES_HOSTNAME` — same roles as `storage ls`.
+`SUPABASE_PROJECT_ID`, `SUPABASE_SERVICES_HOSTNAME`, and the `SUPABASE_API_*`
+override family — same roles as `storage ls`.
 `SUPABASE_PROJECT_ID`'s linked-ref resolution is superseded by `--project-ref` when set.
 
 `storage` is an experimental command: `cp` requires `--experimental`
