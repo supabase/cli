@@ -212,10 +212,14 @@ enabled = false
   });
 
   it.effect("leaves listeners absent when ports are omitted", () => {
-    const root = project(`project_id = "stack-config-defaults"\n`);
+    const root = project(`project_id = "stack-config-defaults"
+[edge_runtime]
+enabled = true
+`);
     return Effect.gen(function* () {
       const config = yield* load(root);
       expect(config.listeners).toEqual({});
+      expect(config.listeners?.functionsInspector).toBeUndefined();
       if (config.capabilities?.database !== undefined && "settings" in config.capabilities.database)
         expect(config.capabilities.database.settings?.health_timeout).toBe("2m");
     });
@@ -228,6 +232,9 @@ enabled = false
       expect(config.listeners?.api).toEqual({ port: 54321 });
       expect(config.listeners?.database).toEqual({ port: 54322 });
       expect(config.listeners?.pooler).toEqual({ enabled: false });
+      expect(config.listeners?.smtp).toBeUndefined();
+      expect(config.listeners?.pop3).toBeUndefined();
+      expect(config.listeners?.functionsInspector).toEqual({ port: 8083 });
     });
   });
 

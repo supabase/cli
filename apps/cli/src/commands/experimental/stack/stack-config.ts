@@ -195,7 +195,7 @@ const listenerFromSection = (
   const enabled = raw["enabled"];
   const port = explicitPort(document, sectionName, portKey);
   if (enabled === false) return { enabled: false };
-  return port === undefined ? {} : { port };
+  return port === undefined ? undefined : { port };
 };
 
 const nestedPort = (
@@ -220,7 +220,7 @@ const nestedListener = (
   if (nested === undefined) return undefined;
   const port = nestedPort(document, sectionName, nestedSection, portKey);
   if (nested.enabled === false) return { enabled: false };
-  return port === undefined ? {} : { port };
+  return port === undefined ? undefined : { port };
 };
 
 const legacyAuthSettings = (auth: CliConfig["auth"]) => ({
