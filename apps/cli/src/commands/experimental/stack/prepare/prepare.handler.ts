@@ -68,6 +68,16 @@ export const legacyExperimentalStackPrepare = Effect.fn("legacy.experimental.sta
           }),
       ),
     );
+    const disabledCapability = flags.capability.find((capability) => {
+      const selected = config.capabilities?.[capability];
+      return selected !== undefined && "enabled" in selected && selected.enabled === false;
+    });
+    if (disabledCapability !== undefined)
+      return yield* new LegacyExperimentalStackPrepareError({
+        reason: "invalid-config",
+        message: `Capability ${disabledCapability} is disabled in config.toml.`,
+        suggestion: `Enable ${disabledCapability} in config.toml or drop --capability ${disabledCapability}.`,
+      });
     const runtime: StackRuntimePreference | undefined = target.runtime;
     const stack =
       target.id !== undefined

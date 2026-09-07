@@ -65,12 +65,15 @@ export const legacyStackPrepareError = (error: unknown) => {
           Match.tag(
             "InvalidStackConfigError",
             "StackVersionUnsupportedError",
-            "InvalidStackIdentityError",
             "InvalidProjectRootError",
             "StackSecretMismatchError",
             "InvalidJwtSigningMaterialError",
             () => ({ reason: "invalid-config" as const }),
           ),
+          Match.tag("InvalidStackIdentityError", () => ({ reason: "flags" as const })),
+          Match.tag("StackStateInvalidError", "StackStateFormatUnsupportedError", () => ({
+            reason: "invalid-config" as const,
+          })),
           Match.tag("StackNotFoundError", "StackRuntimeMismatchError", () => ({
             reason: "flags" as const,
           })),
