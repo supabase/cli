@@ -34,8 +34,6 @@ See the [`mise` installation docs](https://mise.jdx.dev/getting-started.html) fo
 
 `mise` needs to hook into your shell so it can inject the right tool versions into your `PATH` as you move between directories. Follow the `mise activate` instructions [in this section](https://mise.jdx.dev/getting-started.html#activate-mise) to add the activation line for your shell to its startup file.
 
-This repo relies on `mise` support for reading Node and pnpm versions from `package.json`, so use mise `2026.7.0` or newer.
-
 #### Installing the pinned tool versions
 
 Trust this repo's `mise.toml` once from the repo root so `mise` can read the project setting that enables idiomatic version files:
@@ -52,13 +50,13 @@ mise install
 
 `mise install` resolves the versions this repo expects from a handful of files, rather than hardcoding them all in one place:
 
-| Tool          | Version source                               |
-| ------------- | -------------------------------------------- |
-| Bun           | `.bun-version`                               |
-| Node.js       | `devEngines.runtime` field in `package.json` |
-| pnpm          | `packageManager` field in `package.json`     |
-| Go            | `mise.toml`                                  |
-| golangci-lint | `mise.toml`                                  |
+| Tool          | Version source                                      |
+| ------------- | --------------------------------------------------- |
+| Bun           | `.bun-version`                                      |
+| Node.js       | `.node-version`                                     |
+| pnpm          | `devEngines.packageManager` field in `package.json` |
+| Go            | `mise.toml`                                         |
+| golangci-lint | `mise.toml`                                         |
 
 The Go and golangci-lint entries in `mise.toml` are intentionally temporary while the Go CLI remains in the repo. The canonical Go module metadata still lives in `apps/cli-go/go.mod`; keep the `mise.toml` entries aligned only until the Go code is removed.
 
@@ -66,7 +64,7 @@ Once installed, `mise` activates these versions automatically whenever your shel
 
 #### Without mise
 
-`mise` is not required. If you already have Bun, Node, pnpm, and Go installed and managed some other way, just make sure your versions match the ones pinned in `.bun-version`, `mise.toml`, `package.json`, and `apps/cli-go/go.mod`.
+`mise` is not required. If you already have Bun, Node, pnpm, and Go installed and managed some other way, just make sure your versions match the ones pinned in `.bun-version`, `.node-version`, `mise.toml`, `package.json`, and `apps/cli-go/go.mod`.
 
 ### Install dependencies
 
@@ -187,7 +185,7 @@ e2e package with `pnpm run test:e2e --shard=1/3`.
 
 ## E2E Compatibility Test Suite
 
-`apps/cli-e2e` implements the replay-and-record compatibility harness for the TypeScript Legacy CLI (`ts-legacy`, the only shipped CLI shell). Live tests are owned by `apps/cli` and run from the command they cover. The CLI still shells out to the bundled Go binary for the handful of commands the TS port proxies (`db diff`, `db pull`, `db branch *`, `db remote *`, `gen keys`, `functions download`), so `apps/cli-go/` is built alongside the TS CLI for these suites, but there is no Go-vs-TypeScript parity runner.
+`apps/cli-e2e` implements the replay-and-record compatibility harness for the TypeScript Legacy CLI (`ts-legacy`, the only shipped CLI shell). Live tests are owned by `apps/cli` and run from the command they cover. The CLI still shells out to the bundled Go binary for the handful of commands the TS port proxies (`db diff --use-pg-schema`, `db branch *`, `db remote changes`, `gen keys`, `functions download`), so `apps/cli-go/` is built alongside the TS CLI for these suites, but there is no Go-vs-TypeScript parity runner.
 
 ### Architecture
 

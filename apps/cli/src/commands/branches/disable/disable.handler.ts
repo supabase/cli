@@ -1,0 +1,51 @@
+import { Effect } from "effect";
+
+import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
+import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
+import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { Output } from "../../../shared/output/output.service.ts";
+import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
+import { legacyResolveParentScopedProjectRef } from "../../../command-internal/legacy-parent-project-ref.ts";
+import {
+  LegacyBranchesDisableNetworkError,
+  LegacyBranchesDisableUnexpectedStatusError,
+} from "../branches.errors.ts";
+import type { LegacyBranchesDisableFlags } from "./disable.command.ts";
+
+const mapDisableError = mapLegacyHttpError({
+  networkError: LegacyBranchesDisableNetworkError,
+  statusError: LegacyBranchesDisableUnexpectedStatusError,
+  networkMessage: (cause) => `failed to disable preview branching: ${cause}`,
+  statusMessage: (status, body) => `unexpected disable branching status ${status}: ${body}`,
+});
+
+export const legacyBranchesDisable = Effect.fn("legacy.branches.disable")(function* (
+  flags: LegacyBranchesDisableFlags,
+) {
+  const output = yield* Output;
+  const api = yield* LegacyPlatformApi;
+  const linkedProjectCache = yield* LegacyLinkedProjectCache;
+  const telemetryState = yield* LegacyTelemetryState;
+
+  // `branches` is PARENT-scoped: after `supabase link <branch>`,
+  // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
+  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
+  const ref = yield* legacyResolveParentScopedProjectRef(flags.projectRef);
+
+  yield* Effect.gen(function* () {
+    const disabling =
+      output.format === "text" ? yield* output.task("Disabling preview branching...") : undefined;
+    yield* api.v1.disablePreviewBranching({ ref }).pipe(
+      Effect.tapError(() => disabling?.fail() ?? Effect.void),
+      Effect.catch(mapDisableError),
+    );
+    yield* disabling?.clear() ?? Effect.void;
+
+    // Established behavior: this message writes to STDOUT.
+    if (output.format === "json" || output.format === "stream-json") {
+      yield* output.success("Disabled preview branching for project", { project_ref: ref });
+      return;
+    }
+    yield* output.raw(`Disabled preview branching for project: ${ref}\n`);
+  }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
+});

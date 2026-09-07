@@ -25,7 +25,7 @@ func (a ApiKey) IsEmpty() bool {
 	return len(a.Anon) == 0 && len(a.ServiceRole) == 0
 }
 
-func NewApiKey(resp []api.ApiKeyResponse) ApiKey {
+func NewApiKey(resp []api.ApiKeyResponseOutput) ApiKey {
 	var result ApiKey
 	for _, key := range resp {
 		value, err := key.ApiKey.Get()
@@ -34,10 +34,10 @@ func NewApiKey(resp []api.ApiKeyResponse) ApiKey {
 		}
 		if t, err := key.Type.Get(); err == nil {
 			switch t {
-			case api.ApiKeyResponseTypePublishable:
+			case api.ApiKeyResponseOutputTypePublishable:
 				result.Anon = value
 				continue
-			case api.ApiKeyResponseTypeSecret:
+			case api.ApiKeyResponseOutputTypeSecret:
 				if isServiceRole(key) {
 					result.ServiceRole = value
 				}
@@ -58,7 +58,7 @@ func NewApiKey(resp []api.ApiKeyResponse) ApiKey {
 	return result
 }
 
-func isServiceRole(key api.ApiKeyResponse) bool {
+func isServiceRole(key api.ApiKeyResponseOutput) bool {
 	if tmpl, err := key.SecretJwtTemplate.Get(); err == nil {
 		if role, ok := tmpl["role"].(string); ok {
 			return strings.EqualFold(role, "service_role")

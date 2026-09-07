@@ -19,7 +19,6 @@ on:
         required: true
         type: choice
         options:
-          - alpha
           - beta
           - stable
       version:
@@ -152,14 +151,6 @@ jobs:
             fi
           fi
           case "$channel" in
-            alpha)
-              shell=next
-              npm_tag=alpha
-              prerelease=true
-              brew_name=""
-              scoop_name=""
-              publish_brew_scoop=false
-              ;;
             beta)
               shell=legacy
               npm_tag=beta
@@ -286,8 +277,8 @@ jobs:
   # Posts to the release Slack channel once the pipeline succeeds. Listing
   # `release` in `needs` without a status function in `if:` keeps the implicit
   # success() gate, so this only runs when both plan and release succeeded.
-  # The `if:` then filters to real (non-dry-run) stable cuts; alpha, beta, and
-  # dry runs stay silent. Nothing depends on this job, so a Slack/webhook
+  # The `if:` then filters to real (non-dry-run) stable cuts; beta and dry
+  # runs stay silent. Nothing depends on this job, so a Slack/webhook
   # failure can't affect the already-completed release.
   notify-slack:
     name: Notify Slack
@@ -297,6 +288,7 @@ jobs:
       needs.plan.outputs.channel == 'stable'
     uses: ./.github/workflows/slack-notify.yml
     with:
+      package: Supabase CLI
       status: success
       version: ${{ needs.plan.outputs.version }}
       channel: ${{ needs.plan.outputs.channel }}
@@ -307,15 +299,18 @@ jobs:
   # `needs` chain, so this fires whenever `plan` or `release` (and anything in
   # the reusable release-shared workflow) fails. Skipped jobs — e.g. the
   # fast-forward path or a release that never started — don't count as failures,
-  # so this stays quiet there. Dry runs are excluded; an operator running one is
-  # already watching it live. When `plan` fails its outputs are empty, so the
-  # message falls back to the workflow run link as the actionable detail.
+  # so this stays quiet there. Dry runs are excluded — the guard reads the
+  # dispatch input directly, so even a plan job that dies before recording its
+  # dry_run output stays quiet; an operator running one is already watching it
+  # live. When `plan` fails its outputs are empty, so the message falls back to
+  # the workflow run link as the actionable detail.
   notify-slack-failure:
     name: Notify Slack (failure)
     needs: [plan, release]
-    if: failure() && needs.plan.outputs.dry_run != 'true'
+    if: ${{ failure() && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
     uses: ./.github/workflows/slack-notify.yml
     with:
+      package: Supabase CLI
       status: failure
       version: ${{ needs.plan.outputs.version }}
       channel: ${{ needs.plan.outputs.channel }}

@@ -12169,7 +12169,7 @@ type ClientWithResponsesInterface interface {
 type V1DeleteABranchResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *BranchDeleteResponse
+	JSON200      *BranchDeleteResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12199,7 +12199,7 @@ func (r V1DeleteABranchResponse) ContentType() string {
 type V1GetABranchConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *BranchDetailResponse
+	JSON200      *BranchDetailResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12229,7 +12229,7 @@ func (r V1GetABranchConfigResponse) ContentType() string {
 type V1UpdateABranchConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *BranchResponse
+	JSON200      *BranchResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12288,7 +12288,7 @@ func (r V1DiffABranchResponse) ContentType() string {
 type V1MergeABranchResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *BranchUpdateResponse
+	JSON201      *BranchUpdateResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12318,7 +12318,7 @@ func (r V1MergeABranchResponse) ContentType() string {
 type V1PushABranchResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *BranchUpdateResponse
+	JSON201      *BranchUpdateResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12348,7 +12348,7 @@ func (r V1PushABranchResponse) ContentType() string {
 type V1ResetABranchResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *BranchUpdateResponse
+	JSON201      *BranchUpdateResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12378,7 +12378,7 @@ func (r V1ResetABranchResponse) ContentType() string {
 type V1RestoreABranchResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *BranchRestoreResponse
+	JSON201      *BranchRestoreResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12495,7 +12495,7 @@ func (r V1RevokeTokenResponse) ContentType() string {
 type V1ExchangeOauthTokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *OAuthTokenResponse
+	JSON200      *OAuthTokenResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12525,7 +12525,7 @@ func (r V1ExchangeOauthTokenResponse) ContentType() string {
 type V1ListAllOrganizationsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]OrganizationResponseV1
+	JSON200      *[]OrganizationResponseV1Output
 }
 
 // Status returns HTTPResponse.Status
@@ -12555,7 +12555,7 @@ func (r V1ListAllOrganizationsResponse) ContentType() string {
 type V1CreateAnOrganizationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *OrganizationResponseV1
+	JSON201      *OrganizationResponseV1Output
 }
 
 // Status returns HTTPResponse.Status
@@ -12585,7 +12585,7 @@ func (r V1CreateAnOrganizationResponse) ContentType() string {
 type V1GetAnOrganizationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1OrganizationSlugResponse
+	JSON200      *V1OrganizationSlugResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12615,7 +12615,7 @@ func (r V1GetAnOrganizationResponse) ContentType() string {
 type V1GetOrganizationEntitlementsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1ListEntitlementsResponse
+	JSON200      *V1ListEntitlementsResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12645,7 +12645,7 @@ func (r V1GetOrganizationEntitlementsResponse) ContentType() string {
 type V1ListOrganizationMembersResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]V1OrganizationMemberResponse
+	JSON200      *[]V1OrganizationMemberResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12675,7 +12675,7 @@ func (r V1ListOrganizationMembersResponse) ContentType() string {
 type V1GetOrganizationProjectClaimResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *OrganizationProjectClaimResponse
+	JSON200      *OrganizationProjectClaimResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12734,7 +12734,7 @@ func (r V1ClaimProjectForOrganizationResponse) ContentType() string {
 type V1GetAllProjectsForOrganizationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *OrganizationProjectsResponse
+	JSON200      *OrganizationProjectsResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12764,7 +12764,7 @@ func (r V1GetAllProjectsForOrganizationResponse) ContentType() string {
 type V1GetProfileResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1ProfileResponse
+	JSON200      *V1ProfileResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12794,7 +12794,7 @@ func (r V1GetProfileResponse) ContentType() string {
 type V1ListAllProjectsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]V1ProjectWithDatabaseResponse
+	JSON200      *[]V1ProjectWithDatabaseResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12824,7 +12824,7 @@ func (r V1ListAllProjectsResponse) ContentType() string {
 type V1CreateAProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *V1ProjectResponse
+	JSON201      *V1ProjectResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12854,7 +12854,7 @@ func (r V1CreateAProjectResponse) ContentType() string {
 type V1GetAvailableRegionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *RegionsInfo
+	JSON200      *RegionsInfoOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12884,7 +12884,7 @@ func (r V1GetAvailableRegionsResponse) ContentType() string {
 type V1DeleteAProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1ProjectRefResponse
+	JSON200      *V1ProjectRefResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12914,7 +12914,7 @@ func (r V1DeleteAProjectResponse) ContentType() string {
 type V1GetProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1ProjectWithDatabaseResponse
+	JSON200      *V1ProjectWithDatabaseResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12944,7 +12944,7 @@ func (r V1GetProjectResponse) ContentType() string {
 type V1UpdateAProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1ProjectRefResponse
+	JSON200      *V1ProjectRefResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -12974,7 +12974,7 @@ func (r V1UpdateAProjectResponse) ContentType() string {
 type V1ListActionRunsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ListActionRunResponse
+	JSON200      *ListActionRunResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13033,7 +13033,7 @@ func (r V1CountActionRunsResponse) ContentType() string {
 type V1GetActionRunResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ActionRunResponse
+	JSON200      *ActionRunResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13092,7 +13092,7 @@ func (r V1GetActionRunLogsResponse) ContentType() string {
 type V1UpdateActionRunStatusResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *UpdateRunStatusResponse
+	JSON200      *UpdateRunStatusResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13122,7 +13122,7 @@ func (r V1UpdateActionRunStatusResponse) ContentType() string {
 type V1GetPerformanceAdvisorsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1ProjectAdvisorsResponse
+	JSON200      *V1ProjectAdvisorsResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13152,7 +13152,7 @@ func (r V1GetPerformanceAdvisorsResponse) ContentType() string {
 type V1GetSecurityAdvisorsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1ProjectAdvisorsResponse
+	JSON200      *V1ProjectAdvisorsResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13182,7 +13182,7 @@ func (r V1GetSecurityAdvisorsResponse) ContentType() string {
 type V1GetProjectFunctionCombinedStatsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *AnalyticsResponse
+	JSON200      *AnalyticsResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13212,7 +13212,7 @@ func (r V1GetProjectFunctionCombinedStatsResponse) ContentType() string {
 type V1GetProjectLogsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *AnalyticsResponse
+	JSON200      *AnalyticsResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13242,7 +13242,7 @@ func (r V1GetProjectLogsResponse) ContentType() string {
 type V1GetProjectLogsAllResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *AnalyticsResponse
+	JSON200      *AnalyticsResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13301,7 +13301,7 @@ func (r V1ScrapeProjectMetricsResponse) ContentType() string {
 type V1GetProjectUsageApiCountResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1GetUsageApiCountResponse
+	JSON200      *V1GetUsageApiCountResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13331,7 +13331,7 @@ func (r V1GetProjectUsageApiCountResponse) ContentType() string {
 type V1GetProjectUsageRequestCountResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1GetUsageApiRequestsCountResponse
+	JSON200      *V1GetUsageApiRequestsCountResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13361,7 +13361,7 @@ func (r V1GetProjectUsageRequestCountResponse) ContentType() string {
 type V1GetProjectApiKeysResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]ApiKeyResponse
+	JSON200      *[]ApiKeyResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13391,7 +13391,7 @@ func (r V1GetProjectApiKeysResponse) ContentType() string {
 type V1CreateProjectApiKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *ApiKeyResponse
+	JSON201      *ApiKeyResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13421,7 +13421,7 @@ func (r V1CreateProjectApiKeyResponse) ContentType() string {
 type V1GetProjectLegacyApiKeysResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *LegacyApiKeysResponse
+	JSON200      *LegacyApiKeysResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13451,7 +13451,7 @@ func (r V1GetProjectLegacyApiKeysResponse) ContentType() string {
 type V1UpdateProjectLegacyApiKeysResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *LegacyApiKeysResponse
+	JSON200      *LegacyApiKeysResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13481,7 +13481,7 @@ func (r V1UpdateProjectLegacyApiKeysResponse) ContentType() string {
 type V1DeleteProjectApiKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ApiKeyResponse
+	JSON200      *ApiKeyResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13511,7 +13511,7 @@ func (r V1DeleteProjectApiKeyResponse) ContentType() string {
 type V1GetProjectApiKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ApiKeyResponse
+	JSON200      *ApiKeyResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13541,7 +13541,7 @@ func (r V1GetProjectApiKeyResponse) ContentType() string {
 type V1UpdateProjectApiKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ApiKeyResponse
+	JSON200      *ApiKeyResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13571,7 +13571,7 @@ func (r V1UpdateProjectApiKeyResponse) ContentType() string {
 type V1ListProjectAddonsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ListProjectAddonsResponse
+	JSON200      *ListProjectAddonsResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13688,7 +13688,7 @@ func (r V1DisablePreviewBranchingResponse) ContentType() string {
 type V1ListAllBranchesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]BranchResponse
+	JSON200      *[]BranchResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13718,7 +13718,7 @@ func (r V1ListAllBranchesResponse) ContentType() string {
 type V1CreateABranchResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *BranchResponse
+	JSON201      *BranchResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13748,7 +13748,7 @@ func (r V1CreateABranchResponse) ContentType() string {
 type V1GetABranchResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *BranchResponse
+	JSON200      *BranchResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13807,7 +13807,7 @@ func (r V1DeleteProjectClaimTokenResponse) ContentType() string {
 type V1GetProjectClaimTokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ProjectClaimTokenResponse
+	JSON200      *ProjectClaimTokenResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13837,7 +13837,7 @@ func (r V1GetProjectClaimTokenResponse) ContentType() string {
 type V1CreateProjectClaimTokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *CreateProjectClaimTokenResponse
+	JSON200      *CreateProjectClaimTokenResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13867,7 +13867,7 @@ func (r V1CreateProjectClaimTokenResponse) ContentType() string {
 type V1DeleteLoginRolesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *DeleteRolesResponse
+	JSON200      *DeleteRolesResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13897,7 +13897,7 @@ func (r V1DeleteLoginRolesResponse) ContentType() string {
 type V1CreateLoginRoleResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *CreateRoleResponse
+	JSON201      *CreateRoleResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13927,7 +13927,7 @@ func (r V1CreateLoginRoleResponse) ContentType() string {
 type V1GetAuthServiceConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *AuthConfigResponse
+	JSON200      *AuthConfigResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13957,7 +13957,7 @@ func (r V1GetAuthServiceConfigResponse) ContentType() string {
 type V1UpdateAuthServiceConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *AuthConfigResponse
+	JSON200      *AuthConfigResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -13987,7 +13987,7 @@ func (r V1UpdateAuthServiceConfigResponse) ContentType() string {
 type V1GetProjectSigningKeysResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *SigningKeysResponse
+	JSON200      *SigningKeysResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14017,7 +14017,7 @@ func (r V1GetProjectSigningKeysResponse) ContentType() string {
 type V1CreateProjectSigningKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *SigningKeyResponse
+	JSON201      *SigningKeyResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14047,7 +14047,7 @@ func (r V1CreateProjectSigningKeyResponse) ContentType() string {
 type V1GetLegacySigningKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *SigningKeyResponse
+	JSON200      *SigningKeyResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14077,7 +14077,7 @@ func (r V1GetLegacySigningKeyResponse) ContentType() string {
 type V1CreateLegacySigningKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *SigningKeyResponse
+	JSON201      *SigningKeyResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14107,7 +14107,7 @@ func (r V1CreateLegacySigningKeyResponse) ContentType() string {
 type V1RemoveProjectSigningKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *SigningKeyResponse
+	JSON200      *SigningKeyResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14137,7 +14137,7 @@ func (r V1RemoveProjectSigningKeyResponse) ContentType() string {
 type V1GetProjectSigningKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *SigningKeyResponse
+	JSON200      *SigningKeyResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14167,7 +14167,7 @@ func (r V1GetProjectSigningKeyResponse) ContentType() string {
 type V1UpdateProjectSigningKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *SigningKeyResponse
+	JSON200      *SigningKeyResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14197,7 +14197,7 @@ func (r V1UpdateProjectSigningKeyResponse) ContentType() string {
 type V1ListAllSsoProviderResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ListProvidersResponse
+	JSON200      *ListProvidersResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14227,7 +14227,7 @@ func (r V1ListAllSsoProviderResponse) ContentType() string {
 type V1CreateASsoProviderResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *CreateProviderResponse
+	JSON201      *CreateProviderResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14257,7 +14257,7 @@ func (r V1CreateASsoProviderResponse) ContentType() string {
 type V1DeleteASsoProviderResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *DeleteProviderResponse
+	JSON200      *DeleteProviderResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14287,7 +14287,7 @@ func (r V1DeleteASsoProviderResponse) ContentType() string {
 type V1GetASsoProviderResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *GetProviderResponse
+	JSON200      *GetProviderResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14317,7 +14317,7 @@ func (r V1GetASsoProviderResponse) ContentType() string {
 type V1UpdateASsoProviderResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *UpdateProviderResponse
+	JSON200      *UpdateProviderResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14347,7 +14347,7 @@ func (r V1UpdateASsoProviderResponse) ContentType() string {
 type V1ListProjectTpaIntegrationsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]ThirdPartyAuth
+	JSON200      *[]ThirdPartyAuthOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14377,7 +14377,7 @@ func (r V1ListProjectTpaIntegrationsResponse) ContentType() string {
 type V1CreateProjectTpaIntegrationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *ThirdPartyAuth
+	JSON201      *ThirdPartyAuthOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14407,7 +14407,7 @@ func (r V1CreateProjectTpaIntegrationResponse) ContentType() string {
 type V1DeleteProjectTpaIntegrationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ThirdPartyAuth
+	JSON200      *ThirdPartyAuthOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14437,7 +14437,7 @@ func (r V1DeleteProjectTpaIntegrationResponse) ContentType() string {
 type V1GetProjectTpaIntegrationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ThirdPartyAuth
+	JSON200      *ThirdPartyAuthOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14467,7 +14467,7 @@ func (r V1GetProjectTpaIntegrationResponse) ContentType() string {
 type V1GetProjectPgbouncerConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1PgbouncerConfigResponse
+	JSON200      *V1PgbouncerConfigResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14497,7 +14497,7 @@ func (r V1GetProjectPgbouncerConfigResponse) ContentType() string {
 type V1GetPoolerConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]SupavisorConfigResponse
+	JSON200      *[]SupavisorConfigResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14527,7 +14527,7 @@ func (r V1GetPoolerConfigResponse) ContentType() string {
 type V1UpdatePoolerConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *UpdateSupavisorConfigResponse
+	JSON200      *UpdateSupavisorConfigResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14557,7 +14557,7 @@ func (r V1UpdatePoolerConfigResponse) ContentType() string {
 type V1GetPostgresConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *PostgresConfigResponse
+	JSON200      *PostgresConfigResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14587,7 +14587,7 @@ func (r V1GetPostgresConfigResponse) ContentType() string {
 type V1UpdatePostgresConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *PostgresConfigResponse
+	JSON200      *PostgresConfigResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14617,7 +14617,7 @@ func (r V1UpdatePostgresConfigResponse) ContentType() string {
 type V1GetDatabaseDiskResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *DiskResponse
+	JSON200      *DiskResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14676,7 +14676,7 @@ func (r V1ModifyDatabaseDiskResponse) ContentType() string {
 type V1GetProjectDiskAutoscaleConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *DiskAutoscaleConfig
+	JSON200      *DiskAutoscaleConfigOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14706,7 +14706,7 @@ func (r V1GetProjectDiskAutoscaleConfigResponse) ContentType() string {
 type V1GetDiskUtilizationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *DiskUtilMetricsResponse
+	JSON200      *DiskUtilMetricsResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14736,7 +14736,7 @@ func (r V1GetDiskUtilizationResponse) ContentType() string {
 type V1GetRealtimeConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *RealtimeConfigResponse
+	JSON200      *RealtimeConfigResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14824,7 +14824,7 @@ func (r V1ShutdownRealtimeResponse) ContentType() string {
 type V1GetStorageConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *StorageConfigResponse
+	JSON200      *StorageConfigResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14912,7 +14912,7 @@ func (r V1DeleteHostnameConfigResponse) ContentType() string {
 type V1GetHostnameConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *UpdateCustomHostnameResponse
+	JSON200      *UpdateCustomHostnameResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14942,7 +14942,7 @@ func (r V1GetHostnameConfigResponse) ContentType() string {
 type V1ActivateCustomHostnameResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *UpdateCustomHostnameResponse
+	JSON201      *UpdateCustomHostnameResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -14972,7 +14972,7 @@ func (r V1ActivateCustomHostnameResponse) ContentType() string {
 type V1UpdateHostnameConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *UpdateCustomHostnameResponse
+	JSON201      *UpdateCustomHostnameResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -15002,7 +15002,7 @@ func (r V1UpdateHostnameConfigResponse) ContentType() string {
 type V1VerifyDnsConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *UpdateCustomHostnameResponse
+	JSON201      *UpdateCustomHostnameResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -15032,7 +15032,7 @@ func (r V1VerifyDnsConfigResponse) ContentType() string {
 type V1ListAllBackupsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1BackupsResponse
+	JSON200      *V1BackupsResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -15180,7 +15180,7 @@ func (r V1CreateRestorePointResponse) ContentType() string {
 type V1GetBackupScheduleResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1BackupScheduleResponse
+	JSON200      *V1BackupScheduleResponseOutput
 	JSON402      *PlanGateErrorBody
 }
 
@@ -15211,7 +15211,7 @@ func (r V1GetBackupScheduleResponse) ContentType() string {
 type V1UpdateBackupScheduleResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1BackupScheduleResponse
+	JSON200      *V1BackupScheduleResponseOutput
 	JSON402      *PlanGateErrorBody
 }
 
@@ -15271,7 +15271,7 @@ func (r V1UndoResponse) ContentType() string {
 type V1GetDatabaseMetadataResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *GetProjectDbMetadataResponse
+	JSON200      *GetProjectDbMetadataResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -15301,7 +15301,7 @@ func (r V1GetDatabaseMetadataResponse) ContentType() string {
 type V1GetJitAccessResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *JitAccessResponse
+	JSON200      *JitAccessResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -15331,7 +15331,7 @@ func (r V1GetJitAccessResponse) ContentType() string {
 type V1AuthorizeJitAccessResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *JitAuthorizeAccessResponse
+	JSON200      *JitAuthorizeAccessResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -15361,7 +15361,7 @@ func (r V1AuthorizeJitAccessResponse) ContentType() string {
 type V1UpdateJitAccessResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *JitAccessResponse
+	JSON200      *JitAccessResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -15391,7 +15391,7 @@ func (r V1UpdateJitAccessResponse) ContentType() string {
 type V1InviteExternalJitAccessResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *InviteExternalUserJitResponse
+	JSON200      *InviteExternalUserJitResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -15421,7 +15421,7 @@ func (r V1InviteExternalJitAccessResponse) ContentType() string {
 type V1AcceptInviteExternalJitAccessResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *JitAccessResponse
+	JSON200      *JitAccessResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -15480,7 +15480,7 @@ func (r V1DeleteInviteExternalJitAccessResponse) ContentType() string {
 type V1ListJitAccessResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *JitListAccessResponse
+	JSON200      *JitListAccessResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -15568,7 +15568,7 @@ func (r V1RollbackMigrationsResponse) ContentType() string {
 type V1ListMigrationHistoryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1ListMigrationsResponse
+	JSON200      *V1ListMigrationsResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -15656,7 +15656,7 @@ func (r V1UpsertAMigrationResponse) ContentType() string {
 type V1GetAMigrationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1GetMigrationResponse
+	JSON200      *V1GetMigrationResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -15745,7 +15745,7 @@ func (r V1GetDatabaseOpenapiResponse) ContentType() string {
 type V1UpdateDatabasePasswordResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1UpdatePasswordResponse
+	JSON200      *V1UpdatePasswordResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -15862,7 +15862,7 @@ func (r V1EnableDatabaseWebhookResponse) ContentType() string {
 type V1ListAllFunctionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]FunctionResponse
+	JSON200      *[]FunctionResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -15892,7 +15892,7 @@ func (r V1ListAllFunctionsResponse) ContentType() string {
 type V1CreateAFunctionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *FunctionResponse
+	JSON201      *FunctionResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -15922,7 +15922,7 @@ func (r V1CreateAFunctionResponse) ContentType() string {
 type V1BulkUpdateFunctionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *BulkUpdateFunctionResponse
+	JSON200      *BulkUpdateFunctionResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -15952,7 +15952,7 @@ func (r V1BulkUpdateFunctionsResponse) ContentType() string {
 type V1DeployAFunctionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *DeployFunctionResponse
+	JSON201      *DeployFunctionResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16011,7 +16011,7 @@ func (r V1DeleteAFunctionResponse) ContentType() string {
 type V1GetAFunctionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *FunctionSlugResponse
+	JSON200      *FunctionSlugResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16041,7 +16041,7 @@ func (r V1GetAFunctionResponse) ContentType() string {
 type V1UpdateAFunctionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *FunctionResponse
+	JSON200      *FunctionSlugResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16101,7 +16101,7 @@ func (r V1GetAFunctionBodyResponse) ContentType() string {
 type V1GetServicesHealthResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]V1ServiceHealthResponse
+	JSON200      *[]V1ServiceHealthResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16220,7 +16220,7 @@ func (r V1DeleteNetworkBansResponse) ContentType() string {
 type V1ListAllNetworkBansResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *NetworkBanResponse
+	JSON201      *NetworkBanResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16250,7 +16250,7 @@ func (r V1ListAllNetworkBansResponse) ContentType() string {
 type V1ListAllNetworkBansEnrichedResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *NetworkBanResponseEnriched
+	JSON201      *NetworkBanResponseEnrichedOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16280,7 +16280,7 @@ func (r V1ListAllNetworkBansEnrichedResponse) ContentType() string {
 type V1GetNetworkRestrictionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *NetworkRestrictionsResponse
+	JSON200      *NetworkRestrictionsResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16310,7 +16310,7 @@ func (r V1GetNetworkRestrictionsResponse) ContentType() string {
 type V1PatchNetworkRestrictionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *NetworkRestrictionsV2Response
+	JSON200      *NetworkRestrictionsV2ResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16340,7 +16340,7 @@ func (r V1PatchNetworkRestrictionsResponse) ContentType() string {
 type V1UpdateNetworkRestrictionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *NetworkRestrictionsResponse
+	JSON201      *NetworkRestrictionsResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16399,7 +16399,7 @@ func (r V1PauseAProjectResponse) ContentType() string {
 type V1GetPgsodiumConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *PgsodiumConfigResponse
+	JSON200      *PgsodiumConfigResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16429,7 +16429,7 @@ func (r V1GetPgsodiumConfigResponse) ContentType() string {
 type V1UpdatePgsodiumConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *PgsodiumConfigResponse
+	JSON200      *PgsodiumConfigResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16459,7 +16459,7 @@ func (r V1UpdatePgsodiumConfigResponse) ContentType() string {
 type V1GetPostgrestServiceConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *PostgrestConfigWithJWTSecretResponse
+	JSON200      *PostgrestConfigWithJWTSecretResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16489,7 +16489,7 @@ func (r V1GetPostgrestServiceConfigResponse) ContentType() string {
 type V1UpdatePostgrestServiceConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1PostgrestConfigResponse
+	JSON200      *V1PostgrestConfigResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16578,7 +16578,7 @@ func (r V1SetupAReadReplicaResponse) ContentType() string {
 type V1GetReadonlyModeStatusResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ReadOnlyStatusResponse
+	JSON200      *ReadOnlyStatusResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16666,7 +16666,7 @@ func (r V1RestartAProjectResponse) ContentType() string {
 type V1ListAvailableRestoreVersionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *GetProjectAvailableRestoreVersionsResponse
+	JSON200      *GetProjectAvailableRestoreVersionsResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16783,7 +16783,7 @@ func (r V1BulkDeleteSecretsResponse) ContentType() string {
 type V1ListAllSecretsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]SecretResponse
+	JSON200      *[]SecretResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16842,7 +16842,7 @@ func (r V1BulkCreateSecretsResponse) ContentType() string {
 type V1GetSslEnforcementConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *SslEnforcementResponse
+	JSON200      *SslEnforcementResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16872,7 +16872,7 @@ func (r V1GetSslEnforcementConfigResponse) ContentType() string {
 type V1UpdateSslEnforcementConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *SslEnforcementResponse
+	JSON200      *SslEnforcementResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16902,7 +16902,7 @@ func (r V1UpdateSslEnforcementConfigResponse) ContentType() string {
 type V1ListAllBucketsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *[]V1StorageBucketResponse
+	JSON200      *[]V1StorageBucketResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16932,7 +16932,7 @@ func (r V1ListAllBucketsResponse) ContentType() string {
 type V1GenerateTypescriptTypesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *TypescriptResponse
+	JSON200      *TypescriptResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16962,7 +16962,7 @@ func (r V1GenerateTypescriptTypesResponse) ContentType() string {
 type V1UpgradePostgresVersionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *ProjectUpgradeInitiateResponse
+	JSON201      *ProjectUpgradeInitiateResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -16992,7 +16992,7 @@ func (r V1UpgradePostgresVersionResponse) ContentType() string {
 type V1GetPostgresUpgradeEligibilityResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ProjectUpgradeEligibilityResponse
+	JSON200      *ProjectUpgradeEligibilityResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -17022,7 +17022,7 @@ func (r V1GetPostgresUpgradeEligibilityResponse) ContentType() string {
 type V1GetPostgresUpgradeStatusResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *DatabaseUpgradeStatusResponse
+	JSON200      *DatabaseUpgradeStatusResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -17081,7 +17081,7 @@ func (r V1DeactivateVanitySubdomainConfigResponse) ContentType() string {
 type V1GetVanitySubdomainConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *VanitySubdomainConfigResponse
+	JSON200      *VanitySubdomainConfigResponseOutput
 	JSON400      *PlanGateErrorBody
 }
 
@@ -17112,7 +17112,7 @@ func (r V1GetVanitySubdomainConfigResponse) ContentType() string {
 type V1ActivateVanitySubdomainConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *ActivateVanitySubdomainResponse
+	JSON201      *ActivateVanitySubdomainResponseOutput
 	JSON400      *PlanGateErrorBody
 }
 
@@ -17143,7 +17143,7 @@ func (r V1ActivateVanitySubdomainConfigResponse) ContentType() string {
 type V1CheckVanitySubdomainAvailabilityResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *SubdomainAvailabilityResponse
+	JSON201      *SubdomainAvailabilityResponseOutput
 	JSON400      *PlanGateErrorBody
 }
 
@@ -17174,7 +17174,7 @@ func (r V1CheckVanitySubdomainAvailabilityResponse) ContentType() string {
 type V1ListAllSnippetsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *SnippetList
+	JSON200      *SnippetListOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -17204,7 +17204,7 @@ func (r V1ListAllSnippetsResponse) ContentType() string {
 type V1GetASnippetResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *SnippetResponse
+	JSON200      *SnippetResponseOutput
 }
 
 // Status returns HTTPResponse.Status
@@ -19250,7 +19250,7 @@ func ParseV1DeleteABranchResponse(rsp *http.Response) (*V1DeleteABranchResponse,
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest BranchDeleteResponse
+		var dest BranchDeleteResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19276,7 +19276,7 @@ func ParseV1GetABranchConfigResponse(rsp *http.Response) (*V1GetABranchConfigRes
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest BranchDetailResponse
+		var dest BranchDetailResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19302,7 +19302,7 @@ func ParseV1UpdateABranchConfigResponse(rsp *http.Response) (*V1UpdateABranchCon
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest BranchResponse
+		var dest BranchResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19344,7 +19344,7 @@ func ParseV1MergeABranchResponse(rsp *http.Response) (*V1MergeABranchResponse, e
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest BranchUpdateResponse
+		var dest BranchUpdateResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19370,7 +19370,7 @@ func ParseV1PushABranchResponse(rsp *http.Response) (*V1PushABranchResponse, err
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest BranchUpdateResponse
+		var dest BranchUpdateResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19396,7 +19396,7 @@ func ParseV1ResetABranchResponse(rsp *http.Response) (*V1ResetABranchResponse, e
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest BranchUpdateResponse
+		var dest BranchUpdateResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19421,12 +19421,12 @@ func ParseV1RestoreABranchResponse(rsp *http.Response) (*V1RestoreABranchRespons
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest BranchRestoreResponse
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest BranchRestoreResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON200 = &dest
+		response.JSON201 = &dest
 
 	}
 
@@ -19496,7 +19496,7 @@ func ParseV1ExchangeOauthTokenResponse(rsp *http.Response) (*V1ExchangeOauthToke
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest OAuthTokenResponse
+		var dest OAuthTokenResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19522,7 +19522,7 @@ func ParseV1ListAllOrganizationsResponse(rsp *http.Response) (*V1ListAllOrganiza
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []OrganizationResponseV1
+		var dest []OrganizationResponseV1Output
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19548,7 +19548,7 @@ func ParseV1CreateAnOrganizationResponse(rsp *http.Response) (*V1CreateAnOrganiz
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest OrganizationResponseV1
+		var dest OrganizationResponseV1Output
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19574,7 +19574,7 @@ func ParseV1GetAnOrganizationResponse(rsp *http.Response) (*V1GetAnOrganizationR
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1OrganizationSlugResponse
+		var dest V1OrganizationSlugResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19600,7 +19600,7 @@ func ParseV1GetOrganizationEntitlementsResponse(rsp *http.Response) (*V1GetOrgan
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1ListEntitlementsResponse
+		var dest V1ListEntitlementsResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19626,7 +19626,7 @@ func ParseV1ListOrganizationMembersResponse(rsp *http.Response) (*V1ListOrganiza
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []V1OrganizationMemberResponse
+		var dest []V1OrganizationMemberResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19652,7 +19652,7 @@ func ParseV1GetOrganizationProjectClaimResponse(rsp *http.Response) (*V1GetOrgan
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest OrganizationProjectClaimResponse
+		var dest OrganizationProjectClaimResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19694,7 +19694,7 @@ func ParseV1GetAllProjectsForOrganizationResponse(rsp *http.Response) (*V1GetAll
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest OrganizationProjectsResponse
+		var dest OrganizationProjectsResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19720,7 +19720,7 @@ func ParseV1GetProfileResponse(rsp *http.Response) (*V1GetProfileResponse, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1ProfileResponse
+		var dest V1ProfileResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19746,7 +19746,7 @@ func ParseV1ListAllProjectsResponse(rsp *http.Response) (*V1ListAllProjectsRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []V1ProjectWithDatabaseResponse
+		var dest []V1ProjectWithDatabaseResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19772,7 +19772,7 @@ func ParseV1CreateAProjectResponse(rsp *http.Response) (*V1CreateAProjectRespons
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest V1ProjectResponse
+		var dest V1ProjectResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19798,7 +19798,7 @@ func ParseV1GetAvailableRegionsResponse(rsp *http.Response) (*V1GetAvailableRegi
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest RegionsInfo
+		var dest RegionsInfoOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19824,7 +19824,7 @@ func ParseV1DeleteAProjectResponse(rsp *http.Response) (*V1DeleteAProjectRespons
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1ProjectRefResponse
+		var dest V1ProjectRefResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19850,7 +19850,7 @@ func ParseV1GetProjectResponse(rsp *http.Response) (*V1GetProjectResponse, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1ProjectWithDatabaseResponse
+		var dest V1ProjectWithDatabaseResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19876,7 +19876,7 @@ func ParseV1UpdateAProjectResponse(rsp *http.Response) (*V1UpdateAProjectRespons
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1ProjectRefResponse
+		var dest V1ProjectRefResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19902,7 +19902,7 @@ func ParseV1ListActionRunsResponse(rsp *http.Response) (*V1ListActionRunsRespons
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ListActionRunResponse
+		var dest ListActionRunResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19944,7 +19944,7 @@ func ParseV1GetActionRunResponse(rsp *http.Response) (*V1GetActionRunResponse, e
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ActionRunResponse
+		var dest ActionRunResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19986,7 +19986,7 @@ func ParseV1UpdateActionRunStatusResponse(rsp *http.Response) (*V1UpdateActionRu
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest UpdateRunStatusResponse
+		var dest UpdateRunStatusResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20012,7 +20012,7 @@ func ParseV1GetPerformanceAdvisorsResponse(rsp *http.Response) (*V1GetPerformanc
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1ProjectAdvisorsResponse
+		var dest V1ProjectAdvisorsResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20038,7 +20038,7 @@ func ParseV1GetSecurityAdvisorsResponse(rsp *http.Response) (*V1GetSecurityAdvis
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1ProjectAdvisorsResponse
+		var dest V1ProjectAdvisorsResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20064,7 +20064,7 @@ func ParseV1GetProjectFunctionCombinedStatsResponse(rsp *http.Response) (*V1GetP
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AnalyticsResponse
+		var dest AnalyticsResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20090,7 +20090,7 @@ func ParseV1GetProjectLogsResponse(rsp *http.Response) (*V1GetProjectLogsRespons
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AnalyticsResponse
+		var dest AnalyticsResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20116,7 +20116,7 @@ func ParseV1GetProjectLogsAllResponse(rsp *http.Response) (*V1GetProjectLogsAllR
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AnalyticsResponse
+		var dest AnalyticsResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20158,7 +20158,7 @@ func ParseV1GetProjectUsageApiCountResponse(rsp *http.Response) (*V1GetProjectUs
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1GetUsageApiCountResponse
+		var dest V1GetUsageApiCountResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20184,7 +20184,7 @@ func ParseV1GetProjectUsageRequestCountResponse(rsp *http.Response) (*V1GetProje
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1GetUsageApiRequestsCountResponse
+		var dest V1GetUsageApiRequestsCountResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20210,7 +20210,7 @@ func ParseV1GetProjectApiKeysResponse(rsp *http.Response) (*V1GetProjectApiKeysR
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []ApiKeyResponse
+		var dest []ApiKeyResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20236,7 +20236,7 @@ func ParseV1CreateProjectApiKeyResponse(rsp *http.Response) (*V1CreateProjectApi
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ApiKeyResponse
+		var dest ApiKeyResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20262,7 +20262,7 @@ func ParseV1GetProjectLegacyApiKeysResponse(rsp *http.Response) (*V1GetProjectLe
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest LegacyApiKeysResponse
+		var dest LegacyApiKeysResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20288,7 +20288,7 @@ func ParseV1UpdateProjectLegacyApiKeysResponse(rsp *http.Response) (*V1UpdatePro
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest LegacyApiKeysResponse
+		var dest LegacyApiKeysResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20314,7 +20314,7 @@ func ParseV1DeleteProjectApiKeyResponse(rsp *http.Response) (*V1DeleteProjectApi
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ApiKeyResponse
+		var dest ApiKeyResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20340,7 +20340,7 @@ func ParseV1GetProjectApiKeyResponse(rsp *http.Response) (*V1GetProjectApiKeyRes
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ApiKeyResponse
+		var dest ApiKeyResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20366,7 +20366,7 @@ func ParseV1UpdateProjectApiKeyResponse(rsp *http.Response) (*V1UpdateProjectApi
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ApiKeyResponse
+		var dest ApiKeyResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20392,7 +20392,7 @@ func ParseV1ListProjectAddonsResponse(rsp *http.Response) (*V1ListProjectAddonsR
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ListProjectAddonsResponse
+		var dest ListProjectAddonsResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20466,7 +20466,7 @@ func ParseV1ListAllBranchesResponse(rsp *http.Response) (*V1ListAllBranchesRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []BranchResponse
+		var dest []BranchResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20492,7 +20492,7 @@ func ParseV1CreateABranchResponse(rsp *http.Response) (*V1CreateABranchResponse,
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest BranchResponse
+		var dest BranchResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20518,7 +20518,7 @@ func ParseV1GetABranchResponse(rsp *http.Response) (*V1GetABranchResponse, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest BranchResponse
+		var dest BranchResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20560,7 +20560,7 @@ func ParseV1GetProjectClaimTokenResponse(rsp *http.Response) (*V1GetProjectClaim
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ProjectClaimTokenResponse
+		var dest ProjectClaimTokenResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20586,7 +20586,7 @@ func ParseV1CreateProjectClaimTokenResponse(rsp *http.Response) (*V1CreateProjec
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest CreateProjectClaimTokenResponse
+		var dest CreateProjectClaimTokenResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20612,7 +20612,7 @@ func ParseV1DeleteLoginRolesResponse(rsp *http.Response) (*V1DeleteLoginRolesRes
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest DeleteRolesResponse
+		var dest DeleteRolesResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20638,7 +20638,7 @@ func ParseV1CreateLoginRoleResponse(rsp *http.Response) (*V1CreateLoginRoleRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest CreateRoleResponse
+		var dest CreateRoleResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20664,7 +20664,7 @@ func ParseV1GetAuthServiceConfigResponse(rsp *http.Response) (*V1GetAuthServiceC
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AuthConfigResponse
+		var dest AuthConfigResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20690,7 +20690,7 @@ func ParseV1UpdateAuthServiceConfigResponse(rsp *http.Response) (*V1UpdateAuthSe
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AuthConfigResponse
+		var dest AuthConfigResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20716,7 +20716,7 @@ func ParseV1GetProjectSigningKeysResponse(rsp *http.Response) (*V1GetProjectSign
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SigningKeysResponse
+		var dest SigningKeysResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20742,7 +20742,7 @@ func ParseV1CreateProjectSigningKeyResponse(rsp *http.Response) (*V1CreateProjec
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest SigningKeyResponse
+		var dest SigningKeyResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20768,7 +20768,7 @@ func ParseV1GetLegacySigningKeyResponse(rsp *http.Response) (*V1GetLegacySigning
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SigningKeyResponse
+		var dest SigningKeyResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20794,7 +20794,7 @@ func ParseV1CreateLegacySigningKeyResponse(rsp *http.Response) (*V1CreateLegacyS
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest SigningKeyResponse
+		var dest SigningKeyResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20820,7 +20820,7 @@ func ParseV1RemoveProjectSigningKeyResponse(rsp *http.Response) (*V1RemoveProjec
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SigningKeyResponse
+		var dest SigningKeyResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20846,7 +20846,7 @@ func ParseV1GetProjectSigningKeyResponse(rsp *http.Response) (*V1GetProjectSigni
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SigningKeyResponse
+		var dest SigningKeyResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20872,7 +20872,7 @@ func ParseV1UpdateProjectSigningKeyResponse(rsp *http.Response) (*V1UpdateProjec
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SigningKeyResponse
+		var dest SigningKeyResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20898,7 +20898,7 @@ func ParseV1ListAllSsoProviderResponse(rsp *http.Response) (*V1ListAllSsoProvide
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ListProvidersResponse
+		var dest ListProvidersResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20924,7 +20924,7 @@ func ParseV1CreateASsoProviderResponse(rsp *http.Response) (*V1CreateASsoProvide
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest CreateProviderResponse
+		var dest CreateProviderResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20950,7 +20950,7 @@ func ParseV1DeleteASsoProviderResponse(rsp *http.Response) (*V1DeleteASsoProvide
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest DeleteProviderResponse
+		var dest DeleteProviderResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20976,7 +20976,7 @@ func ParseV1GetASsoProviderResponse(rsp *http.Response) (*V1GetASsoProviderRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest GetProviderResponse
+		var dest GetProviderResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21002,7 +21002,7 @@ func ParseV1UpdateASsoProviderResponse(rsp *http.Response) (*V1UpdateASsoProvide
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest UpdateProviderResponse
+		var dest UpdateProviderResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21028,7 +21028,7 @@ func ParseV1ListProjectTpaIntegrationsResponse(rsp *http.Response) (*V1ListProje
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []ThirdPartyAuth
+		var dest []ThirdPartyAuthOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21054,7 +21054,7 @@ func ParseV1CreateProjectTpaIntegrationResponse(rsp *http.Response) (*V1CreatePr
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ThirdPartyAuth
+		var dest ThirdPartyAuthOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21080,7 +21080,7 @@ func ParseV1DeleteProjectTpaIntegrationResponse(rsp *http.Response) (*V1DeletePr
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ThirdPartyAuth
+		var dest ThirdPartyAuthOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21106,7 +21106,7 @@ func ParseV1GetProjectTpaIntegrationResponse(rsp *http.Response) (*V1GetProjectT
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ThirdPartyAuth
+		var dest ThirdPartyAuthOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21132,7 +21132,7 @@ func ParseV1GetProjectPgbouncerConfigResponse(rsp *http.Response) (*V1GetProject
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1PgbouncerConfigResponse
+		var dest V1PgbouncerConfigResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21158,7 +21158,7 @@ func ParseV1GetPoolerConfigResponse(rsp *http.Response) (*V1GetPoolerConfigRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []SupavisorConfigResponse
+		var dest []SupavisorConfigResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21184,7 +21184,7 @@ func ParseV1UpdatePoolerConfigResponse(rsp *http.Response) (*V1UpdatePoolerConfi
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest UpdateSupavisorConfigResponse
+		var dest UpdateSupavisorConfigResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21210,7 +21210,7 @@ func ParseV1GetPostgresConfigResponse(rsp *http.Response) (*V1GetPostgresConfigR
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PostgresConfigResponse
+		var dest PostgresConfigResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21236,7 +21236,7 @@ func ParseV1UpdatePostgresConfigResponse(rsp *http.Response) (*V1UpdatePostgresC
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PostgresConfigResponse
+		var dest PostgresConfigResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21262,7 +21262,7 @@ func ParseV1GetDatabaseDiskResponse(rsp *http.Response) (*V1GetDatabaseDiskRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest DiskResponse
+		var dest DiskResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21304,7 +21304,7 @@ func ParseV1GetProjectDiskAutoscaleConfigResponse(rsp *http.Response) (*V1GetPro
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest DiskAutoscaleConfig
+		var dest DiskAutoscaleConfigOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21330,7 +21330,7 @@ func ParseV1GetDiskUtilizationResponse(rsp *http.Response) (*V1GetDiskUtilizatio
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest DiskUtilMetricsResponse
+		var dest DiskUtilMetricsResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21356,7 +21356,7 @@ func ParseV1GetRealtimeConfigResponse(rsp *http.Response) (*V1GetRealtimeConfigR
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest RealtimeConfigResponse
+		var dest RealtimeConfigResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21414,7 +21414,7 @@ func ParseV1GetStorageConfigResponse(rsp *http.Response) (*V1GetStorageConfigRes
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest StorageConfigResponse
+		var dest StorageConfigResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21472,7 +21472,7 @@ func ParseV1GetHostnameConfigResponse(rsp *http.Response) (*V1GetHostnameConfigR
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest UpdateCustomHostnameResponse
+		var dest UpdateCustomHostnameResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21498,7 +21498,7 @@ func ParseV1ActivateCustomHostnameResponse(rsp *http.Response) (*V1ActivateCusto
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest UpdateCustomHostnameResponse
+		var dest UpdateCustomHostnameResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21524,7 +21524,7 @@ func ParseV1UpdateHostnameConfigResponse(rsp *http.Response) (*V1UpdateHostnameC
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest UpdateCustomHostnameResponse
+		var dest UpdateCustomHostnameResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21550,7 +21550,7 @@ func ParseV1VerifyDnsConfigResponse(rsp *http.Response) (*V1VerifyDnsConfigRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest UpdateCustomHostnameResponse
+		var dest UpdateCustomHostnameResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21576,7 +21576,7 @@ func ParseV1ListAllBackupsResponse(rsp *http.Response) (*V1ListAllBackupsRespons
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1BackupsResponse
+		var dest V1BackupsResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21686,7 +21686,7 @@ func ParseV1GetBackupScheduleResponse(rsp *http.Response) (*V1GetBackupScheduleR
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1BackupScheduleResponse
+		var dest V1BackupScheduleResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21719,7 +21719,7 @@ func ParseV1UpdateBackupScheduleResponse(rsp *http.Response) (*V1UpdateBackupSch
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1BackupScheduleResponse
+		var dest V1BackupScheduleResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21768,7 +21768,7 @@ func ParseV1GetDatabaseMetadataResponse(rsp *http.Response) (*V1GetDatabaseMetad
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest GetProjectDbMetadataResponse
+		var dest GetProjectDbMetadataResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21794,7 +21794,7 @@ func ParseV1GetJitAccessResponse(rsp *http.Response) (*V1GetJitAccessResponse, e
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest JitAccessResponse
+		var dest JitAccessResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21820,7 +21820,7 @@ func ParseV1AuthorizeJitAccessResponse(rsp *http.Response) (*V1AuthorizeJitAcces
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest JitAuthorizeAccessResponse
+		var dest JitAuthorizeAccessResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21846,7 +21846,7 @@ func ParseV1UpdateJitAccessResponse(rsp *http.Response) (*V1UpdateJitAccessRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest JitAccessResponse
+		var dest JitAccessResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21872,7 +21872,7 @@ func ParseV1InviteExternalJitAccessResponse(rsp *http.Response) (*V1InviteExtern
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest InviteExternalUserJitResponse
+		var dest InviteExternalUserJitResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21898,7 +21898,7 @@ func ParseV1AcceptInviteExternalJitAccessResponse(rsp *http.Response) (*V1Accept
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest JitAccessResponse
+		var dest JitAccessResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21940,7 +21940,7 @@ func ParseV1ListJitAccessResponse(rsp *http.Response) (*V1ListJitAccessResponse,
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest JitListAccessResponse
+		var dest JitListAccessResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21998,7 +21998,7 @@ func ParseV1ListMigrationHistoryResponse(rsp *http.Response) (*V1ListMigrationHi
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1ListMigrationsResponse
+		var dest V1ListMigrationsResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22056,7 +22056,7 @@ func ParseV1GetAMigrationResponse(rsp *http.Response) (*V1GetAMigrationResponse,
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1GetMigrationResponse
+		var dest V1GetMigrationResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22124,7 +22124,7 @@ func ParseV1UpdateDatabasePasswordResponse(rsp *http.Response) (*V1UpdateDatabas
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1UpdatePasswordResponse
+		var dest V1UpdatePasswordResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22198,7 +22198,7 @@ func ParseV1ListAllFunctionsResponse(rsp *http.Response) (*V1ListAllFunctionsRes
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []FunctionResponse
+		var dest []FunctionResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22224,7 +22224,7 @@ func ParseV1CreateAFunctionResponse(rsp *http.Response) (*V1CreateAFunctionRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest FunctionResponse
+		var dest FunctionResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22250,7 +22250,7 @@ func ParseV1BulkUpdateFunctionsResponse(rsp *http.Response) (*V1BulkUpdateFuncti
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest BulkUpdateFunctionResponse
+		var dest BulkUpdateFunctionResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22276,7 +22276,7 @@ func ParseV1DeployAFunctionResponse(rsp *http.Response) (*V1DeployAFunctionRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest DeployFunctionResponse
+		var dest DeployFunctionResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22318,7 +22318,7 @@ func ParseV1GetAFunctionResponse(rsp *http.Response) (*V1GetAFunctionResponse, e
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest FunctionSlugResponse
+		var dest FunctionSlugResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22344,7 +22344,7 @@ func ParseV1UpdateAFunctionResponse(rsp *http.Response) (*V1UpdateAFunctionRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest FunctionResponse
+		var dest FunctionSlugResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22396,7 +22396,7 @@ func ParseV1GetServicesHealthResponse(rsp *http.Response) (*V1GetServicesHealthR
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []V1ServiceHealthResponse
+		var dest []V1ServiceHealthResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22490,7 +22490,7 @@ func ParseV1ListAllNetworkBansResponse(rsp *http.Response) (*V1ListAllNetworkBan
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest NetworkBanResponse
+		var dest NetworkBanResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22516,7 +22516,7 @@ func ParseV1ListAllNetworkBansEnrichedResponse(rsp *http.Response) (*V1ListAllNe
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest NetworkBanResponseEnriched
+		var dest NetworkBanResponseEnrichedOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22542,7 +22542,7 @@ func ParseV1GetNetworkRestrictionsResponse(rsp *http.Response) (*V1GetNetworkRes
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest NetworkRestrictionsResponse
+		var dest NetworkRestrictionsResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22568,7 +22568,7 @@ func ParseV1PatchNetworkRestrictionsResponse(rsp *http.Response) (*V1PatchNetwor
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest NetworkRestrictionsV2Response
+		var dest NetworkRestrictionsV2ResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22594,7 +22594,7 @@ func ParseV1UpdateNetworkRestrictionsResponse(rsp *http.Response) (*V1UpdateNetw
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest NetworkRestrictionsResponse
+		var dest NetworkRestrictionsResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22636,7 +22636,7 @@ func ParseV1GetPgsodiumConfigResponse(rsp *http.Response) (*V1GetPgsodiumConfigR
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PgsodiumConfigResponse
+		var dest PgsodiumConfigResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22662,7 +22662,7 @@ func ParseV1UpdatePgsodiumConfigResponse(rsp *http.Response) (*V1UpdatePgsodiumC
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PgsodiumConfigResponse
+		var dest PgsodiumConfigResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22688,7 +22688,7 @@ func ParseV1GetPostgrestServiceConfigResponse(rsp *http.Response) (*V1GetPostgre
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PostgrestConfigWithJWTSecretResponse
+		var dest PostgrestConfigWithJWTSecretResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22714,7 +22714,7 @@ func ParseV1UpdatePostgrestServiceConfigResponse(rsp *http.Response) (*V1UpdateP
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1PostgrestConfigResponse
+		var dest V1PostgrestConfigResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22782,7 +22782,7 @@ func ParseV1GetReadonlyModeStatusResponse(rsp *http.Response) (*V1GetReadonlyMod
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ReadOnlyStatusResponse
+		var dest ReadOnlyStatusResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22840,7 +22840,7 @@ func ParseV1ListAvailableRestoreVersionsResponse(rsp *http.Response) (*V1ListAva
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest GetProjectAvailableRestoreVersionsResponse
+		var dest GetProjectAvailableRestoreVersionsResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22914,7 +22914,7 @@ func ParseV1ListAllSecretsResponse(rsp *http.Response) (*V1ListAllSecretsRespons
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []SecretResponse
+		var dest []SecretResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22956,7 +22956,7 @@ func ParseV1GetSslEnforcementConfigResponse(rsp *http.Response) (*V1GetSslEnforc
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SslEnforcementResponse
+		var dest SslEnforcementResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22982,7 +22982,7 @@ func ParseV1UpdateSslEnforcementConfigResponse(rsp *http.Response) (*V1UpdateSsl
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SslEnforcementResponse
+		var dest SslEnforcementResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -23008,7 +23008,7 @@ func ParseV1ListAllBucketsResponse(rsp *http.Response) (*V1ListAllBucketsRespons
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []V1StorageBucketResponse
+		var dest []V1StorageBucketResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -23034,7 +23034,7 @@ func ParseV1GenerateTypescriptTypesResponse(rsp *http.Response) (*V1GenerateType
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest TypescriptResponse
+		var dest TypescriptResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -23060,7 +23060,7 @@ func ParseV1UpgradePostgresVersionResponse(rsp *http.Response) (*V1UpgradePostgr
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ProjectUpgradeInitiateResponse
+		var dest ProjectUpgradeInitiateResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -23086,7 +23086,7 @@ func ParseV1GetPostgresUpgradeEligibilityResponse(rsp *http.Response) (*V1GetPos
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ProjectUpgradeEligibilityResponse
+		var dest ProjectUpgradeEligibilityResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -23112,7 +23112,7 @@ func ParseV1GetPostgresUpgradeStatusResponse(rsp *http.Response) (*V1GetPostgres
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest DatabaseUpgradeStatusResponse
+		var dest DatabaseUpgradeStatusResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -23154,7 +23154,7 @@ func ParseV1GetVanitySubdomainConfigResponse(rsp *http.Response) (*V1GetVanitySu
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest VanitySubdomainConfigResponse
+		var dest VanitySubdomainConfigResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -23187,7 +23187,7 @@ func ParseV1ActivateVanitySubdomainConfigResponse(rsp *http.Response) (*V1Activa
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ActivateVanitySubdomainResponse
+		var dest ActivateVanitySubdomainResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -23220,7 +23220,7 @@ func ParseV1CheckVanitySubdomainAvailabilityResponse(rsp *http.Response) (*V1Che
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest SubdomainAvailabilityResponse
+		var dest SubdomainAvailabilityResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -23253,7 +23253,7 @@ func ParseV1ListAllSnippetsResponse(rsp *http.Response) (*V1ListAllSnippetsRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SnippetList
+		var dest SnippetListOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -23279,7 +23279,7 @@ func ParseV1GetASnippetResponse(rsp *http.Response) (*V1GetASnippetResponse, err
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SnippetResponse
+		var dest SnippetResponseOutput
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

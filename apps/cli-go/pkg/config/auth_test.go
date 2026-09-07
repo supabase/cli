@@ -51,7 +51,7 @@ func TestAuthDiff(t *testing.T) {
 		c.MinimumPasswordLength = 6
 		c.PasswordRequirements = LettersDigits
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			SiteUrl:                           nullable.NewNullableWithValue("http://127.0.0.1:3000"),
 			UriAllowList:                      nullable.NewNullableWithValue("https://127.0.0.1:3000"),
 			JwtExp:                            nullable.NewNullableWithValue(3600),
@@ -61,7 +61,7 @@ func TestAuthDiff(t *testing.T) {
 			DisableSignup:                     nullable.NewNullableWithValue(false),
 			ExternalAnonymousUsersEnabled:     nullable.NewNullableWithValue(true),
 			PasswordMinLength:                 nullable.NewNullableWithValue(6),
-			PasswordRequiredCharacters:        nullable.NewNullableWithValue(v1API.AuthConfigResponsePasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789),
+			PasswordRequiredCharacters:        nullable.NewNullableWithValue(v1API.AuthConfigResponseOutputPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -81,7 +81,7 @@ func TestAuthDiff(t *testing.T) {
 		c.MinimumPasswordLength = 6
 		c.PasswordRequirements = LowerUpperLettersDigitsSymbols
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			SiteUrl:                           nullable.NewNullableWithValue(""),
 			UriAllowList:                      nullable.NewNullableWithValue("https://127.0.0.1:3000,https://ref.supabase.co"),
 			JwtExp:                            nullable.NewNullableWithValue(0),
@@ -91,7 +91,7 @@ func TestAuthDiff(t *testing.T) {
 			DisableSignup:                     nullable.NewNullableWithValue(false),
 			ExternalAnonymousUsersEnabled:     nullable.NewNullableWithValue(true),
 			PasswordMinLength:                 nullable.NewNullableWithValue(8),
-			PasswordRequiredCharacters:        nullable.NewNullableWithValue(v1API.AuthConfigResponsePasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789),
+			PasswordRequiredCharacters:        nullable.NewNullableWithValue(v1API.AuthConfigResponseOutputPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -102,7 +102,7 @@ func TestAuthDiff(t *testing.T) {
 		c := newWithDefaults()
 		c.EnableSignup = false
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			SiteUrl:                           nullable.NewNullableWithValue(""),
 			UriAllowList:                      nullable.NewNullableWithValue(""),
 			JwtExp:                            nullable.NewNullableWithValue(0),
@@ -112,7 +112,7 @@ func TestAuthDiff(t *testing.T) {
 			DisableSignup:                     nullable.NewNullableWithValue(true),
 			ExternalAnonymousUsersEnabled:     nullable.NewNullableWithValue(false),
 			PasswordMinLength:                 nullable.NewNullableWithValue(0),
-			PasswordRequiredCharacters:        nullable.NewNullableWithValue(v1API.AuthConfigResponsePasswordRequiredCharactersEmpty),
+			PasswordRequiredCharacters:        nullable.NewNullableWithValue(v1API.AuthConfigResponseOutputPasswordRequiredCharactersEmpty),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -132,9 +132,9 @@ func TestCaptchaDiff(t *testing.T) {
 			},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			SecurityCaptchaEnabled:  nullable.NewNullableWithValue(true),
-			SecurityCaptchaProvider: nullable.NewNullableWithValue(v1API.AuthConfigResponseSecurityCaptchaProviderHcaptcha),
+			SecurityCaptchaProvider: nullable.NewNullableWithValue(v1API.AuthConfigResponseOutputSecurityCaptchaProviderHcaptcha),
 			SecurityCaptchaSecret:   nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 		})
 		// Check error
@@ -153,9 +153,9 @@ func TestCaptchaDiff(t *testing.T) {
 			},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			SecurityCaptchaEnabled:  nullable.NewNullableWithValue(true),
-			SecurityCaptchaProvider: nullable.NewNullableWithValue(v1API.AuthConfigResponseSecurityCaptchaProviderHcaptcha),
+			SecurityCaptchaProvider: nullable.NewNullableWithValue(v1API.AuthConfigResponseOutputSecurityCaptchaProviderHcaptcha),
 			SecurityCaptchaSecret:   nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 		})
 		// Check error
@@ -174,9 +174,9 @@ func TestCaptchaDiff(t *testing.T) {
 			},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			SecurityCaptchaEnabled:  nullable.NewNullableWithValue(false),
-			SecurityCaptchaProvider: nullable.NewNullableWithValue(v1API.AuthConfigResponseSecurityCaptchaProviderHcaptcha),
+			SecurityCaptchaProvider: nullable.NewNullableWithValue(v1API.AuthConfigResponseOutputSecurityCaptchaProviderHcaptcha),
 			SecurityCaptchaSecret:   nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 		})
 		// Check error
@@ -190,7 +190,7 @@ func TestCaptchaDiff(t *testing.T) {
 			Enabled: false,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			SecurityCaptchaEnabled: nullable.NewNullableWithValue(false),
 		})
 		// Check error
@@ -201,9 +201,9 @@ func TestCaptchaDiff(t *testing.T) {
 	t.Run("ignores undefined config", func(t *testing.T) {
 		c := newWithDefaults()
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			SecurityCaptchaEnabled:  nullable.NewNullableWithValue(true),
-			SecurityCaptchaProvider: nullable.NewNullableWithValue(v1API.AuthConfigResponseSecurityCaptchaProviderHcaptcha),
+			SecurityCaptchaProvider: nullable.NewNullableWithValue(v1API.AuthConfigResponseOutputSecurityCaptchaProviderHcaptcha),
 			SecurityCaptchaSecret:   nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 		})
 		// Check error
@@ -273,7 +273,7 @@ func TestPasskeyConfigMapping(t *testing.T) {
 		c.Passkey = &Passkey{Enabled: true}
 		c.Webauthn = &Webauthn{}
 		// Run test
-		c.FromRemoteAuthConfig(v1API.AuthConfigResponse{
+		c.FromRemoteAuthConfig(v1API.AuthConfigResponseOutput{
 			PasskeyEnabled:        true,
 			WebauthnRpDisplayName: nullable.NewNullableWithValue("Supabase CLI"),
 			WebauthnRpId:          nullable.NewNullableWithValue("localhost"),
@@ -296,7 +296,7 @@ func TestPasskeyConfigMapping(t *testing.T) {
 	t.Run("ignores remote settings when local passkey config is undefined", func(t *testing.T) {
 		c := newWithDefaults()
 		// Run test
-		c.FromRemoteAuthConfig(v1API.AuthConfigResponse{
+		c.FromRemoteAuthConfig(v1API.AuthConfigResponseOutput{
 			PasskeyEnabled:        true,
 			WebauthnRpDisplayName: nullable.NewNullableWithValue("Supabase CLI"),
 			WebauthnRpId:          nullable.NewNullableWithValue("localhost"),
@@ -312,7 +312,7 @@ func TestPasskeyDiff(t *testing.T) {
 	t.Run("ignores undefined config", func(t *testing.T) {
 		c := newWithDefaults()
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			PasskeyEnabled:        true,
 			WebauthnRpDisplayName: nullable.NewNullableWithValue("Supabase CLI"),
 			WebauthnRpId:          nullable.NewNullableWithValue("localhost"),
@@ -374,7 +374,7 @@ func TestHookDiff(t *testing.T) {
 			},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			HookBeforeUserCreatedEnabled:           nullable.NewNullableWithValue(true),
 			HookBeforeUserCreatedUri:               nullable.NewNullableWithValue("http://example.com"),
 			HookBeforeUserCreatedSecrets:           nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
@@ -422,7 +422,7 @@ func TestHookDiff(t *testing.T) {
 			PasswordVerificationAttempt: nil,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			HookBeforeUserCreatedEnabled:           nullable.NewNullableWithValue(true),
 			HookBeforeUserCreatedUri:               nullable.NewNullableWithValue("http://example.com"),
 			HookBeforeUserCreatedSecrets:           nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
@@ -483,7 +483,7 @@ func TestHookDiff(t *testing.T) {
 			PasswordVerificationAttempt: nil,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			HookBeforeUserCreatedEnabled:           nullable.NewNullableWithValue(false),
 			HookBeforeUserCreatedUri:               nullable.NewNullableWithValue("pg-functions://postgres/public/beforeUserCreated"),
 			HookCustomAccessTokenEnabled:           nullable.NewNullableWithValue(false),
@@ -514,7 +514,7 @@ func TestHookDiff(t *testing.T) {
 			PasswordVerificationAttempt: &hookConfig{Enabled: false},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			HookBeforeUserCreatedEnabled:           nullable.NewNullableWithValue(false),
 			HookCustomAccessTokenEnabled:           nullable.NewNullableWithValue(false),
 			HookSendSmsEnabled:                     nullable.NewNullableWithValue(false),
@@ -552,7 +552,7 @@ func TestMfaDiff(t *testing.T) {
 			MaxEnrolledFactors: 10,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			MfaMaxEnrolledFactors:    nullable.NewNullableWithValue(10),
 			MfaTotpEnrollEnabled:     nullable.NewNullableWithValue(true),
 			MfaTotpVerifyEnabled:     nullable.NewNullableWithValue(true),
@@ -584,7 +584,7 @@ func TestMfaDiff(t *testing.T) {
 			},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			MfaMaxEnrolledFactors:    nullable.NewNullableWithValue(10),
 			MfaTotpEnrollEnabled:     nullable.NewNullableWithValue(false),
 			MfaTotpVerifyEnabled:     nullable.NewNullableWithValue(false),
@@ -612,7 +612,7 @@ func TestMfaDiff(t *testing.T) {
 			},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			MfaMaxEnrolledFactors:    nullable.NewNullableWithValue(10),
 			MfaTotpEnrollEnabled:     nullable.NewNullableWithValue(false),
 			MfaTotpVerifyEnabled:     nullable.NewNullableWithValue(false),
@@ -732,7 +732,7 @@ func TestEmailDiff(t *testing.T) {
 			OtpExpiry:    3600,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			ExternalEmailEnabled:           nullable.NewNullableWithValue(true),
 			MailerSecureEmailChangeEnabled: nullable.NewNullableWithValue(true),
 			MailerAutoconfirm:              nullable.NewNullableWithValue(false),
@@ -874,7 +874,7 @@ func TestEmailDiff(t *testing.T) {
 			OtpExpiry:    86400,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			ExternalEmailEnabled:           nullable.NewNullableWithValue(false),
 			MailerSecureEmailChangeEnabled: nullable.NewNullableWithValue(false),
 			MailerAutoconfirm:              nullable.NewNullableWithValue(true),
@@ -934,7 +934,7 @@ func TestEmailDiff(t *testing.T) {
 			OtpExpiry:    86400,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			ExternalEmailEnabled:           nullable.NewNullableWithValue(true),
 			MailerSecureEmailChangeEnabled: nullable.NewNullableWithValue(true),
 			MailerAutoconfirm:              nullable.NewNullableWithValue(false),
@@ -1023,7 +1023,7 @@ func TestEmailDiff(t *testing.T) {
 			OtpExpiry:    3600,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			ExternalEmailEnabled:           nullable.NewNullableWithValue(false),
 			MailerSecureEmailChangeEnabled: nullable.NewNullableWithValue(false),
 			MailerAutoconfirm:              nullable.NewNullableWithValue(true),
@@ -1058,13 +1058,13 @@ func TestSmsDiff(t *testing.T) {
 			},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			ExternalPhoneEnabled:       nullable.NewNullableWithValue(true),
 			SmsAutoconfirm:             nullable.NewNullableWithValue(true),
 			SmsMaxFrequency:            nullable.NewNullableWithValue(60),
 			SmsOtpExp:                  nullable.NewNullableWithValue(3600),
 			SmsOtpLength:               6,
-			SmsProvider:                nullable.NewNullableWithValue(v1API.AuthConfigResponseSmsProviderTwilio),
+			SmsProvider:                nullable.NewNullableWithValue(v1API.AuthConfigResponseOutputSmsProviderTwilio),
 			SmsTemplate:                nullable.NewNullableWithValue("Your code is {{ .Code }}"),
 			SmsTestOtp:                 nullable.NewNullableWithValue("123=456"),
 			SmsTestOtpValidUntil:       nullable.NewNullableWithValue(time.Date(2050, 1, 1, 1, 0, 0, 0, time.UTC)),
@@ -1092,13 +1092,13 @@ func TestSmsDiff(t *testing.T) {
 	t.Run("local disabled remote enabled", func(t *testing.T) {
 		c := newWithDefaults()
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			ExternalPhoneEnabled:       nullable.NewNullableWithValue(true),
 			SmsAutoconfirm:             nullable.NewNullableWithValue(true),
 			SmsMaxFrequency:            nullable.NewNullableWithValue(60),
 			SmsOtpExp:                  nullable.NewNullableWithValue(3600),
 			SmsOtpLength:               6,
-			SmsProvider:                nullable.NewNullableWithValue(v1API.AuthConfigResponseSmsProviderTwilio),
+			SmsProvider:                nullable.NewNullableWithValue(v1API.AuthConfigResponseOutputSmsProviderTwilio),
 			SmsTemplate:                nullable.NewNullableWithValue("Your code is {{ .Code }}"),
 			SmsTestOtp:                 nullable.NewNullableWithValue("123=456,456=123"),
 			SmsTestOtpValidUntil:       nullable.NewNullableWithValue(time.Date(2050, 1, 1, 1, 0, 0, 0, time.UTC)),
@@ -1130,13 +1130,13 @@ func TestSmsDiff(t *testing.T) {
 			},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			ExternalPhoneEnabled:       nullable.NewNullableWithValue(false),
 			SmsAutoconfirm:             nullable.NewNullableWithValue(false),
 			SmsMaxFrequency:            nullable.NewNullableWithValue(0),
 			SmsOtpExp:                  nullable.NewNullableWithValue(3600),
 			SmsOtpLength:               6,
-			SmsProvider:                nullable.NewNullableWithValue(v1API.AuthConfigResponseSmsProviderTwilio),
+			SmsProvider:                nullable.NewNullableWithValue(v1API.AuthConfigResponseOutputSmsProviderTwilio),
 			SmsTemplate:                nullable.NewNullableWithValue(""),
 			SmsTwilioAccountSid:        nullable.NewNullableWithValue("test-account"),
 			SmsTwilioAuthToken:         nullable.NewNullableWithValue("c84443bc59b92caef8ec8500ff443584793756749523811eb333af2bbc74fc88"),
@@ -1158,7 +1158,7 @@ func TestSmsDiff(t *testing.T) {
 			MaxFrequency:        time.Minute,
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			ExternalPhoneEnabled:     nullable.NewNullableWithValue(false),
 			SmsAutoconfirm:           nullable.NewNullableWithValue(true),
 			SmsMaxFrequency:          nullable.NewNullableWithValue(60),
@@ -1167,7 +1167,7 @@ func TestSmsDiff(t *testing.T) {
 			SmsTemplate:              nullable.NewNullableWithValue("Your code is {{ .Code }}"),
 			SmsTestOtp:               nullable.NewNullableWithValue("123=456"),
 			SmsTestOtpValidUntil:     nullable.NewNullableWithValue(time.Date(2050, 1, 1, 1, 0, 0, 0, time.UTC)),
-			SmsProvider:              nullable.NewNullableWithValue(v1API.AuthConfigResponseSmsProviderMessagebird),
+			SmsProvider:              nullable.NewNullableWithValue(v1API.AuthConfigResponseOutputSmsProviderMessagebird),
 			SmsMessagebirdAccessKey:  nullable.NewNullableWithValue("test-messagebird-key"),
 			SmsMessagebirdOriginator: nullable.NewNullableWithValue("test-messagebird-originator"),
 		})
@@ -1182,9 +1182,9 @@ func TestSmsDiff(t *testing.T) {
 		c := newWithDefaults()
 		c.Sms.EnableSignup = true
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			ExternalPhoneEnabled: nullable.NewNullableWithValue(false),
-			SmsProvider:          nullable.NewNullableWithValue(v1API.AuthConfigResponseSmsProviderTwilio),
+			SmsProvider:          nullable.NewNullableWithValue(v1API.AuthConfigResponseOutputSmsProviderTwilio),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -1195,9 +1195,9 @@ func TestSmsDiff(t *testing.T) {
 		c := newWithDefaults()
 		c.Sms.Messagebird.Enabled = true
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			ExternalPhoneEnabled:    nullable.NewNullableWithValue(false),
-			SmsProvider:             nullable.NewNullableWithValue(v1API.AuthConfigResponseSmsProviderMessagebird),
+			SmsProvider:             nullable.NewNullableWithValue(v1API.AuthConfigResponseOutputSmsProviderMessagebird),
 			SmsMessagebirdAccessKey: nullable.NewNullableWithValue(""),
 		})
 		// Check error
@@ -1232,7 +1232,7 @@ func TestExternalDiff(t *testing.T) {
 			"zoom":          {Enabled: true},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			ExternalAppleAdditionalClientIds:  nullable.NewNullableWithValue(""),
 			ExternalAppleClientId:             nullable.NewNullableWithValue(""),
 			ExternalAppleEnabled:              nullable.NewNullableWithValue(true),
@@ -1354,7 +1354,7 @@ func TestExternalDiff(t *testing.T) {
 			"zoom":          {},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			ExternalAppleAdditionalClientIds:  nullable.NewNullableWithValue("test-client-2"),
 			ExternalAppleClientId:             nullable.NewNullableWithValue("test-client-1"),
 			ExternalAppleEnabled:              nullable.NewNullableWithValue(false),
@@ -1398,7 +1398,7 @@ func TestExternalDiff(t *testing.T) {
 			"zoom":          {},
 		}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			ExternalAppleEnabled:         nullable.NewNullableWithValue(false),
 			ExternalAzureEnabled:         nullable.NewNullableWithValue(false),
 			ExternalBitbucketEnabled:     nullable.NewNullableWithValue(false),
@@ -1441,7 +1441,7 @@ func TestRateLimitsDiff(t *testing.T) {
 		c.RateLimit.SmsSent = 35
 		c.Email.Smtp = &smtp{Enabled: true}
 		// Run test
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			RateLimitAnonymousUsers: nullable.NewNullableWithValue(20),
 			RateLimitTokenRefresh:   nullable.NewNullableWithValue(30),
 			RateLimitOtp:            nullable.NewNullableWithValue(40),
@@ -1466,7 +1466,7 @@ func TestRateLimitsDiff(t *testing.T) {
 		c.RateLimit.SmsSent = 35
 		c.Email.Smtp = &smtp{Enabled: true}
 		// Run test with different remote values
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			RateLimitAnonymousUsers: nullable.NewNullableWithValue(10), // Different value
 			RateLimitTokenRefresh:   nullable.NewNullableWithValue(30),
 			RateLimitOtp:            nullable.NewNullableWithValue(45), // Different value
@@ -1486,7 +1486,7 @@ func TestRateLimitsDiff(t *testing.T) {
 		c := newWithDefaults()
 		c.RateLimit.EmailSent = 25
 		// Run test with remote rate limits
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponseOutput{
 			RateLimitEmailSent: nullable.NewNullableWithValue(15),
 			SmtpHost:           nullable.NewNullableWithValue(""),
 		})

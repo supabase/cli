@@ -29,11 +29,9 @@ export function macIdentifierFor(binary: string): string | undefined {
 }
 
 /**
- * The macOS binaries shipped for a given shell. The legacy shell ships the Go
- * sidecar alongside the Bun SFE; the next shell is SFE-only. Keeping this here
- * (rather than reading a module-level `shell` inside the signer) lets the signer
- * stand on its own and makes the legacy/next split explicit in one place.
+ * The macOS binaries shipped for the CLI: the legacy shell's Bun SFE alongside
+ * the Go sidecar it proxies a residual command surface to.
  */
-export function darwinBinariesForShell(shell: "legacy" | "next"): MacBinaryName[] {
-  return shell === "legacy" ? ["supabase", "supabase-go"] : ["supabase"];
+export function darwinBinaries(): MacBinaryName[] {
+  return ["supabase", "supabase-go"];
 }

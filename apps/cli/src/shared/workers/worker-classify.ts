@@ -4,7 +4,7 @@ import { DEFAULT_WORKER_RUNTIME, type WorkerRuntime } from "./worker-runtimes.ts
 
 /**
  * Best-effort classification of a worker directory into a {@link WorkerRuntime}
- * from common marker files, so `supabase workers push` can deploy a directory
+ * from common marker files, so `supabase experimental workers push` can deploy a directory
  * that has no `[workers.<name>] runtime` at all. The guess is always reported,
  * with a nudge to pin it down, rather than applied silently.
  */

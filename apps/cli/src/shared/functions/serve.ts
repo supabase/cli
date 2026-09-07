@@ -2,14 +2,16 @@ import {
   CliConfigSchema,
   findCliProjectPaths,
   inferFunctionsManifest,
-  loadCliConfig,
-  resolveCliConfigSubtree,
-  resolveCliConfigValue,
   type CliConfig,
   type CliProjectEnvironment,
   type ResolvedCliConfigValue,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config/effect";
+import {
+  loadCliConfig,
+  resolveCliConfigSubtree,
+  resolveCliConfigValue,
+} from "@supabase/config/internal";
 import {
   defaultJwtSecret,
   defaultPublishableKey,
@@ -42,12 +44,12 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   legacyDescribeContainerCliFailure,
   spawnContainerCli,
-} from "../../legacy/shared/legacy-container-cli.ts";
+} from "../../command-internal/legacy-container-cli.ts";
 import {
   LEGACY_SUGGEST_DOCKER_INSTALL,
   legacyIsDockerDaemonUnreachable,
-} from "../../legacy/shared/legacy-docker-suggest.ts";
-import { parseDotEnv } from "../../legacy/shared/legacy-dotenv.ts";
+} from "../../command-internal/legacy-docker-suggest.ts";
+import { parseDotEnv } from "../../command-internal/legacy-dotenv.ts";
 import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-env.ts";
 import {
   resolveRemoteJwks,
@@ -225,7 +227,7 @@ export interface StartedRuntime {
  * Every already-resolved secret/key {@link startEdgeRuntimeContainer} needs,
  * matching {@link finalizeAuthArtifacts}'s return shape. Named and exported so
  * a caller outside this module (`start`'s own edge-runtime bring-up,
- * `legacy/commands/start/services/edge-runtime.service.ts`) can build the
+ * `commands/start/services/edge-runtime.service.ts`) can build the
  * exact same shape from values it has already resolved itself, instead of
  * calling {@link resolveLocalAuthArtifacts} (which re-reads `config.toml`/signing
  * keys independently — correct for the standalone `functions serve` command,
@@ -432,7 +434,7 @@ function toPlainAuthConfig(
 
 /**
  * Exported so `start`'s own edge-runtime bring-up
- * (`legacy/commands/start/services/edge-runtime.service.ts`) can reuse this
+ * (`commands/start/services/edge-runtime.service.ts`) can reuse this
  * exact `Redacted`-unwrapping/zero-hash-filtering logic against its own,
  * already-loaded `CliConfig` instead of duplicating it — see
  * {@link ServeEdgeRuntimeContainerConfig}'s doc comment.
@@ -456,7 +458,7 @@ export function toPlainEdgeRuntimeConfig(
     // resolved secret leaves in `Redacted` and leaves unresolved `env()`
     // literals as plain strings, so `Redacted.isRedacted` + non-empty mirrors
     // both zero-hash cases — the same guard `secrets set` uses
-    // (`legacy/commands/secrets/set/set.handler.ts`).
+    // (`commands/secrets/set/set.handler.ts`).
     secrets: Object.fromEntries(
       Object.entries(edgeRuntime.secrets ?? {}).flatMap(([name, value]) =>
         Redacted.isRedacted(value) && Redacted.value(value).length > 0
@@ -1030,7 +1032,7 @@ export ${name}="\${${name}%x}"`;
   await mkdir(hostEnvDir, { recursive: true, mode: 0o700 });
   // The value files hold secret env values, so keep them owner-only.
   await Promise.all(
-    env.map(([_, value], index) =>
+    env.map(([, value], index) =>
       writeFile(join(hostEnvDir, `env-${index}`), value, { mode: 0o600 }),
     ),
   );

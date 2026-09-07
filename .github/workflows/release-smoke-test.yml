@@ -14,7 +14,6 @@ on:
         type: choice
         options:
           - legacy
-          - next
         default: legacy
       npm_tag:
         description: npm tag to use for local package smoke tests

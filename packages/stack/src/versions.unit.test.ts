@@ -111,7 +111,7 @@ describe("dockerImageForService", () => {
 
   it("uses the upstream mirror repositories for vector and pooler", () => {
     expect(dockerImageForService("vector", DEFAULT_VERSIONS.vector)).toBe(
-      "ghcr.io/supabase/vector:0.53.0-alpine",
+      `ghcr.io/supabase/vector:${DEFAULT_VERSIONS.vector}`,
     );
     expect(dockerImageForService("pooler", DEFAULT_VERSIONS.pooler)).toBe(
       `ghcr.io/supabase/supavisor:${DEFAULT_VERSIONS.pooler}`,

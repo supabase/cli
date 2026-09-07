@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { defaultClientConditions, defaultServerConditions } from "vite";
 import { defineConfig } from "vitest/config";
 
 function dockerfileTextPlugin() {
@@ -15,13 +16,28 @@ function dockerfileTextPlugin() {
   };
 }
 
+// Workspace packages such as @supabase/config publish a `bun` export
+// condition pointing at their TypeScript source (see
+// packages/config/package.json's `exports` map); without it, Vite's resolver
+// falls through to the `default` condition and loads the built `dist/*.js`
+// output instead — which is stale, or missing entirely on a fresh clone
+// before the package has been built. Extending (not replacing) Vite's
+// default condition lists keeps every other package's exports resolution
+// unchanged. Required on every inline `test.projects` entry below too:
+// Vitest builds a separate Vite config per project and does not inherit
+// these from the root config (see PR #6366 finding 0).
+const workspacePackageResolve = { conditions: [...defaultClientConditions, "bun"] };
+const workspacePackageSsrResolve = { conditions: [...defaultServerConditions, "bun"] };
+
 export default defineConfig({
+  resolve: workspacePackageResolve,
+  ssr: { resolve: workspacePackageSsrResolve },
   plugins: [dockerfileTextPlugin()],
   test: {
     passWithNoTests: true,
     coverage: {
       enabled: false,
-      provider: "istanbul",
+      provider: "v8",
       include: ["src/**/*.ts"],
       reporter: ["text", "lcov"],
       reportsDirectory: "coverage",
@@ -41,6 +57,8 @@ export default defineConfig({
     },
     projects: [
       {
+        resolve: workspacePackageResolve,
+        ssr: { resolve: workspacePackageSsrResolve },
         plugins: [dockerfileTextPlugin()],
         test: {
           name: "unit",
@@ -49,6 +67,8 @@ export default defineConfig({
         },
       },
       {
+        resolve: workspacePackageResolve,
+        ssr: { resolve: workspacePackageSsrResolve },
         plugins: [dockerfileTextPlugin()],
         test: {
           name: "integration",
@@ -56,6 +76,8 @@ export default defineConfig({
         },
       },
       {
+        resolve: workspacePackageResolve,
+        ssr: { resolve: workspacePackageSsrResolve },
         plugins: [dockerfileTextPlugin()],
         test: {
           name: "e2e",
@@ -69,6 +91,8 @@ export default defineConfig({
         },
       },
       {
+        resolve: workspacePackageResolve,
+        ssr: { resolve: workspacePackageSsrResolve },
         plugins: [dockerfileTextPlugin()],
         test: {
           // Live tests run against one provisioned project on the configured

@@ -431,7 +431,7 @@ func TestServiceCaptureIncludesLinkedProjectGroups(t *testing.T) {
 	t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
 	fsys := afero.NewMemMapFs()
 	analytics := &fakeAnalytics{enabled: true}
-	require.NoError(t, SaveLinkedProject(api.V1ProjectWithDatabaseResponse{
+	require.NoError(t, SaveLinkedProject(api.V1ProjectWithDatabaseResponseOutput{
 		Ref:              "proj_123",
 		Name:             "My Project",
 		OrganizationId:   "org_123",

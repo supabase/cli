@@ -22,7 +22,7 @@ The legacy shell was built as a gradual TypeScript port of the Go CLI, moving ea
 - **Phase 0** — The command is defined in the TS CLI tree but proxied to the Go binary at runtime via `LegacyGoProxy`.
 - **Phase 1+** — The command is implemented natively in TypeScript.
 
-That port is complete (CLI-1970). `supabase-go` is the residual proxy target for a fixed, small command surface: `db diff` (for `--use-pg-schema`), `db pull` (for `--experimental`), the Go-deprecated `db branch`/`db remote` command families, `gen keys`, and `functions download` (for the hidden `--legacy-bundle` path). See "Go binary command surface" under Release Workflow below for the full list and why each command stays. Two lifecycles apply here and must not be conflated: the **public commands** in that surface are retained (dropping them was ruled a breaking change — CLI-1964), while their **Go implementations** are slated for eventual native TS replacement, after which `supabase-go` stops shipping. Until the proxied surface is empty, the TS binary (`supabase`) still needs `supabase-go` available on the same system for those invocations. Every other Go command from the original CLI has been deleted outright from `apps/cli-go/`, not merely excluded from the build — see the same section for how.
+That port is complete (CLI-1970). `supabase-go` is the residual proxy target for a fixed, small command surface: `db diff` (for `--use-pg-schema`), the Go-deprecated `db branch`/`db remote changes` command families, `gen keys`, and `functions download` (for the hidden `--legacy-bundle` path). See "Go binary command surface" under Release Workflow below for the full list and why each command stays. Two lifecycles apply here and must not be conflated: the **public commands** in that surface are retained (dropping them was ruled a breaking change — CLI-1964), while their **Go implementations** are slated for eventual native TS replacement, after which `supabase-go` stops shipping. Until the proxied surface is empty, the TS binary (`supabase`) still needs `supabase-go` available on the same system for those invocations. Every other Go command from the original CLI has been deleted outright from `apps/cli-go/`, not merely excluded from the build — see the same section for how.
 
 ## Package Layout
 
@@ -68,7 +68,7 @@ No build step is required to run the legacy CLI from source, but the Go binary m
 2. Create a shell alias to run the legacy CLI from source. For example in `.zshrc`:
 
    ```sh
-   alias supabase-dev="bun /path/to/dx-lab/apps/cli/src/legacy/main.ts"
+   alias supabase-dev="bun /path/to/dx-lab/apps/cli/src/main.ts"
    ```
 
 3. Point `SUPABASE_GO_BINARY` at the built binary and run commands:
@@ -100,9 +100,8 @@ This:
 `supabase-go` does not ship the full old Go CLI — only the fixed subset the TypeScript CLI still proxies to via `LegacyGoProxy`:
 
 - `db diff` — kept for `--use-pg-schema`, which wraps the in-process `stripe/pg-schema-diff` Go library with no TS/container equivalent (CLI-1960)
-- `db pull` — kept for `--experimental`, which needs the multigres Postgres DDL parser for structured dumps (CLI-1957)
 - `db branch create`, `db branch delete`, `db branch list`, `db branch switch`
-- `db remote changes`, `db remote commit`
+- `db remote changes`
 - `gen keys` — the public command is kept (its planned removal, CLI-1964, was cancelled as a breaking change); the Go implementation stays only until a native TS replacement lands
 - `functions download` — kept for the hidden `--legacy-bundle` path (CLI-1963)
 
@@ -129,7 +128,7 @@ Measured on the CLI-1970 branch with the real release build (`build.ts --shell l
 
 Progression across both trims: the original two-binary baseline was 97–103 MB per platform; CLI-1966's `internal/start` deletion cut it to roughly 47–52 MB; CLI-1970 brings it to 39.1–42.8 MB.
 
-The remaining size is dominated by dependencies the retained commands still need: the multigres Postgres parser (`db pull --experimental`), `stripe/pg-schema-diff` (`db diff --use-pg-schema`), the Docker client (shadow-database provisioning for diff/pull), pgx, the Management API client, cobra/viper, and sentry/posthog.
+The remaining size is dominated by dependencies the retained commands still need: `stripe/pg-schema-diff` (`db diff --use-pg-schema`), the Docker client (shadow-database provisioning for diff), pgx, the Management API client, cobra/viper, and sentry/posthog.
 
 Release archive sizes (TS `supabase` binary + `supabase-go` together): `.tar.gz` 37.9–52.9 MB, `.zip` (Windows) 50.0–53.0 MB, `.deb` 52.7–53.4 MB, `.rpm` 52.3–53.2 MB, `.apk` 52.8–54.1 MB.
 

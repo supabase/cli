@@ -128,7 +128,7 @@ func TestGenLinkedCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + projectId + "/types/typescript").
 			Reply(200).
-			JSON(api.TypescriptResponse{Types: ""})
+			JSON(api.TypescriptResponseOutput{Types: ""})
 		// Run test
 		assert.NoError(t, Run(context.Background(), projectId, pgconn.Config{}, LangTypescript, []string{}, true, "", time.Second, fsys))
 		// Validate api

@@ -74,6 +74,28 @@ describe("legacyViperEnvBoolWithProjectFallback", () => {
     process.env[KEY] = "true";
     expect(legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "false" })).toBe(true);
   });
+
+  it("whenUnset: true resolves a key absent from both envs to true (opt-out gate default)", () => {
+    delete process.env[KEY];
+    expect(legacyViperEnvBoolWithProjectFallback(KEY, {}, { whenUnset: true })).toBe(true);
+  });
+
+  it("whenUnset: true still yields false for any present non-true value", () => {
+    // A present value keeps the exact ParseBool semantics — `0`, `false`, empty, and garbage
+    // all disable, whether from the shell or the project dotenv.
+    process.env[KEY] = "0";
+    expect(legacyViperEnvBoolWithProjectFallback(KEY, {}, { whenUnset: true })).toBe(false);
+    process.env[KEY] = "";
+    expect(legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "true" }, { whenUnset: true })).toBe(
+      false,
+    );
+    process.env[KEY] = "banana";
+    expect(legacyViperEnvBoolWithProjectFallback(KEY, {}, { whenUnset: true })).toBe(false);
+    delete process.env[KEY];
+    expect(
+      legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "false" }, { whenUnset: true }),
+    ).toBe(false);
+  });
 });
 
 describe("legacyViperEnvStringWithProjectFallback", () => {

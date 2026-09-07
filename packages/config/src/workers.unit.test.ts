@@ -8,9 +8,28 @@ const workerNamePattern = "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$";
 
 describe("workers schema", () => {
   test("decodes a worker table with every dial set", () => {
-    expect(
-      decode({ api: { runtime: "node", size: "4gb", instances: 3, source: "packages/api" } }),
-    ).toEqual({ api: { runtime: "node", size: "4gb", instances: 3, source: "packages/api" } });
+    const every = {
+      api: {
+        runtime: "node",
+        size: "4gb",
+        exposure: "private",
+        instances: 3,
+        source: "packages/api",
+      },
+    };
+    expect(decode(every)).toEqual(every);
+  });
+
+  // Unconstrained, like `runtime` and `size`: the Management API takes
+  // `spec.exposure` as a plain string, and `push` is what names the values it
+  // accepts. Pinning an enum here would make a config a newer CLI understands
+  // fail to load at all.
+  test("accepts an exposure it does not itself recognize", () => {
+    expect(decode({ api: { exposure: "internal" } })).toEqual({ api: { exposure: "internal" } });
+  });
+
+  test("rejects a non-string exposure", () => {
+    expect(() => decode({ api: { exposure: true } })).toThrow();
   });
 
   test("defaults to an empty section when the key is absent", () => {
@@ -19,7 +38,7 @@ describe("workers schema", () => {
 
   // Keys outside the DNS-label pattern fall outside the record's index
   // signature and are dropped, the same way `[functions.<slug>]` treats a slug
-  // its own pattern does not match. `supabase workers new` validates the name
+  // its own pattern does not match. `supabase experimental workers new` validates the name
   // up front so the CLI never writes one that would vanish here.
   test("drops worker names that are not DNS labels", () => {
     expect(decode({ Not_A_Label: {}, api: { runtime: "node" } })).toEqual({
@@ -27,7 +46,7 @@ describe("workers schema", () => {
     });
   });
 
-  // Every dial is optional: a worker scaffolded by `supabase workers new` records
+  // Every dial is optional: a worker scaffolded by `supabase experimental workers new` records
   // only what it prompted for, and `push` resolves the rest from its own defaults.
   test("decodes a worker table with no dials set", () => {
     expect(decode({ api: {} })).toEqual({ api: {} });
@@ -66,6 +85,7 @@ describe("workers schema", () => {
 
     expect(workerSchema?.properties?.runtime).toBeDefined();
     expect(workerSchema?.properties?.size).toBeDefined();
+    expect(workerSchema?.properties?.exposure).toBeDefined();
     expect(workerSchema?.properties?.instances).toBeDefined();
     expect(workerSchema?.properties?.source).toBeDefined();
   });

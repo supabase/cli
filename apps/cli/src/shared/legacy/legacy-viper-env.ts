@@ -48,12 +48,21 @@ export function legacyViperEnvBool(name: string): boolean {
  * which cast to `false`) — suppresses the project value entirely; the file value is
  * consulted only when the variable is absent from the shell env. `??` (not `||`) encodes
  * exactly that presence check.
+ *
+ * `opts.whenUnset` is a CLI-chosen extension over viper (whose zero value is always `false`):
+ * it resolves a key that is absent from BOTH the shell and the project env, letting an
+ * opt-out gate (e.g. `SUPABASE_SHADOW_CACHE`) default ON while a *present* value keeps the
+ * exact `ParseBool` semantics above — so `=0`, `=false`, empty, and garbage all still
+ * disable.
  */
 export function legacyViperEnvBoolWithProjectFallback(
   name: string,
   projectEnv: Record<string, string>,
+  opts: { readonly whenUnset?: boolean } = {},
 ): boolean {
-  return legacyViperBool(process.env[name] ?? projectEnv[name]);
+  const raw = process.env[name] ?? projectEnv[name];
+  if (raw === undefined) return opts.whenUnset ?? false;
+  return legacyViperBool(raw);
 }
 
 /**

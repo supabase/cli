@@ -52,7 +52,7 @@ func TestDbSettingsDiff(t *testing.T) {
 			},
 		}
 
-		remoteConfig := v1API.PostgresConfigResponse{
+		remoteConfig := v1API.PostgresConfigResponseOutput{
 			EffectiveCacheSize: cast.Ptr("8GB"),
 			MaxConnections:     cast.Ptr(200),
 			SharedBuffers:      cast.Ptr("2GB"),
@@ -73,7 +73,7 @@ func TestDbSettingsDiff(t *testing.T) {
 			},
 		}
 
-		remoteConfig := v1API.PostgresConfigResponse{
+		remoteConfig := v1API.PostgresConfigResponseOutput{
 			EffectiveCacheSize: cast.Ptr("4GB"),
 			MaxConnections:     cast.Ptr(100),
 			SharedBuffers:      cast.Ptr("1GB"),
@@ -94,7 +94,7 @@ func TestDbSettingsDiff(t *testing.T) {
 			},
 		}
 
-		remoteConfig := v1API.PostgresConfigResponse{
+		remoteConfig := v1API.PostgresConfigResponseOutput{
 			EffectiveCacheSize: cast.Ptr("4GB"),
 			MaxConnections:     cast.Ptr(100),
 			SharedBuffers:      cast.Ptr("1GB"),
@@ -115,7 +115,7 @@ func TestDbSettingsDiff(t *testing.T) {
 			},
 		}
 
-		remoteConfig := v1API.PostgresConfigResponse{
+		remoteConfig := v1API.PostgresConfigResponseOutput{
 			// All fields are nil to simulate disabled API
 		}
 
@@ -132,7 +132,7 @@ func TestDbSettingsDiff(t *testing.T) {
 			},
 		}
 
-		remoteConfig := v1API.PostgresConfigResponse{
+		remoteConfig := v1API.PostgresConfigResponseOutput{
 			EffectiveCacheSize: cast.Ptr("4GB"),
 			MaxConnections:     cast.Ptr(100),
 			SharedBuffers:      cast.Ptr("1GB"),
@@ -187,7 +187,7 @@ func TestNetworkRestrictionsFromRemote(t *testing.T) {
 	t.Run("converts from remote config with restrictions", func(t *testing.T) {
 		ipv4Cidrs := []string{"192.168.1.0/24"}
 		ipv6Cidrs := []string{"2001:db8::/32"}
-		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig := v1API.NetworkRestrictionsResponseOutput{}
 		remoteConfig.Config.DbAllowedCidrs = &ipv4Cidrs
 		remoteConfig.Config.DbAllowedCidrsV6 = &ipv6Cidrs
 		nr := networkRestrictions{Enabled: true}
@@ -199,7 +199,7 @@ func TestNetworkRestrictionsFromRemote(t *testing.T) {
 	t.Run("converts from remote config with allow all", func(t *testing.T) {
 		ipv4Cidrs := []string{"0.0.0.0/0"}
 		ipv6Cidrs := []string{"::/0"}
-		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig := v1API.NetworkRestrictionsResponseOutput{}
 		remoteConfig.Config.DbAllowedCidrs = &ipv4Cidrs
 		remoteConfig.Config.DbAllowedCidrsV6 = &ipv6Cidrs
 		nr := networkRestrictions{Enabled: true}
@@ -209,7 +209,7 @@ func TestNetworkRestrictionsFromRemote(t *testing.T) {
 	})
 
 	t.Run("ignores locally disabled network restrictions", func(t *testing.T) {
-		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig := v1API.NetworkRestrictionsResponseOutput{}
 		remoteConfig.Config.DbAllowedCidrs = &[]string{"192.168.1.0/24"}
 		remoteConfig.Config.DbAllowedCidrsV6 = &[]string{"2001:db8::/32"}
 		nr := networkRestrictions{}
@@ -227,7 +227,7 @@ func TestNetworkRestrictionsDiff(t *testing.T) {
 			AllowedCidrs:   []string{"192.168.1.0/24"},
 			AllowedCidrsV6: []string{"2001:db8::/32"},
 		}
-		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig := v1API.NetworkRestrictionsResponseOutput{}
 		remoteConfig.Config.DbAllowedCidrs = &[]string{"10.0.0.0/8"}
 		remoteConfig.Config.DbAllowedCidrsV6 = &[]string{"fd00::/8"}
 		diff, err := local.DiffWithRemote(remoteConfig)
@@ -244,7 +244,7 @@ func TestNetworkRestrictionsDiff(t *testing.T) {
 			AllowedCidrs:   []string{"192.168.1.0/24"},
 			AllowedCidrsV6: []string{"2001:db8::/32"},
 		}
-		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig := v1API.NetworkRestrictionsResponseOutput{}
 		remoteConfig.Config.DbAllowedCidrs = &local.AllowedCidrs
 		remoteConfig.Config.DbAllowedCidrsV6 = &local.AllowedCidrsV6
 		diff, err := local.DiffWithRemote(remoteConfig)
@@ -254,7 +254,7 @@ func TestNetworkRestrictionsDiff(t *testing.T) {
 
 	t.Run("both have no restrictions - disabled vs allow all", func(t *testing.T) {
 		local := networkRestrictions{}
-		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig := v1API.NetworkRestrictionsResponseOutput{}
 		remoteConfig.Config.DbAllowedCidrs = &[]string{"0.0.0.0/0"}
 		remoteConfig.Config.DbAllowedCidrsV6 = &[]string{"::/0"}
 		diff, err := local.DiffWithRemote(remoteConfig)
@@ -268,7 +268,7 @@ func TestNetworkRestrictionsDiff(t *testing.T) {
 			AllowedCidrs:   []string{},
 			AllowedCidrsV6: []string{},
 		}
-		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig := v1API.NetworkRestrictionsResponseOutput{}
 		remoteConfig.Config.DbAllowedCidrs = &[]string{"0.0.0.0/0"}
 		remoteConfig.Config.DbAllowedCidrsV6 = &[]string{"::/0"}
 		diff, err := local.DiffWithRemote(remoteConfig)
