@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Stream } from "effect";
-import { StackIdSchema, StackNotFoundError, StackStateInvalidError } from "@supabase/stack/effect";
+import {
+  InvalidStackIdentityError,
+  StackIdSchema,
+  StackNotFoundError,
+  StackStateInvalidError,
+} from "@supabase/stack/effect";
 import type { EffectStack, StackStatus, StackStopError } from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { mockLegacyCliSettings } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -42,6 +47,7 @@ function setup(opts: {
   found?: { id: string; name?: string };
   stop?: () => Effect.Effect<void, StackStopError>;
   openFailure?: StackNotFoundError;
+  findFailure?: InvalidStackIdentityError;
 }) {
   const out = mockOutput();
   const state = {
@@ -89,7 +95,11 @@ function setup(opts: {
         Effect.sync(() => {
           state.findInputs.push(input);
           return descriptor === undefined ? Option.none() : Option.some(descriptor);
-        }),
+        }).pipe(
+          Effect.flatMap((value) =>
+            opts.findFailure === undefined ? Effect.succeed(value) : Effect.fail(opts.findFailure),
+          ),
+        ),
       openStack: (stackId) => {
         if (opts.openFailure !== undefined) return Effect.fail(opts.openFailure);
         return Effect.sync(() => {
@@ -194,6 +204,25 @@ describe("experimental stack stop", () => {
       ).pipe(Effect.flip);
       expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
       expect(setupResult.state.findInputs).toEqual([{ projectRoot: root, name: "missing" }]);
+      expect(setupResult.state.openedIds).toEqual([]);
+      expect(setupResult.state.stopCalls).toBe(0);
+    }).pipe(
+      Effect.provide(setupResult.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("classifies invalid stack names as actionable flags", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-invalid-name-"));
+    const setupResult = setup({
+      root,
+      findFailure: new InvalidStackIdentityError({ message: "The stack name must not be blank" }),
+    });
+    return Effect.gen(function* () {
+      const failure = yield* legacyExperimentalStackStop(flags({ stack: Option.some("") })).pipe(
+        Effect.flip,
+      );
+      expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
       expect(setupResult.state.openedIds).toEqual([]);
       expect(setupResult.state.stopCalls).toBe(0);
     }).pipe(

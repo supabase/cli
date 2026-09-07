@@ -34,7 +34,9 @@ const stopError = (error: unknown): LegacyExperimentalStackStopError => {
     stackError === undefined
       ? { reason: "unknown" as const }
       : Match.value(stackError).pipe(
-          Match.tag("StackNotFoundError", () => ({ reason: "flags" as const })),
+          Match.tag("StackNotFoundError", "InvalidStackIdentityError", () => ({
+            reason: "flags" as const,
+          })),
           Match.tag(
             "StackOwnershipConflictError",
             "StackNotRunningError",
@@ -46,7 +48,6 @@ const stopError = (error: unknown): LegacyExperimentalStackStopError => {
           ),
           Match.tag(
             "InvalidStackConfigError",
-            "InvalidStackIdentityError",
             "StackStateFormatUnsupportedError",
             "InvalidProjectRootError",
             "StackStateInvalidError",
