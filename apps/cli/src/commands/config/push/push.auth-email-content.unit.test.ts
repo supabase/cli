@@ -9,6 +9,19 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { legacyLoadAuthEmailContent } from "./push.auth-email-content.ts";
 
+/**
+ * Builds the exact anchored containment-rejection regex for a given declared `content_path` —
+ * the thrown message echoes that DECLARED value (quoted) between the field name and "resolves
+ * outside the project root", not the fully-canonicalized target (a deliberate recon-leak
+ * mitigation — see `legacyResolveEmailTemplateContentPath`'s own doc comment).
+ */
+function containmentRejectionPattern(fieldPath: string, declaredContentPath: string): RegExp {
+  const escaped = declaredContentPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `^Invalid config for ${fieldPath}: "${escaped}" resolves outside the project root`,
+  );
+}
+
 const emptyEmail = {
   enable_signup: true,
   double_confirm_changes: true,
@@ -180,7 +193,8 @@ describe("legacyLoadAuthEmailContent", () => {
   it("throws a descriptive error when a template file is missing", () => {
     const { cwd } = setup();
 
-    expect(() =>
+    let thrown: unknown;
+    try {
       legacyLoadAuthEmailContent(cwd, {
         ...emptyEmail,
         template: {
@@ -189,8 +203,56 @@ describe("legacyLoadAuthEmailContent", () => {
             content_path: "./templates/missing.html",
           },
         },
-      }),
-    ).toThrow(/^Invalid config for auth\.email\.template\.invite\.content_path:/);
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    // A genuinely missing in-root file must surface the normal read-failure message, never the
+    // containment message — locks in that the symlinked-ancestor containment fix (see the
+    // dedicated symlink test below) doesn't regress into over-rejecting a legitimate missing
+    // file as "outside the project root".
+    expect(message).not.toMatch(/resolves outside the project root/);
+    expect(message).toMatch(/^Invalid config for auth\.email\.template\.invite\.content_path:/);
+  });
+
+  it("does not raise the containment error for a template file missing behind a symlinked project root", () => {
+    // The project root itself is reached through a symlink (mirroring macOS's `/tmp` ->
+    // `/private/tmp`), and the configured template file doesn't exist. Before the CLI-2339 fix
+    // to `canonicalPathForContainment`, comparing a realpath'd root against a lexically-resolved
+    // (symlink-unaware) candidate would have misreported this as escaping the project root
+    // instead of a plain missing file.
+    const realDir = mkdtempSync(join(tmpdir(), "auth-email-content-real-"));
+    const linkContainer = mkdtempSync(join(tmpdir(), "auth-email-content-link-"));
+    const symlinkedRoot = join(linkContainer, "project-root");
+    symlinkSync(realDir, symlinkedRoot, "dir");
+
+    try {
+      let thrown: unknown;
+      try {
+        legacyLoadAuthEmailContent(symlinkedRoot, {
+          ...emptyEmail,
+          template: {
+            invite: {
+              subject: "You are invited",
+              content_path: "./missing-invite.html",
+            },
+          },
+        });
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      const message = (thrown as Error).message;
+      expect(message).not.toMatch(/resolves outside the project root/);
+      expect(message).toMatch(/^Invalid config for auth\.email\.template\.invite\.content_path:/);
+    } finally {
+      rmSync(linkContainer, { recursive: true, force: true });
+      rmSync(realDir, { recursive: true, force: true });
+    }
   });
 
   it("rejects an absolute template content_path outside the project root", () => {
@@ -207,9 +269,7 @@ describe("legacyLoadAuthEmailContent", () => {
           },
         },
       }),
-    ).toThrow(
-      /^Invalid config for auth\.email\.template\.invite\.content_path: resolves outside the project root/,
-    );
+    ).toThrow(containmentRejectionPattern("auth.email.template.invite.content_path", outsideFile));
   });
 
   it("rejects an absolute notification content_path outside the project root", () => {
@@ -228,7 +288,10 @@ describe("legacyLoadAuthEmailContent", () => {
         },
       }),
     ).toThrow(
-      /^Invalid config for auth\.email\.notification\.password_changed\.content_path: resolves outside the project root/,
+      containmentRejectionPattern(
+        "auth.email.notification.password_changed.content_path",
+        outsideFile,
+      ),
     );
   });
 
@@ -247,9 +310,7 @@ describe("legacyLoadAuthEmailContent", () => {
           },
         },
       }),
-    ).toThrow(
-      /^Invalid config for auth\.email\.template\.invite\.content_path: resolves outside the project root/,
-    );
+    ).toThrow(containmentRejectionPattern("auth.email.template.invite.content_path", escapePath));
   });
 
   it("rejects a relative notification content_path that escapes the project root via ..", () => {
@@ -269,7 +330,10 @@ describe("legacyLoadAuthEmailContent", () => {
         },
       }),
     ).toThrow(
-      /^Invalid config for auth\.email\.notification\.password_changed\.content_path: resolves outside the project root/,
+      containmentRejectionPattern(
+        "auth.email.notification.password_changed.content_path",
+        escapePath,
+      ),
     );
   });
 
@@ -290,7 +354,10 @@ describe("legacyLoadAuthEmailContent", () => {
         },
       }),
     ).toThrow(
-      /^Invalid config for auth\.email\.template\.invite\.content_path: resolves outside the project root/,
+      containmentRejectionPattern(
+        "auth.email.template.invite.content_path",
+        "./evil-template.html",
+      ),
     );
   });
 
@@ -312,7 +379,10 @@ describe("legacyLoadAuthEmailContent", () => {
         },
       }),
     ).toThrow(
-      /^Invalid config for auth\.email\.notification\.password_changed\.content_path: resolves outside the project root/,
+      containmentRejectionPattern(
+        "auth.email.notification.password_changed.content_path",
+        "./evil-notification.html",
+      ),
     );
   });
 
