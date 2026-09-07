@@ -2,7 +2,7 @@
  * Unit tests for push.auth-email-content.ts.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
@@ -208,7 +208,7 @@ describe("legacyLoadAuthEmailContent", () => {
         },
       }),
     ).toThrow(
-      /^Invalid config for auth\.email\.template\.invite\.content_path: resolves outside the project root$/,
+      /^Invalid config for auth\.email\.template\.invite\.content_path: resolves outside the project root/,
     );
   });
 
@@ -228,7 +228,7 @@ describe("legacyLoadAuthEmailContent", () => {
         },
       }),
     ).toThrow(
-      /^Invalid config for auth\.email\.notification\.password_changed\.content_path: resolves outside the project root$/,
+      /^Invalid config for auth\.email\.notification\.password_changed\.content_path: resolves outside the project root/,
     );
   });
 
@@ -248,7 +248,7 @@ describe("legacyLoadAuthEmailContent", () => {
         },
       }),
     ).toThrow(
-      /^Invalid config for auth\.email\.template\.invite\.content_path: resolves outside the project root$/,
+      /^Invalid config for auth\.email\.template\.invite\.content_path: resolves outside the project root/,
     );
   });
 
@@ -269,7 +269,50 @@ describe("legacyLoadAuthEmailContent", () => {
         },
       }),
     ).toThrow(
-      /^Invalid config for auth\.email\.notification\.password_changed\.content_path: resolves outside the project root$/,
+      /^Invalid config for auth\.email\.notification\.password_changed\.content_path: resolves outside the project root/,
+    );
+  });
+
+  it("rejects a template content_path that is an in-root symlink to an outside file", () => {
+    const { cwd } = setup();
+    const outsideFile = setupOutsideFile();
+    const symlinkPath = join(cwd, "evil-template.html");
+    symlinkSync(outsideFile, symlinkPath);
+
+    expect(() =>
+      legacyLoadAuthEmailContent(cwd, {
+        ...emptyEmail,
+        template: {
+          invite: {
+            subject: "You are invited",
+            content_path: "./evil-template.html",
+          },
+        },
+      }),
+    ).toThrow(
+      /^Invalid config for auth\.email\.template\.invite\.content_path: resolves outside the project root/,
+    );
+  });
+
+  it("rejects a notification content_path that is an in-root symlink to an outside file", () => {
+    const { cwd } = setup();
+    const outsideFile = setupOutsideFile();
+    const symlinkPath = join(cwd, "evil-notification.html");
+    symlinkSync(outsideFile, symlinkPath);
+
+    expect(() =>
+      legacyLoadAuthEmailContent(cwd, {
+        ...emptyEmail,
+        notification: {
+          password_changed: {
+            enabled: true,
+            subject: "Password changed",
+            content_path: "./evil-notification.html",
+          },
+        },
+      }),
+    ).toThrow(
+      /^Invalid config for auth\.email\.notification\.password_changed\.content_path: resolves outside the project root/,
     );
   });
 
