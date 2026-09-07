@@ -25,8 +25,10 @@ test("renames a preview branch", async ({ cli, project }) => {
       "json",
     ]);
     requireLiveSuccess(created, "branches create");
-    branchRef = (JSON.parse(created.stdout) as { project_ref?: string }).project_ref;
+    branchRef = (JSON.parse(created.stdout) as { project_ref: string }).project_ref;
+    expect(branchRef, created.stdout).toBeTruthy();
 
+    // `--output json` keeps stdout payload-only and sends the confirmation to stderr.
     const updated = await cli([
       "branches",
       "update",

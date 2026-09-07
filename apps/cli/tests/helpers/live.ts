@@ -155,7 +155,7 @@ export async function removeLiveBranch(
   const removed = await cli(["branches", "delete", branch, "--project-ref", project.ref, "--yes"]);
   if (
     removed.exitCode !== 0 &&
-    !/not found|does not exist/i.test(`${removed.stdout}\n${removed.stderr}`)
+    !/not found|does not exist|status 404\b/i.test(`${removed.stdout}\n${removed.stderr}`)
   ) {
     throw new Error(
       `branches delete cleanup for ${branch} failed (exit ${removed.exitCode})\n${removed.stdout}\n${removed.stderr}`,

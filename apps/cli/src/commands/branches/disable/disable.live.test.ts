@@ -14,6 +14,11 @@ test("disables preview branching", async ({ cli, project }) => {
   let targetError: unknown;
   let cleanupError: unknown;
   try {
+    // `branches disable` is project-wide and leaves branching off for the rest
+    // of the serial run. Creating then deleting a branch proves branching was
+    // on, so the assertion below disables a real, empty branching setup rather
+    // than a no-op; sibling tests each create their own branch first, which
+    // re-enables branching for them.
     mayExist = true;
     const created = await cli(["branches", "create", name, "--project-ref", project.ref]);
     requireLiveSuccess(created, "branches create");
