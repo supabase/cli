@@ -136,7 +136,7 @@ describe("experimental stack list", () => {
   it.effect("renders the container engine in text output", () => {
     const run = runList([
       {
-        ...descriptor("p", "/work/container", "podman", "stopped"),
+        ...descriptor("d", "/work/container", "podman", "stopped"),
         runtime: { kind: "container", engine: "podman" },
       },
     ]);
