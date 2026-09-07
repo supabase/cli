@@ -92,10 +92,11 @@ never does. Containment, not proof of isolation:
 
 ## Corpus
 
-Samples come from `supabase/supabase-config-real-world-samples` at the commit
-in `corpus.sha`. Default first-pass trees: `usebasejump__basejump` and
-`vercel__nextjs-subscription-payments`. Copy into scratch; never mutate the
-clone.
+Samples come from `supabase/supabase-config-real-world-samples` (internal) at the
+commit in `corpus.sha`. CI clones it with the org GitHub App (`GH_APP_*`); the
+default `GITHUB_TOKEN` cannot read that repo. Default first-pass trees:
+`usebasejump__basejump` and `vercel__nextjs-subscription-payments`. Copy into
+scratch; never mutate the clone.
 
 This directory is a CI agent brief. It is not the private local playbook
 library and must not grow into a copy of it.
