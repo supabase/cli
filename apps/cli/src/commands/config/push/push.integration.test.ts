@@ -413,13 +413,48 @@ describe("legacy config push integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("aborts on malformed config.toml before any network call", () => {
+  it.live("names supabase/config.toml on malformed config.toml, before any network call", () => {
     const { layer, api } = setup({ toml: "malformed", yes: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
+      const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+        Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+          Effect.succeed(error.message),
+        ),
+      );
+      expect(message).toContain("failed to parse supabase/config.toml:");
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("names supabase/config.json (not config.toml) on a malformed config.json", () => {
+    const dir = join(tempRoot.current, "supabase");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "config.json"), "{not valid json");
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({
+      handler: (request) =>
+        Effect.succeed(legacyJsonResponse(request, 200, { available_addons: [] })),
+    });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      }),
+      mockStdin(true),
+      Layer.succeed(LegacyYesFlag, true),
+    );
+    return Effect.gen(function* () {
+      const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+        Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+          Effect.succeed(error.message),
+        ),
+        Effect.provide(layer),
+      );
+      expect(message).toContain("failed to parse supabase/config.json:");
+      expect(api.requests).toHaveLength(0);
+    });
   });
 
   it.live("merges a matching [remotes.*] block over the base and pushes it", () => {
@@ -706,7 +741,7 @@ max_rows = 1000
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("aborts with exit 1 when no config.toml exists", () => {
+  it.live("directs a missing config file to supabase init, with exit 1", () => {
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({
       handler: (request) =>
@@ -725,6 +760,14 @@ max_rows = 1000
     return Effect.gen(function* () {
       const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
+      const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+        Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+          Effect.succeed(error.message),
+        ),
+      );
+      expect(message).toBe(
+        "failed to read supabase/config.toml or supabase/config.json: file not found. Run `supabase init` to create one.",
+      );
     }).pipe(Effect.provide(layer));
   });
 

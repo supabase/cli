@@ -247,10 +247,11 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // NOTE (CLI-1489): `config push` needs the fully decoded config (every
     // service subset), so it uses `legacyLoadLocalConfig` (`../config.load.ts`,
     // shared with `config diff`/`config pull`) rather than the tolerant
-    // `legacy-db-config.toml-read.ts` subtree reader. That helper raises
-    // `CliConfigParseError` on `env(...)` refs over numeric/bool fields, and
-    // owns the parse/duplicate-remote/missing-file message shapes — only
-    // this family's own tagged error class is local.
+    // `legacy-db-config.toml-read.ts` subtree reader. The underlying
+    // `loadCliConfig` raises `CliConfigParseError` on `env(...)` refs over
+    // numeric/bool fields; `legacyLoadLocalConfig` catches it (and a
+    // duplicate-remote/missing-file failure) and converts it to this
+    // family's own tagged error via the shared message shapes.
     const loaded = yield* legacyLoadLocalConfig(
       cliSettings.workdir,
       ref,

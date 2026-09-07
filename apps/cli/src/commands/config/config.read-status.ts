@@ -23,7 +23,12 @@ export function legacyUnexpectedStatusMessage(status: number, body: string): str
  * command that used to hit six long-lived v1 endpoints, so a 404 here can
  * also mean this v2 endpoint isn't served by the configured API host at all
  * (an older self-hosted Management API, a proxy, a `SUPABASE_PROFILE`
- * pointing elsewhere) rather than a wrong project ref.
+ * pointing elsewhere) rather than a wrong project ref. `apiUrl` traces back
+ * to a `SUPABASE_PROFILE` YAML file's `api_url:` value, which is validated
+ * as a well-formed `http(s)://` URL but not stripped of embedded control
+ * characters (`legacy-profile-load.ts` returns the raw matched string, not
+ * a re-serialized one) — sanitized the same way `ref` already is, so a
+ * crafted profile can't inject terminal control sequences via this message.
  */
 export function legacyConfigReadStatusMessage(
   status: number,
@@ -38,7 +43,7 @@ export function legacyConfigReadStatusMessage(
     return `Access denied for project ${legacySanitizeInlineName(ref)}: your account does not have permission to view its configuration.`;
   }
   if (status === 404) {
-    return `Could not read configuration for project ${legacySanitizeInlineName(ref)} (404). Check the project ref with \`supabase projects list\`; if the ref is correct, this Supabase API endpoint may not be available at ${apiHost}.`;
+    return `Could not read configuration for project ${legacySanitizeInlineName(ref)} (404). Check the project ref with \`supabase projects list\`; if the ref is correct, this Supabase API endpoint may not be available at ${legacySanitizeInlineName(apiHost)}.`;
   }
   return legacyUnexpectedStatusMessage(status, body);
 }
