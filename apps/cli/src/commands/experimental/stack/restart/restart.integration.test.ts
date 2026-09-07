@@ -6,6 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option, Stream } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import {
+  PortUnavailableError,
   StackIdSchema,
   StackLifecycleConflictError,
   StackPreparationError,
@@ -16,7 +17,12 @@ import {
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { mockLegacyCliSettings } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
+import {
+  actionability,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 import { LegacyExperimentalStackApi } from "../stack.shared.ts";
+import { legacyExperimentalStackCommand } from "../stack.command.ts";
 import { legacyExperimentalStackRestart } from "./restart.handler.ts";
 import { legacyExperimentalStackRestartCommand } from "./restart.command.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
@@ -43,7 +49,7 @@ const makeFixture = (options: {
   readonly config?: "valid" | "invalid" | "missing";
   readonly prepare?: "ok" | "fail";
   readonly stop?: "ok" | "fail";
-  readonly start?: "ok" | "fail";
+  readonly start?: "ok" | "fail" | "port";
   readonly format?: "text" | "json";
   readonly legacyOutput?: boolean;
   readonly missingTarget?: boolean;
@@ -82,10 +88,12 @@ const makeFixture = (options: {
       calls.push("start");
       return options.start === "fail"
         ? Effect.fail(new StackRuntimeError({ message: "start failed" }))
-        : Effect.sync(() => {
-            lifecycle = "running";
-            return status(lifecycle);
-          });
+        : options.start === "port"
+          ? Effect.fail(new PortUnavailableError({ message: "port 54321 is unavailable" }))
+          : Effect.sync(() => {
+              lifecycle = "running";
+              return status(lifecycle);
+            });
     },
     destroy: () => {
       calls.push("destroy");
@@ -131,6 +139,7 @@ const makeFixture = (options: {
     stack,
     out,
     projectRoot,
+    cleanup: () => rmSync(root, { recursive: true, force: true }),
     layer,
     effect: legacyExperimentalStackRestart(selectedFlags).pipe(
       Effect.provide(layer),
@@ -157,6 +166,11 @@ describe("experimental stack restart", () => {
     );
   });
 
+  it("registers restart once in the actual parent command", () => {
+    const commands = legacyExperimentalStackCommand.subcommands.flatMap(({ commands }) => commands);
+    expect(commands.filter((command) => command.name === "restart")).toHaveLength(1);
+  });
+
   it.effect("prepares, stops, and starts the same stack in order", () => {
     const fixture = makeFixture({ target: "id", format: "json" });
     return fixture.effect.pipe(
@@ -169,6 +183,18 @@ describe("experimental stack restart", () => {
             id: stackId,
             lifecycle: "running",
           });
+        }),
+      ),
+    );
+  });
+
+  it.effect("renders a concise text result after restart", () => {
+    const fixture = makeFixture({ format: "text" });
+    return fixture.effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(fixture.out.stdoutText).toContain(`Stack ${stackId}`);
+          expect(fixture.out.stdoutText).toContain("Lifecycle: running");
         }),
       ),
     );
@@ -210,6 +236,17 @@ describe("experimental stack restart", () => {
     },
   );
 
+  it.effect("classifies an unavailable start port as actionable configuration", () => {
+    const fixture = makeFixture({ start: "port" });
+    return Effect.gen(function* () {
+      const failure = yield* fixture.effect.pipe(Effect.flip);
+      expect(failure.reason).toBe("port");
+      expect(failure.suggestion).toContain("port");
+      expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
+      expect(fixture.calls).toEqual(["open", "prepare", "stop", "start"]);
+    });
+  });
+
   it.effect("rejects invalid flags and legacy output before lifecycle calls", () => {
     const invalid = makeFixture({});
     const legacy = makeFixture({ legacyOutput: true });
@@ -220,7 +257,8 @@ describe("experimental stack restart", () => {
       expect(Exit.isFailure(yield* legacy.effect.pipe(Effect.exit))).toBe(true);
       expect(Exit.isFailure(yield* invalidEffect)).toBe(true);
       expect(legacy.calls).toEqual([]);
-    });
+      expect(invalid.calls).toEqual([]);
+    }).pipe(Effect.ensuring(Effect.sync(invalid.cleanup)));
   });
 
   it.effect("fails a missing named target without lifecycle calls", () => {

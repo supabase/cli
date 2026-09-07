@@ -22,19 +22,34 @@ const mapStackError = (error: import("@supabase/stack/effect").StackError) => {
   const classification = Match.value(error).pipe(
     Match.tag("StackNotFoundError", () => ({ reason: "not-found" as const })),
     Match.tag("InvalidStackIdentityError", () => ({ reason: "flags" as const })),
+    Match.tag("PortUnavailableError", "PortAllocationError", () => ({
+      reason: "port" as const,
+      suggestion:
+        "Free the conflicting port or update the local stack port configuration, then retry.",
+    })),
     Match.tag(
       "InvalidStackConfigError",
       "StackVersionUnsupportedError",
       "InvalidProjectRootError",
       "StackStateInvalidError",
       "StackStateFormatUnsupportedError",
+      "StackSecretMismatchError",
+      "InvalidJwtSigningMaterialError",
       () => ({ reason: "invalid-config" as const }),
     ),
+    Match.tag("StackRuntimeMismatchError", () => ({
+      reason: "flags" as const,
+      suggestion:
+        "Omit --runtime to reuse the existing runtime, or choose a different --stack name.",
+    })),
     Match.tag(
       "StackLifecycleConflictError",
       "StackNotRunningError",
       "StackMustBeStoppedError",
-      () => ({ reason: "lifecycle" as const, suggestion: "Stop the stack before restarting it." }),
+      () => ({
+        reason: "lifecycle" as const,
+        suggestion: "Run supabase experimental stack status to inspect the stack state.",
+      }),
     ),
     Match.tag("ContainerEngineError", () => ({
       reason: "docker" as const,

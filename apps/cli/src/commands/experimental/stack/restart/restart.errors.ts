@@ -13,6 +13,7 @@ export class LegacyExperimentalStackRestartError extends Data.TaggedError(
     | "flags"
     | "not-found"
     | "invalid-config"
+    | "port"
     | "lifecycle"
     | "docker"
     | "registry"
@@ -25,6 +26,7 @@ export class LegacyExperimentalStackRestartError extends Data.TaggedError(
     if (this.reason === "flags" || this.reason === "not-found") return actionability.provideFlags;
     if (this.reason === "invalid-config" || this.reason === "lifecycle")
       return actionability.invalidConfig;
+    if (this.reason === "port") return actionability.invalidConfig;
     if (this.reason === "docker") return actionability.dockerNotRunning;
     return actionability.externalNetwork;
   }
