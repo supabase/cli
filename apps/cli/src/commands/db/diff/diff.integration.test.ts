@@ -77,14 +77,13 @@ interface SetupOpts {
   readonly diffSql?: string;
   // When set, the pg-delta strategy mock returns one rendered file per entry.
   readonly diffFiles?: ReadonlyArray<{ readonly name: string; readonly sql: string }>;
-  // Exact suffixes returned by the next renderer, parallel to `diffFiles`.
+  // Exact suffixes returned by the pg-delta renderer, parallel to `diffFiles`.
   readonly diffSuffixes?: ReadonlyArray<string | null>;
   readonly hazards?: LegacyPgDeltaHazardReport;
   readonly oom?: boolean; // edge-runtime OOMs; the bash fallback returns `diffSql`
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
   // When set, the PGDELTA_DEBUG shadow-catalog export fails with this message
   // instead of succeeding.
-  readonly catalogExportFailWith?: string;
   readonly diffFailWith?: string;
   // When set, the shadow's own PG15+ one-shot platform-baseline job(s) exit
   // non-zero, exercising cleanup-on-partial-failure (the shadow is still removed).
@@ -274,16 +273,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         return Effect.fail(
           new LegacyEdgeRuntimeScriptError({ message: "Fatal JavaScript out of memory" }),
         );
-      }
-      // The PGDELTA_DEBUG shadow-catalog export uses a distinct errPrefix (`legacy-
-      // pgdelta.ts`'s `legacyExportCatalogPgDelta`), same as `db pull`'s own mock.
-      if (runOpts.errPrefix.includes("catalog")) {
-        if (opts.catalogExportFailWith !== undefined) {
-          return Effect.fail(
-            new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
-          );
-        }
-        return Effect.succeed({ stdout: '{"tables":[]}', stderr: "" });
       }
       if (opts.diffFailWith !== undefined) {
         return Effect.fail(new LegacyEdgeRuntimeScriptError({ message: opts.diffFailWith }));
@@ -626,15 +615,15 @@ describe("legacy db diff", () => {
           connectOptions: { isLocal: true, dnsResolver: "native" },
         },
       });
-      // Even the legacy implementation is hidden behind LegacyPgDeltaEngine;
-      // the handler no longer invokes edge runtime itself.
+      // pg-delta runs in-process through LegacyPgDeltaEngine; the handler never
+      // invokes the edge runtime for it.
       expect(s.edgeCalls).toEqual([]);
       expect(stderr(s.out)).toContain("Diffing schemas: public");
       expect(stdout(s.out)).toBe("create table p ();\n\n");
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("next local diff ignores schema_paths and declarative files", () => {
+  it.effect("pg-delta local diff ignores schema_paths and declarative files", () => {
     mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),

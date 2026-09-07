@@ -45,7 +45,6 @@ import {
   type LegacyDbSession,
   LegacyDbConnection,
 } from "../../../../../command-internal/legacy-db-connection.service.ts";
-import { LegacyPgDeltaSslProbe } from "../../../../../command-internal/legacy-pgdelta-ssl-probe.service.ts";
 import {
   LegacyPgDeltaEngine,
   LegacyPgDeltaEngineError,
@@ -193,10 +192,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     exec: (args) => Effect.sync(() => void proxyCalls.push(args)),
     execCapture: () => Effect.succeed(""),
   });
-  const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
-    requireSsl: () => Effect.succeed(false),
-    requireSslForHost: () => Effect.succeed(false),
-  });
   const runtimeInfo = mockRuntimeInfo({ platform: "linux" });
   const processControl = mockProcessControl();
   const experimentalFlag = Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true);
@@ -227,8 +222,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     networkIdFlag,
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     debugFlag,
-    // The remote ref is a non-Supabase host that refuses TLS → no SSL env.
-    sslProbe,
     // The local-reset bucket-seed core statically requires the (lazy) Management-API
     // factory; never invoked on the local reset (projectRef === "").
     Layer.succeed(LegacyPlatformApiFactory, {

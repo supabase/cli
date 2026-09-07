@@ -233,7 +233,10 @@ describe("legacyGenerateDeclarativeOutput", () => {
             debug: input.debug,
             strictCoverage: input.strictCoverage,
           });
-          return Effect.succeed({ files: [] });
+          return Effect.succeed({
+            files: [],
+            manifest: { redactSecrets: true, scope: "database" },
+          });
         },
         planDeclarativeSchema: () => Effect.die("planDeclarativeSchema not used"),
       }),

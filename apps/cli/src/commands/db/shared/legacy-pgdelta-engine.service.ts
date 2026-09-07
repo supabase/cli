@@ -142,7 +142,8 @@ interface LegacyPgDeltaDeclarativeExportInput extends LegacyPgDeltaCommonInput {
 
 export interface LegacyPgDeltaDeclarativeExportResult {
   readonly files: ReadonlyArray<LegacyPgDeltaSqlFile>;
-  readonly manifest?: LegacyPgDeltaExportManifest;
+  /** Ownership metadata the declarative writer records alongside the files. */
+  readonly manifest: LegacyPgDeltaExportManifest;
 }
 
 export interface LegacyPgDeltaDeclarativePlanInput extends LegacyPgDeltaCommonInput {

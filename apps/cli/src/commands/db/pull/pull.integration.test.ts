@@ -107,7 +107,6 @@ interface SetupOpts {
   // resolvePoolerFallback returns Some(pooler conn) when true, None otherwise.
   readonly poolerAvailable?: boolean;
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
-  readonly catalogStdout?: string; // stdout returned by pg-delta catalog-export runs
   // Initial-migra pull: the bytes the native pg_dump container streams to its sink,
   // its exit code / stderr, and (when set) an IPv6 stderr that fails the FIRST dump
   // attempt so the pooler retry runs (the second attempt then streams `dumpStdout`).
@@ -192,12 +191,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             files: [],
             ...(process.env["PGDELTA_DEBUG"] !== undefined
               ? {
-                  debug: {
-                    sourceSnapshot: opts.catalogStdout ?? "",
-                    ...(opts.nextDebugDirectory !== undefined
+                  debug:
+                    opts.nextDebugDirectory !== undefined
                       ? { directory: opts.nextDebugDirectory }
-                      : {}),
-                  },
+                      : {},
                 }
               : {}),
           });
@@ -276,11 +273,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       edgeCalls.push(runOpts);
       if (opts.edgeFailFirstWith !== undefined && edgeRunCount === 1) {
         return Effect.fail(new LegacyEdgeRuntimeScriptError({ message: opts.edgeFailFirstWith }));
-      }
-      // pg-delta catalog exports (debug capture) use a distinct errPrefix; serve
-      // them their own stdout so an empty diff can still capture non-empty catalogs.
-      if (runOpts.errPrefix.includes("catalog")) {
-        return Effect.succeed({ stdout: opts.catalogStdout ?? "", stderr: "" });
       }
       return Effect.succeed({ stdout: opts.edgeStdout ?? "", stderr: "" });
     },

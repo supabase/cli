@@ -2,21 +2,6 @@ import { Option } from "effect";
 
 import { legacyResolveLocalProjectId, legacySanitizeProjectId } from "./legacy-docker-ids.ts";
 
-/** A per-file payload from pg-delta declarative export. Mirrors Go's `DeclarativeFile`. */
-interface LegacyDeclarativeFile {
-  readonly path: string;
-  readonly order: number;
-  readonly statements: number;
-  readonly sql: string;
-}
-
-/** The declarative export envelope. Mirrors Go's `DeclarativeOutput`. */
-export interface LegacyDeclarativeOutput {
-  readonly version: number;
-  readonly mode: string;
-  readonly files: ReadonlyArray<LegacyDeclarativeFile>;
-}
-
 /**
  * Ambient inputs shared by the pg-delta and migra diff workflows: the project id
  * (for the `supabase_edge_runtime_<id>` Deno-cache volume migra's edge-runtime
