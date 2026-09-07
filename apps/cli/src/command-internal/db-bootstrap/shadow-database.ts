@@ -373,7 +373,7 @@ export interface LegacyShadowSourceResult {
 }
 
 /** Fields shared by `legacy-shadow-source.ts`'s `LegacyPrepareShadowSourceInput` and the shadow readiness probes. */
-export interface LegacyShadowConnectionInput extends LegacyCreateShadowDatabaseInput {
+interface LegacyShadowConnectionInput extends LegacyCreateShadowDatabaseInput {
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly hostname: string;

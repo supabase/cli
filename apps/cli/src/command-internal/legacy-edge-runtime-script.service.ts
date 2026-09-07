@@ -48,7 +48,7 @@ export interface LegacyEdgeRuntimeRunOpts {
   readonly workdir?: string;
 }
 
-export interface LegacyEdgeRuntimeRunResult {
+interface LegacyEdgeRuntimeRunResult {
   readonly stdout: string;
   readonly stderr: string;
 }

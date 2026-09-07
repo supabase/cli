@@ -169,7 +169,7 @@ interface LegacyDbVaultSecretToml {
  * shape instead of re-declaring it inline, making field drift a compile error
  * rather than a silent cache-key gap.
  */
-export interface LegacyBaselineTomlConfig {
+interface LegacyBaselineTomlConfig {
   /** `[auth] enabled`, default true. Gates `initSchema`'s auth service migration. */
   readonly authEnabled: boolean;
   /** `[storage] enabled`, default true. */
