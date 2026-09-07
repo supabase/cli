@@ -3,7 +3,7 @@ import {
   diffProjectConfig,
   fromApiProjectConfig,
 } from "@supabase/config/effect";
-import { loadCliConfig, remoteNameForProjectRef } from "@supabase/config/internal";
+import { remoteNameForProjectRef } from "@supabase/config/internal";
 import { operationDefinitions } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
@@ -18,6 +18,7 @@ import {
   mapLegacyHttpError,
   sanitizeLegacyErrorBody,
 } from "../../../command-internal/legacy-http-errors.ts";
+import { legacyLoadLocalConfig } from "../config.load.ts";
 import { legacyConfigTargetErrorsFor, legacyResolveConfigTarget } from "../config.target.ts";
 import { legacyConfigApiScope, legacyConfigScopeLine } from "../config.format.ts";
 import { legacyConfigProjectConfigTry } from "../config.project-config.ts";
@@ -84,41 +85,14 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
   // resolver and the linked-project cache use — so `--workdir ../other`
   // compares `../other`'s config.toml against `../other`'s linked project,
   // never the invoking directory's file against another root's project.
-  // `cause.path` is anchored under the workdir; render it relative so the
-  // message reads `supabase/config.json` like the family's other messages,
-  // regardless of invocation cwd.
-  const relativeConfigPath = (path: string) =>
-    path.startsWith(cliSettings.workdir)
-      ? path.slice(cliSettings.workdir.length).replace(/^[/\\]/, "")
-      : path;
-
+  // `legacyLoadLocalConfig` (`../config.load.ts`, shared with `config
+  // pull`/`config push`) owns the parse/duplicate-remote/missing-file
+  // message shapes; only this family's own tagged error class is local.
   const loadLocalConfig = (projectRef: string | undefined) =>
-    loadCliConfig(cliSettings.workdir, { projectRef, goViperCompat: true }).pipe(
-      // `cause.path` names the file that actually failed to parse — `loadCliConfig`
-      // probes `supabase/config.json` before falling back to `supabase/config.toml`
-      // (`findCliProjectPaths`), so hardcoding the `.toml` name here would mislabel a
-      // broken `config.json`.
-      Effect.catchTag(
-        "CliConfigParseError",
-        (cause) =>
-          new LegacyConfigDiffLoadConfigError({
-            message: `failed to parse ${relativeConfigPath(cause.path)}: ${String(cause.cause)}`,
-          }),
-      ),
-      Effect.catchTag(
-        "DuplicateRemoteProjectIdError",
-        (cause) => new LegacyConfigDiffLoadConfigError({ message: cause.message }),
-      ),
-      Effect.flatMap((loaded) =>
-        loaded === null
-          ? Effect.fail(
-              new LegacyConfigDiffLoadConfigError({
-                message:
-                  "failed to read supabase/config.toml or supabase/config.json: file not found. Run `supabase init` to create one.",
-              }),
-            )
-          : Effect.succeed(loaded),
-      ),
+    legacyLoadLocalConfig(
+      cliSettings.workdir,
+      projectRef,
+      (message) => new LegacyConfigDiffLoadConfigError({ message }),
     );
 
   // Written once the comparison target is known, so the linked-project cache
@@ -215,7 +189,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
       return yield* new LegacyConfigDiffReadStatusError({
         status: response.status,
         body,
-        message: legacyConfigReadStatusMessage(response.status, body, ref),
+        message: legacyConfigReadStatusMessage(response.status, body, ref, cliSettings.apiUrl),
       });
     }
     const responseJson = yield* response.json.pipe(

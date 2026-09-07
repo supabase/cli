@@ -22,6 +22,7 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
+  LEGACY_DEFAULT_API_URL,
   LEGACY_VALID_REF,
   legacyJsonResponse,
   legacyTransportFailure,
@@ -1808,7 +1809,7 @@ describe("legacy config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a 404 on the config read suggests projects list", () => {
+  it.live("a 404 on the config read suggests projects list and hedges the api host", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 404, body: { message: "not found" } },
@@ -1817,8 +1818,9 @@ describe("legacy config pull integration", () => {
       const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       const rendered = JSON.stringify(exit);
-      expect(rendered).toContain(LEGACY_VALID_REF);
+      expect(rendered).toContain(`Could not read configuration for project ${LEGACY_VALID_REF}`);
       expect(rendered).toContain("supabase projects list");
+      expect(rendered).toContain(LEGACY_DEFAULT_API_URL);
     }).pipe(Effect.provide(layer));
   });
 
