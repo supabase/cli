@@ -15,10 +15,11 @@ runtime resources.
 ## Output
 
 Text mode writes one line per retained or followed entry. JSON mode writes one bounded result;
-`--follow` requires `--output-format stream-json`, which emits one `log-entry` event per line.
+`--follow` is rejected with `--output-format json`; use the default text mode or
+`--output-format stream-json`, which emits one `log-entry` event per line.
 Follow prints the retained history first and then resumes from its returned cursor. If the stack
 is already stopped, it prints the retained history and exits successfully. Interrupting follow
-cancels the log reader and leaves the managed stack owner untouched.
+cancels the log reader, exits with status `130`, and leaves the managed stack owner untouched.
 
 ## Telemetry
 

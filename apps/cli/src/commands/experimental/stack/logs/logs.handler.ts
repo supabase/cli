@@ -30,19 +30,22 @@ const logsError = (error: unknown): LegacyExperimentalStackLogsError => {
             reason: "flags" as const,
           })),
           Match.tag("InvalidLogCursorError", () => ({ reason: "impossible-state" as const })),
-          Match.tag(
-            "StackNotRunningError",
-            "StackOwnershipConflictError",
-            "StackLifecycleConflictError",
-            "StackUpgradeRequiredError",
-            () => ({
-              reason: "lifecycle" as const,
-              suggestion: "Run supabase experimental stack start before reading logs.",
-            }),
-          ),
+          Match.tag("StackNotRunningError", () => ({
+            reason: "lifecycle" as const,
+            suggestion: "Run supabase experimental stack start before reading logs.",
+          })),
+          Match.tag("StackOwnershipConflictError", "StackLifecycleConflictError", () => ({
+            reason: "lifecycle" as const,
+            suggestion: "The stack owner is busy or shutting down; retry shortly.",
+          })),
+          Match.tag("StackUpgradeRequiredError", () => ({
+            reason: "lifecycle" as const,
+            suggestion: "Upgrade the CLI to a compatible stack version before reading logs.",
+          })),
           Match.tag("StackStateInvalidError", "StackStateFormatUnsupportedError", () => ({
             reason: "invalid-config" as const,
           })),
+          Match.tag("InvalidProjectRootError", () => ({ reason: "invalid-config" as const })),
           Match.orElse(() => ({ reason: "unknown" as const })),
         );
   return new LegacyExperimentalStackLogsError({
@@ -141,7 +144,7 @@ export const legacyExperimentalStackLogs = Effect.fn("legacy.experimental.stack.
     } else if (output.format === "stream-json") {
       for (const entry of batch.entries) yield* output.event(eventForEntry(entry, "history"));
     } else {
-      yield* output.success("", batch);
+      yield* output.success("", { found: true, id: stack.id, ...batch });
     }
     return;
   }

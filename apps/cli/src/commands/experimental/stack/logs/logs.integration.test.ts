@@ -5,11 +5,18 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Layer, Option, Stream } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
-import { StackIdSchema } from "@supabase/stack/effect";
+import {
+  InvalidProjectRootError,
+  StackIdSchema,
+  StackOwnershipConflictError,
+  StackUpgradeRequiredError,
+} from "@supabase/stack/effect";
 import type {
   EffectStack,
+  OpenStackError,
   StackLogBatch,
   StackLogEntry,
+  StackDiscoveryError,
   StackStatus,
 } from "@supabase/stack/effect";
 import { mockLegacyCliSettings } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -74,6 +81,8 @@ function setup(opts: {
   root: string;
   logs?: (query: unknown) => Effect.Effect<StackLogBatch, never>;
   followLogs?: (query: unknown) => Stream.Stream<StackLogEntry>;
+  openFailure?: OpenStackError;
+  findFailure?: StackDiscoveryError;
 }) {
   const out = mockOutput();
   const calls: {
@@ -115,12 +124,16 @@ function setup(opts: {
     Layer.succeed(LegacyExperimentalStackApi, {
       createStack: () => Effect.die("must not create"),
       findStack: (query) =>
-        Effect.succeed(query.name === "missing" ? Option.none() : Option.some(descriptor)),
+        opts.findFailure === undefined
+          ? Effect.succeed(query.name === "missing" ? Option.none() : Option.some(descriptor))
+          : Effect.fail(opts.findFailure),
       openStack: (stackId) =>
-        Effect.sync(() => {
-          calls.opened.push(stackId);
-          return stack;
-        }),
+        opts.openFailure === undefined
+          ? Effect.sync(() => {
+              calls.opened.push(stackId);
+              return stack;
+            })
+          : Effect.fail(opts.openFailure),
       inspectStack: () => Effect.die("must not inspect"),
     }),
     BunServices.layer,
@@ -226,6 +239,8 @@ describe("experimental stack logs", () => {
     return Effect.gen(function* () {
       yield* legacyExperimentalStackLogs(flags({ tail: 2 }));
       expect(output.messages.find((message) => message.type === "success")?.data).toEqual({
+        found: true,
+        id,
         entries,
         cursor: { opaque: "2" },
         running: false,
@@ -325,4 +340,57 @@ describe("experimental stack logs", () => {
       expect(result.calls.opened).toEqual([]);
     }),
   );
+
+  it.effect("classifies an invalid project root as invalid config", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-logs-invalid-root-"));
+    const setupResult = setup({
+      root,
+      findFailure: new InvalidProjectRootError({ message: "Project root is invalid" }),
+    });
+    return Effect.gen(function* () {
+      const failure = yield* legacyExperimentalStackLogs(flags()).pipe(Effect.flip);
+      expect(failure.reason).toBe("invalid-config");
+      expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
+      expect(setupResult.calls.opened).toEqual([]);
+    }).pipe(
+      Effect.provide(setupResult.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("gives retry guidance for busy owners and upgrade guidance for old owners", () => {
+    const busyRoot = mkdtempSync(join(tmpdir(), "supabase-stack-logs-busy-"));
+    const upgradeRoot = mkdtempSync(join(tmpdir(), "supabase-stack-logs-upgrade-"));
+    const busy = setup({
+      root: busyRoot,
+      openFailure: new StackOwnershipConflictError({ message: "Stack owner is busy" }),
+    });
+    const upgrade = setup({
+      root: upgradeRoot,
+      openFailure: new StackUpgradeRequiredError({
+        expectedRelease: "next",
+        actualRelease: "current",
+        message: "Stack upgrade required",
+      }),
+    });
+    return Effect.gen(function* () {
+      const busyFailure = yield* legacyExperimentalStackLogs(flags()).pipe(
+        Effect.flip,
+        Effect.provide(busy.layer),
+      );
+      const upgradeFailure = yield* legacyExperimentalStackLogs(flags()).pipe(
+        Effect.flip,
+        Effect.provide(upgrade.layer),
+      );
+      expect(busyFailure.suggestion).toContain("retry");
+      expect(upgradeFailure.suggestion).toContain("compatible stack version");
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(busyRoot, { recursive: true, force: true });
+          rmSync(upgradeRoot, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 });
