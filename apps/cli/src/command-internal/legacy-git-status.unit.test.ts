@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Option, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { legacyConfigFileHasUncommittedChanges } from "./legacy-git-status.ts";
+import { legacyPathHasUncommittedChanges } from "./legacy-git-status.ts";
 
 /** Matches the standing `mockSpawner` shape in `legacy-container-cli.unit.test.ts`. */
 function mockSpawner(
@@ -66,10 +66,10 @@ function mockSpawner(
   };
 }
 
-describe("legacyConfigFileHasUncommittedChanges", () => {
+describe("legacyPathHasUncommittedChanges", () => {
   it.live("reports dirty when git status --porcelain reports non-empty output", () => {
     const mock = mockSpawner({ stdout: " M config.toml\n" });
-    return legacyConfigFileHasUncommittedChanges("/repo/supabase/config.toml").pipe(
+    return legacyPathHasUncommittedChanges("/repo/supabase/config.toml").pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
       Effect.map((result) => {
         expect(Option.isSome(result)).toBe(true);
@@ -80,7 +80,7 @@ describe("legacyConfigFileHasUncommittedChanges", () => {
 
   it.live("reports clean when git status --porcelain exits 0 with empty output", () => {
     const mock = mockSpawner({ stdout: "" });
-    return legacyConfigFileHasUncommittedChanges("/repo/supabase/config.toml").pipe(
+    return legacyPathHasUncommittedChanges("/repo/supabase/config.toml").pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
       Effect.map((result) => {
         expect(Option.isSome(result)).toBe(true);
@@ -91,7 +91,7 @@ describe("legacyConfigFileHasUncommittedChanges", () => {
 
   it.live("degrades to none when git status exits non-zero (e.g. outside a work tree)", () => {
     const mock = mockSpawner({ exitCode: 128, stdout: "" });
-    return legacyConfigFileHasUncommittedChanges("/repo/supabase/config.toml").pipe(
+    return legacyPathHasUncommittedChanges("/repo/supabase/config.toml").pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
       Effect.map((result) => {
         expect(Option.isNone(result)).toBe(true);
@@ -101,7 +101,7 @@ describe("legacyConfigFileHasUncommittedChanges", () => {
 
   it.live("degrades to none when git cannot be spawned", () => {
     const mock = mockSpawner({ spawnFails: true });
-    return legacyConfigFileHasUncommittedChanges("/repo/supabase/config.toml").pipe(
+    return legacyPathHasUncommittedChanges("/repo/supabase/config.toml").pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
       Effect.map((result) => {
         expect(Option.isNone(result)).toBe(true);
@@ -113,13 +113,34 @@ describe("legacyConfigFileHasUncommittedChanges", () => {
     "runs `git status --porcelain -- <basename>` with cwd set to the file's directory",
     () => {
       const mock = mockSpawner({ stdout: "" });
-      return legacyConfigFileHasUncommittedChanges("/repo/supabase/config.toml").pipe(
+      return legacyPathHasUncommittedChanges("/repo/supabase/config.toml").pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
         Effect.map(() => {
           expect(mock.spawned).toEqual([
             {
               command: "git",
               args: ["status", "--porcelain", "--", "config.toml"],
+              cwd: "/repo/supabase",
+            },
+          ]);
+        }),
+      );
+    },
+  );
+
+  it.live(
+    "works the same way for a directory path: reports dirty using the directory's own basename as the pathspec",
+    () => {
+      const mock = mockSpawner({ stdout: " M migrations/20260101000000_init.sql\n" });
+      return legacyPathHasUncommittedChanges("/repo/supabase/migrations").pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+        Effect.map((result) => {
+          expect(Option.isSome(result)).toBe(true);
+          if (Option.isSome(result)) expect(result.value).toBe(true);
+          expect(mock.spawned).toEqual([
+            {
+              command: "git",
+              args: ["status", "--porcelain", "--", "migrations"],
               cwd: "/repo/supabase",
             },
           ]);

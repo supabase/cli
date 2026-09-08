@@ -31,7 +31,7 @@ const config = {
   ),
   force: Flag.boolean("force").pipe(
     Flag.withDescription(
-      "Write even when supabase/config.toml (or config.json) has uncommitted changes in git.",
+      "Write even when supabase/config.toml (or config.json), supabase/migrations, or supabase/functions has uncommitted or untracked changes in git.",
     ),
     Flag.withDefault(false),
   ),

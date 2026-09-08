@@ -240,6 +240,33 @@ function legacyPullFailureCode(cause: unknown): string | undefined {
   return hasStringTag(cause) && cause._tag.length > 0 ? cause._tag : undefined;
 }
 
+/**
+ * The exact standalone command to retry ONE failed step on its own —
+ * `pull.handler.ts` appends this line to a failed step's own
+ * `failure.suggestion` (Phase 3), on top of whatever the step's own
+ * error/suggestion already says, so a user watching `pull` fail doesn't have
+ * to guess which of its four sub-commands to rerun, or redo every step that
+ * already succeeded by rerunning the whole orchestrator. Takes the
+ * already-RESOLVED `ref` — never a branch name someone typed for
+ * `--project-ref`, since not every sub-command necessarily resolves branch
+ * names the same way `pull` does, while a resolved ref is always a valid
+ * `--project-ref` value everywhere.
+ */
+export function legacyPullRetryHint(
+  step: LegacyPullStepId,
+  ref: string,
+  remoteLabel: string | undefined,
+): string {
+  const remoteLabelFlag = remoteLabel === undefined ? "" : ` --remote-label ${remoteLabel}`;
+  const commandByStep: Record<LegacyPullStepId, string> = {
+    config: `supabase config pull --project-ref ${ref}${remoteLabelFlag}`,
+    migration_history: `supabase migration fetch --project-ref ${ref}`,
+    db: `supabase db pull --project-ref ${ref}`,
+    functions: `supabase functions download --project-ref ${ref}`,
+  };
+  return `To retry just this step, run: ${commandByStep[step]}`;
+}
+
 /** Builds a `status: "failed"` result for `step` from an arbitrary caught value. */
 export function legacyPullFailedStepResult(
   step: LegacyPullStepId,

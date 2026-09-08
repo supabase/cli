@@ -20,7 +20,7 @@ import { Effect, FileSystem, Option, Result, Schema, SchemaIssue } from "effect"
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { legacyConfigFileHasUncommittedChanges } from "../../../command-internal/legacy-git-status.ts";
+import { legacyPathHasUncommittedChanges } from "../../../command-internal/legacy-git-status.ts";
 import {
   legacySanitizeInlineName,
   mapLegacyHttpError,
@@ -1036,7 +1036,7 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   // answers it automatically, on any TTY.
   let dirty = false;
   if (!input.force) {
-    const dirtyOption = yield* legacyConfigFileHasUncommittedChanges(configFilePath);
+    const dirtyOption = yield* legacyPathHasUncommittedChanges(configFilePath);
     dirty = Option.getOrElse(dirtyOption, () => false);
     if (dirty) {
       const tty = yield* Tty;

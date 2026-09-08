@@ -162,7 +162,15 @@ function runPull(flags: LegacyPullFlags) {
 // ---------------------------------------------------------------------------
 
 function composeSpawner(
-  opts: { readonly gitDirty?: boolean; readonly gitSpawnFails?: boolean } = {},
+  opts: {
+    /** Reports `supabase/config.toml` dirty. */
+    readonly gitDirty?: boolean;
+    /** Reports `supabase/migrations` dirty. */
+    readonly gitDirtyMigrations?: boolean;
+    /** Reports `supabase/functions` dirty. */
+    readonly gitDirtyFunctions?: boolean;
+    readonly gitSpawnFails?: boolean;
+  } = {},
 ): {
   readonly layer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
   readonly shadowSpawned: ReadonlyArray<{ readonly args: ReadonlyArray<string> }>;
@@ -192,7 +200,18 @@ function composeSpawner(
               }),
             );
           }
-          const stdout = opts.gitDirty === true ? " M config.toml\n" : "";
+          // `pull.handler.ts` spawns up to three of these (config, migrations,
+          // functions), each with its own basename as the trailing pathspec
+          // — mirrors the real dirty guard, so each location can be
+          // independently marked dirty/clean in a single test.
+          const pathspec = command.args[command.args.length - 1];
+          const dirty =
+            pathspec === "migrations"
+              ? opts.gitDirtyMigrations === true
+              : pathspec === "functions"
+                ? opts.gitDirtyFunctions === true
+                : opts.gitDirty === true;
+          const stdout = dirty ? ` M ${pathspec}\n` : "";
           return Effect.succeed(
             ChildProcessSpawner.makeHandle({
               pid: ChildProcessSpawner.ProcessId(9000 + gitCalls.length),
@@ -540,6 +559,8 @@ interface SetupOpts {
   readonly stdinIsTty?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
   readonly gitDirty?: boolean;
+  readonly gitDirtyMigrations?: boolean;
+  readonly gitDirtyFunctions?: boolean;
   readonly gitSpawnFails?: boolean;
   readonly api?: ApiOpts;
   readonly remoteMigrations?: ReadonlyArray<RemoteMigrationRow>;
@@ -577,7 +598,12 @@ function setup(opts: SetupOpts = {}) {
   const analytics = mockContextualAnalytics();
 
   const api = makeApiMock(opts.api ?? {});
-  const spawner = composeSpawner({ gitDirty: opts.gitDirty, gitSpawnFails: opts.gitSpawnFails });
+  const spawner = composeSpawner({
+    gitDirty: opts.gitDirty,
+    gitDirtyMigrations: opts.gitDirtyMigrations,
+    gitDirtyFunctions: opts.gitDirtyFunctions,
+    gitSpawnFails: opts.gitSpawnFails,
+  });
   const callOrder: Array<string> = [];
   const dbConfig = makeDbConfigLayers(opts.remoteMigrations ?? [], callOrder);
   const pgDelta = makePgDeltaEngine(opts.diffOutcome ?? (() => ({ changes: false })));
@@ -1087,15 +1113,23 @@ describe("legacy pull integration", () => {
       },
     );
 
-    it.live("--force proceeds and writes despite dirtiness, never even checking git", () => {
-      writeConfig("[api]\nmax_rows = 500\n");
-      const { layer, spawner } = setup({ yes: true, gitDirty: true });
-      return Effect.gen(function* () {
-        yield* runPull(pullFlags({ force: true }));
-        expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
-        expect(spawner.gitCalls).toHaveLength(0);
-      }).pipe(Effect.provide(layer));
-    });
+    it.live(
+      "--force proceeds and writes despite all three locations being dirty, never even checking git",
+      () => {
+        writeConfig("[api]\nmax_rows = 500\n");
+        const { layer, spawner } = setup({
+          yes: true,
+          gitDirty: true,
+          gitDirtyMigrations: true,
+          gitDirtyFunctions: true,
+        });
+        return Effect.gen(function* () {
+          yield* runPull(pullFlags({ force: true }));
+          expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
+          expect(spawner.gitCalls).toHaveLength(0);
+        }).pipe(Effect.provide(layer));
+      },
+    );
 
     it.live("a git spawn failure degrades to 'not dirty' rather than blocking the pull", () => {
       writeConfig("[api]\nmax_rows = 500\n");
@@ -1106,6 +1140,185 @@ describe("legacy pull integration", () => {
         expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
       }).pipe(Effect.provide(layer));
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // 9b. Dirty supabase/migrations. Checked unconditionally (skipped only by
+  // --force) because the db step always attempts to run and has no preview
+  // machinery to know ahead of time whether it will find drift and write
+  // there — so this fires regardless of whether migration-history itself
+  // will run this invocation.
+  // -------------------------------------------------------------------------
+
+  describe("dirty supabase/migrations", () => {
+    it.live(
+      "already-populated, no --with-migration-history pending: still aborts without --force (the db step might still write there)",
+      () => {
+        writeConfig();
+        seedLocalMigration("20260101000000");
+        const { layer } = setup({
+          yes: true,
+          gitDirtyMigrations: true,
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(runPull(pullFlags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(JSON.stringify(exit)).toContain("LegacyPullUncommittedChangesError");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "a fresh checkout with migration-history bootstrap pending: also aborts without --force",
+      () => {
+        writeConfig();
+        const { layer } = setup({
+          yes: true,
+          gitDirtyMigrations: true,
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(runPull(pullFlags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(JSON.stringify(exit)).toContain("LegacyPullUncommittedChangesError");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "interactive TTY: the prompt defaults to decline and the confirmation body names supabase/migrations",
+      () => {
+        writeConfig();
+        seedLocalMigration("20260101000000");
+        const { layer, out } = setup({
+          stdinIsTty: true,
+          confirm: [false],
+          gitDirtyMigrations: true,
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          yield* runPull(pullFlags());
+          expect(out!.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
+          expect(out!.stdoutText).toContain(
+            "supabase/migrations has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
+          );
+        }).pipe(Effect.provide(layer));
+      },
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // 9c. Dirty supabase/functions. Checked unconditionally (skipped only by
+  // --force), same as migrations, since the functions step always runs with
+  // no "does it have work" signal available without calling the API first.
+  // -------------------------------------------------------------------------
+
+  describe("dirty supabase/functions", () => {
+    it.live("aborts without --force, even with zero config/db drift", () => {
+      writeConfig();
+      seedLocalMigration("20260101000000");
+      const { layer } = setup({
+        yes: true,
+        gitDirtyFunctions: true,
+        remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
+        diffOutcome: () => ({ changes: false }),
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(runPull(pullFlags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("LegacyPullUncommittedChangesError");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live(
+      "interactive TTY: the prompt defaults to decline and the confirmation body names supabase/functions",
+      () => {
+        writeConfig();
+        seedLocalMigration("20260101000000");
+        const { layer, out } = setup({
+          stdinIsTty: true,
+          confirm: [false],
+          gitDirtyFunctions: true,
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          yield* runPull(pullFlags());
+          expect(out!.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
+          expect(out!.stdoutText).toContain(
+            "supabase/functions has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
+          );
+        }).pipe(Effect.provide(layer));
+      },
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // 9d. Multiple dirty locations at once — the confirmation body/abort error
+  // names every one of them, not just the first found.
+  // -------------------------------------------------------------------------
+
+  describe("multiple dirty locations at once", () => {
+    it.live(
+      "config AND functions dirty together: the confirmation body names both, config before functions",
+      () => {
+        writeConfig("[api]\nmax_rows = 500\n");
+        seedLocalMigration("20260101000000");
+        const { layer, out } = setup({
+          stdinIsTty: true,
+          confirm: [false],
+          gitDirty: true,
+          gitDirtyFunctions: true,
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          yield* runPull(pullFlags());
+          expect(out!.stdoutText).toContain(
+            "supabase/config.toml and supabase/functions have uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
+          );
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "all three dirty at once: the abort error names all three, in config, migrations, functions order",
+      () => {
+        writeConfig("[api]\nmax_rows = 500\n");
+        seedLocalMigration("20260101000000");
+        const { layer } = setup({
+          yes: true,
+          gitDirty: true,
+          gitDirtyMigrations: true,
+          gitDirtyFunctions: true,
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(runPull(pullFlags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(JSON.stringify(exit)).toContain(
+            "supabase/config.toml, supabase/migrations, and supabase/functions have uncommitted or untracked changes",
+          );
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -1356,6 +1569,46 @@ describe("legacy pull integration", () => {
           expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
           expect(stepLine(out!.stdoutText, "db")).toContain("unchanged");
           expect(stepLine(out!.stdoutText, "functions")).toContain("changed");
+
+          // The retry hint names the exact standalone command to rerun just
+          // the failed config step, using the resolved ref — surfaced in the
+          // text-mode summary, not just the JSON payload.
+          expect(out!.stdoutText).toContain(
+            `To retry just this step, run: supabase config pull --project-ref ${LEGACY_VALID_REF}`,
+          );
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "a config-step failure carries --remote-label through to its own retry hint when one was passed",
+      () => {
+        writeConfig("[api]\nmax_rows = 500\n");
+        seedLocalMigration("20260101000000");
+        const { layer, out } = setup({
+          stdinIsTty: true,
+          confirm: [true],
+          confirmSideEffect: () =>
+            writeFileSync(
+              configPath(),
+              'project_id = "changed-mid-flight"\n\n[experimental.pgdelta]\nenabled = true\n',
+            ),
+          api: { functionSlugs: [] },
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(
+            runPull(pullFlags({ remoteLabel: Option.some("staging-remote") })),
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(stepLine(out!.stdoutText, "config")).toContain("failed");
+
+          expect(out!.stdoutText).toContain(
+            `To retry just this step, run: supabase config pull --project-ref ${LEGACY_VALID_REF} --remote-label staging-remote`,
+          );
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1389,6 +1642,16 @@ describe("legacy pull integration", () => {
           expect(stepLine(out!.stdoutText, "migration_history")).toContain("failed");
           expect(stepLine(out!.stdoutText, "db")).toContain("failed");
           expect(stepLine(out!.stdoutText, "functions")).toContain("unchanged");
+
+          // Both the migration_history step's own retry hint AND the db
+          // step's own (its failure is a migration conflict, cascading from
+          // the same hostile row) show up in the text-mode summary.
+          expect(out!.stdoutText).toContain(
+            `To retry just this step, run: supabase migration fetch --project-ref ${LEGACY_VALID_REF}`,
+          );
+          expect(out!.stdoutText).toContain(
+            `To retry just this step, run: supabase db pull --project-ref ${LEGACY_VALID_REF}`,
+          );
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1415,6 +1678,53 @@ describe("legacy pull integration", () => {
           expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
           expect(stepLine(out!.stdoutText, "db")).toContain("failed");
           expect(stepLine(out!.stdoutText, "functions")).toContain("unchanged");
+
+          expect(out!.stdoutText).toContain(
+            `To retry just this step, run: supabase db pull --project-ref ${LEGACY_VALID_REF}`,
+          );
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "a db-step migration-conflict failure carries BOTH the --with-migration-history hint AND the generic retry hint, in that order",
+      () => {
+        writeConfig();
+        // A local file that does not match the single remote history row —
+        // `legacyReconcileMigrations` treats every non-matching version on
+        // either side as a conflict — trips `db pull`'s own
+        // `LegacyDbPullMigrationConflictError`, not a synthetic one.
+        seedLocalMigration("20260101000000");
+        const { layer, capturingStdio } = setup({
+          format: "json",
+          yes: true,
+          api: { functionSlugs: [] },
+          remoteMigrations: [
+            { version: "20260103000000", name: "remote-only", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          yield* runPull(pullFlags());
+
+          const envelope = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+          const steps = envelope["steps"] as Record<string, unknown>;
+          expect((steps["db"] as Record<string, unknown>)["status"]).toBe("failed");
+          const failure = (steps["db"] as Record<string, unknown>)["failure"] as Record<
+            string,
+            unknown
+          >;
+          expect(String(failure["code"])).toBe("LegacyDbPullMigrationConflictError");
+
+          const suggestion = String(failure["suggestion"]);
+          const migrationHistoryHintIndex = suggestion.indexOf(
+            "Alternatively, rerun `supabase pull --with-migration-history`",
+          );
+          const retryHintIndex = suggestion.indexOf(
+            `To retry just this step, run: supabase db pull --project-ref ${LEGACY_VALID_REF}`,
+          );
+          expect(migrationHistoryHintIndex).toBeGreaterThan(-1);
+          expect(retryHintIndex).toBeGreaterThan(migrationHistoryHintIndex);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1441,6 +1751,9 @@ describe("legacy pull integration", () => {
           expect(stepLine(out!.stdoutText, "db")).toContain("unchanged");
           expect(stepLine(out!.stdoutText, "functions")).toContain("failed");
           expect(out!.stdoutText).toContain("500");
+          expect(out!.stdoutText).toContain(
+            `To retry just this step, run: supabase functions download --project-ref ${LEGACY_VALID_REF}`,
+          );
         }).pipe(Effect.provide(layer));
       },
     );

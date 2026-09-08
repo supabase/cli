@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   LEGACY_PULL_PAYLOAD_VERSION,
   legacyPullConfirmMessage,
+  legacyPullDirtyWarningMessage,
   legacyPullPayload,
   legacyPullSummaryMessage,
   legacyRenderPullSummary,
@@ -449,17 +450,82 @@ describe("legacyRenderPullSummary", () => {
     expect(row).toContain("supabase/functions/a (+2 more)");
     expect(row).not.toContain("supabase/functions/b");
   });
+
+  it("renders a failed step's suggestion as indented lines below its row, in order, so a text-mode user sees it too", () => {
+    const results: ReadonlyArray<LegacyPullStepResult> = [
+      { step: "config", status: "unchanged", written: [], detail: {} },
+      { step: "migration_history", status: "unchanged", written: [], detail: {} },
+      {
+        step: "db",
+        status: "failed",
+        written: [],
+        detail: {},
+        failure: {
+          message: "remote migration history does not match local files",
+          suggestion:
+            "Make sure your local git repo is up-to-date.\n" +
+            "Alternatively, rerun `supabase pull --with-migration-history` to fetch and reconcile the remote migration history table automatically.\n" +
+            "To retry just this step, run: supabase db pull --project-ref abcdefghijklmnopqrst",
+        },
+      },
+      { step: "functions", status: "unchanged", written: [], detail: {} },
+    ];
+    const aggregate: LegacyPullAggregate = {
+      ref: PROJECT_REF,
+      branch: undefined,
+      dryRun: false,
+      confirmed: true,
+      results,
+    };
+
+    const text = legacyRenderPullSummary(aggregate);
+    const lines = text.split("\n");
+    const dbRowIndex = lines.findIndex((line) => line.startsWith("  db"));
+    expect(lines[dbRowIndex + 1]).toContain("Make sure your local git repo is up-to-date.");
+    expect(lines[dbRowIndex + 2]).toContain("Alternatively, rerun");
+    expect(lines[dbRowIndex + 3]).toContain(
+      "To retry just this step, run: supabase db pull --project-ref abcdefghijklmnopqrst",
+    );
+    // Continuation lines don't start with the step name, so a naive
+    // step-row scanner (e.g. this suite's own `rowFor`/`stepLine` helpers)
+    // never mistakes one for a fake status row.
+    expect(lines[dbRowIndex + 1]!.trimStart().startsWith("db")).toBe(false);
+  });
+
+  it("adds no continuation lines for a failed step with no suggestion", () => {
+    const results: ReadonlyArray<LegacyPullStepResult> = [
+      { step: "config", status: "unchanged", written: [], detail: {} },
+      { step: "migration_history", status: "unchanged", written: [], detail: {} },
+      {
+        step: "db",
+        status: "failed",
+        written: [],
+        detail: {},
+        failure: { message: "shadow database container failed to start" },
+      },
+      { step: "functions", status: "unchanged", written: [], detail: {} },
+    ];
+    const aggregate: LegacyPullAggregate = {
+      ref: PROJECT_REF,
+      branch: undefined,
+      dryRun: false,
+      confirmed: true,
+      results,
+    };
+    const lines = legacyRenderPullSummary(aggregate).split("\n");
+    const dbRowIndex = lines.findIndex((line) => line.startsWith("  db"));
+    expect(lines[dbRowIndex + 1]!.startsWith("  functions")).toBe(true);
+  });
 });
 
 describe("legacyPullConfirmMessage", () => {
   const BASE: LegacyPullConfirmMessageInput = {
     ref: PROJECT_REF,
     branch: undefined,
-    configPath: "supabase/config.toml",
     configDiffText: undefined,
     willFetchMigrationHistory: false,
     migrationHistoryReason: undefined,
-    dirty: false,
+    dirtyPaths: [],
   };
 
   it("names the target project in the header line", () => {
@@ -565,28 +631,37 @@ describe("legacyPullConfirmMessage", () => {
     );
   });
 
-  it("omits the dirty-config warning when dirty is false", () => {
-    const message = legacyPullConfirmMessage({ ...BASE, dirty: false });
+  it("omits the dirty-tree warning when dirtyPaths is empty", () => {
+    const message = legacyPullConfirmMessage({ ...BASE, dirtyPaths: [] });
     expect(message).not.toContain("uncommitted or untracked changes");
   });
 
-  it("appends the dirty-config warning as its own trailing block only when dirty is true", () => {
-    const message = legacyPullConfirmMessage({ ...BASE, dirty: true });
+  it("appends the dirty-tree warning as its own trailing block naming the one dirty path", () => {
+    const message = legacyPullConfirmMessage({ ...BASE, dirtyPaths: ["supabase/config.toml"] });
     expect(message).toContain(
       "supabase/config.toml has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
     );
   });
 
-  it("uses the actual configPath in the dirty-config warning, not a hardcoded supabase/config.toml", () => {
+  it("uses whatever paths are given, not a hardcoded supabase/config.toml", () => {
     const message = legacyPullConfirmMessage({
       ...BASE,
-      configPath: "supabase/config.json",
-      dirty: true,
+      dirtyPaths: ["supabase/config.json"],
     });
     expect(message).toContain(
       "supabase/config.json has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
     );
     expect(message).not.toContain("supabase/config.toml has uncommitted");
+  });
+
+  it("names every dirty path when more than one location is dirty", () => {
+    const message = legacyPullConfirmMessage({
+      ...BASE,
+      dirtyPaths: ["supabase/config.toml", "supabase/migrations", "supabase/functions"],
+    });
+    expect(message).toContain(
+      "supabase/config.toml, supabase/migrations, and supabase/functions have uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
+    );
   });
 
   it("orders the body config → migration_history → db → functions, and composes a config diff, a bootstrap migration-history fetch, and the dirty warning together in one message", () => {
@@ -595,7 +670,7 @@ describe("legacyPullConfirmMessage", () => {
       configDiffText: "api.max_rows [update, write]\n  local:  500\n  remote: 1000",
       willFetchMigrationHistory: true,
       migrationHistoryReason: "bootstrap",
-      dirty: true,
+      dirtyPaths: ["supabase/config.toml"],
     });
     expect(message).toBe(
       `Pulling from project ${PROJECT_REF}\n` +
@@ -609,6 +684,32 @@ describe("legacyPullConfirmMessage", () => {
         "Download every Edge Function's source into supabase/functions.\n" +
         "\n" +
         "supabase/config.toml has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.\n",
+    );
+  });
+});
+
+describe("legacyPullDirtyWarningMessage", () => {
+  it("uses singular 'has' for exactly one dirty path", () => {
+    expect(legacyPullDirtyWarningMessage(["supabase/config.toml"])).toBe(
+      "supabase/config.toml has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
+    );
+  });
+
+  it("joins two dirty paths with 'and' and uses plural 'have'", () => {
+    expect(legacyPullDirtyWarningMessage(["supabase/config.toml", "supabase/functions"])).toBe(
+      "supabase/config.toml and supabase/functions have uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
+    );
+  });
+
+  it("joins three dirty paths with an Oxford comma and uses plural 'have'", () => {
+    expect(
+      legacyPullDirtyWarningMessage([
+        "supabase/config.toml",
+        "supabase/migrations",
+        "supabase/functions",
+      ]),
+    ).toBe(
+      "supabase/config.toml, supabase/migrations, and supabase/functions have uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
     );
   });
 });

@@ -10,6 +10,7 @@ import {
   legacyPullFailedStepResult,
   legacyPullFunctionsStepResult,
   legacyPullMigrationHistoryStepResult,
+  legacyPullRetryHint,
   type LegacyPullConfigStepOutcome,
   type LegacyPullDbStepOutcome,
   type LegacyPullFunctionsStepOutcome,
@@ -382,6 +383,48 @@ describe("legacyPullFailedStepResult", () => {
       detail: {},
       failure: { message: "boom" },
     });
+  });
+});
+
+describe("legacyPullRetryHint", () => {
+  const ref = "abcdefghijklmnopqrst";
+
+  it("names 'supabase config pull --project-ref <ref>' for the config step", () => {
+    expect(legacyPullRetryHint("config", ref, undefined)).toBe(
+      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst",
+    );
+  });
+
+  it("appends --remote-label to the config hint when one was passed", () => {
+    expect(legacyPullRetryHint("config", ref, "staging-remote")).toBe(
+      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst --remote-label staging-remote",
+    );
+  });
+
+  it("names 'supabase migration fetch --project-ref <ref>' for the migration_history step", () => {
+    expect(legacyPullRetryHint("migration_history", ref, undefined)).toBe(
+      "To retry just this step, run: supabase migration fetch --project-ref abcdefghijklmnopqrst",
+    );
+  });
+
+  it("names 'supabase db pull --project-ref <ref>' for the db step", () => {
+    expect(legacyPullRetryHint("db", ref, undefined)).toBe(
+      "To retry just this step, run: supabase db pull --project-ref abcdefghijklmnopqrst",
+    );
+  });
+
+  it("names 'supabase functions download --project-ref <ref>' for the functions step", () => {
+    expect(legacyPullRetryHint("functions", ref, undefined)).toBe(
+      "To retry just this step, run: supabase functions download --project-ref abcdefghijklmnopqrst",
+    );
+  });
+
+  it("ignores a remote label for every step other than config", () => {
+    expect(legacyPullRetryHint("migration_history", ref, "staging-remote")).not.toContain(
+      "--remote-label",
+    );
+    expect(legacyPullRetryHint("db", ref, "staging-remote")).not.toContain("--remote-label");
+    expect(legacyPullRetryHint("functions", ref, "staging-remote")).not.toContain("--remote-label");
   });
 });
 

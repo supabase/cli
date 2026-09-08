@@ -60,28 +60,35 @@ each step's own documented "when" in its own `SIDE_EFFECTS.md`.
 
 ## Git
 
-- Spawns `git status --porcelain -- <basename>` against `<workdir>/supabase/config.toml`/`.json`
-  (cwd set to the config file's own directory) — the SAME check `config pull` runs
-  (`legacyConfigFileHasUncommittedChanges`), but owned and called directly by `pull` itself, once,
-  rather than delegated to `config pull`'s own guard (the config step's run-core,
-  `legacyApplyConfigPullRun`, never runs a git check of its own). Skipped entirely when `--force`
-  is passed, or when the config step's own plan has no work to write (`runPlan.hasWork` is
-  `false`) — see the next bullet.
-- **Aligned with `config pull`'s own guard (CLI-2064 bug A):** the spawn (and any resulting abort)
-  only happens when the config step actually has work to write. A converged config (nothing to
-  pull into the file) never spawns `git status` at all, so an uncommitted-but-otherwise-clean
-  config file never aborts a pull that was never going to touch it — even though the aggregated
-  confirmation also covers three other steps (migration history, db, functions) that may still
-  have work of their own: the dirty guard is scoped to the config file specifically, not to whether
-  `pull` as a whole has anything to do.
-- A dirty (or untracked) result changes behavior by output mode, identically to `config pull`: an
-  interactive TTY text run without `--yes` downgrades the aggregated confirmation prompt's default
-  answer from yes to no and adds a warning to the confirmation body; every other case — a
-  non-interactive or machine-format run, or `--yes` passed on any TTY — aborts before the prompt
-  (`LegacyPullUncommittedChangesError`, exit 1). `--yes`/`SUPABASE_YES` never bypasses this guard,
-  only `--force` does.
-- A non-zero exit, a spawn failure, or the directory not being a git working tree all degrade
-  silently to "clean" (same degrade-on-uncertainty policy `config pull` uses).
+`pull` checks THREE locations for uncommitted or untracked git changes, independently, using the
+same underlying mechanism `config pull` uses for its own config-only guard
+(`legacyPathHasUncommittedChanges`, `command-internal/legacy-git-status.ts`) but owned and called
+directly by `pull` itself, not delegated to any sub-step's own guard (none of the reused run-cores
+run a git check of their own):
+
+| Path                                        | Spawns                                                                         | Checked when                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml` or `.json` | `git status --porcelain -- config.toml` (cwd: the config file's own directory) | `--force` is absent AND the config step's own plan has work to write (`runPlan.hasWork` — CLI-2064 bug A: a converged config never spawns `git status` at all)                                                                                                                                                       |
+| `<workdir>/supabase/migrations`             | `git status --porcelain -- migrations` (cwd: `<workdir>/supabase`)             | `--force` is absent. Unconditional otherwise — the db step always attempts to run and has no preview machinery of its own to know ahead of time whether it will find schema drift and write into this directory (ADR 0024), so this is checked regardless of whether the migration-history step itself will also run |
+| `<workdir>/supabase/functions`              | `git status --porcelain -- functions` (cwd: `<workdir>/supabase`)              | `--force` is absent. Unconditional — the functions step always runs, with no "does it have work" signal available without calling the API first                                                                                                                                                                      |
+
+Each location's dirty state is tracked separately, so the confirmation body and the abort error
+each name exactly which path(s) are actually dirty (e.g. `supabase/config.toml has uncommitted or
+untracked changes...` for one, `supabase/config.toml and supabase/functions have uncommitted or
+untracked changes...` for two, `supabase/config.toml, supabase/migrations, and supabase/functions
+have uncommitted or untracked changes...` for all three).
+
+A dirty (or untracked) result on ANY of the three changes behavior by output mode, identically to
+`config pull`'s own single-path guard: an interactive TTY text run without `--yes` downgrades the
+aggregated confirmation prompt's default answer from yes to no and adds the warning (naming every
+dirty path) to the confirmation body; every other case — a non-interactive or machine-format run,
+or `--yes` passed on any TTY — aborts before the prompt (`LegacyPullUncommittedChangesError`, exit
+1, naming every dirty path in its message). `--yes`/`SUPABASE_YES` never bypasses this guard; only
+`--force` does, for all three locations at once.
+
+A non-zero exit, a spawn failure, or the directory not being a git working tree all degrade
+silently to "clean" for that one location (same degrade-on-uncertainty policy `config pull` uses) —
+each location's check is independent, so a spawn failure on one does not affect another's result.
 
 ## API Routes
 
@@ -150,7 +157,7 @@ functions) — `pull` does not read or override any of these itself, it only sup
 | `1`  | the `-o`/`--output` global flag passed (any value — not supported by this command, `LegacyPullOutputFlagUnsupportedError`)                                                                                                                                                      |
 | `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`LegacyPullWorkdirError`)                                                                                                                                                                           |
 | `1`  | branch-name `--project-ref` target-resolution failure (`LegacyPullBranchNotLinkedError` / `LegacyPullParentRefInvalidError` / `LegacyPullBranchNotFoundError` / `LegacyPullBranchNotReadyError` / `LegacyPullBranchResolveNetworkError` / `LegacyPullBranchResolveStatusError`) |
-| `1`  | `supabase/config.toml`/`.json` has uncommitted or untracked changes and no human will read the warning (`LegacyPullUncommittedChangesError`) — see Git above                                                                                                                    |
+| `1`  | `supabase/config.toml`/`.json`, `supabase/migrations`, and/or `supabase/functions` has uncommitted or untracked changes and no human will read the warning (`LegacyPullUncommittedChangesError`) — see Git above                                                                |
 | `1`  | any one step fails (config, migration history, db, or functions) — every OTHER step still runs and is reported, but the process exits non-zero and re-fails with the FIRST original failure's own cause/classification                                                          |
 
 **Deliberate divergence from standalone `db pull`:** when the db step finds the remote already in

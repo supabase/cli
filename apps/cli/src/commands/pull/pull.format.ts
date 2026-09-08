@@ -104,6 +104,23 @@ function legacyPullStepDetailText(result: LegacyPullStepResult): string {
 }
 
 /**
+ * Splits a failed step's `failure.suggestion` (which can carry embedded
+ * `\n`-separated lines — e.g. a list of `supabase migration repair` commands
+ * plus this step's own retry hint) into individual, sanitized, non-empty
+ * lines — a watching-a-real-terminal user needs this exactly as much as a
+ * script reading the JSON payload's `failure.suggestion` field does. Each
+ * line is sanitized the same way the row's own detail text is (CWE-117): a
+ * suggestion can carry remote-controlled content, so no line may itself
+ * embed a further CR/LF/tab that could forge additional fake summary rows.
+ */
+function legacyPullSuggestionLines(suggestion: string): ReadonlyArray<string> {
+  return suggestion
+    .split("\n")
+    .map((line) => legacyPullSanitizeRowText(line).trim())
+    .filter((line) => line.length > 0);
+}
+
+/**
  * The full text-mode summary block: a header line naming the target project,
  * then one aligned row per step in `LEGACY_PULL_STEP_ORDER` order. A `failed`
  * step's row inlines its failure message even though only the first original
@@ -112,6 +129,10 @@ function legacyPullStepDetailText(result: LegacyPullStepResult): string {
 export function legacyRenderPullSummary(aggregate: LegacyPullAggregate): string {
   const resultByStep = new Map(aggregate.results.map((result) => [result.step, result] as const));
   const stepColumnWidth = Math.max(...LEGACY_PULL_STEP_ORDER.map((step) => step.length));
+
+  // Continuation lines (a failed step's suggestion) indent to line up under
+  // the detail column, rather than repeating the step/status columns.
+  const continuationPrefix = `  ${"".padEnd(stepColumnWidth)}  ${"".padEnd(LEGACY_PULL_STATUS_COLUMN_WIDTH)}  `;
 
   const lines: Array<string> = [`Pull summary — project ${aggregate.ref}`];
   for (const step of LEGACY_PULL_STEP_ORDER) {
@@ -123,6 +144,11 @@ export function legacyRenderPullSummary(aggregate: LegacyPullAggregate): string 
     lines.push(
       `  ${step.padEnd(stepColumnWidth)}  ${result.status.padEnd(LEGACY_PULL_STATUS_COLUMN_WIDTH)}  ${detail}`.trimEnd(),
     );
+    if (result.failure?.suggestion !== undefined) {
+      for (const line of legacyPullSuggestionLines(result.failure.suggestion)) {
+        lines.push(`${continuationPrefix}${line}`);
+      }
+    }
   }
   return `${lines.join("\n")}\n`;
 }
@@ -134,9 +160,6 @@ export interface LegacyPullConfirmMessageInput {
   /** The branch name `--project-ref` resolved, when it named one; `undefined` for a ref-shaped
    *  or linked-fallback target. */
   readonly branch: string | undefined;
-  /** Workdir-relative config file path (e.g. `supabase/config.toml`), used both by the dirty
-   *  warning and anywhere else this body needs to name the actual file being written. */
-  readonly configPath: string;
   /** `config pull`'s own rendered diff body (`legacyRenderConfigPullText`), when there was
    *  anything to show; `undefined`/empty reads as "no config differences found". */
   readonly configDiffText: string | undefined;
@@ -145,8 +168,33 @@ export interface LegacyPullConfirmMessageInput {
   /** Why it will run — `"flag"` for `--with-migration-history`, `"bootstrap"` for an empty/missing
    *  `supabase/migrations`. Only read when `willFetchMigrationHistory` is `true`. */
   readonly migrationHistoryReason: "flag" | "bootstrap" | undefined;
-  /** Whether the config file has uncommitted/untracked changes (the orchestrator's own git guard). */
-  readonly dirty: boolean;
+  /** Workdir-relative paths (out of the config file, `supabase/migrations`, `supabase/functions`)
+   *  that currently have uncommitted or untracked changes in git — the orchestrator's own,
+   *  per-path git guard. Empty when nothing is dirty (or `--force` skipped the check entirely). */
+  readonly dirtyPaths: ReadonlyArray<string>;
+}
+
+/** Joins `paths` into an English list — `"a"`, `"a and b"`, or `"a, b, and c"` — for the shared
+ *  dirty-tree warning below. */
+function legacyJoinPathList(paths: ReadonlyArray<string>): string {
+  if (paths.length <= 1) {
+    return paths[0] ?? "";
+  }
+  if (paths.length === 2) {
+    return `${paths[0]} and ${paths[1]}`;
+  }
+  return `${paths.slice(0, -1).join(", ")}, and ${paths[paths.length - 1]}`;
+}
+
+/**
+ * The dirty-tree warning sentence naming every path in `dirtyPaths` — shared between the
+ * confirmation body's trailing warning (below) and `LegacyPullUncommittedChangesError`'s own
+ * message (`pull.handler.ts`), so the two surfaces can never drift on wording. Singular/plural
+ * verb agreement follows `dirtyPaths.length`.
+ */
+export function legacyPullDirtyWarningMessage(dirtyPaths: ReadonlyArray<string>): string {
+  const verb = dirtyPaths.length === 1 ? "has" : "have";
+  return `${legacyJoinPathList(dirtyPaths)} ${verb} uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.`;
 }
 
 /**
@@ -191,11 +239,8 @@ export function legacyPullConfirmMessage(input: LegacyPullConfirmMessageInput): 
   );
   // functions
   lines.push("Download every Edge Function's source into supabase/functions.");
-  if (input.dirty) {
-    lines.push(
-      "",
-      `${input.configPath} has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.`,
-    );
+  if (input.dirtyPaths.length > 0) {
+    lines.push("", legacyPullDirtyWarningMessage(input.dirtyPaths));
   }
   return `${lines.join("\n")}\n`;
 }

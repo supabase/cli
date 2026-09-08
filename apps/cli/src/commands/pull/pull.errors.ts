@@ -106,10 +106,12 @@ export class LegacyPullWorkdirError extends Data.TaggedError("LegacyPullWorkdirE
 }
 
 /**
- * The config file has uncommitted (or untracked) changes and there is no
+ * At least one of the config file, `supabase/migrations`, or
+ * `supabase/functions` has uncommitted (or untracked) changes and there is no
  * human on hand to read the warning and answer the prompt honestly — mirrors
- * `config pull`'s own `LegacyConfigPullUncommittedChangesError` dirty-guard,
- * reused here because the orchestrator owns this check once instead of
+ * `config pull`'s own `LegacyConfigPullUncommittedChangesError` dirty-guard
+ * over the config file, generalized here to the other two directories `pull`
+ * also writes into, since the orchestrator owns this check once instead of
  * delegating to `config pull`'s own guard. Only `--force` overrides this
  * guard; `--yes` never does, on any TTY.
  */

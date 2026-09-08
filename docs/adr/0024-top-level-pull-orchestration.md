@@ -233,6 +233,35 @@ change to an existing array.
    succeeded; partial-failure isolation reports the full picture in one pass instead of requiring
    several retry-and-rerun cycles to discover each step's own state.
 
+## Addendum (2026-09-08, post-review remediation)
+
+A 4-agent review pass (architecture/engineering/security/DX) on the initial implementation found
+several real defects, all fixed in the same change before merge — see the command's `SIDE_EFFECTS.md`
+and git history for the full list (the `--dry-run` preview being silently dropped, the config step's
+`written` field leaking an absolute path, the git-dirty guard aborting runs the config step had no
+work in, an undisclosed migration-file-overwrite path, and a `pull.layers.ts` `Layer.mergeAll` merge
+order the comment claimed decided the winning `LegacyProjectRefResolver` but which Effect's actual
+concurrent-build memoization made a race — fixed by eliminating the duplicate binding outright rather
+than reordering).
+
+Two follow-up decisions, made directly with the ticket owner rather than surfaced by an automated
+review, extend section 4 and 5 above:
+
+- **The git-dirty guard now covers `supabase/migrations` and `supabase/functions`, not just
+  `supabase/config.toml`** — superseding section 4's "`--force` (bypass the config git-dirty guard)"
+  line above, which described the guard's original, narrower scope. `supabase/migrations` is checked
+  unconditionally (unless `--force`) rather than only when the migration-history step will run,
+  because the `db` step has no preview machinery to know ahead of time whether it will find schema
+  drift and write there; `supabase/functions` is checked unconditionally since the `functions` step
+  always runs. `--force` now bypasses all three checks. See `pull.format.ts`'s
+  `legacyPullDirtyWarningMessage` and `pull.handler.ts`'s three independently-tracked dirty locations.
+- **Failed steps now carry a "retry just this step" hint** naming the exact standalone command
+  (`supabase <command> --project-ref <resolved-ref>`) — added because a failure inside an orchestrator
+  is easy to mis-diagnose as "re-run the whole orchestrator" when re-running just the one failed
+  sub-command is both correct and far cheaper. Appended to `failure.suggestion` after any
+  step-specific remedy (e.g. the `db` step's migration-conflict hint), surfaced in both the JSON
+  payload and the text-mode summary. See `pull.aggregate.ts`'s `legacyPullRetryHint`.
+
 ## Related Decisions
 
 - [ADR 0004](0004-cli-design-goals-and-workflows.md): CLI Design Goals & Development Workflows —
