@@ -198,6 +198,14 @@ describe("Supervisor ingress", () => {
           checkoutId: root,
         };
         const stackId = yield* deriveStackId(stackIdentity);
+        const apiListener = yield* bindHostListener("127.0.0.1", 0, "api");
+        if (apiListener.binding.kind !== "http")
+          return yield* Effect.die("API listener is not HTTP");
+        const apiAddress = apiListener.binding.server.address();
+        if (typeof apiAddress !== "object" || apiAddress === null)
+          return yield* Effect.die("API listener did not expose an address");
+        const apiPort = apiAddress.port;
+        const internalApiListener = yield* bindHostListener("::1", apiPort, "api");
         const compiled = yield* compileStack({
           projectRoot: root,
           runtime: { kind: "native" },
@@ -230,7 +238,7 @@ describe("Supervisor ingress", () => {
           runtime: { kind: "native" },
           desiredLifecycle: "running",
           definition: compiled.definition,
-          ports: [{ field: "api", port: 55432, intent: "automatic" }],
+          ports: [{ field: "api", port: apiPort, intent: "automatic" }],
           privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
             ...binding,
             port: 30000 + index,
@@ -239,14 +247,15 @@ describe("Supervisor ingress", () => {
         });
         const listenerCloseCount = yield* Ref.make(0);
         const bindHost = (address: string, port: number, field: HostListener["field"]) =>
-          bindHostListener(address, port, field).pipe(
-            Effect.map((listener) => ({
-              ...listener,
-              close: listener.close.pipe(
-                Effect.andThen(Ref.update(listenerCloseCount, (count) => count + 1)),
-              ),
-            })),
-          );
+          field !== "api"
+            ? bindHostListener(address, port, field)
+            : Effect.succeed({
+                ...(address === "::1" ? internalApiListener : apiListener),
+                port: apiPort,
+                close: (address === "::1" ? internalApiListener : apiListener).close.pipe(
+                  Effect.andThen(Ref.update(listenerCloseCount, (count) => count + 1)),
+                ),
+              });
         const ingress = yield* makeSupervisorIngress({
           stackId,
           stateRoot: root,
@@ -535,6 +544,13 @@ describe("Supervisor ingress", () => {
           checkoutId: root,
         };
         const stackId = yield* deriveStackId(stackIdentity);
+        const apiListener = yield* bindHostListener("127.0.0.1", 0, "api");
+        if (apiListener.binding.kind !== "http")
+          return yield* Effect.die("API listener is not HTTP");
+        const apiAddress = apiListener.binding.server.address();
+        if (typeof apiAddress !== "object" || apiAddress === null)
+          return yield* Effect.die("API listener did not expose an address");
+        const apiPort = apiAddress.port;
         const templatePath = path.join(root, "templates", "confirmation.html");
         const outsideRoot = yield* fs.makeTempDirectoryScoped({
           prefix: "supabase-ingress-outside-",
@@ -581,7 +597,7 @@ describe("Supervisor ingress", () => {
           runtime: { kind: "native" as const },
           desiredLifecycle: "running" as const,
           definition: compiled.definition,
-          ports: [{ field: "api", port: uniquePort(stackId, 0), intent: "automatic" }] as const,
+          ports: [{ field: "api", port: apiPort, intent: "automatic" }] as const,
           privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
             ...binding,
             port: 30300 + index,
@@ -620,6 +636,10 @@ describe("Supervisor ingress", () => {
                   : Effect.fail(new StackPreparationError({ message: "Template escaped root" })),
               ),
             ),
+          bindHost: (address, port, field) =>
+            field === "api"
+              ? Effect.succeed({ ...apiListener, port: apiPort })
+              : bindHostListener(address, port, field),
         });
         const input = {
           stackId,

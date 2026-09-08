@@ -167,8 +167,7 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 
-const lifecycleConfig = (stackId: string) => {
-  const base = 42_000 + (Number.parseInt(stackId.slice(0, 6), 16) % 7_000);
+const lifecycleConfig = () => {
   return {
     capabilities: {
       database: {},
@@ -184,7 +183,7 @@ const lifecycleConfig = (stackId: string) => {
     },
     listeners: {
       api: { enabled: false },
-      database: { port: base + 1 },
+      database: { enabled: false },
       pooler: { enabled: false },
       studio: { enabled: false },
       mailUi: { enabled: false },
@@ -1702,7 +1701,7 @@ describe("Effect stack lifecycle handoff", () => {
           const restarted = yield* openStack(stack.id);
           yield* Effect.addFinalizer(() => restarted.destroy().pipe(Effect.ignore));
           const directStart = yield* restarted
-            .start({ config: lifecycleConfig(stack.id) })
+            .start({ config: lifecycleConfig() })
             .pipe(Effect.exit);
           expect(Exit.isFailure(directStart)).toBe(true);
           if (Exit.isFailure(directStart)) {
@@ -1712,7 +1711,7 @@ describe("Effect stack lifecycle handoff", () => {
               expect(failure.value).toBeInstanceOf(StackUpgradeRequiredError);
           }
           yield* restarted.stop();
-          const status = yield* restarted.start({ config: lifecycleConfig(stack.id) });
+          const status = yield* restarted.start({ config: lifecycleConfig() });
           const currentOwner = yield* readOwnerMetadata(env.stateRoot, stack.id, env);
           expect(currentOwner?.rpcRelease).toBe(STACK_RPC_RELEASE);
           expect(currentOwner?.ownerSessionId).not.toBe(owner.ownerSessionId);
@@ -1722,7 +1721,7 @@ describe("Effect stack lifecycle handoff", () => {
           yield* restarted.stop();
           expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
           expect(yield* ownerLockExists(env.stateRoot, stack.id)).toBe(false);
-          const startedAgain = yield* restarted.start({ config: lifecycleConfig(stack.id) });
+          const startedAgain = yield* restarted.start({ config: lifecycleConfig() });
           expect(startedAgain.lifecycle).toBe("running");
           yield* restarted.destroy();
         }),
@@ -1753,7 +1752,7 @@ describe("Effect stack lifecycle handoff", () => {
                       const compiled = yield* compileStack({
                         projectRoot,
                         runtime: { kind: "native" },
-                        config: lifecycleConfig(id),
+                        config: lifecycleConfig(),
                       });
                       const resolved = yield* resolveSecrets(
                         {
