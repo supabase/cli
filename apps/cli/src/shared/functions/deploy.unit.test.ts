@@ -652,12 +652,12 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 });
 
 describe("pruneRedundantDockerBinds — child binds covered by a parent bind", () => {
-  const bind = (
-    hostPath: string,
-    containerPath: string,
-    mode: "ro" | "rw" = "ro",
-    externalScope = false,
-  ) => ({ hostPath, containerPath, mode, externalScope });
+  const bind = (hostPath: string, containerPath: string, mode: "ro" | "rw" = "ro") => ({
+    hostPath,
+    containerPath,
+    mode,
+    externalScope: false,
+  });
 
   it("drops a file bind nested inside a same-mode directory bind at the same container offset", () => {
     const parent = bind("/repo/packages/orm", "/repo/packages/orm");
@@ -709,7 +709,7 @@ describe("pruneRedundantDockerBinds — child binds covered by a parent bind", (
     expect(pruneRedundantDockerBinds([volume, output])).toEqual([volume, output]);
   });
 
-  it("keeps both copies of an identical duplicate bind", () => {
+  it("never collapses two identical binds into one", () => {
     const first = bind("/repo/packages/orm", "/repo/packages/orm");
     const second = bind("/repo/packages/orm", "/repo/packages/orm");
     expect(pruneRedundantDockerBinds([first, second])).toEqual([first, second]);
@@ -719,5 +719,24 @@ describe("pruneRedundantDockerBinds — child binds covered by a parent bind", (
     const parent = bind("C:\\repo\\packages\\orm", "/repo/packages/orm");
     const child = bind("C:\\repo\\packages\\orm\\index.ts", "/repo/packages/orm/index.ts");
     expect(pruneRedundantDockerBinds([parent, child])).toEqual([parent]);
+  });
+
+  it("lets a filesystem-root bind cover descendants without covering itself", () => {
+    const root = bind("/", "/");
+    const child = bind("/repo/packages/orm", "/repo/packages/orm");
+    expect(pruneRedundantDockerBinds([root, child])).toEqual([root]);
+    expect(pruneRedundantDockerBinds([root, root])).toEqual([root, root]);
+  });
+
+  it("lets a drive-root bind cover descendants", () => {
+    const root = bind("C:\\", "/");
+    const child = bind("C:\\repo\\orm", "/repo/orm");
+    expect(pruneRedundantDockerBinds([root, child])).toEqual([root]);
+  });
+
+  it("keeps a child a root bind does not supply at that container path", () => {
+    const root = bind("/", "/");
+    const overridden = bind("/repo/orm/index.ts", "/elsewhere/index.ts");
+    expect(pruneRedundantDockerBinds([root, overridden])).toEqual([root, overridden]);
   });
 });

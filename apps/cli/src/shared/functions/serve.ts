@@ -1559,6 +1559,11 @@ const resolveServeFunctionConfigs = Effect.fnUntraced(function* (
  * too. Note this means Go (and this port) genuinely double-prints the
  * message when both Edge Runtime and Studio are enabled, since both call
  * sites fire; don't dedupe it, that would itself diverge from Go.
+ *
+ * The returned set is deliberately NOT run through
+ * `pruneRedundantDockerBinds`: Studio's bring-up never `docker cp`s into its
+ * created container, and overlapping binds are harmless to plain
+ * create+start — pruning is intentionally limited to Edge Runtime's cp path.
  */
 export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBindMounts")(
   function* (

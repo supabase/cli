@@ -336,20 +336,27 @@ export function formatDockerBind(bind: DockerBind) {
 export function pruneRedundantDockerBinds(
   binds: ReadonlyArray<DockerBind>,
 ): ReadonlyArray<DockerBind> {
-  const isCovered = (child: DockerBind) => {
-    const childHost = toSlash(child.hostPath);
-    return binds.some((parent) => {
-      if (parent.mode !== child.mode) {
+  const entries = binds.map((bind) => ({ bind, host: toSlash(bind.hostPath) }));
+  const isCovered = (child: { readonly bind: DockerBind; readonly host: string }) =>
+    entries.some((parent) => {
+      if (parent.bind.mode !== child.bind.mode) {
         return false;
       }
-      const parentHost = toSlash(parent.hostPath);
+      // Only a root path keeps its trailing separator through resolve/realpath,
+      // so each prefix appends one exactly when its own side lacks it; the
+      // host-equality guard is what then keeps a root bind from covering
+      // itself.
+      const hostPrefix = parent.host.endsWith("/") ? parent.host : `${parent.host}/`;
+      const containerPrefix = parent.bind.containerPath.endsWith("/")
+        ? parent.bind.containerPath
+        : `${parent.bind.containerPath}/`;
       return (
-        childHost.startsWith(`${parentHost}/`) &&
-        child.containerPath === `${parent.containerPath}${childHost.slice(parentHost.length)}`
+        child.host !== parent.host &&
+        child.host.startsWith(hostPrefix) &&
+        child.bind.containerPath === `${containerPrefix}${child.host.slice(hostPrefix.length)}`
       );
     });
-  };
-  return binds.filter((bind) => !isCovered(bind));
+  return entries.filter((entry) => !isCovered(entry)).map((entry) => entry.bind);
 }
 
 function dockerNpmEnv(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<string> {
