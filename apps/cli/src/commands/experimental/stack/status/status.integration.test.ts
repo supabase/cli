@@ -1,5 +1,7 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -296,6 +298,7 @@ describe("experimental stack status", () => {
               message: "Project configuration could not be loaded; fix it before checking drift.",
             },
           });
+          // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- assertion checks redaction of serialized output
           expect(JSON.stringify(success?.data)).not.toContain("FAKE_STATUS_SECRET");
         }),
       ),
