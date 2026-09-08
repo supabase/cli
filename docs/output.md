@@ -44,6 +44,10 @@ yield* output.fail({ code: "InvalidTokenError", message: "Bad token format" })
 
 ## How It Works
 
+`stream-json` commands may emit `log-entry` events for line-oriented output. A log-entry event
+has `type: "log-entry"`, `timestamp`, `service`, `stream`, `line`, and `source`; stack logs use
+`stream: "stdout" | "stderr" | "internal"` and `source: "history" | "live"`.
+
 Each format has its own layer implementation. The root command provides the appropriate layer based on the `--output-format` flag:
 
 ```ts
