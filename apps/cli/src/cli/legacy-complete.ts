@@ -110,7 +110,7 @@ export interface LegacyClassifyCompletionInput {
 }
 
 export interface LegacyCompleteDeps {
-  readonly root: Command.Command.Any;
+  readonly root: Command.Command.Any | undefined;
   readonly argv: ReadonlyArray<string>;
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly stdoutWrite: (message: string) => void;
@@ -1549,10 +1549,11 @@ export function legacyClassifyCompletion(
  * (see the module doc comment for why that case isn't otherwise reproduced).
  */
 export function legacyRespondToComplete(
-  root: Command.Command.Any,
+  root: Command.Command.Any | undefined,
   argv: ReadonlyArray<string>,
 ): LegacyCompletionResult | undefined {
   if (argv[0] !== "__complete" && argv[0] !== "__completeNoDesc") return undefined;
+  if (root === undefined) return undefined;
 
   const args = argv.slice(1);
   if (args.length === 0) return undefined;
@@ -1769,7 +1770,7 @@ export async function legacyTryComplete(deps: LegacyCompleteDeps): Promise<boole
   return true;
 }
 
-export function legacyDefaultCompleteDeps(root: Command.Command.Any): LegacyCompleteDeps {
+export function legacyDefaultCompleteDeps(root?: Command.Command.Any): LegacyCompleteDeps {
   return {
     root,
     argv: process.argv.slice(2),

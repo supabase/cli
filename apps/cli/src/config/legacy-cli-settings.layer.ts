@@ -102,7 +102,7 @@ function resolveProfile(
  * `--workdir=` differently (treats it as explicit-but-falls-through-to-walk-up,
  * never to env) — the two are intentionally NOT unified.
  */
-function resolveWorkdir(
+export function legacyResolveWorkdir(
   flagValue: Option.Option<string>,
   envValue: string | undefined,
   cwd: string,
@@ -182,7 +182,7 @@ export const legacyCliSettingsLayer = Layer.unwrap(
             ? Option.none<string>()
             : Option.some(rawProjectId);
 
-        const { workdir, explicit: explicitWorkdir } = yield* resolveWorkdir(
+        const { workdir, explicit: explicitWorkdir } = yield* legacyResolveWorkdir(
           workdirFlag,
           env["SUPABASE_WORKDIR"],
           runtimeInfo.cwd,

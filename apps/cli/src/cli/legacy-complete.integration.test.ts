@@ -55,11 +55,12 @@ function makeCaptureTelemetry(
 function makeDeps(
   argv: ReadonlyArray<string>,
   captureTelemetry: LegacyCompleteDeps["captureTelemetry"],
+  root: LegacyCompleteDeps["root"],
 ) {
   const stdoutWrites: Array<string> = [];
   const exits: Array<number> = [];
   const deps: LegacyCompleteDeps = {
-    root: legacyRoot,
+    root,
     argv,
     env: {},
     stdoutWrite: (message) => {
@@ -74,11 +75,45 @@ function makeDeps(
 }
 
 describe("legacy __complete telemetry (CLI-1965 review finding)", () => {
+  it.each(["__complete", "__completeNoDesc"])(
+    "keeps %s in completion handling when the selected command tree is unavailable",
+    async (completionCommand) => {
+      const analytics = mockAnalyticsWithContext();
+      const { deps, stdoutWrites, exits } = makeDeps(
+        [completionCommand, "stack", "st"],
+        makeCaptureTelemetry(analytics.layer),
+        undefined,
+      );
+
+      expect(await legacyTryComplete(deps)).toBe(true);
+      expect(stdoutWrites).toEqual([]);
+      expect(exits).toEqual([1]);
+      const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
+      expect(event?.command).toBe("__complete");
+      expect(event?.properties[PropExitCode]).toBe(1);
+    },
+  );
+
+  it("leaves regular invocations unhandled when the selected command tree is unavailable", async () => {
+    const analytics = mockAnalyticsWithContext();
+    const { deps, stdoutWrites, exits } = makeDeps(
+      ["stack", "status"],
+      makeCaptureTelemetry(analytics.layer),
+      undefined,
+    );
+
+    expect(await legacyTryComplete(deps)).toBe(false);
+    expect(stdoutWrites).toEqual([]);
+    expect(exits).toEqual([]);
+    expect(analytics.captured).toEqual([]);
+  });
+
   it("fires cli_command_executed with command: __complete and exit_code: 0 for a normal completion request", async () => {
     const analytics = mockAnalyticsWithContext();
     const { deps } = makeDeps(
       ["__complete", "migration", "li"],
       makeCaptureTelemetry(analytics.layer),
+      legacyRoot,
     );
 
     expect(await legacyTryComplete(deps)).toBe(true);
@@ -91,7 +126,7 @@ describe("legacy __complete telemetry (CLI-1965 review finding)", () => {
 
   it("records exit_code: 1 for an unresolvable completion request (zero completion args)", async () => {
     const analytics = mockAnalyticsWithContext();
-    const { deps } = makeDeps(["__complete"], makeCaptureTelemetry(analytics.layer));
+    const { deps } = makeDeps(["__complete"], makeCaptureTelemetry(analytics.layer), legacyRoot);
 
     expect(await legacyTryComplete(deps)).toBe(true);
 
@@ -105,6 +140,7 @@ describe("legacy __complete telemetry (CLI-1965 review finding)", () => {
     const { deps } = makeDeps(
       ["__completeNoDesc", "migration", "li"],
       makeCaptureTelemetry(analytics.layer),
+      legacyRoot,
     );
 
     await legacyTryComplete(deps);

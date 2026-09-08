@@ -20,18 +20,12 @@ const backendExit = await Effect.runPromiseExit(
     Effect.provide(BunServices.layer),
   ),
 );
-if (Exit.isFailure(backendExit)) {
-  await runCli(legacyRoot, {
+const root = Exit.isSuccess(backendExit) ? legacyRootForBackend(backendExit.value) : legacyRoot;
+const completionRoot = Exit.isSuccess(backendExit) ? root : undefined;
+if (!(await legacyTryComplete(legacyDefaultCompleteDeps(completionRoot)))) {
+  await runCli(root, {
     analyticsLayer: legacyAnalyticsLayer,
     afterSuccess: legacyUpgradeNoticeHook,
-    beforeParse: Effect.failCause(backendExit.cause),
+    ...(Exit.isFailure(backendExit) ? { beforeParse: Effect.failCause(backendExit.cause) } : {}),
   });
-} else {
-  const root = legacyRootForBackend(backendExit.value);
-  if (!(await legacyTryComplete(legacyDefaultCompleteDeps(root)))) {
-    await runCli(root, {
-      analyticsLayer: legacyAnalyticsLayer,
-      afterSuccess: legacyUpgradeNoticeHook,
-    });
-  }
 }

@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option } from "effect";
+import { legacyRespondToComplete } from "../../../cli/legacy-complete.ts";
+import { legacyRootForBackend } from "../../../cli/root.ts";
 import {
   LegacyExperimentalStackRoutingError,
   legacyResolveExperimentalStackBackend,
@@ -39,11 +41,94 @@ describe("legacyResolveExperimentalStackBackend", () => {
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
   });
 
-  it.effect("reads the same routing key from JSON and completion argv", () => {
+  it.effect("treats a separated global boolean value as a flag value", () => {
+    const root = project("[experimental]\nstack = true\n");
+    return Effect.gen(function* () {
+      for (const flag of ["--debug", "--experimental", "--yes", "--create-ticket"])
+        for (const value of ["false", "0", "no", "off"])
+          expect(yield* resolve({ args: [flag, value, "start"], cwd: root, env: {} })).toBe(
+            "stack",
+          );
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+  });
+
+  it.effect("offers flags from the selected command tree after a separated boolean", () => {
+    const root = project("[experimental]\nstack = true\n");
+    return Effect.gen(function* () {
+      const backend = yield* resolve({
+        args: ["--debug", "false", "start", "--help"],
+        cwd: root,
+        env: {},
+      });
+      expect(backend).toBe("stack");
+      const completion = legacyRespondToComplete(legacyRootForBackend(backend), [
+        "__complete",
+        "start",
+        "--",
+      ]);
+      expect(completion?.candidates.map((candidate) => candidate.name)).toContain("--runtime");
+      expect(completion?.candidates.map((candidate) => candidate.name)).not.toContain(
+        "--ignore-health-check",
+      );
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+  });
+
+  it.effect("matches handler workdir selection and first repeated workdir", () => {
+    const stackRoot = project("[experimental]\nstack = true\n");
+    const legacyRoot = project("[experimental]\nstack = false\n");
+    const nested = join(stackRoot, "nested");
+    mkdirSync(join(nested, "child"), { recursive: true });
+    return Effect.gen(function* () {
+      expect(yield* resolve({ args: ["start"], cwd: stackRoot, env: {} })).toBe("stack");
+      expect(yield* resolve({ args: ["start"], cwd: nested, env: {} })).toBe("stack");
+      expect(
+        yield* resolve({
+          args: ["--workdir", stackRoot, "--workdir", legacyRoot, "start"],
+          cwd: nested,
+          env: {},
+        }),
+      ).toBe("stack");
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(stackRoot, { recursive: true, force: true });
+          rmSync(legacyRoot, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("does not treat a consumed profile value as workdir", () => {
+    const root = project("[experimental]\nstack = true\n");
+    return resolve({ args: ["--profile", "--workdir=missing", "start"], cwd: root, env: {} }).pipe(
+      Effect.tap((backend) => Effect.sync(() => expect(backend).toBe("stack"))),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("ignores JSON-only projects and supports both completion modes", () => {
     const root = project('{"experimental":{"stack":true}}', "json");
     return Effect.gen(function* () {
-      expect(yield* resolve({ args: ["__complete", "start"], cwd: root, env: {} })).toBe("stack");
+      for (const mode of ["__complete", "__completeNoDesc"]) {
+        const backend = yield* resolve({ args: [mode, "start", "--"], cwd: root, env: {} });
+        expect(backend).toBe("legacy");
+        const response = legacyRespondToComplete(legacyRootForBackend(backend), [
+          mode,
+          "start",
+          "--",
+        ]);
+        expect(response?.candidates.map(({ name }) => name)).toContain("--ignore-health-check");
+      }
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+  });
+
+  it.effect("uses config.toml when JSON and TOML settings conflict", () => {
+    const root = project("[experimental]\nstack = false\n");
+    writeFileSync(join(root, "supabase", "config.json"), '{"experimental":{"stack":true}}');
+    return resolve({ args: ["start"], cwd: root, env: {} }).pipe(
+      Effect.tap((backend) => Effect.sync(() => expect(backend).toBe("legacy"))),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
   });
 
   it.effect("keeps the legacy backend when the setting is false", () => {

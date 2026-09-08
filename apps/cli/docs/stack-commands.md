@@ -23,16 +23,6 @@ The top-level `supabase start`, `supabase stop`, and `supabase status` commands 
 stack = true
 ```
 
-The equivalent in `supabase/config.json` is:
-
-```json
-{
-  "experimental": {
-    "stack": true
-  }
-}
-```
-
 The selected backend determines accepted flags, help, and completion before the command is parsed. Set the flag to `false`, or remove it, to restore the legacy top-level commands. Explicit `supabase stack` commands continue to use the new backend.
 
 This flag currently selects only the `start`, `stop`, and `status` aliases. It does not switch the database, migration, functions, or storage command families to the new backend.
@@ -41,4 +31,4 @@ This flag currently selects only the `start`, `stop`, and `status` aliases. It d
 
 The backends own separate state and databases. Enabling the flag does not import, copy, seed from, or reuse the legacy database, and does not stop a running legacy stack. Normal project migrations and seed configuration are separate from importing legacy database data.
 
-The flag is local CLI configuration and is excluded from hosted project configuration. Project selection follows the CLI’s working-directory rules, including `--workdir` and `SUPABASE_WORKDIR`.
+The flag is local CLI configuration in `supabase/config.toml` and is excluded from hosted project configuration. Lifecycle routing reads that exact file after applying the CLI’s working-directory rules, including `--workdir` and `SUPABASE_WORKDIR`; a JSON-only project does not enable the flag.

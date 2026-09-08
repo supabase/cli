@@ -112,7 +112,7 @@ function isRootValueFlagWithInlineValue(arg: string): boolean {
   return false;
 }
 
-const ROOT_BOOLEAN_FLAGS: ReadonlyArray<string> = [
+export const ROOT_BOOLEAN_FLAGS: ReadonlyArray<string> = [
   "--debug",
   "--experimental",
   "--yes",
@@ -131,7 +131,7 @@ function isFlagOccurrence(arg: string, name: string): boolean {
  * `run.ts`'s `PFLAG_BOOL_TRUE` answers a DIFFERENT question (ParseBool
  * truthiness, for the pflag-modeled upgrade-notice scans); do not merge them.
  */
-const BOOLEAN_FLAG_VALUES: ReadonlySet<string> = new Set([
+export const BOOLEAN_FLAG_VALUES: ReadonlySet<string> = new Set([
   "true",
   "false",
   "1",

@@ -53,6 +53,7 @@ import { makeGoProxyLayer } from "../shared/legacy/go-proxy.layer.ts";
 import { AiTool } from "../shared/telemetry/ai-tool.service.ts";
 import { aiToolLayer } from "../shared/telemetry/ai-tool.layer.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
+import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
 import { isBuiltInTextRequest, resolveAgentOutputFormat } from "../shared/cli/agent-output.ts";
 import {
   LEGACY_GLOBAL_FLAGS,
@@ -68,13 +69,26 @@ import {
   LegacyYesFlag,
 } from "../shared/legacy/global-flags.ts";
 
-const stackStart = legacyExperimentalStackStartCommand.pipe(
+const legacyExperimentalStackStartAliasCommand = legacyExperimentalStackStartCommand.pipe(
+  Command.provide(commandRuntimeLayer(["start"])),
+);
+const legacyExperimentalStackStopAliasCommand = legacyExperimentalStackStopCommand.pipe(
+  Command.provide(commandRuntimeLayer(["stop"])),
+);
+export const legacyExperimentalStackStatusAliasCommand = legacyExperimentalStackStatusCommand.pipe(
+  Command.provide(commandRuntimeLayer(["status"])),
+);
+const legacyExperimentalStackStartRegisteredCommand = legacyExperimentalStackStartAliasCommand.pipe(
   Command.provide(legacyExperimentalStackRuntimeLayer),
 );
-const stackStop = legacyExperimentalStackStopCommand.pipe(
+const legacyExperimentalStackStopRegisteredCommand = legacyExperimentalStackStopAliasCommand.pipe(
   Command.provide(legacyExperimentalStackRuntimeLayer),
 );
-const stackStatus = legacyExperimentalStackStatusCommand.pipe(
+const legacyExperimentalStackStatusRegisteredCommand =
+  legacyExperimentalStackStatusAliasCommand.pipe(
+    Command.provide(legacyExperimentalStackRuntimeLayer),
+  );
+const legacyExperimentalStackRegisteredCommand = legacyExperimentalStackCommand.pipe(
   Command.provide(legacyExperimentalStackRuntimeLayer),
 );
 
@@ -91,7 +105,7 @@ export const legacyRootForBackend = (backend: LegacyExperimentalStackBackend = "
       legacyDomainsCommand,
       legacyEncryptionCommand,
       legacyExperimentalCommand,
-      legacyExperimentalStackCommand,
+      legacyExperimentalStackRegisteredCommand,
       legacyFunctionsCommand,
       legacyGenCommand,
       legacyInitCommand,
@@ -112,9 +126,9 @@ export const legacyRootForBackend = (backend: LegacyExperimentalStackBackend = "
       legacySnippetsCommand,
       legacySslEnforcementCommand,
       legacySsoCommand,
-      backend === "stack" ? stackStart : legacyStartCommand,
-      backend === "stack" ? stackStatus : legacyStatusCommand,
-      backend === "stack" ? stackStop : legacyStopCommand,
+      backend === "stack" ? legacyExperimentalStackStartRegisteredCommand : legacyStartCommand,
+      backend === "stack" ? legacyExperimentalStackStatusRegisteredCommand : legacyStatusCommand,
+      backend === "stack" ? legacyExperimentalStackStopRegisteredCommand : legacyStopCommand,
       legacyStorageCommand,
       legacyTelemetryCommand,
       legacyTestCommand,

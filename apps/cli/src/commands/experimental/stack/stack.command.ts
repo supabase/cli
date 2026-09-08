@@ -1,5 +1,6 @@
 import { Layer } from "effect";
 import { Command } from "effect/unstable/cli";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../command-internal/legacy-debug-logger.layer.ts";
 import { legacyExperimentalStackStartCommand } from "./start/start.command.ts";
@@ -25,13 +26,26 @@ export const legacyExperimentalStackCommand = Command.make("stack").pipe(
   Command.withDescription("Manage a local Supabase stack with the new backend."),
   Command.withShortDescription("Manage local stacks"),
   Command.withSubcommands([
-    legacyExperimentalStackStartCommand,
-    legacyExperimentalStackStopCommand,
-    legacyExperimentalStackStatusCommand,
-    legacyExperimentalStackListCommand,
-    legacyExperimentalStackLogsCommand,
-    legacyExperimentalStackPrepareCommand,
-    legacyExperimentalStackRestartCommand,
+    legacyExperimentalStackStartCommand.pipe(
+      Command.provide(commandRuntimeLayer(["stack", "start"])),
+    ),
+    legacyExperimentalStackStopCommand.pipe(
+      Command.provide(commandRuntimeLayer(["stack", "stop"])),
+    ),
+    legacyExperimentalStackStatusCommand.pipe(
+      Command.provide(commandRuntimeLayer(["stack", "status"])),
+    ),
+    legacyExperimentalStackListCommand.pipe(
+      Command.provide(commandRuntimeLayer(["stack", "list"])),
+    ),
+    legacyExperimentalStackLogsCommand.pipe(
+      Command.provide(commandRuntimeLayer(["stack", "logs"])),
+    ),
+    legacyExperimentalStackPrepareCommand.pipe(
+      Command.provide(commandRuntimeLayer(["stack", "prepare"])),
+    ),
+    legacyExperimentalStackRestartCommand.pipe(
+      Command.provide(commandRuntimeLayer(["stack", "restart"])),
+    ),
   ]),
-  Command.provide(legacyExperimentalStackRuntimeLayer),
 );
