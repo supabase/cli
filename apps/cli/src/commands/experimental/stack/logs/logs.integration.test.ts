@@ -83,6 +83,7 @@ function setup(opts: {
   followLogs?: (query: unknown) => Stream.Stream<StackLogEntry>;
   openFailure?: OpenStackError;
   findFailure?: StackDiscoveryError;
+  noDefault?: boolean;
 }) {
   const out = mockOutput();
   const calls: {
@@ -126,7 +127,11 @@ function setup(opts: {
       listStacks: () => Effect.succeed([]),
       findStack: (query) =>
         opts.findFailure === undefined
-          ? Effect.succeed(query.name === "missing" ? Option.none() : Option.some(descriptor))
+          ? Effect.succeed(
+              query.name === "missing" || (query.name === undefined && opts.noDefault)
+                ? Option.none()
+                : Option.some(descriptor),
+            )
           : Effect.fail(opts.findFailure),
       openStack: (stackId) =>
         opts.openFailure === undefined
@@ -183,6 +188,50 @@ describe("experimental stack logs", () => {
       );
     },
   );
+
+  it.effect("rejects conflicting targets before resolving a stack", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-logs-conflict-"));
+    const setupResult = setup({ root });
+    return Effect.gen(function* () {
+      const failure = yield* legacyExperimentalStackLogs(
+        flags({ stack: Option.some("feature-a"), stackId: Option.some(id) }),
+      ).pipe(Effect.flip);
+      expect(failure.reason).toBe("flags");
+      expect(setupResult.calls.queries).toEqual([]);
+      expect(setupResult.calls.opened).toEqual([]);
+    }).pipe(
+      Effect.provide(setupResult.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("distinguishes an absent default stack from a missing named stack", () => {
+    const defaultRoot = mkdtempSync(join(tmpdir(), "supabase-stack-logs-default-missing-"));
+    const namedRoot = mkdtempSync(join(tmpdir(), "supabase-stack-logs-named-missing-"));
+    const absent = setup({ root: defaultRoot, noDefault: true });
+    const named = setup({ root: namedRoot });
+    return Effect.gen(function* () {
+      yield* legacyExperimentalStackLogs(flags()).pipe(Effect.provide(absent.layer));
+      expect(absent.out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          message: "No managed stack found for this context.",
+        }),
+      );
+      const failure = yield* legacyExperimentalStackLogs(
+        flags({ stack: Option.some("missing") }),
+      ).pipe(Effect.flip, Effect.provide(named.layer));
+      expect(failure.reason).toBe("flags");
+      expect(failure.message).toContain("No managed stack named");
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(defaultRoot, { recursive: true, force: true });
+          rmSync(namedRoot, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 
   it.effect(
     "streams finite follow output and supports interruption without owner lifecycle calls",
@@ -278,6 +327,30 @@ describe("experimental stack logs", () => {
       Effect.provide(Layer.mergeAll(setupResult.layer, output.layer)),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
+  });
+
+  it.effect("emits history and live events while following stream-json", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-logs-stream-follow-"));
+    const setupResult = setup({
+      root,
+      logs: () =>
+        Effect.succeed({ entries: [entries[0]!], cursor: { opaque: "1" }, running: true }),
+      followLogs: () => Stream.fromIterable([entries[1]!]),
+    });
+    const output = mockOutput({ format: "stream-json" });
+    return Effect.gen(function* () {
+      yield* legacyExperimentalStackLogs(flags({ follow: true })).pipe(
+        Effect.provide(Layer.mergeAll(setupResult.layer, output.layer)),
+      );
+      expect(output.events).toEqual([
+        expect.objectContaining({
+          type: "log-entry",
+          source: "history",
+          line: entries[0]!.message,
+        }),
+        expect.objectContaining({ type: "log-entry", source: "live", line: entries[1]!.message }),
+      ]);
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
   });
 
   it.effect("finishes follow after printing retained history when the stack is stopped", () => {

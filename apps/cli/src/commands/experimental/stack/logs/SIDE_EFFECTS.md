@@ -16,10 +16,18 @@ runtime resources.
 
 Text mode writes one line per retained or followed entry. JSON mode writes one bounded result;
 `--follow` is rejected with `--output-format json`; use the default text mode or
-`--output-format stream-json`, which emits one `log-entry` event per line.
+`--output-format stream-json`, which emits one `log-entry` event per line. Each event has
+`type: "log-entry"`, `timestamp`, `service`, `stream`, `line`, and `source`; `stream` is
+`stdout`, `stderr`, or `internal`, and `source` is `history` or `live`.
 Follow prints the retained history first and then resumes from its returned cursor. If the stack
-is already stopped, it prints the retained history and exits successfully. Interrupting follow
-cancels the log reader, exits with status `130`, and leaves the managed stack owner untouched.
+is already stopped, it prints the retained history and exits successfully. With no `--stack` or
+`--stack-id`, an absent default stack prints a successful empty result. A missing named stack
+fails with status `1`. The legacy `-o`/`--output` flag is rejected; use `--output-format`.
+
+Successful reads, including an absent default stack and a stopped stack, exit with status `0`.
+Invalid flags, missing named stacks, and stack read failures exit with status `1`. Interrupting
+follow cancels the log reader, exits with status `130`, and leaves the managed stack owner
+untouched.
 
 ## Telemetry
 

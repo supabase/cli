@@ -110,9 +110,7 @@ export const legacyExperimentalStackLogs = Effect.fn("legacy.experimental.stack.
           })
           .pipe(Effect.mapError(logsError))
       : yield* isStackId(id)
-          ? Effect.succeed(
-              Option.some({ id: StackIdSchema.make(id), projectRoot: settings.workdir }),
-            )
+          ? Effect.succeed(Option.some({ id: StackIdSchema.make(id) }))
           : Effect.fail(
               new LegacyExperimentalStackLogsError({
                 reason: "flags",
@@ -144,12 +142,10 @@ export const legacyExperimentalStackLogs = Effect.fn("legacy.experimental.stack.
         })
       : Effect.forEach(entries, (entry) => output.raw(renderEntry(entry)), { discard: true });
   if (!flags.follow) {
-    if (output.format === "text") {
-      yield* output.raw(batch.entries.map(renderEntry).join(""));
-    } else if (output.format === "stream-json") {
-      for (const entry of batch.entries) yield* output.event(eventForEntry(entry, "history"));
-    } else {
+    if (output.format === "json") {
       yield* output.success("", { found: true, id: stack.id, ...batch });
+    } else {
+      yield* emitEntries("history", batch.entries);
     }
     return;
   }

@@ -4,6 +4,8 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyExperimentalStackLogs } from "./logs.handler.ts";
 
+const MAX_TAIL = 10_000;
+
 const config = {
   stack: Flag.string("stack").pipe(
     Flag.withDescription(
@@ -21,13 +23,16 @@ const config = {
   ),
   tail: Flag.integer("tail").pipe(
     Flag.filter(
-      (value) => value >= 0 && value <= 10_000,
-      (value) => `Expected --tail between 0 and 10000, got ${value}`,
+      (value) => value >= 0 && value <= MAX_TAIL,
+      (value) => `Expected --tail between 0 and ${MAX_TAIL}, got ${value}`,
     ),
-    Flag.withDescription("Number of retained log entries to print."),
+    Flag.withDescription(
+      "Number of retained log entries to print. Use 0 with --follow to skip retained history.",
+    ),
     Flag.withDefault(100),
   ),
   follow: Flag.boolean("follow").pipe(
+    Flag.withAlias("f"),
     Flag.withDescription("Continue printing new log entries until interrupted."),
     Flag.withDefault(false),
   ),
