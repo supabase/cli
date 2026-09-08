@@ -208,8 +208,7 @@ const legacyStackStartError = (error: unknown) => {
           })),
           Match.tag("StackStateFormatUnsupportedError", () => ({
             reason: "invalid-config" as const,
-            suggestion:
-              "Use a CLI version compatible with the persisted stack state.",
+            suggestion: "Use a CLI version compatible with the persisted stack state.",
           })),
           Match.tag("StackNotFoundError", () => ({ reason: "flags" as const })),
           Match.tag(
