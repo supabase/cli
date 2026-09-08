@@ -1,0 +1,1368 @@
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "@effect/vitest";
+import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stdio, Stream } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+
+import { legacyV2ProjectConfigResponse } from "../../../tests/helpers/legacy-config-fixtures.ts";
+import {
+  mockContextualAnalytics,
+  mockOutput,
+  mockProcessControl,
+  mockRuntimeInfo,
+  mockStdin,
+  mockTty,
+} from "../../../tests/helpers/mocks.ts";
+import {
+  buildLegacyTestRuntime,
+  LEGACY_VALID_REF,
+  legacyJsonResponse,
+  mockLegacyCliSettings,
+  mockLegacyLinkedProjectCacheTracked,
+  mockLegacyPlatformApi,
+  mockLegacyShadowContainerCliSpawner,
+  mockLegacyTelemetryStateTracked,
+  legacyTransportFailure,
+  useLegacyShadowCacheDisabled,
+  useLegacyTempWorkdir,
+} from "../../../tests/helpers/legacy-mocks.ts";
+import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
+import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
+import { machineErrorContextLayer } from "../../shared/output/machine-error-context.layer.ts";
+import { jsonOutputLayer, streamJsonOutputLayer } from "../../shared/output/output.layer.ts";
+import {
+  LEGACY_GLOBAL_OUTPUT_FORMATS,
+  LegacyDebugFlag,
+  LegacyDnsResolverFlag,
+  LegacyExperimentalFlag,
+  LegacyNetworkIdFlag,
+  LegacyYesFlag,
+} from "../../shared/legacy/global-flags.ts";
+import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
+import { PROJECT_REF_PATTERN } from "../../config/legacy-project-ref.service.ts";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { LegacyDbConfigResolver } from "../../command-internal/legacy-db-config.service.ts";
+import {
+  LegacyDbConnection,
+  type LegacyDbSession,
+} from "../../command-internal/legacy-db-connection.service.ts";
+import { LegacyDockerRun } from "../../command-internal/legacy-docker-run.service.ts";
+import { LegacyEdgeRuntimeScript } from "../../command-internal/legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../../command-internal/legacy-pgdelta-ssl-probe.service.ts";
+import { Output } from "../../shared/output/output.service.ts";
+import {
+  LegacyPgDeltaEngine,
+  LegacyPgDeltaEngineError,
+} from "../db/shared/legacy-pgdelta-engine.service.ts";
+import type { LegacyPullFlags } from "./pull.command.ts";
+import { legacyPull } from "./pull.handler.ts";
+
+/**
+ * Scenario-oriented integration coverage for `supabase pull` (CLI-1272,
+ * ADR 0024). Drives the real `legacyPull` handler (plus the SAME
+ * `withLegacyCommandInstrumentation`/`withJsonErrorHandling` wiring
+ * `pull.command.ts` composes — replicated here since `pull.command.ts`
+ * doesn't export its wrapped handler, mirroring `config diff`'s own
+ * `legacyConfigDiffHandler`-less precedent) against a fully mocked db-pull/
+ * migration-fetch/functions-download substrate: `LegacyPgDeltaEngine` is
+ * mocked directly (so every db step forces the pg-delta diff engine via
+ * `[experimental.pgdelta] enabled = true`, skipping both the migra/edge-runtime
+ * path and the pg_dump initial-pull seed entirely — pg-delta initial pulls
+ * diff against an empty shadow and never dump), `LegacyDbConnection`/
+ * `LegacyDbConfigResolver` are mocked with a shared fake Postgres session
+ * (shared by the migration-history and db steps, since both read the
+ * SAME `supabase_migrations.schema_migrations` table), and a composite
+ * `ChildProcessSpawner` combines the real shadow-container container-lifecycle
+ * fake with a "docker is not running" answer for `docker info` (so the
+ * functions step's Docker-unbundle path never activates — it falls back to
+ * the plain multipart HTTP download) and a controllable "git status" answer
+ * for the config-file dirty guard.
+ */
+
+const tempRoot = useLegacyTempWorkdir("supabase-pull-int-");
+useLegacyShadowCacheDisabled();
+
+const BRANCH_REF = "cccccccccccccccccccc";
+
+const BRANCH_BY_NAME = {
+  id: "11111111-1111-4111-8111-111111111111",
+  name: "staging",
+  project_ref: BRANCH_REF,
+  parent_project_ref: LEGACY_VALID_REF,
+  is_default: false,
+  persistent: true,
+  status: "MIGRATIONS_PASSED",
+  created_at: "2026-05-27T01:02:03Z",
+  updated_at: "2026-05-27T01:02:04Z",
+  with_data: false,
+};
+
+function configPath(): string {
+  return join(tempRoot.current, "supabase", "config.toml");
+}
+
+function migrationsDir(): string {
+  return join(tempRoot.current, "supabase", "migrations");
+}
+
+/** Writes a minimal, schema-valid `supabase/config.toml` with pg-delta forced on
+ *  (so every db step exercises the fully-mocked `LegacyPgDeltaEngine`, never the
+ *  migra/edge-runtime path or the pg_dump initial-pull seed). */
+function writeConfig(extraToml = ""): string {
+  const dir = join(tempRoot.current, "supabase");
+  mkdirSync(dir, { recursive: true });
+  const path = configPath();
+  writeFileSync(
+    path,
+    `project_id = "${LEGACY_VALID_REF}"\n\n[experimental.pgdelta]\nenabled = true\n${extraToml}`,
+  );
+  return path;
+}
+
+/** Seeds a local migration file whose basename `legacyLoadLocalVersions` parses
+ *  back into `version` — content is irrelevant to every mocked collaborator here. */
+function seedLocalMigration(
+  version: string,
+  name = "local",
+  sql = "create table local ();\n",
+): string {
+  mkdirSync(migrationsDir(), { recursive: true });
+  const path = join(migrationsDir(), `${version}_${name}.sql`);
+  writeFileSync(path, sql);
+  return path;
+}
+
+/** The rendered step row for `step` in `legacyRenderPullSummary`'s output, with
+ *  internal padding collapsed to single spaces so assertions don't hardcode
+ *  column widths. Empty string when the step has no row at all. */
+function stepLine(text: string, step: string): string {
+  const line = text.split("\n").find((candidate) => candidate.trim().startsWith(step));
+  return line === undefined ? "" : line.trim().replace(/\s+/g, " ");
+}
+
+function pullFlags(overrides: Partial<LegacyPullFlags> = {}): LegacyPullFlags {
+  return {
+    projectRef: overrides.projectRef ?? Option.none(),
+    dryRun: overrides.dryRun ?? false,
+    force: overrides.force ?? false,
+    withMigrationHistory: overrides.withMigrationHistory ?? false,
+  };
+}
+
+/** Reproduces `pull.command.ts`'s `legacyPullHandler` wiring, which that file
+ *  does not export (mirrors `config diff`'s own bare-handler precedent). */
+function runPull(flags: LegacyPullFlags) {
+  return legacyPull(flags).pipe(
+    withLegacyCommandInstrumentation({
+      flags,
+      safeFlags:
+        Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
+          ? ["project-ref"]
+          : [],
+      outputFormats: LEGACY_GLOBAL_OUTPUT_FORMATS,
+    }),
+    withJsonErrorHandling,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Composite ChildProcessSpawner: the real shadow-container lifecycle fake,
+// plus a controllable "docker info" (Docker running?) answer and a
+// controllable "git status" (dirty config file?) answer.
+// ---------------------------------------------------------------------------
+
+function composeSpawner(
+  opts: { readonly gitDirty?: boolean; readonly gitSpawnFails?: boolean } = {},
+): {
+  readonly layer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
+  readonly shadowSpawned: ReadonlyArray<{ readonly args: ReadonlyArray<string> }>;
+  readonly gitCalls: ReadonlyArray<ReadonlyArray<string>>;
+} {
+  const shadow = mockLegacyShadowContainerCliSpawner();
+  const gitCalls: Array<ReadonlyArray<string>> = [];
+  const encoder = new TextEncoder();
+
+  const layer = Layer.effect(
+    ChildProcessSpawner.ChildProcessSpawner,
+    Effect.gen(function* () {
+      const inner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      return ChildProcessSpawner.make((command) => {
+        if (command._tag !== "StandardCommand") {
+          return inner.spawn(command);
+        }
+        if (command.command === "git") {
+          gitCalls.push(command.args);
+          if (opts.gitSpawnFails === true) {
+            return Effect.fail(
+              PlatformError.systemError({
+                _tag: "NotFound",
+                module: "ChildProcess",
+                method: "spawn",
+                description: "git not found",
+              }),
+            );
+          }
+          const stdout = opts.gitDirty === true ? " M config.toml\n" : "";
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(9000 + gitCalls.length),
+              stdout: Stream.fromIterable([encoder.encode(stdout)]),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+              isRunning: Effect.succeed(false),
+              stdin: Sink.drain,
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          );
+        }
+        if (command.command === "docker" && command.args[0] === "info") {
+          // Functions step's `isDockerRunning()` check — answering "not
+          // running" keeps the functions step on the plain multipart HTTP
+          // download path instead of the Docker-unbundle path.
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(9500),
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+              isRunning: Effect.succeed(false),
+              stdin: Sink.drain,
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          );
+        }
+        return inner.spawn(command);
+      });
+    }),
+  ).pipe(Layer.provide(shadow.layer));
+
+  return { layer, shadowSpawned: shadow.spawned, gitCalls };
+}
+
+// ---------------------------------------------------------------------------
+// A shared fake Postgres session backing BOTH the migration-history step
+// (`legacyReadMigrationTable`) and the db step (`legacyListRemoteMigrations`/
+// `legacyUpdateMigrationHistory`) — both read the SAME
+// `supabase_migrations.schema_migrations` table in production.
+// ---------------------------------------------------------------------------
+
+interface RemoteMigrationRow {
+  readonly version: string;
+  readonly name: string;
+  readonly statements: ReadonlyArray<string>;
+}
+
+function makeMigrationSession(
+  remoteMigrations: ReadonlyArray<RemoteMigrationRow>,
+  callOrder: Array<string>,
+  tag: "target" | "shadow",
+): {
+  readonly session: LegacyDbSession;
+  readonly historyUpserts: ReadonlyArray<ReadonlyArray<unknown>>;
+} {
+  const historyUpserts: Array<ReadonlyArray<unknown>> = [];
+  const exec = (_sql: string) => Effect.void;
+  const query = (sql: string, params?: ReadonlyArray<unknown>) => {
+    if (tag === "target" && sql.startsWith("SELECT version FROM")) {
+      callOrder.push("db_list_remote");
+      return Effect.succeed(remoteMigrations.map((m) => ({ version: m.version })));
+    }
+    if (tag === "target" && sql.includes("coalesce(name")) {
+      callOrder.push("migration_history_read");
+      return Effect.succeed(
+        remoteMigrations.map((m) => ({
+          version: m.version,
+          name: m.name,
+          statements: m.statements,
+        })),
+      );
+    }
+    if (params !== undefined) {
+      historyUpserts.push(params);
+    }
+    return Effect.succeed([] as ReadonlyArray<Record<string, unknown>>);
+  };
+  const session: LegacyDbSession = {
+    exec,
+    query,
+    execBatch: (statements) =>
+      Effect.forEach(statements, ({ sql, params }) =>
+        params === undefined ? exec(sql) : query(sql, params),
+      ).pipe(Effect.asVoid),
+    extensionExists: () => Effect.die("extensionExists unused"),
+    copyToCsv: () => Effect.die("copyToCsv unused"),
+    queryRaw: () => Effect.die("queryRaw unused"),
+  };
+  return { session, historyUpserts };
+}
+
+const TARGET_PORT = 5432;
+
+function makeDbConfigLayers(
+  remoteMigrations: ReadonlyArray<RemoteMigrationRow>,
+  callOrder: Array<string>,
+): {
+  readonly layer: Layer.Layer<LegacyDbConfigResolver | LegacyDbConnection>;
+  readonly historyUpserts: ReadonlyArray<ReadonlyArray<unknown>>;
+  readonly connectedPorts: ReadonlyArray<number>;
+} {
+  const target = makeMigrationSession(remoteMigrations, callOrder, "target");
+  const shadow = makeMigrationSession([], callOrder, "shadow");
+  const connectedPorts: Array<number> = [];
+
+  const dbConnection = Layer.succeed(LegacyDbConnection, {
+    connect: (cfg: { readonly database: string; readonly port: number }) =>
+      Effect.sync(() => {
+        connectedPorts.push(cfg.port);
+        return cfg.port === TARGET_PORT ? target.session : shadow.session;
+      }),
+  });
+
+  const resolver = Layer.succeed(LegacyDbConfigResolver, {
+    resolve: (resolveFlags) => {
+      const { connType } = resolveFlags;
+      return Effect.succeed({
+        conn: {
+          host: connType === "local" ? "127.0.0.1" : `db.${LEGACY_VALID_REF}.supabase.co`,
+          port: TARGET_PORT,
+          user: "postgres",
+          password: "x",
+          database: "postgres",
+        },
+        isLocal: connType === "local",
+        ref: Option.some(LEGACY_VALID_REF),
+      });
+    },
+    resolvePoolerFallback: () => Effect.succeed(Option.none()),
+  });
+
+  return {
+    layer: Layer.mergeAll(dbConnection, resolver),
+    historyUpserts: target.historyUpserts,
+    connectedPorts,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// A fully-mocked `LegacyPgDeltaEngine` — every db step forces this engine via
+// `[experimental.pgdelta] enabled = true` in `writeConfig`, so neither the
+// migra/edge-runtime path nor the pg_dump initial-pull seed is ever reached.
+// ---------------------------------------------------------------------------
+
+interface DiffOutcome {
+  readonly changes: boolean;
+  readonly files?: ReadonlyArray<{ readonly name: string; readonly sql: string }>;
+  /** Fails the diff with a typed `LegacyPgDeltaEngineError` (an ordinary db-step failure). */
+  readonly fail?: string;
+  /** Dies the diff with a defect — proves `legacyPullCaptureStep` re-raises a
+   *  defect/interruption instead of ever capturing it as a per-step failure. */
+  readonly die?: string;
+}
+
+function makePgDeltaEngine(diffOutcome: () => DiffOutcome): {
+  readonly layer: Layer.Layer<LegacyPgDeltaEngine>;
+  readonly diffCount: () => number;
+} {
+  let diffCount = 0;
+  const layer = Layer.succeed(LegacyPgDeltaEngine, {
+    diffExplicit: () => Effect.die("diffExplicit unused"),
+    diffDatabase: () => {
+      diffCount += 1;
+      const outcome = diffOutcome();
+      if (outcome.die !== undefined) {
+        return Effect.die(new Error(outcome.die));
+      }
+      if (outcome.fail !== undefined) {
+        return Effect.fail(
+          new LegacyPgDeltaEngineError({ message: outcome.fail, cause: outcome.fail }),
+        );
+      }
+      const files = (outcome.files ?? []).map((file, index) => ({
+        sequence: index + 1,
+        name: file.name,
+        suffix: null,
+        sql: file.sql,
+        transactionMode: "transactional" as const,
+      }));
+      return Effect.succeed({
+        changes: outcome.changes,
+        sql: files.map((file) => file.sql).join("\n"),
+        files,
+      });
+    },
+    exportDeclarativeSchema: () =>
+      Effect.die("exportDeclarativeSchema unused (pull never declares --declarative)"),
+    planDeclarativeSchema: () => Effect.die("planDeclarativeSchema unused"),
+  });
+  return { layer, diffCount: () => diffCount };
+}
+
+// ---------------------------------------------------------------------------
+// Management API mock: config GET, branch-by-name resolution, and the
+// functions list/body endpoints, all through one URL-routed handler.
+// ---------------------------------------------------------------------------
+
+function multipartFixture(content: string): { readonly boundary: string; readonly body: string } {
+  const boundary = "legacy-pull-test";
+  return {
+    boundary,
+    body: [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="metadata"',
+      "Content-Type: application/json",
+      "",
+      JSON.stringify({ deno2_entrypoint_path: "source/index.ts" }),
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="file"; filename="source/index.ts"',
+      "",
+      content,
+      `--${boundary}--`,
+      "",
+    ].join("\r\n"),
+  };
+}
+
+interface ApiOpts {
+  readonly configResponse?: unknown;
+  readonly functionSlugs?: ReadonlyArray<string>;
+  readonly functionsListStatus?: number;
+  /** A transport (not status-code) failure resolving a branch-name `--project-ref`. */
+  readonly branchNetworkFails?: boolean;
+}
+
+function makeApiMock(opts: ApiOpts) {
+  return mockLegacyPlatformApi({
+    handler: (request) => {
+      const url = request.url;
+      if (url.includes("/v2/projects/") && url.endsWith("/config")) {
+        return Effect.succeed(
+          legacyJsonResponse(request, 200, opts.configResponse ?? legacyV2ProjectConfigResponse()),
+        );
+      }
+      if (url.includes("/v1/branches/")) {
+        return Effect.succeed(legacyJsonResponse(request, 200, {}));
+      }
+      if (url.includes("/branches/")) {
+        if (opts.branchNetworkFails === true) {
+          return Effect.fail(legacyTransportFailure(request));
+        }
+        return Effect.succeed(legacyJsonResponse(request, 200, BRANCH_BY_NAME));
+      }
+      if (url.endsWith("/body")) {
+        const { boundary, body } = multipartFixture("console.log('pull');\n");
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(body, {
+              status: 200,
+              headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+            }),
+          ),
+        );
+      }
+      if (url.endsWith("/functions")) {
+        if (opts.functionsListStatus !== undefined && opts.functionsListStatus !== 200) {
+          return Effect.succeed(
+            legacyJsonResponse(request, opts.functionsListStatus, "list functions failed"),
+          );
+        }
+        return Effect.succeed(
+          legacyJsonResponse(
+            request,
+            200,
+            (opts.functionSlugs ?? []).map((slug) => ({ slug })),
+          ),
+        );
+      }
+      return Effect.succeed(legacyJsonResponse(request, 200, {}));
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// A REAL captured `Stdio` layer — only the json/stream-json envelope tests
+// need it (the `MachineErrorContext` merge lives inside the real
+// `jsonOutputLayer`/`streamJsonOutputLayer` `fail`/`success` implementations,
+// which `mockOutput` never replicates), mirroring
+// `status.integration.test.ts`'s `mockCapturingStdio`.
+// ---------------------------------------------------------------------------
+
+function mockCapturingStdio(args: ReadonlyArray<string>) {
+  const stdout: Array<string> = [];
+  const stderr: Array<string> = [];
+  const decode = (item: string | Uint8Array) =>
+    typeof item === "string" ? item : new TextDecoder().decode(item);
+  const layer = Layer.succeed(
+    Stdio.Stdio,
+    Stdio.make({
+      args: Effect.succeed(args),
+      stdin: Stream.empty,
+      stdout: () =>
+        Sink.forEach((item: string | Uint8Array) => Effect.sync(() => stdout.push(decode(item)))),
+      stderr: () =>
+        Sink.forEach((item: string | Uint8Array) => Effect.sync(() => stderr.push(decode(item)))),
+    }),
+  );
+  return { layer, stdout, stderr };
+}
+
+/**
+ * Wraps `base` so every `promptConfirm` call first runs `onConfirm` (a
+ * synchronous side effect) before delegating to the real mock — mirrors
+ * `config/pull/pull.integration.test.ts`'s own `withConfirmSideEffect`, used
+ * here to simulate a concurrent edit landing on `supabase/config.toml`
+ * WHILE the orchestrator's own confirmation prompt is "on screen" (the
+ * config step's TOCTOU guard, `legacyApplyConfigPullRun`).
+ */
+function withConfirmSideEffect(
+  base: Layer.Layer<Output>,
+  onConfirm: () => void,
+): Layer.Layer<Output> {
+  return Layer.effect(
+    Output,
+    Effect.gen(function* () {
+      const inner = yield* Output;
+      return {
+        ...inner,
+        promptConfirm: (message: string, promptOpts?: { defaultValue?: boolean }) =>
+          Effect.sync(onConfirm).pipe(Effect.andThen(inner.promptConfirm(message, promptOpts))),
+      };
+    }),
+  ).pipe(Layer.provide(base));
+}
+
+// ---------------------------------------------------------------------------
+// setup()
+// ---------------------------------------------------------------------------
+
+interface SetupOpts {
+  readonly format?: "text" | "json" | "stream-json";
+  readonly goOutput?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
+  readonly yes?: boolean;
+  readonly stdinIsTty?: boolean;
+  readonly confirm?: ReadonlyArray<boolean>;
+  readonly gitDirty?: boolean;
+  readonly gitSpawnFails?: boolean;
+  readonly api?: ApiOpts;
+  readonly remoteMigrations?: ReadonlyArray<RemoteMigrationRow>;
+  readonly diffOutcome?: () => DiffOutcome;
+  /** Runs as a side effect of the ORCHESTRATOR's own "Proceed with pull?"
+   *  confirmation, before it resolves — simulates a concurrent edit landing
+   *  on `supabase/config.toml` while that prompt is on screen (text-mode,
+   *  interactive TTY only). */
+  readonly confirmSideEffect?: () => void;
+  /** Overrides `cliSettings.workdir` — defaults to the temp project root. */
+  readonly workdir?: string;
+}
+
+function setup(opts: SetupOpts = {}) {
+  const format = opts.format ?? "text";
+  const isMachine = format !== "text";
+  const capturingStdio = isMachine ? mockCapturingStdio(["pull"]) : undefined;
+  const out =
+    capturingStdio === undefined
+      ? mockOutput({ format, promptConfirmResponses: opts.confirm })
+      : undefined;
+
+  const finalOutputLayer =
+    capturingStdio !== undefined
+      ? (format === "json" ? jsonOutputLayer : streamJsonOutputLayer).pipe(
+          Layer.provide(capturingStdio.layer),
+        )
+      : opts.confirmSideEffect === undefined
+        ? out!.layer
+        : withConfirmSideEffect(out!.layer, opts.confirmSideEffect);
+
+  const telemetry = mockLegacyTelemetryStateTracked();
+  const linkedProjectCache = mockLegacyLinkedProjectCacheTracked();
+  const processControl = mockProcessControl();
+  const analytics = mockContextualAnalytics();
+
+  const api = makeApiMock(opts.api ?? {});
+  const spawner = composeSpawner({ gitDirty: opts.gitDirty, gitSpawnFails: opts.gitSpawnFails });
+  const callOrder: Array<string> = [];
+  const dbConfig = makeDbConfigLayers(opts.remoteMigrations ?? [], callOrder);
+  const pgDelta = makePgDeltaEngine(opts.diffOutcome ?? (() => ({ changes: false })));
+
+  const cliSettings = mockLegacyCliSettings({
+    workdir: opts.workdir ?? tempRoot.current,
+    projectId: Option.some(LEGACY_VALID_REF),
+  });
+
+  const layer = Layer.mergeAll(
+    buildLegacyTestRuntime({
+      out: { layer: finalOutputLayer },
+      api,
+      cliSettings,
+      tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
+      stdin: mockStdin(opts.stdinIsTty ?? false),
+      runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      telemetry: telemetry.layer,
+      linkedProjectCache: linkedProjectCache.layer,
+      processControl: { layer: processControl.layer },
+      analytics: { layer: analytics.layer },
+      goOutput: opts.goOutput ?? Option.none(),
+    }),
+    machineErrorContextLayer,
+    commandRuntimeLayer(["pull"]),
+    capturingStdio?.layer ?? Stdio.layerTest({ args: Effect.succeed(["pull"]) }),
+    dbConfig.layer,
+    pgDelta.layer,
+    Layer.succeed(LegacyEdgeRuntimeScript, {
+      run: () => Effect.die("migra edge runtime unused — every db step forces pg-delta"),
+    }),
+    Layer.succeed(LegacyDockerRun, {
+      run: () => Effect.die("run unused"),
+      runCapture: () => Effect.die("runCapture unused"),
+      runStream: (runOpts) =>
+        runOpts.skipImageResolve === true
+          ? Effect.succeed({ exitCode: 0, stderr: "" })
+          : Effect.die("runStream unused — pg-delta initial pulls skip the pg_dump seed"),
+    }),
+    Layer.succeed(LegacyPgDeltaSslProbe, {
+      requireSsl: () => Effect.succeed(false),
+      requireSslForHost: () => Effect.succeed(false),
+    }),
+    Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    Layer.succeed(LegacyExperimentalFlag, false),
+    Layer.succeed(LegacyDebugFlag, false),
+    Layer.succeed(LegacyDnsResolverFlag, "native"),
+    Layer.succeed(LegacyNetworkIdFlag, Option.none()),
+    Layer.succeed(CliArgs, { args: [] }),
+    // Listed after `buildLegacyTestRuntime` so it overrides the real spawner
+    // `BunServices.layer` provides (last-wins, same precedent as
+    // `config/pull/pull.integration.test.ts`'s `mockLegacyGitStatusSpawner`).
+    spawner.layer,
+  );
+
+  return {
+    layer,
+    out,
+    capturingStdio,
+    api,
+    telemetry,
+    linkedProjectCache,
+    processControl,
+    analytics,
+    spawner,
+    dbConfig,
+    pgDelta,
+    callOrder,
+  };
+}
+
+describe("legacy pull integration", () => {
+  // -------------------------------------------------------------------------
+  // 1. Fresh-checkout bootstrap.
+  // -------------------------------------------------------------------------
+
+  it.live(
+    "bootstraps a fresh checkout: migration history auto-runs, config/functions/db all report changed",
+    () => {
+      writeConfig("[api]\nmax_rows = 500\n");
+      const { layer, out, telemetry, analytics } = setup({
+        yes: true,
+        api: { functionSlugs: ["hello"] },
+        remoteMigrations: [
+          { version: "20260101000000", name: "init", statements: ["create table foo ();"] },
+        ],
+        diffOutcome: () => ({
+          changes: true,
+          files: [{ name: "pull", sql: "alter table foo add column bar text;" }],
+        }),
+      });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags());
+
+        expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
+        expect(existsSync(join(migrationsDir(), "20260101000000_init.sql"))).toBe(true);
+        // The db step wrote at least one MORE file beyond the one
+        // migration-history just fetched.
+        expect(readdirSync(migrationsDir()).length).toBeGreaterThan(1);
+        expect(
+          existsSync(join(tempRoot.current, "supabase", "functions", "hello", "index.ts")),
+        ).toBe(true);
+
+        expect(stepLine(out!.stdoutText, "config")).toContain("changed");
+        expect(stepLine(out!.stdoutText, "migration_history")).toContain("changed");
+        expect(stepLine(out!.stdoutText, "db")).toContain("changed");
+        expect(stepLine(out!.stdoutText, "functions")).toContain("changed");
+
+        expect(telemetry.flushed).toBe(true);
+        const executed = analytics.captured.filter((c) => c.event === "cli_command_executed");
+        expect(executed).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "bootstraps a fresh checkout with --output-format json: exactly one JSON object with all four step keys",
+    () => {
+      writeConfig("[api]\nmax_rows = 500\n");
+      const { layer, capturingStdio } = setup({
+        format: "json",
+        yes: true,
+        api: { functionSlugs: ["hello"] },
+        remoteMigrations: [
+          { version: "20260101000000", name: "init", statements: ["create table foo ();"] },
+        ],
+        diffOutcome: () => ({
+          changes: true,
+          files: [{ name: "pull", sql: "alter table foo add column bar text;" }],
+        }),
+      });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags());
+
+        expect(capturingStdio!.stdout).toHaveLength(1);
+        const payload = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+        const steps = payload["steps"] as Record<string, unknown>;
+        expect(Object.keys(steps).sort()).toEqual([
+          "config",
+          "db",
+          "functions",
+          "migration_history",
+        ]);
+        expect((steps["config"] as Record<string, unknown>)["status"]).toBe("changed");
+        expect((steps["migration_history"] as Record<string, unknown>)["status"]).toBe("changed");
+        expect((steps["db"] as Record<string, unknown>)["status"]).toBe("changed");
+        expect((steps["functions"] as Record<string, unknown>)["status"]).toBe("changed");
+        expect(payload["wrote"]).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // 2. Target resolved once.
+  // -------------------------------------------------------------------------
+
+  it.live(
+    "a branch-name --project-ref resolves exactly once: one branch lookup, one config GET, no picker prompt",
+    () => {
+      writeConfig();
+      seedLocalMigration("20260101000000");
+      const { layer, out, api } = setup({
+        yes: true,
+        remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
+        diffOutcome: () => ({ changes: false }),
+      });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags({ projectRef: Option.some("staging") }));
+
+        const branchLookups = api.requests.filter((request) => request.url.includes("/branches/"));
+        expect(branchLookups).toHaveLength(1);
+        const configLookups = api.requests.filter((request) => request.url.endsWith("/config"));
+        expect(configLookups).toHaveLength(1);
+        expect(out!.promptSelectCalls).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // 3. Exactly one confirmation.
+  // -------------------------------------------------------------------------
+
+  it.live(
+    "on an interactive TTY with real diffs, the confirmation prompt appears exactly once",
+    () => {
+      writeConfig("[api]\nmax_rows = 500\n");
+      seedLocalMigration("20260101000000");
+      const { layer, out } = setup({
+        stdinIsTty: true,
+        confirm: [true],
+        remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
+        diffOutcome: () => ({ changes: false }),
+      });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags());
+
+        expect(out!.promptConfirmCalls).toHaveLength(1);
+        expect(out!.promptConfirmCalls[0]?.message).toBe("Proceed with pull?");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // 4. --dry-run.
+  // -------------------------------------------------------------------------
+
+  it.live("--dry-run writes nothing and reports every step planned/skipped", () => {
+    const before =
+      'project_id = "test"\n\n[experimental.pgdelta]\nenabled = true\n[api]\nmax_rows = 500\n';
+    mkdirSync(join(tempRoot.current, "supabase"), { recursive: true });
+    writeFileSync(configPath(), before);
+    const { layer, out, api } = setup({ yes: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(runPull(pullFlags({ dryRun: true })));
+      expect(Exit.isSuccess(exit)).toBe(true);
+
+      expect(readFileSync(configPath(), "utf8")).toBe(before);
+      expect(existsSync(migrationsDir())).toBe(false);
+      expect(api.requests.some((request) => request.method !== "GET")).toBe(false);
+
+      expect(stepLine(out!.stdoutText, "config")).toContain("planned");
+      expect(stepLine(out!.stdoutText, "migration_history")).toContain("planned");
+      expect(stepLine(out!.stdoutText, "db")).toContain("planned");
+      expect(stepLine(out!.stdoutText, "functions")).toContain("planned");
+    }).pipe(Effect.provide(layer));
+  });
+
+  // -------------------------------------------------------------------------
+  // 5. Declined confirmation.
+  // -------------------------------------------------------------------------
+
+  it.live(
+    "declining the confirmation writes nothing; migration history reports declined, db/functions report planned",
+    () => {
+      writeConfig("[api]\nmax_rows = 500\n");
+      const before = readFileSync(configPath(), "utf8");
+      const { layer, out } = setup({ stdinIsTty: true, confirm: [false] });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(runPull(pullFlags()));
+        expect(Exit.isSuccess(exit)).toBe(true);
+
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        expect(existsSync(migrationsDir())).toBe(false);
+
+        expect(stepLine(out!.stdoutText, "config")).toContain("planned");
+        expect(stepLine(out!.stdoutText, "migration_history")).toContain("skipped");
+        expect(stepLine(out!.stdoutText, "migration_history")).toContain("declined");
+        expect(stepLine(out!.stdoutText, "db")).toContain("planned");
+        expect(stepLine(out!.stdoutText, "functions")).toContain("planned");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // 7. Partial failure — still exactly one JSON envelope.
+  // -------------------------------------------------------------------------
+
+  it.live(
+    "a functions-step failure still reports every other step, exits non-zero, with exactly one JSON envelope",
+    () => {
+      writeConfig();
+      seedLocalMigration("20260101000000");
+      const { layer, capturingStdio, processControl } = setup({
+        format: "json",
+        yes: true,
+        api: { functionsListStatus: 500 },
+        remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
+        diffOutcome: () => ({ changes: false }),
+      });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags());
+
+        expect(capturingStdio!.stdout).toHaveLength(1);
+        const envelope = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+        expect(envelope["_tag"]).toBe("Error");
+        const steps = envelope["steps"] as Record<string, unknown>;
+        expect((steps["config"] as Record<string, unknown>)["status"]).not.toBe("failed");
+        expect((steps["migration_history"] as Record<string, unknown>)["status"]).not.toBe(
+          "failed",
+        );
+        expect((steps["db"] as Record<string, unknown>)["status"]).not.toBe("failed");
+        expect((steps["functions"] as Record<string, unknown>)["status"]).toBe("failed");
+        const failure = (steps["functions"] as Record<string, unknown>)["failure"] as Record<
+          string,
+          unknown
+        >;
+        expect(String(failure["message"])).toContain("500");
+        expect(processControl.exitCode).toBe(1);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // 8. Steady state: db in-sync, config unchanged, migration history not
+  //    needed, functions unchanged.
+  // -------------------------------------------------------------------------
+
+  it.live(
+    "a steady-state pull (no config drift, no schema drift, no functions) exits 0 with every step non-failed",
+    () => {
+      writeConfig();
+      seedLocalMigration("20260101000000");
+      const { layer, out } = setup({
+        yes: true,
+        remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
+        diffOutcome: () => ({ changes: false }),
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(runPull(pullFlags()));
+        expect(Exit.isSuccess(exit)).toBe(true);
+
+        expect(stepLine(out!.stdoutText, "config")).toContain("unchanged");
+        expect(stepLine(out!.stdoutText, "migration_history")).toContain("skipped");
+        expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
+        expect(stepLine(out!.stdoutText, "db")).toContain("unchanged");
+        expect(stepLine(out!.stdoutText, "functions")).toContain("unchanged");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // 9. Dirty supabase/config.toml.
+  // -------------------------------------------------------------------------
+
+  describe("dirty supabase/config.toml", () => {
+    it.live("interactive TTY: the prompt defaults to decline", () => {
+      writeConfig("[api]\nmax_rows = 500\n");
+      const before = readFileSync(configPath(), "utf8");
+      const { layer, out } = setup({ stdinIsTty: true, confirm: [false], gitDirty: true });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags());
+        expect(out!.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live(
+      "--yes on a dirty tree aborts with the uncommitted-changes error, no prompt shown",
+      () => {
+        writeConfig("[api]\nmax_rows = 500\n");
+        const before = readFileSync(configPath(), "utf8");
+        const { layer, out } = setup({ yes: true, gitDirty: true });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(runPull(pullFlags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          const rendered = JSON.stringify(exit);
+          expect(rendered).toContain("LegacyPullUncommittedChangesError");
+          expect(out!.promptConfirmCalls).toHaveLength(0);
+          expect(readFileSync(configPath(), "utf8")).toBe(before);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live("--output-format json on a dirty tree aborts without --yes and without a TTY", () => {
+      writeConfig("[api]\nmax_rows = 500\n");
+      const { layer, capturingStdio, processControl } = setup({
+        format: "json",
+        gitDirty: true,
+      });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags());
+        expect(capturingStdio!.stdout).toHaveLength(1);
+        const envelope = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+        expect((envelope["error"] as Record<string, unknown>)["code"]).toBe(
+          "LegacyPullUncommittedChangesError",
+        );
+        expect(processControl.exitCode).toBe(1);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live(
+      "a non-interactive text terminal (piped stdin) on a dirty tree aborts without prompting",
+      () => {
+        writeConfig("[api]\nmax_rows = 500\n");
+        const { layer, out } = setup({ stdinIsTty: false, gitDirty: true });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(runPull(pullFlags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(JSON.stringify(exit)).toContain("LegacyPullUncommittedChangesError");
+          expect(out!.promptConfirmCalls).toHaveLength(0);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live("--force proceeds and writes despite dirtiness, never even checking git", () => {
+      writeConfig("[api]\nmax_rows = 500\n");
+      const { layer, spawner } = setup({ yes: true, gitDirty: true });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags({ force: true }));
+        expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
+        expect(spawner.gitCalls).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("a git spawn failure degrades to 'not dirty' rather than blocking the pull", () => {
+      writeConfig("[api]\nmax_rows = 500\n");
+      const { layer } = setup({ yes: true, gitSpawnFails: true });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(runPull(pullFlags()));
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 10. Config-write-visible-to-db-step ordering.
+  // -------------------------------------------------------------------------
+
+  it.live(
+    "the db step's shadow setup observes the config step's own db.major_version write, not the stale pre-pull value",
+    () => {
+      writeConfig("[db]\nmajor_version = 14\n");
+      seedLocalMigration("20260101000000");
+      const { layer, spawner } = setup({
+        yes: true,
+        api: {
+          configResponse: legacyV2ProjectConfigResponse({
+            attributes: (attributes) => ({
+              ...attributes,
+              database: {
+                ...(attributes["database"] as Record<string, unknown>),
+                major_version: 15,
+              },
+            }),
+          }),
+        },
+        remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
+        diffOutcome: () => ({ changes: false }),
+      });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags());
+
+        expect(readFileSync(configPath(), "utf8")).toContain("major_version = 15");
+        const createCalls = spawner.shadowSpawned.filter((call) => call.args[0] === "create");
+        expect(createCalls.length).toBeGreaterThan(0);
+        const createArgs = createCalls.flatMap((call) => call.args);
+        expect(createArgs.some((arg) => /supabase\/postgres:15\./.test(arg))).toBe(true);
+        expect(createArgs.some((arg) => /supabase\/postgres:14\./.test(arg))).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // 11. Migration-history-before-db ordering.
+  // -------------------------------------------------------------------------
+
+  it.live(
+    "the migration-history step's remote read happens before the db step's own remote read",
+    () => {
+      writeConfig();
+      const { layer, callOrder } = setup({
+        yes: true,
+        remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
+        diffOutcome: () => ({ changes: false }),
+      });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags());
+
+        expect(existsSync(join(migrationsDir(), "20260101000000_init.sql"))).toBe(true);
+        expect(callOrder).toContain("migration_history_read");
+        expect(callOrder).toContain("db_list_remote");
+        expect(callOrder.indexOf("migration_history_read")).toBeLessThan(
+          callOrder.indexOf("db_list_remote"),
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // 12. -o/--output rejected.
+  // -------------------------------------------------------------------------
+
+  it.live(
+    "supabase pull -o json fails with a message pointing at --output-format, not a machine payload",
+    () => {
+      writeConfig();
+      const { layer, api } = setup({ goOutput: Option.some("json") });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(runPull(pullFlags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyPullOutputFlagUnsupportedError");
+        expect(rendered).toContain("--output-format");
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Phase 0 preconditions: an invalid workdir, and a network (not status-code)
+  // failure resolving a branch-name --project-ref.
+  // -------------------------------------------------------------------------
+
+  it.live(
+    "a --workdir naming a directory that does not exist fails before any target resolution",
+    () => {
+      const missing = join(tempRoot.current, "does-not-exist");
+      const { layer, api } = setup({ workdir: missing });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(runPull(pullFlags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyPullWorkdirError");
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "a network failure resolving a branch-name --project-ref fails with a network error, not a status error",
+    () => {
+      writeConfig();
+      const { layer } = setup({ api: { branchNetworkFails: true } });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(runPull(pullFlags({ projectRef: Option.some("staging") })));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("LegacyPullBranchResolveNetworkError");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // 13. Auto-run vs explicit --with-migration-history.
+  // -------------------------------------------------------------------------
+
+  describe("migration-history auto-run vs --with-migration-history", () => {
+    it.live(
+      "supabase/migrations already has files and the flag is not set: skipped as not_needed",
+      () => {
+        writeConfig();
+        seedLocalMigration("20260101000000");
+        const { layer, out } = setup({
+          yes: true,
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          yield* runPull(pullFlags());
+          expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "supabase/migrations already has files but --with-migration-history is set: the step actually runs",
+      () => {
+        writeConfig();
+        // Named "init" to match the remote row's own name below — the fetch
+        // rewrites this SAME file rather than leaving a stale
+        // differently-named duplicate under the same version behind (which
+        // would desync the remote/local version reconciliation the db step
+        // runs next).
+        seedLocalMigration("20260101000000", "init");
+        const { layer, out } = setup({
+          yes: true,
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+            { version: "20260102000000", name: "second", statements: ["select 2;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          yield* runPull(pullFlags({ withMigrationHistory: true }));
+          expect(existsSync(join(migrationsDir(), "20260102000000_second.sql"))).toBe(true);
+          expect(stepLine(out!.stdoutText, "migration_history")).toContain("changed");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "supabase/migrations is missing entirely: the step auto-runs (bootstrap reason)",
+      () => {
+        writeConfig();
+        const { layer, out } = setup({
+          yes: true,
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          yield* runPull(pullFlags());
+          expect(out!.stdoutText).toContain("supabase/migrations is empty");
+          expect(existsSync(join(migrationsDir(), "20260101000000_init.sql"))).toBe(true);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Per-step Phase-3 failure isolation: each of the four steps' own failure
+  // branch, one at a time, proving the OTHER three still ran and reported.
+  // -------------------------------------------------------------------------
+
+  describe("per-step failure isolation", () => {
+    it.live(
+      "a config-step failure (a concurrent edit during the confirmation prompt) still runs migration_history/db/functions, in text mode",
+      () => {
+        writeConfig("[api]\nmax_rows = 500\n");
+        seedLocalMigration("20260101000000");
+        const { layer, out } = setup({
+          stdinIsTty: true,
+          confirm: [true],
+          // Keeps `[experimental.pgdelta] enabled = true` intact — the point
+          // is the config step's own TOCTOU guard, not accidentally routing
+          // the db step onto the (unmocked) migra/edge-runtime path.
+          confirmSideEffect: () =>
+            writeFileSync(
+              configPath(),
+              'project_id = "changed-mid-flight"\n\n[experimental.pgdelta]\nenabled = true\n',
+            ),
+          api: { functionSlugs: ["hello"] },
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(runPull(pullFlags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(JSON.stringify(exit)).toContain("LegacyConfigPullFileChangedError");
+
+          expect(stepLine(out!.stdoutText, "config")).toContain("failed");
+          expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
+          expect(stepLine(out!.stdoutText, "db")).toContain("unchanged");
+          expect(stepLine(out!.stdoutText, "functions")).toContain("changed");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "a migration-history-step failure (a hostile remote history row) still runs config/functions, and re-fails with its OWN (first) cause even though db also fails downstream",
+      () => {
+        writeConfig();
+        const { layer, out } = setup({
+          yes: true,
+          api: { functionSlugs: [] },
+          // A path-traversal `name` trips `legacyRunMigrationFetch`'s own
+          // injection guard (CWE-22) — a real, reachable write failure, not a
+          // synthetic one. Since the fetch never gets to write this row, the
+          // db step's own remote/local reconciliation (same table) also
+          // conflicts — a real cascading-failure case, not a synthetic one.
+          remoteMigrations: [
+            { version: "20260101000000", name: "../evil", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(runPull(pullFlags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          // The FIRST failure (migration_history) is what re-fails the
+          // process, even though db independently fails too.
+          expect(JSON.stringify(exit)).toContain("LegacyMigrationFetchWriteError");
+          expect(JSON.stringify(exit)).not.toContain("LegacyDbPullMigrationConflictError");
+
+          expect(stepLine(out!.stdoutText, "config")).toContain("unchanged");
+          expect(stepLine(out!.stdoutText, "migration_history")).toContain("failed");
+          expect(stepLine(out!.stdoutText, "db")).toContain("failed");
+          expect(stepLine(out!.stdoutText, "functions")).toContain("unchanged");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "a db-step failure (a pg-delta engine error) still runs config/migration_history/functions",
+      () => {
+        writeConfig();
+        seedLocalMigration("20260101000000");
+        const { layer, out } = setup({
+          yes: true,
+          api: { functionSlugs: [] },
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false, fail: "boom: pg-delta blew up" }),
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(runPull(pullFlags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(JSON.stringify(exit)).toContain("LegacyPgDeltaEngineError");
+
+          expect(stepLine(out!.stdoutText, "config")).toContain("unchanged");
+          expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
+          expect(stepLine(out!.stdoutText, "db")).toContain("failed");
+          expect(stepLine(out!.stdoutText, "functions")).toContain("unchanged");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "a functions-step failure reported in TEXT mode inlines the failure message in the summary block",
+      () => {
+        writeConfig();
+        seedLocalMigration("20260101000000");
+        const { layer, out } = setup({
+          yes: true,
+          api: { functionsListStatus: 500 },
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(runPull(pullFlags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+
+          expect(stepLine(out!.stdoutText, "config")).toContain("unchanged");
+          expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
+          expect(stepLine(out!.stdoutText, "db")).toContain("unchanged");
+          expect(stepLine(out!.stdoutText, "functions")).toContain("failed");
+          expect(out!.stdoutText).toContain("500");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "a defect inside a step (not a typed failure) propagates as a defect instead of a captured step failure",
+      () => {
+        writeConfig();
+        seedLocalMigration("20260101000000");
+        const { layer } = setup({
+          yes: true,
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false, die: "pg-delta engine defect" }),
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(runPull(pullFlags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.hasDies(exit.cause)).toBe(true);
+            expect(Cause.hasFails(exit.cause)).toBe(false);
+          }
+        }).pipe(Effect.provide(layer));
+      },
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // dry-run / declined, when migration history is genuinely NOT needed
+  // (`supabase/migrations` already has files) — the "not_needed" reason
+  // branch of each early-return, distinct from the bootstrap ("declined"/
+  // "planned" via an empty directory) cases exercised above.
+  // -------------------------------------------------------------------------
+
+  it.live(
+    "--dry-run over an already-populated supabase/migrations reports migration_history as not_needed",
+    () => {
+      writeConfig("[api]\nmax_rows = 500\n");
+      seedLocalMigration("20260101000000");
+      const { layer, out } = setup({ yes: true });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags({ dryRun: true }));
+        expect(stepLine(out!.stdoutText, "migration_history")).toContain("skipped");
+        expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "declining over an already-populated supabase/migrations reports migration_history as not_needed",
+    () => {
+      writeConfig("[api]\nmax_rows = 500\n");
+      seedLocalMigration("20260101000000");
+      const { layer, out } = setup({ stdinIsTty: true, confirm: [false] });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags());
+        expect(stepLine(out!.stdoutText, "migration_history")).toContain("skipped");
+        expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+});
