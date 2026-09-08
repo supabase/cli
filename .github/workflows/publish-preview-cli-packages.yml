@@ -3,44 +3,44 @@ name: Publish Preview CLI Packages
 # Release-notes PRs (head ref `release-notes/*`) are markdown-only and are not
 # meant to produce installable preview packages.
 #
-# Default path: ready (non-draft) PRs targeting `develop`.
-# `run-ci.yml` calls this workflow for drafts and stacked / non-develop PRs.
+# Opt-in by label: pkg.pr.new hosts large CLI binaries, so publish only when
+# someone needs a shareable install. Add `run-preview-packages` to publish
+# (and re-publish on each subsequent push while labeled); remove it to cancel
+# in-progress runs via this workflow's concurrency group.
 on:
   pull_request:
     types:
       - opened
       - synchronize
       - reopened
-      - ready_for_review
-      - converted_to_draft
-    branches:
-      - develop
-  workflow_call:
-    inputs:
-      force:
-        description: Publish even when the PR is a draft (used by run-ci.yml)
-        type: boolean
-        default: false
-    secrets:
-      DF_FIREWALL_TOKEN:
-        required: true
+      - labeled
+      - unlabeled
 
 permissions:
   actions: read
   contents: read
 
-# Literal prefix: called workflows inherit github.workflow from the caller
-# (`run-ci`). `inputs.force` separates this call from a skipped native run on
-# a develop draft.
+# Unrelated label events still start a run; give them a unique group so they
+# cannot cancel an in-progress publish. Removing `run-preview-packages` stays
+# on the main group and cancels via cancel-in-progress.
 concurrency:
-  group: publish-preview-cli-packages.yml-${{ github.event.pull_request.number || github.head_ref }}-${{ inputs.force && 'run-ci' || 'direct' }}
+  group: >-
+    publish-preview-cli-packages.yml-${{ github.event.pull_request.number || github.ref }}${{
+      ((github.event.action == 'labeled' || github.event.action == 'unlabeled')
+        && github.event.label.name != 'run-preview-packages'
+        && format('-noop-{0}', github.run_id))
+      || ''
+    }}
   cancel-in-progress: true
 
 jobs:
   build:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
-      (inputs.force || github.event.pull_request.draft == false)
+      contains(github.event.pull_request.labels.*.name, 'run-preview-packages') &&
+      ((github.event.action != 'labeled' &&
+          github.event.action != 'unlabeled') ||
+        github.event.label.name == 'run-preview-packages')
     name: Build preview CLI packages
     uses: ./.github/workflows/build-cli-artifacts.yml
     with:
@@ -53,7 +53,10 @@ jobs:
     needs: build
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
-      (inputs.force || github.event.pull_request.draft == false) &&
+      contains(github.event.pull_request.labels.*.name, 'run-preview-packages') &&
+      ((github.event.action != 'labeled' &&
+          github.event.action != 'unlabeled') ||
+        github.event.label.name == 'run-preview-packages') &&
       needs.build.result == 'success'
     name: Publish preview package
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -137,7 +140,10 @@ jobs:
     needs: publish
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
-      (inputs.force || github.event.pull_request.draft == false) &&
+      contains(github.event.pull_request.labels.*.name, 'run-preview-packages') &&
+      ((github.event.action != 'labeled' &&
+          github.event.action != 'unlabeled') ||
+        github.event.label.name == 'run-preview-packages') &&
       needs.publish.result == 'success'
     name: Post preview command comment
     runs-on: ubuntu-latest
