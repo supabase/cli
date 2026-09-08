@@ -53,7 +53,7 @@ export const legacyExperimentalStackLogsCommand = Command.make("logs", config).p
   ]),
   Command.withHandler((flags) =>
     legacyExperimentalStackLogs(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, config }),
+      withLegacyCommandInstrumentation({ flags, config, aliases: { f: "follow" } }),
       withJsonErrorHandling,
     ),
   ),
