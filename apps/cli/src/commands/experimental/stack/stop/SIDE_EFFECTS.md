@@ -21,8 +21,11 @@ returning. That process is package-owned and is not managed directly by the CLI.
 ## Output and telemetry
 
 Text mode reports the selected stack and stopped outcome. Structured modes include the selected
-stack id and stopped outcome. For `--all`, all stops are attempted and a partial failure returns
-one aggregate error naming failed stack ids. An empty registry succeeds. If no current stack
+stack id and stopped outcome. For `--all`, registry enumeration must succeed before any stop
+is attempted. An unreadable or unsupported registry entry fails discovery with the affected stack
+id; repair that entry or stop known stacks individually by id. After successful enumeration, all
+stops are attempted and a partial failure returns one aggregate error naming failed stack ids.
+An empty registry succeeds. If no current stack
 exists, the command succeeds with an explicit no-stack result. Exit status is `0` for a
 successful stop or no current stack, `1` for a missing named stack or any typed stop failure,
 and `130` if the command is interrupted before the stop completes. Standard command instrumentation records command

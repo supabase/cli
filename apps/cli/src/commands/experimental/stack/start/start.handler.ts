@@ -56,6 +56,13 @@ const legacyApplyExperimentalStackStartExclusions = (
 ) => {
   if (exclusions.length === 0) return config;
   const excluded = new Set(exclusions);
+  const apiGatewayDisabled =
+    (excluded.has("rest") || config.capabilities?.rest?.enabled === false) &&
+    (excluded.has("auth") || config.capabilities?.auth?.enabled === false) &&
+    (excluded.has("realtime") || config.capabilities?.realtime?.enabled === false) &&
+    (excluded.has("storage") || config.capabilities?.storage?.enabled === false) &&
+    (excluded.has("functions") || config.capabilities?.functions?.enabled === false) &&
+    (excluded.has("analytics") || config.capabilities?.analytics?.enabled === false);
   return {
     ...config,
     capabilities: {
@@ -88,6 +95,14 @@ const legacyApplyExperimentalStackStartExclusions = (
         ? { pooler: { ...config.capabilities?.pooler, enabled: false as const } }
         : {}),
     },
+    ...(apiGatewayDisabled
+      ? {
+          listeners: {
+            ...config.listeners,
+            api: { ...config.listeners?.api, enabled: false as const },
+          },
+        }
+      : {}),
   };
 };
 

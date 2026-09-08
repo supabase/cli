@@ -47,7 +47,9 @@ project’s configured services. `--eager` waits for enabled services to become 
 
 `supabase stack stop --all` stops every stack in the new backend’s registry and
 preserves data. It cannot be combined with `--stack` or `--stack-id`. Failures
-are reported after attempting the other stacks.
+are reported after attempting the other stacks once registry enumeration succeeds. If a registry
+entry is unreadable or unsupported, discovery fails before any stack is stopped; repair that
+entry or stop known stacks individually with `--stack-id`.
 
 `supabase stack destroy --stack feature-a` permanently removes exactly that
 stack and its data after confirmation. Use `--yes` for unattended execution.

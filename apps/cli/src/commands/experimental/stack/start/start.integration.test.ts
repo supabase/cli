@@ -283,6 +283,10 @@ describe("experimental stack start targeting", () => {
 
   it.live("applies capability exclusions only to the start request", () => {
     const root = project();
+    writeFileSync(
+      join(root, "supabase", "config.toml"),
+      'project_id = "start-test"\n[api]\nport = 55422\n',
+    );
     let startConfig: unknown;
     const stack = fakeStack("e".repeat(64), (config) => {
       startConfig = config;
@@ -290,18 +294,85 @@ describe("experimental stack start targeting", () => {
     });
     const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
-      yield* legacyExperimentalStackStart(flags({ exclude: ["rest", "functions"] }));
+      yield* legacyExperimentalStackStart(
+        flags({ exclude: ["rest", "auth", "realtime", "storage", "functions"] }),
+      );
       expect(startConfig).toMatchObject({
         config: {
           capabilities: {
             rest: { enabled: false },
+            auth: { enabled: false },
+            realtime: { enabled: false },
+            storage: { enabled: false },
             functions: { enabled: false },
           },
         },
       });
       expect(startConfig).not.toMatchObject({
-        config: { capabilities: { auth: { enabled: false } } },
+        config: { capabilities: { analytics: { enabled: false } } },
       });
+      expect(startConfig).toMatchObject({ config: { listeners: { api: { port: 55422 } } } });
+      expect(startConfig).not.toMatchObject({ config: { listeners: { api: { enabled: false } } } });
+    }).pipe(
+      Effect.provide(setup.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("disables the API listener when every gateway capability is excluded", () => {
+    const root = project();
+    writeFileSync(
+      join(root, "supabase", "config.toml"),
+      'project_id = "start-test"\n[api]\nport = 55423\n',
+    );
+    let startConfig: unknown;
+    const stack = fakeStack("f".repeat(64), (config) => {
+      startConfig = config;
+      return Effect.succeed(status("f".repeat(64)));
+    });
+    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+    return Effect.gen(function* () {
+      yield* legacyExperimentalStackStart(
+        flags({
+          exclude: ["rest", "auth", "realtime", "storage", "functions", "analytics"],
+        }),
+      );
+      expect(startConfig).toMatchObject({
+        config: {
+          capabilities: {
+            rest: { enabled: false },
+            auth: { enabled: false },
+            realtime: { enabled: false },
+            storage: { enabled: false },
+            functions: { enabled: false },
+            analytics: { enabled: false },
+          },
+          listeners: { api: { enabled: false, port: 55423 } },
+        },
+      });
+    }).pipe(
+      Effect.provide(setup.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("counts configured-disabled gateway capabilities with exclusions", () => {
+    const root = project();
+    writeFileSync(
+      join(root, "supabase", "config.toml"),
+      'project_id = "start-test"\n[api]\nport = 55424\n[analytics]\nenabled = false\n',
+    );
+    let startConfig: unknown;
+    const stack = fakeStack("a".repeat(64), (config) => {
+      startConfig = config;
+      return Effect.succeed(status("a".repeat(64)));
+    });
+    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+    return Effect.gen(function* () {
+      yield* legacyExperimentalStackStart(
+        flags({ exclude: ["rest", "auth", "realtime", "storage", "functions"] }),
+      );
+      expect(startConfig).toMatchObject({ config: { listeners: { api: { enabled: false } } } });
     }).pipe(
       Effect.provide(setup.layer),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
