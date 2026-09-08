@@ -489,7 +489,7 @@ function countChangedLines(before: string, after: string): number {
   return a.filter((line, index) => line !== b[index]).length;
 }
 
-describe("legacy config pull integration", () => {
+describe("config pull integration", () => {
   it.live(
     "root-target single-property update writes the file with exactly one changed line",
     () => {

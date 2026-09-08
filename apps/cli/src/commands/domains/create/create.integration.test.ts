@@ -104,7 +104,7 @@ function postedToInitialize(api: { requests: ReadonlyArray<{ url: string }> }): 
   return api.requests.some((r) => r.url.includes("/custom-hostname/initialize"));
 }
 
-describe("legacy domains create integration", () => {
+describe("domains create integration", () => {
   it.live("verifies the CNAME, creates the hostname, and prints status to stderr", () => {
     const { layer, out, api, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {

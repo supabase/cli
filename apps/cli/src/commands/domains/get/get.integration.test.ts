@@ -67,7 +67,7 @@ function setup(opts: SetupOpts = {}) {
 
 const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
 
-describe("legacy domains get integration", () => {
+describe("domains get integration", () => {
   it.live("prints the hostname status to stderr in text mode", () => {
     const { layer, out, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {

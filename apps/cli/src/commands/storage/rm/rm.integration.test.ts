@@ -27,7 +27,7 @@ function prefixCount(body: unknown): number {
     : -1;
 }
 
-describe("legacy storage rm", () => {
+describe("storage rm", () => {
   const tmp = useTempWorkdir("supabase-storage-rm-");
 
   afterEach(() => {

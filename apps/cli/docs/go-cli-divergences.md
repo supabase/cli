@@ -1,7 +1,7 @@
 # Go CLI Divergences
 
 **Frozen historical ledger** of deliberate TypeScript divergences from the old Go CLI
-(pre-`7b469f5b3`) on the legacy shell: TS-only commands, flags, and behavior with no Go
+(pre-`7b469f5b3`) on the CLI: TS-only commands, flags, and behavior with no Go
 counterpart. The TypeScript CLI is now the source of truth, so this ledger no longer accumulates
 entries — new flags, commands, and behavioral changes are simply new CLI behavior, documented
 through help text, tests, and each command's `SIDE_EFFECTS.md`. This document exists to answer
@@ -35,7 +35,7 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   not emit coverage diagnostics. Default behavior (omitted flag) matches Go.
 - `db push` has a TS-only `--skip-vault` flag. It applies migrations without
   resolving or updating `[db.vault]` secrets; default behavior still matches Go.
-- Every legacy command that resolves a linked project ref for its own database
+- Every command that resolves a linked project ref for its own database
   connection has a TS-only `--project-ref` flag (no Go equivalent on any
   user-facing command — only the `SUPABASE_PROJECT_ID` env var could override
   the linked ref; the sole Go registration is a hidden, non-user-facing seam,
@@ -72,7 +72,7 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   no short alias). It writes the generated declarative tree to the given directory for this
   invocation only, without changing the configured `declarative_schema_path` — the staging step
   of the legacy-tree upgrade recipe printed by the sync/generate compatibility gates. The name
-  deliberately avoids `--output`/`-o`, which the legacy root reserves for the global
+  deliberately avoids `--output`/`-o`, which the root command reserves for the global
   machine-format flag; a leaf string flag would shadow it and turn `generate -o json` into a
   write to a directory named `json`. Default behavior (omitted flag) matches Go.
 - `link` has a TS-only `[ref-or-branch]` positional argument (no Go equivalent), and its
@@ -242,7 +242,7 @@ commit` is now native `db pull`, so it uses pull's flag-then-env-then-dotenv
   container instead of failing outright (CLI-2220). The CLI process's own limit is used as a
   proxy for the daemon's — exact in the sandboxes this targets, where both share the cap; a
   Linux client more constrained than its daemon (remote `DOCKER_HOST`, mounted socket) just
-  gets a smaller fd budget, never a failed start. When the clamp lowers the request, the legacy
+  gets a smaller fd budget, never a failed start. When the clamp lowers the request, the CLI's
   `functions serve`/`start` bring-up warns with the reduced limit. The `@supabase/stack` service
   builder (next-shell `stack start`) applies the same clamp silently: its defs are built without
   an output channel, and in managed mode inside the daemon process, so a user-visible warning

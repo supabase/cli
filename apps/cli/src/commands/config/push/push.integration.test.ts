@@ -382,7 +382,7 @@ function setup(opts: {
   return { layer, out, api, telemetry, linkedProjectCache };
 }
 
-describe("legacy config push integration", () => {
+describe("config push integration", () => {
   it.live("pushes local config (text) and surfaces a PATCH failure", () => {
     // Regression test for the encoder's sparse body: `encodeApiBody`
     // omits every unchanged key entirely (no `undefined`-valued keys), so
@@ -1352,7 +1352,7 @@ function methodsOf(apiMock: ReturnType<typeof setupService>["apiMock"]): Array<s
   return apiMock.requests.map((r) => r.method);
 }
 
-describe("legacy config push gated services", () => {
+describe("config push gated services", () => {
   it.live("pushes auth email HTML loaded from content_path", () => {
     const templateDir = join(tempRoot.current, "templates");
     mkdirSync(templateDir, { recursive: true });
@@ -2277,7 +2277,7 @@ allowed_cidrs_v6 = ["::/0"]
 // Each test cites the decision letter(s) it exercises.
 // ---------------------------------------------------------------------------
 
-describe("legacy config push fix-pass scenarios", () => {
+describe("config push fix-pass scenarios", () => {
   it.live(
     "D1: an undeclared allowed_cidrs_v6 keeps the REMOTE v6 list, not a schema default",
     () => {
@@ -2926,7 +2926,7 @@ function setupLinkedBranchPush(
   });
 }
 
-describe("legacy config push branch/project target detection (CLI-2168)", () => {
+describe("config push branch/project target detection (CLI-2168)", () => {
   it.live("a plain project push never triggers the branch confirmation gate", () => {
     const { layer, out, api } = setup({
       toml: BRANCH_PUSH_TOML,
@@ -3039,7 +3039,7 @@ describe("legacy config push branch/project target detection (CLI-2168)", () => 
       expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
       expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(false);
       expect(api.requests.some((r) => r.url.includes("/postgrest"))).toBe(false);
-      // Legacy Shell Invariant #1: a declined branch gate still flushes
+      // CLI Invariant #1: a declined branch gate still flushes
       // telemetry and writes the linked-project cache, same as any other
       // failure.
       expect(telemetry.flushed).toBe(true);
@@ -3297,7 +3297,7 @@ describe("legacy config push branch/project target detection (CLI-2168)", () => 
   // `FileSystem` fake diverging from every other scenario in this file.
 });
 
-describe("legacy config push --project-ref branch name/UUID resolution (CLI-2289)", () => {
+describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () => {
   it.live(
     "--project-ref <branch-name> resolves via the already-known parent, no extra live probe",
     () => {
@@ -3465,7 +3465,7 @@ describe("legacy config push --project-ref branch name/UUID resolution (CLI-2289
       expect(rendered).toContain('Branch \\"ghost\\" not found');
       expect(rendered).toContain("supabase branches list");
       expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
-      // Legacy Shell Invariant #1: telemetry flushes even though ref
+      // CLI Invariant #1: telemetry flushes even though ref
       // resolution itself failed — but no ref was ever resolved, so the
       // linked-project cache stays untouched.
       expect(telemetry.flushed).toBe(true);
@@ -3504,7 +3504,7 @@ describe("legacy config push --project-ref branch name/UUID resolution (CLI-2289
       expect(rendered).toContain("ConfigPushBranchNotLinkedError");
       expect(rendered).toContain('\\"somebranch\\"');
       expect(api.requests).toHaveLength(0);
-      // Legacy Shell Invariant #1: fails purely from local file/env state,
+      // CLI Invariant #1: fails purely from local file/env state,
       // before any ref is resolved — telemetry still flushes, but the
       // linked-project cache write is a no-op.
       expect(telemetry.flushed).toBe(true);
@@ -3525,7 +3525,7 @@ describe("legacy config push --project-ref branch name/UUID resolution (CLI-2289
       expect(rendered).toContain("ConfigPushParentRefInvalidError");
       expect(rendered).toContain('\\"somebranch\\"');
       expect(api.requests).toHaveLength(0);
-      // Legacy Shell Invariant #1: no ref ever resolved here either.
+      // CLI Invariant #1: no ref ever resolved here either.
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -3583,7 +3583,7 @@ describe("legacy config push --project-ref branch name/UUID resolution (CLI-2289
   });
 });
 
-describe("legacy config push telemetry wiring", () => {
+describe("config push telemetry wiring", () => {
   // Drives the exact `Command.withHandler` wiring (configPushHandler)
   // rather than the bare handler: the safeFlags guard lives in the wiring,
   // and nothing validates `--project-ref` before instrumentation fires.

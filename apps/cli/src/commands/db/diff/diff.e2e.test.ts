@@ -4,7 +4,7 @@ import { runSupabase } from "../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
-describe("supabase db diff (legacy)", () => {
+describe("supabase db diff", () => {
   // Docker-free golden-path: the explicit-mode flag validation runs before any
   // shadow/Docker work, so `--from` without `--to` exits non-zero with the
   // established error message through a real subprocess.

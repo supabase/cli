@@ -97,7 +97,7 @@ function gatedApi(matchWrite: (url: string) => boolean) {
   });
 }
 
-describe("legacy vanity-subdomains get", () => {
+describe("vanity-subdomains get", () => {
   it.live("prints status and subdomain in text mode", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
@@ -291,7 +291,7 @@ describe("legacy vanity-subdomains get", () => {
   });
 });
 
-describe("legacy vanity-subdomains check-availability", () => {
+describe("vanity-subdomains check-availability", () => {
   it.live("prints availability in text mode", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
@@ -462,7 +462,7 @@ describe("legacy vanity-subdomains check-availability", () => {
   });
 });
 
-describe("legacy vanity-subdomains activate", () => {
+describe("vanity-subdomains activate", () => {
   it.live("activates the vanity subdomain in text mode", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
@@ -639,7 +639,7 @@ describe("legacy vanity-subdomains activate", () => {
   });
 });
 
-describe("legacy vanity-subdomains delete", () => {
+describe("vanity-subdomains delete", () => {
   it.live("deletes the vanity subdomain in text mode", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
@@ -711,7 +711,7 @@ describe("legacy vanity-subdomains delete", () => {
   });
 });
 
-describe("legacy vanity-subdomains PersistentPostRun parity", () => {
+describe("vanity-subdomains PersistentPostRun parity", () => {
   it.live("flushes telemetry and writes linked-project cache on success", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });

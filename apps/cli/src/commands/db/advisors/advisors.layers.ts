@@ -24,7 +24,7 @@ import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts
  * an *eagerly* built `CommandPlatformApi`, which resolves an access token at layer
  * construction. Merging it would make the auth-free `--local` path fail with a
  * "token not provided" error before the handler runs (caught by the bundled-binary
- * smoke test — legacy CLAUDE.md item 5 / 7).
+ * smoke test — CLAUDE.md invariant 5 / 7).
  *
  * Instead the project-ref resolver is given the **lazy** `commandPlatformApiFactoryLayer`,
  * whose `make` is only forced by an interactive project-ref prompt. The linked path

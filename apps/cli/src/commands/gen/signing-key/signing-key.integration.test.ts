@@ -126,7 +126,7 @@ const testRoot = Command.make("supabase").pipe(
   Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
-describe("legacy gen signing-key integration", () => {
+describe("gen signing-key integration", () => {
   it.live("prints a generated key to stdout when no signing_keys_path is configured", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {

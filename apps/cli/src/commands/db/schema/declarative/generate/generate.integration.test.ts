@@ -269,7 +269,7 @@ const flags = (
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
 
-describe("legacy db schema declarative generate integration", () => {
+describe("db schema declarative generate integration", () => {
   const tmp = useTempWorkdir();
 
   it.effect("gate: fails when neither --experimental nor config enables pg-delta", () => {

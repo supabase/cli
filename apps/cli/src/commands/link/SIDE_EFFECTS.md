@@ -155,8 +155,8 @@ in these modes (stderr in `json`; a structured `log` event in `stream-json`) rat
 
 - The cosmetic `WARNING: Local database version differs from the linked project.` message is
   **not** reproduced: it requires loading the local `config.toml` `[db].major_version` with CLI
-  defaults, which the legacy shell does not surface. The `postgres-version` file (the meaningful
+  defaults, which the CLI does not surface. The `postgres-version` file (the meaningful
   side effect) is still written.
 - The `Finished supabase link.` line is emitted as **plain text**; the old Go CLI rendered
-  `supabase link` in ANSI cyan. This matches the established legacy-port convention (color
+  `supabase link` in ANSI cyan. This matches the established port convention (color
   helpers are rendered plain); ANSI-stripping scripts are unaffected.

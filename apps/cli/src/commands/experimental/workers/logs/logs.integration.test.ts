@@ -81,7 +81,7 @@ function sentQuery(request: { readonly urlParams: Readonly<Record<string, string
   return request.urlParams;
 }
 
-describe("legacy workers logs", () => {
+describe("workers logs", () => {
   it.live("prints a worker's own output oldest first", () => {
     const repo = project();
     const { layer, out } = setupWorkers({

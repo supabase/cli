@@ -72,7 +72,7 @@ function setup(args: ReadonlyArray<string>) {
   return { layer };
 }
 
-describe("legacy storage cp --jobs negative rejection (command-tree wiring)", () => {
+describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
   it.live(
     "rejects --jobs=-1 with pflag's exact ParseUint message, ahead of the experimental gate and the --linked/--local mutex conflict",
     () => {

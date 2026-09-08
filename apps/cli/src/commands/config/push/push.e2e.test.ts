@@ -16,7 +16,7 @@ const TEST_TOKEN = "sbp_" + "a".repeat(40);
  * layer + `withJsonErrorHandling` surface the parse error with exit code 1.
  * Per-service diff/output parity is covered by the unit + integration suites.
  */
-describe("supabase config push (legacy)", () => {
+describe("supabase config push", () => {
   let projectDir: string;
 
   beforeAll(() => {

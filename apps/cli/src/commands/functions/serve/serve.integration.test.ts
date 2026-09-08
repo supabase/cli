@@ -427,7 +427,7 @@ beforeEach(() => {
   deployMockState.reset();
 });
 
-describe("legacy functions serve integration", () => {
+describe("functions serve integration", () => {
   it.live("overlays each Function's env file on the shared fallback", () => {
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {

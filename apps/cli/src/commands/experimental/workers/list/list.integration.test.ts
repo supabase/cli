@@ -37,7 +37,7 @@ function project(config = CONFIG) {
 
 const listRoute = `GET ${workersRoute()}`;
 
-describe("legacy workers list", () => {
+describe("workers list", () => {
   it.live("shows configured and deployed workers as one inventory", () => {
     const repo = project();
     const { layer, out } = setupWorkers({

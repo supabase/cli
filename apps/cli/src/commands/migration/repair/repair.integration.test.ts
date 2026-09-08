@@ -152,7 +152,7 @@ const seedMigration = (workdir: string, name: string, body: string) => {
 
 const tmp = useTempWorkdir();
 
-describe("legacy migration repair", () => {
+describe("migration repair", () => {
   it.live("marks a version as applied by upserting from its local file", () => {
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, execs, queries, out } = setup(tmp.current);

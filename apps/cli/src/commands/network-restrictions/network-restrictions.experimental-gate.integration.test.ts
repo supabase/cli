@@ -79,7 +79,7 @@ function setup() {
   return { layer, api };
 }
 
-describe("legacy network-restrictions experimental gate (Go PersistentPreRunE parity)", () => {
+describe("network-restrictions experimental gate (Go PersistentPreRunE parity)", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "get", args: ["network-restrictions", "get"] },
     { name: "update", args: ["network-restrictions", "update"] },

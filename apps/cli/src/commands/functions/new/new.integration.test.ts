@@ -74,7 +74,7 @@ function exitTag(exit: Exit.Exit<unknown, unknown>): string | undefined {
   return String(failure.value._tag);
 }
 
-describe("legacy functions new integration", () => {
+describe("functions new integration", () => {
   it.live("creates the default apikey scaffold, config snippet, and optional files", () => {
     const { layer, out, telemetry, workdir } = setup();
     return Effect.gen(function* () {

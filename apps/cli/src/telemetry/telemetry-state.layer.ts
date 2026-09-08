@@ -435,52 +435,52 @@ export function readExistingState(text: string): PriorState | undefined {
   }
 }
 
-export const loadOrCreateTelemetryState = Effect.fn("legacy.telemetry.loadOrCreateState")(
-  function* (opts: { readonly now?: Date } = {}) {
-    const fs = yield* FileSystem.FileSystem;
-    const pathSvc = yield* Path.Path;
-    const filePath = telemetryPath(process.env, pathSvc);
-    const exists = yield* fs.exists(filePath);
-    const existing = exists ? yield* fs.readFileString(filePath) : undefined;
-    const prior = existing !== undefined ? readExistingState(existing) : undefined;
-    const now = opts.now ?? new Date();
-    const nowIso = now.toISOString();
+export const loadOrCreateTelemetryState = Effect.fn("telemetry.loadOrCreateState")(function* (
+  opts: { readonly now?: Date } = {},
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const pathSvc = yield* Path.Path;
+  const filePath = telemetryPath(process.env, pathSvc);
+  const exists = yield* fs.exists(filePath);
+  const existing = exists ? yield* fs.readFileString(filePath) : undefined;
+  const prior = existing !== undefined ? readExistingState(existing) : undefined;
+  const now = opts.now ?? new Date();
+  const nowIso = now.toISOString();
 
-    // The expiry comparison uses the epoch computed by `parseGoRfc3339Ms`
-    // during decode — NOT a `new Date(string)` re-parse. Go-valid forms JS
-    // cannot parse (comma fraction `…00,5Z`, offsets `+24:00`/`+05:60`)
-    // would NaN there and read as expired, rotating `session_id` where Go —
-    // which decoded the instant fine — retains it inside the 30-minute
-    // window (`LoadOrCreateState`, `state.go:140-148`; verified against the
-    // Go binary: a recent `…00,5Z` keeps the seeded session id).
-    const priorActiveMs = prior?.sessionLastActiveMs;
-    const expired =
-      priorActiveMs === undefined || now.getTime() - priorActiveMs > SESSION_ROTATION_MS;
+  // The expiry comparison uses the epoch computed by `parseGoRfc3339Ms`
+  // during decode — NOT a `new Date(string)` re-parse. Go-valid forms JS
+  // cannot parse (comma fraction `…00,5Z`, offsets `+24:00`/`+05:60`)
+  // would NaN there and read as expired, rotating `session_id` where Go —
+  // which decoded the instant fine — retains it inside the 30-minute
+  // window (`LoadOrCreateState`, `state.go:140-148`; verified against the
+  // Go binary: a recent `…00,5Z` keeps the seeded session id).
+  const priorActiveMs = prior?.sessionLastActiveMs;
+  const expired =
+    priorActiveMs === undefined || now.getTime() - priorActiveMs > SESSION_ROTATION_MS;
 
-    const state: State = {
-      enabled: prior?.enabled ?? true,
-      device_id: prior?.device_id ?? crypto.randomUUID(),
-      session_id:
-        !expired && prior?.session_id !== undefined ? prior.session_id : crypto.randomUUID(),
-      session_last_active: nowIso,
-      ...(prior?.distinct_id !== undefined ? { distinct_id: prior.distinct_id } : {}),
-      // Go keeps a decoded file's non-zero schema_version (`state.go:103-106`).
-      // The numeric field is for in-memory readers; the exact token rides
-      // along for the write so magnitudes above 2^53 round-trip like Go.
-      schema_version:
-        prior?.schemaVersionToken !== undefined ? Number(prior.schemaVersionToken) : SCHEMA_VERSION,
-      ...(prior?.schemaVersionToken !== undefined
-        ? { schemaVersionToken: prior.schemaVersionToken }
-        : {}),
-    };
+  const state: State = {
+    enabled: prior?.enabled ?? true,
+    device_id: prior?.device_id ?? crypto.randomUUID(),
+    session_id:
+      !expired && prior?.session_id !== undefined ? prior.session_id : crypto.randomUUID(),
+    session_last_active: nowIso,
+    ...(prior?.distinct_id !== undefined ? { distinct_id: prior.distinct_id } : {}),
+    // Go keeps a decoded file's non-zero schema_version (`state.go:103-106`).
+    // The numeric field is for in-memory readers; the exact token rides
+    // along for the write so magnitudes above 2^53 round-trip like Go.
+    schema_version:
+      prior?.schemaVersionToken !== undefined ? Number(prior.schemaVersionToken) : SCHEMA_VERSION,
+    ...(prior?.schemaVersionToken !== undefined
+      ? { schemaVersionToken: prior.schemaVersionToken }
+      : {}),
+  };
 
-    yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
-    yield* fs.writeFileString(filePath, serializeTelemetryState(state));
-    return state;
-  },
-);
+  yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
+  yield* fs.writeFileString(filePath, serializeTelemetryState(state));
+  return state;
+});
 
-export const setTelemetryEnabled = Effect.fn("legacy.telemetry.setEnabled")(function* (
+export const setTelemetryEnabled = Effect.fn("telemetry.setEnabled")(function* (
   enabled: boolean,
   opts: { readonly now?: Date } = {},
 ) {
@@ -503,7 +503,7 @@ export const setTelemetryEnabled = Effect.fn("legacy.telemetry.setEnabled")(func
  * (`clearDistinctId`). Mirrors Go's `SaveState(s.state, fsys)` after mutating
  * `s.state.DistinctID` (`service.go:141-150`).
  */
-const persistDistinctId = Effect.fn("legacy.telemetry.persistDistinctId")(function* (
+const persistDistinctId = Effect.fn("telemetry.persistDistinctId")(function* (
   distinctId: string | undefined,
 ) {
   const base = yield* loadOrCreateTelemetryState();
@@ -517,7 +517,7 @@ const persistDistinctId = Effect.fn("legacy.telemetry.persistDistinctId")(functi
   yield* fs.writeFileString(filePath, serializeTelemetryState(nextState));
 });
 
-const persistIdentityReset = Effect.fn("legacy.telemetry.persistIdentityReset")(function* () {
+const persistIdentityReset = Effect.fn("telemetry.persistIdentityReset")(function* () {
   const base = yield* loadOrCreateTelemetryState();
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;

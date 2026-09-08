@@ -16,7 +16,7 @@ function testRoot() {
   return Command.make("supabase").pipe(Command.withSubcommands([completionPowershellCommand]));
 }
 
-describe("legacy completion powershell", () => {
+describe("completion powershell", () => {
   it.live("prints the native powershell completion script", () => {
     const out = setupCompletionPowershell();
     return Effect.gen(function* () {

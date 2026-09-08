@@ -17,7 +17,7 @@ import {
  * scheme `ss` (case-insensitive), a non-empty path, and no host.
  *
  * Kept pure (no Effect, no command-specific tagged errors) so the handlers map
- * the thrown errors to their own `Legacy*` tagged errors and the parser stays
+ * the thrown errors to their own tagged errors and the parser stays
  * unit-testable against `scheme_test.go`.
  */
 

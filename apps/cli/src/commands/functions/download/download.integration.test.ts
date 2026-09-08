@@ -206,7 +206,7 @@ function mockProxy() {
   };
 }
 
-describe("legacy functions download", () => {
+describe("functions download", () => {
   it.live("downloads a function natively into the legacy workdir", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({

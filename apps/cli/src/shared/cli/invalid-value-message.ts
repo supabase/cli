@@ -43,7 +43,7 @@ const EXPECTED_PREFIX = "Expected ";
 // pflag's `invalid argument %q for %q flag: %v` (pflag v1.0.10
 // `errors.go:116`). Wrapping that in `CliError.InvalidValue`'s own
 // `Invalid value for flag --X: "V". Expected: ...` template would
-// double-frame it and break the legacy shell's stderr contract (byte-parity
+// double-frame it and break the CLI's stderr contract (byte-parity
 // with the Go CLI), so render it verbatim instead.
 const PFLAG_INVALID_ARGUMENT_PREFIX = "invalid argument ";
 

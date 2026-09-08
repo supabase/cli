@@ -16,7 +16,7 @@ function seedTokenFile(home: string): string {
   return tokenPath;
 }
 
-describe("supabase logout (legacy)", () => {
+describe("supabase logout", () => {
   // Deliberate Go quirk (parity note 1): under SUPABASE_NO_KEYRING=1 the profile
   // keyring delete is unsupported, so logout removes the file token yet still
   // reports "not logged in" and exits 0.

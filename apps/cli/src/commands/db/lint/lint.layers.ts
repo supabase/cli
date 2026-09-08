@@ -26,7 +26,7 @@ import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts
  * `managementApiRuntimeLayer`: that layer exposes an *eagerly* built
  * `CommandPlatformApi`, which resolves an access token at layer construction, so
  * merging it would make the auth-free `--local` path fail before the handler
- * runs (legacy CLAUDE.md item 5 / 7). The project-ref resolver is instead given
+ * runs (CLAUDE.md invariant 5 / 7). The project-ref resolver is instead given
  * the **lazy** `commandPlatformApiFactoryLayer`; the linked lint path resolves the
  * ref via the non-prompting `loadProjectRef`, which never forces the factory.
  *

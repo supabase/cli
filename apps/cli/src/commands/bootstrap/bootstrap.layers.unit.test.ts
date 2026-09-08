@@ -109,7 +109,7 @@ function ambientStubs() {
     // commandPlatformApiLayer additionally eagerly validates the access token at
     // layer-construction time, so inject a valid token via the isolated env —
     // the same mechanism the cli-e2e harness uses (SUPABASE_ACCESS_TOKEN env
-    // var, legacy CLAUDE.md item 4 dual-mode profile).
+    // var, CLAUDE.md invariant 4 dual-mode profile).
     isolatedHomeLayer(tempRoot.current, { SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     mockTty(),
     mockProcessControl().layer,

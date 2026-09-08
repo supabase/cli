@@ -64,7 +64,7 @@ function setupTracked(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, cache };
 }
 
-describe("legacy network-bans get integration", () => {
+describe("network-bans get integration", () => {
   it.live("writes the stderr heading and JSON array bytes in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {

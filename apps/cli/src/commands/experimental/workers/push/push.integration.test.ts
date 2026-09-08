@@ -124,7 +124,7 @@ function push(flagOverrides: Partial<WorkersPushFlags> = {}) {
   });
 }
 
-describe("legacy workers push", () => {
+describe("workers push", () => {
   it.live("packages, uploads, deploys and waits for the build to settle", () => {
     const repo = project();
     const { layer, out, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
@@ -1155,7 +1155,7 @@ describe("legacy workers push", () => {
   });
 
   it.live("acts on the workdir's project, not the process's directory", () => {
-    // `--workdir`/`SUPABASE_WORKDIR` names the project every legacy command acts
+    // `--workdir`/`SUPABASE_WORKDIR` names the project every command acts
     // on, so the worker discovered here comes from that tree even though the
     // process is somewhere else entirely.
     const repo = project();

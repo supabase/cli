@@ -18,7 +18,7 @@ function baseFlags(): FunctionsServeFlags {
   };
 }
 
-describe("legacy functions serve inspect flags", () => {
+describe("functions serve inspect flags", () => {
   it("treats --inspect-mode brk", () => {
     expect(resolveFunctionsServeInspectMode({ ...baseFlags(), inspect: true })).toBe("brk");
   });

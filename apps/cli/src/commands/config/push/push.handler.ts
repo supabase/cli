@@ -164,7 +164,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
 
   // Written once ref resolution succeeds, so the linked-project cache
   // finalizer below only fires for invocations that got that far — mirrors
-  // `diff.handler.ts`'s `resolvedRef` pattern (Legacy Shell Invariant #1):
+  // `diff.handler.ts`'s `resolvedRef` pattern (CLI Invariant #1):
   // every failure path from here on, including branch/UUID resolution,
   // stays inside this file's single `Effect.ensuring`-wrapped block below.
   let resolvedRef: string | undefined;

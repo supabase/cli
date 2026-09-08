@@ -47,7 +47,7 @@ const routes = {
   [deleteRoute]: { status: 204 },
 };
 
-describe("legacy workers delete", () => {
+describe("workers delete", () => {
   it.live("deletes after the name is typed back, and keeps the local files", () => {
     const repo = project();
     const { layer, out, http } = setupWorkers({

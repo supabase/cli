@@ -3,7 +3,7 @@
  * (`pkg/config/config.go`). `file_size_limit` config values are parsed with
  * `RAMInBytes` before being sent to service APIs.
  *
- * Shared across the legacy shell: `config push` (storage/auth/api/db diffing)
+ * Shared across the CLI: `config push` (storage/auth/api/db diffing)
  * and `seed buckets` (which converts each `[storage.buckets.*].file_size_limit`
  * string to the int64 byte count Go sends in the create/update bucket body).
  *

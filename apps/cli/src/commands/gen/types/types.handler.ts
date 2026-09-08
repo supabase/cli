@@ -621,8 +621,12 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         new Error("--postgrest-v9-compat must used together with --db-url"),
       );
     }
-    const lang = findPositionalLanguage(rawArgs);
-    if (Option.isSome(lang) && lang.value !== "typescript" && !occurrences.has("lang")) {
+    const positionalLang = findPositionalLanguage(rawArgs);
+    if (
+      Option.isSome(positionalLang) &&
+      positionalLang.value !== "typescript" &&
+      !occurrences.has("lang")
+    ) {
       return yield* Effect.fail(new Error("use --lang flag to specify the typegen language"));
     }
 

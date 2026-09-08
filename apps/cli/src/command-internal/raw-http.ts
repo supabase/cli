@@ -6,7 +6,7 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
  * `HttpClientRequest`: an `Authorization: Bearer` header when a token is
  * present, and the CLI `User-Agent`.
  *
- * Shared by the legacy commands that bypass the typed Management API client and
+ * Shared by the commands that bypass the typed Management API client and
  * issue raw HTTP (e.g. `postgres-config` arbitrary key/value updates,
  * `config push` cost-matrix fetch) so the bearer/User-Agent wiring lives in one
  * place instead of being copy-pasted per command.

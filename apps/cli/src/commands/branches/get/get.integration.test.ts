@@ -163,7 +163,7 @@ const baseFlags: BranchesGetFlags = {
   projectRef: Option.none(),
 };
 
-describe("legacy branches get integration", () => {
+describe("branches get integration", () => {
   it.live("fetches branch detail directly when input is a UUID (no lookup)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {

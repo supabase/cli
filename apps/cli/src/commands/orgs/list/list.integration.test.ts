@@ -69,7 +69,7 @@ function setupTracked(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry };
 }
 
-describe("legacy orgs list integration", () => {
+describe("orgs list integration", () => {
   it.live("renders a Glamour table with ID and NAME columns in text mode", () => {
     const { layer, out } = setup({ response: [SAMPLE_ORG] });
     return Effect.gen(function* () {

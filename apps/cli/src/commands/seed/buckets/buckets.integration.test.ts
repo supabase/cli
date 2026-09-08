@@ -213,7 +213,7 @@ const VECTOR_LIST = "/storage/v1/vector/ListVectorBuckets";
 const VECTOR_CREATE = "/storage/v1/vector/CreateVectorBucket";
 const VECTOR_DELETE = "/storage/v1/vector/DeleteVectorBucket";
 
-describe("legacy seed buckets", () => {
+describe("seed buckets", () => {
   const tmp = useTempWorkdir("supabase-seed-buckets-");
 
   // Ambient `SUPABASE_API_*` values would shadow the dotenv fixtures below —

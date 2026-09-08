@@ -135,7 +135,7 @@ const testRoot = Command.make("supabase").pipe(
   Command.withSubcommands([genCommand]),
 );
 
-describe("legacy gen bearer-jwt integration", () => {
+describe("gen bearer-jwt integration", () => {
   it.live("mints a token with the built-in default ES256 key when no config exists", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {

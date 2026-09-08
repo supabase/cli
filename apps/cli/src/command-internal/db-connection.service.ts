@@ -138,7 +138,7 @@ export interface DbSession {
    * code `42710`, `duplicate_object`). That notice fires whenever
    * `CREATE EXTENSION IF NOT EXISTS pgtap ...` finds the extension already
    * installed — extensions are global per-database, so the schema is irrelevant.
-   * `@effect/sql-pg`'s `PgClient` exposes no notice hook, so the legacy port
+   * `@effect/sql-pg`'s `PgClient` exposes no notice hook, so the port
    * detects pre-existence with this query before enabling. Querying by `extname`
    * only (not `extname` + `nspname`) matches that behavior: it must not drop a pgTAP the user
    * pre-installed in another schema such as `public`.
@@ -227,7 +227,7 @@ interface DbConnectionShape {
 }
 
 /**
- * Opens raw Postgres connections for legacy commands (`test db`, and later
+ * Opens raw Postgres connections for commands (`test db`, and later
  * `db reset` / `db dump`). The underlying driver is swappable behind this
  * interface — the default is `@effect/sql-pg`; a Bun.SQL fallback exists with
  * the same shape. Handlers depend only on this service, never on the driver.

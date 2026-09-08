@@ -8,7 +8,7 @@ import {
 
 /**
  * `ErrMissingToken`. The reference implementation Aqua-styles the
- * `--token` / `SUPABASE_ACCESS_TOKEN` substrings, but the legacy port renders
+ * `--token` / `SUPABASE_ACCESS_TOKEN` substrings, but the port renders
  * styling as plain text (color is stripped on a non-TTY anyway), so this is
  * byte-exact.
  */

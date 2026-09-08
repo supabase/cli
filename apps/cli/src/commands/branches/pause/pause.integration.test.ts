@@ -104,7 +104,7 @@ const baseFlags: BranchesPauseFlags = {
   projectRef: Option.none(),
 };
 
-describe("legacy branches pause integration", () => {
+describe("branches pause integration", () => {
   it.live("pauses a branch when given a project-ref pattern (skips lookup)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {

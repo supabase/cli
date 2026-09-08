@@ -59,7 +59,7 @@ function subprocessBaseEnv(): Record<string, string> {
 function assertBuildArtifactsExist(binaryPath: string): void {
   if (!existsSync(SHIM_PATH) || !existsSync(binaryPath)) {
     throw new Error(
-      `Missing legacy CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking e2e tests.\n` +
+      `Missing CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking e2e tests.\n` +
         `  expected shim:   ${SHIM_PATH}\n` +
         `  expected binary: ${binaryPath}`,
     );
@@ -308,7 +308,7 @@ export function spawnSupabase(
     cleanupProcessGroupOnClose?: boolean;
     /** Maximum time to wait for the process to exit before force-killing it. */
     exitTimeoutMs?: number;
-    /** Which source entrypoint to execute. Only the legacy shell remains. */
+    /** Which source entrypoint to execute. Only the CLI remains. */
     entrypoint?: "legacy";
   },
 ): SpawnedSupabase {
@@ -534,7 +534,7 @@ export async function runSupabase(
     untilTimeoutMs?: number;
     /** Maximum time to wait for the command to exit before force-killing it. */
     exitTimeoutMs?: number;
-    /** Which source entrypoint to execute. Only the legacy shell remains. */
+    /** Which source entrypoint to execute. Only the CLI remains. */
     entrypoint?: "legacy";
   },
 ): Promise<RunResult> {

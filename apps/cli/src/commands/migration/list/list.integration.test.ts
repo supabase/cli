@@ -129,7 +129,7 @@ const seedMigrations = (workdir: string, names: ReadonlyArray<string>) => {
 
 const tmp = useTempWorkdir();
 
-describe("legacy migration list", () => {
+describe("migration list", () => {
   it.live("lists merged local + remote migrations for the linked project by default", () => {
     seedMigrations(tmp.current, ["20240101000000_a.sql", "20240103000000_c.sql"]);
     const ctx = setup(tmp.current, {

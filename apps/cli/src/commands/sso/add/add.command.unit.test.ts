@@ -4,7 +4,7 @@ import { describe, expect, test } from "vitest";
 import { normalizeCause } from "../../../shared/output/normalize-error.ts";
 import { ssoAddDomainsFlag } from "./add.command.ts";
 
-describe("legacy sso add --domains flag (pflag StringSlice parity)", () => {
+describe("sso add --domains flag (pflag StringSlice parity)", () => {
   test("splits a comma-separated value into multiple domains", async () => {
     const [, domains] = await Effect.runPromise(
       ssoAddDomainsFlag

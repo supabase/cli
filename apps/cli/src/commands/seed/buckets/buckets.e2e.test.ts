@@ -14,7 +14,7 @@ const E2E_TIMEOUT_MS = 30_000;
  *  - `--local --linked` is rejected by the mutually-exclusive flag check.
  * Bucket/object seeding parity is covered by the integration + unit suites.
  */
-describe("supabase seed buckets (legacy)", () => {
+describe("supabase seed buckets", () => {
   let projectDir: string;
 
   beforeAll(() => {

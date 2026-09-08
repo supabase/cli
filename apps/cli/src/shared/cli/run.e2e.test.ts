@@ -13,7 +13,7 @@ import { runSupabase } from "../../../tests/helpers/cli.ts";
  * `run.unit.test.ts` and `run.integration.test.ts`; this is the one minimal
  * case that observes the real subprocess boundary.
  */
-describe("legacy CLI process exit codes (CLI-1906)", () => {
+describe("CLI process exit codes (CLI-1906)", () => {
   test("bare `branches` (no subcommand, no --help) exits 0", async () => {
     const { exitCode } = await runSupabase(["branches"], { entrypoint: "legacy" });
     expect(exitCode).toBe(0);
@@ -41,7 +41,7 @@ describe("legacy CLI process exit codes (CLI-1906)", () => {
  * (`apps/cli-go/cmd/root.go:97`) — always on stderr, never stdout;
  * verified directly against the built Go binary).
  */
-describe("legacy CLI required-flag/choice parse errors (CLI-1901)", () => {
+describe("CLI required-flag/choice parse errors (CLI-1901)", () => {
   test("an unrecognized flag: stdout stays clean, the help/usage content and the single error line land on stderr with no duplicate", async () => {
     const { exitCode, stdout, stderr } = await runSupabase(
       ["branches", "--this-flag-does-not-exist"],
@@ -66,7 +66,7 @@ describe("legacy CLI required-flag/choice parse errors (CLI-1901)", () => {
 });
 
 /** Real-subprocess proof of the `afterSuccess` wiring; everything else lives in `upgrade-notice.unit.test.ts`. */
-describe("legacy CLI upgrade notice (#5853)", () => {
+describe("CLI upgrade notice (#5853)", () => {
   let workdir: string;
 
   afterEach(() => {

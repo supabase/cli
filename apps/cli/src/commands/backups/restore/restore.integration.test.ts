@@ -43,7 +43,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api };
 }
 
-describe("legacy backups restore integration", () => {
+describe("backups restore integration", () => {
   it.live("sends recovery_time_target_unix=0 when --timestamp is omitted", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {

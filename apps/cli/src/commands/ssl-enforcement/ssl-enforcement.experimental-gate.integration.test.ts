@@ -59,7 +59,7 @@ function setup() {
   return { layer, api };
 }
 
-describe("legacy ssl-enforcement experimental gate (Go PersistentPreRunE parity)", () => {
+describe("ssl-enforcement experimental gate (Go PersistentPreRunE parity)", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "get", args: ["ssl-enforcement", "get"] },
     { name: "update", args: ["ssl-enforcement", "update", "--enable-db-ssl-enforcement"] },

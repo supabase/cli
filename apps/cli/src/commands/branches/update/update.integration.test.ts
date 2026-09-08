@@ -146,7 +146,7 @@ const baseFlags: BranchesUpdateFlags = {
   notifyUrl: Option.none(),
 };
 
-describe("legacy branches update integration", () => {
+describe("branches update integration", () => {
   it.live("updates a branch with --name and emits 'Updated preview branch:' to stderr", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {

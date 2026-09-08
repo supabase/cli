@@ -43,7 +43,7 @@ const baseFlags: BranchesUnpauseFlags = {
   projectRef: Option.none(),
 };
 
-describe("legacy branches unpause integration", () => {
+describe("branches unpause integration", () => {
   it.live("unpauses a branch given a project-ref pattern", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {

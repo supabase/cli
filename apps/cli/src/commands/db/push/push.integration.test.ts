@@ -257,7 +257,7 @@ const migrationFile = (version: string, body = "create table t ();") => ({
   [`${MIGRATION_DIR}/${version}_test.sql`]: body,
 });
 
-describe("legacy db push", () => {
+describe("db push", () => {
   const tmp = useTempWorkdir("supabase-db-push-");
 
   it.live("reports up to date when nothing is pending (text)", () => {

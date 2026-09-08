@@ -182,7 +182,7 @@ function dateFolderContents(base: string): { dir: string; files: Array<string> }
   return { dir, files: readdirSync(dir) };
 }
 
-describe("legacy inspect report", () => {
+describe("inspect report", () => {
   it.live("writes one CSV per inspect query for the linked project", () => {
     const base = tempDir("supabase-report-out-");
     const { layer, connection } = setupReport({ csvs: DEFAULT_RULE_CSVS });

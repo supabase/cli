@@ -16,7 +16,7 @@ function testRoot() {
   return Command.make("supabase").pipe(Command.withSubcommands([completionZshCommand]));
 }
 
-describe("legacy completion zsh", () => {
+describe("completion zsh", () => {
   it.live("prints the native zsh completion script", () => {
     const out = setupCompletionZsh();
     return Effect.gen(function* () {

@@ -35,7 +35,7 @@ import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts"
  * it does not expose the provided service to siblings of a `Layer.mergeAll(...)`. The
  * project-ref layer reads `CommandSettings` directly for workdir/projectId resolution,
  * so without an explicit provide here the bundled runtime panics with
- * `Service not found: supabase/legacy/CliSettings`. Handlers that yield `CommandSettings`
+ * `Service not found: supabase/cli/CommandSettings`. Handlers that yield `CommandSettings`
  * directly (e.g. `branches get`, `suggestUpgrade`) also need the service exposed
  * at the top level of the merged layer, hence the top-level `cliSettings` entry below.
  *
@@ -112,7 +112,7 @@ export function managementApiRuntimeLayer(subcommand: ReadonlyArray<string>) {
   );
 
   // Compile-time guarantee that the merged layer exposes every service a
-  // Management-API legacy handler is allowed to yield from its top-level
+  // Management-API handler is allowed to yield from its top-level
   // `Effect.fn` body. If a future handler yields a service NOT in this union,
   // either:
   // (a) the new service belongs in the runtime layer — add it to the merge
@@ -133,7 +133,7 @@ export function managementApiRuntimeLayer(subcommand: ReadonlyArray<string>) {
 }
 
 /**
- * Services that every Management-API legacy handler is allowed to yield
+ * Services that every Management-API handler is allowed to yield
  * directly from its top-level `Effect.fn` body. Adding a new `yield* X` in a
  * handler without adding `X` here is a **compile error**, surfacing what was
  * previously a runtime `Service not found: …` panic that only the cli-e2e

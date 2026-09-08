@@ -465,7 +465,7 @@ function setupFailureEnvelope(opts: FailureEnvelopeOpts) {
   return { workdir, layer, stdio, processControl };
 }
 
-describe("legacy status integration", () => {
+describe("status integration", () => {
   it.live("shows the running stack as a pretty table", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {

@@ -78,7 +78,7 @@ export function formatLinkedValue(value: unknown): string {
 const PG_FLOAT4_OID = 700;
 const PG_FLOAT8_OID = 701;
 
-// Postgres `date` / `timestamp` / `timestamptz` type OIDs. The legacy `queryRaw`
+// Postgres `date` / `timestamp` / `timestamptz` type OIDs. The `queryRaw`
 // type-parser override keeps these as raw Postgres text (not a JS `Date`), so
 // microsecond precision survives — a JS `Date` is millisecond resolution and
 // applies the local timezone.

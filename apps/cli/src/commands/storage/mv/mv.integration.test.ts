@@ -25,7 +25,7 @@ function mvFlags(opts: {
   };
 }
 
-describe("legacy storage mv", () => {
+describe("storage mv", () => {
   const tmp = useTempWorkdir("supabase-storage-mv-");
 
   it.live("moves a single object and prints the response message", () => {

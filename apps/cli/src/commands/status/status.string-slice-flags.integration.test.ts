@@ -72,7 +72,7 @@ function setup() {
   return { layer };
 }
 
-describe("legacy status StringSlice flags (pflag CSV parity)", () => {
+describe("status StringSlice flags (pflag CSV parity)", () => {
   // Every rendered line below was verified against pflag's actual output
   // (pflag v1.0.10 → encoding/csv).
   const cases: ReadonlyArray<{

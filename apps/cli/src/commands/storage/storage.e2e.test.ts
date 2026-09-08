@@ -14,7 +14,7 @@ const E2E_TIMEOUT_MS = 30_000;
  * (they don't need a live local stack); these only exercise what the in-process
  * suites bypass.
  */
-describe("supabase storage (legacy)", () => {
+describe("supabase storage", () => {
   let projectDir: string;
 
   beforeAll(() => {

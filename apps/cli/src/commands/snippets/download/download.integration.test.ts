@@ -72,7 +72,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, cache };
 }
 
-describe("legacy snippets download integration", () => {
+describe("snippets download integration", () => {
   it.live("prints raw SQL with a trailing newline in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {

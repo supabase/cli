@@ -217,7 +217,7 @@ const flags = (over: Partial<DbLintFlags> = {}): DbLintFlags => ({
   failOn: over.failOn ?? Option.none<"none" | "warning" | "error">(),
 });
 
-describe("legacy db lint", () => {
+describe("db lint", () => {
   it.live("lints the named schema and prints parsed issues to stdout", () => {
     const { layer, out, connection } = setup({
       schemas: [],

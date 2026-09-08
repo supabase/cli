@@ -81,7 +81,7 @@ function setupTracked(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, cache };
 }
 
-describe("legacy network-restrictions get integration", () => {
+describe("network-restrictions get integration", () => {
   it.live("prints the Go-format text block when the response has v4 and v6 entries", () => {
     const { layer, out } = setup({ response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {

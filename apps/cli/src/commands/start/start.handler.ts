@@ -644,7 +644,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // work, matching the established config-validation contract.
     // `@supabase/config`'s own schema DOES model `[functions.<slug>.env]`
     // (`packages/config/src/functions.ts`) — a legitimate `next/`-only
-    // feature shared infrastructure the legacy shell can't remove — so this
+    // feature shared infrastructure the CLI can't remove — so this
     // is a legacy-only rejection, not a schema change. Confirmed against the
     // established parity contract: a config with `[functions.foo.env]`
     // fails with `'functions[foo]' has invalid keys: env`.

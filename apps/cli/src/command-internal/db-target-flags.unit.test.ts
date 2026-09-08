@@ -196,7 +196,7 @@ describe("resolveDbTargetFlags", () => {
 describe("VALUE_CONSUMING_LONG_FLAGS / VALUE_CONSUMING_SHORT_FLAGS completeness (CLI-1896 review)", () => {
   // `telemetry/command-telemetry.ts`'s `extractChangedFlagNames`
   // relies on these two sets to know which flag consumes the next raw-argv
-  // token as its value, across EVERY legacy command (not just the db-target
+  // token as its value, across EVERY command (not just the db-target
   // subset this file's other describe block covers) — see the doc comment on
   // `VALUE_CONSUMING_LONG_FLAGS` in `db-target-flags.ts`. This scan is
   // static-source-based (same technique as

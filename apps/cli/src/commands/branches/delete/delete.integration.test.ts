@@ -86,7 +86,7 @@ const baseFlags: BranchesDeleteFlags = {
   projectRef: Option.none(),
 };
 
-describe("legacy branches delete integration", () => {
+describe("branches delete integration", () => {
   it.live("deletes a branch and emits 'Deleted preview branch: <ref>' to stderr", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {

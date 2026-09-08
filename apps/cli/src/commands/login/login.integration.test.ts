@@ -116,7 +116,7 @@ function setupLogin(opts: SetupOpts = {}) {
   return { layer, out, credentials, crypto, loginApi, telemetry, analytics };
 }
 
-describe("legacy login integration", () => {
+describe("login integration", () => {
   it.live("saves the token from --token and reports logged in", () => {
     const { layer, out, credentials, analytics } = setupLogin();
     return Effect.gen(function* () {

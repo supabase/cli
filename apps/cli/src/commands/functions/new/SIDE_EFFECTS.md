@@ -33,13 +33,13 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                    | Required?                                                         |
-| ----------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | resolved into legacy CLI config even though this command performs no API calls             | no (falls back to credential lookup paths that are not used here) |
-| `SUPABASE_HOME`         | changes where telemetry state is persisted                                                 | no (defaults to `~/.supabase`)                                    |
-| `SUPABASE_PROFILE`      | selects a built-in profile or YAML profile path during legacy CLI config resolution        | no (falls back to `~/.supabase/profile` -> `supabase`)            |
-| `SUPABASE_PROJECT_ID`   | resolved into legacy CLI config even though this command does not use a linked project ref | no                                                                |
-| `SUPABASE_WORKDIR`      | sets `<workdir>` for all local project reads and writes                                    | no (falls back to `--workdir` -> current working dir)             |
+| Variable                | Purpose                                                                             | Required?                                                         |
+| ----------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | resolved into CLI config even though this command performs no API calls             | no (falls back to credential lookup paths that are not used here) |
+| `SUPABASE_HOME`         | changes where telemetry state is persisted                                          | no (defaults to `~/.supabase`)                                    |
+| `SUPABASE_PROFILE`      | selects a built-in profile or YAML profile path during CLI config resolution        | no (falls back to `~/.supabase/profile` -> `supabase`)            |
+| `SUPABASE_PROJECT_ID`   | resolved into CLI config even though this command does not use a linked project ref | no                                                                |
+| `SUPABASE_WORKDIR`      | sets `<workdir>` for all local project reads and writes                             | no (falls back to `--workdir` -> current working dir)             |
 
 ## Exit Codes
 

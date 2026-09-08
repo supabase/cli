@@ -75,7 +75,7 @@ function fakeConsole(): { readonly console: Console.Console; readonly calls: Arr
  * `branchesCommand` directly avoids needing to provide or mock that
  * unused graph for a test that only cares about the `ShowHelp` cause shape.
  */
-describe("legacy group command exit codes (CLI-1906)", () => {
+describe("group command exit codes (CLI-1906)", () => {
   const layerFor = (args: ReadonlyArray<string>) =>
     Layer.mergeAll(
       CliOutput.layer(textCliOutputFormatter()),

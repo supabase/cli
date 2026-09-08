@@ -4,7 +4,7 @@ import { runSupabase } from "../../../tests/helpers/cli.ts";
 const E2E_TIMEOUT_MS = 30_000;
 const TEST_TOKEN = "sbp_" + "a".repeat(40);
 
-describe("supabase link (legacy)", () => {
+describe("supabase link", () => {
   // Golden-path surface test: in a real subprocess with no TTY, no --project-ref
   // and no SUPABASE_PROJECT_ID, ref resolution fails before any API call with the
   // cobra-style required-flag error. Validates dispatch + ref-resolution wiring

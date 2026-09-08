@@ -429,7 +429,7 @@ const failureTag = (exit: Exit.Exit<unknown, unknown>): string | undefined => {
 const tmp = useTempWorkdir();
 useShadowCacheDisabled();
 
-describe("legacy migration squash", () => {
+describe("migration squash", () => {
   describe("flag surface & ordering", () => {
     it.effect("rejects --linked combined with --local", () => {
       const s = setup(tmp.current, { args: ["--linked", "--local"] });

@@ -13,7 +13,7 @@ const testRoot = Command.make("supabase").pipe(
   Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
-describe("legacy migration command integration", () => {
+describe("migration command integration", () => {
   it.live("accepts the Go-compatible plural migrations alias", () => {
     // After CLI-1969, `squash` is native and no `migration` subcommand is proxied
     // any more — so the plural alias is now proven at the PARSER instead: a

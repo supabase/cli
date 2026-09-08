@@ -48,7 +48,7 @@ function project(files: Readonly<Record<string, string>> = {}) {
   };
 }
 
-describe("legacy workers new", () => {
+describe("workers new", () => {
   it.live("scaffolds the runtime's starter files and records the choice", () => {
     const repo = project();
     const { layer, out } = setupWorkers({ workdir: repo.dir });

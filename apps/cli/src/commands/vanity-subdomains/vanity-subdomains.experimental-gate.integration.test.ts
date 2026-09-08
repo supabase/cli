@@ -78,7 +78,7 @@ function setup() {
   return { layer, api };
 }
 
-describe("legacy vanity-subdomains experimental gate (Go PersistentPreRunE parity)", () => {
+describe("vanity-subdomains experimental gate (Go PersistentPreRunE parity)", () => {
   // `check-availability` and `activate` deliberately OMIT `--desired-subdomain`:
   // Go marks it required (`cmd/vanitySubdomains.go:67,69`) but cobra validates
   // required flags only after `PersistentPreRunE` (`cobra@v1.10.2

@@ -312,7 +312,7 @@ const failSuggestion = (
 ): string | undefined =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.suggestion : undefined;
 
-describe("legacy db dump integration", () => {
+describe("db dump integration", () => {
   const tmp = useTempWorkdir();
 
   it.live("errors when --use-copy is used without --data-only", () => {

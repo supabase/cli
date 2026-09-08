@@ -80,7 +80,7 @@ stderr after generating and writing — on both interactive and `--yes` paths.
 without prompting; both override the global `--yes`. `--no-apply` and `--apply`
 are mutually exclusive.
 
-A manifest-less legacy tree is refused by two compatibility gates — one when the
+A manifest-less CLI tree is refused by two compatibility gates — one when the
 tree fails to load on the bundled engine's shadow, one when the plan drops an
 extension the tree no longer declares (removing or renaming a `pg_cron` job or
 `pgmq` queue declaration is an ordinary change and is never refused). Both

@@ -24,7 +24,7 @@ import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts"
  * (`db-config.layer.ts`), so this layer only exposes the always-needed,
  * auth-free services. `commandSettingsLayer` is provided to the resolver AND
  * exposed at the top level (the handler yields it; `Layer.provide` does not
- * share to merge siblings — legacy CLAUDE.md item 5).
+ * share to merge siblings — CLAUDE.md invariant 5).
  *
  * `commandPath` must reflect the ACTUAL invoked command path (`["test", "db"]`
  * or `["db", "test"]`): Go's `cli_command_executed` telemetry records

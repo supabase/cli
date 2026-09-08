@@ -142,7 +142,7 @@ function setupTracked(opts: SetupOpts = {}) {
   return { layer, out, telemetry, cache };
 }
 
-describe("legacy projects list integration", () => {
+describe("projects list integration", () => {
   it.live("renders a Glamour table with all six columns in text mode", () => {
     const { layer, out } = setup({ response: [SAMPLE_PROJECT, OTHER_PROJECT] });
     return Effect.gen(function* () {

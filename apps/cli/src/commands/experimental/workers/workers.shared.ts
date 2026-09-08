@@ -18,7 +18,7 @@ import { InvalidWorkerNameError } from "../../../shared/workers/workers.errors.t
  *
  * The project directory is `CommandSettings.workdir` rather than an ancestor
  * walk from the current directory. That is the resolved workdir every other
- * legacy command acts on — `--workdir`/`SUPABASE_WORKDIR` when given, else the
+ * command acts on — `--workdir`/`SUPABASE_WORKDIR` when given, else the
  * ancestor walk Go's own `getProjectRoot` performs — so `supabase experimental workers`
  * answers to the same flag as its siblings instead of inventing a second notion
  * of "which project".

@@ -540,7 +540,7 @@ const PGADMIN_SOURCE_URL =
   "postgresql://postgres:postgres@127.0.0.1:54322/postgres?connect_timeout=10";
 const PGADMIN_TARGET_URL = "postgresql://postgres:postgres@127.0.0.1:54320/postgres";
 
-describe("legacy db diff", () => {
+describe("db diff", () => {
   it.effect("diffs local with the default migra engine and prints SQL to stdout", () => {
     const s = setup(tmp.current, { diffSql: "create table players ();\n" });
     return Effect.gen(function* () {

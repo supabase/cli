@@ -559,7 +559,7 @@ const testRoot = Command.make("supabase").pipe(
   Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
-describe("legacy gen types", () => {
+describe("gen types", () => {
   it.effect("accepts Go-style microsecond duration aliases", () =>
     Effect.gen(function* () {
       expect(yield* parseQueryTimeoutSeconds(`15${"µ"}s`)).toBe(0);

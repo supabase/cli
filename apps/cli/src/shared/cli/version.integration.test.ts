@@ -19,7 +19,7 @@ describe("CLI --version (text)", () => {
       BunServices.layer,
     );
 
-  test("legacy shell prints bare semver on stdout", async () => {
+  test("CLI prints bare semver on stdout", async () => {
     const logs: string[] = [];
     const spy = vi
       .spyOn(console, "log")

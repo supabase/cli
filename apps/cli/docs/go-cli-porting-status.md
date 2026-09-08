@@ -4,7 +4,7 @@
 > this file once held is gone now that the port is done; it documents only the residual Go
 > delegation surface below.
 
-The Go→TypeScript legacy port is complete (CLI-1970). The bundled `supabase-go` binary and the
+The Go→TypeScript port is complete (CLI-1970). The bundled `supabase-go` binary and the
 `apps/cli-go/` tree contain **only** the delegation surface in the table below — Go source for
 every other command was deleted outright once nothing in the TypeScript CLI could reach it,
 directly or indirectly. For any other command's former Go source, the reference is the last commit
@@ -14,7 +14,7 @@ with it intact: `7b469f5b3` (CLI-1966's `internal/start` pin remains its own, se
 See [`binary-distribution.md`](./binary-distribution.md) for how these two binaries are packaged,
 resolved at runtime, and sized. The TypeScript CLI is the source of truth for all CLI behavior;
 `apps/cli-go/` is authoritative only for the proxied commands below, and the whole surface is
-slated for cleanup and removal ([ADR 0016](../../../docs/adr/0016-legacy-port-completion-and-go-cli-authority-scope.md)
+slated for cleanup and removal ([ADR 0016](../../../docs/adr/0016-port-completion-and-go-cli-authority-scope.md)
 records the earlier transition policy).
 
 ## The delegation surface
@@ -38,7 +38,7 @@ All delegation goes through the shared `GoProxy` service
   `PATH` fallback (CLI-1488: the shim itself is what's on `PATH`, so falling back would re-invoke
   it and fork-bomb) — resolution failure is a hard error with install guidance. PATH-installed
   setups work via the co-location step: `supabase-go` sits next to the `supabase` shim.
-- **Global-flag forwarding**: `cli/root.ts` translates the legacy shell's global flags
+- **Global-flag forwarding**: `cli/root.ts` translates the CLI's global flags
   (`--output`, `--profile`, `--debug`, `--workdir`, `--experimental`, `--network-id`, `--yes`,
   `--dns-resolver`, `--create-ticket`, `--agent`) into Go-style argv ahead of every proxied
   invocation.

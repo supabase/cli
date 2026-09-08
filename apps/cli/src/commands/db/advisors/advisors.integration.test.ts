@@ -315,7 +315,7 @@ const flags = (over: Partial<DbAdvisorsFlags> = {}): DbAdvisorsFlags => ({
   failOn: over.failOn ?? Option.none<"none" | "info" | "warn" | "error">(),
 });
 
-describe("legacy db advisors — local", () => {
+describe("db advisors — local", () => {
   it.live("queries the local database and prints the Go pretty JSON array", () => {
     const { layer, out, connection } = setup({ rows: [lintRow()] });
     return Effect.gen(function* () {
@@ -512,7 +512,7 @@ describe("legacy db advisors — local", () => {
   });
 });
 
-describe("legacy db advisors — linked", () => {
+describe("db advisors — linked", () => {
   const securityLint = {
     name: "rls_disabled_in_public",
     title: "RLS disabled",

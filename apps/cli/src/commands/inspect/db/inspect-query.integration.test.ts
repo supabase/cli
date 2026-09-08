@@ -174,7 +174,7 @@ const flags = (over: Partial<InspectConnectionFlags> = {}): InspectConnectionFla
   projectRef: over.projectRef ?? Option.none<string>(),
 });
 
-describe("legacy inspect db query runner", () => {
+describe("inspect db query runner", () => {
   it.live("renders a glamour table in text mode (db-stats)", () => {
     const { layer, out, connection } = setup({ rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {

@@ -128,7 +128,7 @@ function setupTracked(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, cache };
 }
 
-describe("legacy branches list integration", () => {
+describe("branches list integration", () => {
   it.live("renders a Glamour table with all 8 columns in text mode", () => {
     const { layer, out } = setup({ response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {

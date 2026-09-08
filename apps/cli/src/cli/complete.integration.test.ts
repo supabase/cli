@@ -64,7 +64,7 @@ function makeDeps(argv: ReadonlyArray<string>, captureTelemetry: CompleteDeps["c
   return { deps, stdoutWrites, exits };
 }
 
-describe("legacy __complete telemetry (CLI-1965 review finding)", () => {
+describe("__complete telemetry (CLI-1965 review finding)", () => {
   it("fires cli_command_executed with command: __complete and exit_code: 0 for a normal completion request", async () => {
     const analytics = mockAnalyticsWithContext();
     const { deps } = makeDeps(

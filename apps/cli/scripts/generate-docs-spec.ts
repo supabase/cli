@@ -1,7 +1,7 @@
 /**
  * Emits the `clispec 001` CLI reference document for the supabase.com docs
  * site (`supabase/supabase` `apps/docs/spec/cli_v1_commands.yaml`) from the
- * legacy Effect command tree plus the content under `apps/cli/docs/`
+ * Effect command tree plus the content under `apps/cli/docs/`
  * (`supabase/` description overlays, `templates/examples.yaml`).
  *
  * Contract (documented in `docs/README.md`): the spec YAML is the ONLY thing

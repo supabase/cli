@@ -7,7 +7,7 @@ import { runSupabase, stripAnsi } from "../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
-describe("supabase migration fetch (legacy)", () => {
+describe("supabase migration fetch", () => {
   let workdir: string;
   beforeEach(() => {
     workdir = mkdtempSync(join(tmpdir(), "sb-mig-fetch-e2e-"));

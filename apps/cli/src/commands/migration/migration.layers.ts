@@ -47,7 +47,7 @@ const dbConfig = dbConfigLayer.pipe(
  *
  * `identityStitchLayer` is provided by the SAME reference to `dbConfig` and
  * the linked resolver so Effect memoises one shared identity-stitch attempt
- * (legacy CLAUDE.md rule 5).
+ * (CLAUDE.md invariant 5).
  */
 export const migrationDbRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
   Layer.mergeAll(

@@ -46,7 +46,7 @@ function mockContextualAnalytics() {
 // eslint-disable-next-line no-control-regex
 const stripSgr = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
-describe("legacy functions delete", () => {
+describe("functions delete", () => {
   it.live("deletes a function natively through the Management API", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: null } });

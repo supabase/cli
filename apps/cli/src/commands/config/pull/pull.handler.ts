@@ -1069,7 +1069,7 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
       source,
     });
   }).pipe(
-    // Legacy Shell Invariant #1: telemetry flushes on EVERY invocation —
+    // CLI Invariant #1: telemetry flushes on EVERY invocation —
     // including load/parse failures and branch-resolution failures — while
     // the linked-project cache write needs a resolved ref, so it fires
     // exactly when one exists (mirrors `config diff`).

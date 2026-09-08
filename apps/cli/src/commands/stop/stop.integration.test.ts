@@ -217,7 +217,7 @@ function setup(opts: SetupOpts = {}) {
   return { workdir, out, telemetry, child, layer };
 }
 
-describe("legacy stop integration", () => {
+describe("stop integration", () => {
   it.live(
     "stops the current project's containers with backup and suggests the volume command",
     () => {

@@ -65,7 +65,7 @@ export function redactHttpUrl(url: string): string {
 }
 
 /**
- * Wraps `FetchHttpClient.layer` so every HTTP request goes through the legacy
+ * Wraps `FetchHttpClient.layer` so every HTTP request goes through the CLI's
  * debug side channel. The logger itself owns the `--debug` guard and the
  * line formatting.
  *

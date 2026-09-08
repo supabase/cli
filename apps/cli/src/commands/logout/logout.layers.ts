@@ -15,7 +15,7 @@ import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
  *
  * `commandSettingsLayer` is provided to `commandCredentialsLayer` and also exposed
  * at the top level (`Layer.provide` does not share to siblings inside a merge —
- * legacy CLAUDE.md item 5). `Analytics`, `Output`, `Stdio`, `Tty`, `FileSystem`,
+ * CLAUDE.md invariant 5). `Analytics`, `Output`, `Stdio`, `Tty`, `FileSystem`,
  * `Path`, `TelemetryRuntime`, and `YesFlag` come from the root layer;
  * `stdinLayer` (the shared piped-stdin reader for the logout confirm) builds its
  * `Stdin` from the root `Tty`, like the migration runtimes.

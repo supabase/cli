@@ -114,7 +114,7 @@ function findFailure(exit: Exit.Exit<unknown, unknown>): Record<string, unknown>
   return Option.isSome(failure) ? (failure.value as Record<string, unknown>) : {};
 }
 
-describe("legacy projects create integration", () => {
+describe("projects create integration", () => {
   it.live("creates a project non-interactively from flags", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {

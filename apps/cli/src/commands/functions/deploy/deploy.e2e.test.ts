@@ -26,7 +26,7 @@ const SLUG = "deploy-e2e-basic";
 const FAKE_TOKEN = `sbp_${"0".repeat(40)}`;
 const FAKE_REF = "a".repeat(20);
 
-describe("supabase functions deploy (legacy) — argument validation", () => {
+describe("supabase functions deploy — argument validation", () => {
   const conflicts = [
     { name: "--use-api + --use-docker", flags: ["--use-api", "--use-docker"] },
     { name: "--use-api + --legacy-bundle", flags: ["--use-api", "--legacy-bundle"] },

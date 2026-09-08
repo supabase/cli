@@ -98,7 +98,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, cache };
 }
 
-describe("legacy snippets list integration", () => {
+describe("snippets list integration", () => {
   it.live("renders an ASCII table in text mode with all six columns", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {

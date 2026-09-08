@@ -220,7 +220,7 @@ const flags = () => ({
   projectRef: Option.none<string>(),
 });
 
-describe("legacy db test (alias) integration", () => {
+describe("db test (alias) integration", () => {
   it.live("runs pgTAP through the alias exactly like `test db`", () => {
     const { layer, connection, docker } = setup();
     return Effect.gen(function* () {

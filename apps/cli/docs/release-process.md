@@ -37,7 +37,7 @@ Publish the CLI into it from another terminal (current platform only, faster tha
 # TS-native shell only ("next"):
 pnpm cli-release --next
 
-# Legacy shell (TS shim + Go sidecar — requires Go on PATH and `pnpm repos:install`):
+# CLI (TS shim + Go sidecar — requires Go on PATH and `pnpm repos:install`):
 pnpm cli-release --legacy
 ```
 
@@ -218,7 +218,7 @@ Production releases live in a single `[.github/workflows/release.yml](../../../.
 | beta    | push: develop        | legacy | beta         | supabase-beta   | prerelease | `X.Y.Z-beta.N`    |
 | stable  | push: main (post-FF) | legacy | latest       | supabase        | latest     | `X.Y.Z`           |
 
-`alpha` is reserved for the v3 rewrite (`next` shell), released only on demand. `beta` auto-publishes on every merge to `develop` (legacy shell). `stable` auto-publishes after a develop→main fast-forward, which itself happens when the weekly `[deploy.yml](../../../.github/workflows/deploy.yml)` cron PR is approved (the FF push to `main` re-fires `release.yml` via the `push: branches: [main]` trigger).
+`alpha` is reserved for the v3 rewrite (`next` shell), released only on demand. `beta` auto-publishes on every merge to `develop` (CLI). `stable` auto-publishes after a develop→main fast-forward, which itself happens when the weekly `[deploy.yml](../../../.github/workflows/deploy.yml)` cron PR is approved (the FF push to `main` re-fires `release.yml` via the `push: branches: [main]` trigger).
 
 Beta + stable versions are computed by `cycjimmy/semantic-release-action` from the first line of each squash commit (the PR title). Conventional commit titles use `feat:` → minor, `fix:`, `perf:`, or `revert:` → patch, and `!` after the type or scope (`feat!:` / `fix(scope)!:`) → major. Commit bodies, including `BREAKING CHANGE` notes, are ignored for version calculation. The `release` config lives in `apps/cli/package.json` and is configured with `prerelease: beta` on the `develop` branch, so develop pushes emit `X.Y.Z-beta.N` and main pushes emit `X.Y.Z` (suffix dropped).
 

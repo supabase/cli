@@ -17,7 +17,7 @@ const DEAD_DB_URL = "postgres://postgres:postgres@127.0.0.1:1/postgres";
 const TEXT_MODE = "--agent";
 const TEXT_MODE_VALUE = "no";
 
-describe("supabase inspect db (legacy)", () => {
+describe("supabase inspect db", () => {
   test(
     "inspect db locks fails gracefully when the database is unreachable",
     { timeout: E2E_TIMEOUT_MS },

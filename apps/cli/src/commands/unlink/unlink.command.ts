@@ -15,7 +15,7 @@ import { unlink } from "./unlink.handler.ts";
 // an access token and would fail with "Access token not provided" for a token-less
 // `unlink`. It provides only the services the handler + instrumentation consume.
 // `commandSettingsLayer` is provided to credentials AND exposed at the top level
-// (Layer.provide does not share to siblings inside a merge — legacy CLAUDE.md item 5).
+// (Layer.provide does not share to siblings inside a merge — CLAUDE.md invariant 5).
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const credentials = commandCredentialsLayer.pipe(
   Layer.provide(cliSettings),

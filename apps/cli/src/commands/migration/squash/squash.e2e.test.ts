@@ -7,7 +7,7 @@ import { runSupabase, stripAnsi } from "../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
-describe("supabase migration squash (legacy)", () => {
+describe("supabase migration squash", () => {
   let workdir: string;
   beforeEach(() => {
     workdir = mkdtempSync(join(tmpdir(), "sb-mig-squash-e2e-"));

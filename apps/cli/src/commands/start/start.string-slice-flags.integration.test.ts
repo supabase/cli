@@ -74,7 +74,7 @@ function setup() {
   return { layer };
 }
 
-describe("legacy start --exclude flag (pflag CSV parity)", () => {
+describe("start --exclude flag (pflag CSV parity)", () => {
   // Verified against pflag's actual output (CLI-2005): the rendered line is
   // identical for both spellings — pflag always frames a shorthand flag as
   // `-x, --exclude`.

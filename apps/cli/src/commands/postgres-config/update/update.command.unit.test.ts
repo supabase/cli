@@ -4,7 +4,7 @@ import { describe, expect, test } from "vitest";
 import { normalizeCause } from "../../../shared/output/normalize-error.ts";
 import { postgresConfigUpdateConfigFlag } from "./update.command.ts";
 
-describe("legacy postgres-config update --config flag (pflag StringSlice parity)", () => {
+describe("postgres-config update --config flag (pflag StringSlice parity)", () => {
   test("splits a comma-separated value into multiple key=value pairs", async () => {
     const [, values] = await Effect.runPromise(
       postgresConfigUpdateConfigFlag

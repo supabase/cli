@@ -267,7 +267,7 @@ function flags(overrides: Partial<BootstrapFlags> = {}): BootstrapFlags {
   };
 }
 
-describe("legacy bootstrap integration", () => {
+describe("bootstrap integration", () => {
   it.live("bootstraps the scratch template into the workdir (blank init, logged in)", () => {
     const s = setup();
     return Effect.gen(function* () {

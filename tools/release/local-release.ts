@@ -134,7 +134,7 @@ async function checkGo(): Promise<void> {
     await $`go version`.quiet();
   } catch {
     console.error("\nError: `go` not found in PATH.");
-    console.error("Install Go from https://go.dev/dl/ to build the legacy shell.\n");
+    console.error("Install Go from https://go.dev/dl/ to build the CLI.\n");
     process.exit(1);
   }
 }

@@ -9,7 +9,7 @@ function parseJsonLines(output: string): Array<unknown> {
     .map((line) => JSON.parse(line));
 }
 
-describe("legacy CLI agent output", () => {
+describe("CLI agent output", () => {
   test("formats parse errors as JSON for detected coding agents", async () => {
     const { exitCode, stdout, stderr } = await runSupabase(["definitely-not-a-command"], {
       entrypoint: "legacy",

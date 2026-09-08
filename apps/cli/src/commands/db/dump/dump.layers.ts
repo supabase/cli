@@ -68,7 +68,7 @@ const dbConfig = dbConfigLayer.pipe(
   // The linked db-config resolver snapshots `IdentityStitch` (shared with
   // the lazy platform-API factory + linked-project cache), so the command
   // runtime must provide it or the bundled binary panics with a
-  // missing-service error (legacy CLAUDE.md rule 5). Its Analytics / TelemetryRuntime
+  // missing-service error (CLAUDE.md invariant 5). Its Analytics / TelemetryRuntime
   // / FileSystem / Path deps are ambient from the root runtime.
   Layer.provide(identityStitchLayer),
 );

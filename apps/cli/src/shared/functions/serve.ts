@@ -164,8 +164,8 @@ export interface FunctionsServeDependencies {
   readonly projectIdOverride: Option.Option<string>;
   readonly goViperCompat: boolean;
   /**
-   * `undefined` in `next`; the legacy shell injects
-   * `functionsGoConfigCompat` so this file never imports `legacy/`
+   * `undefined` in `next`; the CLI injects
+   * `functionsGoConfigCompat` so this file never imports the command tree
    * directly — see {@link FunctionsGoConfigCompat}. Distinct from
    * `goViperCompat` above, which only gates `env(...)` interpolation.
    */
@@ -718,7 +718,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   // This single value is what keeps the `.env` discovery, the config load,
   // and the functions-manifest inference from ever resolving three
   // different roots: `goConfigCompat === undefined` (`next`/library path)
-  // keeps the package-default ancestor search; the legacy shell's
+  // keeps the package-default ancestor search; the CLI's
   // `search: false` below must match `loadFunctionsCliConfig`'s own options
   // exactly (see the config-load comment further down).
   const searchAncestors = goConfigCompat === undefined;
@@ -738,7 +738,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   // in, so loading neither re-reads those files nor mutates `process.env`.
   //
   // `search: searchAncestors` (`false`)/`tomlOnly: true` when `goConfigCompat`
-  // is set (legacy shell): this MUST match `loadFunctionsCliConfig`'s own
+  // is set (CLI): this MUST match `loadFunctionsCliConfig`'s own
   // options below exactly, or the two loads can resolve two different files
   // (an ancestor's config.toml vs this dir's; a stray config.json vs
   // config.toml) — one supplying `auth`/`edgeRuntime`/`apiPort` here, the
@@ -805,7 +805,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   // Go: `flags.LoadConfig` -> `Config.Validate` (`pkg/config/config.go:878,989-1192`)
   // — `restartEdgeRuntime` runs this FIRST, before `AssertSupabaseDbIsRunning`
   // (see this function's own caller for that ordering) — so an invalid
-  // config must fail here too, before any Docker check. Legacy shell only;
+  // config must fail here too, before any Docker check. CLI only;
   // `next` keeps its own package-default config resolution above unchanged.
   // A second, independent config/dotenv load (rather than reusing this
   // function's own `loadedConfig`/`projectEnv` above) — that pipeline's
@@ -1916,7 +1916,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
   let ownsRuntime = false;
   let startedRuntime: StartedRuntime | undefined;
   return yield* Effect.gen(function* () {
-    // `SUPABASE_NETWORK_ID` (env or project dotenv) is legacy-shell-only —
+    // `SUPABASE_NETWORK_ID` (env or project dotenv) is CLI-only —
     // same Go-viper-parity gate as `resolved.projectEnvValues` itself
     // (`undefined` in `next`).
     const networkMode = resolveDockerNetworkMode({

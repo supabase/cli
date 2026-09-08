@@ -69,7 +69,7 @@ interface DownloadDockerRuntimeDependencies extends DownloadRuntimeDependencies 
   /**
    * Optional shell-specific styling hook for the `Downloading function:`
    * progress line — mirrors `deploy.ts`'s `DeployFunctionsDependencies.styleEmphasis`.
-   * Defaults to identity (plain text); the legacy shell injects Go's bold
+   * Defaults to identity (plain text); the CLI injects Go's bold
    * styling here so the next shell stays isolated from `legacy/`-specific
    * rendering. Go: `utils.Bold(slug)` (`downloadOne`, `download.go:219`).
    */
@@ -98,8 +98,8 @@ interface DownloadDockerRuntimeDependencies extends DownloadRuntimeDependencies 
 interface EdgeRuntimeImageDependencies {
   readonly projectRoot: string;
   /**
-   * `undefined` in `next`; the legacy shell injects
-   * `functionsGoConfigCompat` so this file never imports `legacy/`
+   * `undefined` in `next`; the CLI injects
+   * `functionsGoConfigCompat` so this file never imports the command tree
    * directly — see {@link FunctionsGoConfigCompat}.
    */
   readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
@@ -1075,7 +1075,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   // preserves the "explicitly cleared" vs "never touched" distinction
   // `resolveDockerNetworkMode` needs to decide whether `SUPABASE_NETWORK_ID`
   // applies — see that function's own doc comment. `SUPABASE_NETWORK_ID`
-  // (env or project dotenv) is legacy-shell-only — same Go-viper-parity gate
+  // (env or project dotenv) is CLI-only — same Go-viper-parity gate
   // as `projectEnvValues` itself (`undefined` in `next`).
   const networkMode = resolveDockerNetworkMode({
     explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),

@@ -11,7 +11,7 @@ import {
  * `github.com/spf13/pflag/string_slice.go`'s `stringSliceValue.Set`. A naive
  * `.split(",")` diverges on quoted/embedded commas (`'"a,b",c'`). Effect V4
  * CLI has no CSV/list primitive, so every Go `StringSliceVar` flag ported to
- * the legacy shell needs this (e.g. `--domains`, `--config`).
+ * the CLI needs this (e.g. `--domains`, `--config`).
  *
  * Whitespace is NOT trimmed and empty fields are NOT dropped: Go's csv.Reader
  * returns raw field values; pflag appends them directly to the slice.

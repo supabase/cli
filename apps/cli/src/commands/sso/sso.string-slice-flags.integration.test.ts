@@ -74,7 +74,7 @@ function setup() {
   return { layer, api };
 }
 
-describe("legacy sso StringSlice flags (pflag CSV parity)", () => {
+describe("sso StringSlice flags (pflag CSV parity)", () => {
   const cases: ReadonlyArray<{
     readonly name: string;
     readonly args: ReadonlyArray<string>;

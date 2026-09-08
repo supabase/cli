@@ -102,7 +102,7 @@ function parsePostBody(body: unknown): Array<{ name: string; value: string }> {
   return body as Array<{ name: string; value: string }>;
 }
 
-describe("legacy secrets set integration", () => {
+describe("secrets set integration", () => {
   it.live("sets a single secret via CLI arg FOO=bar", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {

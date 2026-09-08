@@ -74,7 +74,7 @@ function parseDeleteBody(body: unknown): string[] {
   return body as string[];
 }
 
-describe("legacy secrets unset integration", () => {
+describe("secrets unset integration", () => {
   it.live("unsets a single secret given explicitly (with --yes)", () => {
     const { layer, out, api } = setup({ yes: true });
     return Effect.gen(function* () {

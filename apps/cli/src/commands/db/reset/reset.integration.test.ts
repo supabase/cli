@@ -521,7 +521,7 @@ const migrationFile = (version: string, body = "create table t ();") => ({
 const PG14_TOML = 'project_id = "test"\n[db]\nmajor_version = 14\n';
 const FAST_HEALTH_TOML = '[db]\nhealth_timeout = "1s"\n';
 
-describe("legacy db reset", () => {
+describe("db reset", () => {
   const tmp = useTempWorkdir("supabase-db-reset-");
 
   describe("local reset — PG15+", () => {

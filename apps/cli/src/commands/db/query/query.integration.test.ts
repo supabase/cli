@@ -262,11 +262,10 @@ function setup(opts: SetupOpts = {}) {
         opts.accessTokenInvalid === true
           ? validateAccessToken("not_sbp").pipe(Effect.map((t) => Option.some(Redacted.make(t))))
           : Effect.succeed(opts.accessToken ?? Option.some(Redacted.make(VALID_TOKEN))),
-      saveAccessToken: () => Effect.die("unexpected legacy credentials write in test"),
-      deleteAccessToken: Effect.die("unexpected legacy credentials delete in test"),
-      deleteAllProjectCredentials: Effect.die("unexpected legacy project-credential sweep in test"),
-      deleteProjectCredential: () =>
-        Effect.die("unexpected legacy project-credential delete in test"),
+      saveAccessToken: () => Effect.die("unexpected credentials write in test"),
+      deleteAccessToken: Effect.die("unexpected credentials delete in test"),
+      deleteAllProjectCredentials: Effect.die("unexpected project-credential sweep in test"),
+      deleteProjectCredential: () => Effect.die("unexpected project-credential delete in test"),
     }),
     httpClient.layer,
     BunServices.layer,
@@ -292,7 +291,7 @@ const SELECT_RESULT: QueryResult = {
   commandTag: "SELECT 2",
 };
 
-describe("legacy db query integration", () => {
+describe("db query integration", () => {
   it.live("runs SQL passed as a positional argument and renders a table for humans", () => {
     const { layer, out, cache } = setup({ result: SELECT_RESULT });
     return Effect.gen(function* () {

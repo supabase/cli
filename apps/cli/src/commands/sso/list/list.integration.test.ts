@@ -140,7 +140,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, analytics, telemetry, cache };
 }
 
-describe("legacy sso list integration", () => {
+describe("sso list integration", () => {
   it.live("renders an ASCII table in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {

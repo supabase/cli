@@ -31,7 +31,7 @@ function lsFlags(
   };
 }
 
-describe("legacy storage ls", () => {
+describe("storage ls", () => {
   const tmp = useTempWorkdir("supabase-storage-ls-");
 
   it.live("lists buckets at the root, filtered by the bucket prefix", () => {

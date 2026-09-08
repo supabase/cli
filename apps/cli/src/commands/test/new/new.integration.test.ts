@@ -71,7 +71,7 @@ const flags = (name: string, template?: "pgtap") => ({
   template: template === undefined ? Option.none<"pgtap">() : Option.some(template),
 });
 
-describe("legacy test new integration", () => {
+describe("test new integration", () => {
   it.live("creates a pgtap test file and prints the created path", () => {
     const { layer, out, workdir } = setup();
     return Effect.gen(function* () {

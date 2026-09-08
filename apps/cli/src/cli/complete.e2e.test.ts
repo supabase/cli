@@ -3,7 +3,7 @@ import { runSupabase } from "../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
-describe("supabase __complete (legacy)", () => {
+describe("supabase __complete", () => {
   test(
     "migration li completes to list with a description and the NoFileComp directive",
     { timeout: E2E_TIMEOUT_MS },

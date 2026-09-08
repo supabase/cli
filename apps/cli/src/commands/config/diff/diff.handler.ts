@@ -256,7 +256,7 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
       yield* processControl.setExitCode(2);
     }
   }).pipe(
-    // Legacy Shell Invariant #1: telemetry flushes on EVERY invocation —
+    // CLI Invariant #1: telemetry flushes on EVERY invocation —
     // including load/parse failures and branch-resolution failures — while
     // the linked-project cache write needs a resolved ref, so it fires
     // exactly when one exists.

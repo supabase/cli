@@ -5,7 +5,7 @@ const E2E_TIMEOUT_MS = 30_000;
 const TEST_PROJECT_REF = "abcdefghijklmnopqrst";
 const TEST_TOKEN = "sbp_" + "a".repeat(40);
 
-describe("supabase sso (legacy)", () => {
+describe("supabase sso", () => {
   test(
     "info --output-format=json emits derived URLs (no auth needed)",
     { timeout: E2E_TIMEOUT_MS },

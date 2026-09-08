@@ -27,9 +27,10 @@ This document explains how the CLI's on-disk config document loading works, acro
 - `CliProjectPaths`: the discovered filesystem paths for the active project.
 - `CliProjectContext`: apps/cli's runtime bundle of discovered paths + merged env for the active
   project.
-- `CommandSettings`: apps/cli's legacy shell's own equivalent of `CliSettings` — same role,
-  scoped to the legacy shell, and pending deletion once the legacy/next shells consolidate.
-  Defined at `apps/cli/src/config/command-settings.service.ts`.
+- `CommandSettings`: apps/cli's command-level counterpart to `CliSettings` — the per-invocation
+  settings every command handler resolves (active profile, `--workdir`, project id, access token).
+  It predates `CliSettings`; the two are slated to consolidate. Defined at
+  `apps/cli/src/config/command-settings.service.ts`.
 
 The `Cli*` prefix is a rule, not a per-name coincidence: it names the local checkout side — what
 the CLI reads, writes, or resolves about itself on disk. A bare `Project*` name is reserved for the
@@ -45,9 +46,9 @@ ref — the value that binds that remote block to a specific persistent Supabase
 The `Cli*` prefix names the local checkout side — what the CLI reads, writes, or resolves about
 itself on disk. A bare `Project*` name is reserved for the hosted Supabase project side. (Deliberate
 exceptions live in apps/cli: services that describe the hosted project itself or the CLI's link to
-it — `ProjectLinkRemote`, `ProjectLinkState` (both in `next/config`), and legacy's
-`ProjectRefResolver` (exported as `ProjectRefResolver`, carrying the legacy shell's own
-separate mandatory prefix) — keep the bare `Project*` root under this same rule.)
+it — `ProjectLinkRemote`, `ProjectLinkState` (both in `shared/config`), and
+`ProjectRefResolver` (in `apps/cli/src/config`) — keep the bare `Project*` root under this same
+rule.)
 
 ## The `/io` facade
 
@@ -238,7 +239,7 @@ resolves and redacts leaves nested inside `[remotes.*]` blocks.
 
 An optional `goViperCompat` flag switches the `env(NAME)` matcher from the default, strict
 `SCREAMING_SNAKE_CASE`-only pattern to Go/viper's case-agnostic `^env\((.*)\)$` form; only the
-Go-parity legacy shell sets it. The public `resolveCliConfigValue`/`resolveCliConfigSubtree` on
+Go-parity CLI sets it. The public `resolveCliConfigValue`/`resolveCliConfigSubtree` on
 `.`/`./effect` take no options parameter at all (CLI-2234) — `goViperCompat` is internal-only,
 typed on `InternalResolveCliConfigOptions`, a package-internal type that is not itself exported.
 `@supabase/config/internal` re-exports these same runtime functions re-typed to additionally

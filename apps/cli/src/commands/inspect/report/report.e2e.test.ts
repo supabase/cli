@@ -18,7 +18,7 @@ const DEAD_DB_URL = "postgres://postgres:postgres@127.0.0.1:1/postgres";
 // auto-selects JSON on stdout in a detected agent environment).
 const TEXT_MODE = ["--agent", "no"];
 
-describe("supabase inspect report (legacy)", () => {
+describe("supabase inspect report", () => {
   test(
     "creates the dated output directory and prints the connect diagnostic before failing on an unreachable database",
     { timeout: E2E_TIMEOUT_MS },

@@ -167,7 +167,7 @@ const cases: ReadonlyArray<AliasCase> = [
   },
 ];
 
-describe("legacy inspect db deprecated aliases", () => {
+describe("inspect db deprecated aliases", () => {
   it("covers all 12 deprecated aliases", () => {
     expect(cases).toHaveLength(12);
   });

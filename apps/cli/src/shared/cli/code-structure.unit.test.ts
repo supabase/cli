@@ -71,7 +71,7 @@ describe("code structure", () => {
     expect(violations).toEqual([]);
   });
 
-  it("prevents legacy commands from importing other legacy command internals", () => {
+  it("prevents commands from importing other command internals", () => {
     const violations: Array<string> = [];
 
     for (const filePath of walk(commandsDir).filter(isSourceFile)) {
@@ -94,7 +94,7 @@ describe("code structure", () => {
     expect(violations).toEqual([]);
   });
 
-  it("keeps command-internal/db-bootstrap independent from legacy commands", () => {
+  it("keeps command-internal/db-bootstrap independent from commands", () => {
     const violations: Array<string> = [];
 
     for (const filePath of walk(dbBootstrapDir).filter(isSourceFile)) {

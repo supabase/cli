@@ -259,7 +259,7 @@ function compareType(
   path: string,
   mismatches: Array<GoStructDriftMismatch>,
 ): void {
-  const { pointer: pointer, inner } = unwrapPointer(legacy);
+  const { pointer, inner } = unwrapPointer(legacy);
   if (pointer !== parsed.pointer) {
     mismatches.push({
       path,

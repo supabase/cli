@@ -510,7 +510,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       }
 
       // Repairing the tree in place is offered only interactively, and only as an
-      // advanced choice: on a real legacy tree each added declaration tends to
+      // advanced choice: on a real CLI tree each added declaration tends to
       // unlock the next refusal, so it is a false trail for a scripted run.
       const choice = yield* output.promptSelect("How would you like to continue?", [
         { value: "stage", label: `Generate next export to ${stagedDirRel}`, hint: "recommended" },

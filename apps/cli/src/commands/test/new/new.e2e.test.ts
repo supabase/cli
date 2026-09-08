@@ -13,7 +13,7 @@ const E2E_TIMEOUT_MS = 30_000;
  * Branch detail (json/stream-json, exists/write errors) is covered by the
  * integration suite.
  */
-describe("supabase test new (legacy)", () => {
+describe("supabase test new", () => {
   let projectDir: string;
 
   beforeAll(() => {

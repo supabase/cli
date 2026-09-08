@@ -138,7 +138,7 @@ const flags = (over: Partial<MigrationFetchFlags> = {}): MigrationFetchFlags => 
 const migrationsDir = (workdir: string) => join(workdir, "supabase", "migrations");
 const tmp = useTempWorkdir();
 
-describe("legacy migration fetch", () => {
+describe("migration fetch", () => {
   it.live("writes migration files joined with the Go separator when the dir is empty", () => {
     const { layer, out } = setup(tmp.current, {
       rows: [

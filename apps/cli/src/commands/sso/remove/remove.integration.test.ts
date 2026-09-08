@@ -121,7 +121,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, analytics, telemetry, cache };
 }
 
-describe("legacy sso remove integration", () => {
+describe("sso remove integration", () => {
   it.live("rejects bad UUID", () => {
     const { layer } = setup();
     return Effect.gen(function* () {

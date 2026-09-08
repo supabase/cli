@@ -8,7 +8,7 @@ import {
   ssoUpdateRemoveDomainsFlag,
 } from "./update.command.ts";
 
-describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
+describe("sso update domain flags (pflag StringSlice parity)", () => {
   test("--domains splits a comma-separated value into multiple domains", async () => {
     const [, domains] = await Effect.runPromise(
       ssoUpdateDomainsFlag

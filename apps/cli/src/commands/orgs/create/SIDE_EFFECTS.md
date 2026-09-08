@@ -14,7 +14,7 @@
 | ---------------------------- | ------ | ----------------------------------------------- |
 | `~/.supabase/telemetry.json` | JSON   | always (in `Effect.ensuring`) at end of command |
 
-`orgs create` is a user-level command — it does not resolve a `--project-ref`, so the legacy
+`orgs create` is a user-level command — it does not resolve a `--project-ref`, so the
 linked-project cache is never written.
 
 ## Positional Arguments

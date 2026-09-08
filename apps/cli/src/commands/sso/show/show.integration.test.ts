@@ -63,7 +63,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, analytics, telemetry, cache };
 }
 
-describe("legacy sso show integration", () => {
+describe("sso show integration", () => {
   it.live("rejects bad UUID with Go-format message", () => {
     const { layer } = setup();
     return Effect.gen(function* () {

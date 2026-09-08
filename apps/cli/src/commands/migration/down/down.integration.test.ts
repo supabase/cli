@@ -170,7 +170,7 @@ const seed = (workdir: string, name: string, body = "create table a;\n") => {
 
 const tmp = useTempWorkdir();
 
-describe("legacy migration down", () => {
+describe("migration down", () => {
   it.live("rejects --last 0", () => {
     const { layer } = setup(tmp.current);
     return Effect.gen(function* () {

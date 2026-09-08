@@ -264,7 +264,7 @@ function cliArgsFor(flags: typeof defaultFlags): ReadonlyArray<string> {
   return argv;
 }
 
-describe("legacy sso update integration", () => {
+describe("sso update integration", () => {
   it.live("rejects bad UUID", () => {
     const { layer } = setup();
     return Effect.gen(function* () {

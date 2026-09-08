@@ -66,7 +66,7 @@ const authenticatedEnv = {
 };
 
 describe("native hidden flags", () => {
-  it("omits hidden flags from help docs for every legacy command that still carries one", () => {
+  it("omits hidden flags from help docs for every command that still carries one", () => {
     expect(buildHelpDoc(startCommand).flags.map((flag) => flag.name)).toEqual([
       "exclude",
       "ignore-health-check",
@@ -227,7 +227,7 @@ describe("native hidden flags", () => {
   });
 });
 
-describe("legacy hidden subcommands", () => {
+describe("hidden subcommands", () => {
   it("omits hidden branch and db subcommands from help docs", () => {
     const branchesHelp = buildHelpDoc(branchesCommand);
     expect(branchesHelp.subcommands?.[0]?.commands.map((command) => command.name)).toEqual([

@@ -43,7 +43,7 @@ function prefixOf(body: unknown): string {
     : "";
 }
 
-describe("legacy storage cp", () => {
+describe("storage cp", () => {
   const tmp = useTempWorkdir("supabase-storage-cp-");
 
   it.live("uploads a single local file with a sniffed content-type", () => {

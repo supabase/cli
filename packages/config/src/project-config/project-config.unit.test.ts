@@ -1272,7 +1272,7 @@ describe("fromApiProjectConfig — auth section", () => {
 
   // CLI-2316 follow-up: `sms.otp_length`/`sms.otp_expiry` are new config-schema
   // fields for pre-existing real GoTrue fields (`sms_otp_length`/`sms_otp_exp`)
-  // that the legacy shell's config-sync never modeled and neither did Go's own
+  // that the CLI's config-sync never modeled and neither did Go's own
   // `sms` struct — not a Go-parity gap, a genuinely new mapping.
   test("sms_otp_length/sms_otp_exp map to auth.sms.otp_length/otp_expiry", () => {
     const apiSide = fromApiProjectConfig({ auth: { sms_otp_length: 6, sms_otp_exp: 60 } });

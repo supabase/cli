@@ -195,7 +195,7 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
         // Go prints this from inside config load, before any command output
         // (`pkg/config/config.go:605`) — unconditionally on a matching
         // `[remotes.*]` block, ahead of the (possibly failing) decode. Other
-        // legacy handlers surface it the same way (e.g. `config push`); this
+        // handlers surface it the same way (e.g. `config push`); this
         // path must not silently drop it just because it maps straight down
         // to `.config` below.
         return (

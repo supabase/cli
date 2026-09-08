@@ -161,7 +161,7 @@ function issueSetup(
   return { layer, out, browser };
 }
 
-describe("legacy issue", () => {
+describe("issue", () => {
   it.live("opens bug form with runtime fields and user-provided context", () => {
     const { layer, out, browser } = issueSetup();
 

@@ -45,7 +45,7 @@ const expectedAcsUrl = `https://${VALID_REF}.supabase.co/auth/v1/sso/saml/acs`;
 const expectedEntityId = `https://${VALID_REF}.supabase.co/auth/v1/sso/saml/metadata`;
 const expectedRelayState = `https://${VALID_REF}.supabase.co`;
 
-describe("legacy sso info integration", () => {
+describe("sso info integration", () => {
   it.live("renders a 3-row markdown table in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {

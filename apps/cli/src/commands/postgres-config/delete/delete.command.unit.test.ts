@@ -4,7 +4,7 @@ import { describe, expect, test } from "vitest";
 import { normalizeCause } from "../../../shared/output/normalize-error.ts";
 import { postgresConfigDeleteConfigFlag } from "./delete.command.ts";
 
-describe("legacy postgres-config delete --config flag (pflag StringSlice parity)", () => {
+describe("postgres-config delete --config flag (pflag StringSlice parity)", () => {
   test("splits a comma-separated value into multiple keys", async () => {
     const [, values] = await Effect.runPromise(
       postgresConfigDeleteConfigFlag

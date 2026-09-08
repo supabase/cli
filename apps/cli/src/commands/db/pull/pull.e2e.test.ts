@@ -4,7 +4,7 @@ import { runSupabase } from "../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
-describe("supabase db pull (legacy)", () => {
+describe("supabase db pull", () => {
   // Docker-free golden-path: the `--declarative` / `--diff-engine` mutual-exclusion
   // is validated before any connection or shadow work, so this exits non-zero
   // through a real subprocess without Docker.

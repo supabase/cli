@@ -112,13 +112,12 @@ a final `:<directive>` line (an integer — `0` default, `4` "no file completion
 
 ## Notes
 
-- Effect CLI's `--completions` global flag remains exposed at the root for `next/`
-  users; it does not satisfy the legacy parity contract and is not what this
-  subcommand routes through.
+- Effect CLI's `--completions` global flag remains exposed at the root; it is not
+  the compatibility path and is not what this subcommand routes through.
 - **Known divergence (CLI-1906):** the old Go CLI exited `0` on both bare
   `completion` (no shell subcommand) AND `completion <unknown-shell>` — an
   unrecognized subcommand name was treated the same as a missing one, printing
-  help and returning success. The legacy TS shell currently exits `1` for
+  help and returning success. The TS CLI currently exits `1` for
   both invocations; this is a real, systemic exit-code bug in the shared CLI
   harness (`shared/cli/run.ts`), not `completion`-specific — it reproduces on
   any bare or unrecognized-subcommand invocation of a group command with

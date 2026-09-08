@@ -100,7 +100,7 @@ function renderFailureToStderr(exit: Exit.Exit<unknown, unknown>) {
   });
 }
 
-describe("legacy init", () => {
+describe("init", () => {
   it.live("creates config.toml natively without the Go proxy", () => {
     const tempDir = makeTempDir();
 

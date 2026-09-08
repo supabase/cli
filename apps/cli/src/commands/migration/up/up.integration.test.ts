@@ -149,7 +149,7 @@ const insertedVersions = (queries: Array<{ sql: string; params?: ReadonlyArray<u
 
 const tmp = useTempWorkdir();
 
-describe("legacy migration up", () => {
+describe("migration up", () => {
   it.live("applies pending migrations in order and prints progress", () => {
     seed(tmp.current, "20240101000000_a.sql");
     seed(tmp.current, "20240102000000_b.sql");

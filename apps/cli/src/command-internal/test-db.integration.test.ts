@@ -237,7 +237,7 @@ const flags = (over: Partial<Parameters<typeof testDb>[0]> = {}) => ({
   projectRef: over.projectRef ?? Option.none<string>(),
 });
 
-describe("legacy test db integration", () => {
+describe("test db integration", () => {
   it.live("runs pgTAP on the local db: enables then drops pgtap, exits 0", () => {
     const { layer, connection, docker } = setup();
     return Effect.gen(function* () {

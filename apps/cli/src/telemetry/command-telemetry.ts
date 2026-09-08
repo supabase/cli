@@ -327,7 +327,13 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
   readonly changedFlagNames: ReadonlyArray<string>;
   readonly choiceFlagNames: ReadonlySet<string>;
 }): Record<string, unknown> | undefined {
-  const { flags, globalFlagValues, safeFlagSet, changedFlagNames, choiceFlagNames } = options;
+  const {
+    flags,
+    globalFlagValues: globalFlags,
+    safeFlagSet,
+    changedFlagNames,
+    choiceFlagNames,
+  } = options;
   if (changedFlagNames.length === 0) return undefined;
 
   const result: Record<string, unknown> = {};
@@ -345,7 +351,7 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
     // root's global `--output` enum (`cmd/root.go:330`). Only fall back to
     // the live global-flag value when the handler never declared this name.
     const isFromHandler = handlerFlagsByCliName.has(cliName);
-    const rawValue = isFromHandler ? handlerFlagsByCliName.get(cliName) : globalFlagValues[cliName];
+    const rawValue = isFromHandler ? handlerFlagsByCliName.get(cliName) : globalFlags[cliName];
     const value = normalizeFlagValue(rawValue);
 
     // `safeFlagSet`/`choiceFlagNames` classify a flag as safe by CLI NAME,

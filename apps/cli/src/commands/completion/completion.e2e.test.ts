@@ -3,7 +3,7 @@ import { runSupabase } from "../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
-describe("supabase completion (legacy)", () => {
+describe("supabase completion", () => {
   // Golden-path e2e: `--no-descriptions` used to be rejected by Effect's argv
   // parser (`UnrecognizedOption`) before the flag reached the completion
   // command at all. The script is generated natively in TS — only a real

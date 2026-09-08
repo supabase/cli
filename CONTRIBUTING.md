@@ -106,24 +106,24 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 | Workspace      | Purpose                                                                                                                                |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/cli`     | Main `supabase` package. Contains command handlers, runtime services, auth, output, telemetry, and docs generation scripts.            |
-| `apps/cli-e2e` | Compatibility e2e test suite. Record-and-replay harness for testing the TS Legacy port against real Supabase Management API responses. |
+| `apps/cli-e2e` | Compatibility e2e test suite. Record-and-replay harness for testing the TypeScript CLI against real Supabase Management API responses. |
 | `apps/docs`    | Internal docs site built with Next.js and generated from the CLI docs sources.                                                         |
 
 ## Packages
 
-| Workspace                       | Purpose                                                                                                             |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `packages/api`                  | Auto-generated TypeScript client for the Supabase Management API.                                                   |
-| `packages/cli-test-helpers`     | CLI test harness library — `createHarness`/`exec` API for spawning TS Legacy and TS Next CLI subprocesses in tests. |
-| `packages/config`               | JSON Schema and generated TypeScript types for Supabase configuration.                                              |
-| `packages/stack`                | Programmatic local Supabase stack used by the CLI and other tooling.                                                |
-| `packages/cli-darwin-arm64`     | Published native CLI binary wrapper for macOS arm64.                                                                |
-| `packages/cli-darwin-x64`       | Published native CLI binary wrapper for macOS x64.                                                                  |
-| `packages/cli-linux-arm64`      | Published native CLI binary wrapper for Linux arm64 (glibc).                                                        |
-| `packages/cli-linux-arm64-musl` | Published native CLI binary wrapper for Linux arm64 (musl).                                                         |
-| `packages/cli-linux-x64`        | Published native CLI binary wrapper for Linux x64 (glibc).                                                          |
-| `packages/cli-linux-x64-musl`   | Published native CLI binary wrapper for Linux x64 (musl).                                                           |
-| `packages/cli-windows-x64`      | Published native CLI binary wrapper for Windows x64.                                                                |
+| Workspace                       | Purpose                                                                                       |
+| ------------------------------- | --------------------------------------------------------------------------------------------- |
+| `packages/api`                  | Auto-generated TypeScript client for the Supabase Management API.                             |
+| `packages/cli-test-helpers`     | CLI test harness library — `createHarness`/`exec` API for spawning CLI subprocesses in tests. |
+| `packages/config`               | JSON Schema and generated TypeScript types for Supabase configuration.                        |
+| `packages/stack`                | Programmatic local Supabase stack used by the CLI and other tooling.                          |
+| `packages/cli-darwin-arm64`     | Published native CLI binary wrapper for macOS arm64.                                          |
+| `packages/cli-darwin-x64`       | Published native CLI binary wrapper for macOS x64.                                            |
+| `packages/cli-linux-arm64`      | Published native CLI binary wrapper for Linux arm64 (glibc).                                  |
+| `packages/cli-linux-arm64-musl` | Published native CLI binary wrapper for Linux arm64 (musl).                                   |
+| `packages/cli-linux-x64`        | Published native CLI binary wrapper for Linux x64 (glibc).                                    |
+| `packages/cli-linux-x64-musl`   | Published native CLI binary wrapper for Linux x64 (musl).                                     |
+| `packages/cli-windows-x64`      | Published native CLI binary wrapper for Windows x64.                                          |
 
 ## Working In The Monorepo
 
@@ -185,7 +185,7 @@ e2e package with `pnpm run test:e2e --shard=1/3`.
 
 ## E2E Compatibility Test Suite
 
-`apps/cli-e2e` implements the replay-and-record compatibility harness for the TypeScript Legacy CLI (`ts-legacy`, the only shipped CLI shell). Live tests are owned by `apps/cli` and run from the command they cover. The CLI still shells out to the bundled Go binary for the handful of commands the TS port proxies (`db diff --use-pg-schema`, `db branch *`, `db remote changes`, `gen keys`, `functions download`), so `apps/cli-go/` is built alongside the TS CLI for these suites, but there is no Go-vs-TypeScript parity runner.
+`apps/cli-e2e` implements the replay-and-record compatibility harness for the TypeScript CLI (harness target `ts-legacy`). Live tests are owned by `apps/cli` and run from the command they cover. The CLI still shells out to the bundled Go binary for the handful of commands the TS port proxies (`db diff --use-pg-schema`, `db branch *`, `db remote changes`, `gen keys`, `functions download`), so `apps/cli-go/` is built alongside the TS CLI for these suites, but there is no Go-vs-TypeScript parity runner.
 
 ### Architecture
 

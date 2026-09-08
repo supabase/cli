@@ -351,7 +351,7 @@ function setup(opts: SetupOpts = {}) {
 const currentBranchPath = (workdir: string) =>
   join(workdir, "supabase", ".branches", "_current_branch");
 
-describe("legacy db start", () => {
+describe("db start", () => {
   beforeEach(() => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
   });

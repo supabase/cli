@@ -60,7 +60,7 @@ function setup() {
   return { layer, api };
 }
 
-describe("legacy postgres-config experimental gate (Go PersistentPreRunE parity)", () => {
+describe("postgres-config experimental gate (Go PersistentPreRunE parity)", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "get", args: ["postgres-config", "get"] },
     { name: "update", args: ["postgres-config", "update"] },

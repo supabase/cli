@@ -32,7 +32,7 @@ function project(files: Readonly<Record<string, string>> = {}) {
 
 const getRoute = `GET ${workersRoute("/api")}`;
 
-describe("legacy workers status", () => {
+describe("workers status", () => {
   it.live("reports the deployment facts and the live instance tally", () => {
     const repo = project();
     const { layer, out } = setupWorkers({

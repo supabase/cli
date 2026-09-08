@@ -68,7 +68,7 @@ function booleanFlagsRequiringAValue(command: Command.Command.Any): ReadonlyArra
   return [...own, ...flattenSubcommands(command).flatMap(booleanFlagsRequiringAValue)];
 }
 
-describe("legacy boolean flag wiring", () => {
+describe("boolean flag wiring", () => {
   it("gives every boolean flag a default, so omitting it is not a parse error", () => {
     expect(booleanFlagsRequiringAValue(rootCommand)).toEqual([]);
   });

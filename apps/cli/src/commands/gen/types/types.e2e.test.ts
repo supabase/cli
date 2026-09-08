@@ -328,7 +328,7 @@ function expectLocalSmokeTable(lang: TypegenLang, stdout: string) {
   expect(stdout).toContain("TypegenSmoke");
 }
 
-describe("legacy gen types e2e", () => {
+describe("gen types e2e", () => {
   test(
     "generates all supported languages from a tokenless local stack",
     {

@@ -52,7 +52,7 @@ const baseFlags: BranchesDisableFlags = {
   projectRef: Option.none(),
 };
 
-describe("legacy branches disable integration", () => {
+describe("branches disable integration", () => {
   it.live("disables preview branching and emits header to stdout", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {

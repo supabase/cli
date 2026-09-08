@@ -68,7 +68,7 @@ function setupTracked(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, cache };
 }
 
-describe("legacy network-bans remove integration", () => {
+describe("network-bans remove integration", () => {
   it.live("removes bans and prints the success line in text mode", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {

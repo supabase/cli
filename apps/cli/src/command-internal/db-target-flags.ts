@@ -42,7 +42,7 @@ export interface DbTargetSelection {
  * cause the immediately following token to be skipped during the target-selector
  * scan.
  *
- * Sources: every legacy command that calls `resolveDbTargetFlags`
+ * Sources: every command that calls `resolveDbTargetFlags`
  * (`db lint`, `db advisors`, `test db`, and the `migration` commands `list`/
  * `repair`/`fetch`/`up`/`down`) or `changedLinkedLocalFlags`
  * (`seed buckets`, `storage cp/ls/mv/rm`), plus the shared global flags
@@ -52,7 +52,7 @@ export interface DbTargetSelection {
  *
  * Also consulted by `extractChangedFlagNames`
  * (`telemetry/command-telemetry.ts`), which scans EVERY
- * legacy command's raw argv, not just the db-target/global subset above — so
+ * command's raw argv, not just the db-target/global subset above — so
  * this set additionally lists every other value-consuming (non-boolean) flag
  * declared anywhere under `commands/`. Without an entry here, a bare
  * `--some-local-flag <token>` is mis-scanned: the value token is treated as a

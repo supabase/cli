@@ -48,7 +48,7 @@ function setup(opts: SetupOpts = {}) {
 
 const baseFlags = { projectRef: Option.none<string>() };
 
-describe("legacy encryption get-root-key integration", () => {
+describe("encryption get-root-key integration", () => {
   it.live("prints the root key to stdout in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {

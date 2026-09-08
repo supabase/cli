@@ -162,7 +162,7 @@ const baseFlags: BranchesCreateFlags = {
   gitBranch: Option.none(),
 };
 
-describe("legacy branches create integration", () => {
+describe("branches create integration", () => {
   it.live("creates a branch with explicit name and prints text-mode header + table", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {

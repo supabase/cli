@@ -23,17 +23,17 @@ import {
  * (`applyRemoteAuthConfig` and its `applyRemoteHook`/`applyRemoteProvider`
  * helpers for the pull direction, `authToUpdateBody` for the push direction)
  * — cited per row below — and verified against the config schema files under
- * `../auth/*.ts`. Local helpers below replicate the legacy shell's duration,
+ * `../auth/*.ts`. Local helpers below replicate the CLI's duration,
  * password-character, and env-map conversions since `packages/config` cannot
  * import from `apps/cli`.
  */
 
-// Local helpers replicated from the legacy shell (see each citation).
+// Local helpers replicated from the CLI (see each citation).
 
 /**
- * Port of Go `time.Duration.String()`, based on the legacy port at
+ * Port of Go `time.Duration.String()`, based on the port at
  * `apps/cli/src/commands/config/push/config-sync/config-sync.duration.ts:18-82`,
- * with one DELIBERATE divergence: the legacy port truncates sub-second
+ * with one DELIBERATE divergence: the port truncates sub-second
  * remainders in its hours/minutes branches (its :39-45), where Go itself
  * prints fractional seconds (`"1h0m0.5s"`). This copy matches Go because it
  * renders the HOSTED value (the API arm must show sub-second bits a hosted
@@ -197,7 +197,7 @@ function parseDuration(s: string): number {
       }
     }
     // Go's ParseDuration rejects a component with no digits at all (`!pre &&
-    // !post`, e.g. "s" or ".h") — the legacy port at
+    // !post`, e.g. "s" or ".h") — the port at
     // config-sync.duration.ts:107-125 omits that check and reads such input
     // as zero, which would let `canonicalizeDurationString` silently rewrite
     // a malformed document value like "s" into "0s". Failing here instead
@@ -717,7 +717,7 @@ function hoursDurationRow(
 // Legacy-handled but deliberately unmapped: the 4 passkey/webauthn keys
 // (auth.sync.ts:281-285) — `passkey_enabled`, `webauthn_rp_display_name`,
 // `webauthn_rp_id`, `webauthn_rp_origins`. `RemoteAuthConfig` carries them
-// (the legacy shell's own `authSubsetFromConfig` sets its `passkey`/
+// (the CLI's own `authSubsetFromConfig` sets its `passkey`/
 // `webauthn` subset fields to `undefined` unconditionally, auth.sync.ts:
 // 918-920, "not in @supabase/config schema"), but there is no
 // `../auth/*.ts` section for passkey/WebAuthn at all, so no row can target
@@ -1072,7 +1072,7 @@ const smsBaseRows: ReadonlyArray<ProjectConfigMappingRow> = [
   secondsDurationRow(["auth", "sms", "max_frequency"], "sms_max_frequency"),
   // No sync precedent (CLI-2316 follow-up audit): `sms.otp_length`/
   // `otp_expiry` are new config-schema fields (`../auth/sms.ts`) added
-  // alongside this pair of rows — the legacy shell's `config-sync/auth.sync.ts`
+  // alongside this pair of rows — the CLI's `config-sync/auth.sync.ts`
   // predates both and never read or wrote either, matching neither Go's own
   // `sms` struct (`apps/cli-go/pkg/config/auth.go`, which also has no
   // `OtpLength`/`OtpExpiry` on `sms` — only on the unrelated `email` and

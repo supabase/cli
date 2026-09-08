@@ -344,7 +344,7 @@ const uuidLoadError = () =>
     ],
   });
 
-describe("legacy db schema declarative sync integration", () => {
+describe("db schema declarative sync integration", () => {
   const tmp = useTempWorkdir();
   useShadowCacheDisabled();
 

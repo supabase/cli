@@ -384,7 +384,7 @@ export interface DeclarativeUpgradeGateText {
  *
  * Deliberately offers exactly ONE non-interactive recovery: the staged
  * regenerate. Telling a non-interactive user to hand-add an extension
- * declaration is a false trail — on a real legacy tree each declaration only
+ * declaration is a false trail — on a real CLI tree each declaration only
  * unlocks the next refusal. Interactive flows still offer the repair as an
  * advanced choice.
  */

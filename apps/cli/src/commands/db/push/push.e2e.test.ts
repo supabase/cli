@@ -9,7 +9,7 @@ import { runSupabase } from "../../../../tests/helpers/cli.ts";
 const E2E_TIMEOUT_MS = 30_000;
 const UNREACHABLE_DB_URL = "postgresql://postgres:postgres@127.0.0.1:1/postgres";
 
-describe("supabase db push --skip-vault (legacy)", () => {
+describe("supabase db push --skip-vault", () => {
   let projectDir: string;
 
   beforeAll(() => {

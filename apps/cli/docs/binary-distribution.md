@@ -1,6 +1,6 @@
 # Binary Distribution
 
-This document explains how the Supabase CLI is packaged and distributed, covering the two-binary model used by the legacy shell.
+This document explains how the Supabase CLI is packaged and distributed, covering the two-binary model used by the CLI.
 
 ## Overview
 
@@ -17,7 +17,7 @@ The base `supabase` package routes to the correct platform package via `src/shar
 
 ## Why Two Binaries
 
-The legacy shell was built as a gradual TypeScript port of the Go CLI, moving each command through two phases:
+The CLI was built as a gradual TypeScript port of the Go CLI, moving each command through two phases:
 
 - **Phase 0** — The command is defined in the TS CLI tree but proxied to the Go binary at runtime via `GoProxy`.
 - **Phase 1+** — The command is implemented natively in TypeScript.
@@ -58,14 +58,14 @@ The Go CLI source lives in `apps/cli-go/` and is managed via:
 pnpm repos:install
 ```
 
-This must be run after a fresh clone before building a legacy release.
+This must be run after a fresh clone before building a release.
 
 ## Development Workflow
 
-No build step is required to run the legacy CLI from source, but the Go binary must be resolvable — easiest via `SUPABASE_GO_BINARY` (below) or an installed `@supabase/cli-<platform>` package.
+No build step is required to run the CLI from source, but the Go binary must be resolvable — easiest via `SUPABASE_GO_BINARY` (below) or an installed `@supabase/cli-<platform>` package.
 
 1. Build the Go binary once: `cd apps/cli-go && go build -o supabase-go .`
-2. Create a shell alias to run the legacy CLI from source. For example in `.zshrc`:
+2. Create a shell alias to run the CLI from source. For example in `.zshrc`:
 
    ```sh
    alias supabase-dev="bun /path/to/dx-lab/apps/cli/src/main.ts"

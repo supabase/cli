@@ -11,7 +11,7 @@ pgTAP enable/disable and the `pg_prove` docker invocation a second time
 **Every side effect below is identical to `supabase test db`** — see
 [`../../test/db/SIDE_EFFECTS.md`](../../test/db/SIDE_EFFECTS.md) for the full
 inventory (docker bind-mount rules, network selection, TLS/DNS resolver
-behavior, pooler-URL handling, etc.). This file exists per the "every legacy
+behavior, pooler-URL handling, etc.). This file exists per the "every
 command needs its own `SIDE_EFFECTS.md`" mandate and only calls out what is
 genuinely different for this entry point.
 

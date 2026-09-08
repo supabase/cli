@@ -45,7 +45,7 @@ function setupLogout(opts: SetupOpts = {}) {
   return { layer, out, telemetry, credentials };
 }
 
-describe("legacy logout integration", () => {
+describe("logout integration", () => {
   it.live("confirms then deletes the token + all project credentials", () => {
     const { layer, out, credentials } = setupLogout({ confirm: true });
     return Effect.gen(function* () {

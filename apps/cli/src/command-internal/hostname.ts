@@ -121,7 +121,7 @@ function hostFromTcpEndpoint(endpoint: string): string | undefined {
  * 4. `127.0.0.1` otherwise (the default unix-socket daemon, or an
  * unresolvable/malformed context).
  *
- * Shared across legacy commands that connect to the local stack (`gen types`,
+ * Shared across commands that connect to the local stack (`gen types`,
  * `test db`, `status`, `stop`, and later `db reset` / `db dump`).
  */
 export function getHostname(): string {
@@ -143,7 +143,7 @@ export function getHostname(): string {
   return LOCAL_HOST;
 }
 
-/** Keeps Bun from proxying the legacy CLI's loopback HTTP requests. */
+/** Keeps Bun from proxying the CLI's loopback HTTP requests. */
 export function configureLoopbackProxyBypass(env: NodeJS.ProcessEnv = process.env): void {
   const key = (env["no_proxy"]?.length ?? 0) > 0 ? "no_proxy" : "NO_PROXY";
   const current = env[key];

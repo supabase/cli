@@ -201,7 +201,7 @@ export interface InternalResolveCliConfigOptions {
    * Opt into Go/viper-parity `env()` matching (case-agnostic
    * `^env\((.*)\)$`). Defaults to `false`, which uses the pre-PR-#5765 strict
    * SCREAMING_SNAKE_CASE matcher (`ENV_CAPTURE_REGEX_STRICT`). Only the
-   * Go-parity legacy shell sets this to `true`.
+   * Go-parity CLI sets this to `true`.
    */
   readonly goViperCompat?: boolean;
 }

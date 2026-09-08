@@ -16,7 +16,7 @@ function testRoot() {
   return Command.make("supabase").pipe(Command.withSubcommands([completionBashCommand]));
 }
 
-describe("legacy completion bash", () => {
+describe("completion bash", () => {
   it.live("prints the native bash completion script", () => {
     const out = setupCompletionBash();
     return Effect.gen(function* () {

@@ -4,7 +4,7 @@ import { describe, expect, test } from "vitest";
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { startExcludeFlag } from "./start.command.ts";
 
-describe("legacy start --exclude flag (pflag StringSlice parity)", () => {
+describe("start --exclude flag (pflag StringSlice parity)", () => {
   test("splits a comma-separated value into multiple exclusions", async () => {
     const [, exclude] = await Effect.runPromise(
       startExcludeFlag

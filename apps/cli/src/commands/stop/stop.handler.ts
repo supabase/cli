@@ -67,51 +67,52 @@ import {
  * to the config.toml branch exactly like an absent flag, so that's mirrored
  * here with a non-empty check rather than `Option.isSome` alone.
  */
-const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProjectIdFilter")(
-  function* (flags: StopFlags, cliSettings: CommandSettings["Service"]) {
-    // The `!all` check reads the resolved value (not
-    // presence), so this branch stays value-based — `Option.getOrElse` mirrors
-    // the boolean flag's default of `false` when `--all` was never passed.
-    if (Option.getOrElse(flags.all, () => false)) return "";
-    if (Option.isSome(flags.projectId) && flags.projectId.value.length > 0) {
-      return flags.projectId.value;
-    }
+const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilter")(function* (
+  flags: StopFlags,
+  cliSettings: CommandSettings["Service"],
+) {
+  // The `!all` check reads the resolved value (not
+  // presence), so this branch stays value-based — `Option.getOrElse` mirrors
+  // the boolean flag's default of `false` when `--all` was never passed.
+  if (Option.getOrElse(flags.all, () => false)) return "";
+  if (Option.isSome(flags.projectId) && flags.projectId.value.length > 0) {
+    return flags.projectId.value;
+  }
 
-    // `loadLocalProjectContext` covers the config-load/env/project-id
-    // resolution sequence — see its own doc comment for the full
-    // rationale (including why workdir validation stays out of it
-    // and is instead handled by `stop`'s own unconditional call above).
-    const context = yield* loadLocalProjectContext(
-      cliSettings.workdir,
-      (message) => new StopConfigLoadError({ message }),
-    );
+  // `loadLocalProjectContext` covers the config-load/env/project-id
+  // resolution sequence — see its own doc comment for the full
+  // rationale (including why workdir validation stays out of it
+  // and is instead handled by `stop`'s own unconditional call above).
+  const context = yield* loadLocalProjectContext(
+    cliSettings.workdir,
+    (message) => new StopConfigLoadError({ message }),
+  );
 
-    // VALIDATE config before any Docker call — the default `stop` path runs
-    // full config validation before ever touching Docker — unlike the
-    // `--all`/`--project-id` branches above, which bypass config loading
-    // entirely and so must NOT run this. `resolveLocalConfigValues` is
-    // reused purely for its throwing side effects (its resolved URLs/keys are
-    // discarded); it gives `stop` the same partial-but-growing config validation
-    // coverage `status` already has (`status.handler.ts`), rather than a one-off
-    // re-implementation.
-    yield* Effect.try({
-      try: () =>
-        resolveLocalConfigValues(
-          context.config,
-          context.hostname,
-          cliSettings.workdir,
-          context.projectEnvValues,
-          context.loaded?.document,
-        ),
-      catch: (cause) =>
-        new StopConfigLoadError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+  // VALIDATE config before any Docker call — the default `stop` path runs
+  // full config validation before ever touching Docker — unlike the
+  // `--all`/`--project-id` branches above, which bypass config loading
+  // entirely and so must NOT run this. `resolveLocalConfigValues` is
+  // reused purely for its throwing side effects (its resolved URLs/keys are
+  // discarded); it gives `stop` the same partial-but-growing config validation
+  // coverage `status` already has (`status.handler.ts`), rather than a one-off
+  // re-implementation.
+  yield* Effect.try({
+    try: () =>
+      resolveLocalConfigValues(
+        context.config,
+        context.hostname,
+        cliSettings.workdir,
+        context.projectEnvValues,
+        context.loaded?.document,
+      ),
+    catch: (cause) =>
+      new StopConfigLoadError({
+        message: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
 
-    return context.projectId;
-  },
-);
+  return context.projectId;
+});
 
 export const stop = Effect.fn("stop")(function* (flags: StopFlags) {
   const output = yield* Output;

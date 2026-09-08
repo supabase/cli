@@ -18,7 +18,7 @@ import { loginCryptoLayer } from "../../command-internal/login-crypto.layer.ts";
 // `commandSettingsLayer` is provided to both `commandCredentialsLayer` and
 // `loginApiLayer`, and exposed at the top level for the handler's direct
 // `CommandSettings` reads. `Layer.provide` does not share to siblings inside a
-// `Layer.mergeAll` (legacy CLAUDE.md item 5), so the shared sub-layers are
+// `Layer.mergeAll` (CLAUDE.md invariant 5), so the shared sub-layers are
 // memoised by reference to avoid building two keyring readers / config loaders.
 // `Analytics`, `Output`, `Stdio`, `Tty`, `TelemetryRuntime`, `FileSystem`, and
 // `Path` come from the root layer.

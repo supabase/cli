@@ -85,7 +85,7 @@ function testRoot() {
   return Command.make("supabase").pipe(Command.withSubcommands([telemetryCommand]));
 }
 
-describe("legacy telemetry integration", () => {
+describe("telemetry integration", () => {
   it.live("status creates legacy telemetry.json and prints Go-style enabled output", () => {
     const dir = makeTempDir();
     const { out, layer } = setup(dir);

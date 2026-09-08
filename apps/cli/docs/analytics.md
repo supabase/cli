@@ -20,7 +20,7 @@ Analytics answers product questions such as:
 
 This path is event-based and is owned by the PostHog-facing `Analytics` service in
 [`src/shared/telemetry/analytics.service.ts`](../src/shared/telemetry/analytics.service.ts),
-implemented for the legacy shell by
+implemented for the CLI by
 [`src/telemetry/analytics.layer.ts`](../src/telemetry/analytics.layer.ts).
 
 It is intentionally separate from the span-based tracing path.

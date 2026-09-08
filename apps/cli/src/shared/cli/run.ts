@@ -728,7 +728,7 @@ export interface RunCliOptions {
   readonly analyticsLayer: AnyAnalyticsLayer;
   /**
    * Runs just before the process exits on any invocation that exits 0 — the
-   * seam for the legacy shell's upgrade notice. `cleanShowHelp` marks the
+   * seam for the CLI's upgrade notice. `cleanShowHelp` marks the
    * exit-0 ShowHelp failure branch (a bare group command), which cobra serves
    * without `PersistentPreRunE`. Must never fail, and cannot change the exit
    * code.

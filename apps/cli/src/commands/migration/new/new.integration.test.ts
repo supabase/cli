@@ -70,7 +70,7 @@ const onlyMigration = (workdir: string) => {
   return files[0]!;
 };
 
-describe("legacy migration new", () => {
+describe("migration new", () => {
   it.live("creates a timestamped migration file and prints its relative path", () => {
     const { layer, out, telemetry } = setup(tmp.current);
     return Effect.gen(function* () {

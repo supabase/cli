@@ -18,7 +18,7 @@
  * `cast.ToBool` swallows to `false`.
  *
  * This helper reproduces `viper.GetBool` for a single bound boolean key so the
- * legacy shell honors `SUPABASE_YES`, `SUPABASE_EXPERIMENTAL`, etc. exactly like
+ * CLI honors `SUPABASE_YES`, `SUPABASE_EXPERIMENTAL`, etc. exactly like
  * the Go CLI. Effect CLI's flag parser carries no env binding, so callers OR the
  * parsed flag value with this read (flag-set wins, matching viper precedence).
  */

@@ -4,7 +4,7 @@ import { describe, expect, test } from "vitest";
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { statusExcludeFlag, statusOverrideNameFlag } from "./status.command.ts";
 
-describe("legacy status --override-name flag (pflag StringSlice parity)", () => {
+describe("status --override-name flag (pflag StringSlice parity)", () => {
   test("splits a comma-separated value into multiple overrides", async () => {
     const [, overrideName] = await Effect.runPromise(
       statusOverrideNameFlag
@@ -90,7 +90,7 @@ describe("legacy status --override-name flag (pflag StringSlice parity)", () => 
   });
 });
 
-describe("legacy status --exclude flag (pflag StringSlice parity)", () => {
+describe("status --exclude flag (pflag StringSlice parity)", () => {
   test("splits a comma-separated value into multiple exclusions", async () => {
     const [, exclude] = await Effect.runPromise(
       statusExcludeFlag

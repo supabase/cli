@@ -98,7 +98,7 @@ function mockDockerBundleSpawner() {
   return mockChildProcessSpawner(spawnerOpts);
 }
 
-describe("legacy functions deploy", () => {
+describe("functions deploy", () => {
   it.live("deploys a function natively through the Management API", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
@@ -1721,7 +1721,7 @@ describe("legacy functions deploy", () => {
       // climbed independently of the config load — no `search` option meant
       // the package default (always climbing), regardless of `goConfigCompat`,
       // while the config load (`loadFunctionsCliConfig`) has always used
-      // `search: false` for the legacy shell. Before this fix, a function
+      // `search: false` for the CLI. Before this fix, a function
       // directory with no `deno.json` of its own would still be reported as
       // HAVING one — borrowed from an unrelated ANCESTOR project's own
       // `deno.json` — because the manifest's filesystem walk climbed to find

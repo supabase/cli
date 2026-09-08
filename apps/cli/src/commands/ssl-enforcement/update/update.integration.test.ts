@@ -79,7 +79,7 @@ function setupTracked(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, cache };
 }
 
-describe("legacy ssl-enforcement update integration", () => {
+describe("ssl-enforcement update integration", () => {
   // Flag validation
 
   it.live("fails with SslEnforcementNoEnableDisableFlagError when neither flag is set", () => {

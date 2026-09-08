@@ -528,7 +528,7 @@ const seedMigration = (workdir: string, version: string) => {
 const tmp = useTempWorkdir();
 useShadowCacheDisabled();
 
-describe("legacy db pull", () => {
+describe("db pull", () => {
   it.effect("pulls a migration (pgdelta engine) and updates remote history under --yes", () => {
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
@@ -2255,7 +2255,7 @@ describe("legacy db pull", () => {
   });
 });
 
-describe("legacy db remote commit", () => {
+describe("db remote commit", () => {
   it.effect("writes a remote_commit migration in-process and skips the pull PostRun line", () => {
     seedMigration(tmp.current, "20240101000000");
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });

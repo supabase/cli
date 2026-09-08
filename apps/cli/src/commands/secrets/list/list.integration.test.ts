@@ -50,7 +50,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api };
 }
 
-describe("legacy secrets list integration", () => {
+describe("secrets list integration", () => {
   it.live("renders a Glamour ASCII table with NAME and DIGEST columns in text mode", () => {
     const { layer, out } = setup({ response: SAMPLE_SECRETS });
     return Effect.gen(function* () {

@@ -106,7 +106,7 @@ function setupTracked(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, cache };
 }
 
-describe("legacy functions list integration", () => {
+describe("functions list integration", () => {
   it.live("renders a Glamour table with all 6 columns in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {

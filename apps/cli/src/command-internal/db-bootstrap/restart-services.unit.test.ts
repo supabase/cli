@@ -9,7 +9,7 @@ import {
   restartServicesAndReloadKong,
 } from "./restart-services.ts";
 
-/** Matches the standing `mockSpawner` shape used across `legacy-docker-*.unit.test.ts` files. */
+/** Matches the standing `mockSpawner` shape used across `docker-*.unit.test.ts` files. */
 function mockSpawner(
   handler: (args: ReadonlyArray<string>) => { exitCode: number; stdout?: string; stderr?: string },
 ) {

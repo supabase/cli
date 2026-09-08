@@ -67,7 +67,7 @@ function setup(opts: SetupOpts = {}) {
 
 const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
 
-describe("legacy domains activate integration", () => {
+describe("domains activate integration", () => {
   it.live("suggests upgrade from entitlement_required envelope on 400", () => {
     const { layer, out, analytics, api } = setup({
       status: 400,

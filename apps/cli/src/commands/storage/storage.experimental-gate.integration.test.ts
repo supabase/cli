@@ -55,7 +55,7 @@ function setup(args: ReadonlyArray<string>) {
   return { layer };
 }
 
-describe("legacy storage experimental gate vs mutual-exclusivity ordering (Go PersistentPreRunE parity)", () => {
+describe("storage experimental gate vs mutual-exclusivity ordering (Go PersistentPreRunE parity)", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "ls", args: ["storage", "ls", "ss:///bucket"] },
     { name: "cp", args: ["storage", "cp", "ss:///bucket/a", "ss:///bucket/b"] },

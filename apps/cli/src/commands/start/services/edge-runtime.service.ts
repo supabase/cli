@@ -162,7 +162,7 @@ export interface EdgeRuntimeBringUpInput {
  * `docker start` window, not just a non-zero exit code), so the caller only
  * needs to leave the returned `cleanup` unused on success.
  */
-export const startStackEdgeRuntimeContainer = Effect.fn("legacy.start.edgeRuntime")(function* (
+export const startStackEdgeRuntimeContainer = Effect.fn("start.edgeRuntime")(function* (
   input: EdgeRuntimeBringUpInput,
 ) {
   return yield* startEdgeRuntimeContainer({

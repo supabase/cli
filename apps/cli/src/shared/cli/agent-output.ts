@@ -2,7 +2,7 @@ import { Option } from "effect";
 import type { OutputFormat } from "../output/types.ts";
 import { GLOBAL_VALUE_FLAG_TOKENS } from "./cobra-flag-groups.ts";
 
-// The union of every legacy command's `--output` values (see
+// The union of every command's `--output` values (see
 // `command-internal/global-flags.ts`): resource commands use `env|pretty|json|toml|yaml`,
 // `db query` adds `table|csv`. An explicit legacy `-o` of any of these suppresses the
 // coding-agent JSON auto-default below. (`next/` never sets `-o`, so this stays inert

@@ -305,7 +305,7 @@ function transportFailureForMock() {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("legacy link integration", () => {
+describe("link integration", () => {
   describe("plain project-ref linking", () => {
     it.live("links a project, writing the project-ref and version files", () => {
       const { layer, out, workdir } = setup();

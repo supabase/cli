@@ -103,7 +103,7 @@ function hasMethod(
   return api.requests.some((r) => r.method === method);
 }
 
-describe("legacy projects delete integration", () => {
+describe("projects delete integration", () => {
   it.live("deletes a project by positional ref after confirmation", () => {
     const { layer, out, api } = setup({ stdinIsTty: true, promptConfirmResponses: [true] });
     return Effect.gen(function* () {

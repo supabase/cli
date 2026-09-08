@@ -217,7 +217,7 @@ function cliArgsFor(flags: typeof defaultFlags): ReadonlyArray<string> {
   return argv;
 }
 
-describe("legacy sso add integration", () => {
+describe("sso add integration", () => {
   it.live("POSTs to /v1/projects/{ref}/config/auth/sso/providers with type=saml", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {

@@ -35,7 +35,7 @@ const dbConfig = dbConfigLayer.pipe(
   // The linked db-config resolver + the linked-resolver runtime both snapshot
   // the single `IdentityStitch`; provide the SAME layer reference to
   // each so Effect memoises one shared instance. Without it the bundled
-  // binary panics with a missing-service error (legacy CLAUDE.md rule 5).
+  // binary panics with a missing-service error (CLAUDE.md invariant 5).
   Layer.provide(identityStitchLayer),
 );
 

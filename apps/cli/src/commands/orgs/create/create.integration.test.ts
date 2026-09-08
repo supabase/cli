@@ -63,7 +63,7 @@ function setupTracked(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry };
 }
 
-describe("legacy orgs create integration", () => {
+describe("orgs create integration", () => {
   it.live('prints "Created organization: <id>" then a Glamour table in text mode', () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {

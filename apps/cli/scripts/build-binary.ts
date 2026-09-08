@@ -3,10 +3,10 @@ import { $ } from "bun";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
 
 /**
- * Compile the legacy CLI shell to a standalone binary, embedding the pre-bundled
+ * Compile the CLI shell to a standalone binary, embedding the pre-bundled
  * edge-runtime template via the `SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE` define so
  * the binary serves Functions offline without bundling at runtime
- * (supabase/supabase#45570). Used by the `build:legacy` script; the multi-target
+ * (supabase/supabase#45570). Used by the `build:binary` script; the multi-target
  * release build in `build.ts` injects the same define.
  */
 const entrypoint = "src/main.ts";

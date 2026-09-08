@@ -957,8 +957,8 @@ function resolveNotificationContentPath(base: string, contentPath: string): stri
   if (isAbsolute(contentPath)) return contentPath;
   const resolved = join(base, contentPath);
   if (probeFile(resolved) === "missing") {
-    const resolved = join(base, "supabase", contentPath);
-    if (probeFile(resolved) === "exists") return resolved;
+    const fallbackResolved = join(base, "supabase", contentPath);
+    if (probeFile(fallbackResolved) === "exists") return fallbackResolved;
   }
   return resolved;
 }

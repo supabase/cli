@@ -70,7 +70,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api };
 }
 
-describe("legacy ssl-enforcement get integration", () => {
+describe("ssl-enforcement get integration", () => {
   it.live('prints "SSL is being enforced." when database=true and appliedSuccessfully=true', () => {
     const { layer, out } = setup({ response: SSL_ENFORCED });
     return Effect.gen(function* () {

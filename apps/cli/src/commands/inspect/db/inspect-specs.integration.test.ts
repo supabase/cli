@@ -250,7 +250,7 @@ const cases: ReadonlyArray<Case> = [
   },
 ];
 
-describe("legacy inspect db specs (per-subcommand correctness)", () => {
+describe("inspect db specs (per-subcommand correctness)", () => {
   it("covers all 13 active subcommands", () => {
     expect(cases).toHaveLength(13);
   });

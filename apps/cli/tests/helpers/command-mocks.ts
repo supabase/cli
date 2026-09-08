@@ -98,10 +98,10 @@ export const mockTelemetryStateLayer = Layer.succeed(TelemetryState, {
 // handlers.
 export const mockCommandCredentialsLayer = Layer.succeed(CommandCredentials, {
   getAccessToken: Effect.sync(() => Option.none()),
-  saveAccessToken: () => Effect.die("unexpected legacy credentials write in test"),
-  deleteAccessToken: Effect.die("unexpected legacy credentials delete in test"),
-  deleteAllProjectCredentials: Effect.die("unexpected legacy project-credential sweep in test"),
-  deleteProjectCredential: () => Effect.die("unexpected legacy project-credential delete in test"),
+  saveAccessToken: () => Effect.die("unexpected credentials write in test"),
+  deleteAccessToken: Effect.die("unexpected credentials delete in test"),
+  deleteAllProjectCredentials: Effect.die("unexpected project-credential sweep in test"),
+  deleteProjectCredential: () => Effect.die("unexpected project-credential delete in test"),
 });
 
 /**
@@ -633,7 +633,7 @@ export interface MockCommandPlatformApiServiceOpts {
   readonly v1?: V1Stubs;
   /**
    * Raw-execute stub responses keyed by operation id (e.g.
-   * `"v2GetProjectConfig"`) — the legacy shell's one typed-but-lenient v2 read
+   * `"v2GetProjectConfig"`) — the CLI's one typed-but-lenient v2 read
    * goes through `executeRaw`, not `v2.*` (see the `v2Proxy` comment below).
    * `"fail"` simulates a transport failure (`transportFailure`);
    * otherwise the given `{ status, body }` is returned as a real
@@ -672,7 +672,7 @@ export function mockCommandPlatformApiService(
     },
   });
 
-  // No typed v2 operation has stub support here: the legacy shell's only v2
+  // No typed v2 operation has stub support here: the CLI's only v2
   // call (the effective-project-config read) deliberately bypasses the typed
   // `v2.*` surface for `executeRaw` (ADR 0019 rule 2 — the generated client's
   // strict schema would reject the exact forward-compatible shapes the read
@@ -1400,7 +1400,7 @@ export function mockDockerDaemonCliSpawner(
 // Runtime composition — bundles the entire Layer.mergeAll(...) graph that
 // every native-port integration test re-builds, including the easy-to-mis-wire
 // `projectRefLayer.pipe(Layer.provide(...))` subgraph
-// (legacy CLAUDE.md item 5: "Layer.provide does not share to siblings inside
+// (CLAUDE.md invariant 5: "Layer.provide does not share to siblings inside
 // Layer.mergeAll" — centralising the subgraph here removes a recurring footgun).
 // ---------------------------------------------------------------------------
 
@@ -1455,9 +1455,7 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
   const noopHttpClient = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make(() =>
-      Effect.die(
-        "unexpected HttpClient.execute() in legacy test runtime — pass api.httpClientLayer",
-      ),
+      Effect.die("unexpected HttpClient.execute() in test runtime — pass api.httpClientLayer"),
     ),
   );
 

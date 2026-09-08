@@ -4,7 +4,7 @@ import { runSupabase } from "../../../tests/helpers/cli.ts";
 const E2E_TIMEOUT_MS = 30_000;
 const TEST_TOKEN = "sbp_" + "a".repeat(40);
 
-describe("supabase encryption (legacy)", () => {
+describe("supabase encryption", () => {
   // Golden-path e2e: validates real subprocess dispatch + ref-resolution error
   // wiring for the get path. With an isolated HOME and no --project-ref /
   // SUPABASE_PROJECT_ID, the resolver fails before any API call.

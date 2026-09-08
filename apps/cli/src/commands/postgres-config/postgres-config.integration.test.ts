@@ -38,7 +38,7 @@ function runtimeWith(opts: {
   });
 }
 
-describe("legacy postgres-config get", () => {
+describe("postgres-config get", () => {
   it.live("prints the Glamour table with stderr headings in text mode", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
@@ -237,7 +237,7 @@ describe("legacy postgres-config get", () => {
   });
 });
 
-describe("legacy postgres-config update", () => {
+describe("postgres-config update", () => {
   it.live(
     "merges current overrides, coerces values, and PUTs arbitrary keys through raw HTTP",
     () => {
@@ -471,7 +471,7 @@ describe("legacy postgres-config update", () => {
   });
 });
 
-describe("legacy postgres-config delete", () => {
+describe("postgres-config delete", () => {
   it.live("uses GET plus PUT and trims keys before deleting", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({

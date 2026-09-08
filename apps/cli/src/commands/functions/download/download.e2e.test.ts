@@ -15,7 +15,7 @@ const SLUG = "download-e2e-basic";
 const FAKE_TOKEN = `sbp_${"0".repeat(40)}`;
 const FAKE_REF = "a".repeat(20);
 
-describe("supabase functions download (legacy) — argument validation", () => {
+describe("supabase functions download — argument validation", () => {
   const conflicts = [
     { name: "--use-api + --use-docker", flags: ["--use-api", "--use-docker"] },
     { name: "--use-api + --legacy-bundle", flags: ["--use-api", "--legacy-bundle"] },

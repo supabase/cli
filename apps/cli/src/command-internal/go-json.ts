@@ -1,6 +1,6 @@
 /**
  * Byte-faithful reproduction of `encoding/json` value encoder for the
- * legacy commands that must match Go's stdout exactly (`db lint` / `db advisors`
+ * commands that must match Go's stdout exactly (`db lint` / `db advisors`
  * pretty-print `[]Result` / `[]Lint` via `json.Encoder.SetIndent("", " ")`).
  *
  * Unlike `go-output.encoders.ts`'s `encodeGoJson`, this encoder does NOT
@@ -152,7 +152,7 @@ export function encodeGoJsonCompact(value: unknown): string {
 
 /**
  * `encoding/json` type names for the JSON-representable kinds `json.Unmarshal`
- * rejects. Shared by every legacy command that reproduces Go's exact `"json: cannot
+ * rejects. Shared by every command that reproduces Go's exact `"json: cannot
  * unmarshal <kind> into Go value of type <target>"` wording against its own target
  * type — `gen bearer-jwt`'s `jwt.MapClaims` (`bearer-jwt.claims.ts`) and `config.JWK`
  * (`bearer-jwt.signing-key.ts`) are today's two callers.

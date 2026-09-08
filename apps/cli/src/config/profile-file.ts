@@ -15,9 +15,9 @@ import {
  */
 
 /**
- * Resolves the global Supabase home for the legacy shell. Delegates to the
+ * Resolves the global Supabase home for the CLI. Delegates to the
  * shared `resolveSupabaseHome` contract (honors `SUPABASE_HOME`, else
- * `<homeDir>/.supabase`). The legacy shell reads ambient `process.env`
+ * `<homeDir>/.supabase`). The CLI reads ambient `process.env`
  * directly, so `env` defaults to it.
  */
 export function supabaseHome(

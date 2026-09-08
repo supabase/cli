@@ -5,7 +5,7 @@ import { CliOutput, Command } from "effect/unstable/cli";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import { functionsServeCommand } from "./serve.command.ts";
 
-describe("legacy functions serve command", () => {
+describe("functions serve command", () => {
   it.live("accepts all legacy function name positional arguments", () => {
     let handlerRan = false;
     let parsedFunctionNames: ReadonlyArray<string> = [];

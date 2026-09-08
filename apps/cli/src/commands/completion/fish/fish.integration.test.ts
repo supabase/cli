@@ -16,7 +16,7 @@ function testRoot() {
   return Command.make("supabase").pipe(Command.withSubcommands([completionFishCommand]));
 }
 
-describe("legacy completion fish", () => {
+describe("completion fish", () => {
   it.live("prints the native fish completion script", () => {
     const out = setupCompletionFish();
     return Effect.gen(function* () {

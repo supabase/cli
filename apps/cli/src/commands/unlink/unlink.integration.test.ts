@@ -81,7 +81,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, telemetry, credentials, workdir: tempRoot.current };
 }
 
-describe("legacy unlink integration", () => {
+describe("unlink integration", () => {
   it.live("unlinks: removes the temp dir, deletes the keyring entry, prints Finished", () => {
     const { layer, out, credentials, workdir } = setup();
     seedProjectRef(workdir, VALID_REF);

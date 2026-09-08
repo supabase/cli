@@ -88,8 +88,8 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   readonly supabaseDir: string;
   readonly dashboardUrl: string;
   /**
-   * `undefined` in `next`; the legacy shell injects
-   * `functionsGoConfigCompat` so this file never imports `legacy/`
+   * `undefined` in `next`; the CLI injects
+   * `functionsGoConfigCompat` so this file never imports the command tree
    * directly — see {@link FunctionsGoConfigCompat}.
    */
   readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
@@ -101,7 +101,7 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
   /**
    * Optional shell-specific styling hooks. Both default to identity (plain
-   * text); the legacy shell injects Go's aqua/bold here so the next shell
+   * text); the CLI injects Go's aqua/bold here so the next shell
    * stays isolated from `legacy/`-specific rendering.
    * - `styleIdentifier`: the project ref in the stdout success line.
    * - `styleEmphasis`: the slug in the stderr `Bundling Function:` line and
@@ -290,8 +290,8 @@ function explicitBooleanFlag(
 /**
  * Must stay in sync with `CLI_WORKDIR_LABEL`
  * (`command-internal/docker-ids.ts:95`) — same string literal, kept as a
- * separate copy here rather than imported to respect the `next`/`legacy`
- * isolation boundary (this file has no Go equivalent for the other two
+ * separate copy here rather than imported so `shared/` does not depend on the
+ * command tree (this file has no Go equivalent for the other two
  * labels either). Read back by `cleanupStartSecrets` so a later
  * `stop`/`rollbackStart` can reclaim this container's staged-secret
  * directory using its OWN workdir rather than the caller's cwd.
@@ -1405,7 +1405,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
   } = options;
   const output = yield* Output;
   // Go: `fmt.Fprintln(os.Stderr, "Bundling Function:", utils.Bold(slug))`
-  // (`internal/functions/deploy/bundle.go:30`) — the legacy handler injects
+  // (`internal/functions/deploy/bundle.go:30`) — the handler injects
   // the bold styling via `styleEmphasis`; next stays plain.
   yield* output.raw(`Bundling Function: ${styleEmphasis(config.slug)}\n`, "stderr");
 
@@ -2334,7 +2334,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     // `@supabase/config` merges the matching `[remotes.*]` block over the base
     // config (Go's `loadFromFile` with `Config.ProjectId` set), so the resolved
     // config already reflects any remote function/edge_runtime overrides.
-    // In the legacy shell this also runs the same `Config.Validate`/dotenv/
+    // In the CLI this also runs the same `Config.Validate`/dotenv/
     // env-override pipeline `start`/`stop`/`status` already go through — see
     // `functions-config.ts`. Go: `flags.LoadConfig` runs before validating any
     // slug (`deploy.go:22-28`), so this must precede the loop below too — an
@@ -2373,7 +2373,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       cwd: dependencies.projectRoot,
       config: deployConfig,
       // Matches `loadFunctionsCliConfig`'s own options above (`search: false,
-      // tomlOnly: true` for the legacy shell): no ancestor directory is
+      // tomlOnly: true` for the CLI): no ancestor directory is
       // searched past `dependencies.projectRoot` for EITHER load, so they can
       // never resolve two different projects (same rationale as
       // `start.handler.ts`'s equivalent call).
@@ -2392,7 +2392,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
         new NoFunctionsToDeployError({
           // Go: `errors.Errorf("No Functions specified or found in %s",
           // utils.Bold(utils.FunctionsDir))` (`internal/functions/deploy/deploy.go:35`) —
-          // the legacy handler injects the bold styling via `styleEmphasis`. Styling is
+          // the handler injects the bold styling via `styleEmphasis`. Styling is
           // text-mode only: in `--output-format json`/`stream-json` this message lands in
           // the structured error payload, which must stay free of ANSI escapes.
           message: `No Functions specified or found in ${
@@ -2452,7 +2452,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
           // "never touched" distinction `resolveDockerNetworkMode` needs to
           // decide whether `SUPABASE_NETWORK_ID` applies — see that
           // function's own doc comment. `SUPABASE_NETWORK_ID` (env or
-          // project dotenv) is legacy-shell-only — same Go-viper-parity gate
+          // project dotenv) is CLI-only — same Go-viper-parity gate
           // as `context.projectEnvValues` itself (`undefined` in `next`).
           const networkMode = resolveDockerNetworkMode({
             explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
@@ -2488,7 +2488,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     if (output.format === "text") {
       // Go: `fmt.Printf("Deployed Functions on project %s: %s\n",
       // utils.Aqua(flags.ProjectRef), strings.Join(slugs, ", "))`
-      // (`internal/functions/deploy/deploy.go:70`) — the legacy handler injects
+      // (`internal/functions/deploy/deploy.go:70`) — the handler injects
       // the aqua styling via `styleIdentifier` (stdout-bound, so its TTY gate
       // must check stdout); next stays plain. Go joins the raw `slugs` list, not
       // the deduped set, so `functions deploy foo foo` prints "foo, foo".

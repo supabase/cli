@@ -58,7 +58,7 @@ function setup(opts: SetupOpts = {}) {
 
 const baseFlags = { projectRef: Option.none<string>() };
 
-describe("legacy encryption update-root-key integration", () => {
+describe("encryption update-root-key integration", () => {
   it.live("reads a piped root key and PUTs it, printing the finished message to stderr", () => {
     const { layer, out, api } = setup({ pipedInput: "new-key" });
     return Effect.gen(function* () {

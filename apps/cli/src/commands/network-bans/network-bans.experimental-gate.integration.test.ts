@@ -57,7 +57,7 @@ function setup() {
   return { layer, api };
 }
 
-describe("legacy network-bans experimental gate (Go PersistentPreRunE parity)", () => {
+describe("network-bans experimental gate (Go PersistentPreRunE parity)", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "get", args: ["network-bans", "get"] },
     { name: "remove", args: ["network-bans", "remove"] },

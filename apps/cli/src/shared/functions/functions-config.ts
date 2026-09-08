@@ -7,7 +7,7 @@ import { normalizeProjectId } from "./functions-docker.ts";
 /**
  * Everything the native `functions` Docker paths (`deploy`/`download`/`serve`)
  * need from project config resolution, unified across both shells. In the
- * legacy shell this also runs the same `Config.Validate`/dotenv pipeline
+ * CLI this also runs the same `Config.Validate`/dotenv pipeline
  * `start`/`stop`/`status` already go through — see {@link FunctionsGoConfigCompat}.
  * `next` keeps its existing plain `loadCliConfig` behavior exactly (no
  * Go-parity claim there).
@@ -16,18 +16,17 @@ interface FunctionsCliConfigContext {
   readonly loaded: LoadedCliConfig | null;
   /** Go's post-`loadNestedEnv` merged env (ambient-wins). `undefined` in `next`. */
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
-  /** Go's `Config.ProjectId`, sanitized, after `Config.Validate` in the legacy shell. */
+  /** Go's `Config.ProjectId`, sanitized, after `Config.Validate` in the CLI. */
   readonly projectId: string;
   readonly denoVersion: number | undefined;
 }
 
 /**
- * Legacy-shell-only Go-parity hook, injected so this file (used by both
- * shells) never imports `legacy/`-specific validation/dotenv machinery
- * directly — same isolation rationale as `download.ts`'s `styleEmphasis`/
- * `styleAqua`. `undefined` marks the `next` shell.
+ * Go-parity hook, injected so this shared module never imports the command
+ * tree's validation/dotenv machinery directly — same rationale as
+ * `download.ts`'s `styleEmphasis`/`styleAqua`. `undefined` disables the hook.
  *
- * A single method (not one hook per step) so the legacy implementation can
+ * A single method (not one hook per step) so the command-tree implementation can
  * delegate its dotenv/config-load work to `local-project-context.ts`'s
  * `loadLocalProjectContext` end to end — the same pipeline `start`/
  * `stop`/`status` already share — rather than re-implementing it here.
@@ -53,7 +52,7 @@ export interface FunctionsGoConfigCompat {
  * `pkg/config/config.go:579-611,878`) — loads dotenv, decodes config.toml
  * (merging template defaults + env even when the file is absent), and ends in
  * `Config.Validate`, unconditionally, before any Docker/API work. Only the
- * legacy shell (`goConfigCompat` set) runs that Go-parity dotenv/validate
+ * CLI (`goConfigCompat` set) runs that Go-parity dotenv/validate
  * pipeline; `next` keeps today's plain `loadCliConfig` behavior exactly.
  */
 export const loadFunctionsCliConfig = Effect.fnUntraced(function* (input: {

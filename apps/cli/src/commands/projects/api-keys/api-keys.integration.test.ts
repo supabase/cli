@@ -56,7 +56,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api };
 }
 
-describe("legacy projects api-keys integration", () => {
+describe("projects api-keys integration", () => {
   it.live("lists api keys as a NAME / KEY VALUE table and masks null values", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {

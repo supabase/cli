@@ -21,7 +21,7 @@ import { templateServiceLayer } from "./bootstrap.templates.ts";
 // `bootstrap` is a meta-orchestrator: it needs the full Management-API stack
 // (create / api-keys / link cores), the browser-login stack (ensure-login), and
 // the GitHub template service. `Layer.provide` does not share to siblings inside
-// a `Layer.mergeAll` (legacy CLAUDE.md item 5), so every sub-layer that requires
+// a `Layer.mergeAll` (CLAUDE.md invariant 5), so every sub-layer that requires
 // `CommandSettings` / `HttpClient` / `CommandCredentials` is fed those explicitly.
 // Shared sub-layers are memoised by reference so the merge reuses one keyring
 // reader / one debug-logging HTTP wrapper / one config loader.

@@ -163,7 +163,7 @@ const noFlags = {
   exitCode: false,
 };
 
-describe("legacy config diff integration", () => {
+describe("config diff integration", () => {
   it.live("reports drift against the linked project without touching the config file", () => {
     const { layer, out, processControl, telemetry, linkedProjectCache } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
@@ -510,7 +510,7 @@ describe("legacy config diff integration", () => {
       expect(rendered).toContain("ConfigDiffBranchNotFoundError");
       expect(rendered).toContain('Branch \\"ghost\\" not found');
       expect(rendered).toContain("supabase branches list");
-      // Legacy Shell Invariant #1: telemetry flushes on failure too; the
+      // CLI Invariant #1: telemetry flushes on failure too; the
       // linked-project cache stays untouched because no target ref resolved.
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();
@@ -1185,7 +1185,7 @@ describe("legacy config diff integration", () => {
   });
 });
 
-describe("legacy config diff telemetry wiring", () => {
+describe("config diff telemetry wiring", () => {
   // Drives the exact `Command.withHandler` wiring (configDiffHandler)
   // rather than the bare handler: the safeFlags guard lives in the wiring,
   // and nothing validates `--project-ref` before instrumentation fires.
@@ -1223,7 +1223,7 @@ describe("legacy config diff telemetry wiring", () => {
   });
 });
 
-describe("legacy config diff -o/--output wrapper wiring", () => {
+describe("config diff -o/--output wrapper wiring", () => {
   // The wrapper's own per-command `-o` enum check (`withCommandTelemetry`)
   // defaults to the resource-command set (`env|pretty|json|toml|yaml`), which
   // excludes `table`/`csv` — without `diff.command.ts`'s `outputFormats`

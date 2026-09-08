@@ -7,7 +7,7 @@ import { runSupabase, stripAnsi } from "../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
-describe("supabase start (legacy)", () => {
+describe("supabase start", () => {
   let projectDir: string;
 
   beforeEach(() => {

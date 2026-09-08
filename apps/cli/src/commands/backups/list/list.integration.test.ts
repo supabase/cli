@@ -74,7 +74,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api };
 }
 
-describe("legacy backups list integration", () => {
+describe("backups list integration", () => {
   it.live("renders a PITR-only table when no physical backups exist", () => {
     const { layer, out } = setup({ response: PITR_RESPONSE });
     return Effect.gen(function* () {

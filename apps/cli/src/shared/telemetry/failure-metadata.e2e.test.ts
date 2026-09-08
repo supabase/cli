@@ -47,7 +47,7 @@ describe("failed command telemetry", () => {
     capturedEvents.length = 0;
   });
 
-  // Both cases exercise the legacy shell (the only remaining shell). The
+  // Both cases exercise the CLI (the only remaining shell). The
   // `branches list` case needs a syntactically valid access token so the
   // Management API auth gate builds successfully and the failure happens
   // in-handler, during project-ref resolution, rather than at the auth gate
@@ -86,7 +86,7 @@ describe("failed command telemetry", () => {
       },
       rawErrors: ["failed to connect", "127.0.0.1", "select 1"],
     },
-  ])("emits sanitized metadata from the compiled legacy shell ($command)", async (testCase) => {
+  ])("emits sanitized metadata from the compiled CLI ($command)", async (testCase) => {
     const result = await runSupabase(testCase.args, {
       entrypoint: "legacy",
       env: {

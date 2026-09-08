@@ -153,7 +153,7 @@ function expectFailureTag(exit: Exit.Exit<unknown, unknown>, tag: string) {
   }
 }
 
-describe("legacy services", () => {
+describe("services", () => {
   it.effect("runs tokenless local service listing through command wiring", () =>
     Effect.tryPromise({
       try: async () => {

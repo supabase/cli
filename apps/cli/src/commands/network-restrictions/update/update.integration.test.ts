@@ -122,7 +122,7 @@ const baseFlags = {
   append: false,
 };
 
-describe("legacy network-restrictions update integration", () => {
+describe("network-restrictions update integration", () => {
   // Replace mode (POST /apply)
 
   it.live("POSTs /apply with partitioned v4/v6 lists and prints the Go-format block", () => {
