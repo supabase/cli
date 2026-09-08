@@ -1355,10 +1355,7 @@ describe("functions serve integration", () => {
         );
 
         const { layer } = setupServe({ childSpawner });
-        const error = yield* functionsServe(baseFlags()).pipe(
-          Effect.provide(layer),
-          Effect.flip,
-        );
+        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
         if (error instanceof Error) {
@@ -1436,10 +1433,7 @@ describe("functions serve integration", () => {
       });
 
       const { layer } = setupServe({ workdir: projectDir, childSpawner });
-      const error = yield* functionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
