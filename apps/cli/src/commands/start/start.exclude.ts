@@ -1,10 +1,10 @@
-import { legacyAqua, legacyYellow } from "../../command-internal/legacy-colors.ts";
-import { LEGACY_SERVICE_CATALOG } from "../../command-internal/legacy-service-catalog.ts";
+import { aqua, yellow } from "../../command-internal/colors.ts";
+import { SERVICE_CATALOG } from "../../command-internal/service-catalog.ts";
 
 /**
  * The `--exclude` values' canonical order: Gotrue, Realtime, Storage,
  * ImgProxy, Kong, Inbucket, Postgrest, Pgmeta, Studio, EdgeRuntime, Logflare,
- * Vector, Supavisor. This is NOT `LEGACY_SERVICE_CATALOG`'s stored order,
+ * Vector, Supavisor. This is NOT `SERVICE_CATALOG`'s stored order,
  * which is the actual container *start* sequence (Postgres first, Kong before
  * Gotrue, etc). Expressed here as `service` keys so the actual `excludeKey`
  * strings stay single-sourced from the catalog.
@@ -26,7 +26,7 @@ const EXCLUDABLE_SERVICE_KEYS_IN_GO_ORDER: ReadonlyArray<string> = [
 ];
 
 const EXCLUDE_KEY_BY_SERVICE = new Map(
-  LEGACY_SERVICE_CATALOG.map((entry) => [entry.service, entry.excludeKey]),
+  SERVICE_CATALOG.map((entry) => [entry.service, entry.excludeKey]),
 );
 
 /**
@@ -35,11 +35,12 @@ const EXCLUDE_KEY_BY_SERVICE = new Map(
  * `db`/`postgres` are rejected as invalid `--exclude` values the same as any
  * other unrecognized string.
  */
-export const LEGACY_START_EXCLUDABLE_KEYS: ReadonlyArray<string> =
-  EXCLUDABLE_SERVICE_KEYS_IN_GO_ORDER.map((service) => EXCLUDE_KEY_BY_SERVICE.get(service) ?? "");
+export const START_EXCLUDABLE_KEYS: ReadonlyArray<string> = EXCLUDABLE_SERVICE_KEYS_IN_GO_ORDER.map(
+  (service) => EXCLUDE_KEY_BY_SERVICE.get(service) ?? "",
+);
 
-export interface LegacyStartExcludePartition {
-  /** Raw `--exclude` values that matched a `LEGACY_START_EXCLUDABLE_KEYS` entry, in input order. */
+export interface StartExcludePartition {
+  /** Raw `--exclude` values that matched a `START_EXCLUDABLE_KEYS` entry, in input order. */
   readonly valid: ReadonlyArray<string>;
   /** Raw `--exclude` values that matched nothing, in input order. */
   readonly invalid: ReadonlyArray<string>;
@@ -53,13 +54,13 @@ export interface LegacyStartExcludePartition {
  * Partitions raw `--exclude` values into valid and invalid. An unrecognized
  * `--exclude` value never fails the command — it prints a `WARNING:` to
  * stderr and the command proceeds regardless. The valid-options list in the
- * warning is alphabetically sorted, unlike `LEGACY_START_EXCLUDABLE_KEYS`'s
+ * warning is alphabetically sorted, unlike `START_EXCLUDABLE_KEYS`'s
  * canonical-order sequence used for the flag's help text.
  */
-export function legacyPartitionStartExcludeFlags(
+export function partitionStartExcludeFlags(
   rawValues: ReadonlyArray<string>,
-): LegacyStartExcludePartition {
-  const validKeys = new Set(LEGACY_START_EXCLUDABLE_KEYS);
+): StartExcludePartition {
+  const validKeys = new Set(START_EXCLUDABLE_KEYS);
   const valid: string[] = [];
   const invalid: string[] = [];
   for (const value of rawValues) {
@@ -69,10 +70,10 @@ export function legacyPartitionStartExcludeFlags(
 
   if (invalid.length === 0) return { valid, invalid };
 
-  const sortedValidKeys = [...LEGACY_START_EXCLUDABLE_KEYS].sort();
+  const sortedValidKeys = [...START_EXCLUDABLE_KEYS].sort();
   const warning =
-    `${legacyYellow("WARNING:")} The following container names are not valid to exclude: ` +
-    `${legacyAqua(invalid.join(", "))}\n` +
-    `Valid containers to exclude are: ${legacyAqua(sortedValidKeys.join(", "))}\n`;
+    `${yellow("WARNING:")} The following container names are not valid to exclude: ` +
+    `${aqua(invalid.join(", "))}\n` +
+    `Valid containers to exclude are: ${aqua(sortedValidKeys.join(", "))}\n`;
   return { valid, invalid, warning };
 }

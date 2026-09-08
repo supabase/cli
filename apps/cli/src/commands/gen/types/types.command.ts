@@ -1,10 +1,10 @@
 import { Argument, Command, Flag, Param } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyParseSchemaFlags } from "../../../command-internal/legacy-schema-flags.ts";
-import { legacyGenTypes } from "./types.handler.ts";
-import { legacyGenTypesRuntimeLayer } from "./types.layers.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
+import { genTypes } from "./types.handler.ts";
+import { genTypesRuntimeLayer } from "./types.layers.ts";
 
 const LANG_VALUES = ["typescript", "go", "swift", "python"] as const;
 const SWIFT_ACCESS_CONTROL_VALUES = ["internal", "public"] as const;
@@ -35,7 +35,7 @@ const config = {
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
     Flag.mapTryCatch(
-      (rawValues) => legacyParseSchemaFlags(rawValues),
+      (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
@@ -55,12 +55,12 @@ const config = {
 
 const commandConfig = {
   ...config,
-  legacyLanguage: Argument.string("language").pipe(Argument.optional, Param.withHidden),
+  language: Argument.string("language").pipe(Argument.optional, Param.withHidden),
 } as const;
 
-export type LegacyGenTypesFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type GenTypesFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyGenTypesCommand = Command.make("types", commandConfig).pipe(
+export const genTypesCommand = Command.make("types", commandConfig).pipe(
   Command.withDescription("Generate types from Postgres schema."),
   Command.withShortDescription("Generate types from Postgres schema"),
   Command.withExamples([
@@ -82,10 +82,10 @@ export const legacyGenTypesCommand = Command.make("types", commandConfig).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyGenTypes(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-id"], config }),
+    genTypes(flags).pipe(
+      withCommandTelemetry({ flags, safeFlags: ["project-id"], config }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyGenTypesRuntimeLayer),
+  Command.provide(genTypesRuntimeLayer),
 );

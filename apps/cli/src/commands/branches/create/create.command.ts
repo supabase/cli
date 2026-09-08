@@ -4,9 +4,9 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { Layer } from "effect";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyBranchesCreate } from "./create.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { branchesCreate } from "./create.handler.ts";
 
 const BRANCH_REGIONS = [
   "ap-east-1",
@@ -89,20 +89,18 @@ const config = {
   ),
 } as const;
 
-export type LegacyBranchesCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type BranchesCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyBranchesCreateCommand = Command.make("create", config).pipe(
+export const branchesCreateCommand = Command.make("create", config).pipe(
   Command.withDescription("Create a preview branch for the linked project."),
   Command.withShortDescription("Create a preview branch"),
   Command.withHandler((flags) =>
-    legacyBranchesCreate(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"], config }),
+    branchesCreate(flags).pipe(
+      withCommandTelemetry({ flags, safeFlags: ["project-ref"], config }),
       withJsonErrorHandling,
     ),
   ),
-  // `stdinLayer`: the confirmation prompt reads piped stdin via `legacyPromptYesNo`
+  // `stdinLayer`: the confirmation prompt reads piped stdin via `promptYesNo`
   // on a non-TTY stdin.
-  Command.provide(
-    Layer.mergeAll(legacyManagementApiRuntimeLayer(["branches", "create"]), stdinLayer),
-  ),
+  Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["branches", "create"]), stdinLayer)),
 );

@@ -35,7 +35,7 @@ bun scripts/generate-docs-spec.ts <version> | bun scripts/publish-docs-spec.ts -
 ## Maintenance
 
 When adding or changing a command or flag, update the matching entries in
-`src/docs/legacy-docs-spec.tables.ts` — each table's doc comment says
+`src/docs/docs-spec.tables.ts` — each table's doc comment says
 when it applies: `TAGS`, `DEFAULT_OVERRIDES`, `REQUIRED`, `EXPERIMENTAL` (and
 `_OPTIONAL`), `EXCLUDED` (whole commands), `EXCLUDED_FLAGS`, `ARG_OVERRIDES`,
 `CHOICE_OVERRIDES`, `EXTRA_FLAGS`. The spec build fails on entries that no

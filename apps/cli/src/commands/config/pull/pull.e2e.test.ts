@@ -22,7 +22,6 @@ describe("config pull CLI surface", () => {
     const cwd = await mkdtemp(join(tmpdir(), "supabase-config-pull-e2e-"));
     try {
       const { stdout, stderr } = await runSupabase(["config", "pull"], {
-        entrypoint: "legacy",
         cwd,
         env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN },
       });

@@ -1,9 +1,9 @@
 import { Command } from "effect/unstable/cli";
-import { legacySslEnforcementGetCommand } from "./get/get.command.ts";
-import { legacySslEnforcementUpdateCommand } from "./update/update.command.ts";
+import { sslEnforcementGetCommand } from "./get/get.command.ts";
+import { sslEnforcementUpdateCommand } from "./update/update.command.ts";
 
-export const legacySslEnforcementCommand = Command.make("ssl-enforcement").pipe(
+export const sslEnforcementCommand = Command.make("ssl-enforcement").pipe(
   Command.withDescription("Manage SSL enforcement configuration."),
   Command.withShortDescription("Manage SSL enforcement"),
-  Command.withSubcommands([legacySslEnforcementGetCommand, legacySslEnforcementUpdateCommand]),
+  Command.withSubcommands([sslEnforcementGetCommand, sslEnforcementUpdateCommand]),
 );

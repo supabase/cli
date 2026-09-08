@@ -1,25 +1,25 @@
 import { Effect, Option } from "effect";
 
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   encodeEnv,
   encodeGoJson,
   encodeToml,
   encodeYaml,
-} from "../../../command-internal/legacy-go-output.encoders.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+} from "../../../command-internal/go-output.encoders.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { buildInfoPayload, renderInfoMarkdown } from "../sso.format.ts";
-import type { LegacySsoInfoFlags } from "./info.command.ts";
+import type { SsoInfoFlags } from "./info.command.ts";
 
-export const legacySsoInfo = Effect.fn("legacy.sso.info")(function* (flags: LegacySsoInfoFlags) {
+export const ssoInfo = Effect.fn("sso.info")(function* (flags: SsoInfoFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
     const ref = yield* resolver.resolve(flags.projectRef);

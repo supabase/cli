@@ -2,12 +2,12 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit } from "effect";
 import { describe, expect, test } from "vitest";
 import { normalizeCause } from "../../../shared/output/normalize-error.ts";
-import { legacySsoAddDomainsFlag } from "./add.command.ts";
+import { ssoAddDomainsFlag } from "./add.command.ts";
 
-describe("legacy sso add --domains flag (pflag StringSlice parity)", () => {
+describe("sso add --domains flag (pflag StringSlice parity)", () => {
   test("splits a comma-separated value into multiple domains", async () => {
     const [, domains] = await Effect.runPromise(
-      legacySsoAddDomainsFlag
+      ssoAddDomainsFlag
         .parse({
           flags: { domains: ["example.com,example.org"] },
           arguments: [],
@@ -20,7 +20,7 @@ describe("legacy sso add --domains flag (pflag StringSlice parity)", () => {
 
   test("accumulates repeated occurrences, each CSV-split", async () => {
     const [, domains] = await Effect.runPromise(
-      legacySsoAddDomainsFlag
+      ssoAddDomainsFlag
         .parse({
           flags: { domains: ["example.com,example.org", "example.net"] },
           arguments: [],
@@ -33,7 +33,7 @@ describe("legacy sso add --domains flag (pflag StringSlice parity)", () => {
 
   test("defaults to an empty array when unset", async () => {
     const [, domains] = await Effect.runPromise(
-      legacySsoAddDomainsFlag
+      ssoAddDomainsFlag
         .parse({
           flags: {},
           arguments: [],
@@ -49,7 +49,7 @@ describe("legacy sso add --domains flag (pflag StringSlice parity)", () => {
     // parse error — pflag calls `csv.Reader.Read()` once, so the malformed
     // second line is silently dropped.
     const [, domains] = await Effect.runPromise(
-      legacySsoAddDomainsFlag
+      ssoAddDomainsFlag
         .parse({
           flags: { domains: ['a.com\nb"c'] },
           arguments: [],
@@ -62,7 +62,7 @@ describe("legacy sso add --domains flag (pflag StringSlice parity)", () => {
 
   test("rejects malformed CSV (unterminated quote) with pflag's exact diagnostic", async () => {
     const exit = await Effect.runPromise(
-      legacySsoAddDomainsFlag
+      ssoAddDomainsFlag
         .parse({
           flags: { domains: ['"example.com'] },
           arguments: [],
@@ -83,7 +83,7 @@ describe("legacy sso add --domains flag (pflag StringSlice parity)", () => {
     // Go-verified (CLI-2005): `sso add --domains $'\n'` →
     // `invalid argument "\n" for "--domains" flag: EOF`.
     const exit = await Effect.runPromise(
-      legacySsoAddDomainsFlag
+      ssoAddDomainsFlag
         .parse({
           flags: { domains: ["\n"] },
           arguments: [],

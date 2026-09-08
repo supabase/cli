@@ -7,8 +7,31 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-export class LegacyNetworkBansGetNetworkError extends Data.TaggedError(
-  "LegacyNetworkBansGetNetworkError",
+export class NetworkBansGetNetworkError extends Data.TaggedError("NetworkBansGetNetworkError")<{
+  readonly message: string;
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
+
+export class NetworkBansGetUnexpectedStatusError extends Data.TaggedError(
+  "NetworkBansGetUnexpectedStatusError",
+)<{
+  readonly status: number;
+  readonly body: string;
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
+
+export class NetworkBansRemoveNetworkError extends Data.TaggedError(
+  "NetworkBansRemoveNetworkError",
 )<{
   readonly message: string;
   readonly decode?: boolean;
@@ -20,8 +43,8 @@ export class LegacyNetworkBansGetNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyNetworkBansGetUnexpectedStatusError extends Data.TaggedError(
-  "LegacyNetworkBansGetUnexpectedStatusError",
+export class NetworkBansRemoveUnexpectedStatusError extends Data.TaggedError(
+  "NetworkBansRemoveUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -32,33 +55,8 @@ export class LegacyNetworkBansGetUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacyNetworkBansRemoveNetworkError extends Data.TaggedError(
-  "LegacyNetworkBansRemoveNetworkError",
-)<{
-  readonly message: string;
-  readonly decode?: boolean;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return this.decode === true
-      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
-      : actionability.externalNetwork;
-  }
-}
-
-export class LegacyNetworkBansRemoveUnexpectedStatusError extends Data.TaggedError(
-  "LegacyNetworkBansRemoveUnexpectedStatusError",
-)<{
-  readonly status: number;
-  readonly body: string;
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
-  }
-}
-
-export class LegacyNetworkBansEnvNotSupportedError extends Data.TaggedError(
-  "LegacyNetworkBansEnvNotSupportedError",
+export class NetworkBansEnvNotSupportedError extends Data.TaggedError(
+  "NetworkBansEnvNotSupportedError",
 )<{
   readonly message: string;
 }> {
@@ -67,9 +65,7 @@ export class LegacyNetworkBansEnvNotSupportedError extends Data.TaggedError(
   }
 }
 
-export class LegacyNetworkBansInvalidIpError extends Data.TaggedError(
-  "LegacyNetworkBansInvalidIpError",
-)<{
+export class NetworkBansInvalidIpError extends Data.TaggedError("NetworkBansInvalidIpError")<{
   readonly input: string;
   readonly message: string;
 }> {

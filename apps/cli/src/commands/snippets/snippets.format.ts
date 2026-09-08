@@ -1,5 +1,5 @@
-import { renderGlamourTable } from "../../output/legacy-glamour-table.ts";
-import { formatLegacyTimestamp } from "../../command-internal/legacy-timestamp.format.ts";
+import { renderGlamourTable } from "../../output/glamour-table.ts";
+import { formatTimestamp } from "../../command-internal/timestamp.format.ts";
 
 // ---------------------------------------------------------------------------
 // Pure formatter — no Effect / no service dependencies, kept unit-testable.
@@ -15,7 +15,7 @@ import { formatLegacyTimestamp } from "../../command-internal/legacy-timestamp.f
 // Note: API-supplied strings are NOT stripped of ANSI escape sequences or
 // other terminal control bytes before rendering. If a future security review
 // decides to sanitize, it should land at the renderer
-// (`legacy-glamour-table.ts`), not per-command.
+// (`glamour-table.ts`), not per-command.
 // ---------------------------------------------------------------------------
 
 const HEADERS = [
@@ -42,8 +42,8 @@ export function renderSnippetsTable(items: ReadonlyArray<SnippetRow>): string {
     snippet.name,
     snippet.visibility,
     snippet.owner.username,
-    formatLegacyTimestamp(snippet.inserted_at),
-    formatLegacyTimestamp(snippet.updated_at),
+    formatTimestamp(snippet.inserted_at),
+    formatTimestamp(snippet.updated_at),
   ]);
   return renderGlamourTable(HEADERS, rows);
 }

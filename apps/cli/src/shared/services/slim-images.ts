@@ -43,7 +43,7 @@ const V_PREFIXED_SERVICES: ReadonlySet<SlimServiceName> = new Set([
 
 /**
  * Ambient process env only — the project-dotenv installers
- * (`legacy-db-config.toml-read.ts`, `legacy-local-project-context.ts`) copy
+ * (`db-config.toml-read.ts`, `local-project-context.ts`) copy
  * only a fixed set of keys into `process.env`, not arbitrary flags, so a
  * value set only in `supabase/.env` is not observed here. Read per call
  * rather than cached so tests can stub the ambient env per case.

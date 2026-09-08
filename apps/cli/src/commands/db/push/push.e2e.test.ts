@@ -9,7 +9,7 @@ import { runSupabase } from "../../../../tests/helpers/cli.ts";
 const E2E_TIMEOUT_MS = 30_000;
 const UNREACHABLE_DB_URL = "postgresql://postgres:postgres@127.0.0.1:1/postgres";
 
-describe("supabase db push --skip-vault (legacy)", () => {
+describe("supabase db push --skip-vault", () => {
   let projectDir: string;
 
   beforeAll(() => {
@@ -27,7 +27,6 @@ describe("supabase db push --skip-vault (legacy)", () => {
 
   test("fails during config loading without the flag", { timeout: E2E_TIMEOUT_MS }, async () => {
     const { exitCode, stderr } = await runSupabase(["db", "push", "--db-url", UNREACHABLE_DB_URL], {
-      entrypoint: "legacy",
       cwd: projectDir,
     });
     expect(exitCode).toBe(1);
@@ -41,7 +40,7 @@ describe("supabase db push --skip-vault (legacy)", () => {
     async () => {
       const { exitCode, stderr } = await runSupabase(
         ["db", "push", "--db-url", UNREACHABLE_DB_URL, "--skip-vault"],
-        { entrypoint: "legacy", cwd: projectDir },
+        { cwd: projectDir },
       );
       expect(exitCode).toBe(1);
       expect(stderr).toContain("Connecting to remote database...");

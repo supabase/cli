@@ -1,20 +1,16 @@
 import { Effect, Option, Ref, Schedule } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
-import { legacyAqua } from "../../../../command-internal/legacy-colors.ts";
+import { aqua } from "../../../../command-internal/colors.ts";
 import {
-  legacyEmitWorkersMachineOutput,
-  legacyRejectWorkersEnvOutput,
-  legacyWorkersProjectRefSuffix,
+  emitWorkersMachineOutput,
+  rejectWorkersEnvOutput,
+  workersProjectRefSuffix,
 } from "../workers.output.ts";
-import {
-  legacyRenderWorkerLogLine,
-  legacyWorkerLogLevel,
-  legacyWorkerLogText,
-} from "../workers-logs.format.ts";
+import { renderWorkerLogLine, workerLogLevel, workerLogText } from "../workers-logs.format.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
-import { LegacyWorkersFollowNotSupportedError } from "../workers.errors.ts";
-import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
+import { WorkersFollowNotSupportedError } from "../workers.errors.ts";
+import { CommandPlatformApi } from "../../../../auth/command-platform-api.service.ts";
 import {
   fetchWorkerLogs,
   type WorkerLogEntry,
@@ -34,15 +30,12 @@ import {
   WorkersApiNetworkError,
   WorkersApiUnexpectedStatusError,
 } from "../../../../shared/workers/workers.errors.ts";
-import { LegacyProjectRefResolver } from "../../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyValidateWorkerName } from "../workers.shared.ts";
-import {
-  legacyWorkersMachineOutputRequested,
-  legacyWorkersRenderFormat,
-} from "../workers.output.ts";
-import type { LegacyWorkersLogsFlags } from "./logs.command.ts";
+import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
+import { validateWorkerName } from "../workers.shared.ts";
+import { workersMachineOutputRequested, workersRenderFormat } from "../workers.output.ts";
+import type { WorkersLogsFlags } from "./logs.command.ts";
 
 /**
  * `supabase experimental workers logs <name>` — what the worker has actually been doing.
@@ -138,14 +131,14 @@ function isRetryableFollowFailure(error: unknown): boolean {
  * real ones are spaced in seconds, and a test exercising the cursor, the dedupe,
  * or the retry path should not wait on a wall clock to do it.
  */
-export interface LegacyWorkersLogsOptions {
+export interface WorkersLogsOptions {
   readonly pollSchedule?: Schedule.Schedule<unknown>;
   readonly retrySchedule?: Schedule.Schedule<unknown>;
 }
 
 /** The machine-format row for one line. */
 function toPayloadEntry(entry: WorkerLogEntry) {
-  const level = legacyWorkerLogLevel(entry);
+  const level = workerLogLevel(entry);
   return {
     id: entry.id,
     // Both forms: the ISO string is what a human or `jq` wants to read, the raw
@@ -159,15 +152,15 @@ function toPayloadEntry(entry: WorkerLogEntry) {
   };
 }
 
-export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(function* (
-  flags: LegacyWorkersLogsFlags,
-  options: LegacyWorkersLogsOptions = {},
+export const workersLogs = Effect.fn("experimental.workers.logs")(function* (
+  flags: WorkersLogsFlags,
+  options: WorkersLogsOptions = {},
 ) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
   const processControl = yield* ProcessControl;
 
   // Telemetry wraps the ref resolution as well: an unlinked non-interactive
@@ -176,26 +169,26 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
   // without one.
   yield* Effect.gen(function* () {
     const projectRef = yield* resolver.resolve(flags.projectRef);
-    const refSuffix = legacyWorkersProjectRefSuffix(flags.projectRef);
+    const refSuffix = workersProjectRefSuffix(flags.projectRef);
 
     yield* Effect.gen(function* () {
-      const name = yield* legacyValidateWorkerName(flags.name);
+      const name = yield* validateWorkerName(flags.name);
 
       // Up front, like the rest of the family: this payload always carries a `logs`
       // array, so `-o env` can never encode it, and finding that out at emit time
       // means failing after the query has already been paid for.
-      yield* legacyRejectWorkersEnvOutput();
+      yield* rejectWorkersEnvOutput();
 
       // Resolved once, before anything branches: `-o` outranks `--output-format`,
       // so `output.format` on its own is not what this run renders in.
-      const renderFormat = yield* legacyWorkersRenderFormat();
+      const renderFormat = yield* workersRenderFormat();
 
       // Also up front: a tail has no single terminal payload, so the bounded
       // machine formats cannot express it. `stream-json` can, and is allowed.
       if (flags.follow) {
-        const machineOutput = yield* legacyWorkersMachineOutputRequested();
+        const machineOutput = yield* workersMachineOutputRequested();
         if (machineOutput || renderFormat === "json") {
-          return yield* new LegacyWorkersFollowNotSupportedError({
+          return yield* new WorkersFollowNotSupportedError({
             message:
               "--follow cannot be combined with a single-payload output format. " +
               "Use --output-format stream-json to stream, or drop --follow.",
@@ -230,7 +223,7 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
           }
           if (renderFormat === "stream-json") {
             for (const entry of batch) {
-              const level = legacyWorkerLogLevel(entry);
+              const level = workerLogLevel(entry);
               yield* output.event({
                 type: "log-entry",
                 timestamp: new Date(entry.timestampMs).toISOString(),
@@ -240,14 +233,14 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
                 // request line's status and duration and a build's reason live
                 // in `log_attributes`, and `log-entry` has no field to carry
                 // them separately.
-                line: legacyWorkerLogText(entry),
+                line: workerLogText(entry),
                 source: origin,
               });
             }
             return;
           }
           yield* output.raw(
-            `${batch.map((entry) => legacyRenderWorkerLogLine(entry, { showStream })).join("\n")}\n`,
+            `${batch.map((entry) => renderWorkerLogLine(entry, { showStream })).join("\n")}\n`,
           );
         });
 
@@ -313,7 +306,7 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
       // `-o` asks for a machine-readable stdout, so nothing human may be written to
       // it — `output.success` logs to stdout in text mode. Unreachable while
       // following, which refuses these formats up front.
-      if (!flags.follow && (yield* legacyEmitWorkersMachineOutput(payload))) {
+      if (!flags.follow && (yield* emitWorkersMachineOutput(payload))) {
         return;
       }
 
@@ -329,7 +322,7 @@ export const legacyWorkersLogs = Effect.fn("legacy.experimental.workers.logs")(f
         // Deployed (the check above would have failed otherwise) and silent.
         yield* output.raw(`No logs for "${name}" in the last 24 hours.\n`);
         yield* emitSuccessTrailer(
-          `Check it is running with ${legacyAqua(`supabase experimental workers status ${name}${refSuffix}`)}.\n`,
+          `Check it is running with ${aqua(`supabase experimental workers status ${name}${refSuffix}`)}.\n`,
         );
         return;
       }

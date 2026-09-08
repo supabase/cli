@@ -2,10 +2,10 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { LEGACY_QUERY_OUTPUT_FORMATS } from "../../../command-internal/legacy-go-output-flag.ts";
-import { legacyDbQuery } from "./query.handler.ts";
-import { legacyDbQueryRuntimeLayer } from "./query.layers.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { QUERY_OUTPUT_FORMATS } from "../../../command-internal/go-output-flag.ts";
+import { dbQuery } from "./query.handler.ts";
+import { dbQueryRuntimeLayer } from "./query.layers.ts";
 
 /**
  * NOTE on `--output` / `-o`: `db query` needs its own command-local
@@ -13,7 +13,7 @@ import { legacyDbQueryRuntimeLayer } from "./query.layers.ts";
  * Effect CLI extracts global flags from the whole token stream **before**
  * the leaf parse and builds one tree-wide registry, so a duplicate
  * command-scoped `output` global is impossible (`Parser.createFlagRegistry`
- * throws on duplicate names). Instead the global `LegacyOutputFlag` choice is
+ * throws on duplicate names). Instead the global `OutputFlag` choice is
  * the UNION of every command's `--output` values
  * (`env|pretty|json|toml|yaml|table|csv`); this handler reads the global and
  * honors `json`, `table`, and `csv` — `db query`'s own enum — defaulting by
@@ -59,14 +59,14 @@ const config = {
   ),
 } as const;
 
-export type LegacyDbQueryFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DbQueryFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDbQueryCommand = Command.make("query", config).pipe(
+export const dbQueryCommand = Command.make("query", config).pipe(
   Command.withDescription("Execute a SQL query against the database."),
   Command.withShortDescription("Execute a SQL query against the database"),
   Command.withHandler((flags) =>
-    legacyDbQuery(flags).pipe(
-      withLegacyCommandInstrumentation({
+    dbQuery(flags).pipe(
+      withCommandTelemetry({
         flags: {
           "db-url": flags.dbUrl,
           linked: flags.linked,
@@ -77,7 +77,7 @@ export const legacyDbQueryCommand = Command.make("query", config).pipe(
         // --project-ref has no established telemetry-safety baseline, so it
         // stays redacted.
         // db query's own enum is `json|table|csv`, not the resource-command set.
-        outputFormats: LEGACY_QUERY_OUTPUT_FORMATS,
+        outputFormats: QUERY_OUTPUT_FORMATS,
         // `--file` registers shorthand `-f`, and telemetry reports changed
         // flags by canonical name, so `-f query.sql` must log as `file`. `f`
         // is query's only telemetry-relevant shorthand. Mirrors dump.command.ts.
@@ -86,5 +86,5 @@ export const legacyDbQueryCommand = Command.make("query", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyDbQueryRuntimeLayer),
+  Command.provide(dbQueryRuntimeLayer),
 );

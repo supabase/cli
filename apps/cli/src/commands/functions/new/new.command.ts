@@ -4,11 +4,11 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
-import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
-import { legacyDebugLoggerLayer } from "../../../command-internal/legacy-debug-logger.layer.ts";
-import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyFunctionsNew } from "./new.handler.ts";
+import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
+import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
+import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { functionsNew } from "./new.handler.ts";
 
 const AUTH_MODE_VALUES = ["none", "apikey", "user"] as const;
 
@@ -22,27 +22,24 @@ const config = {
   ),
 } as const;
 
-export type LegacyFunctionsNewFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type FunctionsNewFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 
-const legacyFunctionsNewRuntimeLayer = Layer.mergeAll(
+const functionsNewRuntimeLayer = Layer.mergeAll(
   cliSettings,
-  legacyTelemetryStateLayer,
+  telemetryStateLayer,
   commandRuntimeLayer(["functions", "new"]),
   // `stdinLayer`: the first-function IDE prompts read piped stdin via
-  // `legacyPromptYesNo`.
+  // `promptYesNo`.
   stdinLayer,
 );
 
-export const legacyFunctionsNewCommand = Command.make("new", config).pipe(
+export const functionsNewCommand = Command.make("new", config).pipe(
   Command.withDescription("Create a new Function locally."),
   Command.withShortDescription("Create a new Function locally"),
   Command.withHandler((flags) =>
-    legacyFunctionsNew(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, config }),
-      withJsonErrorHandling,
-    ),
+    functionsNew(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
-  Command.provide(legacyFunctionsNewRuntimeLayer),
+  Command.provide(functionsNewRuntimeLayer),
 );

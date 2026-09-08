@@ -2,7 +2,7 @@
 
 ## Files Read
 
-Same auth fallback chain (env / keyring / `~/.supabase/access-token`) as every Management-API legacy command. Project-ref discovery is PARENT-scoped (CLI-2167 follow-up, TS-only): env `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/linked-project.json`'s `ref` → `<workdir>/supabase/.temp/project-ref`, first ref-shaped candidate wins — see `branches list/SIDE_EFFECTS.md` for the full chain and rationale.
+Same auth fallback chain (env / keyring / `~/.supabase/access-token`) as every Management-API command. Project-ref discovery is PARENT-scoped (CLI-2167 follow-up, TS-only): env `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/linked-project.json`'s `ref` → `<workdir>/supabase/.temp/project-ref`, first ref-shaped candidate wins — see `branches list/SIDE_EFFECTS.md` for the full chain and rationale.
 
 ## Files Written
 
@@ -26,14 +26,14 @@ Same auth fallback chain (env / keyring / `~/.supabase/access-token`) as every M
 
 ## Exit Codes
 
-| Code | Condition                                                                               |
-| ---- | --------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                 |
-| `1`  | `LegacyBranchesFindUnexpectedStatusError` / `…NetworkError` — named-lookup phase failed |
-| `1`  | `LegacyBranchesGetUnexpectedStatusError` / `…NetworkError` — detail phase failed        |
-| `1`  | `LegacyBranchesApiKeysUnexpectedStatusError` / `…NetworkError` — api-keys phase failed  |
-| `1`  | `LegacyBranchesPoolerUnexpectedStatusError` / `…NetworkError` — pooler phase failed     |
-| `1`  | `LegacyBranchesPrimaryNotFoundError` — no `database_type === "PRIMARY"` pooler entry    |
+| Code | Condition                                                                         |
+| ---- | --------------------------------------------------------------------------------- |
+| `0`  | success                                                                           |
+| `1`  | `BranchesFindUnexpectedStatusError` / `…NetworkError` — named-lookup phase failed |
+| `1`  | `BranchesGetUnexpectedStatusError` / `…NetworkError` — detail phase failed        |
+| `1`  | `BranchesApiKeysUnexpectedStatusError` / `…NetworkError` — api-keys phase failed  |
+| `1`  | `BranchesPoolerUnexpectedStatusError` / `…NetworkError` — pooler phase failed     |
+| `1`  | `BranchesPrimaryNotFoundError` — no `database_type === "PRIMARY"` pooler entry    |
 
 ## Telemetry Events Fired
 

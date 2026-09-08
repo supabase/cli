@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { legacyReadInspectRules } from "./report.config.ts";
+import { readInspectRules } from "./report.config.ts";
 
 function makeWorkdir(configToml?: string): string {
   const workdir = mkdtempSync(join(tmpdir(), "supabase-report-config-"));
@@ -20,10 +20,10 @@ const readRules = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    return yield* legacyReadInspectRules(fs, path, workdir);
+    return yield* readInspectRules(fs, path, workdir);
   }).pipe(Effect.provide(BunServices.layer));
 
-describe("legacyReadInspectRules", () => {
+describe("readInspectRules", () => {
   it.effect("returns [] when config.toml is absent", () =>
     Effect.gen(function* () {
       const rules = yield* readRules(makeWorkdir());
@@ -60,7 +60,7 @@ describe("legacyReadInspectRules", () => {
 
   it.effect("expands env(VAR) in rule string fields", () =>
     Effect.gen(function* () {
-      process.env["LEGACY_REPORT_TEST_FAIL"] = "from-env";
+      process.env["REPORT_TEST_FAIL"] = "from-env";
       const rules = yield* readRules(
         makeWorkdir(
           [
@@ -68,22 +68,22 @@ describe("legacyReadInspectRules", () => {
             'query = "SELECT COUNT(*) FROM `locks.csv`"',
             'name = "r"',
             'pass = "ok"',
-            'fail = "env(LEGACY_REPORT_TEST_FAIL)"',
+            'fail = "env(REPORT_TEST_FAIL)"',
             "",
           ].join("\n"),
         ),
       );
-      delete process.env["LEGACY_REPORT_TEST_FAIL"];
+      delete process.env["REPORT_TEST_FAIL"];
       expect(rules[0]?.fail).toBe("from-env");
     }),
   );
 
-  it.effect("fails with LegacyDbConfigLoadError on a malformed config.toml", () =>
+  it.effect("fails with DbConfigLoadError on a malformed config.toml", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(readRules(makeWorkdir("this is = = not valid toml [[[")));
       expect(exit._tag).toBe("Failure");
       if (exit._tag === "Failure") {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
+        expect(JSON.stringify(exit.cause)).toContain("DbConfigLoadError");
       }
     }),
   );

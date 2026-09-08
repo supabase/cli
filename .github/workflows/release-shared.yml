@@ -7,10 +7,6 @@ on:
         description: npm package version to publish
         required: true
         type: string
-      shell:
-        description: CLI shell to package as the shipped supabase binary
-        required: true
-        type: string
       npm_tag:
         description: npm dist-tag to publish under
         required: true
@@ -65,7 +61,6 @@ jobs:
     uses: ./.github/workflows/build-cli-artifacts.yml
     with:
       version: ${{ inputs.version }}
-      shell: ${{ inputs.shell }}
     secrets:
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
@@ -77,7 +72,6 @@ jobs:
     uses: ./.github/workflows/build-cli-artifacts.yml
     with:
       version: ${{ inputs.version }}
-      shell: ${{ inputs.shell }}
       runner: large-linux-x86
       cache_key_suffix: -github
       timeout_minutes: 45
@@ -119,7 +113,7 @@ jobs:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.version }}-v1
           enableCrossOsArchive: true
           fail-on-cache-miss: true
 
@@ -255,7 +249,7 @@ jobs:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.version }}-github-v1
           enableCrossOsArchive: true
           fail-on-cache-miss: true
 
@@ -317,7 +311,7 @@ jobs:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.version }}-github-v1
           enableCrossOsArchive: true
           fail-on-cache-miss: true
 
@@ -509,7 +503,7 @@ jobs:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.version }}-github-v1
           enableCrossOsArchive: true
           fail-on-cache-miss: true
 
@@ -572,7 +566,7 @@ jobs:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.version }}-github-v1
           enableCrossOsArchive: true
           fail-on-cache-miss: true
 

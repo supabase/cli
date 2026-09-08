@@ -2,9 +2,9 @@ import { V1CreateAProjectInput } from "@supabase/api/effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyProjectsCreate } from "./create.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { projectsCreate } from "./create.handler.ts";
 
 const AWS_REGIONS = [
   "ap-east-1",
@@ -110,9 +110,9 @@ const config = {
     Flag.withHidden,
   ),
 };
-export type LegacyProjectsCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type ProjectsCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyProjectsCreateCommand = Command.make("create", config).pipe(
+export const projectsCreateCommand = Command.make("create", config).pipe(
   Command.withDescription("Create a project on Supabase."),
   Command.withShortDescription("Create a project"),
   Command.withExamples([
@@ -123,16 +123,16 @@ export const legacyProjectsCreateCommand = Command.make("create", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyProjectsCreate(flags).pipe(
+    projectsCreate(flags).pipe(
       // `high-availability` is intentionally not in `safeFlags`: Go marks only
       // `org-id` telemetry-safe (`markFlagTelemetrySafe`), and it's a boolean flag
       // anyway — boolean values are always logged verbatim by the instrumentation
       // regardless of `safeFlags`. See the same pattern on `projects api-keys`'s
       // `--reveal`. `config` is passed so `region`/`size`/`release-channel`/
       // `postgres-engine` (all `Flag.choice`) are auto-detected as telemetry-safe.
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["org-id"], config }),
+      withCommandTelemetry({ flags, safeFlags: ["org-id"], config }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["projects", "create"])),
+  Command.provide(managementApiRuntimeLayer(["projects", "create"])),
 );

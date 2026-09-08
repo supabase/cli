@@ -4,18 +4,18 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyRequireExperimental } from "../../../command-internal/legacy-experimental-gate.ts";
-import { legacyStorageGatewayRuntimeLayer } from "../../../command-internal/legacy-storage-runtime.layer.ts";
-import { legacyStorageInvalidJobsMessage } from "../storage.errors.ts";
-import { legacyParseUintBase0 } from "../../../command-internal/legacy-parse-uint.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
+import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
+import { storageInvalidJobsMessage } from "../storage.errors.ts";
+import { parseUintBase0 } from "../../../command-internal/parse-uint.ts";
 import {
-  LegacyStorageLinkedFlagDef,
-  LegacyStorageLocalFlagDef,
-  LegacyStorageProjectRefFlagDef,
-  legacyAssertStorageTargetsExclusive,
+  StorageLinkedFlagDef,
+  StorageLocalFlagDef,
+  StorageProjectRefFlagDef,
+  assertStorageTargetsExclusive,
 } from "../storage.flags.ts";
-import { legacyStorageCp } from "./cp.handler.ts";
+import { storageCp } from "./cp.handler.ts";
 
 // `--linked`/`--local` are scoped globals on the `storage` group. Effect CLI
 // renders no defaults at all, so the established `(default …)` tokens are
@@ -54,7 +54,7 @@ const config = {
     // `--jobs` is a pflag-style uint, so a non-uint token fails
     // `strconv.ParseUint(s, 0, 64)` at flag-parse time — before group
     // validation, the experimental gate, the handler body, and without
-    // emitting telemetry. The raw token is parsed with `legacyParseUintBase0`
+    // emitting telemetry. The raw token is parsed with `parseUintBase0`
     // (an exact ParseUint port) rather than `Flag.integer`, because numeric
     // normalization loses fidelity: `-0` normalizes to negative zero (which a
     // `value < 0` check accepts, where the established behavior rejects every
@@ -69,9 +69,9 @@ const config = {
     // missing — flags are validated before args.
     Flag.mapTryCatch(
       (token) => {
-        const parsed = legacyParseUintBase0(token);
+        const parsed = parseUintBase0(token);
         if ("cause" in parsed) {
-          throw new Error(legacyStorageInvalidJobsMessage(token, parsed.cause));
+          throw new Error(storageInvalidJobsMessage(token, parsed.cause));
         }
         return parsed.value;
       },
@@ -79,16 +79,16 @@ const config = {
     ),
     Flag.optional,
   ),
-  linked: LegacyStorageLinkedFlagDef,
-  local: LegacyStorageLocalFlagDef,
-  projectRef: LegacyStorageProjectRefFlagDef,
+  linked: StorageLinkedFlagDef,
+  local: StorageLocalFlagDef,
+  projectRef: StorageProjectRefFlagDef,
   src: Argument.string("src").pipe(Argument.withDescription("Source path to copy from.")),
   dst: Argument.string("dst").pipe(Argument.withDescription("Destination path to copy to.")),
 } as const;
 
-export type LegacyStorageCpFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type StorageCpFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyStorageCpCommand = Command.make("cp", config).pipe(
+export const storageCpCommand = Command.make("cp", config).pipe(
   Command.withDescription("Copy objects from src to dst path."),
   Command.withShortDescription("Copy objects from src to dst path"),
   Command.withExamples([
@@ -108,12 +108,12 @@ export const legacyStorageCpCommand = Command.make("cp", config).pipe(
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // Gate before the mutex check below — order matters; see
-      // legacyRequireExperimental's doc comment for why. (A non-uint `--jobs`
+      // requireExperimental's doc comment for why. (A non-uint `--jobs`
       // never reaches this handler: the flag's own `Flag.mapTryCatch` rejects
       // it at parse time, before the experimental gate.)
-      yield* legacyRequireExperimental;
+      yield* requireExperimental;
       const cliArgs = yield* CliArgs;
-      yield* legacyAssertStorageTargetsExclusive(cliArgs.args);
+      yield* assertStorageTargetsExclusive(cliArgs.args);
       const telemetryFlags = {
         recursive: flags.recursive,
         cacheControl: flags.cacheControl,
@@ -123,13 +123,13 @@ export const legacyStorageCpCommand = Command.make("cp", config).pipe(
         local: flags.local,
         "project-ref": flags.projectRef,
       };
-      return yield* legacyStorageCp(flags).pipe(
+      return yield* storageCp(flags).pipe(
         // TS-only flag with no Go telemetry-safety baseline; Go's nearest
         // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
         // others) are unmarked, so it stays redacted.
-        withLegacyCommandInstrumentation({ flags: telemetryFlags }),
+        withCommandTelemetry({ flags: telemetryFlags }),
       );
     }).pipe(withJsonErrorHandling),
   ),
-  Command.provide(legacyStorageGatewayRuntimeLayer(["storage", "cp"])),
+  Command.provide(storageGatewayRuntimeLayer(["storage", "cp"])),
 );

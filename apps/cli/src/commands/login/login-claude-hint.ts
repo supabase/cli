@@ -11,15 +11,15 @@
  */
 const CLAUDE_CODE_HINT = `<claude-code-hint v="1" type="plugin" value="supabase@claude-plugins-official" />`;
 
-export function legacyIsClaudeCode(env: NodeJS.ProcessEnv = process.env): boolean {
+export function isClaudeCode(env: NodeJS.ProcessEnv = process.env): boolean {
   return (env["CLAUDECODE"] ?? "") !== "" || (env["CLAUDE_CODE"] ?? "") !== "";
 }
 
-export function legacySuggestClaudePlugin(opts: {
+export function suggestClaudePlugin(opts: {
   readonly stdoutIsTty: boolean;
   readonly env?: NodeJS.ProcessEnv;
 }): string {
-  if (!legacyIsClaudeCode(opts.env)) return "";
+  if (!isClaudeCode(opts.env)) return "";
   if (!opts.stdoutIsTty) return "";
   return CLAUDE_CODE_HINT;
 }

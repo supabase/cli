@@ -6,18 +6,15 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
-import { legacyIsContainerNotFoundMessage, spawnContainerCli } from "../legacy-container-cli.ts";
-import { legacyReadDbToml } from "../legacy-db-config.toml-read.ts";
-import { legacyResolveLocalProjectId, localDbContainerId } from "../legacy-docker-ids.ts";
-import {
-  LEGACY_SUGGEST_DOCKER_INSTALL,
-  legacyIsDockerDaemonUnreachable,
-} from "../legacy-docker-suggest.ts";
+import { isContainerNotFoundMessage, spawnContainerCli } from "../container-cli.ts";
+import { readDbToml } from "../db-config.toml-read.ts";
+import { resolveLocalProjectId, localDbContainerId } from "../docker-ids.ts";
+import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "../docker-suggest.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
 /** `docker container inspect` failed for a reason other than "the container doesn't exist". */
-export class LegacyLocalDbRunningError extends Data.TaggedError("LegacyLocalDbRunningError")<{
+export class LocalDbRunningError extends Data.TaggedError("LocalDbRunningError")<{
   readonly message: string;
   /** Classified at the container-runtime boundary; never inferred from `message` by telemetry. */
   readonly daemonDown?: boolean;
@@ -48,10 +45,10 @@ const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
  * inspect the local Postgres container. Resolves `true` when it exists (the
  * stack is up) and `false` when the container-CLI reports a missing container —
  * Docker's "No such container"/"No such object" or Podman's own "no container with
- * name or ID ... found" wording, via the shared `legacyIsContainerNotFoundMessage`
- * matcher (`../legacy-container-cli.ts`) — Go's `ErrNotRunning`. Any other inspect
+ * name or ID ... found" wording, via the shared `isContainerNotFoundMessage`
+ * matcher (`../container-cli.ts`) — Go's `ErrNotRunning`. Any other inspect
  * failure (e.g. the Docker daemon is
- * unreachable) fails with {@link LegacyLocalDbRunningError} instead of being
+ * unreachable) fails with {@link LocalDbRunningError} instead of being
  * treated as "not running", matching Go, which returns the wrapped inspect
  * error rather than silently treating the database as stopped.
  *
@@ -68,13 +65,13 @@ const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
  * we only want the resolved `projectId` and tolerate falling back to the
  * workdir basename on an unreadable `.env` rather than re-throwing.
  */
-export function legacyIsLocalDbRunning(
+export function isLocalDbRunning(
   spawner: Spawner,
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
   configuredProjectId: string | undefined,
-): Effect.Effect<boolean, LegacyLocalDbRunningError> {
+): Effect.Effect<boolean, LocalDbRunningError> {
   return Effect.scoped(
     Effect.gen(function* () {
       // `warnOnUnresolvedEnv: false` — this doc comment's own `resolveDbToml` note:
@@ -82,14 +79,14 @@ export function legacyIsLocalDbRunning(
       // has an OrioleDB project with an unresolved S3 `env(VAR)`, already printed
       // Go's single `assertEnvLoaded` WARN) before reaching this probe. Re-printing
       // it here would diverge from Go's exactly-once `flags.LoadConfig` call.
-      const tomlProjectId = yield* legacyReadDbToml(fs, path, workdir, undefined, {
+      const tomlProjectId = yield* readDbToml(fs, path, workdir, undefined, {
         validate: false,
         warnOnUnresolvedEnv: false,
       }).pipe(
         Effect.map((toml) => toml.projectId),
         Effect.orElseSucceed(() => Option.none<string>()),
       );
-      const projectId = legacyResolveLocalProjectId(
+      const projectId = resolveLocalProjectId(
         configuredProjectId,
         Option.getOrUndefined(tomlProjectId),
         workdir,
@@ -105,7 +102,7 @@ export function legacyIsLocalDbRunning(
       }).pipe(
         Effect.mapError(
           () =>
-            new LegacyLocalDbRunningError({
+            new LocalDbRunningError({
               message: "failed to inspect service",
               daemonDown: true,
             }),
@@ -117,38 +114,34 @@ export function legacyIsLocalDbRunning(
           stderrChunks.push(chunk);
         }),
       ).pipe(
-        Effect.mapError(
-          () => new LegacyLocalDbRunningError({ message: "failed to inspect service" }),
-        ),
+        Effect.mapError(() => new LocalDbRunningError({ message: "failed to inspect service" })),
       );
       const inspectExit = yield* child.exitCode.pipe(
         Effect.map(Number),
-        Effect.mapError(
-          () => new LegacyLocalDbRunningError({ message: "failed to inspect service" }),
-        ),
+        Effect.mapError(() => new LocalDbRunningError({ message: "failed to inspect service" })),
       );
       if (inspectExit === 0) return true; // container exists ⇒ running
 
       const stderr = decodeChunks(stderrChunks).trim();
       // Only a missing container means "not running". Any other inspect
       // failure propagates, matching Go's `AssertSupabaseDbIsRunning`. Uses the
-      // shared, Podman-aware matcher (`legacyIsContainerNotFoundMessage`) rather than a
+      // shared, Podman-aware matcher (`isContainerNotFoundMessage`) rather than a
       // Docker-only substring check, since `spawnContainerCli` above falls back to Podman
       // on Docker-less hosts, and Podman's inspect-miss wording ("no container with name
       // or ID ... found: no such container") differs from Docker's.
-      if (!legacyIsContainerNotFoundMessage(stderr)) {
+      if (!isContainerNotFoundMessage(stderr)) {
         // Go's `AssertServiceIsRunning` sets `CmdSuggestion = suggestDockerInstall`
         // on a daemon-connection failure (`misc.go:148-154`), so a down daemon
         // still surfaces the actionable Docker Desktop hint, not just raw stderr.
-        const daemonDown = legacyIsDockerDaemonUnreachable(stderr);
+        const daemonDown = isDockerDaemonUnreachable(stderr);
         return yield* Effect.fail(
-          new LegacyLocalDbRunningError({
+          new LocalDbRunningError({
             message:
               stderr.length > 0
                 ? `failed to inspect service: ${stderr}`
                 : "failed to inspect service",
             daemonDown,
-            ...(daemonDown ? { suggestion: LEGACY_SUGGEST_DOCKER_INSTALL } : {}),
+            ...(daemonDown ? { suggestion: SUGGEST_DOCKER_INSTALL } : {}),
           }),
         );
       }

@@ -427,7 +427,7 @@ describe("diffProjectConfig classification", () => {
     // template declares all of these), silently blocking `config pull` from
     // ever syncing the platform's real Postgres version or pooler settings:
     // `unmanaged` paths never reach `changes` (`hasAncestorPathKey` above),
-    // and `config pull`'s planner (`legacyPlanConfigPull`) only ever writes
+    // and `config pull`'s planner (`planConfigPull`) only ever writes
     // from `changes`. `config push` itself doesn't consult `ProjectConfig` at
     // all today (still the legacy v1 `config-sync` mappers), so there was
     // never a push-correctness reason to exclude them either.

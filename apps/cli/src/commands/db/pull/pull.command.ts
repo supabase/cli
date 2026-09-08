@@ -2,10 +2,10 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyParseSchemaFlags } from "../../../command-internal/legacy-schema-flags.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyDbPull } from "./pull.handler.ts";
-import { legacyDbPullRuntimeLayer } from "./pull.layers.ts";
+import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { dbPull } from "./pull.handler.ts";
+import { dbPullRuntimeLayer } from "./pull.layers.ts";
 
 const config = {
   name: Argument.string("migration name").pipe(
@@ -43,7 +43,7 @@ const config = {
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
     Flag.mapTryCatch(
-      (rawValues) => legacyParseSchemaFlags(rawValues),
+      (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
@@ -73,16 +73,16 @@ const config = {
   ),
 } as const;
 
-export type LegacyDbPullFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DbPullFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDbPullCommand = Command.make("pull", config).pipe(
+export const dbPullCommand = Command.make("pull", config).pipe(
   Command.withDescription(
     "Migration mode compares supabase/migrations with the selected live database (--linked by default), writes the complete difference as migration files, and may record them in that database's migration history. --declarative instead replaces the declarative schema tree and does not create migrations or update migration history.",
   ),
   Command.withShortDescription("Pull schema from the remote database"),
   Command.withHandler((flags) =>
-    legacyDbPull(flags).pipe(
-      withLegacyCommandInstrumentation({
+    dbPull(flags).pipe(
+      withCommandTelemetry({
         flags: {
           declarative: flags.declarative,
           "use-pg-delta": flags.usePgDelta,
@@ -105,5 +105,5 @@ export const legacyDbPullCommand = Command.make("pull", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyDbPullRuntimeLayer),
+  Command.provide(dbPullRuntimeLayer),
 );

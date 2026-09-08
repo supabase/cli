@@ -2,7 +2,7 @@
 
 ## Files Read
 
-Same auth fallback chain as every Management-API legacy command. Project-ref discovery (for the PARENT) is PARENT-scoped (CLI-2167 follow-up, TS-only): env `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/linked-project.json`'s `ref` → `<workdir>/supabase/.temp/project-ref`, first ref-shaped candidate wins — see `branches list/SIDE_EFFECTS.md` for the full chain and rationale.
+Same auth fallback chain as every Management-API command. Project-ref discovery (for the PARENT) is PARENT-scoped (CLI-2167 follow-up, TS-only): env `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/linked-project.json`'s `ref` → `<workdir>/supabase/.temp/project-ref`, first ref-shaped candidate wins — see `branches list/SIDE_EFFECTS.md` for the full chain and rationale.
 
 ## Files Written
 
@@ -27,12 +27,12 @@ Same auth fallback chain as every Management-API legacy command. Project-ref dis
 
 ## Exit Codes
 
-| Code | Condition                                                                               |
-| ---- | --------------------------------------------------------------------------------------- |
-| `0`  | success — branch updated                                                                |
-| `1`  | `LegacyBranchesUpdateUnexpectedStatusError` — non-200 response from the update endpoint |
-| `1`  | `LegacyBranchesUpdateNetworkError` — transport-level network failure                    |
-| `1`  | Branch-id resolution errors (find / config endpoints failed)                            |
+| Code | Condition                                                                         |
+| ---- | --------------------------------------------------------------------------------- |
+| `0`  | success — branch updated                                                          |
+| `1`  | `BranchesUpdateUnexpectedStatusError` — non-200 response from the update endpoint |
+| `1`  | `BranchesUpdateNetworkError` — transport-level network failure                    |
+| `1`  | Branch-id resolution errors (find / config endpoints failed)                      |
 
 ## Telemetry Events Fired
 
@@ -51,4 +51,4 @@ For `--output {json,yaml,toml,env}`, the header goes to stderr followed by the e
 
 ## Notes
 
-The upgrade-suggest call uses the branch's own resolved project ref (`legacyResolveBranchProjectRef`) — not the parent `--project-ref` value — so the entitlements check is scoped to the branch's org.
+The upgrade-suggest call uses the branch's own resolved project ref (`resolveBranchProjectRef`) — not the parent `--project-ref` value — so the entitlements check is scoped to the branch's org.

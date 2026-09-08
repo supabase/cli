@@ -6,7 +6,7 @@
  * ExternalId, ModeType, DefaultMaxClients, DefaultPoolSize. Rendered by
  * `lib/template-render.ts`.
  */
-export const LEGACY_START_POOLER_EXS_TEMPLATE = `{:ok, _} = Application.ensure_all_started(:supavisor)
+export const START_POOLER_EXS_TEMPLATE = `{:ok, _} = Application.ensure_all_started(:supavisor)
 
 {:ok, version} =
   case Supavisor.Repo.query!("select version()") do

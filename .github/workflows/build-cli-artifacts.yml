@@ -7,10 +7,6 @@ on:
         description: CLI package version to build
         required: true
         type: string
-      shell:
-        description: CLI shell to package as the shipped supabase binary
-        required: true
-        type: string
       ref:
         description: Optional git ref or SHA to check out before building
         required: false
@@ -55,7 +51,6 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
-      BUN_SHELL: ${{ inputs.shell }}
       VERSION: ${{ inputs.version }}
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
@@ -111,9 +106,9 @@ jobs:
       - name: Sync versions
         run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
 
-      - name: Build selected shell
+      - name: Build CLI artifacts
         timeout-minutes: ${{ inputs.build_timeout_minutes }}
-        run: pnpm exec bun apps/cli/scripts/build.ts --version "${VERSION}" --shell "${BUN_SHELL}"
+        run: pnpm exec bun apps/cli/scripts/build.ts --version "${VERSION}"
 
       - name: Verify build artifacts
         run: |
@@ -131,7 +126,7 @@ jobs:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}${{ inputs.cache_key_suffix }}-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.version }}${{ inputs.cache_key_suffix }}-v1
           enableCrossOsArchive: true
           lookup-only: true
 
@@ -142,5 +137,5 @@ jobs:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}${{ inputs.cache_key_suffix }}-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.version }}${{ inputs.cache_key_suffix }}-v1
           enableCrossOsArchive: true

@@ -3,9 +3,9 @@ import * as nodePath from "node:path";
 /**
  * Pure path helper for `seed buckets` object upload, ported from
  * `UpsertObjects` (`apps/cli-go/pkg/storage/batch.go`). Content-type resolution
- * and the sniff read live in `command-internal/legacy-storage-content-type.ts`
+ * and the sniff read live in `command-internal/storage-content-type.ts`
  * (shared with `storage cp`); size parsing in
- * `command-internal/legacy-storage-bucket-config.ts`.
+ * `command-internal/storage-bucket-config.ts`.
  */
 
 /**
@@ -19,11 +19,7 @@ import * as nodePath from "node:path";
  * `objectsPath` and `filePath` are OS paths; the relative segment is normalised
  * to forward slashes (`filepath.ToSlash`) for the remote key.
  */
-export function legacyBucketObjectKey(
-  bucketName: string,
-  objectsPath: string,
-  filePath: string,
-): string {
+export function bucketObjectKey(bucketName: string, objectsPath: string, filePath: string): string {
   const relPath = nodePath.relative(objectsPath, filePath);
   if (relPath === "") {
     return nodePath.posix.join(bucketName, nodePath.basename(filePath));

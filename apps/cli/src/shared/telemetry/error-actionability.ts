@@ -396,7 +396,7 @@ export const actionability = {
 
 /**
  * The declaration for a failure confirmed plan-gated by the entitlement
- * check (`legacySuggestUpgrade`). Shared so every gated surface groups under
+ * check (`suggestUpgrade`). Shared so every gated surface groups under
  * the same fingerprint family.
  */
 export const planLimitGatedActionability: CliErrorActionabilityDeclaration = {
@@ -407,7 +407,7 @@ export const planLimitGatedActionability: CliErrorActionabilityDeclaration = {
 /**
  * Classification policy for errors that carry a Management API status code.
  * `upgradeSuggested` is the typed result of the entitlement gate
- * (`legacySuggestUpgrade`) threaded through the error constructor — never
+ * (`suggestUpgrade`) threaded through the error constructor — never
  * inferred from message text.
  *
  * A 404 is user-actionable only when the caller knows the endpoint names a
@@ -928,7 +928,7 @@ export function classifyCliCauseActionability(cause: Cause.Cause<unknown>): CliE
 /**
  * Fallback for a command that deliberately signalled failure through
  * ProcessControl without failing its Effect, when no typed error is available
- * to derive a classification from (see `withLegacyCommandInstrumentation`,
+ * to derive a classification from (see `withCommandTelemetry`,
  * which classifies the command's own fail-on error class where one exists).
  */
 export const unknownProcessControlledFailureActionability: CliErrorActionability = toActionability(

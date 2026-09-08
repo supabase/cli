@@ -53,7 +53,6 @@ const base = vitestTest.extend<LiveFixtures>({
     const directory = mkdtempSync(path.join(tmpdir(), `supabase-live-${suffix || "test"}-`));
     try {
       const initialized = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: directory,
         home: home.dir,
         env: { SUPABASE_PROFILE: inject("liveProfilePath") },
@@ -72,7 +71,6 @@ const base = vitestTest.extend<LiveFixtures>({
   cli: async ({ workspace, home }, use) => {
     await use((args, options) =>
       runSupabase(args, {
-        entrypoint: "legacy",
         ...options,
         cwd: options?.cwd ?? workspace.path,
         home: home.dir,

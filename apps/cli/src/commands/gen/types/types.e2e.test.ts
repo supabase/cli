@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { makeTempHome, makeTempStackProject, runSupabase } from "../../../../tests/helpers/cli.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
-import { localDbContainerId, localNetworkId } from "../../../command-internal/legacy-docker-ids.ts";
-import { legacyGetRegistryImageUrl } from "../../../command-internal/legacy-docker-registry.ts";
+import { localDbContainerId, localNetworkId } from "../../../command-internal/docker-ids.ts";
+import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
 import {
   RESOLVE_BUDGET_MS,
   ensureImage,
@@ -16,7 +16,7 @@ import { resolvePgmetaImage } from "./types.shared.ts";
 const TYPEGEN_LANGS = ["typescript", "go", "swift", "python"] as const;
 type TypegenLang = (typeof TYPEGEN_LANGS)[number];
 
-const LOCAL_POSTGRES_IMAGE = legacyGetRegistryImageUrl(dockerfileServiceImage("pg"));
+const LOCAL_POSTGRES_IMAGE = getRegistryImageUrl(dockerfileServiceImage("pg"));
 const LOCAL_POSTGRES_TIMEOUT_MS = 120_000;
 const TYPEGEN_TIMEOUT_MS = 90_000;
 // Image resolution happens inside the test bodies, ahead of the startup and
@@ -328,7 +328,7 @@ function expectLocalSmokeTable(lang: TypegenLang, stdout: string) {
   expect(stdout).toContain("TypegenSmoke");
 }
 
-describe("legacy gen types e2e", () => {
+describe("gen types e2e", () => {
   test(
     "generates all supported languages from a tokenless local stack",
     {
@@ -361,7 +361,6 @@ describe("legacy gen types e2e", () => {
               cwd: project.dir,
               home: home.dir,
               env,
-              entrypoint: "legacy",
               exitTimeoutMs: TYPEGEN_TIMEOUT_MS,
             },
           );
@@ -408,7 +407,6 @@ describe("legacy gen types e2e", () => {
             cwd: project.dir,
             home: home.dir,
             env: remoteEnv(remoteAccessToken, project.dir),
-            entrypoint: "legacy",
             exitTimeoutMs: TYPEGEN_TIMEOUT_MS,
           },
         );

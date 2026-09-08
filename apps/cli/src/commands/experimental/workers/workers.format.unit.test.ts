@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { legacyRenderWorkerDetails } from "./workers.format.ts";
+import { renderWorkerDetails } from "./workers.format.ts";
 
-describe("legacyRenderWorkerDetails", () => {
+describe("renderWorkerDetails", () => {
   it("pads every label to the widest one", () => {
     expect(
-      legacyRenderWorkerDetails([
+      renderWorkerDetails([
         ["State", "active"],
         ["Runtime", "node"],
       ]),
@@ -13,7 +13,7 @@ describe("legacyRenderWorkerDetails", () => {
 
   it("drops rows whose value is empty", () => {
     expect(
-      legacyRenderWorkerDetails([
+      renderWorkerDetails([
         ["State", "active"],
         ["Image", ""],
       ]),
@@ -25,7 +25,7 @@ describe("legacyRenderWorkerDetails", () => {
   // keeps the caller from printing an empty block under its headline.
   it("renders nothing at all when every value is empty", () => {
     expect(
-      legacyRenderWorkerDetails([
+      renderWorkerDetails([
         ["Image", ""],
         ["URL", ""],
       ]),

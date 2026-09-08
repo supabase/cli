@@ -65,7 +65,7 @@ type OutputEvent = {
 // runs or manual CLI invocations — the failure mode the previous fixed literal
 // `/tmp/supabase-cli-test-home` allowed. Tests that really read or write files
 // under homeDir must pass their own per-test temp dir instead (see
-// `useLegacyTempWorkdir` in `legacy-mocks.ts`).
+// `useTempWorkdir` in `command-mocks.ts`).
 const defaultTestHomeDir = join(
   tmpdir(),
   `supabase-cli-test-home-${process.pid.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
@@ -523,7 +523,7 @@ export function mockApi(
 }
 
 /**
- * `withLegacyCommandInstrumentation` threads `flags`/`command`/etc. through
+ * `withCommandTelemetry` threads `flags`/`command`/etc. through
  * `CurrentAnalyticsContext`, not the direct `capture()` call args. The plain
  * `mockAnalytics()` below deliberately doesn't merge that context (most
  * callers don't need it); tests asserting on context-carried properties

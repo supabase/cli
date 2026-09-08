@@ -1,7 +1,4 @@
-import { legacyMakeInspectDbHandler } from "../legacy-inspect-query.ts";
-import { legacyLocksSpec } from "./locks.query.ts";
+import { makeInspectDbHandler } from "../inspect-query.ts";
+import { locksSpec } from "./locks.query.ts";
 
-export const legacyInspectDbLocks = legacyMakeInspectDbHandler(
-  legacyLocksSpec,
-  "legacy.inspect.db.locks",
-);
+export const inspectDbLocks = makeInspectDbHandler(locksSpec, "inspect.db.locks");
