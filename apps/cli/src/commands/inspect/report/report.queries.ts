@@ -10,6 +10,7 @@ import { outliersSpec } from "../db/outliers/outliers.query.ts";
 import { replicationSlotsSpec } from "../db/replication-slots/replication-slots.query.ts";
 import { roleStatsSpec } from "../db/role-stats/role-stats.query.ts";
 import { tableStatsSpec } from "../db/table-stats/table-stats.query.ts";
+import { toastSizesSpec } from "../db/toast-sizes/toast-sizes.query.ts";
 import { trafficProfileSpec } from "../db/traffic-profile/traffic-profile.query.ts";
 import { vacuumStatsSpec } from "../db/vacuum-stats/vacuum-stats.query.ts";
 
@@ -50,7 +51,7 @@ export interface ReportQuery {
 }
 
 /**
- * The 14 report queries. Reuses the 13 `inspect db` specs' `.sql` verbatim
+ * The 15 report queries. Reuses the 14 `inspect db` specs' `.sql` verbatim
  * (byte-identical COPY input → byte-identical CSVs) plus the standalone
  * `unused_indexes` query.
  */
@@ -68,6 +69,7 @@ export const REPORT_QUERIES: ReadonlyArray<ReportQuery> = [
   { fileName: "table_stats", sql: tableStatsSpec.sql },
   { fileName: "traffic_profile", sql: trafficProfileSpec.sql },
   { fileName: "unused_indexes", sql: UNUSED_INDEXES_REPORT_SQL },
+  { fileName: "toast_sizes", sql: toastSizesSpec.sql },
   { fileName: "vacuum_stats", sql: vacuumStatsSpec.sql },
 ];
 
