@@ -8,16 +8,10 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
-import {
-  ExperimentalStackApi,
-  ExperimentalStackTargetResolver,
-} from "../stack.shared.ts";
+import { ExperimentalStackApi, ExperimentalStackTargetResolver } from "../stack.shared.ts";
 import { loadStackConfig } from "../stack-config.ts";
 import type { ExperimentalStackStartFlags } from "./start.command.ts";
-import {
-  ExperimentalStackStartError,
-  ExperimentalStackTargetFlagsError,
-} from "./start.errors.ts";
+import { ExperimentalStackStartError, ExperimentalStackTargetFlagsError } from "./start.errors.ts";
 
 const statusPayload = (status: StackStatus) => ({
   id: status.id,
