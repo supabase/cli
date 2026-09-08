@@ -3,8 +3,11 @@
 // stack after the CLI process has exited.
 // oxlint-disable-next-line effecttsgo/process-env -- package runtime composition is scoped below.
 
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- compiled CLI fixture requires host process/filesystem APIs
 import { access, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- compiled CLI fixture requires host process/filesystem APIs
 import { execFile as execFileCallback } from "node:child_process";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- compiled CLI fixture requires host process/filesystem APIs
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
@@ -47,6 +50,7 @@ enabled = false
 enabled = false
 `;
 
+// oxlint-disable-next-line effecttsgo/async-function -- subprocess cleanup is a foreign Promise boundary
 async function inspectAndDestroyStack(home: string, stackId: string) {
   const script = `
     import { inspectStack, openStack, StackIdSchema } from "@supabase/stack";
@@ -90,6 +94,7 @@ describe("experimental stack start (compiled e2e)", () => {
   let stackId: string | undefined;
   let stackDestroyed = false;
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest cleanup callback is a Promise boundary
   afterEach(async () => {
     let cleanupComplete = stackDestroyed;
     if (!cleanupComplete && home !== undefined) {
@@ -119,6 +124,7 @@ describe("experimental stack start (compiled e2e)", () => {
   test.skipIf(!nativeSupported)(
     "starts a detached native owner and leaves a ready database after CLI exit",
     { timeout: START_TIMEOUT_MS + CLEANUP_TIMEOUT_MS },
+    // oxlint-disable-next-line effecttsgo/async-function -- compiled CLI e2e callback is a Promise boundary
     async () => {
       home = makeTempHome();
       projectDir = await mkdtemp(path.join("/tmp", "supabase-compiled-stack-start-e2e-"));

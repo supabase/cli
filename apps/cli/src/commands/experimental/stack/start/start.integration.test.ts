@@ -1,5 +1,7 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -42,10 +44,10 @@ const project = (): string => {
   return root;
 };
 
-const resolverLayer = Layer.mergeAll(
-  legacyExperimentalStackApiLayer,
-  legacyExperimentalStackTargetResolverLayer,
-).pipe(Layer.provide(BunServices.layer));
+const resolverLayer = legacyExperimentalStackTargetResolverLayer.pipe(
+  Layer.provideMerge(legacyExperimentalStackApiLayer),
+  Layer.provide(BunServices.layer),
+);
 
 const status = (id: string, runtime: "native" | "container" = "native") =>
   ({
@@ -86,7 +88,7 @@ function fakeStack(
     credentials: () => Effect.die("credentials not used in start test"),
     prepare: () => Effect.die("prepare not used in start test"),
     start,
-    stop: () => Effect.succeed(undefined),
+    stop: () => Effect.void,
     destroy: () => Effect.die("destroy not used in start test"),
     logs: () => Effect.die("logs not used in start test"),
     followLogs: () => Stream.empty,
@@ -155,7 +157,6 @@ describe("experimental stack start targeting", () => {
       expect(target.runtime).toBeUndefined();
     }).pipe(
       Effect.provide(resolverLayer),
-      Effect.provide(BunServices.layer),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });
@@ -173,7 +174,6 @@ describe("experimental stack start targeting", () => {
       expect(target.runtime).toEqual({ kind: "native" });
     }).pipe(
       Effect.provide(resolverLayer),
-      Effect.provide(BunServices.layer),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });
@@ -187,7 +187,7 @@ describe("experimental stack start targeting", () => {
       expect(failure).toBeInstanceOf(LegacyExperimentalStackTargetError);
       expect(failure.message).toContain("lowercase SHA-256");
       expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
-    }).pipe(Effect.provide(resolverLayer), Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(resolverLayer)),
   );
 
   it.effect("classifies an existing stack runtime mismatch as provided flags", () => {
@@ -214,9 +214,12 @@ describe("experimental stack start targeting", () => {
         .pipe(Effect.flip);
       expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
     }).pipe(
-      Effect.provide(legacyExperimentalStackTargetResolverLayer),
-      Effect.provide(api),
-      Effect.provide(BunServices.layer),
+      Effect.provide(
+        legacyExperimentalStackTargetResolverLayer.pipe(
+          Layer.provideMerge(api),
+          Layer.provide(BunServices.layer),
+        ),
+      ),
     );
   });
 
@@ -319,7 +322,7 @@ describe("experimental stack start targeting", () => {
       ),
       stop: () => {
         stopped = true;
-        return Effect.succeed(undefined);
+        return Effect.void;
       },
       destroy: () =>
         Effect.sync(() => {
@@ -352,7 +355,7 @@ describe("experimental stack start targeting", () => {
       ...fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64)))),
       stop: () => {
         stopped = true;
-        return Effect.succeed(undefined);
+        return Effect.void;
       },
       destroy: () =>
         Effect.sync(() => {
@@ -467,7 +470,7 @@ describe("experimental stack start targeting", () => {
         ),
         stop: () => {
           stopped = true;
-          return Effect.succeed(undefined);
+          return Effect.void;
         },
         destroy: () =>
           Effect.sync(() => {

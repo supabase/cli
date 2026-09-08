@@ -8,6 +8,7 @@ import {
 } from "@supabase/stack/effect";
 import type { StackId } from "@supabase/stack";
 import { StackNotFoundError } from "@supabase/stack/effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -48,7 +49,7 @@ interface LegacyExperimentalStackTargetResolverShape {
   }) => Effect.Effect<
     LegacyExperimentalStackTarget,
     LegacyExperimentalStackTargetError,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto | LegacyExperimentalStackApi
+    LegacyExperimentalStackApi
   >;
 }
 
@@ -60,17 +61,50 @@ export class LegacyExperimentalStackTargetResolver extends Context.Service<
 export class LegacyExperimentalStackApi extends Context.Service<
   LegacyExperimentalStackApi,
   {
-    readonly createStack: typeof createStack;
-    readonly openStack: typeof openStack;
-    readonly inspectStack: typeof inspectStack;
+    readonly createStack: (
+      ...args: Parameters<typeof createStack>
+    ) => Effect.Effect<
+      Effect.Success<ReturnType<typeof createStack>>,
+      Effect.Error<ReturnType<typeof createStack>>
+    >;
+    readonly openStack: (
+      ...args: Parameters<typeof openStack>
+    ) => Effect.Effect<
+      Effect.Success<ReturnType<typeof openStack>>,
+      Effect.Error<ReturnType<typeof openStack>>
+    >;
+    readonly inspectStack: (
+      ...args: Parameters<typeof inspectStack>
+    ) => Effect.Effect<
+      Effect.Success<ReturnType<typeof inspectStack>>,
+      Effect.Error<ReturnType<typeof inspectStack>>
+    >;
   }
 >()("supabase/experimental-stack/StackApi") {}
 
-export const legacyExperimentalStackApiLayer = Layer.succeed(LegacyExperimentalStackApi, {
-  createStack,
-  openStack,
-  inspectStack,
-});
+export const legacyExperimentalStackApiLayer = Layer.effect(
+  LegacyExperimentalStackApi,
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const childProcess = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const provideServices = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcess),
+      );
+    return {
+      createStack: (...args: Parameters<typeof createStack>) =>
+        provideServices(createStack(...args)),
+      openStack: (...args: Parameters<typeof openStack>) => provideServices(openStack(...args)),
+      inspectStack: (...args: Parameters<typeof inspectStack>) =>
+        provideServices(inspectStack(...args)),
+    };
+  }),
+);
 
 /** Runtime configuration for the first stack command. Later commands reuse this layer. */
 export const legacyExperimentalStackTargetResolverLayer = Layer.succeed(
