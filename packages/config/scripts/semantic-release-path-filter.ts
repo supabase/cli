@@ -51,6 +51,19 @@ const releaseNotesGenerator: ReleaseNotesGeneratorPlugin = require("@semantic-re
 export const PACKAGE_PATH_PREFIX = "packages/config/";
 
 /**
+ * Whether a write failed because the reader is gone.
+ *
+ * Node and Bun both tag this as `EPIPE` on the error object; the message text
+ * differs between them and is not matched.
+ */
+function isBrokenPipe(cause: unknown): boolean {
+  if (typeof cause !== "object" || cause === null || !("code" in cause)) {
+    return false;
+  }
+  return cause.code === "EPIPE";
+}
+
+/**
  * Resolves which of `commits` touch a path under {@link PACKAGE_PATH_PREFIX},
  * using ONE batched `git diff-tree --stdin -r --root --name-only -z`
  * subprocess rather than one per commit — the first release analyzes the
@@ -107,8 +120,21 @@ export async function filterCommitsToPackage<T extends { hash: string }>(
   // is one runtime port away — don't rely on the buffering behavior.
   const stdoutText = new Response(proc.stdout).text();
   const stderrText = new Response(proc.stderr).text();
-  await proc.stdin.write(`${hashes.join("\n")}\n`);
-  await proc.stdin.end();
+  // A `git` that rejects its arguments — a `cwd` outside any repository, say —
+  // exits before it reads a single hash, and writing to a process that has
+  // already gone raises EPIPE. Whether that happens is a race against process
+  // startup, so surfacing it would make the failure mode nondeterministic:
+  // sometimes `EPIPE: broken pipe, send`, sometimes the real diagnosis. The
+  // exit code and stderr below are the diagnosis, so a broken pipe here is
+  // dropped and the reporting left to them.
+  try {
+    await proc.stdin.write(`${hashes.join("\n")}\n`);
+    await proc.stdin.end();
+  } catch (cause) {
+    if (!isBrokenPipe(cause)) {
+      throw cause;
+    }
+  }
 
   const [exitCode, stdout, stderr] = await Promise.all([proc.exited, stdoutText, stderrText]);
   if (exitCode !== 0) {
