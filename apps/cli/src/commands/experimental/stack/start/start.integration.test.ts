@@ -5,7 +5,13 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Layer, Option, Stream } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
-import { ContainerEngineError, ContainerPullError, StackIdSchema } from "@supabase/stack/effect";
+import {
+  ContainerEngineError,
+  ContainerPullError,
+  StackIdSchema,
+  StackRuntimeError,
+  StackStateInvalidError,
+} from "@supabase/stack/effect";
 import type { EffectStack, StackStartError, StackStatus } from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { mockLegacyCliSettings } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -380,6 +386,46 @@ describe("experimental stack start targeting", () => {
         expect(failure.reason).toBe("registry");
         expect(failure.suggestion).toContain("registry connectivity");
         expect(failure[ErrorActionabilityId]).toEqual(actionability.externalNetwork);
+      }
+    }).pipe(
+      Effect.provide(setup.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("reports runtime start failures with operational guidance", () => {
+    const root = project();
+    const stack = fakeStack("b".repeat(64), () =>
+      Effect.fail(new StackRuntimeError({ message: "runtime crashed" })),
+    );
+    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+    return Effect.gen(function* () {
+      const failure = yield* legacyExperimentalStackStart(flags()).pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(LegacyExperimentalStackStartError);
+      if (failure instanceof LegacyExperimentalStackStartError) {
+        expect(failure.reason).toBe("unknown");
+        expect(failure.suggestion).toContain("runtime diagnostics");
+        expect(failure[ErrorActionabilityId]).toEqual(actionability.unknown);
+      }
+    }).pipe(
+      Effect.provide(setup.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("classifies persisted state failures with recovery guidance", () => {
+    const root = project();
+    const stack = fakeStack("c".repeat(64), () =>
+      Effect.fail(new StackStateInvalidError({ message: "persisted state is invalid" })),
+    );
+    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+    return Effect.gen(function* () {
+      const failure = yield* legacyExperimentalStackStart(flags()).pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(LegacyExperimentalStackStartError);
+      if (failure instanceof LegacyExperimentalStackStartError) {
+        expect(failure.reason).toBe("invalid-config");
+        expect(failure.suggestion).toContain("experimental stack status");
+        expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
       }
     }).pipe(
       Effect.provide(setup.layer),

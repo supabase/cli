@@ -11,7 +11,7 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 /** A config error suitable for an experimental stack command's user-facing boundary. */
-class LegacyStackConfigError extends Data.TaggedError("LegacyStackConfigError")<{
+export class LegacyStackConfigError extends Data.TaggedError("LegacyStackConfigError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -52,19 +52,38 @@ const parseEnv = (contents: string): Record<string, Redacted.Redacted<string>> =
     Object.entries(parseDotenv(contents)).map(([key, value]) => [key, Redacted.make(value)]),
   );
 
+const envKeyPattern = /^[A-Z_][A-Z0-9_]*$/u;
+
+const validateEnvKeys = (
+  values: Readonly<Record<string, Redacted.Redacted<string>>>,
+  file: string,
+) => {
+  const invalid = Object.keys(values).find((key) => !envKeyPattern.test(key));
+  return invalid === undefined
+    ? Effect.succeed(values)
+    : Effect.fail(
+        new LegacyStackConfigError({
+          message: `Invalid environment variable key ${invalid} in ${file}; use uppercase letters, digits, and underscores.`,
+        }),
+      );
+};
+
 const legacyReadFunctionEnvironments = (projectRoot: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const root = path.join(projectRoot, "supabase", "functions");
     const read = (file: string) =>
-      fs
-        .exists(file)
-        .pipe(
-          Effect.flatMap((exists) =>
-            exists ? fs.readFileString(file).pipe(Effect.map(parseEnv)) : Effect.succeed({}),
-          ),
-        );
+      fs.exists(file).pipe(
+        Effect.flatMap((exists) =>
+          exists
+            ? fs.readFileString(file).pipe(
+                Effect.map(parseEnv),
+                Effect.flatMap((values) => validateEnvKeys(values, file)),
+              )
+            : Effect.succeed({}),
+        ),
+      );
     const shared = yield* read(path.join(root, ".env"));
     const entries = yield* fs.readDirectory(root).pipe(Effect.orElseSucceed(() => []));
     const result: Record<string, Readonly<Record<string, Redacted.Redacted<string>>>> = {};
@@ -149,7 +168,7 @@ const authProviderNames = [
 ] as const;
 
 const legacyStackProjectPath = (value: string): string =>
-  value.length === 0 || value.startsWith("/") || value.startsWith("supabase/")
+  value.length === 0 || value.startsWith("/")
     ? value
     : `supabase/${value.startsWith("./") ? value.slice(2) : value}`;
 
@@ -164,6 +183,22 @@ const legacyFunctionRelativePath = (value: string, name: string): string => {
   while (common < base.length && common < target.length && base[common] === target[common])
     common += 1;
   return [...base.slice(common).map(() => ".."), ...target.slice(common)].join("/");
+};
+
+const legacyFunctionPathError = (
+  name: string,
+  field: string,
+  value: string,
+): string | undefined => {
+  if (value.length === 0) return undefined;
+  const normalized = value.replace(/^\.\//u, "").replace(/^supabase\//u, "");
+  if (
+    value.startsWith("/") ||
+    !normalized.startsWith("functions/") ||
+    normalized.split("/").includes("..")
+  )
+    return `functions.${name}.${field} path must be inside supabase/functions`;
+  return undefined;
 };
 
 const apiListener = (
@@ -511,7 +546,6 @@ const legacyFunctionsSettings = (
 };
 
 const legacyConfigInput = (
-  projectRoot: string,
   config: CliConfig,
   document?: Record<string, unknown>,
   projectEnvValues: Readonly<Record<string, string>> = {},
@@ -528,7 +562,6 @@ const legacyConfigInput = (
   const capability = (enabled: boolean, settings: unknown) =>
     enabled ? { settings } : { enabled: false as const };
   return {
-    preparation: "background",
     capabilities: {
       database: {
         version: String(db.major_version),
@@ -613,6 +646,15 @@ const legacyConfigValidationError = (
   if (config.edge_runtime.enabled === false) return undefined;
   for (const [name, functionConfig] of Object.entries(config.functions)) {
     if (functionConfig.enabled === false) continue;
+    for (const [field, value] of [
+      ["import_map", functionConfig.import_map],
+      ["entrypoint", functionConfig.entrypoint],
+      ...functionConfig.static_files.map((path) => ["static_files", path] as const),
+    ] as const) {
+      if (typeof value !== "string") continue;
+      const pathError = legacyFunctionPathError(name, field, value);
+      if (pathError !== undefined) return pathError;
+    }
     for (const value of Object.values(functionConfig.env)) {
       if (typeof value !== "string") continue;
       const match = /^env\(([A-Za-z_][A-Za-z0-9_]*)\)$/.exec(value);
@@ -655,7 +697,6 @@ export const legacyLoadStackConfig = (projectRoot: string): LegacyStackConfigEff
                 if (validationError !== undefined)
                   return Effect.fail(new LegacyStackConfigError({ message: validationError }));
                 const input = legacyConfigInput(
-                  projectRoot,
                   context.config,
                   context.loaded?.document,
                   context.projectEnvValues,

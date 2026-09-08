@@ -22,7 +22,7 @@ interface LegacyExperimentalStackTarget {
   readonly runtime?: StackRuntimePreference;
 }
 
-class LegacyExperimentalStackTargetError extends Data.TaggedError(
+export class LegacyExperimentalStackTargetError extends Data.TaggedError(
   "LegacyExperimentalStackTargetError",
 )<{
   readonly message: string;
@@ -73,9 +73,9 @@ export const legacyExperimentalStackApiLayer = Layer.succeed(LegacyExperimentalS
 });
 
 /** Runtime configuration for the first stack command. Later commands reuse this layer. */
-export const legacyExperimentalStackTargetResolverLayer = Layer.effect(
+export const legacyExperimentalStackTargetResolverLayer = Layer.succeed(
   LegacyExperimentalStackTargetResolver,
-  Effect.succeed({
+  {
     resolve: (input) =>
       Effect.gen(function* () {
         if (input.id !== undefined && !isStackId(input.id)) {
@@ -128,5 +128,5 @@ export const legacyExperimentalStackTargetResolverLayer = Layer.effect(
             : {}),
         };
       }),
-  }),
+  },
 );

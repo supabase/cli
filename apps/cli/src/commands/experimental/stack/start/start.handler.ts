@@ -197,10 +197,14 @@ const legacyStackStartError = (error: unknown) => {
             "StackVersionUnsupportedError",
             "InvalidStackIdentityError",
             "InvalidProjectRootError",
+            "StackStateInvalidError",
+            "StackStateFormatUnsupportedError",
             "StackSecretMismatchError",
             "InvalidJwtSigningMaterialError",
             () => ({
               reason: "invalid-config" as const,
+              suggestion:
+                "Run supabase experimental stack status to inspect the persisted stack state.",
             }),
           ),
           Match.tag("StackNotFoundError", () => ({ reason: "flags" as const })),
@@ -210,13 +214,19 @@ const legacyStackStartError = (error: unknown) => {
             "StackMustBeStoppedError",
             "StackLifecycleConflictError",
             "StackUpgradeRequiredError",
-            "StackRuntimeError",
-            "StackCleanupError",
             () => ({
               reason: "lifecycle" as const,
               suggestion: "Stop the stack before starting it again.",
             }),
           ),
+          Match.tag("StackRuntimeError", () => ({
+            reason: "unknown" as const,
+            suggestion: "Retry the stack start with --debug and inspect the runtime diagnostics.",
+          })),
+          Match.tag("StackCleanupError", () => ({
+            reason: "unknown" as const,
+            suggestion: "Retry the stack start with --debug and inspect cleanup diagnostics.",
+          })),
           Match.orElse(() => ({ reason: "unknown" as const })),
         );
   return new LegacyExperimentalStackStartError({

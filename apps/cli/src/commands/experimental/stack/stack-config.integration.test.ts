@@ -186,6 +186,50 @@ env = { TOKEN = "env(SUPABASE_STACK_TEST_MISSING_ENV)" }
     });
   });
 
+  it.effect("reports unsupported dotenv keys with the file and key only", () => {
+    const root = project('project_id = "stack-config-invalid-env-key"\n');
+    writeFileSync(join(root, "supabase", "functions", ".env"), "lowercase=value\nSECRET=value\n");
+    return Effect.gen(function* () {
+      const exit = yield* load(root).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const message = String(exit.cause);
+        expect(message).toContain("functions/.env");
+        expect(message).toContain("lowercase");
+        expect(message).not.toContain("value");
+      }
+    });
+  });
+
+  it.effect("rejects function paths outside the function root", () => {
+    const root = project(`project_id = "stack-config-outside-function"
+
+[functions.hello]
+import_map = "./import_map.json"
+`);
+    return Effect.gen(function* () {
+      const exit = yield* load(root).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("functions.hello.import_map");
+    });
+  });
+
+  it.effect("resolves supabase-prefixed signing paths beneath the config directory", () => {
+    const root = project(
+      `project_id = "stack-config-signing-path"
+[auth]
+signing_keys_path = "supabase/signing-keys.json"
+`,
+    );
+    return Effect.gen(function* () {
+      const config = yield* load(root);
+      expect(config.security?.jwt?.signing).toEqual({
+        kind: "jwks-file",
+        path: "supabase/supabase/signing-keys.json",
+      });
+    });
+  });
+
   it.effect("keeps the gateway listener when API service is disabled for auth", () => {
     const root = project(`project_id = "stack-config-gateway"
 [api]
