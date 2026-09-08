@@ -21,7 +21,6 @@ on:
 permissions:
   actions: read
   contents: read
-  pull-requests: write
 
 # Unrelated label events still start a run; give them a unique group so they
 # cannot cancel an in-progress suite. Removing `run-ci` stays on the main
