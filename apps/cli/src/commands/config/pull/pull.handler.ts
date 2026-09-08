@@ -49,6 +49,7 @@ import {
   legacyConfigApiScope,
   legacyConfigRenderPath,
   legacyConfigScopeLine,
+  type LegacyConfigApiScope,
 } from "../config.format.ts";
 import { legacyConfigProjectConfigTry } from "../config.project-config.ts";
 import {
@@ -100,6 +101,23 @@ import {
   LegacyConfigPullWriteError,
 } from "./pull.errors.ts";
 import type { LegacyConfigPullFlags } from "./pull.command.ts";
+
+export interface LegacyConfigPullPlanRequest {
+  readonly target: LegacyConfigTarget;
+  readonly remoteLabel: string | undefined;
+  readonly source: LegacyConfigPullSource;
+}
+
+export interface LegacyConfigPullRunPlan {
+  readonly changeSet: ConfigChangeSet;
+  readonly scope: LegacyConfigApiScope;
+  readonly plan: LegacyConfigPullPlan;
+  readonly context: LegacyConfigPullContext;
+  /** Absolute path of the file the writes target (`loaded.path`) — subject of the git guard and the TOCTOU re-read. */
+  readonly configFilePath: string;
+  /** `plan.writes.length > 0 || plan.createdTable !== undefined`. */
+  readonly hasWork: boolean;
+}
 
 /**
  * `config pull` — writes a remote project or branch's configuration into

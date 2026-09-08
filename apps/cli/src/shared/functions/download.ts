@@ -58,6 +58,14 @@ export interface DownloadFunctionsOptions {
   readonly legacyBundle: boolean;
 }
 
+export interface DownloadFunctionsResult {
+  readonly projectRef: string;
+  /** Downloaded slugs, in download order. Empty when the project has none. */
+  readonly slugs: ReadonlyArray<string>;
+  /** `true` when the remote project has no functions at all. */
+  readonly empty: boolean;
+}
+
 interface DownloadRuntimeDependencies {
   readonly api: ApiClient;
   readonly projectRoot: string;

@@ -13,7 +13,10 @@ import { legacyBold } from "../../../command-internal/legacy-colors.ts";
 import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../command-internal/legacy-db-connection.service.ts";
 import { legacyLoadProjectEnv } from "../../../command-internal/legacy-db-config.toml-read.ts";
-import { resolveLegacyDbTargetFlags } from "../../../command-internal/legacy-db-target-flags.ts";
+import {
+  resolveLegacyDbTargetFlags,
+  type LegacyDbTargetSelection,
+} from "../../../command-internal/legacy-db-target-flags.ts";
 import { legacyReadMigrationTable } from "../../../command-internal/legacy-migration-history.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -24,6 +27,18 @@ import {
 import { legacyMigrationConfirm } from "../migration.prompt.ts";
 import type { LegacyMigrationFetchFlags } from "./fetch.command.ts";
 import { LegacyMigrationFetchWriteError } from "./fetch.errors.ts";
+
+export interface LegacyMigrationFetchInput {
+  readonly flags: LegacyMigrationFetchFlags;
+  readonly target: LegacyDbTargetSelection;
+  /** Overrides `--yes`/`SUPABASE_YES`/`supabase/.env` resolution. */
+  readonly assumeYes?: boolean;
+}
+
+export interface LegacyMigrationFetchOutcome {
+  /** Absolute paths written, in remote-history order. */
+  readonly files: ReadonlyArray<string>;
+}
 
 const runFetch = Effect.fnUntraced(function* (
   flags: LegacyMigrationFetchFlags,

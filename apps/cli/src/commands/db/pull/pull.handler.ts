@@ -124,7 +124,26 @@ const EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE =
 export type LegacyDbPullInvoke = {
   /** Skip `Finished supabase db pull.` — Go's `db remote commit` has no PostRun line. */
   readonly skipFinishedLine?: boolean;
+  /**
+   * Overrides `--yes`/`SUPABASE_YES`/`supabase/.env` resolution for an
+   * in-process caller that already ran its own aggregated confirmation.
+   * `undefined` keeps the existing resolution.
+   */
+  readonly assumeYes?: boolean;
 };
+
+export type LegacyDbPullOutcome =
+  | {
+      readonly kind: "declarative";
+      readonly schemaWritten: string;
+      readonly engine: "pg-delta";
+    }
+  | {
+      readonly kind: "migration";
+      readonly schemaFiles: ReadonlyArray<string>;
+      readonly remoteHistoryUpdated: boolean;
+      readonly engine: "pg-delta" | "migra";
+    };
 
 export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (
   flags: LegacyDbPullFlags,
