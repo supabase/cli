@@ -59,6 +59,7 @@
     "@supabase/config": "workspace:*",
     "@supabase/pg-delta": "1.0.0-alpha.49",
     "@supabase/pg-topo": "1.0.0-alpha.6",
+    "@supabase/stack": "workspace:*",
     "@supabase/supabase-js": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",

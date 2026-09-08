@@ -28,6 +28,8 @@ import { makeSupervisor, type SupervisorRuntime } from "./Supervisor.ts";
 import type { RuntimeDriver } from "../runtime/RuntimeDriver.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { StackLogEntry } from "../public/Logs.ts";
+import type { StackError } from "../public/Errors.ts";
+import type { HostListener } from "../state/PortCoordinator.ts";
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
@@ -110,8 +112,14 @@ describe("startup ingress", () => {
           Context.add(Path.Path, path),
           Context.add(Crypto.Crypto, crypto),
         );
-        const listenerBound =
-          yield* Deferred.make<import("../state/PortCoordinator.ts").HostListener>();
+        const listenerBound = yield* Deferred.make<HostListener, StackError>();
+        const apiListener = yield* bindHostListener("127.0.0.1", 0, "api");
+        if (apiListener.binding.kind !== "http")
+          return yield* Effect.die("API listener is not HTTP");
+        const apiAddress = apiListener.binding.server.address();
+        if (typeof apiAddress !== "object" || apiAddress === null)
+          return yield* Effect.die("API listener did not expose an address");
+        const apiPort = apiAddress.port;
         const startEntered = yield* Deferred.make<void>();
         const releaseStart = yield* Deferred.make<void>();
         const activationCalls = yield* Ref.make(0);
@@ -125,11 +133,11 @@ describe("startup ingress", () => {
           port: number,
           field: import("../public/Status.ts").PortField,
         ) =>
-          bindHostListener(host, port, field).pipe(
-            Effect.tap((listener) =>
-              field === "api" ? Deferred.succeed(listenerBound, listener) : Effect.void,
-            ),
-          );
+          field === "api"
+            ? Effect.succeed({ ...apiListener, port: apiPort }).pipe(
+                Effect.tap((listener) => Deferred.succeed(listenerBound, listener)),
+              )
+            : bindHostListener(host, port, field);
         const ingress = yield* makeSupervisorIngress({
           stackId,
           stateRoot: root,
@@ -195,7 +203,22 @@ describe("startup ingress", () => {
           runtime,
         });
         const starting = yield* Effect.forkChild(
-          supervisor.start({ config: { listeners: { api: { enabled: true } } } }),
+          supervisor
+            .start({
+              config: {
+                listeners: {
+                  api: { port: apiPort },
+                  database: { enabled: false },
+                  pooler: { enabled: false },
+                  studio: { enabled: false },
+                  mailUi: { enabled: false },
+                  smtp: { enabled: false },
+                  pop3: { enabled: false },
+                  functionsInspector: { enabled: false },
+                },
+              },
+            })
+            .pipe(Effect.tapCause((cause) => Deferred.failCause(listenerBound, cause))),
         );
         const listener = yield* Deferred.await(listenerBound);
         if (listener.binding.kind !== "http") return yield* Effect.die("API listener is not HTTP");

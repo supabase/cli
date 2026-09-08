@@ -339,10 +339,42 @@ describe("Supervisor ingress", () => {
           workspaceId: root,
           checkoutId: root,
         });
+        const apiListener = yield* bindHostListener("127.0.0.1", 0, "api");
+        const databaseListener = yield* bindHostListener("127.0.0.1", 0, "database");
+        const apiAddress = apiListener.binding.server.address();
+        const databaseAddress = databaseListener.binding.server.address();
+        if (typeof apiAddress !== "object" || apiAddress === null)
+          return yield* Effect.die("API listener did not expose an address");
+        if (typeof databaseAddress !== "object" || databaseAddress === null)
+          return yield* Effect.die("Database listener did not expose an address");
+        const apiPort = apiAddress.port;
+        const databasePort = databaseAddress.port;
         const compiled = yield* compileStack({
           projectRoot: root,
           runtime: { kind: "native" },
-          config: { capabilities: { rest: {} } },
+          config: {
+            capabilities: {
+              rest: {},
+              auth: { enabled: false },
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              functions: { enabled: false },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+              pooler: { enabled: false },
+            },
+            listeners: {
+              api: { port: apiPort },
+              database: { port: databasePort },
+              pooler: { enabled: false },
+              studio: { enabled: false },
+              mailUi: { enabled: false },
+              smtp: { enabled: false },
+              pop3: { enabled: false },
+              functionsInspector: { enabled: false },
+            },
+          },
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
         yield* store.initialize(stackId, {
@@ -359,9 +391,8 @@ describe("Supervisor ingress", () => {
           desiredLifecycle: "running",
           definition: compiled.definition,
           ports: [
-            { field: "api", port: 55433, intent: "automatic" },
-            { field: "database", port: 55436, intent: "automatic" },
-            { field: "pooler", port: 55437, intent: "automatic" },
+            { field: "api", port: apiPort, intent: "automatic" },
+            { field: "database", port: databasePort, intent: "automatic" },
           ] as const,
           privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
             ...binding,
@@ -369,7 +400,18 @@ describe("Supervisor ingress", () => {
           })),
           secrets: {},
         });
-        const ingress = yield* makeSupervisorIngress({ stackId, stateRoot: root, store, context });
+        const ingress = yield* makeSupervisorIngress({
+          stackId,
+          stateRoot: root,
+          store,
+          context,
+          bindHost: (address, port, field) =>
+            field === "api"
+              ? Effect.succeed({ ...apiListener, port: apiPort })
+              : field === "database"
+                ? Effect.succeed({ ...databaseListener, port: databasePort })
+                : bindHostListener(address, port, field),
+        });
         const state = yield* store.read(stackId).pipe(Effect.map((value) => value!));
         const reservation = yield* ingress.acquire({
           stackId,
@@ -415,6 +457,11 @@ describe("Supervisor ingress", () => {
           checkoutId: root,
         };
         const stackId = yield* deriveStackId(stackIdentity);
+        const databaseListener = yield* bindHostListener("127.0.0.1", 0, "database");
+        const databaseAddress = databaseListener.binding.server.address();
+        if (typeof databaseAddress !== "object" || databaseAddress === null)
+          return yield* Effect.die("Database listener did not expose an address");
+        const databasePort = databaseAddress.port;
         const compiled = yield* compileStack({
           projectRoot: root,
           runtime: { kind: "native" },
@@ -449,7 +496,7 @@ describe("Supervisor ingress", () => {
           runtime: { kind: "native" as const },
           desiredLifecycle: "running" as const,
           definition: compiled.definition,
-          ports: [{ field: "database", port: 55434, intent: "automatic" }] as const,
+          ports: [{ field: "database", port: databasePort, intent: "automatic" }] as const,
           privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
             ...binding,
             port: 30200 + index,
@@ -462,6 +509,10 @@ describe("Supervisor ingress", () => {
           stateRoot: root,
           store,
           context,
+          bindHost: (address, port, field) =>
+            field === "database"
+              ? Effect.succeed({ ...databaseListener, port: databasePort })
+              : bindHostListener(address, port, field),
           apiMaterial: () =>
             Effect.fail(new StackPreparationError({ message: "API material must not resolve" })),
         });
@@ -508,6 +559,13 @@ describe("Supervisor ingress", () => {
           checkoutId: root,
         };
         const stackId = yield* deriveStackId(stackIdentity);
+        const apiListener = yield* bindHostListener("127.0.0.1", 0, "api");
+        if (apiListener.binding.kind !== "http")
+          return yield* Effect.die("API listener is not HTTP");
+        const apiAddress = apiListener.binding.server.address();
+        if (typeof apiAddress !== "object" || apiAddress === null)
+          return yield* Effect.die("API listener did not expose an address");
+        const apiPort = apiAddress.port;
         const templatePath = path.join(root, "templates", "confirmation.html");
         const outsideRoot = yield* fs.makeTempDirectoryScoped({
           prefix: "supabase-ingress-outside-",
@@ -554,7 +612,7 @@ describe("Supervisor ingress", () => {
           runtime: { kind: "native" as const },
           desiredLifecycle: "running" as const,
           definition: compiled.definition,
-          ports: [{ field: "api", port: 55435, intent: "automatic" }] as const,
+          ports: [{ field: "api", port: apiPort, intent: "automatic" }] as const,
           privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
             ...binding,
             port: 30300 + index,
@@ -593,6 +651,10 @@ describe("Supervisor ingress", () => {
                   : Effect.fail(new StackPreparationError({ message: "Template escaped root" })),
               ),
             ),
+          bindHost: (address, port, field) =>
+            field === "api"
+              ? Effect.succeed({ ...apiListener, port: apiPort })
+              : bindHostListener(address, port, field),
         });
         const input = {
           stackId,
