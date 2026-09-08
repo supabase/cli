@@ -1,4 +1,4 @@
-# `supabase experimental stack list`
+# `supabase stack list`
 
 Lists persisted managed local stacks discovered in the global stack registry.
 The command includes stopped stacks and performs no config loading, owner RPC,

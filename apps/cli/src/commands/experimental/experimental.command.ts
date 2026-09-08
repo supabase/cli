@@ -1,6 +1,5 @@
 import { Command } from "effect/unstable/cli";
 import { legacyWorkersCommand } from "./workers/workers.command.ts";
-import { legacyExperimentalStackCommand } from "./stack/stack.command.ts";
 
 /**
  * `supabase experimental` — the parent for command families that are not yet
@@ -18,6 +17,6 @@ export const legacyExperimentalCommand = Command.make("experimental").pipe(
     "Experimental commands. These are unstable: their flags, output, and invocation path can change or be removed in any release, and they are excluded from the CLI's compatibility promise.",
   ),
   Command.withShortDescription("Experimental, unstable commands"),
-  Command.withSubcommands([legacyWorkersCommand, legacyExperimentalStackCommand]),
+  Command.withSubcommands([legacyWorkersCommand]),
   Command.unlisted,
 );

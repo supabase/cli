@@ -122,7 +122,7 @@ describe("experimental stack start (compiled e2e)", () => {
   }, CLEANUP_TIMEOUT_MS);
 
   test.skipIf(!nativeSupported)(
-    "starts a detached native owner and leaves a ready database after CLI exit",
+    "starts a native stack and manages it through config-selected aliases",
     { timeout: START_TIMEOUT_MS + CLEANUP_TIMEOUT_MS },
     // oxlint-disable-next-line effecttsgo/async-function -- compiled CLI e2e callback is a Promise boundary
     async () => {
@@ -131,15 +131,12 @@ describe("experimental stack start (compiled e2e)", () => {
       await mkdir(path.join(projectDir, "supabase"), { recursive: true });
       await writeFile(path.join(projectDir, "supabase", "config.toml"), minimalConfig);
 
-      const result = await runSupabase(
-        ["experimental", "stack", "start", "--runtime", "native", "--eager"],
-        {
-          entrypoint: "legacy",
-          cwd: projectDir,
-          home: home.dir,
-          exitTimeoutMs: START_TIMEOUT_MS,
-        },
-      );
+      const result = await runSupabase(["stack", "start", "--runtime", "native", "--eager"], {
+        entrypoint: "legacy",
+        cwd: projectDir,
+        home: home.dir,
+        exitTimeoutMs: START_TIMEOUT_MS,
+      });
       expect(result.exitCode, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0);
       const idMatch = result.stdout.match(/Stack ([0-9a-f]{64})/u);
       expect(idMatch, `stdout:\n${result.stdout}`).not.toBeNull();
@@ -149,6 +146,29 @@ describe("experimental stack start (compiled e2e)", () => {
       const projectRoot = projectDir;
       if (idText === undefined || homeDir === undefined || projectRoot === undefined)
         throw new Error("compiled start did not return a stack id");
+
+      await writeFile(
+        path.join(projectRoot, "supabase", "config.toml"),
+        `${minimalConfig}\n[experimental]\nstack = true\n`,
+      );
+      const aliasOptions = {
+        entrypoint: "legacy" as const,
+        cwd: projectRoot,
+        home: homeDir.dir,
+        exitTimeoutMs: START_TIMEOUT_MS,
+      };
+      const aliasStatus = await runSupabase(["status", "--stack-id", idText], aliasOptions);
+      expect(aliasStatus.exitCode, aliasStatus.stderr).toBe(0);
+      expect(aliasStatus.stdout).toContain(idText);
+
+      const aliasStop = await runSupabase(["stop", "--stack-id", idText], aliasOptions);
+      expect(aliasStop.exitCode, aliasStop.stderr).toBe(0);
+      const aliasStart = await runSupabase(
+        ["start", "--stack-id", idText, "--runtime", "native", "--eager"],
+        aliasOptions,
+      );
+      expect(aliasStart.exitCode, aliasStart.stderr).toBe(0);
+      expect(aliasStart.stdout).toContain(idText);
 
       const observed = await inspectAndDestroyStack(homeDir.dir, idText);
       stackDestroyed = true;

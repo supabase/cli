@@ -327,6 +327,7 @@ function copyHostedValueForDocument(value: unknown, path: ReadonlyArray<string>)
  *   same as any other section: pruning only fires on a container this
  *   function's OWN exclusion emptied, never one that started empty), matching
  *   `fromApiProjectConfig` already never carrying a populated one either.
+ * - `experimental.stack` — selects the local CLI stack backend.
  * - `experimental.orioledb_version`, `experimental.s3_host`,
  *   `experimental.s3_region` — local OrioleDB-with-S3 storage engine config
  *   (`experimental.s3_access_key`/`s3_secret_key` need no entry: both are
@@ -387,6 +388,7 @@ export const DOCUMENT_ONLY_LOCAL_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
   ["realtime", "enabled"],
   ["realtime", "ip_version"],
   ["realtime", "max_header_length"],
+  ["experimental", "stack"],
   ["experimental", "orioledb_version"],
   ["experimental", "s3_host"],
   ["experimental", "s3_region"],

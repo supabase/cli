@@ -1,4 +1,4 @@
-# `supabase experimental stack status`
+# `supabase stack status`
 
 Reports the persisted identity and current owner state of a managed local stack.
 The command is read-only: it never creates, starts, prepares, stops, destroys, or

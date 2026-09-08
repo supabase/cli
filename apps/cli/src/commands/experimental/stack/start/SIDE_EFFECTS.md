@@ -1,4 +1,4 @@
-# `supabase experimental stack start`
+# `supabase stack start`
 
 This command creates or resumes the managed stack identified by the current
 project and optional `--stack`, or opens an existing stack with `--stack-id`.

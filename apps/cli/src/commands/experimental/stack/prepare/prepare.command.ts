@@ -28,11 +28,11 @@ export const legacyExperimentalStackPrepareCommand = Command.make("prepare", con
   Command.withShortDescription("Prepare a managed local stack"),
   Command.withExamples([
     {
-      command: "supabase experimental stack prepare",
+      command: "supabase stack prepare",
       description: "Prepare all enabled stack capabilities",
     },
     {
-      command: "supabase experimental stack prepare --stack feature-a --capability rest",
+      command: "supabase stack prepare --stack feature-a --capability rest",
       description: "Prepare one capability in a named stack",
     },
   ]),

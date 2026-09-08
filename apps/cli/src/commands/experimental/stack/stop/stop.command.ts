@@ -19,7 +19,7 @@ export const legacyExperimentalStackStopCommand = Command.make("stop", config).p
   Command.withShortDescription("Stop a managed local stack"),
   Command.withExamples([
     {
-      command: "supabase experimental stack stop --stack feature-a",
+      command: "supabase stack stop --stack feature-a",
       description: "Stop the existing feature-a stack",
     },
   ]),

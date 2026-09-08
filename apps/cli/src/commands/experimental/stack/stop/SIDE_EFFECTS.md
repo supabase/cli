@@ -1,4 +1,4 @@
-# `supabase experimental stack stop`
+# `supabase stack stop`
 
 This command stops the managed stack identified by the current project, an optional `--stack`
 name, or `--stack-id`. It uses the public `@supabase/stack` API to stop the owner while

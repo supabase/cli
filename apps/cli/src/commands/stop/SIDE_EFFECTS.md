@@ -1,5 +1,7 @@
 # `supabase stop`
 
+This document describes the legacy backend. With `[experimental] stack = true`, `supabase stop` uses the new [`supabase stack stop` implementation](../experimental/stack/stop/SIDE_EFFECTS.md). See [backend selection](../../../docs/stack-commands.md).
+
 Talks directly to Docker via subprocess
 (`docker`/`podman`), replicating the old Go CLI's label-filtering and container-naming
 scheme byte-for-byte — it does not go through `@supabase/stack/effect`'s orchestration

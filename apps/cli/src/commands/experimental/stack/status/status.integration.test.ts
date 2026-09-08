@@ -312,7 +312,7 @@ describe("experimental stack status", () => {
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
-          expect(error.suggestion).toBe("Run supabase experimental stack start first.");
+          expect(error.suggestion).toBe("Run supabase stack start first.");
           expect(run.inspectInputs).toEqual([]);
         }),
       ),

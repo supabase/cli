@@ -56,7 +56,7 @@ const mapStackError = (error: StackError) => {
       "StackCleanupError",
       () => ({
         reason: "lifecycle" as const,
-        suggestion: "Run supabase experimental stack status to inspect the stack state.",
+        suggestion: "Run supabase stack status to inspect the stack state.",
       }),
     ),
     Match.tag("ContainerEngineError", () => ({
@@ -125,7 +125,7 @@ export const legacyExperimentalStackRestart = Effect.fn("legacy.experimental.sta
                   : `No managed stack named "${stackName}" was found for this project.`,
               suggestion:
                 stackName === undefined
-                  ? "Run supabase experimental stack start first."
+                  ? "Run supabase stack start first."
                   : "Choose an existing --stack name or omit --stack for the current project.",
             });
           return { id: found.value.id, projectRoot: found.value.projectRoot };

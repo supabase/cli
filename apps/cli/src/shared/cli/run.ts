@@ -724,6 +724,8 @@ function cliProjectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
 type AnyAnalyticsLayer = Layer.Layer<Analytics, never, any>;
 
 export interface RunCliOptions {
+  /** Runs after runtime services are installed and before command argument parsing. */
+  readonly beforeParse?: Effect.Effect<void, Error, FileSystem.FileSystem | Path.Path>;
   readonly analyticsLayer: AnyAnalyticsLayer;
   /**
    * Runs just before the process exits on any invocation that exits 0 — the
@@ -780,10 +782,16 @@ function cliProgramFor<
       }),
     ),
   );
-  return withoutParseErrorHelpDump(Command.runWith(rootCommand, { version: CLI_VERSION })(args), {
-    rootCommand,
-    args,
-  }).pipe(
+  const commandProgram = options.beforeParse ?? Effect.void;
+  return withoutParseErrorHelpDump(
+    commandProgram.pipe(
+      Effect.andThen(Command.runWith(rootCommand, { version: CLI_VERSION })(args)),
+    ),
+    {
+      rootCommand,
+      args,
+    },
+  ).pipe(
     Effect.provide(formatterLayerFor(rootCommand, args, outputFormat)),
     Effect.provide(options.analyticsLayer),
     Effect.provide(tracingLayer),

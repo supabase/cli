@@ -1,4 +1,4 @@
-# `supabase experimental stack restart`
+# `supabase stack restart`
 
 ## Files Read
 

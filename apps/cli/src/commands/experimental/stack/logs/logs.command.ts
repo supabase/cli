@@ -43,11 +43,11 @@ export const legacyExperimentalStackLogsCommand = Command.make("logs", config).p
   Command.withShortDescription("Read managed local stack logs"),
   Command.withExamples([
     {
-      command: "supabase experimental stack logs --service database --tail 50",
+      command: "supabase stack logs --service database --tail 50",
       description: "Print the latest database logs",
     },
     {
-      command: "supabase experimental stack logs --follow --output-format stream-json",
+      command: "supabase stack logs --follow --output-format stream-json",
       description: "Stream new stack logs as structured events",
     },
   ]),

@@ -14,9 +14,16 @@ import {
   legacyExperimentalStackTargetResolverLayer,
 } from "./stack.shared.ts";
 
+/** Shared by the explicit stack commands and config-selected top-level aliases. */
+export const legacyExperimentalStackRuntimeLayer = Layer.mergeAll(
+  legacyExperimentalStackTargetResolverLayer,
+  legacyExperimentalStackApiLayer,
+  legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer)),
+);
+
 export const legacyExperimentalStackCommand = Command.make("stack").pipe(
-  Command.withDescription("Manage an experimental managed local Supabase stack."),
-  Command.withShortDescription("Manage a managed local stack"),
+  Command.withDescription("Manage a local Supabase stack with the new backend."),
+  Command.withShortDescription("Manage local stacks"),
   Command.withSubcommands([
     legacyExperimentalStackStartCommand,
     legacyExperimentalStackStopCommand,
@@ -26,7 +33,5 @@ export const legacyExperimentalStackCommand = Command.make("stack").pipe(
     legacyExperimentalStackPrepareCommand,
     legacyExperimentalStackRestartCommand,
   ]),
-  Command.provide(legacyExperimentalStackTargetResolverLayer),
-  Command.provide(legacyExperimentalStackApiLayer),
-  Command.provide(legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer))),
+  Command.provide(legacyExperimentalStackRuntimeLayer),
 );

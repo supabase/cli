@@ -29,7 +29,7 @@ const classifyStackError = (error: StackError) =>
     Match.tag("StackNotFoundError", () => ({
       reason: "not-found" as const,
       suggestion:
-        "Choose an existing --stack-id, or run supabase experimental stack start without --stack-id to create one.",
+        "Choose an existing --stack-id, or run supabase stack start without --stack-id to create one.",
     })),
     Match.tag(
       "InvalidStackIdentityError",
@@ -154,7 +154,7 @@ const findDescriptor = (projectRoot: string, name: string | undefined, id: strin
       return yield* new LegacyExperimentalStackStatusError({
         reason: "not-found",
         message: "No managed stack exists for the selected project.",
-        suggestion: "Run supabase experimental stack start first.",
+        suggestion: "Run supabase stack start first.",
       });
     return { descriptor: found.value, id: found.value.id, projectRoot: found.value.projectRoot };
   });

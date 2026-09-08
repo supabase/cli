@@ -31,11 +31,11 @@ export const legacyExperimentalStackStartCommand = Command.make("start", config)
   Command.withShortDescription("Start a managed local stack"),
   Command.withExamples([
     {
-      command: "supabase experimental stack start",
+      command: "supabase stack start",
       description: "Start the current project stack",
     },
     {
-      command: "supabase experimental stack start --stack feature-a --runtime docker",
+      command: "supabase stack start --stack feature-a --runtime docker",
       description: "Start a named Docker stack",
     },
   ]),

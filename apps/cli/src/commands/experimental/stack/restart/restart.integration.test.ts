@@ -249,7 +249,7 @@ describe("experimental stack restart", () => {
         const failure = yield* start.effect.pipe(Effect.flip);
         expect(failure.reason).toBe("lifecycle");
         expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
-        expect(failure.suggestion).toContain("experimental stack status");
+        expect(failure.suggestion).toContain("stack status");
         expect(stop.calls).toEqual(["open", "prepare", "stop"]);
         expect(start.calls).toEqual(["open", "prepare", "stop", "start"]);
         expect(start.calls).not.toContain("destroy");

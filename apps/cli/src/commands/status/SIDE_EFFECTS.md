@@ -1,5 +1,7 @@
 # `supabase status`
 
+This document describes the legacy backend. With `[experimental] stack = true`, `supabase status` uses the new [`supabase stack status` implementation](../experimental/stack/status/SIDE_EFFECTS.md). See [backend selection](../../../docs/stack-commands.md).
+
 TS-only divergence (CLI-2167 follow-up, no Go counterpart): `status` additionally resolves and
 surfaces the current linked project/branch — a "Linked Project:" block on stdout in human text
 mode, and additive fields in every machine-readable output — so an agent (or a human who forgot

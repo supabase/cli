@@ -1,4 +1,4 @@
-# `supabase experimental stack logs`
+# `supabase stack logs`
 
 This command reads retained logs from the managed stack identified by the current project,
 an optional `--stack` name, or `--stack-id`. It calls the public `@supabase/stack` logs

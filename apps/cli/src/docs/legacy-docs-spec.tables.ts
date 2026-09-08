@@ -67,6 +67,7 @@ export const LEGACY_DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> =
   "supabase-snippets": ["management-api"],
   "supabase-ssl-enforcement": ["management-api"],
   "supabase-sso": ["management-api"],
+  "supabase-stack": ["local-dev"],
   "supabase-start": ["local-dev"],
   "supabase-status": ["local-dev"],
   "supabase-stop": ["local-dev"],
@@ -134,6 +135,10 @@ export const LEGACY_DOCS_EXCLUDED: ReadonlySet<string> = new Set([
  * flags add entries by hand.
  */
 export const LEGACY_DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
+  "supabase-stack-start runtime": "auto",
+  "supabase-stack-start preparation": "background",
+  "supabase-stack-prepare runtime": "auto",
+  "supabase-stack-logs tail": "100",
   "supabase agent": "auto",
   "supabase dns-resolver": "native",
   "supabase output": "pretty",

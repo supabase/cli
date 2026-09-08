@@ -9,6 +9,15 @@ import { legacyDbCommand } from "../commands/db/db.command.ts";
 import { legacyDomainsCommand } from "../commands/domains/domains.command.ts";
 import { legacyEncryptionCommand } from "../commands/encryption/encryption.command.ts";
 import { legacyExperimentalCommand } from "../commands/experimental/experimental.command.ts";
+import {
+  legacyExperimentalStackCommand,
+  legacyExperimentalStackRuntimeLayer,
+} from "../commands/experimental/stack/stack.command.ts";
+import { legacyExperimentalStackStartCommand } from "../commands/experimental/stack/start/start.command.ts";
+import { legacyExperimentalStackStopCommand } from "../commands/experimental/stack/stop/stop.command.ts";
+import { legacyExperimentalStackStatusCommand } from "../commands/experimental/stack/status/status.command.ts";
+import type { LegacyExperimentalStackBackend } from "../commands/experimental/stack/stack-backend.ts";
+
 import { legacyFunctionsCommand } from "../commands/functions/functions.command.ts";
 import { legacyGenCommand } from "../commands/gen/gen.command.ts";
 import { legacyInitCommand } from "../commands/init/init.command.ts";
@@ -59,111 +68,125 @@ import {
   LegacyYesFlag,
 } from "../shared/legacy/global-flags.ts";
 
-export const legacyRoot = Command.make("supabase").pipe(
-  Command.withDescription("Supabase CLI (stable channel)."),
-  Command.withSubcommands([
-    legacyBackupsCommand,
-    legacyBootstrapCommand,
-    legacyBranchesCommand,
-    legacyCompletionCommand,
-    legacyConfigCommand,
-    legacyDbCommand,
-    legacyDomainsCommand,
-    legacyEncryptionCommand,
-    legacyExperimentalCommand,
-    legacyFunctionsCommand,
-    legacyGenCommand,
-    legacyInitCommand,
-    legacyInspectCommand,
-    legacyIssueCommand,
-    legacyLinkCommand,
-    legacyLoginCommand,
-    legacyLogoutCommand,
-    legacyMigrationCommand,
-    legacyNetworkBansCommand,
-    legacyNetworkRestrictionsCommand,
-    legacyOrgsCommand,
-    legacyPostgresConfigCommand,
-    legacyProjectsCommand,
-    legacySecretsCommand,
-    legacySeedCommand,
-    legacyServicesCommand,
-    legacySnippetsCommand,
-    legacySslEnforcementCommand,
-    legacySsoCommand,
-    legacyStartCommand,
-    legacyStatusCommand,
-    legacyStopCommand,
-    legacyStorageCommand,
-    legacyTelemetryCommand,
-    legacyTestCommand,
-    legacyUnlinkCommand,
-    legacyVanitySubdomainsCommand,
-  ]),
-  Command.provide(
-    Layer.unwrap(
-      Effect.gen(function* () {
-        const explicitOutputFormat = yield* OutputFormatFlag;
-        const goOutput = yield* LegacyOutputFlag;
-        const profile = yield* LegacyProfileFlag;
-        const debug = yield* LegacyDebugFlag;
-        const workdir = yield* LegacyWorkdirFlag;
-        const experimental = yield* LegacyExperimentalFlag;
-        const networkId = yield* LegacyNetworkIdFlag;
-        const yes = yield* LegacyYesFlag;
-        const dnsResolver = yield* LegacyDnsResolverFlag;
-        const createTicket = yield* LegacyCreateTicketFlag;
-        const agent = yield* LegacyAgentFlag;
-        const cliArgs = yield* CliArgs;
-
-        const aiTool = yield* AiTool.pipe(Effect.provide(aiToolLayer));
-        // An explicit Go --output is a complete format choice (even `-o pretty`
-        // must keep its human table), so the agent JSON default only applies
-        // when that flag is absent.
-        const outputFormat = resolveAgentOutputFormat({
-          explicitOutputFormat,
-          legacyOutputFormat: goOutput,
-          agentOverride: agent,
-          detectedAgentName: aiTool.name,
-          isBuiltInTextRequest: isBuiltInTextRequest(cliArgs.args),
-        });
-
-        // Build args to prepend to every proxy exec call.
-        // --output: use explicit --output if set, otherwise map from --output-format.
-        const globalArgs: string[] = [];
-        if (Option.isSome(goOutput)) {
-          globalArgs.push("--output", goOutput.value);
-        } else if (outputFormat !== "text") {
-          globalArgs.push("--output", "json");
-        }
-        if (profile !== "supabase") globalArgs.push("--profile", profile);
-        if (debug) globalArgs.push("--debug");
-        if (Option.isSome(workdir)) globalArgs.push("--workdir", workdir.value);
-        if (experimental) globalArgs.push("--experimental");
-        if (Option.isSome(networkId)) globalArgs.push("--network-id", networkId.value);
-        if (yes) globalArgs.push("--yes");
-        if (dnsResolver !== "native") globalArgs.push("--dns-resolver", dnsResolver);
-        if (createTicket) globalArgs.push("--create-ticket");
-        if (agent !== "auto") globalArgs.push("--agent", agent);
-
-        // Go's `-o {json,yaml,toml,env,csv}` selects a machine encoder the
-        // handler writes via `output.raw`. Keep the text layer (so errors still
-        // render as red text on stderr, matching Go), but suppress its progress
-        // spinner — otherwise clack writes ANSI to stdout and corrupts the
-        // payload (CLI-1546). `-o pretty` / `-o table` (`db query`'s human
-        // default) / no `-o` keep the normal text/json layers.
-        const goFmt = Option.getOrUndefined(goOutput);
-        const isGoMachineFormat = goFmt !== undefined && goFmt !== "pretty" && goFmt !== "table";
-        const outputLayer = isGoMachineFormat
-          ? legacyQuietProgressTextOutputLayer
-          : outputLayerFor(outputFormat);
-
-        return Layer.mergeAll(
-          outputLayer,
-          makeGoProxyLayer({ globalArgs, parentOwnsCapturedSuccessTail: true }),
-        );
-      }),
-    ),
-  ),
-  Command.withGlobalFlags([OutputFormatFlag, ...LEGACY_GLOBAL_FLAGS]),
+const stackStart = legacyExperimentalStackStartCommand.pipe(
+  Command.provide(legacyExperimentalStackRuntimeLayer),
 );
+const stackStop = legacyExperimentalStackStopCommand.pipe(
+  Command.provide(legacyExperimentalStackRuntimeLayer),
+);
+const stackStatus = legacyExperimentalStackStatusCommand.pipe(
+  Command.provide(legacyExperimentalStackRuntimeLayer),
+);
+
+export const legacyRootForBackend = (backend: LegacyExperimentalStackBackend = "legacy") =>
+  Command.make("supabase").pipe(
+    Command.withDescription("Supabase CLI (stable channel)."),
+    Command.withSubcommands([
+      legacyBackupsCommand,
+      legacyBootstrapCommand,
+      legacyBranchesCommand,
+      legacyCompletionCommand,
+      legacyConfigCommand,
+      legacyDbCommand,
+      legacyDomainsCommand,
+      legacyEncryptionCommand,
+      legacyExperimentalCommand,
+      legacyExperimentalStackCommand,
+      legacyFunctionsCommand,
+      legacyGenCommand,
+      legacyInitCommand,
+      legacyInspectCommand,
+      legacyIssueCommand,
+      legacyLinkCommand,
+      legacyLoginCommand,
+      legacyLogoutCommand,
+      legacyMigrationCommand,
+      legacyNetworkBansCommand,
+      legacyNetworkRestrictionsCommand,
+      legacyOrgsCommand,
+      legacyPostgresConfigCommand,
+      legacyProjectsCommand,
+      legacySecretsCommand,
+      legacySeedCommand,
+      legacyServicesCommand,
+      legacySnippetsCommand,
+      legacySslEnforcementCommand,
+      legacySsoCommand,
+      backend === "stack" ? stackStart : legacyStartCommand,
+      backend === "stack" ? stackStatus : legacyStatusCommand,
+      backend === "stack" ? stackStop : legacyStopCommand,
+      legacyStorageCommand,
+      legacyTelemetryCommand,
+      legacyTestCommand,
+      legacyUnlinkCommand,
+      legacyVanitySubdomainsCommand,
+    ]),
+    Command.provide(
+      Layer.unwrap(
+        Effect.gen(function* () {
+          const explicitOutputFormat = yield* OutputFormatFlag;
+          const goOutput = yield* LegacyOutputFlag;
+          const profile = yield* LegacyProfileFlag;
+          const debug = yield* LegacyDebugFlag;
+          const workdir = yield* LegacyWorkdirFlag;
+          const experimental = yield* LegacyExperimentalFlag;
+          const networkId = yield* LegacyNetworkIdFlag;
+          const yes = yield* LegacyYesFlag;
+          const dnsResolver = yield* LegacyDnsResolverFlag;
+          const createTicket = yield* LegacyCreateTicketFlag;
+          const agent = yield* LegacyAgentFlag;
+          const cliArgs = yield* CliArgs;
+
+          const aiTool = yield* AiTool.pipe(Effect.provide(aiToolLayer));
+          // An explicit Go --output is a complete format choice (even `-o pretty`
+          // must keep its human table), so the agent JSON default only applies
+          // when that flag is absent.
+          const outputFormat = resolveAgentOutputFormat({
+            explicitOutputFormat,
+            legacyOutputFormat: goOutput,
+            agentOverride: agent,
+            detectedAgentName: aiTool.name,
+            isBuiltInTextRequest: isBuiltInTextRequest(cliArgs.args),
+          });
+
+          // Build args to prepend to every proxy exec call.
+          // --output: use explicit --output if set, otherwise map from --output-format.
+          const globalArgs: string[] = [];
+          if (Option.isSome(goOutput)) {
+            globalArgs.push("--output", goOutput.value);
+          } else if (outputFormat !== "text") {
+            globalArgs.push("--output", "json");
+          }
+          if (profile !== "supabase") globalArgs.push("--profile", profile);
+          if (debug) globalArgs.push("--debug");
+          if (Option.isSome(workdir)) globalArgs.push("--workdir", workdir.value);
+          if (experimental) globalArgs.push("--experimental");
+          if (Option.isSome(networkId)) globalArgs.push("--network-id", networkId.value);
+          if (yes) globalArgs.push("--yes");
+          if (dnsResolver !== "native") globalArgs.push("--dns-resolver", dnsResolver);
+          if (createTicket) globalArgs.push("--create-ticket");
+          if (agent !== "auto") globalArgs.push("--agent", agent);
+
+          // Go's `-o {json,yaml,toml,env,csv}` selects a machine encoder the
+          // handler writes via `output.raw`. Keep the text layer (so errors still
+          // render as red text on stderr, matching Go), but suppress its progress
+          // spinner — otherwise clack writes ANSI to stdout and corrupts the
+          // payload (CLI-1546). `-o pretty` / `-o table` (`db query`'s human
+          // default) / no `-o` keep the normal text/json layers.
+          const goFmt = Option.getOrUndefined(goOutput);
+          const isGoMachineFormat = goFmt !== undefined && goFmt !== "pretty" && goFmt !== "table";
+          const outputLayer = isGoMachineFormat
+            ? legacyQuietProgressTextOutputLayer
+            : outputLayerFor(outputFormat);
+
+          return Layer.mergeAll(
+            outputLayer,
+            makeGoProxyLayer({ globalArgs, parentOwnsCapturedSuccessTail: true }),
+          );
+        }),
+      ),
+    ),
+    Command.withGlobalFlags([OutputFormatFlag, ...LEGACY_GLOBAL_FLAGS]),
+  );
+
+export const legacyRoot = legacyRootForBackend();

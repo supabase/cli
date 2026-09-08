@@ -1,4 +1,4 @@
-# `experimental stack prepare`
+# `supabase stack prepare`
 
 ## Reads
 

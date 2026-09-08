@@ -32,12 +32,12 @@ const logsError = (error: unknown): LegacyExperimentalStackLogsError => {
           Match.tag("InvalidLogCursorError", () => ({ reason: "impossible-state" as const })),
           Match.tag("StackNotRunningError", () => ({
             reason: "lifecycle" as const,
-            suggestion: "Run supabase experimental stack start before reading logs.",
+            suggestion: "Run supabase stack start before reading logs.",
           })),
           Match.tag("StackOwnershipConflictError", () => ({
             reason: "lifecycle" as const,
             suggestion:
-              "Run supabase experimental stack status to inspect ownership; retry if the stack is shutting down.",
+              "Run supabase stack status to inspect ownership; retry if the stack is shutting down.",
           })),
           Match.tag("StackLifecycleConflictError", () => ({
             reason: "lifecycle" as const,
