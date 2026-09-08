@@ -43,8 +43,8 @@ import {
 export { StackRuntimeEnvironment } from "../state/Ownership.ts";
 export type { StackRuntimeEnvironmentValue } from "../state/Ownership.ts";
 
-/** Private argv marker used when a compiled CLI dispatches its embedded Supervisor. */
-export const SUPERVISOR_DISPATCH_SENTINEL = "__supabase_stack_supervisor__" as const;
+export { SUPERVISOR_DISPATCH_SENTINEL } from "../internal/dispatch-markers.ts";
+import { SUPERVISOR_DISPATCH_SENTINEL } from "../internal/dispatch-markers.ts";
 
 const isBunVirtualPath = (value: string): boolean => /(?:^|[\\/])\$bunfs(?:[\\/]|$)/.test(value);
 
