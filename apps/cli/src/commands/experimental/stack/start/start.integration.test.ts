@@ -16,7 +16,10 @@ import {
 } from "@supabase/stack/effect";
 import type { EffectStack, StackStartError, StackStatus } from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
-import { mockCommandSettings } from "../../../../../tests/helpers/command-mocks.ts";
+import {
+  mockCommandSettings,
+  mockTelemetryStateTracked,
+} from "../../../../../tests/helpers/command-mocks.ts";
 import {
   experimentalStackApiLayer,
   ExperimentalStackTargetError,
@@ -24,7 +27,7 @@ import {
   experimentalStackTargetResolverLayer,
   ExperimentalStackApi,
 } from "../stack.shared.ts";
-import { experimentalStackStart, validateExperimentalStackStartTarget } from "./start.handler.ts";
+import { experimentalStackStart } from "./start.handler.ts";
 import { ExperimentalStackStartError } from "./start.errors.ts";
 import { experimentalStackStartCommand } from "./start.command.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
@@ -109,6 +112,7 @@ function handlerLayer(opts: {
   onOpen?: () => void;
 }) {
   const out = mockOutput();
+  const telemetry = mockTelemetryStateTracked();
   const { id, ...targetWithoutId } = opts.target;
   const targetLayer = Layer.succeed(ExperimentalStackTargetResolver, {
     resolve: () =>
@@ -129,8 +133,10 @@ function handlerLayer(opts: {
   });
   return {
     out,
+    telemetry,
     layer: Layer.mergeAll(
       out.layer,
+      telemetry.layer,
       mockCommandSettings({ workdir: opts.root }),
       targetLayer,
       apiLayer,
@@ -220,18 +226,6 @@ describe("experimental stack start targeting", () => {
     );
   });
 
-  it.effect("rejects mutually exclusive stack targets", () =>
-    validateExperimentalStackStartTarget({
-      stack: Option.some("feature-a"),
-      stackId: Option.some("a".repeat(64)),
-    }).pipe(
-      Effect.flip,
-      Effect.tap((failure) =>
-        Effect.sync(() => expect(failure.message).toContain("cannot be used together")),
-      ),
-    ),
-  );
-
   it.live("creates a named native stack with eager on-demand configuration", () => {
     const root = project();
     let createOptions: unknown;
@@ -267,6 +261,7 @@ describe("experimental stack start targeting", () => {
         config: { capabilities: { rest: { activation: "eager" } } },
       });
       expect(setup.out.stdoutText).toContain("Stack");
+      expect(setup.telemetry.flushed).toBe(true);
     }).pipe(
       Effect.provide(setup.layer),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
@@ -338,6 +333,7 @@ describe("experimental stack start targeting", () => {
       expect(stopped).toBe(false);
       expect(destroyed).toBe(false);
       expect(setup.out.messages.filter((message) => message.type === "success")).toHaveLength(0);
+      expect(setup.telemetry.flushed).toBe(true);
     }).pipe(
       Effect.provide(setup.layer),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
@@ -496,6 +492,7 @@ describe("experimental stack start targeting", () => {
     });
     const layer = Layer.mergeAll(
       setup.out.layer,
+      setup.telemetry.layer,
       mockCommandSettings({ workdir: root }),
       Layer.succeed(ExperimentalStackTargetResolver, {
         resolve: () => {
@@ -520,6 +517,7 @@ describe("experimental stack start targeting", () => {
       expect(failure.message).toContain("cannot be used together");
       expect(resolved).toBe(false);
       expect(created).toBe(false);
+      expect(setup.telemetry.flushed).toBe(true);
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
@@ -574,6 +572,7 @@ describe("experimental stack start parser", () => {
         expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
       }
       expect(resolved).toBe(false);
+      expect(setup.telemetry.flushed).toBe(true);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(setup.layer, target, Layer.succeed(OutputFlag, Option.some("json"))),

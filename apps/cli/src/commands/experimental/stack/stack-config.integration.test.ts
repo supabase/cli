@@ -2,11 +2,11 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option, Redacted } from "effect";
+import { Cause, Effect, Exit, Option, Path, Redacted } from "effect";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 
 import { StackConfigError, loadStackConfig } from "./stack-config.ts";
@@ -206,6 +206,71 @@ env = { TOKEN = "env(SUPABASE_STACK_TEST_MISSING_ENV)" }
     });
   });
 
+  it.effect("sanitizes malformed dotenv parser errors", () => {
+    const root = project('project_id = "stack-config-malformed-env"\n');
+    writeFileSync(join(root, "supabase", "functions", ".env"), "BROKEN=value\n!=secret-value\n");
+    return Effect.gen(function* () {
+      const exit = yield* load(root).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain("Failed to parse environment file");
+        expect(String(exit.cause)).not.toContain("secret-value");
+        expect(String(exit.cause)).not.toContain("StackConfigError: StackConfigError");
+      }
+    });
+  });
+
+  it.effect("preserves platform-specific absolute signing paths", () => {
+    const root = project(
+      `project_id = "stack-config-windows-signing-path"
+[auth]
+signing_keys_path = 'C:\\keys\\signing.json'
+`,
+    );
+    return Effect.gen(function* () {
+      const nativePath = yield* Path.Path;
+      const config = yield* loadStackConfig(root).pipe(
+        Effect.provideService(Path.Path, { ...nativePath, isAbsolute: win32.isAbsolute }),
+      );
+      expect(config.security?.jwt?.signing).toEqual({
+        kind: "jwks-file",
+        path: "C:\\keys\\signing.json",
+      });
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("rejects encrypted secrets with a targeted diagnostic", () => {
+    const root = project(
+      `project_id = "stack-config-encrypted-secret"
+[auth]
+jwt_secret = "encrypted:not-a-real-ciphertext"
+`,
+    );
+    return Effect.gen(function* () {
+      const exit = yield* load(root).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const message = String(exit.cause);
+        expect(message).toContain("capabilities.auth.settings.jwt_secret uses an encrypted secret");
+        expect(message).not.toContain("not-a-real-ciphertext");
+      }
+    });
+  });
+
+  it.effect("rejects encrypted function dotenv values", () => {
+    const root = project('project_id = "stack-config-encrypted-function-secret"\n');
+    writeFileSync(join(root, "supabase", "functions", ".env"), "DOTENV=encrypted:dotenv\n");
+    return Effect.gen(function* () {
+      const exit = yield* load(root).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const message = String(exit.cause);
+        expect(message).toContain("uses an encrypted secret");
+        expect(message).not.toContain("encrypted:dotenv");
+      }
+    });
+  });
+
   it.effect("rejects function paths outside the function root", () => {
     const root = project(`project_id = "stack-config-outside-function"
 
@@ -249,6 +314,40 @@ signing_keys_path = "supabase/signing-keys.json"
         kind: "jwks-file",
         path: "supabase/supabase/signing-keys.json",
       });
+    });
+  });
+
+  it.effect("lets the stack runtime resolve the API port for Studio's default URL", () => {
+    const root = project('project_id = "stack-config-studio-default"\n');
+    return Effect.gen(function* () {
+      const config = yield* load(root);
+      if (config.capabilities?.studio === undefined || !("settings" in config.capabilities.studio))
+        throw new Error("Studio settings missing");
+      expect(config.capabilities.studio.settings).toEqual({
+        api_url: undefined,
+        openai_api_key: undefined,
+      });
+    });
+  });
+
+  it.effect("parses legacy dotenv expansion and colon assignments", () => {
+    const root = project('project_id = "stack-config-dotenv-compat"\n');
+    writeFileSync(
+      join(root, "supabase", "functions", ".env"),
+      "BASE=shared\nEXPANDED=$BASE\nCOLON: colon-value\n",
+    );
+    return Effect.gen(function* () {
+      const config = yield* load(root);
+      if (
+        config.capabilities?.functions === undefined ||
+        !("settings" in config.capabilities.functions)
+      )
+        throw new Error("Functions settings missing");
+      const env = config.capabilities.functions.settings?.functions?.hello?.env;
+      expect(env).toBeDefined();
+      if (env === undefined) throw new Error("Function env missing");
+      expect(Redacted.value(env.EXPANDED!)).toBe("shared");
+      expect(Redacted.value(env.COLON!)).toBe("colon-value");
     });
   });
 

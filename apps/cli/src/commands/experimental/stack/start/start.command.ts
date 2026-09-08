@@ -27,7 +27,10 @@ const config = {
 export type ExperimentalStackStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const experimentalStackStartCommand = Command.make("start", config).pipe(
-  Command.withDescription("Create or resume a managed local Supabase stack."),
+  Command.withDescription(
+    "Create or resume a managed local Supabase stack from supabase/config.toml. " +
+      "Configure values in that file or with explicit env(NAME) references; automatic SUPABASE_* section overrides are not applied.",
+  ),
   Command.withShortDescription("Start a managed local stack"),
   Command.withExamples([
     {
