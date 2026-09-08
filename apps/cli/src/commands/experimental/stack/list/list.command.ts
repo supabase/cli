@@ -7,9 +7,6 @@ export const legacyExperimentalStackListCommand = Command.make("list").pipe(
   Command.withDescription("List persisted managed local Supabase stacks."),
   Command.withShortDescription("List managed local stacks"),
   Command.withHandler(() =>
-    legacyExperimentalStackList().pipe(
-      withLegacyCommandInstrumentation({ flags: {}, config: {} }),
-      withJsonErrorHandling,
-    ),
+    legacyExperimentalStackList().pipe(withLegacyCommandInstrumentation(), withJsonErrorHandling),
   ),
 );

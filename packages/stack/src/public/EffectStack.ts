@@ -7,6 +7,7 @@ import {
   Exit,
   FileSystem,
   Fiber,
+  Match,
   Option,
   Path,
   Predicate,
@@ -1097,9 +1098,48 @@ export const listStacks = (
     const result: StackDescriptor[] = [];
     for (const entry of entries) {
       if (!Schema.is(StackIdSchema)(entry)) continue;
-      const state = yield* store
-        .read(entry)
-        .pipe(Effect.catchIf(isMissingStateRemnantError, () => Effect.void));
+      const state = yield* store.read(entry).pipe(
+        Effect.mapError((error) => {
+          const message = `Failed to read managed stack ${entry}: ${error.message}`;
+          return Match.value(error).pipe(
+            Match.tag(
+              "InvalidProjectRootError",
+              (error) =>
+                new InvalidProjectRootError({
+                  projectRoot: error.projectRoot,
+                  stateRoot: error.stateRoot,
+                  message,
+                  cause: error,
+                }),
+            ),
+            Match.tag(
+              "StackStateInvalidError",
+              (error) =>
+                new StackStateInvalidError({
+                  stackId: entry,
+                  path: error.path,
+                  code: error.code,
+                  slot: error.slot,
+                  message,
+                  cause: error,
+                }),
+            ),
+            Match.tag(
+              "StackStateFormatUnsupportedError",
+              (error) =>
+                new StackStateFormatUnsupportedError({
+                  format: error.format,
+                  message,
+                  cause: error,
+                }),
+            ),
+            Match.exhaustive,
+          );
+        }),
+        Effect.catchTag("StackStateInvalidError", (error) =>
+          isMissingStateRemnantError(error) ? Effect.succeed(undefined) : Effect.fail(error),
+        ),
+      );
       if (
         state !== undefined &&
         (projectRoot === undefined || state.identity.projectRoot === projectRoot)

@@ -39,14 +39,14 @@ const runList = (
 ) => {
   const out = mockOutput({ format: options.format });
   let listCalls = 0;
-  let mutationCalls = 0;
+  let otherApiCalls = 0;
   const api = Layer.succeed(LegacyExperimentalStackApi, {
     createStack: () => {
-      mutationCalls++;
+      otherApiCalls++;
       return Effect.die("create must not run");
     },
     findStack: () => {
-      mutationCalls++;
+      otherApiCalls++;
       return Effect.succeed(Option.none());
     },
     listStacks: () =>
@@ -55,11 +55,11 @@ const runList = (
         return stacks;
       }),
     openStack: () => {
-      mutationCalls++;
+      otherApiCalls++;
       return Effect.die("open must not run");
     },
     inspectStack: () => {
-      mutationCalls++;
+      otherApiCalls++;
       return Effect.die("inspect must not run");
     },
   });
@@ -74,8 +74,8 @@ const runList = (
     get listCalls() {
       return listCalls;
     },
-    get mutationCalls() {
-      return mutationCalls;
+    get otherApiCalls() {
+      return otherApiCalls;
     },
     effect: legacyExperimentalStackList().pipe(Effect.provide(layer)),
   };
@@ -95,7 +95,7 @@ describe("experimental stack list", () => {
         Effect.tap(() =>
           Effect.sync(() => {
             expect(run.listCalls).toBe(1);
-            expect(run.mutationCalls).toBe(0);
+            expect(run.otherApiCalls).toBe(0);
             expect(run.out.stdoutText.indexOf("alpha")).toBeLessThan(
               run.out.stdoutText.indexOf("beta"),
             );
@@ -158,51 +158,57 @@ describe("experimental stack list", () => {
     );
   });
 
-  it.effect("preserves registry errors and rejects legacy output without listing", () => {
+  it.effect("rejects legacy output without listing", () => {
     const run = runList([], { legacyOutput: true });
-    return Effect.gen(function* () {
-      const legacyExit = yield* run.effect.pipe(Effect.exit);
-      expect(Exit.isFailure(legacyExit)).toBe(true);
-      expect(run.listCalls).toBe(0);
-      if (Exit.isFailure(legacyExit)) {
-        const error = Cause.findErrorOption(legacyExit.cause);
-        expect(Option.isSome(error)).toBe(true);
-        if (Option.isSome(error)) {
-          expect(error.value).toBeInstanceOf(LegacyExperimentalStackListError);
-          if (error.value instanceof LegacyExperimentalStackListError) {
-            expect(error.value.message).toContain("legacy -o/--output flag");
-            expect(error.value[ErrorActionabilityId]).toEqual(actionability.provideFlags);
+    return run.effect.pipe(
+      Effect.exit,
+      Effect.tap((legacyExit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(legacyExit)).toBe(true);
+          expect(run.listCalls).toBe(0);
+          if (Exit.isFailure(legacyExit)) {
+            const error = Cause.findErrorOption(legacyExit.cause);
+            expect(Option.isSome(error)).toBe(true);
+            if (Option.isSome(error) && error.value instanceof LegacyExperimentalStackListError) {
+              expect(error.value.message).toContain("legacy -o/--output flag");
+              expect(error.value.suggestion).toContain("--output-format");
+              expect(error.value[ErrorActionabilityId]).toEqual(actionability.provideFlags);
+            }
           }
-        }
-      }
-      const errorOut = mockOutput();
-      const errorLayer = Layer.succeed(LegacyExperimentalStackApi, {
-        createStack: () => Effect.die("unused"),
-        findStack: () => Effect.succeed(Option.none()),
-        listStacks: () =>
-          Effect.fail(new StackStateFormatUnsupportedError({ message: "registry unreadable" })),
-        openStack: () => Effect.die("unused"),
-        inspectStack: () => Effect.die("unused"),
-      });
-      const errorExit = yield* legacyExperimentalStackList().pipe(
-        Effect.provide(Layer.mergeAll(errorOut.layer, errorLayer, BunServices.layer)),
-        Effect.exit,
-      );
-      expect(Exit.isFailure(errorExit)).toBe(true);
-      if (Exit.isFailure(errorExit)) {
-        const error = Cause.findErrorOption(errorExit.cause);
-        expect(Option.isSome(error)).toBe(true);
-        if (Option.isSome(error)) {
-          expect(error.value).toBeInstanceOf(LegacyExperimentalStackListError);
-          if (error.value instanceof LegacyExperimentalStackListError) {
-            expect(error.value.message).toBe("registry unreadable");
-            expect(error.value.suggestion).toContain("managed stack registry");
-            expect(error.value.cause).toBeInstanceOf(StackStateFormatUnsupportedError);
-            expect(error.value[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
-          }
-        }
-      }
+        }),
+      ),
+    );
+  });
+
+  it.effect("preserves registry errors with actionable diagnostics", () => {
+    const errorOut = mockOutput();
+    const errorLayer = Layer.succeed(LegacyExperimentalStackApi, {
+      createStack: () => Effect.die("unused"),
+      findStack: () => Effect.succeed(Option.none()),
+      listStacks: () =>
+        Effect.fail(new StackStateFormatUnsupportedError({ message: "registry unreadable" })),
+      openStack: () => Effect.die("unused"),
+      inspectStack: () => Effect.die("unused"),
     });
+    return legacyExperimentalStackList().pipe(
+      Effect.provide(Layer.mergeAll(errorOut.layer, errorLayer, BunServices.layer)),
+      Effect.exit,
+      Effect.tap((errorExit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(errorExit)).toBe(true);
+          if (Exit.isFailure(errorExit)) {
+            const error = Cause.findErrorOption(errorExit.cause);
+            expect(Option.isSome(error)).toBe(true);
+            if (Option.isSome(error) && error.value instanceof LegacyExperimentalStackListError) {
+              expect(error.value.message).toBe("registry unreadable");
+              expect(error.value.suggestion).toContain("managed stack registry");
+              expect(error.value.cause).toBeInstanceOf(StackStateFormatUnsupportedError);
+              expect(error.value[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
+            }
+          }
+        }),
+      ),
+    );
   });
 
   it.live("parses the list command through the command runner", () => {
