@@ -52,8 +52,8 @@ describe("REPORT_QUERIES", () => {
       "role_stats",
       "table_stats",
       "traffic_profile",
-      "toast_sizes",
       "unused_indexes",
+      "toast_sizes",
       "vacuum_stats",
     ]);
   });
