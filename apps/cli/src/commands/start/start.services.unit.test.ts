@@ -5,17 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import type { LocalServiceVersionOverrides } from "../../shared/services/services.shared.ts";
 import { toSlimImage } from "../../shared/services/slim-images.ts";
-import {
-  legacyServiceContainerIds,
-  localDbContainerId,
-} from "../../command-internal/legacy-docker-ids.ts";
-import { LEGACY_SERVICE_CATALOG } from "../../command-internal/legacy-service-catalog.ts";
-import {
-  legacyResolveStartGates,
-  legacyResolveStartImagePlan,
-  type LegacyStartGates,
-} from "./start.gates.ts";
-import { LEGACY_START_SERVICES, legacyStartServiceMeta } from "./start.services.ts";
+import { serviceContainerIds, localDbContainerId } from "../../command-internal/docker-ids.ts";
+import { SERVICE_CATALOG } from "../../command-internal/service-catalog.ts";
+import { resolveStartGates, resolveStartImagePlan, type StartGates } from "./start.gates.ts";
+import { START_SERVICES, startServiceMeta } from "./start.services.ts";
 
 const currentGotrue = dockerfileServiceImageRaw("gotrue");
 const currentLogflare = dockerfileServiceImageRaw("logflare");
@@ -23,20 +16,20 @@ const currentVector = dockerfileServiceImageRaw("vector");
 const currentPooler = dockerfileServiceImageRaw("supavisor");
 const currentPoolerTag = currentPooler.split(":")[1] ?? "";
 
-describe("LEGACY_START_SERVICES", () => {
-  it("has one row per LEGACY_SERVICE_CATALOG entry, in the catalog's startOrder", () => {
-    expect(LEGACY_START_SERVICES).toHaveLength(LEGACY_SERVICE_CATALOG.length);
-    expect(LEGACY_START_SERVICES.map((entry) => entry.service)).toEqual(
-      LEGACY_SERVICE_CATALOG.map((entry) => entry.service),
+describe("START_SERVICES", () => {
+  it("has one row per SERVICE_CATALOG entry, in the catalog's startOrder", () => {
+    expect(START_SERVICES).toHaveLength(SERVICE_CATALOG.length);
+    expect(START_SERVICES.map((entry) => entry.service)).toEqual(
+      SERVICE_CATALOG.map((entry) => entry.service),
     );
-    expect(LEGACY_START_SERVICES.map((entry) => entry.startOrder)).toEqual(
-      LEGACY_SERVICE_CATALOG.map((entry) => entry.startOrder),
+    expect(START_SERVICES.map((entry) => entry.startOrder)).toEqual(
+      SERVICE_CATALOG.map((entry) => entry.startOrder),
     );
   });
 
   it("has exactly 13 excludable rows and 1 non-excludable row (Postgres)", () => {
-    const excludable = LEGACY_START_SERVICES.filter((entry) => entry.excludeKey !== undefined);
-    const nonExcludable = LEGACY_START_SERVICES.filter((entry) => entry.excludeKey === undefined);
+    const excludable = START_SERVICES.filter((entry) => entry.excludeKey !== undefined);
+    const nonExcludable = START_SERVICES.filter((entry) => entry.excludeKey === undefined);
     expect(excludable).toHaveLength(13);
     expect(nonExcludable).toHaveLength(1);
     expect(nonExcludable[0]?.service).toBe("postgres");
@@ -44,30 +37,30 @@ describe("LEGACY_START_SERVICES", () => {
   });
 
   it("carries a non-empty imageConfigField and enabledGate for every entry", () => {
-    for (const entry of LEGACY_START_SERVICES) {
+    for (const entry of START_SERVICES) {
       expect(entry.imageConfigField.length).toBeGreaterThan(0);
       expect(entry.enabledGate.length).toBeGreaterThan(0);
     }
   });
 
   it("has no duplicate service, containerSuffix, or imageConfigField values", () => {
-    const services = LEGACY_START_SERVICES.map((entry) => entry.service);
-    const suffixes = LEGACY_START_SERVICES.map((entry) => entry.containerSuffix);
-    const imageConfigFields = LEGACY_START_SERVICES.map((entry) => entry.imageConfigField);
+    const services = START_SERVICES.map((entry) => entry.service);
+    const suffixes = START_SERVICES.map((entry) => entry.containerSuffix);
+    const imageConfigFields = START_SERVICES.map((entry) => entry.imageConfigField);
 
     expect(new Set(services).size).toBe(services.length);
     expect(new Set(suffixes).size).toBe(suffixes.length);
     expect(new Set(imageConfigFields).size).toBe(imageConfigFields.length);
   });
 
-  it("every non-Postgres containerSuffix matches a legacyServiceContainerIds suffix", () => {
+  it("every non-Postgres containerSuffix matches a serviceContainerIds suffix", () => {
     const projectId = "start-services-cross-check";
-    const containerIds = legacyServiceContainerIds(projectId);
+    const containerIds = serviceContainerIds(projectId);
     const suffixesFromContainerIds = containerIds.map((id) =>
       id.replace(/^supabase_/, "").replace(new RegExp(`_${projectId}$`), ""),
     );
 
-    for (const entry of LEGACY_START_SERVICES) {
+    for (const entry of START_SERVICES) {
       if (entry.service === "postgres") continue;
       expect(suffixesFromContainerIds).toContain(entry.containerSuffix);
     }
@@ -75,7 +68,7 @@ describe("LEGACY_START_SERVICES", () => {
 
   it("Postgres's containerSuffix matches localDbContainerId's suffix", () => {
     const projectId = "start-services-cross-check";
-    const postgres = LEGACY_START_SERVICES.find((entry) => entry.service === "postgres");
+    const postgres = START_SERVICES.find((entry) => entry.service === "postgres");
     expect(postgres?.containerSuffix).toBe("db");
     expect(localDbContainerId(projectId)).toBe(
       `supabase_${postgres?.containerSuffix}_${projectId}`,
@@ -83,33 +76,33 @@ describe("LEGACY_START_SERVICES", () => {
   });
 
   it("notes Vector's dependency on Logflare", () => {
-    const vector = LEGACY_START_SERVICES.find((entry) => entry.service === "vector");
+    const vector = START_SERVICES.find((entry) => entry.service === "vector");
     expect(vector?.enabledGate).toBe("analytics.enabled");
     expect(vector?.dependsOn).toEqual(["logflare"]);
   });
 
   it("notes ImgProxy's dependency on Storage", () => {
-    const imgproxy = LEGACY_START_SERVICES.find((entry) => entry.service === "imgproxy");
+    const imgproxy = START_SERVICES.find((entry) => entry.service === "imgproxy");
     expect(imgproxy?.enabledGate).toBe("storage.enabled && storage.image_transformation.enabled");
     expect(imgproxy?.dependsOn).toEqual(["storage"]);
   });
 
   it("notes Studio's dependency on pg-meta", () => {
-    const studio = LEGACY_START_SERVICES.find((entry) => entry.service === "studio");
+    const studio = START_SERVICES.find((entry) => entry.service === "studio");
     expect(studio?.enabledGate).toBe("studio.enabled");
     expect(studio?.dependsOn).toEqual(["pgMeta"]);
   });
 
   it("gates Kong on !excluded only, with no config field", () => {
-    const kong = LEGACY_START_SERVICES.find((entry) => entry.service === "kong");
+    const kong = START_SERVICES.find((entry) => entry.service === "kong");
     expect(kong?.enabledGate).toBe("none");
   });
 });
 
-describe("legacyStartServiceMeta", () => {
-  it("returns the same metadata as the joined LEGACY_START_SERVICES row", () => {
-    const meta = legacyStartServiceMeta("gotrue");
-    const entry = LEGACY_START_SERVICES.find((candidate) => candidate.service === "gotrue");
+describe("startServiceMeta", () => {
+  it("returns the same metadata as the joined START_SERVICES row", () => {
+    const meta = startServiceMeta("gotrue");
+    const entry = START_SERVICES.find((candidate) => candidate.service === "gotrue");
     expect(meta).toEqual({
       imageConfigField: entry?.imageConfigField,
       enabledGate: entry?.enabledGate,
@@ -118,25 +111,25 @@ describe("legacyStartServiceMeta", () => {
   });
 
   it("returns undefined for an unknown service key", () => {
-    expect(legacyStartServiceMeta("not-a-real-service")).toBeUndefined();
+    expect(startServiceMeta("not-a-real-service")).toBeUndefined();
   });
 });
 
 /**
  * Cross-check: `start.services.ts`'s `enabledGate` metadata (descriptive
  * only, never read by runtime code — see that module's header) against
- * `start.gates.ts`'s `legacyResolveStartGates` (the REAL, executable gate).
+ * `start.gates.ts`'s `resolveStartGates` (the REAL, executable gate).
  * The two are hand-maintained separately and can silently drift (e.g. a gate
  * condition changes in `start.gates.ts` without the matching `enabledGate`
  * string being updated) — this mechanically evaluates every `enabledGate`
  * boolean-string expression against a synthetic config and compares it
- * against what `legacyResolveStartGates` actually computes for the SAME
+ * against what `resolveStartGates` actually computes for the SAME
  * config, so a future drift fails loudly here instead of silently.
  */
-describe("LEGACY_START_SERVICES enabledGate cross-check against start.gates.ts", () => {
+describe("START_SERVICES enabledGate cross-check against start.gates.ts", () => {
   const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
-  /** Every `config.toml` boolean atom referenced by a `LEGACY_START_SERVICES` `enabledGate` expression (the `"always"`/`"none"` sentinels aside). */
+  /** Every `config.toml` boolean atom referenced by a `START_SERVICES` `enabledGate` expression (the `"always"`/`"none"` sentinels aside). */
   const GATE_ATOMS = [
     "analytics.enabled",
     "api.enabled",
@@ -188,8 +181,8 @@ describe("LEGACY_START_SERVICES enabledGate cross-check against start.gates.ts",
   }
 
   /** Real gates for `config`, with the exclusion factor neutralized (nothing excluded). */
-  function realGatesFor(config: CliConfig): LegacyStartGates {
-    return legacyResolveStartGates({
+  function realGatesFor(config: CliConfig): StartGates {
+    return resolveStartGates({
       config,
       projectEnvValues: undefined,
       excludedKeys: new Set(),
@@ -199,8 +192,8 @@ describe("LEGACY_START_SERVICES enabledGate cross-check against start.gates.ts",
 
   function expectGatesMatchMetadata(config: CliConfig, label: string) {
     const realGates = realGatesFor(config);
-    for (const service of Object.keys(realGates) as ReadonlyArray<keyof LegacyStartGates>) {
-      const meta = legacyStartServiceMeta(service);
+    for (const service of Object.keys(realGates) as ReadonlyArray<keyof StartGates>) {
+      const meta = startServiceMeta(service);
       expect(meta, `start.services.ts is missing metadata for "${service}"`).toBeDefined();
       const expected = evaluateEnabledGate(meta!.enabledGate, config);
       expect(realGates[service], `${service} (${label})`).toBe(expected);
@@ -224,17 +217,17 @@ describe("LEGACY_START_SERVICES enabledGate cross-check against start.gates.ts",
   it("only omits Postgres (unconditional, handled directly by the caller) from the real gate set", () => {
     const realGates = realGatesFor(configWithEnabled(new Set()));
     const gatedServices = new Set(Object.keys(realGates));
-    const ungated = LEGACY_START_SERVICES.filter((entry) => !gatedServices.has(entry.service));
+    const ungated = START_SERVICES.filter((entry) => !gatedServices.has(entry.service));
     expect(ungated.map((entry) => entry.service).toSorted()).toEqual(["postgres"]);
   });
 });
 
-describe("legacyResolveStartImagePlan under SUPABASE_USE_SLIM_IMAGES", () => {
+describe("resolveStartImagePlan under SUPABASE_USE_SLIM_IMAGES", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  const allGatesOpen: LegacyStartGates = {
+  const allGatesOpen: StartGates = {
     kong: true,
     gotrue: true,
     mailpit: true,
@@ -251,9 +244,8 @@ describe("legacyResolveStartImagePlan under SUPABASE_USE_SLIM_IMAGES", () => {
   };
 
   const imageFor = (service: string, serviceVersions: LocalServiceVersionOverrides = {}) =>
-    legacyResolveStartImagePlan(allGatesOpen, serviceVersions).find(
-      (entry) => entry.service === service,
-    )?.image;
+    resolveStartImagePlan(allGatesOpen, serviceVersions).find((entry) => entry.service === service)
+      ?.image;
 
   it("plans docker.io images while the flag is off", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);

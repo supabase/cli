@@ -1,27 +1,27 @@
 import { Effect, Exit, FileSystem, Option, Path } from "effect";
-import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
-import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
+import { CommandSettings } from "../../config/command-settings.service.ts";
+import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import {
   INVALID_PROJECT_REF_MESSAGE,
   PROJECT_REF_PATTERN,
-} from "../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyReadDbToml } from "../../command-internal/legacy-db-config.toml-read.ts";
-import { legacyResolveDbImage } from "../../command-internal/legacy-db-image.ts";
-import { legacyResolveEdgeRuntimeImage } from "../../command-internal/legacy-edge-runtime-image.ts";
-import { legacyReadServiceVersionOverrides } from "../../command-internal/legacy-service-version-overrides.ts";
-import { LegacyOutputFlag } from "../../shared/legacy/global-flags.ts";
+} from "../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
+import { readDbToml } from "../../command-internal/db-config.toml-read.ts";
+import { resolveDbImage } from "../../command-internal/db-image.ts";
+import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
+import { readServiceVersionOverrides } from "../../command-internal/service-version-overrides.ts";
+import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../command-internal/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../command-internal/go-output.encoders.ts";
 import {
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-  legacyGoSlice,
-  legacyGoString,
-  legacyGoStruct,
-  legacyGoTomlListWrapper,
-} from "../../command-internal/legacy-go-struct-output.encoders.ts";
+  encodeGoToml,
+  encodeGoYaml,
+  goSlice,
+  goString,
+  goStruct,
+  goTomlListWrapper,
+} from "../../command-internal/go-struct-output.encoders.ts";
 import {
   fetchLinkedServiceVersions,
   formatServicesWarning,
@@ -31,34 +31,31 @@ import {
   renderServicesTable,
   renderServicesWarning,
 } from "../../shared/services/services.shared.ts";
-import type { LegacyServicesFlags } from "./services.command.ts";
-import { LegacyServicesEnvNotSupportedError } from "./services.errors.ts";
+import type { ServicesFlags } from "./services.command.ts";
+import { ServicesEnvNotSupportedError } from "./services.errors.ts";
 
 /**
  * Type shape for the hand-written `imageVersion` struct — declaration order
  * is Name, Local, Remote (not alphabetical), and `Remote` is always emitted
  * even when empty (CLI-1975).
  */
-const LEGACY_GO_IMAGE_VERSION = legacyGoStruct([
-  ["name", legacyGoString],
-  ["local", legacyGoString],
-  ["remote", legacyGoString],
+const GO_IMAGE_VERSION = goStruct([
+  ["name", goString],
+  ["local", goString],
+  ["remote", goString],
 ]);
 
-const LEGACY_GO_SERVICES_LIST = legacyGoSlice(LEGACY_GO_IMAGE_VERSION);
+const GO_SERVICES_LIST = goSlice(GO_IMAGE_VERSION);
 
-const LEGACY_GO_SERVICES_TOML_WRAPPER = legacyGoTomlListWrapper(
-  "services",
-  LEGACY_GO_IMAGE_VERSION,
-);
+const GO_SERVICES_TOML_WRAPPER = goTomlListWrapper("services", GO_IMAGE_VERSION);
 
-export const legacyServices = Effect.fn("legacy.services")(function* (_flags: LegacyServicesFlags) {
+export const services = Effect.fn("services")(function* (_flags: ServicesFlags) {
   const output = yield* Output;
-  const legacyOutput = yield* LegacyOutputFlag;
-  const cliSettings = yield* LegacyCliSettings;
-  const credentials = yield* LegacyCredentials;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const cliSettings = yield* CommandSettings;
+  const credentials = yield* CommandCredentials;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -122,7 +119,7 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
       yield* output.raw(`${INVALID_PROJECT_REF_MESSAGE}\n`, "stderr");
     }
 
-    const tomlValues = yield* legacyReadDbToml(
+    const tomlValues = yield* readDbToml(
       fs,
       path,
       cliSettings.workdir,
@@ -135,7 +132,7 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     const serviceVersions =
       tomlValues === null
         ? {}
-        : yield* legacyReadServiceVersionOverrides(
+        : yield* readServiceVersionOverrides(
             fs,
             path,
             cliSettings.workdir,
@@ -144,7 +141,7 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     const postgresImage =
       tomlValues === null
         ? undefined
-        : (yield* legacyResolveDbImage(
+        : (yield* resolveDbImage(
             fs,
             path,
             cliSettings.workdir,
@@ -154,12 +151,7 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     const edgeRuntimeImage =
       tomlValues === null
         ? undefined
-        : yield* legacyResolveEdgeRuntimeImage(
-            fs,
-            path,
-            cliSettings.workdir,
-            tomlValues.denoVersion,
-          );
+        : yield* resolveEdgeRuntimeImage(fs, path, cliSettings.workdir, tomlValues.denoVersion);
     const imageOverrides: LocalServiceImageOverrides = {};
     if (postgresImage !== undefined) {
       imageOverrides.postgres = postgresImage;
@@ -191,11 +183,11 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
       yield* output.raw(formatServicesWarning(warning, output.format === "text"), "stderr");
     }
 
-    const goOutput = Option.getOrUndefined(legacyOutput);
+    const goOutput = Option.getOrUndefined(goOutputFlag);
 
     if (goOutput === "env") {
       return yield* Effect.fail(
-        new LegacyServicesEnvNotSupportedError({
+        new ServicesEnvNotSupportedError({
           message: "--output env flag is not supported",
         }),
       );
@@ -207,12 +199,12 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     }
 
     if (goOutput === "yaml") {
-      yield* output.raw(encodeLegacyGoYaml(rows, LEGACY_GO_SERVICES_LIST));
+      yield* output.raw(encodeGoYaml(rows, GO_SERVICES_LIST));
       return;
     }
 
     if (goOutput === "toml") {
-      yield* output.raw(encodeLegacyGoToml({ services: rows }, LEGACY_GO_SERVICES_TOML_WRAPPER));
+      yield* output.raw(encodeGoToml({ services: rows }, GO_SERVICES_TOML_WRAPPER));
       return;
     }
 

@@ -754,7 +754,7 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
   // doesn't append a newline the way `Fprintln` does), so Go's actual stderr
   // bytes have no real line break after this message — a library-internal
   // artifact, not the parity-relevant part, same call already made for
-  // `LegacyInvalidPortEnvOverrideError` in the legacy shell. Not reproduced
+  // `InvalidPortEnvOverrideError` in the CLI. Not reproduced
   // byte-for-byte; `Console.error` supplies a normal trailing newline instead.
   // Pinned to the real console for the same reason as the `[inbucket]`
   // warning above — see that comment.

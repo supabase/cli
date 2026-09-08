@@ -4,16 +4,16 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Effect, Exit, Layer, Option, Stdio } from "effect";
 
-import { LegacyYesFlag } from "../../../shared/legacy/global-flags.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
 import {
-  buildLegacyTestRuntime,
-  legacyJsonResponse,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  buildTestRuntime,
+  jsonResponse,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import {
@@ -21,20 +21,20 @@ import {
   shouldChmodBundleOutputDirectory,
 } from "../../../shared/functions/deploy.ts";
 import { toDockerPath } from "../../../shared/functions/functions-docker.ts";
-import { legacyFunctionsGoConfigCompat } from "../../../command-internal/legacy-functions-go-config.ts";
+import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
 import {
   ConflictingFunctionDeployFlagsError,
   InvalidFunctionDeploySlugError,
   NoFunctionsToDeployError,
 } from "../../../shared/functions/deploy.errors.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { legacyFunctionsDeploy } from "./deploy.handler.ts";
-import type { LegacyFunctionsDeployFlags } from "./deploy.command.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { functionsDeploy } from "./deploy.handler.ts";
+import type { FunctionsDeployFlags } from "./deploy.command.ts";
 
-const tempRoot = useLegacyTempWorkdir("supabase-functions-deploy-legacy-");
+const tempRoot = useTempWorkdir("supabase-functions-deploy-legacy-");
 
-const baseFlags: LegacyFunctionsDeployFlags = {
+const baseFlags: FunctionsDeployFlags = {
   functionNames: ["hello-world"],
   projectRef: Option.none(),
   noVerifyJwt: false,
@@ -62,7 +62,7 @@ async function writeLocalFunction(
   await writeFile(join(functionDir, "deno.json"), '{"imports":{}}\n');
 }
 
-// Strip ANSI SGR (color/bold) sequences — `legacyBold` styles the pruned slugs
+// Strip ANSI SGR (color/bold) sequences — `bold` styles the pruned slugs
 // only when stderr supports color, so byte-assertions normalize first.
 // eslint-disable-next-line no-control-regex
 const stripSgr = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
@@ -98,17 +98,17 @@ function mockDockerBundleSpawner() {
   return mockChildProcessSpawner(spawnerOpts);
 }
 
-describe("legacy functions deploy", () => {
+describe("functions deploy", () => {
   it.live("deploys a function natively through the Management API", () => {
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi({
+    const api = mockCommandPlatformApi({
       handler: (request) => {
         if (request.method === "GET") {
-          return Effect.succeed(legacyJsonResponse(request, 200, []));
+          return Effect.succeed(jsonResponse(request, 200, []));
         }
         if (request.url.endsWith("/functions/deploy")) {
           return Effect.succeed(
-            legacyJsonResponse(request, 201, {
+            jsonResponse(request, 201, {
               id: "function-id",
               slug: "hello-world",
               name: "hello-world",
@@ -123,21 +123,21 @@ describe("legacy functions deploy", () => {
             }),
           );
         }
-        return Effect.succeed(legacyJsonResponse(request, 404, { error: "not found" }));
+        return Effect.succeed(jsonResponse(request, 404, { error: "not found" }));
       },
     });
-    const linkedProjectCache = mockLegacyLinkedProjectCacheTracked();
-    const telemetry = mockLegacyTelemetryStateTracked();
+    const linkedProjectCache = mockLinkedProjectCacheTracked();
+    const telemetry = mockTelemetryStateTracked();
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         linkedProjectCache: linkedProjectCache.layer,
         telemetry: telemetry.layer,
       }),
-      Layer.succeed(LegacyYesFlag, false),
+      Layer.succeed(YesFlag, false),
       Stdio.layerTest({
         args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
       }),
@@ -147,7 +147,7 @@ describe("legacy functions deploy", () => {
       yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
       yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
-      yield* legacyFunctionsDeploy(baseFlags);
+      yield* functionsDeploy(baseFlags);
 
       expect(api.requests).toHaveLength(2);
       const deployRequest = api.requests.find(
@@ -175,14 +175,14 @@ describe("legacy functions deploy", () => {
     // a repeated slug prints twice even though only one deploy request is
     // made for it.
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi({
+    const api = mockCommandPlatformApi({
       handler: (request) => {
         if (request.method === "GET") {
-          return Effect.succeed(legacyJsonResponse(request, 200, []));
+          return Effect.succeed(jsonResponse(request, 200, []));
         }
         if (request.url.endsWith("/functions/deploy")) {
           return Effect.succeed(
-            legacyJsonResponse(request, 201, {
+            jsonResponse(request, 201, {
               id: "function-id",
               slug: "hello-world",
               name: "hello-world",
@@ -197,17 +197,17 @@ describe("legacy functions deploy", () => {
             }),
           );
         }
-        return Effect.succeed(legacyJsonResponse(request, 404, { error: "not found" }));
+        return Effect.succeed(jsonResponse(request, 404, { error: "not found" }));
       },
     });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
-      Layer.succeed(LegacyYesFlag, false),
+      Layer.succeed(YesFlag, false),
       Stdio.layerTest({
         args: Effect.succeed(["functions", "deploy", "hello-world", "hello-world", "--use-api"]),
       }),
@@ -217,7 +217,7 @@ describe("legacy functions deploy", () => {
       yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
       yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
-      yield* legacyFunctionsDeploy({
+      yield* functionsDeploy({
         ...baseFlags,
         functionNames: ["hello-world", "hello-world"],
       });
@@ -240,13 +240,13 @@ describe("legacy functions deploy", () => {
 
   it.live("uses an explicit project ref when provided", () => {
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi({
+    const api = mockCommandPlatformApi({
       handler: (request) => {
         if (request.method === "GET") {
-          return Effect.succeed(legacyJsonResponse(request, 200, []));
+          return Effect.succeed(jsonResponse(request, 200, []));
         }
         return Effect.succeed(
-          legacyJsonResponse(request, 201, {
+          jsonResponse(request, 201, {
             id: "function-id",
             slug: "hello-world",
             name: "hello-world",
@@ -263,16 +263,16 @@ describe("legacy functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({
+        cliSettings: mockCommandSettings({
           workdir: tempRoot.current,
           projectId: Option.none(),
         }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
-      Layer.succeed(LegacyYesFlag, false),
+      Layer.succeed(YesFlag, false),
       Stdio.layerTest({
         args: Effect.succeed([
           "functions",
@@ -289,7 +289,7 @@ describe("legacy functions deploy", () => {
       yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
       yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
-      yield* legacyFunctionsDeploy({
+      yield* functionsDeploy({
         ...baseFlags,
         projectRef: Option.some("qrstuvwxyzabcdefghij"),
       });
@@ -309,13 +309,13 @@ describe("legacy functions deploy", () => {
   it.live("resolves --import-map relative to the caller cwd", () => {
     const callerDir = join(tempRoot.current, "caller");
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi({
+    const api = mockCommandPlatformApi({
       handler: (request) => {
         if (request.method === "GET") {
-          return Effect.succeed(legacyJsonResponse(request, 200, []));
+          return Effect.succeed(jsonResponse(request, 200, []));
         }
         return Effect.succeed(
-          legacyJsonResponse(request, 201, {
+          jsonResponse(request, 201, {
             id: "function-id",
             slug: "hello-world",
             name: "hello-world",
@@ -332,13 +332,13 @@ describe("legacy functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: callerDir }),
       }),
-      Layer.succeed(LegacyYesFlag, false),
+      Layer.succeed(YesFlag, false),
       Stdio.layerTest({
         args: Effect.succeed([
           "functions",
@@ -359,7 +359,7 @@ describe("legacy functions deploy", () => {
         writeFile(join(callerDir, "import_map.json"), '{"imports":{}}'),
       );
 
-      yield* legacyFunctionsDeploy({
+      yield* functionsDeploy({
         ...baseFlags,
         importMap: Option.some("./import_map.json"),
       });
@@ -379,10 +379,10 @@ describe("legacy functions deploy", () => {
   it.live("loads project config from the resolved workdir", () => {
     const callerDir = join(tempRoot.current, "caller");
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi({
+    const api = mockCommandPlatformApi({
       handler: (request) =>
         Effect.succeed(
-          legacyJsonResponse(request, 201, {
+          jsonResponse(request, 201, {
             id: "function-id",
             slug: "configured",
             name: "configured",
@@ -398,13 +398,13 @@ describe("legacy functions deploy", () => {
         ),
     });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: callerDir }),
       }),
-      Layer.succeed(LegacyYesFlag, false),
+      Layer.succeed(YesFlag, false),
       Stdio.layerTest({
         args: Effect.succeed(["functions", "deploy", "--use-api"]),
       }),
@@ -422,7 +422,7 @@ describe("legacy functions deploy", () => {
       yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "configured"));
       yield* Effect.tryPromise(() => mkdir(callerDir, { recursive: true }));
 
-      yield* legacyFunctionsDeploy({
+      yield* functionsDeploy({
         ...baseFlags,
         functionNames: [],
       });
@@ -452,7 +452,7 @@ describe("legacy functions deploy", () => {
     const workdir = join(repoRoot, "app");
     const multiparts: Array<{ metadata?: string; fileNames: ReadonlyArray<string> }> = [];
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi({
+    const api = mockCommandPlatformApi({
       handler: (request) => {
         if (request.body._tag === "FormData") {
           const metadata = request.body.formData.get("metadata");
@@ -464,10 +464,10 @@ describe("legacy functions deploy", () => {
           });
         }
         if (request.method === "GET") {
-          return Effect.succeed(legacyJsonResponse(request, 200, []));
+          return Effect.succeed(jsonResponse(request, 200, []));
         }
         return Effect.succeed(
-          legacyJsonResponse(request, 201, {
+          jsonResponse(request, 201, {
             id: "function-id",
             slug: "hello-world",
             name: "hello-world",
@@ -484,13 +484,13 @@ describe("legacy functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir }),
+        cliSettings: mockCommandSettings({ workdir }),
         runtimeInfo: mockRuntimeInfo({ cwd: workdir }),
       }),
-      Layer.succeed(LegacyYesFlag, false),
+      Layer.succeed(YesFlag, false),
       Stdio.layerTest({
         args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
       }),
@@ -524,7 +524,7 @@ describe("legacy functions deploy", () => {
         ),
       );
 
-      const exit = yield* Effect.exit(legacyFunctionsDeploy(baseFlags));
+      const exit = yield* Effect.exit(functionsDeploy(baseFlags));
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -543,13 +543,13 @@ describe("legacy functions deploy", () => {
 
   it.live("deploys config-declared custom entrypoints when deploying all functions", () => {
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi({
+    const api = mockCommandPlatformApi({
       handler: (request) => {
         if (request.method === "GET") {
-          return Effect.succeed(legacyJsonResponse(request, 200, []));
+          return Effect.succeed(jsonResponse(request, 200, []));
         }
         return Effect.succeed(
-          legacyJsonResponse(request, 201, {
+          jsonResponse(request, 201, {
             id: "function-id",
             slug: "custom-entry",
             name: "custom-entry",
@@ -566,13 +566,13 @@ describe("legacy functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
-      Layer.succeed(LegacyYesFlag, false),
+      Layer.succeed(YesFlag, false),
       Stdio.layerTest({
         args: Effect.succeed(["functions", "deploy", "--use-api"]),
       }),
@@ -608,7 +608,7 @@ describe("legacy functions deploy", () => {
         ),
       );
 
-      yield* legacyFunctionsDeploy({
+      yield* functionsDeploy({
         ...baseFlags,
         functionNames: [],
       });
@@ -631,11 +631,11 @@ describe("legacy functions deploy", () => {
 
   it.live("honors global --yes when pruning remote functions", () => {
     const out = mockOutput({ format: "text", promptConfirmFail: true });
-    const api = mockLegacyPlatformApi({
+    const api = mockCommandPlatformApi({
       handler: (request) => {
         if (request.method === "POST") {
           return Effect.succeed(
-            legacyJsonResponse(request, 201, {
+            jsonResponse(request, 201, {
               id: "function-id",
               slug: "hello-world",
               name: "hello-world",
@@ -652,7 +652,7 @@ describe("legacy functions deploy", () => {
         }
         if (request.method === "GET") {
           return Effect.succeed(
-            legacyJsonResponse(request, 200, [
+            jsonResponse(request, 200, [
               {
                 id: "remote-id",
                 slug: "remote-only",
@@ -667,17 +667,17 @@ describe("legacy functions deploy", () => {
             ]),
           );
         }
-        return Effect.succeed(legacyJsonResponse(request, 200, {}));
+        return Effect.succeed(jsonResponse(request, 200, {}));
       },
     });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
-      Layer.succeed(LegacyYesFlag, true),
+      Layer.succeed(YesFlag, true),
       Stdio.layerTest({
         args: Effect.succeed([
           "functions",
@@ -694,7 +694,7 @@ describe("legacy functions deploy", () => {
       yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
       yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
-      yield* legacyFunctionsDeploy({ ...baseFlags, prune: true });
+      yield* functionsDeploy({ ...baseFlags, prune: true });
 
       expect(out.promptConfirmCalls).toHaveLength(0);
       // Established behavior: the accepted prompt echoes to stderr under the
@@ -724,10 +724,10 @@ describe("legacy functions deploy", () => {
       const out = mockOutput({ format: "text" });
       let deployCalls = 0;
       let bulkCalls = 0;
-      const api = mockLegacyPlatformApi({
+      const api = mockCommandPlatformApi({
         handler: (request, recorded) => {
           if (request.method === "GET") {
-            return Effect.succeed(legacyJsonResponse(request, 200, []));
+            return Effect.succeed(jsonResponse(request, 200, []));
           }
           if (request.method === "POST") {
             const status = opts.deployStatuses[deployCalls] ?? 201;
@@ -736,12 +736,10 @@ describe("legacy functions deploy", () => {
               ? "bye-world"
               : "hello-world";
             if (status !== 201) {
-              return Effect.succeed(
-                legacyJsonResponse(request, status, { message: `rejected ${slug}` }),
-              );
+              return Effect.succeed(jsonResponse(request, status, { message: `rejected ${slug}` }));
             }
             return Effect.succeed(
-              legacyJsonResponse(request, 201, {
+              jsonResponse(request, 201, {
                 id: `${slug}-id`,
                 slug,
                 name: slug,
@@ -761,21 +759,21 @@ describe("legacy functions deploy", () => {
             bulkCalls += 1;
             if (status !== 200) {
               return Effect.succeed(
-                legacyJsonResponse(request, status, { message: "bulk update rejected" }),
+                jsonResponse(request, status, { message: "bulk update rejected" }),
               );
             }
           }
-          return Effect.succeed(legacyJsonResponse(request, 200, {}));
+          return Effect.succeed(jsonResponse(request, 200, {}));
         },
       });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(LegacyYesFlag, false),
+        Layer.succeed(YesFlag, false),
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "bye-world", "--use-api"]),
         }),
@@ -791,7 +789,7 @@ describe("legacy functions deploy", () => {
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "bye-world"));
 
-        const error = yield* legacyFunctionsDeploy({
+        const error = yield* functionsDeploy({
           ...baseFlags,
           functionNames: ["hello-world", "bye-world"],
         }).pipe(Effect.flip);
@@ -826,7 +824,7 @@ describe("legacy functions deploy", () => {
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "bye-world"));
 
-        const error = yield* legacyFunctionsDeploy({
+        const error = yield* functionsDeploy({
           ...baseFlags,
           functionNames: ["hello-world", "bye-world"],
         }).pipe(Effect.flip);
@@ -859,7 +857,7 @@ describe("legacy functions deploy", () => {
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "bye-world"));
 
-        const error = yield* legacyFunctionsDeploy({
+        const error = yield* functionsDeploy({
           ...baseFlags,
           functionNames: ["hello-world", "bye-world"],
         }).pipe(Effect.flip);
@@ -883,24 +881,22 @@ describe("legacy functions deploy", () => {
 
   it.live("rejects the bundler mutex with cobra's exact error text", () => {
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi();
+    const api = mockCommandPlatformApi();
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
-      Layer.succeed(LegacyYesFlag, false),
+      Layer.succeed(YesFlag, false),
       Stdio.layerTest({
         args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api", "--use-docker"]),
       }),
     );
 
     return Effect.gen(function* () {
-      const error = yield* legacyFunctionsDeploy({ ...baseFlags, useDocker: true }).pipe(
-        Effect.flip,
-      );
+      const error = yield* functionsDeploy({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(ConflictingFunctionDeployFlagsError);
       if (!(error instanceof ConflictingFunctionDeployFlagsError)) {
@@ -916,17 +912,17 @@ describe("legacy functions deploy", () => {
   describe("--jobs validation (Go parity: cmd/functions.go:79-82)", () => {
     function setupJobsTest(rawArgs: ReadonlyArray<string>) {
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi({
-        handler: (request) => Effect.succeed(legacyJsonResponse(request, 200, [])),
+      const api = mockCommandPlatformApi({
+        handler: (request) => Effect.succeed(jsonResponse(request, 200, [])),
       });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(LegacyYesFlag, false),
+        Layer.succeed(YesFlag, false),
         Stdio.layerTest({ args: Effect.succeed(rawArgs) }),
       );
       return { out, api, layer };
@@ -936,7 +932,7 @@ describe("legacy functions deploy", () => {
       const { layer } = setupJobsTest(["functions", "deploy", "hello-world", "--jobs", "2"]);
 
       return Effect.gen(function* () {
-        const error = yield* legacyFunctionsDeploy({
+        const error = yield* functionsDeploy({
           ...baseFlags,
           useApi: false,
           useDocker: true,
@@ -962,7 +958,7 @@ describe("legacy functions deploy", () => {
       ]);
 
       return Effect.gen(function* () {
-        const error = yield* legacyFunctionsDeploy({
+        const error = yield* functionsDeploy({
           ...baseFlags,
           useApi: false,
           useDocker: false,
@@ -976,13 +972,13 @@ describe("legacy functions deploy", () => {
 
     it.live("allows --jobs > 1 together with --use-api", () => {
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi({
+      const api = mockCommandPlatformApi({
         handler: (request) => {
           if (request.method === "GET") {
-            return Effect.succeed(legacyJsonResponse(request, 200, []));
+            return Effect.succeed(jsonResponse(request, 200, []));
           }
           return Effect.succeed(
-            legacyJsonResponse(request, 201, {
+            jsonResponse(request, 201, {
               id: "function-id",
               slug: "hello-world",
               name: "hello-world",
@@ -999,13 +995,13 @@ describe("legacy functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(LegacyYesFlag, false),
+        Layer.succeed(YesFlag, false),
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api", "--jobs", "2"]),
         }),
@@ -1015,7 +1011,7 @@ describe("legacy functions deploy", () => {
         yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
-        yield* legacyFunctionsDeploy({
+        yield* functionsDeploy({
           ...baseFlags,
           useApi: true,
           jobs: Option.some(2),
@@ -1034,13 +1030,13 @@ describe("legacy functions deploy", () => {
 
     it.live("treats --jobs 0 as 1 and does not require --use-api", () => {
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi({
+      const api = mockCommandPlatformApi({
         handler: (request) => {
           if (request.method === "GET") {
-            return Effect.succeed(legacyJsonResponse(request, 200, []));
+            return Effect.succeed(jsonResponse(request, 200, []));
           }
           return Effect.succeed(
-            legacyJsonResponse(request, 201, {
+            jsonResponse(request, 201, {
               id: "function-id",
               slug: "hello-world",
               name: "hello-world",
@@ -1057,13 +1053,13 @@ describe("legacy functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(LegacyYesFlag, false),
+        Layer.succeed(YesFlag, false),
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "--jobs", "0"]),
         }),
@@ -1073,7 +1069,7 @@ describe("legacy functions deploy", () => {
         yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
-        yield* legacyFunctionsDeploy({
+        yield* functionsDeploy({
           ...baseFlags,
           useApi: false,
           jobs: Option.some(0),
@@ -1100,13 +1096,13 @@ describe("legacy functions deploy", () => {
       // `--use-api=false` silently forced the API path instead.
       const out = mockOutput({ format: "text" });
       const child = mockChildProcessSpawner({ exitCode: 1 });
-      const api = mockLegacyPlatformApi({
+      const api = mockCommandPlatformApi({
         handler: (request) => {
           if (request.method === "GET") {
-            return Effect.succeed(legacyJsonResponse(request, 200, []));
+            return Effect.succeed(jsonResponse(request, 200, []));
           }
           return Effect.succeed(
-            legacyJsonResponse(request, 201, {
+            jsonResponse(request, 201, {
               id: "function-id",
               slug: "hello-world",
               name: "hello-world",
@@ -1123,13 +1119,13 @@ describe("legacy functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(LegacyYesFlag, false),
+        Layer.succeed(YesFlag, false),
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
@@ -1140,7 +1136,7 @@ describe("legacy functions deploy", () => {
         yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
-        yield* legacyFunctionsDeploy({
+        yield* functionsDeploy({
           ...baseFlags,
           useApi: false,
           useDocker: true,
@@ -1174,24 +1170,24 @@ describe("legacy functions deploy", () => {
 
   describe("no-functions error styling (Go parity: deploy.go:35; structured output stays plain)", () => {
     // Calls the shared `deployFunctions` with a marker `styleEmphasis` instead of
-    // going through `legacyFunctionsDeploy`: the real hook (`legacyBold`) is
+    // going through `functionsDeploy`: the real hook (`bold`) is
     // TTY-gated and therefore inert under vitest, so only an injected marker can
     // deterministically observe which output formats apply the styling.
     function setupNoFunctionsTest(format: "text" | "json") {
       const out = mockOutput({ format });
-      const api = mockLegacyPlatformApi();
+      const api = mockCommandPlatformApi();
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(LegacyYesFlag, false),
+        Layer.succeed(YesFlag, false),
         Stdio.layerTest({ args: Effect.succeed(["functions", "deploy"]) }),
       );
       const deployNoFunctions = Effect.gen(function* () {
-        const platformApi = yield* LegacyPlatformApi;
+        const platformApi = yield* CommandPlatformApi;
         return yield* deployFunctions(
           { ...baseFlags, functionNames: [] },
           {
@@ -1201,7 +1197,7 @@ describe("legacy functions deploy", () => {
             projectRoot: tempRoot.current,
             supabaseDir: join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
-            goConfigCompat: legacyFunctionsGoConfigCompat,
+            goConfigCompat: functionsGoConfigCompat,
             yes: false,
             rawArgs: ["functions", "deploy"],
             edgeRuntimeVersion: "1.69.12",
@@ -1260,15 +1256,15 @@ describe("legacy functions deploy", () => {
       "fails before any Docker/API work when config.toml has an explicit empty project_id",
       () => {
         const out = mockOutput({ format: "text" });
-        const api = mockLegacyPlatformApi();
+        const api = mockCommandPlatformApi();
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api,
-            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
-          Layer.succeed(LegacyYesFlag, false),
+          Layer.succeed(YesFlag, false),
           Stdio.layerTest({
             args: Effect.succeed(["functions", "deploy", "hello-world"]),
           }),
@@ -1278,7 +1274,7 @@ describe("legacy functions deploy", () => {
           yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current, 'project_id = ""\n'));
           yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
-          const error = yield* legacyFunctionsDeploy(baseFlags).pipe(Effect.flip);
+          const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
 
           expect(error).toBeInstanceOf(Error);
           expect((error as Error).message).toBe("Missing required field in config: project_id");
@@ -1299,15 +1295,15 @@ describe("legacy functions deploy", () => {
         // — `db.major_version = 12` is a genuinely unrelated Go `Config.Validate`
         // branch (`config.go:1034-1062`).
         const out = mockOutput({ format: "text" });
-        const api = mockLegacyPlatformApi();
+        const api = mockCommandPlatformApi();
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api,
-            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
-          Layer.succeed(LegacyYesFlag, false),
+          Layer.succeed(YesFlag, false),
           Stdio.layerTest({
             args: Effect.succeed(["functions", "deploy", "hello-world"]),
           }),
@@ -1322,7 +1318,7 @@ describe("legacy functions deploy", () => {
           );
           yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
-          const error = yield* legacyFunctionsDeploy(baseFlags).pipe(Effect.flip);
+          const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
 
           expect(error).toBeInstanceOf(Error);
           expect((error as Error).message).toBe(
@@ -1342,15 +1338,15 @@ describe("legacy functions deploy", () => {
       "reports a Config.Validate failure before an invalid slug's format error, matching Go's flags.LoadConfig-before-slug-validation order (deploy.go:22-28)",
       () => {
         const out = mockOutput({ format: "text" });
-        const api = mockLegacyPlatformApi();
+        const api = mockCommandPlatformApi();
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api,
-            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
-          Layer.succeed(LegacyYesFlag, false),
+          Layer.succeed(YesFlag, false),
           Stdio.layerTest({
             args: Effect.succeed(["functions", "deploy", "1-invalid-slug"]),
           }),
@@ -1359,7 +1355,7 @@ describe("legacy functions deploy", () => {
         return Effect.gen(function* () {
           yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current, 'project_id = ""\n'));
 
-          const error = yield* legacyFunctionsDeploy({
+          const error = yield* functionsDeploy({
             ...baseFlags,
             functionNames: ["1-invalid-slug"],
           }).pipe(Effect.flip);
@@ -1378,15 +1374,15 @@ describe("legacy functions deploy", () => {
 
     it.live("still rejects an invalid slug once the config itself is valid", () => {
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi();
+      const api = mockCommandPlatformApi();
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(LegacyYesFlag, false),
+        Layer.succeed(YesFlag, false),
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "1-invalid-slug"]),
         }),
@@ -1395,7 +1391,7 @@ describe("legacy functions deploy", () => {
       return Effect.gen(function* () {
         yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
 
-        const error = yield* legacyFunctionsDeploy({
+        const error = yield* functionsDeploy({
           ...baseFlags,
           functionNames: ["1-invalid-slug"],
         }).pipe(Effect.flip);
@@ -1413,13 +1409,13 @@ describe("legacy functions deploy", () => {
 
   describe("Docker bundling path Go-parity config/env wiring (CLI-1963)", () => {
     function mockFunctionCreateApi() {
-      return mockLegacyPlatformApi({
+      return mockCommandPlatformApi({
         handler: (request) => {
           if (request.method === "GET") {
-            return Effect.succeed(legacyJsonResponse(request, 200, []));
+            return Effect.succeed(jsonResponse(request, 200, []));
           }
           return Effect.succeed(
-            legacyJsonResponse(request, 201, {
+            jsonResponse(request, 201, {
               id: "function-id",
               slug: "hello-world",
               name: "hello-world",
@@ -1443,13 +1439,13 @@ describe("legacy functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api,
-            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
-          Layer.succeed(LegacyYesFlag, false),
+          Layer.succeed(YesFlag, false),
           child.layer,
           Stdio.layerTest({
             args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
@@ -1463,7 +1459,7 @@ describe("legacy functions deploy", () => {
           yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
           yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
-          yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
+          yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
           // `docker info` is spawned[0]; the bundler's first image-inspect
           // candidate (a cache hit here) is spawned[1].
@@ -1496,13 +1492,13 @@ describe("legacy functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api,
-            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
-          Layer.succeed(LegacyYesFlag, false),
+          Layer.succeed(YesFlag, false),
           child.layer,
           Stdio.layerTest({
             args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
@@ -1516,7 +1512,7 @@ describe("legacy functions deploy", () => {
           yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
           yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
-          yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
+          yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
           expect(child.spawned[2]).toEqual({
             command: "docker",
@@ -1549,13 +1545,13 @@ describe("legacy functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api,
-            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
-          Layer.succeed(LegacyYesFlag, false),
+          Layer.succeed(YesFlag, false),
           child.layer,
           Stdio.layerTest({
             args: Effect.succeed([
@@ -1576,7 +1572,7 @@ describe("legacy functions deploy", () => {
           yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
           yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
-          yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
+          yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
           expect(child.spawned[2]).toEqual({
             command: "docker",
@@ -1610,13 +1606,13 @@ describe("legacy functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api,
-            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
-          Layer.succeed(LegacyYesFlag, false),
+          Layer.succeed(YesFlag, false),
           child.layer,
           Stdio.layerTest({
             args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
@@ -1629,7 +1625,7 @@ describe("legacy functions deploy", () => {
           );
           yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
-          yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
+          yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args).toEqual(
@@ -1680,13 +1676,13 @@ describe("legacy functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api,
-            cliSettings: mockLegacyCliSettings({ workdir: nestedWorkdir }),
+            cliSettings: mockCommandSettings({ workdir: nestedWorkdir }),
             runtimeInfo: mockRuntimeInfo({ cwd: nestedWorkdir }),
           }),
-          Layer.succeed(LegacyYesFlag, false),
+          Layer.succeed(YesFlag, false),
           child.layer,
           Stdio.layerTest({
             args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
@@ -1699,7 +1695,7 @@ describe("legacy functions deploy", () => {
           );
           yield* Effect.tryPromise(() => writeLocalFunction(nestedWorkdir, "hello-world"));
 
-          yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
+          yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
           expect(child.spawned[2]).toEqual({
             command: "docker",
@@ -1725,7 +1721,7 @@ describe("legacy functions deploy", () => {
       // climbed independently of the config load — no `search` option meant
       // the package default (always climbing), regardless of `goConfigCompat`,
       // while the config load (`loadFunctionsCliConfig`) has always used
-      // `search: false` for the legacy shell. Before this fix, a function
+      // `search: false` for the CLI. Before this fix, a function
       // directory with no `deno.json` of its own would still be reported as
       // HAVING one — borrowed from an unrelated ANCESTOR project's own
       // `deno.json` — because the manifest's filesystem walk climbed to find
@@ -1736,14 +1732,14 @@ describe("legacy functions deploy", () => {
       // deploying the function with no import map.
       const nestedWorkdir = join(tempRoot.current, "nested");
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi({
+      const api = mockCommandPlatformApi({
         handler: (request) => {
           if (request.method === "GET") {
-            return Effect.succeed(legacyJsonResponse(request, 200, []));
+            return Effect.succeed(jsonResponse(request, 200, []));
           }
           if (request.url.endsWith("/functions/deploy")) {
             return Effect.succeed(
-              legacyJsonResponse(request, 201, {
+              jsonResponse(request, 201, {
                 id: "function-id",
                 slug: "hello-world",
                 name: "hello-world",
@@ -1757,17 +1753,17 @@ describe("legacy functions deploy", () => {
               }),
             );
           }
-          return Effect.succeed(legacyJsonResponse(request, 404, { error: "not found" }));
+          return Effect.succeed(jsonResponse(request, 404, { error: "not found" }));
         },
       });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: nestedWorkdir }),
+          cliSettings: mockCommandSettings({ workdir: nestedWorkdir }),
           runtimeInfo: mockRuntimeInfo({ cwd: nestedWorkdir }),
         }),
-        Layer.succeed(LegacyYesFlag, false),
+        Layer.succeed(YesFlag, false),
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
         }),
@@ -1794,7 +1790,7 @@ describe("legacy functions deploy", () => {
           ),
         );
 
-        yield* legacyFunctionsDeploy(baseFlags);
+        yield* functionsDeploy(baseFlags);
 
         const deployRequest = api.requests.find(
           (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
@@ -1812,18 +1808,18 @@ describe("legacy functions deploy", () => {
   describe("docker-not-running warning styling (Go parity: deploy.go:60; only WARNING: is styled)", () => {
     it.live("wraps only the WARNING token, not the rest of the fallback line", () => {
       // Calls the shared `deployFunctions` with a marker `styleWarning` instead
-      // of going through `legacyFunctionsDeploy`: the real hook (`legacyYellow`)
+      // of going through `functionsDeploy`: the real hook (`yellow`)
       // is TTY-gated and therefore inert under vitest, so only an injected
       // marker can deterministically observe styling scope — same pattern as
       // the "no-functions error styling" block above.
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi({
+      const api = mockCommandPlatformApi({
         handler: (request) => {
           if (request.method === "GET") {
-            return Effect.succeed(legacyJsonResponse(request, 200, []));
+            return Effect.succeed(jsonResponse(request, 200, []));
           }
           return Effect.succeed(
-            legacyJsonResponse(request, 201, {
+            jsonResponse(request, 201, {
               id: "function-id",
               slug: "hello-world",
               name: "hello-world",
@@ -1840,13 +1836,13 @@ describe("legacy functions deploy", () => {
       });
       const child = mockChildProcessSpawner({ exitCode: 1 });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(LegacyYesFlag, false),
+        Layer.succeed(YesFlag, false),
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
@@ -1857,7 +1853,7 @@ describe("legacy functions deploy", () => {
         yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
-        const platformApi = yield* LegacyPlatformApi;
+        const platformApi = yield* CommandPlatformApi;
         yield* deployFunctions(
           { ...baseFlags, useApi: false, useDocker: true },
           {
@@ -1867,7 +1863,7 @@ describe("legacy functions deploy", () => {
             projectRoot: tempRoot.current,
             supabaseDir: join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
-            goConfigCompat: legacyFunctionsGoConfigCompat,
+            goConfigCompat: functionsGoConfigCompat,
             yes: false,
             rawArgs: ["functions", "deploy", "hello-world", "--use-api=false"],
             edgeRuntimeVersion: "1.69.12",

@@ -1,23 +1,23 @@
 import { Effect } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { mapLegacyEncryptionHttpError } from "../encryption.errors.ts";
-import type { LegacyEncryptionGetRootKeyFlags } from "./get-root-key.command.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { mapEncryptionHttpError } from "../encryption.errors.ts";
+import type { EncryptionGetRootKeyFlags } from "./get-root-key.command.ts";
 
-const mapGetError = mapLegacyEncryptionHttpError({ networkVerb: "retrieve", statusVerb: "get" });
+const mapGetError = mapEncryptionHttpError({ networkVerb: "retrieve", statusVerb: "get" });
 
-export const legacyEncryptionGetRootKey = Effect.fn("legacy.encryption.get-root-key")(function* (
-  flags: LegacyEncryptionGetRootKeyFlags,
+export const encryptionGetRootKey = Effect.fn("encryption.get-root-key")(function* (
+  flags: EncryptionGetRootKeyFlags,
 ) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   const ref = yield* resolver.resolve(flags.projectRef);
 

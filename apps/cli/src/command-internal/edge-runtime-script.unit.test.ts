@@ -1,0 +1,74 @@
+import { Option } from "effect";
+import { describe, expect, it } from "vitest";
+
+import {
+  buildEdgeRuntimeEntrypoint,
+  buildEdgeRuntimeStartCmd,
+} from "./edge-runtime-script.service.ts";
+
+describe("buildEdgeRuntimeStartCmd", () => {
+  it("includes --port when a free port was allocated", () => {
+    expect(buildEdgeRuntimeStartCmd({ port: Option.some(54123), debug: false })).toEqual([
+      "edge-runtime",
+      "start",
+      "--main-service=.",
+      "--port=54123",
+    ]);
+  });
+
+  it("drops --port when allocation failed (Go preserves prior behaviour)", () => {
+    expect(buildEdgeRuntimeStartCmd({ port: Option.none(), debug: false })).toEqual([
+      "edge-runtime",
+      "start",
+      "--main-service=.",
+    ]);
+  });
+
+  it("appends --verbose after --port under --debug", () => {
+    expect(buildEdgeRuntimeStartCmd({ port: Option.some(5), debug: true })).toEqual([
+      "edge-runtime",
+      "start",
+      "--main-service=.",
+      "--port=5",
+      "--verbose",
+    ]);
+  });
+});
+
+describe("buildEdgeRuntimeEntrypoint", () => {
+  it("returns just the command (newline-terminated) when there are no files", () => {
+    expect(buildEdgeRuntimeEntrypoint([], "edge-runtime start")).toBe("exec edge-runtime start\n");
+  });
+
+  it("writes a single file via a sentinel here-document then runs the command", () => {
+    const out = buildEdgeRuntimeEntrypoint(
+      [{ name: "index.ts", content: "console.log(1);" }],
+      "edge-runtime start --main-service=. --port=5",
+    );
+    expect(out).toBe(
+      "cat <<'__EDGE_RT_FILE_0__' > index.ts && exec edge-runtime start --main-service=. --port=5\n" +
+        "console.log(1);\n__EDGE_RT_FILE_0__\n",
+    );
+  });
+
+  it("stacks multiple files in declaration order with unique sentinels", () => {
+    const out = buildEdgeRuntimeEntrypoint(
+      [
+        { name: "index.ts", content: "A" },
+        { name: ".npmrc", content: "B" },
+      ],
+      "CMD",
+    );
+    expect(out).toBe(
+      "cat <<'__EDGE_RT_FILE_0__' > index.ts && cat <<'__EDGE_RT_FILE_1__' > .npmrc && exec CMD\n" +
+        "A\n__EDGE_RT_FILE_0__\nB\n__EDGE_RT_FILE_1__\n",
+    );
+  });
+
+  it("preserves file contents that themselves contain EOF-like text", () => {
+    const out = buildEdgeRuntimeEntrypoint([{ name: "index.ts", content: "EOF\nmore" }], "C");
+    expect(out).toBe(
+      "cat <<'__EDGE_RT_FILE_0__' > index.ts && exec C\nEOF\nmore\n__EDGE_RT_FILE_0__\n",
+    );
+  });
+});

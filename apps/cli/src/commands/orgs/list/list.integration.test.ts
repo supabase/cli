@@ -4,13 +4,13 @@ import { Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { legacyOrgsList } from "./list.handler.ts";
+  buildTestRuntime,
+  mockCommandSettings,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { orgsList } from "./list.handler.ts";
 
 type Organizations = typeof V1ListAllOrganizationsOutput.Type;
 
@@ -26,7 +26,7 @@ const SAMPLE_ORG_PIPE: Organizations[number] = {
   name: "with|pipe",
 };
 
-const tempRoot = useLegacyTempWorkdir("supabase-orgs-list-int-");
+const tempRoot = useTempWorkdir("supabase-orgs-list-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
@@ -38,12 +38,12 @@ interface SetupOpts {
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 200, body: opts.response ?? [SAMPLE_ORG] },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -54,13 +54,13 @@ function setup(opts: SetupOpts = {}) {
 
 function setupTracked(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 200, body: opts.response ?? [SAMPLE_ORG] },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const telemetry = mockTelemetryStateTracked();
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -69,11 +69,11 @@ function setupTracked(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry };
 }
 
-describe("legacy orgs list integration", () => {
+describe("orgs list integration", () => {
   it.live("renders a Glamour table with ID and NAME columns in text mode", () => {
     const { layer, out } = setup({ response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
-      yield* legacyOrgsList({});
+      yield* orgsList({});
       expect(out.stdoutText).toContain("ID");
       expect(out.stdoutText).toContain("NAME");
       expect(out.stdoutText).toContain("combined-fuchsia-lion");
@@ -84,7 +84,7 @@ describe("legacy orgs list integration", () => {
   it.live("renders an empty table when the API returns []", () => {
     const { layer, out } = setup({ response: [] });
     return Effect.gen(function* () {
-      yield* legacyOrgsList({});
+      yield* orgsList({});
       expect(out.stdoutText).toContain("NAME");
       expect(out.stdoutText).not.toContain("Test Org");
     }).pipe(Effect.provide(layer));
@@ -93,7 +93,7 @@ describe("legacy orgs list integration", () => {
   it.live("renders literal | characters in organization names (Go parity)", () => {
     const { layer, out } = setup({ response: [SAMPLE_ORG_PIPE] });
     return Effect.gen(function* () {
-      yield* legacyOrgsList({});
+      yield* orgsList({});
       expect(out.stdoutText).toContain("with|pipe");
     }).pipe(Effect.provide(layer));
   });
@@ -101,7 +101,7 @@ describe("legacy orgs list integration", () => {
   it.live("emits a success event with { organizations } for --output-format=json", () => {
     const { layer, out } = setup({ format: "json", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
-      yield* legacyOrgsList({});
+      yield* orgsList({});
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({ organizations: [SAMPLE_ORG] });
@@ -111,7 +111,7 @@ describe("legacy orgs list integration", () => {
   it.live("emits a success event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
-      yield* legacyOrgsList({});
+      yield* orgsList({});
       expect(out.messages.find((m) => m.type === "success")).toBeDefined();
     }).pipe(Effect.provide(layer));
   });
@@ -119,7 +119,7 @@ describe("legacy orgs list integration", () => {
   it.live("emits Go-byte-exact indented JSON for --output json", () => {
     const { layer, out } = setup({ goOutput: "json", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
-      yield* legacyOrgsList({});
+      yield* orgsList({});
       expect(out.stdoutText.startsWith("[\n  {\n")).toBe(true);
       expect(out.stdoutText.endsWith("]\n")).toBe(true);
       expect(out.stdoutText).toContain('"name": "Test Org"');
@@ -129,7 +129,7 @@ describe("legacy orgs list integration", () => {
   it.live("emits a YAML array for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
-      yield* legacyOrgsList({});
+      yield* orgsList({});
       expect(out.stdoutText).toContain("name: Test Org");
     }).pipe(Effect.provide(layer));
   });
@@ -137,21 +137,21 @@ describe("legacy orgs list integration", () => {
   it.live("wraps result as { organizations = [...] } for --output toml", () => {
     const { layer, out } = setup({ goOutput: "toml", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
-      yield* legacyOrgsList({});
+      yield* orgsList({});
       expect(out.stdoutText).toContain("[[organizations]]");
       // PascalCase field names with BurntSushi's 2-space indent (CLI-1975).
       expect(out.stdoutText).toContain('  Name = "Test Org"');
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyOrgsEnvNotSupportedError for --output env", () => {
+  it.live("fails with OrgsEnvNotSupportedError for --output env", () => {
     const { layer } = setup({ goOutput: "env", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyOrgsList({}));
+      const exit = yield* Effect.exit(orgsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyOrgsEnvNotSupportedError");
+        expect(json).toContain("OrgsEnvNotSupportedError");
         expect(json).toContain("--output env flag is not supported");
       }
     }).pipe(Effect.provide(layer));
@@ -160,7 +160,7 @@ describe("legacy orgs list integration", () => {
   it.live("treats --output pretty as identical to text mode (table render)", () => {
     const { layer, out } = setup({ goOutput: "pretty", response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
-      yield* legacyOrgsList({});
+      yield* orgsList({});
       expect(out.stdoutText).toContain("NAME");
       expect(out.stdoutText).toContain("Test Org");
     }).pipe(Effect.provide(layer));
@@ -173,7 +173,7 @@ describe("legacy orgs list integration", () => {
       response: [SAMPLE_ORG],
     });
     return Effect.gen(function* () {
-      yield* legacyOrgsList({});
+      yield* orgsList({});
       expect(out.stdoutText).toContain("name: Test Org");
     }).pipe(Effect.provide(layer));
   });
@@ -181,34 +181,34 @@ describe("legacy orgs list integration", () => {
   it.live("calls GET /v1/organizations with no path params", () => {
     const { layer, api } = setup({ response: [SAMPLE_ORG] });
     return Effect.gen(function* () {
-      yield* legacyOrgsList({});
+      yield* orgsList({});
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.method).toBe("GET");
       expect(api.requests[0]?.url).toContain("/v1/organizations");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyOrgsListUnexpectedStatusError on HTTP 503", () => {
+  it.live("fails with OrgsListUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503, response: [] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyOrgsList({}));
+      const exit = yield* Effect.exit(orgsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyOrgsListUnexpectedStatusError");
+        expect(json).toContain("OrgsListUnexpectedStatusError");
         expect(json).toContain("unexpected list organizations status 503");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyOrgsListNetworkError on transport failure", () => {
+  it.live("fails with OrgsListNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyOrgsList({}));
+      const exit = yield* Effect.exit(orgsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyOrgsListNetworkError");
+        expect(json).toContain("OrgsListNetworkError");
         expect(json).toContain("failed to list organizations");
       }
     }).pipe(Effect.provide(layer));
@@ -219,11 +219,11 @@ describe("legacy orgs list integration", () => {
   it.live("propagates a transport failure when --output-format=json suppresses the spinner", () => {
     const { layer } = setup({ format: "json", network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyOrgsList({}));
+      const exit = yield* Effect.exit(orgsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyOrgsListNetworkError");
+        expect(json).toContain("OrgsListNetworkError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -231,7 +231,7 @@ describe("legacy orgs list integration", () => {
   it.live("flushes telemetry state on success", () => {
     const { layer, telemetry } = setupTracked();
     return Effect.gen(function* () {
-      yield* legacyOrgsList({});
+      yield* orgsList({});
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -239,7 +239,7 @@ describe("legacy orgs list integration", () => {
   it.live("flushes telemetry state on failure", () => {
     const { layer, telemetry } = setupTracked({ status: 503 });
     return Effect.gen(function* () {
-      yield* Effect.exit(legacyOrgsList({}));
+      yield* Effect.exit(orgsList({}));
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });

@@ -6,8 +6,8 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-export class LegacySslEnforcementGetNetworkError extends Data.TaggedError(
-  "LegacySslEnforcementGetNetworkError",
+export class SslEnforcementGetNetworkError extends Data.TaggedError(
+  "SslEnforcementGetNetworkError",
 )<{
   readonly message: string;
   readonly decode?: boolean;
@@ -19,8 +19,8 @@ export class LegacySslEnforcementGetNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacySslEnforcementGetUnexpectedStatusError extends Data.TaggedError(
-  "LegacySslEnforcementGetUnexpectedStatusError",
+export class SslEnforcementGetUnexpectedStatusError extends Data.TaggedError(
+  "SslEnforcementGetUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -31,8 +31,8 @@ export class LegacySslEnforcementGetUnexpectedStatusError extends Data.TaggedErr
   }
 }
 
-export class LegacySslEnforcementUpdateNetworkError extends Data.TaggedError(
-  "LegacySslEnforcementUpdateNetworkError",
+export class SslEnforcementUpdateNetworkError extends Data.TaggedError(
+  "SslEnforcementUpdateNetworkError",
 )<{
   readonly message: string;
   readonly decode?: boolean;
@@ -44,8 +44,8 @@ export class LegacySslEnforcementUpdateNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacySslEnforcementUpdateUnexpectedStatusError extends Data.TaggedError(
-  "LegacySslEnforcementUpdateUnexpectedStatusError",
+export class SslEnforcementUpdateUnexpectedStatusError extends Data.TaggedError(
+  "SslEnforcementUpdateUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -56,8 +56,8 @@ export class LegacySslEnforcementUpdateUnexpectedStatusError extends Data.Tagged
   }
 }
 
-export class LegacySslEnforcementNoEnableDisableFlagError extends Data.TaggedError(
-  "LegacySslEnforcementNoEnableDisableFlagError",
+export class SslEnforcementNoEnableDisableFlagError extends Data.TaggedError(
+  "SslEnforcementNoEnableDisableFlagError",
 )<{
   readonly message: string;
 }> {
@@ -72,8 +72,8 @@ export class LegacySslEnforcementNoEnableDisableFlagError extends Data.TaggedErr
 
 // Verbatim cobra string for `MarkFlagsMutuallyExclusive`. Effect CLI has no
 // built-in equivalent, so we enforce it at handler entry.
-export class LegacySslEnforcementMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "LegacySslEnforcementMutuallyExclusiveFlagsError",
+export class SslEnforcementMutuallyExclusiveFlagsError extends Data.TaggedError(
+  "SslEnforcementMutuallyExclusiveFlagsError",
 )<{
   readonly message: string;
 }> {

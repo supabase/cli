@@ -7,19 +7,19 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { mockAnalytics, mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  LEGACY_VALID_REF,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { LegacyProfileFlag } from "../../../shared/legacy/global-flags.ts";
-import { LegacyIdentityStitch } from "../../../command-internal/legacy-identity-stitch.ts";
+  buildTestRuntime,
+  VALID_REF,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { ProfileFlag } from "../../../command-internal/global-flags.ts";
+import { IdentityStitch } from "../../../command-internal/identity-stitch.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
-import { legacySsoUpdate } from "./update.handler.ts";
+import { ssoUpdate } from "./update.handler.ts";
 
 const VALID_PROVIDER_ID = "b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8";
 
@@ -35,7 +35,7 @@ const RESPONSE_PROVIDER = {
   domains: [{ domain: "new.com" }],
 };
 
-const tempRoot = useLegacyTempWorkdir("supabase-sso-update-int-");
+const tempRoot = useTempWorkdir("supabase-sso-update-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -60,7 +60,7 @@ interface SetupOpts {
    */
   cliArgs?: ReadonlyArray<string>;
   /**
-   * The Effect-parsed `--profile` value (`LegacyProfileFlag`), which the real
+   * The Effect-parsed `--profile` value (`ProfileFlag`), which the real
    * parser sets for any `--profile` it accepted. Tests whose `cliArgs` carry a
    * `--profile` the parser would have consumed must provide it, exactly as the
    * real CLI tree would.
@@ -91,8 +91,8 @@ function jsonResponse(
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const analytics = mockAnalytics();
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
 
   const gate = opts.upgradeGate;
   const getStatus = opts.getStatus ?? 200;
@@ -100,7 +100,7 @@ function setup(opts: SetupOpts = {}) {
   const putStatus = opts.putStatus ?? 200;
   const putBody = opts.putBody ?? RESPONSE_PROVIDER;
 
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     handler: (request) => {
       const url = request.url;
       if (url.includes("/config/auth/sso/providers/")) {
@@ -121,12 +121,12 @@ function setup(opts: SetupOpts = {}) {
         if (request.method === "PUT")
           return Effect.succeed(jsonResponse(request, putStatus, putBody));
       }
-      if (url.endsWith(`/v1/projects/${LEGACY_VALID_REF}`)) {
+      if (url.endsWith(`/v1/projects/${VALID_REF}`)) {
         if (gate === undefined) return Effect.succeed(jsonResponse(request, 404, {}));
         return Effect.succeed(
           jsonResponse(request, 200, {
-            id: LEGACY_VALID_REF,
-            ref: LEGACY_VALID_REF,
+            id: VALID_REF,
+            ref: VALID_REF,
             organization_id: "org-id",
             organization_slug: "acme",
             name: "Test",
@@ -164,7 +164,7 @@ function setup(opts: SetupOpts = {}) {
   // through the shared per-command guard exactly like the typed client's
   // response transform.
   let stitchedResponses = 0;
-  const stitchLayer = Layer.succeed(LegacyIdentityStitch, {
+  const stitchLayer = Layer.succeed(IdentityStitch, {
     stitch: () =>
       Effect.sync(() => {
         stitchedResponses += 1;
@@ -172,12 +172,12 @@ function setup(opts: SetupOpts = {}) {
     stitchedDistinctId: () => undefined,
   });
 
-  const cliSettings = mockLegacyCliSettings({
+  const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
     ...(opts.accessToken !== undefined ? { accessToken: opts.accessToken } : {}),
   });
   const layer = Layer.mergeAll(
-    buildLegacyTestRuntime({
+    buildTestRuntime({
       out,
       api: { layer: api.layer, httpClientLayer: api.httpClientLayer },
       cliSettings,
@@ -191,9 +191,7 @@ function setup(opts: SetupOpts = {}) {
       args: Effect.succeed(opts.cliArgs ?? ["sso", "update", VALID_PROVIDER_ID]),
     }),
     stitchLayer,
-    opts.profileFlag === undefined
-      ? Layer.empty
-      : Layer.succeed(LegacyProfileFlag, opts.profileFlag),
+    opts.profileFlag === undefined ? Layer.empty : Layer.succeed(ProfileFlag, opts.profileFlag),
   );
 
   return {
@@ -266,16 +264,14 @@ function cliArgsFor(flags: typeof defaultFlags): ReadonlyArray<string> {
   return argv;
 }
 
-describe("legacy sso update integration", () => {
+describe("sso update integration", () => {
   it.live("rejects bad UUID", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacySsoUpdate({ ...defaultFlags, providerId: "not-a-uuid" }),
-      );
+      const exit = yield* Effect.exit(ssoUpdate({ ...defaultFlags, providerId: "not-a-uuid" }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoInvalidUuidError");
+        expect(JSON.stringify(exit.cause)).toContain("SsoInvalidUuidError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -283,7 +279,7 @@ describe("legacy sso update integration", () => {
   it.live("always GETs before PUTting", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(defaultFlags);
+      yield* ssoUpdate(defaultFlags);
       const methods = api.requests.map((r) => r.method);
       expect(methods.indexOf("GET")).toBeLessThan(methods.indexOf("PUT"));
     }).pipe(Effect.provide(layer));
@@ -292,10 +288,10 @@ describe("legacy sso update integration", () => {
   it.live("GET 404 → NotFound error", () => {
     const { layer } = setup({ getStatus: 404, getBody: {} });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+      const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoUpdateNotFoundError");
+        expect(JSON.stringify(exit.cause)).toContain("SsoUpdateNotFoundError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -303,11 +299,11 @@ describe("legacy sso update integration", () => {
   it.live("GET 500 → unexpected-status error", () => {
     const { layer } = setup({ getStatus: 500, getBody: { error: "boom" } });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+      const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoUpdateUnexpectedStatusError");
+        expect(dump).toContain("SsoUpdateUnexpectedStatusError");
         expect(dump).toContain("unexpected error fetching identity provider");
       }
     }).pipe(Effect.provide(layer));
@@ -319,12 +315,12 @@ describe("legacy sso update integration", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoUpdate({ ...defaultFlags, domains: ["a.com"], addDomains: ["b.com"] }),
+        ssoUpdate({ ...defaultFlags, domains: ["a.com"], addDomains: ["b.com"] }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoMutexFlagError");
+        expect(dump).toContain("SsoMutexFlagError");
         // Byte-matches cobra's `validateExclusiveFlagGroups` template
         // (`flag_groups.go:204`): group in registration order, changed flags
         // sorted alphabetically — "add-domains" < "domains".
@@ -349,12 +345,12 @@ describe("legacy sso update integration", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoUpdate({ ...defaultFlags, domains: ["a.com"], removeDomains: ["b.com"] }),
+        ssoUpdate({ ...defaultFlags, domains: ["a.com"], removeDomains: ["b.com"] }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoMutexFlagError");
+        expect(dump).toContain("SsoMutexFlagError");
         expect(dump).toContain(
           "if any flags in the group [domains remove-domains] are set none of the others can be; [domains remove-domains] were all set",
         );
@@ -374,11 +370,11 @@ describe("legacy sso update integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoUpdate({ ...defaultFlags, domains: [], addDomains: ["b.com"] }),
+          ssoUpdate({ ...defaultFlags, domains: [], addDomains: ["b.com"] }),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacySsoMutexFlagError");
+          expect(JSON.stringify(exit.cause)).toContain("SsoMutexFlagError");
         }
       }).pipe(Effect.provide(layer));
     },
@@ -403,7 +399,7 @@ describe("legacy sso update integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoUpdate({ ...defaultFlags, addDomains: ["b.com"], removeDomains: ["c.com"] }),
+          ssoUpdate({ ...defaultFlags, addDomains: ["b.com"], removeDomains: ["c.com"] }),
         );
         expect(Exit.isSuccess(exit)).toBe(true);
       }).pipe(Effect.provide(layer));
@@ -430,7 +426,7 @@ describe("legacy sso update integration", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoUpdate({
+        ssoUpdate({
           ...defaultFlags,
           domains: ["a.com"],
           addDomains: ["b.com"],
@@ -452,13 +448,13 @@ describe("legacy sso update integration", () => {
     // Flag-group validation runs before the handler body, and the
     // provider-ID format check lives inside the handler. So an invalid UUID
     // combined with a mutex violation must surface the mutex error, not
-    // `LegacySsoInvalidUuidError`.
+    // `SsoInvalidUuidError`.
     const { layer } = setup({
       cliArgs: ["sso", "update", "not-a-uuid", "--domains", "a.com", "--add-domains", "b.com"],
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoUpdate({
+        ssoUpdate({
           ...defaultFlags,
           providerId: "not-a-uuid",
           domains: ["a.com"],
@@ -468,8 +464,8 @@ describe("legacy sso update integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoMutexFlagError");
-        expect(dump).not.toContain("LegacySsoInvalidUuidError");
+        expect(dump).toContain("SsoMutexFlagError");
+        expect(dump).not.toContain("SsoInvalidUuidError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -490,7 +486,7 @@ describe("legacy sso update integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoUpdate({
+          ssoUpdate({
             ...defaultFlags,
             metadataFile: Option.some("/tmp/x.xml"),
             metadataUrl: Option.some("https://idp.example.com/m"),
@@ -499,7 +495,7 @@ describe("legacy sso update integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoMutexFlagError");
+          expect(dump).toContain("SsoMutexFlagError");
           // Go registers this pair too (`cmd/sso.go:178`) — it was left emitting
           // a hand-written message alongside the domains groups' custom text
           // before this fix; now all three of `sso update`'s mutex groups on
@@ -529,11 +525,11 @@ describe("legacy sso update integration", () => {
         cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--metadata-file", "--metadata-url"],
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoUpdateMetadataFileError");
+          expect(dump).toContain("SsoUpdateMetadataFileError");
           expect(dump).toContain("failed to open metadata file");
         }
         expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
@@ -553,7 +549,7 @@ describe("legacy sso update integration", () => {
         cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--add-domains", "--domains=x.com"],
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
         expect(Exit.isSuccess(exit)).toBe(true);
         const putReq = api.requests.find((r) => r.method === "PUT");
         const domains = (putReq?.body as { domains: string[] })?.domains;
@@ -588,7 +584,7 @@ describe("legacy sso update integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoUpdate({
+          ssoUpdate({
             ...defaultFlags,
             metadataFile: Option.some("x.xml"),
             metadataUrl: Option.some("https://idp.example.com/m"),
@@ -597,7 +593,7 @@ describe("legacy sso update integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoUpdateArityError");
+          expect(dump).toContain("SsoUpdateArityError");
           expect(dump).toContain("accepts 1 arg(s), received 2");
         }
         expect(api.requests.length).toBe(0);
@@ -626,7 +622,7 @@ describe("legacy sso update integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoUpdate({
+          ssoUpdate({
             ...defaultFlags,
             metadataUrl: Option.some("https://idp.example.com/m"),
           }),
@@ -634,7 +630,7 @@ describe("legacy sso update integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoUpdateArityError");
+          expect(dump).toContain("SsoUpdateArityError");
           expect(dump).toContain("accepts 1 arg(s), received 2");
         }
         expect(api.requests.length).toBe(0);
@@ -653,11 +649,11 @@ describe("legacy sso update integration", () => {
         cliArgs: ["sso", "update", "--domains", "--profile", "staging", VALID_PROVIDER_ID],
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoUpdateArityError");
+          expect(dump).toContain("SsoUpdateArityError");
           expect(dump).toContain("accepts 1 arg(s), received 2");
         }
         expect(api.requests.length).toBe(0);
@@ -687,7 +683,7 @@ describe("legacy sso update integration", () => {
       return Effect.gen(function* () {
         for (const cliArgs of argvVariants) {
           const { layer, api } = setup({ cliArgs });
-          yield* legacySsoUpdate(defaultFlags).pipe(Effect.provide(layer));
+          yield* ssoUpdate(defaultFlags).pipe(Effect.provide(layer));
           expect(api.requests.some((r) => r.method === "PUT")).toBe(true);
         }
       });
@@ -716,7 +712,7 @@ describe("legacy sso update integration", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoUpdate({
+        ssoUpdate({
           ...defaultFlags,
           domains: ["a.com"],
           addDomains: ["b.com"],
@@ -726,8 +722,8 @@ describe("legacy sso update integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoUpdateArityError");
-        expect(dump).not.toContain("LegacySsoMutexFlagError");
+        expect(dump).toContain("SsoUpdateArityError");
+        expect(dump).not.toContain("SsoMutexFlagError");
       }
       expect(api.requests.length).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -748,19 +744,19 @@ describe("legacy sso update integration", () => {
           "update",
           VALID_PROVIDER_ID,
           "--project-ref",
-          LEGACY_VALID_REF,
+          VALID_REF,
           "--workdir",
           "--metadata-file",
         ],
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoUpdate({ ...defaultFlags, projectRef: Option.some(LEGACY_VALID_REF) }),
+          ssoUpdate({ ...defaultFlags, projectRef: Option.some(VALID_REF) }),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacyPflagWorkdirError");
+          expect(dump).toContain("PflagWorkdirError");
           expect(dump).toContain(
             "failed to change workdir: chdir --metadata-file: no such file or directory",
           );
@@ -792,16 +788,16 @@ describe("legacy sso update integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoUpdate({ ...defaultFlags, domains: ["a.com"], addDomains: ["b.com"] }),
+          ssoUpdate({ ...defaultFlags, domains: ["a.com"], addDomains: ["b.com"] }),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacyPflagWorkdirError");
+          expect(dump).toContain("PflagWorkdirError");
           expect(dump).toContain(
             "failed to change workdir: chdir /nonexistent-sso-update-workdir: no such file or directory",
           );
-          expect(dump).not.toContain("LegacySsoMutexFlagError");
+          expect(dump).not.toContain("SsoMutexFlagError");
         }
         expect(api.requests.length).toBe(0);
       }).pipe(Effect.provide(layer));
@@ -813,13 +809,13 @@ describe("legacy sso update integration", () => {
       cliArgs: ["sso", "update", "a", "b", "--workdir", "/nonexistent-sso-update-workdir"],
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoUpdate({ ...defaultFlags, providerId: "a" }));
+      const exit = yield* Effect.exit(ssoUpdate({ ...defaultFlags, providerId: "a" }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoUpdateArityError");
+        expect(dump).toContain("SsoUpdateArityError");
         expect(dump).toContain("accepts 1 arg(s), received 2");
-        expect(dump).not.toContain("LegacyPflagWorkdirError");
+        expect(dump).not.toContain("PflagWorkdirError");
       }
       expect(api.requests.length).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -833,7 +829,7 @@ describe("legacy sso update integration", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoUpdate({
+        ssoUpdate({
           ...defaultFlags,
           providerId: "not-a-uuid",
           metadataUrl: Option.some("u"),
@@ -842,8 +838,8 @@ describe("legacy sso update integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoUpdateArityError");
-        expect(dump).not.toContain("LegacySsoInvalidUuidError");
+        expect(dump).toContain("SsoUpdateArityError");
+        expect(dump).not.toContain("SsoInvalidUuidError");
       }
       expect(api.requests.length).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -861,7 +857,7 @@ describe("legacy sso update integration", () => {
         cliArgs: ["sso", "update", "--domains", "--yes", VALID_PROVIDER_ID],
       });
       return Effect.gen(function* () {
-        yield* legacySsoUpdate(defaultFlags);
+        yield* ssoUpdate(defaultFlags);
         const putReq = api.requests.find((r) => r.method === "PUT");
         expect((putReq?.body as { domains?: string[] })?.domains).toEqual(["--yes"]);
       }).pipe(Effect.provide(layer));
@@ -881,11 +877,11 @@ describe("legacy sso update integration", () => {
         cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--domains"],
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoFlagNeedsArgumentError");
+          expect(dump).toContain("SsoFlagNeedsArgumentError");
           expect(dump).toContain("flag needs an argument: --domains");
         }
         expect(api.requests.length).toBe(0);
@@ -912,7 +908,7 @@ describe("legacy sso update integration", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoUpdate({
+        ssoUpdate({
           ...defaultFlags,
           metadataUrl: Option.some("https://idp.example.com/m"),
         }),
@@ -920,9 +916,9 @@ describe("legacy sso update integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoFlagNeedsArgumentError");
+        expect(dump).toContain("SsoFlagNeedsArgumentError");
         expect(dump).toContain("flag needs an argument: --add-domains");
-        expect(dump).not.toContain("LegacySsoUpdateArityError");
+        expect(dump).not.toContain("SsoUpdateArityError");
       }
       expect(api.requests.length).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -951,7 +947,7 @@ describe("legacy sso update integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoUpdate({
+          ssoUpdate({
             ...defaultFlags,
             metadataUrl: Option.some("https://idp.example.com/m"),
           }),
@@ -959,7 +955,7 @@ describe("legacy sso update integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoUpdateArityError");
+          expect(dump).toContain("SsoUpdateArityError");
           expect(dump).toContain("accepts 1 arg(s), received 2");
         }
         expect(api.requests.length).toBe(0);
@@ -975,7 +971,7 @@ describe("legacy sso update integration", () => {
       cliArgs: ["sso", "--profile", "supabase", "update", VALID_PROVIDER_ID],
     });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(defaultFlags);
+      yield* ssoUpdate(defaultFlags);
       expect(api.requests.some((r) => r.method === "PUT")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -1000,7 +996,7 @@ describe("legacy sso update integration", () => {
         ],
       });
       return Effect.gen(function* () {
-        yield* legacySsoUpdate({
+        yield* ssoUpdate({
           ...defaultFlags,
           skipUrlValidation: false, // Effect's first-wins parse
           metadataUrl: Option.some("http://insecure.example.com/md"),
@@ -1033,7 +1029,7 @@ describe("legacy sso update integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoUpdate({
+          ssoUpdate({
             ...defaultFlags,
             skipUrlValidation: true, // Effect's first-wins parse
             metadataUrl: Option.some("http://insecure.example.com/md"),
@@ -1042,7 +1038,7 @@ describe("legacy sso update integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoUpdateMetadataFileError");
+          expect(dump).toContain("SsoUpdateMetadataFileError");
           expect(dump).toContain("only HTTPS Metadata URLs are supported");
         }
         // Go GETs first (`update.go:42`), then fails validation before the PUT.
@@ -1076,7 +1072,7 @@ describe("legacy sso update integration", () => {
         ],
       });
       return Effect.gen(function* () {
-        yield* legacySsoUpdate({
+        yield* ssoUpdate({
           ...defaultFlags,
           skipUrlValidation: true,
           nameIdFormat: Option.some(transient), // Effect's first-wins parse
@@ -1108,7 +1104,7 @@ describe("legacy sso update integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoUpdate({
+          ssoUpdate({
             ...defaultFlags,
             skipUrlValidation: true, // the Effect parser reads yes as true
             metadataUrl: Option.some("https://idp.example.com/m"),
@@ -1117,7 +1113,7 @@ describe("legacy sso update integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoInvalidFlagValueError");
+          expect(dump).toContain("SsoInvalidFlagValueError");
           expect(dump).toContain(
             'invalid argument \\"yes\\" for \\"--skip-url-validation\\" flag: strconv.ParseBool: parsing \\"yes\\": invalid syntax',
           );
@@ -1149,7 +1145,7 @@ describe("legacy sso update integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoUpdate({
+          ssoUpdate({
             ...defaultFlags,
             skipUrlValidation: false, // Effect's first-wins parse
             metadataUrl: Option.some("https://idp.example.com/m"),
@@ -1158,7 +1154,7 @@ describe("legacy sso update integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoInvalidFlagValueError");
+          expect(dump).toContain("SsoInvalidFlagValueError");
           expect(dump).toContain(
             'invalid argument \\"\\" for \\"--skip-url-validation\\" flag: strconv.ParseBool: parsing \\"\\": invalid syntax',
           );
@@ -1187,7 +1183,7 @@ describe("legacy sso update integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoUpdate({
+          ssoUpdate({
             ...defaultFlags,
             nameIdFormat: Option.some(persistent), // Effect's first-wins parse
           }),
@@ -1195,7 +1191,7 @@ describe("legacy sso update integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoInvalidFlagValueError");
+          expect(dump).toContain("SsoInvalidFlagValueError");
           expect(dump).toContain(
             'invalid argument \\"bogus\\" for \\"--name-id-format\\" flag: must be one of [ urn:oasis',
           );
@@ -1216,14 +1212,12 @@ describe("legacy sso update integration", () => {
         cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--skip-url-validation=yes", "--domains"],
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
-          legacySsoUpdate({ ...defaultFlags, skipUrlValidation: true }),
-        );
+        const exit = yield* Effect.exit(ssoUpdate({ ...defaultFlags, skipUrlValidation: true }));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoInvalidFlagValueError");
-          expect(dump).not.toContain("LegacySsoFlagNeedsArgumentError");
+          expect(dump).toContain("SsoInvalidFlagValueError");
+          expect(dump).not.toContain("SsoFlagNeedsArgumentError");
         }
         expect(api.requests.length).toBe(0);
       }).pipe(Effect.provide(layer));
@@ -1234,7 +1228,7 @@ describe("legacy sso update integration", () => {
     const flags = { ...defaultFlags, domains: ["new.com"] };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(flags);
+      yield* ssoUpdate(flags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       expect((putReq?.body as { domains?: string[] })?.domains).toEqual(["new.com"]);
     }).pipe(Effect.provide(layer));
@@ -1244,7 +1238,7 @@ describe("legacy sso update integration", () => {
     const flags = { ...defaultFlags, addDomains: ["new.com"] };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(flags);
+      yield* ssoUpdate(flags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       const domains = (putReq?.body as { domains: string[] })?.domains;
       // Go map iteration is unordered — sort before asserting.
@@ -1256,7 +1250,7 @@ describe("legacy sso update integration", () => {
     const flags = { ...defaultFlags, removeDomains: ["old1.com"] };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(flags);
+      yield* ssoUpdate(flags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       const domains = (putReq?.body as { domains: string[] })?.domains;
       expect([...domains].sort()).toEqual(["old2.com"]);
@@ -1270,7 +1264,7 @@ describe("legacy sso update integration", () => {
     // `{"domains":["old1.com","old2.com"]}`.
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(defaultFlags);
+      yield* ssoUpdate(defaultFlags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       const domains = (putReq?.body as { domains: string[] })?.domains;
       // Go map iteration is unordered — sort before asserting.
@@ -1285,7 +1279,7 @@ describe("legacy sso update integration", () => {
       // body is exactly `{"domains":[]}`.
       const { layer, api } = setup({ getBody: { ...EXISTING_PROVIDER, domains: [] } });
       return Effect.gen(function* () {
-        yield* legacySsoUpdate(defaultFlags);
+        yield* ssoUpdate(defaultFlags);
         const putReq = api.requests.find((r) => r.method === "PUT");
         const body = putReq?.body as Record<string, unknown>;
         expect(Object.keys(body)).toContain("domains");
@@ -1301,7 +1295,7 @@ describe("legacy sso update integration", () => {
     const { domains: _omitted, ...providerWithoutDomains } = EXISTING_PROVIDER;
     const { layer, api } = setup({ getBody: providerWithoutDomains });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(defaultFlags);
+      yield* ssoUpdate(defaultFlags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       const body = putReq?.body as Record<string, unknown>;
       expect(Object.keys(body)).toContain("domains");
@@ -1318,7 +1312,7 @@ describe("legacy sso update integration", () => {
       cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--domains="],
     });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate({ ...defaultFlags, domains: [] });
+      yield* ssoUpdate({ ...defaultFlags, domains: [] });
       const putReq = api.requests.find((r) => r.method === "PUT");
       const domains = (putReq?.body as { domains: string[] })?.domains;
       expect([...domains].sort()).toEqual(["old1.com", "old2.com"]);
@@ -1336,7 +1330,7 @@ describe("legacy sso update integration", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(defaultFlags);
+      yield* ssoUpdate(defaultFlags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       const domains = (putReq?.body as { domains: string[] })?.domains;
       expect([...domains].sort()).toEqual(["", "old1.com"]);
@@ -1349,7 +1343,7 @@ describe("legacy sso update integration", () => {
     const flags = { ...defaultFlags, metadataFile: Option.some(path) };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(flags);
+      yield* ssoUpdate(flags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       expect((putReq?.body as { metadata_xml?: string })?.metadata_xml).toContain("<md/>");
     }).pipe(Effect.provide(layer));
@@ -1361,7 +1355,7 @@ describe("legacy sso update integration", () => {
     const flags = { ...defaultFlags, attributeMappingFile: Option.some(path) };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(flags);
+      yield* ssoUpdate(flags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       const mapping = (putReq?.body as { attribute_mapping?: { keys: { a: { default: number } } } })
         ?.attribute_mapping;
@@ -1372,23 +1366,23 @@ describe("legacy sso update integration", () => {
   it.live("PUT 200 → renders single-provider markdown in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(defaultFlags);
+      yield* ssoUpdate(defaultFlags);
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("PUT 4xx + gated entitlement → unexpected error + cli_upgrade_suggested", () => {
-    // legacySuggestUpgrade fires only on 4xx.
+    // suggestUpgrade fires only on 4xx.
     const { layer, analytics } = setup({
       putStatus: 403,
       putBody: { error: "forbidden" },
       upgradeGate: "gated",
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+      const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoUpdateUnexpectedStatusError");
+        expect(JSON.stringify(exit.cause)).toContain("SsoUpdateUnexpectedStatusError");
       }
       expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -1397,7 +1391,7 @@ describe("legacy sso update integration", () => {
   it.live("Go --output=env emits nothing", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(defaultFlags);
+      yield* ssoUpdate(defaultFlags);
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -1405,7 +1399,7 @@ describe("legacy sso update integration", () => {
   it.live("Go --output=json encodes response verbatim", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(defaultFlags);
+      yield* ssoUpdate(defaultFlags);
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
     }).pipe(Effect.provide(layer));
   });
@@ -1413,7 +1407,7 @@ describe("legacy sso update integration", () => {
   it.live("TS --output-format=json emits success", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(defaultFlags);
+      yield* ssoUpdate(defaultFlags);
       expect(out.messages.some((m) => m.type === "success")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -1421,7 +1415,7 @@ describe("legacy sso update integration", () => {
   it.live("flushes telemetry even on GET failure", () => {
     const { layer, telemetry } = setup({ getStatus: 500, getBody: {} });
     return Effect.gen(function* () {
-      yield* Effect.exit(legacySsoUpdate(defaultFlags));
+      yield* Effect.exit(ssoUpdate(defaultFlags));
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -1429,7 +1423,7 @@ describe("legacy sso update integration", () => {
   it.live("Go --output=yaml encodes response verbatim", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(defaultFlags);
+      yield* ssoUpdate(defaultFlags);
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
     }).pipe(Effect.provide(layer));
   });
@@ -1437,7 +1431,7 @@ describe("legacy sso update integration", () => {
   it.live("Go --output=toml encodes response verbatim", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(defaultFlags);
+      yield* ssoUpdate(defaultFlags);
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
     }).pipe(Effect.provide(layer));
   });
@@ -1449,7 +1443,7 @@ describe("legacy sso update integration", () => {
     };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(flags);
+      yield* ssoUpdate(flags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       expect((putReq?.body as { name_id_format?: string })?.name_id_format).toBe(
         "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
@@ -1465,18 +1459,18 @@ describe("legacy sso update integration", () => {
     };
     const { layer } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoUpdate(flags));
+      const exit = yield* Effect.exit(ssoUpdate(flags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoUpdateMetadataFileError");
+        expect(dump).toContain("SsoUpdateMetadataFileError");
         // Error tail is `… Use --skip-url-validation to suppress this error.`
         // (trailing period).
         expect(dump).toContain("Use --skip-url-validation to suppress this error.");
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
           error_category: "invalid_input",
           suggestion_type: "provide_flags",
-          error_fingerprint: "tag:LegacySsoUpdateMetadataFileError:invalid_url",
+          error_fingerprint: "tag:SsoUpdateMetadataFileError:invalid_url",
         });
       }
     }).pipe(Effect.provide(layer));
@@ -1488,10 +1482,10 @@ describe("legacy sso update integration", () => {
     const flags = { ...defaultFlags, attributeMappingFile: Option.some(path) };
     const { layer } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoUpdate(flags));
+      const exit = yield* Effect.exit(ssoUpdate(flags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoUpdateAttributeMappingFileError");
+        expect(JSON.stringify(exit.cause)).toContain("SsoUpdateAttributeMappingFileError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1500,7 +1494,7 @@ describe("legacy sso update integration", () => {
     const flags = { ...defaultFlags, addDomains: ["new.com"], removeDomains: ["old1.com"] };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate(flags);
+      yield* ssoUpdate(flags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       const domains = (putReq?.body as { domains: string[] })?.domains;
       // Go uses map iteration → unordered; sort before asserting.
@@ -1569,8 +1563,8 @@ describe("legacy sso update integration", () => {
       });
       const { layer, api, cache } = testSetup;
       return Effect.gen(function* () {
-        yield* legacySsoUpdate(defaultFlags);
-        const providerUrl = `http://second.example/v1/projects/${LEGACY_VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`;
+        yield* ssoUpdate(defaultFlags);
+        const providerUrl = `http://second.example/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`;
         const get = api.requests.find((r) => r.method === "GET");
         const put = api.requests.find((r) => r.method === "PUT");
         expect(get?.url).toBe(providerUrl);
@@ -1602,11 +1596,11 @@ describe("legacy sso update integration", () => {
         profileFlag: first,
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoUpdateNotFoundError");
+          expect(dump).toContain("SsoUpdateNotFoundError");
           expect(dump).toContain(
             `An identity provider with ID \\"${VALID_PROVIDER_ID}\\" could not be found.`,
           );
@@ -1629,11 +1623,11 @@ describe("legacy sso update integration", () => {
         profileFlag: first,
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoUpdateUnexpectedStatusError");
+          expect(dump).toContain("SsoUpdateUnexpectedStatusError");
           expect(dump).toContain("unexpected error fetching identity provider:");
         }
         expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
@@ -1669,10 +1663,10 @@ describe("legacy sso update integration", () => {
         profileFlag: first,
       });
       return Effect.gen(function* () {
-        yield* legacySsoUpdate({ ...defaultFlags, addDomains: ["new.com"] });
+        yield* ssoUpdate({ ...defaultFlags, addDomains: ["new.com"] });
         const put = api.requests.find((r) => r.method === "PUT");
         expect(put?.url).toBe(
-          `http://second.example/v1/projects/${LEGACY_VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
+          `http://second.example/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
         );
         const domains = (put?.body as { domains?: string[] })?.domains ?? [];
         expect([...domains].sort()).toEqual(["new.com", "old1.com"]);
@@ -1718,13 +1712,11 @@ describe("legacy sso update integration", () => {
       profileFlag: first,
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacySsoUpdate({ ...defaultFlags, addDomains: ["new.com"] }),
-      );
+      const exit = yield* Effect.exit(ssoUpdate({ ...defaultFlags, addDomains: ["new.com"] }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoAccessTokenError");
+        expect(dump).toContain("SsoAccessTokenError");
         expect(dump).toContain("Access token not provided. Supply an access token by running");
       }
       expect(api.requests).toHaveLength(0);
@@ -1757,7 +1749,7 @@ describe("legacy sso update integration", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoUpdate({ ...defaultFlags, domains: ["a.com"], addDomains: ["new.com"] }),
+        ssoUpdate({ ...defaultFlags, domains: ["a.com"], addDomains: ["new.com"] }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -1789,7 +1781,7 @@ describe("legacy sso update integration", () => {
       profileFlag: first,
     });
     return Effect.gen(function* () {
-      yield* legacySsoUpdate({ ...defaultFlags, addDomains: ["new.com"] });
+      yield* ssoUpdate({ ...defaultFlags, addDomains: ["new.com"] });
       const put = api.requests.find((r) => r.method === "PUT");
       expect((put?.body as { domains?: string[] })?.domains).toEqual(["new.com"]);
     }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
@@ -1806,11 +1798,11 @@ describe("legacy sso update integration", () => {
         cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", "--add-domains"],
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacyProfileLoadError");
+          expect(dump).toContain("ProfileLoadError");
           expect(dump).toContain(`failed to read profile: Unsupported Config Type \\"\\"`);
         }
         expect(api.requests.length).toBe(0);
@@ -1832,16 +1824,16 @@ describe("legacy sso update integration", () => {
         profileFlag: first,
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoUpdateNetworkError");
+          expect(dump).toContain("SsoUpdateNetworkError");
           expect(dump).toContain("failed to get sso provider:");
           const classified = classifyCliCauseActionability(exit.cause);
           expect(classified.error_kind).toBe("external_service");
           expect(classified.error_category).toBe("api_status");
-          expect(classified.error_fingerprint).toBe("tag:LegacySsoUpdateNetworkError:api_response");
+          expect(classified.error_fingerprint).toBe("tag:SsoUpdateNetworkError:api_response");
         }
         expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
@@ -1862,11 +1854,11 @@ describe("legacy sso update integration", () => {
         profileFlag: first,
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoUpdateUnexpectedStatusError");
+          expect(dump).toContain("SsoUpdateUnexpectedStatusError");
           expect(dump).toContain("unexpected error fetching identity provider: plain text body");
         }
         expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
@@ -1891,7 +1883,7 @@ describe("legacy sso update integration", () => {
         profileFlag: first,
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const classified = classifyCliCauseActionability(exit.cause);
@@ -1899,11 +1891,9 @@ describe("legacy sso update integration", () => {
           expect(classified.error_category).toBe("plan_limit");
           expect(classified.suggestion_type).toBe("upgrade_plan");
         }
-        const project = api.requests.find((r) =>
-          r.url.endsWith(`/v1/projects/${LEGACY_VALID_REF}`),
-        );
+        const project = api.requests.find((r) => r.url.endsWith(`/v1/projects/${VALID_REF}`));
         const entitlements = api.requests.find((r) => r.url.includes("/entitlements"));
-        expect(project?.url).toBe(`http://second.example/v1/projects/${LEGACY_VALID_REF}`);
+        expect(project?.url).toBe(`http://second.example/v1/projects/${VALID_REF}`);
         expect(entitlements?.url).toBe("http://second.example/v1/organizations/acme/entitlements");
         expect(api.requests.some((r) => r.url.startsWith("http://first.example/"))).toBe(false);
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
@@ -1920,12 +1910,12 @@ describe("legacy sso update integration", () => {
       cliArgs: ["sso", "update", "a", "b", "--profile", "--metadata-url", "u"],
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoUpdate({ ...defaultFlags, providerId: "a" }));
+      const exit = yield* Effect.exit(ssoUpdate({ ...defaultFlags, providerId: "a" }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoUpdateArityError");
-        expect(dump).not.toContain("LegacyProfileLoadError");
+        expect(dump).toContain("SsoUpdateArityError");
+        expect(dump).not.toContain("ProfileLoadError");
       }
       expect(api.requests.length).toBe(0);
     }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));

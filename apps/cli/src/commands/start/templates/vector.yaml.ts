@@ -6,7 +6,7 @@
  * GotrueId, RestId, RealtimeId, StorageId, EdgeRuntimeId, DbId. Rendered by
  * `lib/template-render.ts`.
  */
-export const LEGACY_START_VECTOR_YAML_TEMPLATE = `api:
+export const START_VECTOR_YAML_TEMPLATE = `api:
   enabled: true
   address: 0.0.0.0:9001
 

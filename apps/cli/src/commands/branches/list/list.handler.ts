@@ -1,54 +1,46 @@
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../../command-internal/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
+import { GO_BRANCHES_LIST, GO_BRANCHES_TOML_WRAPPER } from "../branches.go-payload.ts";
 import {
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
-import { legacyResolveParentScopedProjectRef } from "../../../command-internal/legacy-parent-project-ref.ts";
-import {
-  LEGACY_GO_BRANCHES_LIST,
-  LEGACY_GO_BRANCHES_TOML_WRAPPER,
-} from "../branches.go-payload.ts";
-import {
-  LegacyBranchesEnvNotSupportedError,
-  LegacyBranchesListNetworkError,
-  LegacyBranchesListUnexpectedStatusError,
+  BranchesEnvNotSupportedError,
+  BranchesListNetworkError,
+  BranchesListUnexpectedStatusError,
 } from "../branches.errors.ts";
 import { renderBranchesListTable } from "../branches.format.ts";
-import type { LegacyBranchesListFlags } from "./list.command.ts";
+import type { BranchesListFlags } from "./list.command.ts";
 
 type Branches = typeof V1ListAllBranchesOutput.Type;
 
-const mapListError = mapLegacyHttpError({
-  networkError: LegacyBranchesListNetworkError,
-  statusError: LegacyBranchesListUnexpectedStatusError,
+const mapListError = mapHttpError({
+  networkError: BranchesListNetworkError,
+  statusError: BranchesListUnexpectedStatusError,
   networkMessage: (cause) => `failed to list branch: ${cause}`,
   statusMessage: (status, body) => `unexpected list branch status ${status}: ${body}`,
 });
 
-export const legacyBranchesList = Effect.fn("legacy.branches.list")(function* (
-  flags: LegacyBranchesListFlags,
-) {
+export const branchesList = Effect.fn("branches.list")(function* (flags: BranchesListFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   // `branches` is PARENT-scoped: after `supabase link <branch>`,
   // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
   // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
-  const ref = yield* legacyResolveParentScopedProjectRef(flags.projectRef);
+  const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
 
   yield* Effect.gen(function* () {
     const fetching =
@@ -62,7 +54,7 @@ export const legacyBranchesList = Effect.fn("legacy.branches.list")(function* (
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
     if (goFmt === "env") {
-      return yield* new LegacyBranchesEnvNotSupportedError({
+      return yield* new BranchesEnvNotSupportedError({
         message: "--output env flag is not supported",
       });
     }
@@ -71,16 +63,16 @@ export const legacyBranchesList = Effect.fn("legacy.branches.list")(function* (
       return;
     }
     if (goFmt === "yaml") {
-      yield* output.raw(encodeLegacyGoYaml(branches, LEGACY_GO_BRANCHES_LIST));
+      yield* output.raw(encodeGoYaml(branches, GO_BRANCHES_LIST));
       return;
     }
     if (goFmt === "toml") {
       // Go builds the list with `append` (`list.go:70-80`), so an empty list
       // stays a nil slice and BurntSushi emits nothing for the wrapper.
       yield* output.raw(
-        encodeLegacyGoToml(
+        encodeGoToml(
           { branches: branches.length > 0 ? branches : undefined },
-          LEGACY_GO_BRANCHES_TOML_WRAPPER,
+          GO_BRANCHES_TOML_WRAPPER,
         ),
       );
       return;

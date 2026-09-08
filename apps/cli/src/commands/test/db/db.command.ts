@@ -1,24 +1,24 @@
 import { Command } from "effect/unstable/cli";
 
 import {
-  LEGACY_TEST_DB_DESCRIPTION,
-  LEGACY_TEST_DB_SHORT,
-  legacyRunTestDbCommand,
-  legacyTestDbConfig,
-} from "../../../command-internal/legacy-test-db.command-handler.ts";
-import { legacyTestDbRuntimeLayer } from "../../../command-internal/legacy-test-db.layers.ts";
+  TEST_DB_DESCRIPTION,
+  TEST_DB_SHORT,
+  runTestDbCommand,
+  testDbConfig,
+} from "../../../command-internal/test-db.command-handler.ts";
+import { testDbRuntimeLayer } from "../../../command-internal/test-db.layers.ts";
 
 /**
  * `test db` — the visible entry point. Its hidden alias `db test`
- * (`../../db/test/test.command.ts`) reuses `legacyTestDbConfig` and
- * `legacyRunTestDbCommand` verbatim — the same implementation function
+ * (`../../db/test/test.command.ts`) reuses `testDbConfig` and
+ * `runTestDbCommand` verbatim — the same implementation function
  * reused across two `Command` registrations. The implementation itself
  * lives in `command-internal/legacy-test-db.*` — see that module's doc
  * comment for why.
  */
-export const legacyTestDbCommand = Command.make("db", legacyTestDbConfig).pipe(
-  Command.withDescription(LEGACY_TEST_DB_DESCRIPTION),
-  Command.withShortDescription(LEGACY_TEST_DB_SHORT),
-  Command.withHandler(legacyRunTestDbCommand),
-  Command.provide(legacyTestDbRuntimeLayer(["test", "db"])),
+export const testDbCommand = Command.make("db", testDbConfig).pipe(
+  Command.withDescription(TEST_DB_DESCRIPTION),
+  Command.withShortDescription(TEST_DB_SHORT),
+  Command.withHandler(runTestDbCommand),
+  Command.provide(testDbRuntimeLayer(["test", "db"])),
 );

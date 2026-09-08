@@ -1,12 +1,12 @@
 import { Layer } from "effect";
 
-import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
-import { legacyDbConfigLayer } from "../../../command-internal/legacy-db-config.layer.ts";
-import { legacyDbConnectionLayer } from "../../../command-internal/legacy-db-connection.layer.ts";
-import { legacyDebugLoggerLayer } from "../../../command-internal/legacy-debug-logger.layer.ts";
-import { legacyIdentityStitchLayer } from "../../../command-internal/legacy-identity-stitch.ts";
-import { legacyLinkedDbResolverRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { legacyTelemetryOutputFormatLayer } from "../../../telemetry/legacy-telemetry-output-format.layer.ts";
+import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
+import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
+import { dbConnectionLayer } from "../../../command-internal/db-connection.layer.ts";
+import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
+import { identityStitchLayer } from "../../../command-internal/identity-stitch.ts";
+import { linkedDbResolverRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { telemetryOutputFormatLayer } from "../../../telemetry/telemetry-output-format.layer.ts";
 import { aiToolLayer } from "../../../shared/telemetry/ai-tool.layer.ts";
 import { randomLayer } from "../../../shared/runtime/random.layer.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
@@ -14,40 +14,38 @@ import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 /**
  * Runtime layer for `supabase db query`.
  *
- * The `--local` / `--db-url` paths go through `LegacyDbConfigResolver` +
- * `LegacyDbConnection` (auth-free). The `--linked` path POSTs to the Management
- * API over raw HTTP, so it needs `LegacyCredentials` / `HttpClient` /
- * `LegacyProjectRefResolver` / `LegacyCliSettings` (plus `LegacyTelemetryState` /
- * `CommandRuntime` / `LegacyLinkedProjectCache`) — supplied by
- * `legacyLinkedDbResolverRuntimeLayer`. That runtime exposes the access token
- * **lazily** via `LegacyPlatformApiFactory` rather than the eager `LegacyPlatformApi`
+ * The `--local` / `--db-url` paths go through `DbConfigResolver` +
+ * `DbConnection` (auth-free). The `--linked` path POSTs to the Management
+ * API over raw HTTP, so it needs `CommandCredentials` / `HttpClient` /
+ * `ProjectRefResolver` / `CommandSettings` (plus `TelemetryState` /
+ * `CommandRuntime` / `LinkedProjectCache`) — supplied by
+ * `linkedDbResolverRuntimeLayer`. That runtime exposes the access token
+ * **lazily** via `CommandPlatformApiFactory` rather than the eager `CommandPlatformApi`
  * stack, so building the runtime resolves no token: `db query --local` /
  * `--db-url` run without a login (the handler's `--linked` branch checks
  * `getAccessToken` itself), matching the token requirement only kicking in
  * on the `--linked` path.
  */
-const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 
-const dbConfig = legacyDbConfigLayer.pipe(
+const dbConfig = dbConfigLayer.pipe(
   Layer.provide(cliSettings),
-  Layer.provide(legacyDbConnectionLayer),
-  Layer.provide(legacyDebugLoggerLayer),
+  Layer.provide(dbConnectionLayer),
+  Layer.provide(debugLoggerLayer),
   // The linked db-config resolver + the linked-resolver runtime both snapshot
-  // the single `LegacyIdentityStitch`; provide the SAME layer reference to
+  // the single `IdentityStitch`; provide the SAME layer reference to
   // each so Effect memoises one shared instance. Without it the bundled
-  // binary panics with a missing-service error (legacy CLAUDE.md rule 5).
-  Layer.provide(legacyIdentityStitchLayer),
+  // binary panics with a missing-service error (CLAUDE.md invariant 5).
+  Layer.provide(identityStitchLayer),
 );
 
-export const legacyDbQueryRuntimeLayer = Layer.mergeAll(
+export const dbQueryRuntimeLayer = Layer.mergeAll(
   dbConfig,
-  legacyDbConnectionLayer,
+  dbConnectionLayer,
   randomLayer,
   aiToolLayer,
   stdinLayer,
-  legacyTelemetryOutputFormatLayer,
-  legacyIdentityStitchLayer,
-  legacyLinkedDbResolverRuntimeLayer(["db", "query"]).pipe(
-    Layer.provide(legacyIdentityStitchLayer),
-  ),
+  telemetryOutputFormatLayer,
+  identityStitchLayer,
+  linkedDbResolverRuntimeLayer(["db", "query"]).pipe(Layer.provide(identityStitchLayer)),
 );

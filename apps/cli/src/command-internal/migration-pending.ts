@@ -1,0 +1,114 @@
+import { bold } from "./colors.ts";
+import { sortMigrationPathsByVersion } from "./migration-history.ts";
+
+/**
+ * Local migration filenames are `<digits>_<name>.sql`.
+ * `ListLocalMigrations` guarantees every path in `localMigrations` matches, so the
+ * version capture group is always present.
+ */
+const MIGRATE_FILE_PATTERN = /^([0-9]+)_(.*)\.sql$/u;
+
+/** Last path segment, mirroring `filepath.Base`. */
+const baseName = (path: string): string => {
+  const normalized = path.replace(/[/\\]+$/u, "");
+  const slash = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+  return slash === -1 ? normalized : normalized.slice(slash + 1);
+};
+
+/**
+ * The exact error strings so the
+ * handler can match them on stderr.
+ */
+export const ERR_MISSING_REMOTE =
+  "Found local migration files to be inserted before the last migration on remote database.";
+export const ERR_MISSING_LOCAL =
+  "Remote migration versions not found in local migrations directory.";
+
+/**
+ * The outcome of comparing local migration files against the remote
+ * `schema_migrations` history. Pure 1:1 port of `FindPendingMigrations`.
+ *
+ * - `ok` — `pending` are the local migration paths to apply (those
+ * beyond the remote history, in order).
+ * - `missing-local` — remote has versions with no local file (`ErrMissingLocal`).
+ * `versions` are the offending remote versions.
+ * - `missing-remote`— local has files ordered before the remote head
+ * (`ErrMissingRemote`). `paths` are the out-of-order local
+ * migration paths.
+ */
+export type PendingMigrations =
+  | { readonly kind: "ok"; readonly pending: ReadonlyArray<string> }
+  | { readonly kind: "missing-local"; readonly versions: ReadonlyArray<string> }
+  | { readonly kind: "missing-remote"; readonly paths: ReadonlyArray<string> };
+
+/**
+ * Two-pointer reconciliation of local migration paths vs remote applied versions.
+ * Mirrors `FindPendingMigrations`, including its **string** comparison of
+ * versions (`remote == local` / `remote < local`).
+ * Both sides must agree on ordering, so `localMigrations` is re-sorted by version.
+ */
+export function findPendingMigrations(
+  localMigrations: ReadonlyArray<string>,
+  remoteMigrations: ReadonlyArray<string>,
+): PendingMigrations {
+  const sortedLocal = sortMigrationPathsByVersion(localMigrations);
+  const unapplied: Array<string> = [];
+  const missing: Array<string> = [];
+  let i = 0;
+  let j = 0;
+  while (i < remoteMigrations.length && j < sortedLocal.length) {
+    const remote = remoteMigrations[i]!;
+    const filename = baseName(sortedLocal[j]!);
+    // ListLocalMigrations guarantees a match, so the capture group is present.
+    const local = MIGRATE_FILE_PATTERN.exec(filename)![1]!;
+    if (remote === local) {
+      i++;
+      j++;
+    } else if (remote < local) {
+      missing.push(remote);
+      i++;
+    } else {
+      // Include out-of-order local migrations.
+      unapplied.push(sortedLocal[j]!);
+      j++;
+    }
+  }
+  // Ensure all remote versions exist on local.
+  if (j === sortedLocal.length) {
+    missing.push(...remoteMigrations.slice(i));
+  }
+  if (missing.length > 0) {
+    return { kind: "missing-local", versions: missing };
+  }
+  // Enforce migrations are applied in chronological order by default.
+  if (unapplied.length > 0) {
+    return { kind: "missing-remote", paths: unapplied };
+  }
+  return { kind: "ok", pending: sortedLocal.slice(remoteMigrations.length) };
+}
+
+/**
+ * Computes the `--include-all` pending set when reconciliation reports
+ * `missing-remote`. Mirrors `GetPendingMigrations` includeAll branch:
+ * the out-of-order paths first, then the
+ * local migrations beyond `len(remote)+len(diff)`.
+ */
+export function includeAllPending(
+  localMigrations: ReadonlyArray<string>,
+  remoteCount: number,
+  diff: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  // Slices the same version-ordered list `diff` was taken from — indexing a
+  // name-ordered list with a version-ordered offset would skip a pending
+  // migration and re-apply an already-applied one.
+  const sortedLocal = sortMigrationPathsByVersion(localMigrations);
+  return [...diff, ...sortedLocal.slice(remoteCount + diff.length)];
+}
+
+/** `suggestIgnoreFlag`. */
+export function suggestIgnoreFlag(paths: ReadonlyArray<string>): string {
+  return (
+    "\nRerun the command with --include-all flag to apply these migrations:\n" +
+    `${bold(paths.join("\n"))}\n`
+  );
+}

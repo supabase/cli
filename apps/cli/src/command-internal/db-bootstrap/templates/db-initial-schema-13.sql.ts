@@ -4,10 +4,10 @@
  * exported as `utils.InitialSchemaPg13Sql`). Run via `ExecBatch` against a fresh
  * `db.major_version == 13` local database by `InitSchema14`
  * (`apps/cli-go/internal/db/start/start.go:256-266`), right after
- * {@link LEGACY_START_DB_GLOBALS_SQL}. Not a Go `text/template`. Do not hand-edit —
+ * {@link START_DB_GLOBALS_SQL}. Not a Go `text/template`. Do not hand-edit —
  * re-transcribe from the Go source if it changes.
  */
-export const LEGACY_START_DB_INITIAL_SCHEMA_13_SQL = `--
+export const START_DB_INITIAL_SCHEMA_13_SQL = `--
 -- PostgreSQL database dump
 --
 

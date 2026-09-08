@@ -31,14 +31,14 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                       |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success - Postgres config printed                                                                                                               |
-| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) - checked before ref resolution/API/telemetry |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                         |
-| `1`  | API non-2xx (`LegacyPostgresConfigGetUnexpectedStatusError`)                                                                                    |
-| `1`  | transport failure (`LegacyPostgresConfigGetNetworkError`)                                                                                       |
-| `1`  | invalid JSON response (`LegacyPostgresConfigGetUnmarshalError`)                                                                                 |
+| Code | Condition                                                                                                                                 |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success - Postgres config printed                                                                                                         |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) - checked before ref resolution/API/telemetry |
+| `1`  | project ref unresolved (`ProjectRefNotLinkedError` / `InvalidProjectRefError`)                                                            |
+| `1`  | API non-2xx (`PostgresConfigGetUnexpectedStatusError`)                                                                                    |
+| `1`  | transport failure (`PostgresConfigGetNetworkError`)                                                                                       |
+| `1`  | invalid JSON response (`PostgresConfigGetUnmarshalError`)                                                                                 |
 
 ## Telemetry Events Fired
 

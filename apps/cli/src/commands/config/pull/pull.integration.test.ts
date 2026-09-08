@@ -22,29 +22,26 @@ import {
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  LEGACY_DEFAULT_API_URL,
-  LEGACY_VALID_REF,
-  legacyJsonResponse,
-  legacyTransportFailure,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import {
-  LEGACY_GLOBAL_OUTPUT_FORMATS,
-  LegacyYesFlag,
-} from "../../../shared/legacy/global-flags.ts";
+  buildTestRuntime,
+  DEFAULT_API_URL,
+  VALID_REF,
+  jsonResponse,
+  transportFailure,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { GLOBAL_OUTPUT_FORMATS, YesFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
-  legacyConfigPull,
-  legacyOpenConfigPullSource,
-  legacyRunConfigPull,
-  type LegacyConfigPullSource,
+  configPull,
+  openConfigPullSource,
+  runConfigPull,
+  type ConfigPullSource,
 } from "./pull.handler.ts";
-import type { LegacyConfigPullFlags } from "./pull.command.ts";
+import type { ConfigPullFlags } from "./pull.command.ts";
 
 /**
  * Setup + fixtures mirror `../diff/diff.integration.test.ts` — same temp
@@ -55,7 +52,7 @@ import type { LegacyConfigPullFlags } from "./pull.command.ts";
  * more `describe`/`it.live` blocks without refactoring this shape.
  */
 
-const tempRoot = useLegacyTempWorkdir("supabase-config-pull-int-");
+const tempRoot = useTempWorkdir("supabase-config-pull-int-");
 
 const BRANCH_REF = "cccccccccccccccccccc";
 const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
@@ -257,7 +254,7 @@ function v2Response(
   return {
     data: {
       type: "project_config",
-      id: opts.ref ?? LEGACY_VALID_REF,
+      id: opts.ref ?? VALID_REF,
       attributes: opts.attributes === undefined ? attributes : opts.attributes(attributes),
     },
   };
@@ -268,7 +265,7 @@ const BRANCH_BY_NAME = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "staging",
   project_ref: BRANCH_REF,
-  parent_project_ref: LEGACY_VALID_REF,
+  parent_project_ref: VALID_REF,
   is_default: false,
   persistent: true,
   status: "MIGRATIONS_PASSED",
@@ -316,13 +313,13 @@ function withConfirmSideEffect(
 
 /**
  * Fakes the `git status --porcelain -- config.toml` subprocess the dirty
- * guard (`legacy-git-status.ts`) issues — pattern copied from
- * `legacy-git-status.unit.test.ts`'s own `mockSpawner`. Listed AFTER
- * `buildLegacyTestRuntime` in the layer merge (below) so it overrides the
+ * guard (`git-status.ts`) issues — pattern copied from
+ * `git-status.unit.test.ts`'s own `mockSpawner`. Listed AFTER
+ * `buildTestRuntime` in the layer merge (below) so it overrides the
  * real spawner `BunServices.layer` provides (last-wins, same precedent as
  * `signing-key.integration.test.ts`'s `mockGitCheckIgnore`).
  */
-function mockLegacyGitStatusSpawner(
+function mockGitStatusSpawner(
   opts: { readonly dirty?: boolean; readonly spawnFails?: boolean } = {},
 ): {
   readonly layer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
@@ -372,7 +369,7 @@ interface SetupOpts {
   readonly toml?: string;
   readonly dotenv?: string;
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: (typeof LEGACY_GLOBAL_OUTPUT_FORMATS)[number];
+  readonly goOutput?: (typeof GLOBAL_OUTPUT_FORMATS)[number];
   readonly v2?: { status: number; body: unknown } | "fail" | "decode-fail";
   readonly branchByName?: { status: number; body: unknown } | "fail";
   readonly branchByUuid?: { status: number; body: unknown };
@@ -406,12 +403,12 @@ function setup(opts: SetupOpts = {}) {
     opts.confirmSideEffect === undefined
       ? out.layer
       : withConfirmSideEffect(out.layer, opts.confirmSideEffect);
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     handler: (request) => {
       const url = request.url;
       if (url.includes("/v2/projects/")) {
         if (opts.v2 === "fail") {
-          return Effect.fail(legacyTransportFailure(request));
+          return Effect.fail(transportFailure(request));
         }
         if (opts.v2 === "decode-fail") {
           return Effect.succeed(
@@ -425,34 +422,34 @@ function setup(opts: SetupOpts = {}) {
           );
         }
         const v2 = opts.v2 ?? { status: 200, body: v2Response() };
-        return Effect.succeed(legacyJsonResponse(request, v2.status, v2.body));
+        return Effect.succeed(jsonResponse(request, v2.status, v2.body));
       }
       if (url.includes("/v1/branches/")) {
         const b = opts.branchByUuid ?? { status: 200, body: BRANCH_CONFIG };
-        return Effect.succeed(legacyJsonResponse(request, b.status, b.body));
+        return Effect.succeed(jsonResponse(request, b.status, b.body));
       }
       if (url.includes("/branches/")) {
         if (opts.branchByName === "fail") {
-          return Effect.fail(legacyTransportFailure(request));
+          return Effect.fail(transportFailure(request));
         }
         const b = opts.branchByName ?? { status: 200, body: BRANCH_BY_NAME };
-        return Effect.succeed(legacyJsonResponse(request, b.status, b.body));
+        return Effect.succeed(jsonResponse(request, b.status, b.body));
       }
-      return Effect.succeed(legacyJsonResponse(request, 200, {}));
+      return Effect.succeed(jsonResponse(request, 200, {}));
     },
   });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const linkedProjectCache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const linkedProjectCache = mockLinkedProjectCacheTracked();
   const processControl = mockProcessControl();
-  const gitStatus = mockLegacyGitStatusSpawner({
+  const gitStatus = mockGitStatusSpawner({
     dirty: opts.gitDirty,
     spawnFails: opts.gitSpawnFails,
   });
   const layer = Layer.mergeAll(
-    buildLegacyTestRuntime({
+    buildTestRuntime({
       out: { layer: outputLayer },
       api,
-      cliSettings: mockLegacyCliSettings({
+      cliSettings: mockCommandSettings({
         workdir: opts.workdir ?? tempRoot.current,
         explicitWorkdir: opts.explicitWorkdir ?? false,
         ...(opts.projectId !== undefined
@@ -469,15 +466,15 @@ function setup(opts: SetupOpts = {}) {
       goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
     }),
     mockStdin(opts.stdinIsTty ?? false),
-    Layer.succeed(LegacyYesFlag, opts.yes ?? false),
-    // Listed after `buildLegacyTestRuntime` so it overrides the real spawner
+    Layer.succeed(YesFlag, opts.yes ?? false),
+    // Listed after `buildTestRuntime` so it overrides the real spawner
     // BunServices.layer provides (last-wins).
     gitStatus.layer,
   );
   return { layer, out, api, telemetry, linkedProjectCache, processControl, gitStatus };
 }
 
-const noFlags: LegacyConfigPullFlags = {
+const noFlags: ConfigPullFlags = {
   projectRef: Option.none<string>(),
   remoteLabel: Option.none<string>(),
   dryRun: false,
@@ -492,21 +489,21 @@ function countChangedLines(before: string, after: string): number {
   return a.filter((line, index) => line !== b[index]).length;
 }
 
-describe("legacy config pull integration", () => {
+describe("config pull integration", () => {
   it.live(
     "root-target single-property update writes the file with exactly one changed line",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
       const { layer, out, telemetry, linkedProjectCache } = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         const after = readFileSync(configPath(), "utf8");
         expect(countChangedLines(before, after)).toBe(1);
         expect(after).toContain("max_rows = 1000");
         expect(after).not.toContain("max_rows = 500");
         expect(out.stdoutText).toContain("1 change written.");
         expect(telemetry.flushed).toBe(true);
-        expect(linkedProjectCache.cachedRef).toBe(LEGACY_VALID_REF);
+        expect(linkedProjectCache.cachedRef).toBe(VALID_REF);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -517,7 +514,7 @@ describe("legacy config pull integration", () => {
     const path = configPath();
     const beforeStat = { mtimeMs: statSync(path).mtimeMs, contents: readFileSync(path, "utf8") };
     return Effect.gen(function* () {
-      yield* legacyConfigPull({ ...noFlags, dryRun: true });
+      yield* configPull({ ...noFlags, dryRun: true });
       expect(statSync(path).mtimeMs).toBe(beforeStat.mtimeMs);
       expect(readFileSync(path, "utf8")).toBe(beforeStat.contents);
       const success = out.messages.find((message) => message.type === "success");
@@ -546,7 +543,7 @@ describe("legacy config pull integration", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* legacyConfigPull({ ...noFlags, projectRef: Option.some("staging") });
+      yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
       const after = readFileSync(configPath(), "utf8");
       expect(after.startsWith(before)).toBe(true);
       const remotesIndex = after.indexOf("[remotes.staging]");
@@ -599,7 +596,7 @@ describe("legacy config pull integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         const after = readFileSync(configPath(), "utf8");
         expect(after).toContain("[auth.oauth_server]");
         expect(after).toContain("enabled = true");
@@ -642,7 +639,7 @@ describe("legacy config pull integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         const after = readFileSync(configPath(), "utf8");
         expect(after).toContain("[auth.rate_limit]");
         expect(after).toContain("email_sent = 50");
@@ -657,7 +654,7 @@ describe("legacy config pull integration", () => {
   it.live("a clean remote reports nothing to write without prompting", () => {
     const { layer, out } = setup({ toml: 'project_id = "test"\n' });
     return Effect.gen(function* () {
-      yield* legacyConfigPull(noFlags);
+      yield* configPull(noFlags);
       expect(out.stdoutText).toContain("No config differences found.");
       expect(out.promptConfirmCalls).toHaveLength(0);
     }).pipe(Effect.provide(layer));
@@ -672,7 +669,7 @@ describe("legacy config pull integration", () => {
       confirm: [false],
     });
     return Effect.gen(function* () {
-      yield* legacyConfigPull(noFlags);
+      yield* configPull(noFlags);
       expect(readFileSync(configPath(), "utf8")).toBe(before);
       expect(out.promptConfirmCalls).toHaveLength(1);
       // No `[remotes.*]` suffix for a root-bound write (CLI-2064 item F.5).
@@ -687,7 +684,7 @@ describe("legacy config pull integration", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, format: "json", yes: true });
     return Effect.gen(function* () {
-      yield* legacyConfigPull(noFlags);
+      yield* configPull(noFlags);
       const success = out.messages.find((message) => message.type === "success");
       const data = success?.data as Record<string, unknown>;
       expect(data["config_path"]).toBe(join("supabase", "config.toml"));
@@ -711,10 +708,10 @@ describe("legacy config pull integration", () => {
   it.live("telemetry flushes and the linked-project cache writes on a failed run too", () => {
     const { layer, telemetry, linkedProjectCache, api } = setup();
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+      const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("LegacyConfigPullLoadConfigError");
+      expect(rendered).toContain("ConfigPullLoadConfigError");
       // A DEFAULTED workdir with no project keeps the established
       // `supabase init` suggestion — only an EXPLICIT --workdir/SUPABASE_WORKDIR
       // gets the resolved-path wording (see the CLI-2285 regression below).
@@ -744,10 +741,10 @@ describe("legacy config pull integration", () => {
       const path = configPath();
       const beforeStat = { mtimeMs: statSync(path).mtimeMs, contents: readFileSync(path, "utf8") };
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+        const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("LegacyConfigPullLoadConfigError");
+        expect(rendered).toContain("ConfigPullLoadConfigError");
         expect(rendered).toContain("file not found");
         // An EXPLICIT workdir never gets the ancestor-search-exhausted
         // `supabase init` hint — it names the resolved directory instead, and
@@ -767,15 +764,15 @@ describe("legacy config pull integration", () => {
     "an explicit --workdir naming a directory that does not exist at all fails before any config load",
     () => {
       // Distinct from the "exists but holds no project" regression above:
-      // this path was never created, so `legacyValidateWorkdirIsDirectory`
+      // this path was never created, so `validateWorkdirIsDirectory`
       // must fail first, and nothing is ever written to disk.
       const missing = join(tempRoot.current, "does-not-exist");
       const { layer, api } = setup({ workdir: missing, explicitWorkdir: true });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+        const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("LegacyConfigPullWorkdirError");
+        expect(rendered).toContain("ConfigPullWorkdirError");
         expect(rendered).toContain("failed to change workdir: chdir");
         expect(api.requests).toHaveLength(0);
         // Nothing was written to disk — the missing directory stays missing.
@@ -801,7 +798,7 @@ describe("legacy config pull integration", () => {
       ].join("\n");
       const { layer, out } = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
-        yield* legacyConfigPull({ ...noFlags, projectRef: Option.some("staging") });
+        yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
         expect(out.stderrText).toContain("→ [remotes.prod]");
         expect(out.stderrText).not.toContain("[remotes.staging]");
         const after = readFileSync(configPath(), "utf8");
@@ -823,7 +820,7 @@ describe("legacy config pull integration", () => {
     ].join("\n");
     const { layer, out } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
-      yield* legacyConfigPull({
+      yield* configPull({
         ...noFlags,
         projectRef: Option.some("staging"),
         remoteLabel: Option.some("prod"),
@@ -846,7 +843,7 @@ describe("legacy config pull integration", () => {
       ].join("\n");
       const { layer, out } = setup({ toml: before, stdinIsTty: true, confirm: [true] });
       return Effect.gen(function* () {
-        yield* legacyConfigPull({ ...noFlags, projectRef: Option.some("staging") });
+        yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
         expect(out.promptConfirmCalls[0]?.message).toBe(
           `Apply 1 change(s) to ${join("supabase", "config.toml")} [remotes.prod]?`,
         );
@@ -865,13 +862,13 @@ describe("legacy config pull integration", () => {
       ].join("\n");
       const { layer } = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull({
+        const exit = yield* configPull({
           ...noFlags,
           remoteLabel: Option.some("prod"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("LegacyConfigPullRemoteLabelCollisionError");
+        expect(rendered).toContain("ConfigPullRemoteLabelCollisionError");
         expect(rendered).toContain('--remote-label \\"prod\\"');
         expect(rendered).toContain("dddddddddddddddddddd");
         expect(readFileSync(configPath(), "utf8")).toBe(before);
@@ -885,22 +882,22 @@ describe("legacy config pull integration", () => {
       const before = [
         'project_id = "test"',
         "[remotes.other]",
-        `project_id = "${LEGACY_VALID_REF}"`,
+        `project_id = "${VALID_REF}"`,
         "",
       ].join("\n");
       const { layer } = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull({
+        const exit = yield* configPull({
           ...noFlags,
           remoteLabel: Option.some("newname"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("LegacyConfigPullRemoteLabelCollisionError");
+        expect(rendered).toContain("ConfigPullRemoteLabelCollisionError");
         // CLI-2064 item E: names the ACTUALLY conflicting block (`other`),
         // not the requested-but-unused label.
         expect(rendered).toContain("[remotes.other] already tracks project");
-        expect(rendered).toContain(LEGACY_VALID_REF);
+        expect(rendered).toContain(VALID_REF);
         expect(readFileSync(configPath(), "utf8")).toBe(before);
       }).pipe(Effect.provide(layer));
     },
@@ -917,14 +914,14 @@ describe("legacy config pull integration", () => {
       ].join("\n");
       const { layer, api } = setup({
         toml: before,
-        dotenv: `REMOTE_REF=${LEGACY_VALID_REF}\n`,
+        dotenv: `REMOTE_REF=${VALID_REF}\n`,
         yes: true,
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+        const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("LegacyConfigPullRemoteEnvRefError");
+        expect(rendered).toContain("ConfigPullRemoteEnvRefError");
         expect(rendered).toContain("REMOTE_REF");
         expect(readFileSync(configPath(), "utf8")).toBe(before);
         // Fails purely from the scope resolver — never even reaches the fetch.
@@ -944,14 +941,14 @@ describe("legacy config pull integration", () => {
       ].join("\n");
       const { layer } = setup({
         toml: before,
-        dotenv: `REMOTE_REF=${LEGACY_VALID_REF}\n`,
+        dotenv: `REMOTE_REF=${VALID_REF}\n`,
         yes: true,
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull({ ...noFlags, remoteLabel: Option.some("y") });
+        yield* configPull({ ...noFlags, remoteLabel: Option.some("y") });
         const after = readFileSync(configPath(), "utf8");
         expect(after).toContain("[remotes.y]");
-        expect(after).toContain(`project_id = "${LEGACY_VALID_REF}"`);
+        expect(after).toContain(`project_id = "${VALID_REF}"`);
         // The unrelated env()-spelled block is left exactly as it was.
         expect(after).toContain('project_id = "env(REMOTE_REF)"');
       }).pipe(Effect.provide(layer));
@@ -975,13 +972,13 @@ describe("legacy config pull integration", () => {
       ].join("\n");
       const { layer } = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull({
+        const exit = yield* configPull({
           ...noFlags,
           projectRef: Option.some("staging"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("LegacyConfigPullRemoteLabelCollisionError");
+        expect(rendered).toContain("ConfigPullRemoteLabelCollisionError");
         expect(rendered).toContain("dddddddddddddddddddd");
         expect(readFileSync(configPath(), "utf8")).toBe(before);
       }).pipe(Effect.provide(layer));
@@ -999,13 +996,13 @@ describe("legacy config pull integration", () => {
       ].join("\n");
       const { layer } = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull({
+        const exit = yield* configPull({
           ...noFlags,
           remoteLabel: Option.some(`stag${String.fromCharCode(1)}ing`),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("LegacyConfigPullRemoteLabelCollisionError");
+        expect(rendered).toContain("ConfigPullRemoteLabelCollisionError");
         expect(rendered).toContain("dddddddddddddddddddd");
         expect(readFileSync(configPath(), "utf8")).toBe(before);
       }).pipe(Effect.provide(layer));
@@ -1021,11 +1018,9 @@ describe("legacy config pull integration", () => {
     () => {
       const { layer, out } = setup({ toml: 'project_id = "test"\n', v2: "fail" });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+        const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(out.stderrText).toContain(
-          `Pulling config from project ${LEGACY_VALID_REF} → config root`,
-        );
+        expect(out.stderrText).toContain(`Pulling config from project ${VALID_REF} → config root`);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1038,7 +1033,7 @@ describe("legacy config pull integration", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
-      yield* legacyConfigPull(noFlags);
+      yield* configPull(noFlags);
       const entries = readdirSync(join(tempRoot.current, "supabase"));
       expect(entries.some((name) => name.includes(".tmp."))).toBe(false);
       expect(entries).toContain("config.toml");
@@ -1046,7 +1041,7 @@ describe("legacy config pull integration", () => {
   });
 
   it.live(
-    "an editor refusal (an edit path through an inline table) leaves the file byte-identical and fails with LegacyConfigPullUnsupportedLayoutError",
+    "an editor refusal (an edit path through an inline table) leaves the file byte-identical and fails with ConfigPullUnsupportedLayoutError",
     () => {
       // A genuine duplicate `[api]` table header (the plan's own example
       // fixture) is rejected by `smol-toml` itself at LOAD time — the load
@@ -1057,10 +1052,10 @@ describe("legacy config pull integration", () => {
       const before = 'project_id = "test"\napi = { max_rows = 500 }\n';
       const { layer } = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+        const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("LegacyConfigPullUnsupportedLayoutError");
+        expect(rendered).toContain("ConfigPullUnsupportedLayoutError");
         // CLI-2064 item F.3: prose, not the raw reason token, plus a
         // remediation sentence.
         expect(rendered).toContain("an inline table on this path");
@@ -1099,7 +1094,7 @@ describe("legacy config pull integration", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* legacyConfigPull(noFlags);
+      yield* configPull(noFlags);
       expect(readFileSync(configPath(), "utf8")).toContain(
         'site_url = "https://local.example.com"',
       );
@@ -1131,7 +1126,7 @@ describe("legacy config pull integration", () => {
         yes: true,
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         const after = readFileSync(configPath(), "utf8");
         expect(after).toContain('site_url = "env(SITE_URL)"');
         expect(after).toContain("max_rows = 1000");
@@ -1160,7 +1155,7 @@ describe("legacy config pull integration", () => {
       ].join("\n");
       const { layer, out } = setup({ toml: before, dotenv: "SMTP_PASS=hunter2\n", yes: true });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         expect(readFileSync(configPath(), "utf8")).toContain('pass = "env(SMTP_PASS)"');
         expect(out.stdoutText).toContain(
           "Note: 1 credential value not compared (masked by the API): auth.email.smtp.pass",
@@ -1199,7 +1194,7 @@ describe("legacy config pull integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         const after = readFileSync(configPath(), "utf8");
         // The `site_url` key stays byte-identical — the remote's env()-spelled
         // value is never written — while the unrelated `max_rows` change,
@@ -1230,7 +1225,7 @@ describe("legacy config pull integration", () => {
     const before = 'project_id = "test"\n[auth]\nsite_url = "https://custom.example.com"\n';
     const { layer, out } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
-      yield* legacyConfigPull(noFlags);
+      yield* configPull(noFlags);
       expect(out.stdoutText).toContain("Warnings:");
       expect(out.stdoutText).toContain(
         "auth.site_url also configures the local stack (`supabase start`) — writing it to the config root changes local dev behavior too.",
@@ -1259,7 +1254,7 @@ describe("legacy config pull integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull({ ...noFlags, projectRef: Option.some("staging") });
+        yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
         expect(out.stdoutText).not.toContain("Warnings:");
         expect(out.stdoutText).not.toContain("also configures the local stack");
         expect(readFileSync(configPath(), "utf8")).toContain(
@@ -1295,7 +1290,7 @@ describe("legacy config pull integration", () => {
       ].join("\n");
       const { layer, out } = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
-        yield* legacyConfigPull({ ...noFlags, projectRef: Option.some("staging") });
+        yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
         expect(out.stdoutText).toContain(
           "api.max_rows already matches the config root's value — this remote block now carries a redundant copy.",
         );
@@ -1316,9 +1311,9 @@ describe("legacy config pull integration", () => {
       // `--force` does.
       const { layer } = setup({ toml: before, gitDirty: true, yes: true });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+        const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("LegacyConfigPullUncommittedChangesError");
+        expect(JSON.stringify(exit)).toContain("ConfigPullUncommittedChangesError");
         expect(readFileSync(configPath(), "utf8")).toBe(before);
       }).pipe(Effect.provide(layer));
     },
@@ -1334,9 +1329,9 @@ describe("legacy config pull integration", () => {
       stdinIsTty: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+      const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("LegacyConfigPullUncommittedChangesError");
+      expect(JSON.stringify(exit)).toContain("ConfigPullUncommittedChangesError");
       expect(readFileSync(configPath(), "utf8")).toBe(before);
     }).pipe(Effect.provide(layer));
   });
@@ -1347,9 +1342,9 @@ describe("legacy config pull integration", () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
       const { layer } = setup({ toml: before, gitDirty: true, yes: true, stdinIsTty: true });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+        const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("LegacyConfigPullUncommittedChangesError");
+        expect(JSON.stringify(exit)).toContain("ConfigPullUncommittedChangesError");
         expect(readFileSync(configPath(), "utf8")).toBe(before);
       }).pipe(Effect.provide(layer));
     },
@@ -1361,7 +1356,7 @@ describe("legacy config pull integration", () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
       const { layer, out } = setup({ toml: before, gitDirty: true, yes: true });
       return Effect.gen(function* () {
-        yield* legacyConfigPull({ ...noFlags, force: true });
+        yield* configPull({ ...noFlags, force: true });
         expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
         expect(out.stdoutText).not.toContain("uncommitted changes");
       }).pipe(Effect.provide(layer));
@@ -1379,7 +1374,7 @@ describe("legacy config pull integration", () => {
         confirm: [false],
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         expect(out.stdoutText).toContain(
           "supabase/config.toml has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
         );
@@ -1393,7 +1388,7 @@ describe("legacy config pull integration", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, gitSpawnFails: true, yes: true });
     return Effect.gen(function* () {
-      yield* legacyConfigPull(noFlags);
+      yield* configPull(noFlags);
       expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
       expect(out.stdoutText).not.toContain("uncommitted changes");
     }).pipe(Effect.provide(layer));
@@ -1409,7 +1404,7 @@ describe("legacy config pull integration", () => {
         gitDirty: true,
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         const success = out.messages.find((message) => message.type === "success");
         expect(success?.message).toContain("No config differences found.");
         const data = success?.data as Record<string, unknown>;
@@ -1431,12 +1426,12 @@ describe("legacy config pull integration", () => {
         v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull({
+        const exit = yield* configPull({
           ...noFlags,
           projectRef: Option.some("staging"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("LegacyConfigPullUncommittedChangesError");
+        expect(JSON.stringify(exit)).toContain("ConfigPullUncommittedChangesError");
         expect(readFileSync(configPath(), "utf8")).toBe(before);
         expect(gitStatus.spawnCalls).toBe(1);
       }).pipe(Effect.provide(layer));
@@ -1460,7 +1455,7 @@ describe("legacy config pull integration", () => {
         v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull({ ...noFlags, projectRef: Option.some("staging") });
+        yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
         expect(first.out.promptConfirmCalls).toHaveLength(1);
         expect(first.out.promptConfirmCalls[0]?.message).toContain("Create [remotes.staging] in");
         expect(first.out.promptConfirmCalls[0]?.message).toContain(join("supabase", "config.toml"));
@@ -1485,7 +1480,7 @@ describe("legacy config pull integration", () => {
           format: "json",
           v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
         });
-        yield* legacyConfigPull({ ...noFlags, projectRef: Option.some("staging") }).pipe(
+        yield* configPull({ ...noFlags, projectRef: Option.some("staging") }).pipe(
           Effect.provide(second.layer),
         );
         const success = second.out.messages.find((message) => message.type === "success");
@@ -1501,10 +1496,10 @@ describe("legacy config pull integration", () => {
     const before = 'project_id = "test"\n';
     const { layer, out } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
-      yield* legacyConfigPull({ ...noFlags, remoteLabel: Option.some("customname") });
+      yield* configPull({ ...noFlags, remoteLabel: Option.some("customname") });
       expect(out.stderrText).toContain("→ [remotes.customname]");
       expect(readFileSync(configPath(), "utf8")).toBe(
-        `${before}\n[remotes.customname]\nproject_id = "${LEGACY_VALID_REF}"\n`,
+        `${before}\n[remotes.customname]\nproject_id = "${VALID_REF}"\n`,
       );
     }).pipe(Effect.provide(layer));
   });
@@ -1519,7 +1514,7 @@ describe("legacy config pull integration", () => {
         v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull({
+        yield* configPull({
           ...noFlags,
           projectRef: Option.some("staging"),
           dryRun: true,
@@ -1543,7 +1538,7 @@ describe("legacy config pull integration", () => {
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
-      yield* legacyConfigPull({ ...noFlags, projectRef: Option.some("staging") });
+      yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
       expect(readFileSync(configPath(), "utf8")).toBe(before);
       expect(out.promptConfirmCalls).toHaveLength(1);
       expect(out.stdoutText).toContain("[remotes.staging] not created (declined).");
@@ -1558,7 +1553,7 @@ describe("legacy config pull integration", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, yes: true, stdinIsTty: true });
     return Effect.gen(function* () {
-      yield* legacyConfigPull(noFlags);
+      yield* configPull(noFlags);
       expect(out.promptConfirmCalls).toHaveLength(0);
       expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
     }).pipe(Effect.provide(layer));
@@ -1570,12 +1565,12 @@ describe("legacy config pull integration", () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
       const first = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         const afterFirst = readFileSync(configPath(), "utf8");
         expect(afterFirst).toContain("max_rows = 1000");
 
         const second = setup({ toml: afterFirst, yes: true });
-        yield* legacyConfigPull(noFlags).pipe(Effect.provide(second.layer));
+        yield* configPull(noFlags).pipe(Effect.provide(second.layer));
         expect(second.out.stdoutText).toContain("No config differences found.");
         expect(readFileSync(configPath(), "utf8")).toBe(afterFirst);
       }).pipe(Effect.provide(first.layer));
@@ -1594,9 +1589,9 @@ describe("legacy config pull integration", () => {
         confirmSideEffect: () => writeFileSync(configPath(), concurrent),
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+        const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("LegacyConfigPullFileChangedError");
+        expect(JSON.stringify(exit)).toContain("ConfigPullFileChangedError");
         expect(readFileSync(configPath(), "utf8")).toBe(concurrent);
       }).pipe(Effect.provide(layer));
     },
@@ -1607,17 +1602,17 @@ describe("legacy config pull integration", () => {
   // -------------------------------------------------------------------------
 
   it.live("every -o/--output value is rejected before any config load or network call", () => {
-    const values = LEGACY_GLOBAL_OUTPUT_FORMATS;
+    const values = GLOBAL_OUTPUT_FORMATS;
     const run = (goOutput: (typeof values)[number]) => {
       const { layer, api } = setup({
         toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
         goOutput,
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+        const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("LegacyConfigPullOutputFlagUnsupportedError");
+        expect(rendered).toContain("ConfigPullOutputFlagUnsupportedError");
         expect(rendered).toContain(
           "the -o/--output flag is not supported by config pull; use --output-format json|stream-json instead.",
         );
@@ -1642,12 +1637,12 @@ describe("legacy config pull integration", () => {
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
-      yield* legacyConfigPull({ ...noFlags, projectRef: Option.some("staging") });
+      yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
       expect(out.stderrText).toContain(`Pulling config from 'staging' (branch ${BRANCH_REF})`);
       const urls = api.requests.map((request) => request.url);
-      expect(
-        urls.some((url) => url.includes(`/v1/projects/${LEGACY_VALID_REF}/branches/staging`)),
-      ).toBe(true);
+      expect(urls.some((url) => url.includes(`/v1/projects/${VALID_REF}/branches/staging`))).toBe(
+        true,
+      );
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -1669,7 +1664,7 @@ describe("legacy config pull integration", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* legacyConfigPull({ ...noFlags, projectRef: Option.some(BRANCH_UUID) });
+      yield* configPull({ ...noFlags, projectRef: Option.some(BRANCH_UUID) });
       const urls = api.requests.map((request) => request.url);
       expect(urls.some((url) => url.includes(`/v1/branches/${BRANCH_UUID}`))).toBe(true);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
@@ -1689,7 +1684,7 @@ describe("legacy config pull integration", () => {
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
-      yield* legacyConfigPull({ ...noFlags, projectRef: Option.some(BRANCH_REF) });
+      yield* configPull({ ...noFlags, projectRef: Option.some(BRANCH_REF) });
       const urls = api.requests.map((request) => request.url);
       expect(urls.some((url) => url.includes("/branches/"))).toBe(false);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
@@ -1704,13 +1699,13 @@ describe("legacy config pull integration", () => {
         linked: false,
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull({
+        const exit = yield* configPull({
           ...noFlags,
           projectRef: Option.some("somebranch"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("LegacyConfigPullBranchNotLinkedError");
+        expect(rendered).toContain("ConfigPullBranchNotLinkedError");
         expect(rendered).toContain('\\"somebranch\\"');
         expect(api.requests).toHaveLength(0);
         expect(telemetry.flushed).toBe(true);
@@ -1725,13 +1720,13 @@ describe("legacy config pull integration", () => {
       projectId: Option.some("not-a-valid-ref"),
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull({
+      const exit = yield* configPull({
         ...noFlags,
         projectRef: Option.some("somebranch"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("LegacyConfigPullParentRefInvalidError");
+      expect(rendered).toContain("ConfigPullParentRefInvalidError");
       expect(rendered).toContain('\\"somebranch\\"');
       expect(rendered).toContain("Relink the parent project");
       expect(api.requests).toHaveLength(0);
@@ -1744,12 +1739,12 @@ describe("legacy config pull integration", () => {
       branchByName: { status: 404, body: { message: "not found" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull({ ...noFlags, projectRef: Option.some("ghost") }).pipe(
+      const exit = yield* configPull({ ...noFlags, projectRef: Option.some("ghost") }).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
       const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("LegacyConfigPullBranchNotFoundError");
+      expect(rendered).toContain("ConfigPullBranchNotFoundError");
       expect(rendered).toContain('Branch \\"ghost\\" not found');
       expect(rendered).toContain("supabase branches list");
     }).pipe(Effect.provide(layer));
@@ -1761,13 +1756,13 @@ describe("legacy config pull integration", () => {
       branchByName: { status: 200, body: { ...BRANCH_BY_NAME, project_ref: "" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull({
+      const exit = yield* configPull({
         ...noFlags,
         projectRef: Option.some("staging"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("LegacyConfigPullBranchNotReadyError");
+      expect(rendered).toContain("ConfigPullBranchNotReadyError");
       expect(rendered).toContain("has no project ref yet");
       expect(api.requests.some((request) => request.url.includes("/v2/projects/"))).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -1779,12 +1774,12 @@ describe("legacy config pull integration", () => {
       branchByName: { status: 500, body: { message: "boom" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull({
+      const exit = yield* configPull({
         ...noFlags,
         projectRef: Option.some("staging"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("LegacyConfigPullReadStatusError");
+      expect(JSON.stringify(exit)).toContain("ConfigPullReadStatusError");
     }).pipe(Effect.provide(layer));
   });
 
@@ -1795,7 +1790,7 @@ describe("legacy config pull integration", () => {
   it.live("a malformed config aborts before any network call, even with a branch target", () => {
     const { layer, api, telemetry } = setup({ toml: "not [valid toml\n" });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull({
+      const exit = yield* configPull({
         ...noFlags,
         projectRef: Option.some("staging"),
       }).pipe(Effect.exit);
@@ -1810,16 +1805,16 @@ describe("legacy config pull integration", () => {
     const before = [
       'project_id = "test"',
       "[remotes.a]",
-      `project_id = "${LEGACY_VALID_REF}"`,
+      `project_id = "${VALID_REF}"`,
       "[remotes.b]",
-      `project_id = "${LEGACY_VALID_REF}"`,
+      `project_id = "${VALID_REF}"`,
       "",
     ].join("\n");
     const { layer } = setup({ toml: before });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+      const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("LegacyConfigPullLoadConfigError");
+      expect(JSON.stringify(exit)).toContain("ConfigPullLoadConfigError");
     }).pipe(Effect.provide(layer));
   });
 
@@ -1840,7 +1835,7 @@ describe("legacy config pull integration", () => {
       },
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+      const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       const rendered = JSON.stringify(exit);
       expect(rendered).toContain("ProjectConfigParseError");
@@ -1854,10 +1849,10 @@ describe("legacy config pull integration", () => {
       v2: { status: 401, body: { message: "unauthorized" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+      const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("LegacyConfigPullReadStatusError");
+      expect(rendered).toContain("ConfigPullReadStatusError");
       expect(rendered).toContain("supabase login");
     }).pipe(Effect.provide(layer));
   });
@@ -1868,12 +1863,12 @@ describe("legacy config pull integration", () => {
       v2: { status: 403, body: { message: "forbidden" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+      const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("LegacyConfigPullReadStatusError");
+      expect(rendered).toContain("ConfigPullReadStatusError");
       expect(rendered).toContain("Access denied");
-      expect(rendered).toContain(LEGACY_VALID_REF);
+      expect(rendered).toContain(VALID_REF);
     }).pipe(Effect.provide(layer));
   });
 
@@ -1883,12 +1878,12 @@ describe("legacy config pull integration", () => {
       v2: { status: 404, body: { message: "not found" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+      const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       const rendered = JSON.stringify(exit);
-      expect(rendered).toContain(`Could not read configuration for project ${LEGACY_VALID_REF}`);
+      expect(rendered).toContain(`Could not read configuration for project ${VALID_REF}`);
       expect(rendered).toContain("supabase projects list");
-      expect(rendered).toContain(LEGACY_DEFAULT_API_URL);
+      expect(rendered).toContain(DEFAULT_API_URL);
     }).pipe(Effect.provide(layer));
   });
 
@@ -1898,7 +1893,7 @@ describe("legacy config pull integration", () => {
       v2: { status: 500, body: { message: "boom" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+      const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain('unexpected status 500: {\\"message\\":\\"boom\\"}');
     }).pipe(Effect.provide(layer));
@@ -1915,7 +1910,7 @@ describe("legacy config pull integration", () => {
       writeJsonConfig(before);
       const { layer } = setup({ yes: true });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         const after = readFileSync(jsonConfigPath(), "utf8");
         expect(after).toBe(
           `${JSON.stringify({ project_id: "test", api: { max_rows: 1000 } }, null, 4)}\n`,
@@ -1932,13 +1927,13 @@ describe("legacy config pull integration", () => {
   it.live("a branch-lookup transport failure maps to the read network error", () => {
     const { layer } = setup({ toml: 'project_id = "test"\n', branchByName: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull({
+      const exit = yield* configPull({
         ...noFlags,
         projectRef: Option.some("staging"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("LegacyConfigPullReadNetworkError");
+      expect(rendered).toContain("ConfigPullReadNetworkError");
       expect(rendered).toContain("failed to resolve branch");
     }).pipe(Effect.provide(layer));
   });
@@ -1946,9 +1941,9 @@ describe("legacy config pull integration", () => {
   it.live("a fetch failure in json mode still maps cleanly without a spinner", () => {
     const { layer } = setup({ toml: 'project_id = "test"\n', v2: "fail", format: "json" });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+      const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("LegacyConfigPullReadNetworkError");
+      expect(JSON.stringify(exit)).toContain("ConfigPullReadNetworkError");
     }).pipe(Effect.provide(layer));
   });
 
@@ -1959,18 +1954,18 @@ describe("legacy config pull integration", () => {
       format: "json",
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+      const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("LegacyConfigPullReadStatusError");
+      expect(JSON.stringify(exit)).toContain("ConfigPullReadStatusError");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("an undecodable config-read body fails as a decode network error", () => {
     const { layer } = setup({ toml: 'project_id = "test"\n', v2: "decode-fail" });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+      const exit = yield* configPull(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("LegacyConfigPullReadNetworkError");
+      expect(JSON.stringify(exit)).toContain("ConfigPullReadNetworkError");
     }).pipe(Effect.provide(layer));
   });
 
@@ -1979,9 +1974,9 @@ describe("legacy config pull integration", () => {
     () => {
       const { layer } = setup({ toml: 'project_id = "test"\n', v2: "decode-fail", format: "json" });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+        const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("LegacyConfigPullReadNetworkError");
+        expect(JSON.stringify(exit)).toContain("ConfigPullReadNetworkError");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1994,7 +1989,7 @@ describe("legacy config pull integration", () => {
         v2: { status: 200, body: {} },
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         expect(out.stderrText).toContain("Comparison scope: (none)");
         expect(out.stdoutText).toContain("No config differences found.");
       }).pipe(Effect.provide(layer));
@@ -2005,7 +2000,7 @@ describe("legacy config pull integration", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
-      yield* legacyConfigPull({ ...noFlags, dryRun: true });
+      yield* configPull({ ...noFlags, dryRun: true });
       expect(out.stdoutText).toContain("api.max_rows [update, write]");
       expect(out.stdoutText).toContain("1 change would be written (dry run).");
       expect(readFileSync(configPath(), "utf8")).toBe(before);
@@ -2013,7 +2008,7 @@ describe("legacy config pull integration", () => {
   });
 
   it.live(
-    "the file disappearing between confirmation and re-read fails with LegacyConfigPullFileChangedError",
+    "the file disappearing between confirmation and re-read fails with ConfigPullFileChangedError",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
       const { layer } = setup({
@@ -2023,9 +2018,9 @@ describe("legacy config pull integration", () => {
         confirmSideEffect: () => rmSync(configPath()),
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+        const exit = yield* configPull(noFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("LegacyConfigPullFileChangedError");
+        expect(JSON.stringify(exit)).toContain("ConfigPullFileChangedError");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -2046,27 +2041,27 @@ describe("legacy config pull integration", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* legacyConfigPull({ ...noFlags, remoteLabel: Option.some("newstage") });
+      yield* configPull({ ...noFlags, remoteLabel: Option.some("newstage") });
       expect(out.stderrText).toContain("→ [remotes.newstage]");
       const after = readFileSync(configPath(), "utf8");
       expect(after).toContain("[remotes.newstage]");
-      expect(after).toContain(`project_id = "${LEGACY_VALID_REF}"`);
+      expect(after).toContain(`project_id = "${VALID_REF}"`);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a filesystem write failure maps to LegacyConfigPullWriteError", () => {
+  it.live("a filesystem write failure maps to ConfigPullWriteError", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer } = setup({ toml: before, yes: true });
     const dir = join(tempRoot.current, "supabase");
     chmodSync(dir, 0o500);
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull(noFlags).pipe(Effect.exit);
+      const exit = yield* configPull(noFlags).pipe(Effect.exit);
       chmodSync(dir, 0o700);
       // Running as root (some CI/container setups) bypasses the permission
       // bit entirely — skip the assertion rather than assert a false
       // negative when that's the environment this runs under.
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit)).toContain("LegacyConfigPullWriteError");
+        expect(JSON.stringify(exit)).toContain("ConfigPullWriteError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -2080,7 +2075,7 @@ describe("legacy config pull integration", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* legacyConfigPull(noFlags);
+      yield* configPull(noFlags);
       expect(out.stderrText).toContain(
         "Comparison scope: api, database, pooler, realtime, storage (not returned: auth)",
       );
@@ -2095,7 +2090,7 @@ describe("legacy config pull integration", () => {
       'project_id = "test"\n[api]\nmax_rows = 500\nextra_search_path = "custom_schema"\n';
     const { layer, out } = setup({ toml: before, yes: true });
     return Effect.gen(function* () {
-      yield* legacyConfigPull(noFlags);
+      yield* configPull(noFlags);
       expect(out.stdoutText).toContain("2 differences found (2 to write, 0 to skip).");
       expect(out.stdoutText).toContain("2 changes written.");
     }).pipe(Effect.provide(layer));
@@ -2108,7 +2103,7 @@ describe("legacy config pull integration", () => {
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
-      yield* legacyConfigPull({ ...noFlags, projectRef: Option.some("staging") });
+      yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
       const success = out.messages.find((message) => message.type === "success");
       expect(success?.data).toMatchObject({ target: { branch: "staging" } });
     }).pipe(Effect.provide(layer));
@@ -2121,11 +2116,11 @@ describe("legacy config pull integration", () => {
       branchByName: { status: 404, body: { message: "not found" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPull({ ...noFlags, projectRef: Option.some("ghost") }).pipe(
+      const exit = yield* configPull({ ...noFlags, projectRef: Option.some("ghost") }).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("LegacyConfigPullBranchNotFoundError");
+      expect(JSON.stringify(exit)).toContain("ConfigPullBranchNotFoundError");
     }).pipe(Effect.provide(layer));
   });
 
@@ -2159,7 +2154,7 @@ describe("legacy config pull integration", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* legacyConfigPull(noFlags);
+      yield* configPull(noFlags);
       expect(out.stdoutText).toContain("No config differences found.");
       expect(out.stdoutText).toContain(
         "Note: 1 declared property is not part of the current comparison and was not compared: auth.oauth_server.allow_dynamic_registration",
@@ -2202,7 +2197,7 @@ describe("legacy config pull integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         expect(out.stdoutText).toContain("No config differences found.");
         expect(out.stdoutText).toContain(
           "Note: 2 declared properties are not part of the current comparison and were not compared: auth.oauth_server.allow_dynamic_registration, auth.oauth_server.authorization_url_path",
@@ -2221,7 +2216,7 @@ describe("legacy config pull integration", () => {
         yes: true,
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         expect(out.stdoutText).toContain("auth.site_url [update, skip: env() reference]");
         expect(out.stdoutText).toContain("No changes written.");
         expect(readFileSync(configPath(), "utf8")).toBe(before);
@@ -2233,7 +2228,7 @@ describe("legacy config pull integration", () => {
     const before = 'project_id = "test"\n[auth]\nsite_url = "https://custom.example.com"\n';
     const { layer, out } = setup({ toml: before, format: "json", yes: true });
     return Effect.gen(function* () {
-      yield* legacyConfigPull(noFlags);
+      yield* configPull(noFlags);
       const success = out.messages.find((message) => message.type === "success");
       const data = success?.data as Record<string, unknown>;
       expect(data["warnings"]).toEqual([{ kind: "dual_scope", path: ["auth", "site_url"] }]);
@@ -2288,7 +2283,7 @@ describe("legacy config pull integration", () => {
         TWILIO_AUTH_TOKEN_VAR,
         "a-real-secret-value",
         Effect.gen(function* () {
-          yield* legacyConfigPull(noFlags);
+          yield* configPull(noFlags);
           const after = readFileSync(configPath(), "utf8");
           expect(after).toContain("enabled = true");
           expect(after).toContain('account_sid = "ACreal0000000000000000000000000"');
@@ -2310,7 +2305,7 @@ describe("legacy config pull integration", () => {
             yes: true,
             v2: twilioV2({ withMessageServiceSid: true }),
           });
-          yield* legacyConfigPull(noFlags).pipe(Effect.provide(second.layer));
+          yield* configPull(noFlags).pipe(Effect.provide(second.layer));
           expect(second.out.stdoutText).toContain("No config differences found.");
           expect(readFileSync(configPath(), "utf8")).toBe(after);
         }),
@@ -2350,7 +2345,7 @@ describe("legacy config pull integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         const after = readFileSync(configPath(), "utf8");
         // The unrelated change still wrote.
         expect(after).toContain("max_rows = 250");
@@ -2370,11 +2365,11 @@ describe("legacy config pull integration", () => {
 
         // The written file reloads cleanly — it was never actually touched
         // for the twilio family, and the rest of the file is still valid.
-        // (`legacyOpenConfigPullSource` re-reads and re-decodes the SAME
+        // (`openConfigPullSource` re-reads and re-decodes the SAME
         // config path this run just wrote; a failing decode would fail
         // this `yield*`, failing the test.)
         const configText = readFileSync(configPath(), "utf8");
-        const reloaded = yield* legacyOpenConfigPullSource();
+        const reloaded = yield* openConfigPullSource();
         expect(reloaded.loaded.config.auth.sms.twilio.enabled).toBe(false);
 
         // A second run reports the SAME drift + the SAME skip (converged for
@@ -2398,7 +2393,7 @@ describe("legacy config pull integration", () => {
             }),
           },
         });
-        yield* legacyConfigPull(noFlags).pipe(Effect.provide(second.layer));
+        yield* configPull(noFlags).pipe(Effect.provide(second.layer));
         expect(second.out.stdoutText).toContain(
           "auth.sms.twilio.enabled [update, skip: requires values pull cannot write]",
         );
@@ -2429,7 +2424,7 @@ describe("legacy config pull integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         const success = out.messages.find((message) => message.type === "success");
         const data = success?.data as Record<string, unknown>;
         const changes = data["changes"] as ReadonlyArray<Record<string, unknown>>;
@@ -2473,7 +2468,7 @@ describe("legacy config pull integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         const after = readFileSync(configPath(), "utf8");
         expect(after).toContain("enabled = true");
         expect(after).toContain('provider = "turnstile"');
@@ -2521,7 +2516,7 @@ describe("legacy config pull integration", () => {
         yes: true,
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull(noFlags);
+        yield* configPull(noFlags);
         const after = readFileSync(configPath(), "utf8");
         expect(after).toContain('max_rows = "env(PULL_TEST_NUMERIC_ENV)"');
         expect(after).toContain("graphql_public");
@@ -2535,21 +2530,21 @@ describe("legacy config pull integration", () => {
   it.live(
     "a pre-write decode failure at a path unrelated to the plan is exempted: pull still writes its planned change and exits 0 (review T0)",
     () => {
-      // `legacyRunConfigPull` (exported precisely to be reusable independently
-      // of `legacyConfigPull`'s own load step) is called directly here with a
+      // `runConfigPull` (exported precisely to be reusable independently
+      // of `configPull`'s own load step) is called directly here with a
       // hand-augmented `source.loaded.rawDocument`/`.text`: the REAL loader
       // itself unconditionally aborts the whole command on a root-level
       // business-rule violation (verified directly against the real
       // loader — a broken `[auth.sms.twilio]` at the config root is NEVER
-      // reachable past `legacyOpenConfigPullSource`'s own initial load, by
+      // reachable past `openConfigPullSource`'s own initial load, by
       // construction), so the only way to exercise the validation gate's OWN
       // pre-existing exemption for a failure the rest of the command's load
       // path would already have caught is to construct the source directly,
-      // the way `legacyConfigPull` already does before delegating.
+      // the way `configPull` already does before delegating.
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
       const { layer, out } = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
-        const source = yield* legacyOpenConfigPullSource();
+        const source = yield* openConfigPullSource();
         const brokenRawDocument = {
           ...source.loaded.rawDocument,
           auth: { sms: { twilio: { enabled: true, account_sid: "", message_service_sid: "" } } },
@@ -2560,12 +2555,12 @@ describe("legacy config pull integration", () => {
           'account_sid = ""\n' +
           'message_service_sid = ""\n';
         writeFileSync(configPath(), brokenText);
-        const brokenSource: LegacyConfigPullSource = {
+        const brokenSource: ConfigPullSource = {
           loaded: { ...source.loaded, rawDocument: brokenRawDocument },
           text: brokenText,
         };
-        yield* legacyRunConfigPull({
-          target: { ref: LEGACY_VALID_REF, branch: undefined },
+        yield* runConfigPull({
+          target: { ref: VALID_REF, branch: undefined },
           remoteLabel: undefined,
           dryRun: false,
           force: false,
@@ -2626,7 +2621,7 @@ describe("legacy config pull integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* legacyConfigPull({ ...noFlags, projectRef: Option.some(MERGE_CHECK_REF) });
+        yield* configPull({ ...noFlags, projectRef: Option.some(MERGE_CHECK_REF) });
         const after = readFileSync(configPath(), "utf8");
         expect(after).toContain("[remotes.staging.auth.sms.twilio]");
         expect(after).toContain("enabled = false");

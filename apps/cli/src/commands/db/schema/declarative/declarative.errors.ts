@@ -5,7 +5,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
-import type { LegacyDeclarativeLoadCompatibilityFinding } from "./declarative.flow.ts";
+import type { DeclarativeLoadCompatibilityFinding } from "./declarative.flow.ts";
 
 /**
  * Declarative commands were invoked without `--experimental` and without
@@ -15,9 +15,7 @@ import type { LegacyDeclarativeLoadCompatibilityFinding } from "./declarative.fl
  * (`apps/cli-go/cmd/db_schema_declarative.go:63-69`, deleted in CLI-1970;
  * last present at commit 7b469f5b3).
  */
-export class LegacyDeclarativeNotEnabledError extends Data.TaggedError(
-  "LegacyDeclarativeNotEnabledError",
-)<{
+export class DeclarativeNotEnabledError extends Data.TaggedError("DeclarativeNotEnabledError")<{
   readonly message: string;
   readonly suggestion: string;
 }> {
@@ -32,8 +30,8 @@ export class LegacyDeclarativeNotEnabledError extends Data.TaggedError(
  * (generate, `:200`) and the sync variants that require `db schema declarative
  * generate` first (`:311`, `:318`).
  */
-export class LegacyDeclarativeNonInteractiveError extends Data.TaggedError(
-  "LegacyDeclarativeNonInteractiveError",
+export class DeclarativeNonInteractiveError extends Data.TaggedError(
+  "DeclarativeNonInteractiveError",
 )<{
   readonly message: string;
 }> {
@@ -50,8 +48,8 @@ export class LegacyDeclarativeNonInteractiveError extends Data.TaggedError(
  * (both deleted in CLI-1970; last present at commit 7b469f5b3). Both fail
  * before any side effects run, matching cobra's pre-RunE validation.
  */
-export class LegacyDeclarativeMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "LegacyDeclarativeMutuallyExclusiveFlagsError",
+export class DeclarativeMutuallyExclusiveFlagsError extends Data.TaggedError(
+  "DeclarativeMutuallyExclusiveFlagsError",
 )<{
   readonly message: string;
 }> {
@@ -65,9 +63,7 @@ export class LegacyDeclarativeMutuallyExclusiveFlagsError extends Data.TaggedErr
  * Go's `"database URL cannot be empty"` (`:281`) and
  * `"failed to parse connection string: " + err` (`:285`).
  */
-export class LegacyDeclarativeInvalidDbUrlError extends Data.TaggedError(
-  "LegacyDeclarativeInvalidDbUrlError",
-)<{
+export class DeclarativeInvalidDbUrlError extends Data.TaggedError("DeclarativeInvalidDbUrlError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -80,8 +76,8 @@ export class LegacyDeclarativeInvalidDbUrlError extends Data.TaggedError(
  * post-generate guard). Byte-matches Go's
  * `"declarative schema generation did not produce any files"` (`:326`).
  */
-export class LegacyDeclarativeNoFilesGeneratedError extends Data.TaggedError(
-  "LegacyDeclarativeNoFilesGeneratedError",
+export class DeclarativeNoFilesGeneratedError extends Data.TaggedError(
+  "DeclarativeNoFilesGeneratedError",
 )<{
   readonly message: string;
 }> {
@@ -96,7 +92,7 @@ export class LegacyDeclarativeNoFilesGeneratedError extends Data.TaggedError(
  * (`apps/cli-go/internal/db/declarative/declarative.go`). A debug bundle is
  * written before this surfaces.
  */
-export class LegacyDeclarativeDiffError extends Data.TaggedError("LegacyDeclarativeDiffError")<{
+export class DeclarativeDiffError extends Data.TaggedError("DeclarativeDiffError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -105,19 +101,19 @@ export class LegacyDeclarativeDiffError extends Data.TaggedError("LegacyDeclarat
 }
 
 /** Sync stopped because a manifest-less legacy schema needs an explicit migration choice. */
-export class LegacyDeclarativeCompatibilityError extends Data.TaggedError(
-  "LegacyDeclarativeCompatibilityError",
+export class DeclarativeCompatibilityError extends Data.TaggedError(
+  "DeclarativeCompatibilityError",
 )<{
   readonly message: string;
   /**
    * Recovery commands, printed bare on stderr by `Output.fail` INSTEAD of the
    * generic "Try rerunning the command with --debug" footer. A compatibility
    * gate is a deliberate refusal, not a crash, so it must never suggest
-   * troubleshooting flags (same mechanism as {@link LegacyDeclarativeApplyError}).
+   * troubleshooting flags (same mechanism as {@link DeclarativeApplyError}).
    */
   readonly suggestion?: string;
   /** Structured only for a known implicit-extension failure during shadow load. */
-  readonly loadFindings?: ReadonlyArray<LegacyDeclarativeLoadCompatibilityFinding>;
+  readonly loadFindings?: ReadonlyArray<DeclarativeLoadCompatibilityFinding>;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
@@ -131,7 +127,7 @@ export class LegacyDeclarativeCompatibilityError extends Data.TaggedError(
  * (`apps/cli-go/cmd/db_schema_declarative.go:397-435`, deleted in CLI-1970;
  * last present at commit 7b469f5b3).
  */
-export class LegacyDeclarativeApplyError extends Data.TaggedError("LegacyDeclarativeApplyError")<{
+export class DeclarativeApplyError extends Data.TaggedError("DeclarativeApplyError")<{
   readonly message: string;
   /**
    * Set when this failure came from connecting to the local Postgres instance
@@ -140,7 +136,7 @@ export class LegacyDeclarativeApplyError extends Data.TaggedError("LegacyDeclara
   readonly connect?: boolean;
   /**
    * Forwarded from the underlying typed failure this wraps (e.g. a
-   * `LegacyKongReloadError`'s recovery hint, or a health-timeout architecture
+   * `KongReloadError`'s recovery hint, or a health-timeout architecture
    * hint) when the local-reset recovery path fails — the wrap must not drop it
    * (review CLI-1958).
    */
@@ -156,11 +152,11 @@ export class LegacyDeclarativeApplyError extends Data.TaggedError("LegacyDeclara
 
 /**
  * Duck-types an optional `suggestion: string` off an arbitrary typed failure —
- * used when wrapping a lower-level error (e.g. `legacyResetLocalDatabase`'s
- * `LegacyKongReloadError`) into a {@link LegacyDeclarativeApplyError} so its
+ * used when wrapping a lower-level error (e.g. `resetLocalDatabase`'s
+ * `KongReloadError`) into a {@link DeclarativeApplyError} so its
  * recovery hint isn't silently dropped by the wrap.
  */
-export function legacyReadErrorSuggestion(error: unknown): string | undefined {
+export function readErrorSuggestion(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null || !("suggestion" in error)) return undefined;
   const { suggestion } = error as { suggestion: unknown };
   return typeof suggestion === "string" ? suggestion : undefined;

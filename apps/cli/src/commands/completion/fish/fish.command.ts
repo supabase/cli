@@ -2,16 +2,16 @@ import { Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { LegacyCompletionNoDescriptionsFlagDef } from "../completion.flags.ts";
-import { legacyCompletionFish } from "./fish.handler.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { CompletionNoDescriptionsFlagDef } from "../completion.flags.ts";
+import { completionFish } from "./fish.handler.ts";
 
 const config = {
-  noDescriptions: LegacyCompletionNoDescriptionsFlagDef,
+  noDescriptions: CompletionNoDescriptionsFlagDef,
 } as const;
-export type LegacyCompletionFishFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type CompletionFishFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyCompletionFishCommand = Command.make("fish", config).pipe(
+export const completionFishCommand = Command.make("fish", config).pipe(
   Command.withDescription(
     "Generate the autocompletion script for the fish shell.\n\n" +
       "To load completions in your current shell session:\n\n" +
@@ -22,10 +22,7 @@ export const legacyCompletionFishCommand = Command.make("fish", config).pipe(
   ),
   Command.withShortDescription("Generate the autocompletion script for fish"),
   Command.withHandler((flags) =>
-    legacyCompletionFish(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
-      withJsonErrorHandling,
-    ),
+    completionFish(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["completion", "fish"])),
 );

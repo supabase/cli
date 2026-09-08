@@ -1,25 +1,25 @@
 import { Effect } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { emitLegacyHostnameResult } from "../domains.emit.ts";
-import { mapLegacyDomainsHttpError } from "../domains.errors.ts";
-import { legacyGateMapError } from "../../../command-internal/legacy-upgrade-suggest.ts";
-import type { LegacyDomainsActivateFlags } from "./activate.command.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { emitHostnameResult } from "../domains.emit.ts";
+import { mapDomainsHttpError } from "../domains.errors.ts";
+import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
+import type { DomainsActivateFlags } from "./activate.command.ts";
 
-const mapActivateError = mapLegacyDomainsHttpError("activate");
+const mapActivateError = mapDomainsHttpError("activate");
 
-export const legacyDomainsActivate = Effect.fn("legacy.domains.activate")(function* (
-  flags: LegacyDomainsActivateFlags,
+export const domainsActivate = Effect.fn("domains.activate")(function* (
+  flags: DomainsActivateFlags,
 ) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
@@ -28,10 +28,10 @@ export const legacyDomainsActivate = Effect.fn("legacy.domains.activate")(functi
       output.format === "text" ? yield* output.task("Activating custom hostname...") : undefined;
     const response = yield* api.v1.activateCustomHostname({ ref }).pipe(
       Effect.tapError(() => activating?.fail() ?? Effect.void),
-      Effect.catch(legacyGateMapError({ projectRef: ref }, mapActivateError)),
+      Effect.catch(gateMapError({ projectRef: ref }, mapActivateError)),
     );
     yield* activating?.clear() ?? Effect.void;
 
-    yield* emitLegacyHostnameResult(response, flags.includeRawOutput);
+    yield* emitHostnameResult(response, flags.includeRawOutput);
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

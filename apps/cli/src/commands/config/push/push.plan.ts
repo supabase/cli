@@ -10,9 +10,9 @@
 
 import type { CliConfig, ConfigChange, ConfigChangeSet, ProjectConfig } from "@supabase/config";
 
-import { legacyIsPrefixOf, legacyPathIn, legacySamePath, legacyValueAtPath } from "./push.paths.ts";
+import { isPrefixOf, pathIn, samePath, valueAtPath } from "./push.paths.ts";
 
-export type LegacyPushResource =
+export type PushResource =
   | "api"
   | "db.settings"
   | "db.network_restrictions"
@@ -21,7 +21,7 @@ export type LegacyPushResource =
   | "storage";
 
 /** Push order — the order `config push` has always processed its services in. */
-export const LEGACY_PUSH_RESOURCES: ReadonlyArray<LegacyPushResource> = [
+export const PUSH_RESOURCES: ReadonlyArray<PushResource> = [
   "api",
   "db.settings",
   "db.network_restrictions",
@@ -36,15 +36,15 @@ export const LEGACY_PUSH_RESOURCES: ReadonlyArray<LegacyPushResource> = [
  * these prefixes is unsupported: `db.major_version`;
  * `db.pooler.{pool_mode,default_pool_size,max_client_conn}`.
  */
-export const LEGACY_PUSH_UNSUPPORTED_PREFIXES: ReadonlyArray<ReadonlyArray<string>> = [
+export const PUSH_UNSUPPORTED_PREFIXES: ReadonlyArray<ReadonlyArray<string>> = [
   ["db", "major_version"],
   ["db", "pooler"],
 ];
 
 /** Longest-registered-prefix routing target for a comparable config path. */
-const LEGACY_PUSH_RESOURCE_PREFIXES: ReadonlyArray<{
+const PUSH_RESOURCE_PREFIXES: ReadonlyArray<{
   readonly prefix: ReadonlyArray<string>;
-  readonly resource: LegacyPushResource;
+  readonly resource: PushResource;
 }> = [
   { prefix: ["db", "settings"], resource: "db.settings" },
   { prefix: ["db", "network_restrictions"], resource: "db.network_restrictions" },
@@ -55,7 +55,7 @@ const LEGACY_PUSH_RESOURCE_PREFIXES: ReadonlyArray<{
 ];
 
 /** Cost-matrix / confirmation-prompt key per resource — the three `db.*` resources share one prompt. */
-export function legacyPushPromptKey(resource: LegacyPushResource): string {
+export function pushPromptKey(resource: PushResource): string {
   switch (resource) {
     case "api":
       return "api";
@@ -71,9 +71,7 @@ export function legacyPushPromptKey(resource: LegacyPushResource): string {
 }
 
 /** The Management API v2 response block a resource's comparisons are read from. */
-export function legacyPushResponseBlock(
-  resource: LegacyPushResource,
-): "api" | "database" | "auth" | "storage" {
+export function pushResponseBlock(resource: PushResource): "api" | "database" | "auth" | "storage" {
   switch (resource) {
     case "api":
       return "api";
@@ -96,20 +94,16 @@ export function legacyPushResponseBlock(
  * `changeSet.changes` — see this module's unit test's drift guard). Never
  * `undefined`, so a resource lookup is total for every caller.
  */
-export function legacyPushResourceForPath(
-  path: ReadonlyArray<string>,
-): LegacyPushResource | "unsupported" {
-  for (const unsupportedPrefix of LEGACY_PUSH_UNSUPPORTED_PREFIXES) {
-    if (legacyIsPrefixOf(unsupportedPrefix, path)) {
+export function pushResourceForPath(path: ReadonlyArray<string>): PushResource | "unsupported" {
+  for (const unsupportedPrefix of PUSH_UNSUPPORTED_PREFIXES) {
+    if (isPrefixOf(unsupportedPrefix, path)) {
       return "unsupported";
     }
   }
-  let best:
-    | { readonly prefix: ReadonlyArray<string>; readonly resource: LegacyPushResource }
-    | undefined;
-  for (const entry of LEGACY_PUSH_RESOURCE_PREFIXES) {
+  let best: { readonly prefix: ReadonlyArray<string>; readonly resource: PushResource } | undefined;
+  for (const entry of PUSH_RESOURCE_PREFIXES) {
     if (
-      legacyIsPrefixOf(entry.prefix, path) &&
+      isPrefixOf(entry.prefix, path) &&
       (best === undefined || entry.prefix.length > best.prefix.length)
     ) {
       best = entry;
@@ -118,9 +112,9 @@ export function legacyPushResourceForPath(
   return best?.resource ?? "unsupported";
 }
 
-export interface LegacyPushPlan {
+export interface PushPlan {
   /** Pushable (`update` | `local_only`) changes per resource, path-ordered. Total — every resource has an entry, even an empty one. */
-  readonly changesByResource: Readonly<Record<LegacyPushResource, ReadonlyArray<ConfigChange>>>;
+  readonly changesByResource: Readonly<Record<PushResource, ReadonlyArray<ConfigChange>>>;
   /** Pushable-class changes whose path has no v1 write path. */
   readonly unsupported: ReadonlyArray<ReadonlyArray<string>>;
   /** Count of `remote_only` changes (hands-off; informational only). */
@@ -133,8 +127,8 @@ export interface LegacyPushPlan {
  * counted; a pushable change with no v1 write path is collected into
  * `unsupported` instead of a resource bucket.
  */
-export function legacyPlanConfigPush(changeSet: ConfigChangeSet): LegacyPushPlan {
-  const changesByResource: Record<LegacyPushResource, Array<ConfigChange>> = {
+export function planConfigPush(changeSet: ConfigChangeSet): PushPlan {
+  const changesByResource: Record<PushResource, Array<ConfigChange>> = {
     api: [],
     "db.settings": [],
     "db.network_restrictions": [],
@@ -148,7 +142,7 @@ export function legacyPlanConfigPush(changeSet: ConfigChangeSet): LegacyPushPlan
     if (change.class !== "update" && change.class !== "local_only") {
       continue;
     }
-    const resource = legacyPushResourceForPath(change.path);
+    const resource = pushResourceForPath(change.path);
     if (resource === "unsupported") {
       unsupported.push(change.path);
       continue;
@@ -177,8 +171,8 @@ export function legacyPlanConfigPush(changeSet: ConfigChangeSet): LegacyPushPlan
  * locally. `db.network_restrictions.enabled` stays a genuine gate: it is a
  * real hosted-side management opt-out, not a local-service toggle.
  */
-export function legacyPushResourceEnabled(
-  resource: LegacyPushResource,
+export function pushResourceEnabled(
+  resource: PushResource,
   config: CliConfig,
   local: ProjectConfig,
 ): boolean {
@@ -195,14 +189,14 @@ export function legacyPushResourceEnabled(
   }
 }
 
-export interface LegacyPushAddonGate {
+export interface PushAddonGate {
   readonly costKey: "auth_mfa_phone" | "auth_mfa_web_authn";
   readonly verifyPath: ReadonlyArray<string>;
   readonly enrollPath: ReadonlyArray<string>;
 }
 
 /** The two paid MFA addons whose enablement is gated behind a cost-aware prompt. */
-export const LEGACY_PUSH_ADDON_GATES: ReadonlyArray<LegacyPushAddonGate> = [
+export const PUSH_ADDON_GATES: ReadonlyArray<PushAddonGate> = [
   {
     costKey: "auth_mfa_phone",
     verifyPath: ["auth", "mfa", "phone", "verify_enabled"],
@@ -223,25 +217,25 @@ export const LEGACY_PUSH_ADDON_GATES: ReadonlyArray<LegacyPushAddonGate> = [
  * (`remote`'s `verify_enabled` is `true`), in which case there is no new
  * cost to confirm.
  */
-export function legacyPushAddonPromptNeeded(
+export function pushAddonPromptNeeded(
   changes: ReadonlyArray<ConfigChange>,
-  gate: LegacyPushAddonGate,
+  gate: PushAddonGate,
   remote: ProjectConfig,
 ): boolean {
-  if (legacyValueAtPath(remote, gate.verifyPath) === true) {
+  if (valueAtPath(remote, gate.verifyPath) === true) {
     return false;
   }
   const turnsOn = (path: ReadonlyArray<string>): boolean =>
-    changes.some((change) => legacySamePath(change.path, path) && change.local === true);
+    changes.some((change) => samePath(change.path, path) && change.local === true);
   return turnsOn(gate.verifyPath) || turnsOn(gate.enrollPath);
 }
 
 /** The routed change list, narrowed to the paths a resource's body actually communicated. */
-export function legacyChangesCommunicated(
+export function changesCommunicated(
   changes: ReadonlyArray<ConfigChange>,
   encodedPaths: ReadonlyArray<ReadonlyArray<string>>,
 ): ReadonlyArray<ConfigChange> {
-  return changes.filter((change) => legacyPathIn(change.path, encodedPaths));
+  return changes.filter((change) => pathIn(change.path, encodedPaths));
 }
 
 /**
@@ -255,18 +249,16 @@ export function legacyChangesCommunicated(
  * omitting them leaves the remote's current (already disabled) state
  * untouched.
  */
-export function legacyApplyMfaAddonDecline(
+export function applyMfaAddonDecline(
   changes: ReadonlyArray<ConfigChange>,
-  gate: LegacyPushAddonGate,
+  gate: PushAddonGate,
   remote: ProjectConfig,
 ): ReadonlyArray<ConfigChange> {
   const withoutGate = changes.filter(
-    (change) =>
-      !legacySamePath(change.path, gate.verifyPath) &&
-      !legacySamePath(change.path, gate.enrollPath),
+    (change) => !samePath(change.path, gate.verifyPath) && !samePath(change.path, gate.enrollPath),
   );
-  const remoteVerify = legacyValueAtPath(remote, gate.verifyPath);
-  const remoteEnroll = legacyValueAtPath(remote, gate.enrollPath);
+  const remoteVerify = valueAtPath(remote, gate.verifyPath);
+  const remoteEnroll = valueAtPath(remote, gate.enrollPath);
   if (remoteVerify !== true && remoteEnroll !== true) {
     return withoutGate;
   }

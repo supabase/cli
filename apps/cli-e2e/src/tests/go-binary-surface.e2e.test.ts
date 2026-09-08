@@ -4,14 +4,14 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 // CLI-1970 shrank the bundled `supabase-go` binary down to exactly the
-// commands the TypeScript CLI's `LegacyGoProxy` can spawn — every other Go
+// commands the TypeScript CLI's `GoProxy` can spawn — every other Go
 // command was deleted outright. Every TS integration test stubs that
 // subprocess boundary, so nothing in the normal test pyramid notices when a
 // still-reachable Go command gets trimmed away by mistake: that regression
 // was previously caught only by a human audit.
 //
 // This suite is the durable guard: it enumerates every argv shape the TS
-// side can hand to `LegacyGoProxy` and asserts the built `supabase-go`
+// side can hand to `GoProxy` and asserts the built `supabase-go`
 // binary still resolves it. If this fails after trimming the Go binary,
 // either the TS spawn surface grew (add the new command to the retained
 // set in `apps/cli-go`) or the trim cut too deep (restore the command).
@@ -83,7 +83,7 @@ describe.skipIf(GO_BINARY === undefined)("go binary spawn surface (CLI-1970)", (
     };
   }
 
-  // The complete spawn surface, mirrored from `LegacyGoProxy` call sites:
+  // The complete spawn surface, mirrored from `GoProxy` call sites:
   //   - db diff (diff.handler.ts, `--use-pg-schema` delegate path)
   //   - db branch create|delete|list|switch (thin proxies)
   //   - db remote changes (thin proxy)

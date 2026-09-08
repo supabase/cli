@@ -1,34 +1,34 @@
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
-  LegacyVanitySubdomainsDeleteNetworkError,
-  LegacyVanitySubdomainsDeleteUnexpectedStatusError,
+  VanitySubdomainsDeleteNetworkError,
+  VanitySubdomainsDeleteUnexpectedStatusError,
 } from "../vanity-subdomains.errors.ts";
-import type { LegacyVanitySubdomainsDeleteFlags } from "./delete.command.ts";
+import type { VanitySubdomainsDeleteFlags } from "./delete.command.ts";
 
-const mapDeleteError = mapLegacyHttpError({
-  networkError: LegacyVanitySubdomainsDeleteNetworkError,
-  statusError: LegacyVanitySubdomainsDeleteUnexpectedStatusError,
+const mapDeleteError = mapHttpError({
+  networkError: VanitySubdomainsDeleteNetworkError,
+  statusError: VanitySubdomainsDeleteUnexpectedStatusError,
   networkMessage: (cause) => `failed to delete vanity subdomain: ${cause}`,
   statusMessage: (status, body) => `unexpected delete vanity subdomain status ${status}: ${body}`,
 });
 
-export const legacyVanitySubdomainsDelete = Effect.fn("legacy.vanity-subdomains.delete")(function* (
-  flags: LegacyVanitySubdomainsDeleteFlags,
+export const vanitySubdomainsDelete = Effect.fn("vanity-subdomains.delete")(function* (
+  flags: VanitySubdomainsDeleteFlags,
 ) {
   const output = yield* Output;
-  const legacyOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const outputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
     const ref = yield* resolver.resolve(flags.projectRef);
@@ -45,12 +45,9 @@ export const legacyVanitySubdomainsDelete = Effect.fn("legacy.vanity-subdomains.
       // `--output` is ignored entirely (stderr-only success). We still read
       // the legacy flag so that an explicit --output suppresses the TS json/stream-json
       // success event, keeping stdout empty either way.
-      const legacyOutput = Option.getOrUndefined(legacyOutputFlag);
+      const goOutput = Option.getOrUndefined(outputFlag);
 
-      if (
-        legacyOutput === undefined &&
-        (output.format === "json" || output.format === "stream-json")
-      ) {
+      if (goOutput === undefined && (output.format === "json" || output.format === "stream-json")) {
         yield* output.success("Deleted vanity subdomain successfully.");
         return;
       }

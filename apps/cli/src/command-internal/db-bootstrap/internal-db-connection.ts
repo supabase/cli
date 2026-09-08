@@ -7,7 +7,7 @@
  * present at commit a253ccba2 — threaded through `run()` as `dbConfig`).
  *
  * This is deliberately NOT the same value as
- * `LegacyLocalConfigValues.dbUrl` (`legacy-local-config-values.ts`): that
+ * `LocalConfigValues.dbUrl` (`local-config-values.ts`): that
  * field is `postgresql://postgres:<password>@<hostname>:<host-mapped db.port>/postgres`
  * — the HOST-facing address `status`/`stop` print for a user's own `psql`
  * client, reachable through Docker's published port mapping. Every
@@ -24,19 +24,19 @@
  */
 
 /** Go's `dbConfig.Port` literal (`start.go:68`) — always 5432, never the configurable `db.port`. */
-export const LEGACY_START_INTERNAL_DB_PORT = 5432;
+export const START_INTERNAL_DB_PORT = 5432;
 
 /** Go's `dbConfig.Database` literal (`start.go:71`) — always `"postgres"`, never configurable. */
-export const LEGACY_START_INTERNAL_DB_NAME = "postgres";
+export const START_INTERNAL_DB_NAME = "postgres";
 
 /**
  * Extracts `dbConfig.Password` (Go's `utils.Config.Db.Password`, `db.go:88` —
  * `toml:"-"`, never configurable, always the `"postgres"` literal default,
  * `pkg/config/config.go:459`) from the already-resolved
- * `LegacyLocalConfigValues.dbUrl` rather than re-deriving that default a
+ * `LocalConfigValues.dbUrl` rather than re-deriving that default a
  * second time — `dbUrl`'s shape
  * (`postgresql://postgres:<password>@<hostname>:<port>/postgres`,
- * `legacyResolveLocalConfigValues`) always embeds the exact same password
+ * `resolveLocalConfigValues`) always embeds the exact same password
  * value `dbConfig.Password` does, since both are sourced from the same
  * `config.Db.Password` field.
  *
@@ -44,15 +44,15 @@ export const LEGACY_START_INTERNAL_DB_NAME = "postgres";
  * .password` preserves percent-encoding (`new URL("postgresql://u:p%40s@h:5/d")
  * .password === "p%40s"`), but consumers split into plain-env uses that need the
  * decoded value (Realtime's `DB_PASSWORD`, `realtime-env.ts`) and URI re-embedders
- * that re-encode themselves ({@link legacyStartInternalDbUrl}). The shadow database
- * path (`legacy-shadow-source.ts`) builds its `dbUrl` via `legacyToPostgresURL`,
+ * that re-encode themselves ({@link startInternalDbUrl}). The shadow database
+ * path (`shadow-source.ts`) builds its `dbUrl` via `toPostgresURL`,
  * which `encodeURIComponent`s a config-derived password, so decoding here is what
  * keeps a special-character password working against a container initialized with
  * the raw value. For `start`'s constant `"postgres"` both forms are identical. The
  * fallback covers a `dbUrl` whose userinfo was never percent-encoded (a raw `%`
  * would throw `URIError`) — the undecoded octets are the best available value there.
  */
-export function legacyStartInternalDbPassword(dbUrl: string): string {
+export function startInternalDbPassword(dbUrl: string): string {
   const encoded = new URL(dbUrl).password;
   try {
     return decodeURIComponent(encoded);
@@ -68,13 +68,13 @@ export function legacyStartInternalDbPassword(dbUrl: string): string {
  * `supabase_storage_admin`, Storage's vector-bucket default `VECTOR_DATABASE_URL`
  * as `postgres` — see `appendStorageVectorEnv`, `start.go:1487-1501`).
  *
- * `dbPassword` is the RAW password ({@link legacyStartInternalDbPassword}); it is
+ * `dbPassword` is the RAW password ({@link startInternalDbPassword}); it is
  * percent-encoded here so the consuming service's URI parser decodes it back to
  * the same value. Go interpolates the raw string, but its only possible value is
  * the reserved-character-free `"postgres"` literal, for which the two are
  * byte-identical — encoding only diverges for the shadow path's config-derived
  * password, where the raw form would produce an unparseable URI.
  */
-export function legacyStartInternalDbUrl(role: string, dbHost: string, dbPassword: string): string {
-  return `postgresql://${role}:${encodeURIComponent(dbPassword)}@${dbHost}:${LEGACY_START_INTERNAL_DB_PORT}/${LEGACY_START_INTERNAL_DB_NAME}`;
+export function startInternalDbUrl(role: string, dbHost: string, dbPassword: string): string {
+  return `postgresql://${role}:${encodeURIComponent(dbPassword)}@${dbHost}:${START_INTERNAL_DB_PORT}/${START_INTERNAL_DB_NAME}`;
 }

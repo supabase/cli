@@ -1,98 +1,95 @@
 import { Layer } from "effect";
 
-import { legacyCredentialsLayer } from "../../../auth/legacy-credentials.layer.ts";
-import { legacyPlatformApiFactoryLayer } from "../../../auth/legacy-platform-api-factory.layer.ts";
-import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
-import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { legacyDbConfigLayer } from "../../../command-internal/legacy-db-config.layer.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import { legacyDbConnectionLayer } from "../../../command-internal/legacy-db-connection.layer.ts";
-import { legacyDebugLoggerLayer } from "../../../command-internal/legacy-debug-logger.layer.ts";
-import { legacyPgDeltaSslProbeLayer } from "../../../command-internal/legacy-pgdelta-ssl-probe.layer.ts";
-import { LegacyPgDeltaSslProbe } from "../../../command-internal/legacy-pgdelta-ssl-probe.service.ts";
-import {
-  LegacyIdentityStitch,
-  legacyIdentityStitchLayer,
-} from "../../../command-internal/legacy-identity-stitch.ts";
-import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts";
-import { legacyLinkedProjectCacheLayer } from "../../../telemetry/legacy-linked-project-cache.layer.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { commandCredentialsLayer } from "../../../auth/command-credentials.layer.ts";
+import { commandPlatformApiFactoryLayer } from "../../../auth/command-platform-api-factory.layer.ts";
+import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
+import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { projectRefLayer } from "../../../config/project-ref.layer.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import { dbConnectionLayer } from "../../../command-internal/db-connection.layer.ts";
+import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
+import { pgDeltaSslProbeLayer } from "../../../command-internal/pgdelta-ssl-probe.layer.ts";
+import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.service.ts";
+import { IdentityStitch, identityStitchLayer } from "../../../command-internal/identity-stitch.ts";
+import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
+import { linkedProjectCacheLayer } from "../../../telemetry/linked-project-cache.layer.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { CommandRuntime } from "../../../shared/runtime/command-runtime.service.ts";
 
 /**
  * `gen types --local` and `--db-url` do not use the Management API, so this
- * runtime deliberately avoids `legacyManagementApiRuntimeLayer`: that layer
+ * runtime deliberately avoids `managementApiRuntimeLayer`: that layer
  * eagerly builds the platform API client and requires an access token before
  * the handler can choose the local/db-url branch.
  */
-export const legacyGenTypesRuntimeLayer = (() => {
-  const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
-  const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
-  const credentials = legacyCredentialsLayer.pipe(
+export const genTypesRuntimeLayer = (() => {
+  const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
+  const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
+  const credentials = commandCredentialsLayer.pipe(
     Layer.provide(cliSettings),
-    Layer.provide(legacyDebugLoggerLayer),
+    Layer.provide(debugLoggerLayer),
   );
-  // `legacyIdentityStitchLayer` (one per-command identity stitcher) is provided by
+  // `identityStitchLayer` (one per-command identity stitcher) is provided by
   // the SAME reference to the platform-API factory and the linked-project cache so
   // memoisation gives both a single `stitchAttempted` guard.
-  const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
+  const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliSettings),
-    Layer.provide(legacyDebugLoggerLayer),
-    Layer.provide(legacyIdentityStitchLayer),
+    Layer.provide(debugLoggerLayer),
+    Layer.provide(identityStitchLayer),
   );
-  const dbConfig = legacyDbConfigLayer.pipe(
+  const dbConfig = dbConfigLayer.pipe(
     Layer.provide(cliSettings),
-    Layer.provide(legacyDbConnectionLayer),
-    Layer.provide(legacyDebugLoggerLayer),
-    Layer.provide(legacyIdentityStitchLayer),
+    Layer.provide(dbConnectionLayer),
+    Layer.provide(debugLoggerLayer),
+    Layer.provide(identityStitchLayer),
   );
 
   const built = Layer.mergeAll(
     dbConfig,
-    legacyDbConnectionLayer,
+    dbConnectionLayer,
     cliSettings,
     platformApiFactory,
-    legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
-    legacyLinkedProjectCacheLayer.pipe(
+    projectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
+    linkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
       Layer.provide(cliSettings),
       Layer.provide(httpClient),
-      Layer.provide(legacyIdentityStitchLayer),
+      Layer.provide(identityStitchLayer),
     ),
-    legacyPgDeltaSslProbeLayer,
-    legacyTelemetryStateLayer,
+    pgDeltaSslProbeLayer,
+    telemetryStateLayer,
     // The one per-command identity stitcher, exposed at top level so
-    // `withLegacyCommandInstrumentation` can read
+    // `withCommandTelemetry` can read
     // `stitchedDistinctId()` and attribute the cli_command_executed event to the
     // gotrue id. The SAME reference is provided to platformApiFactory /
     // linkedProjectCache above, so memoisation gives both a single
     // `stitchAttempted` guard — aliasing/persisting at most once. Its
     // Analytics / TelemetryRuntime / FileSystem / Path deps are ambient (root
     // runtime). Mirrors advisors.layers.ts / lint.layers.ts.
-    legacyIdentityStitchLayer,
+    identityStitchLayer,
     commandRuntimeLayer(["gen", "types"]),
   );
 
-  const _serviceCoverageCheck: Layer.Layer<LegacyGenTypesServices, unknown, unknown> = built;
+  const _serviceCoverageCheck: Layer.Layer<GenTypesServices, unknown, unknown> = built;
   void _serviceCoverageCheck;
 
   return built;
 })();
 
-type LegacyGenTypesServices =
-  | LegacyPlatformApiFactory
-  | LegacyCliSettings
-  | LegacyProjectRefResolver
-  | LegacyDbConfigResolver
-  | LegacyPgDeltaSslProbe
-  | LegacyLinkedProjectCache
-  | LegacyTelemetryState
-  | LegacyIdentityStitch
+type GenTypesServices =
+  | CommandPlatformApiFactory
+  | CommandSettings
+  | ProjectRefResolver
+  | DbConfigResolver
+  | PgDeltaSslProbe
+  | LinkedProjectCache
+  | TelemetryState
+  | IdentityStitch
   | CommandRuntime;

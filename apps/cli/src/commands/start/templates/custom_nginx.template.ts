@@ -10,7 +10,7 @@
  * template-literal interpolation — the backslash escapes are required so this
  * TS template literal doesn't try to evaluate `{{VAR}}` as an object literal.
  */
-export const LEGACY_START_CUSTOM_NGINX_TEMPLATE = `pid pids/nginx.pid;                      # this setting is mandatory
+export const START_CUSTOM_NGINX_TEMPLATE = `pid pids/nginx.pid;                      # this setting is mandatory
 error_log logs/error.log \${{LOG_LEVEL}}; # can be set by kong.conf
 
 daemon \${{NGINX_DAEMON}};                     # can be set by kong.conf

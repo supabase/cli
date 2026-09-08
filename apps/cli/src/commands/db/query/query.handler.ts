@@ -2,52 +2,45 @@ import { Effect, FileSystem, Option, Path, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyTelemetryOutputFormat } from "../../../telemetry/legacy-telemetry-output-format.service.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import {
-  LegacyDbConnection,
-  type LegacyPgConnInput,
-} from "../../../command-internal/legacy-db-connection.service.ts";
-import {
-  LegacyAgentFlag,
-  LegacyDnsResolverFlag,
-  LegacyOutputFlag,
-} from "../../../shared/legacy/global-flags.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { TelemetryOutputFormat } from "../../../telemetry/telemetry-output-format.service.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import { AgentFlag, DnsResolverFlag, OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Random } from "../../../shared/runtime/random.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { AiTool } from "../../../shared/telemetry/ai-tool.service.ts";
-import type { LegacyDbQueryFlags } from "./query.command.ts";
-import { LEGACY_RLS_CHECK_SQL, legacyBuildRlsAdvisory } from "./query.advisory.ts";
+import type { DbQueryFlags } from "./query.command.ts";
+import { RLS_CHECK_SQL, buildRlsAdvisory } from "./query.advisory.ts";
 import {
-  LegacyDbQueryExecError,
-  LegacyDbQueryLoginRequiredError,
-  LegacyDbQueryMutuallyExclusiveFlagsError,
-  LegacyDbQueryNoSqlError,
-  LegacyDbQueryNoStdinSqlError,
-  LegacyDbQueryReadFileError,
-  LegacyDbQueryUnexpectedStatusError,
+  DbQueryExecError,
+  DbQueryLoginRequiredError,
+  DbQueryMutuallyExclusiveFlagsError,
+  DbQueryNoSqlError,
+  DbQueryNoStdinSqlError,
+  DbQueryReadFileError,
+  DbQueryUnexpectedStatusError,
 } from "./query.errors.ts";
 import {
-  type LegacyAdvisory,
-  legacyCoerceLocalJsonRows,
-  legacyFindNonFiniteJsonValue,
-  legacyFormatLinkedValue,
-  legacyMakeLocalCellFormatter,
-  legacyOrderedKeys,
-  legacyRenderJson,
-  legacyRenderTablewriter,
-  legacyResolveAgentMode,
-  legacyToCsv,
+  type Advisory,
+  coerceLocalJsonRows,
+  findNonFiniteJsonValue,
+  formatLinkedValue,
+  makeLocalCellFormatter,
+  orderedKeys,
+  renderJson,
+  renderTablewriter,
+  resolveAgentMode,
+  toCsv,
 } from "./query.format.ts";
 
 /** The output formats `db query` selects: `json|table|csv`. */
-type LegacyResolvedFormat = "json" | "table" | "csv";
+type ResolvedFormat = "json" | "table" | "csv";
 
 // Established output contract for a missing access token.
 const MISSING_TOKEN_MESSAGE =
@@ -55,11 +48,11 @@ const MISSING_TOKEN_MESSAGE =
 
 const BOUNDARY_BYTES = 16;
 
-export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: LegacyDbQueryFlags) {
+export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
   const output = yield* Output;
-  const telemetryState = yield* LegacyTelemetryState;
-  const telemetryOutputFormat = yield* LegacyTelemetryOutputFormat;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
+  const telemetryOutputFormat = yield* TelemetryOutputFormat;
+  const linkedProjectCache = yield* LinkedProjectCache;
   // The project ref is resolved during the linked pre-run, before DB
   // resolution and before SQL resolution. The linked-project cache is
   // refreshed unconditionally afterward, so it must refresh even when a
@@ -71,26 +64,26 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
   const stdin = yield* Stdin;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const cliSettings = yield* LegacyCliSettings;
+  const cliSettings = yield* CommandSettings;
   const random = yield* Random;
-  const agentFlag = yield* LegacyAgentFlag;
-  const outputFlag = yield* LegacyOutputFlag;
+  const agentFlag = yield* AgentFlag;
+  const outputFlag = yield* OutputFlag;
   const aiTool = yield* AiTool;
-  const resolver = yield* LegacyDbConfigResolver;
-  const dbConn = yield* LegacyDbConnection;
-  const dnsResolver = yield* LegacyDnsResolverFlag;
+  const resolver = yield* DbConfigResolver;
+  const dbConn = yield* DbConnection;
+  const dnsResolver = yield* DnsResolverFlag;
 
   // Emit the resolved payload (json/table/csv) to stdout in every output
   // format — there is no `--output-format` for `db query`, so there is no
   // machine envelope. The CSV and table writers ignore agent mode / the
   // advisory; only JSON carries the agent envelope.
   const emit = (
-    format: LegacyResolvedFormat,
+    format: ResolvedFormat,
     cols: ReadonlyArray<string>,
     data: ReadonlyArray<ReadonlyArray<unknown>>,
     agentMode: boolean,
-    advisory: Option.Option<LegacyAdvisory>,
-    // The linked path passes `legacyFormatLinkedValue` (JSON-decoded float
+    advisory: Option.Option<Advisory>,
+    // The linked path passes `formatLinkedValue` (JSON-decoded float
     // cells → `%v`/`%g`-style formatting); the local path passes an OID-aware
     // formatter (`float4`/`float8` → `%g`, ints plain). JSON output re-marshals
     // the raw values either way.
@@ -102,26 +95,25 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
   ) =>
     Effect.gen(function* () {
       if (format === "table") {
-        return yield* output.raw(legacyRenderTablewriter(cols, data, formatCell));
+        return yield* output.raw(renderTablewriter(cols, data, formatCell));
       }
       if (format === "csv") {
-        return yield* output.raw(legacyToCsv(cols, data, formatCell));
+        return yield* output.raw(toCsv(cols, data, formatCell));
       }
       // The established JSON encoding fails on NaN/±Inf (empty stdout, exit
       // 1); mirror that instead of letting `JSON.stringify` emit `null`.
       // Checked before any output.
-      const nonFinite = legacyFindNonFiniteJsonValue(data);
+      const nonFinite = findNonFiniteJsonValue(data);
       if (nonFinite !== undefined) {
         return yield* Effect.fail(
-          new LegacyDbQueryExecError({
+          new DbQueryExecError({
             message: `failed to encode JSON: json: unsupported value: ${nonFinite}`,
           }),
         );
       }
-      const jsonData =
-        fieldTypeIds === undefined ? data : legacyCoerceLocalJsonRows(data, fieldTypeIds);
+      const jsonData = fieldTypeIds === undefined ? data : coerceLocalJsonRows(data, fieldTypeIds);
       const boundary = agentMode ? yield* random.randomHex(BOUNDARY_BYTES) : "";
-      const rendered = legacyRenderJson(cols, jsonData, agentMode, boundary, advisory);
+      const rendered = renderJson(cols, jsonData, agentMode, boundary, advisory);
       if (output.format === "stream-json" && Option.getOrUndefined(outputFlag) !== "json") {
         const compactRendered = rendered.trimEnd().replaceAll("\n", "");
         yield* output.raw(
@@ -133,9 +125,9 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     });
 
   const runLocal = (
-    target: { readonly conn: LegacyPgConnInput; readonly isLocal: boolean },
+    target: { readonly conn: PgConnInput; readonly isLocal: boolean },
     sql: string,
-    format: LegacyResolvedFormat,
+    format: ResolvedFormat,
     agentMode: boolean,
   ) => {
     const { conn, isLocal } = target;
@@ -146,7 +138,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
 
         const result = yield* session
           .queryRaw(sql)
-          .pipe(Effect.mapError((cause) => new LegacyDbQueryExecError({ message: cause.message })));
+          .pipe(Effect.mapError((cause) => new DbQueryExecError({ message: cause.message })));
 
         // DDL/DML statements expose no columns → print the command tag.
         if (result.fields.length === 0) {
@@ -155,13 +147,11 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
 
         // Agent mode runs a best-effort RLS advisory check (only rendered in JSON).
         const advisory = agentMode
-          ? yield* session.queryRaw(LEGACY_RLS_CHECK_SQL).pipe(
-              Effect.map((rls) =>
-                legacyBuildRlsAdvisory(rls.rows.map((row) => String(row[0] ?? ""))),
-              ),
-              Effect.orElseSucceed(() => Option.none<LegacyAdvisory>()),
+          ? yield* session.queryRaw(RLS_CHECK_SQL).pipe(
+              Effect.map((rls) => buildRlsAdvisory(rls.rows.map((row) => String(row[0] ?? "")))),
+              Effect.orElseSucceed(() => Option.none<Advisory>()),
             )
-          : Option.none<LegacyAdvisory>();
+          : Option.none<Advisory>();
 
         yield* emit(
           format,
@@ -169,7 +159,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
           result.rows,
           agentMode,
           advisory,
-          legacyMakeLocalCellFormatter(result.fieldTypeIds ?? []),
+          makeLocalCellFormatter(result.fieldTypeIds ?? []),
           result.fieldTypeIds ?? [],
         );
       }),
@@ -178,13 +168,13 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
 
   const runLinked = (
     sql: string,
-    format: LegacyResolvedFormat,
+    format: ResolvedFormat,
     agentMode: boolean,
     ref: string,
     token: Redacted.Redacted<string>,
   ) =>
     Effect.gen(function* () {
-      const cliSettings = yield* LegacyCliSettings;
+      const cliSettings = yield* CommandSettings;
       const httpClient = yield* HttpClient.HttpClient;
 
       const request = HttpClientRequest.post(
@@ -201,7 +191,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       }).pipe(
         Effect.mapError(
           (cause) =>
-            new LegacyDbQueryExecError({
+            new DbQueryExecError({
               message: `failed to execute query: ${cause}`,
               transport: true,
             }),
@@ -209,7 +199,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       );
       if (status !== 201) {
         return yield* Effect.fail(
-          new LegacyDbQueryUnexpectedStatusError({
+          new DbQueryUnexpectedStatusError({
             status,
             message: `unexpected status ${status}: ${body}`,
           }),
@@ -237,10 +227,10 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       if (rows.length === 0) {
         return yield* emit(format, [], [], agentMode, Option.none());
       }
-      const orderedCols = legacyOrderedKeys(body);
+      const orderedCols = orderedKeys(body);
       const cols = orderedCols.length > 0 ? [...orderedCols] : Object.keys(rows[0] ?? {});
       const data = rows.map((row) => cols.map((col) => row?.[col] ?? null));
-      yield* emit(format, cols, data, agentMode, Option.none(), legacyFormatLinkedValue);
+      yield* emit(format, cols, data, agentMode, Option.none(), formatLinkedValue);
     });
 
   yield* Effect.gen(function* () {
@@ -253,7 +243,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     if (Option.isSome(flags.local)) exclusive.push("local");
     if (exclusive.length > 1) {
       return yield* Effect.fail(
-        new LegacyDbQueryMutuallyExclusiveFlagsError({
+        new DbQueryMutuallyExclusiveFlagsError({
           message: `if any flags in the group [db-url linked local] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
         }),
       );
@@ -264,7 +254,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     // for the full TS-only rationale.
     if (Option.isSome(flags.projectRef) && Option.isNone(flags.linked)) {
       return yield* Effect.fail(
-        new LegacyDbQueryMutuallyExclusiveFlagsError({
+        new DbQueryMutuallyExclusiveFlagsError({
           message:
             "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         }),
@@ -277,8 +267,8 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     // error. Run that preflight here, before resolving SQL.
     let linkedAuth: { readonly token: Redacted.Redacted<string>; readonly ref: string } | undefined;
     if (Option.isSome(flags.linked)) {
-      const credentials = yield* LegacyCredentials;
-      const projectRef = yield* LegacyProjectRefResolver;
+      const credentials = yield* CommandCredentials;
+      const projectRef = yield* ProjectRefResolver;
       // The DB config is resolved FIRST, and only then is the token checked —
       // otherwise an unlinked-project / invalid-config / IPv6 / pooler /
       // login-role failure is masked behind a generic "supabase login" error.
@@ -320,7 +310,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       const tokenOpt = yield* credentials.getAccessToken;
       if (Option.isNone(tokenOpt)) {
         return yield* Effect.fail(
-          new LegacyDbQueryLoginRequiredError({
+          new DbQueryLoginRequiredError({
             message: MISSING_TOKEN_MESSAGE,
             suggestion: "Run supabase login first.",
           }),
@@ -355,7 +345,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
         return yield* fs.readFileString(filePath).pipe(
           Effect.mapError(
             (cause) =>
-              new LegacyDbQueryReadFileError({
+              new DbQueryReadFileError({
                 message: `failed to read SQL file: ${cause.message}`,
               }),
           ),
@@ -368,13 +358,13 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
         const piped = yield* stdin.readPipedText;
         if (Option.isNone(piped)) {
           return yield* Effect.fail(
-            new LegacyDbQueryNoStdinSqlError({ message: "no SQL provided via stdin" }),
+            new DbQueryNoStdinSqlError({ message: "no SQL provided via stdin" }),
           );
         }
         return piped.value;
       }
       return yield* Effect.fail(
-        new LegacyDbQueryNoSqlError({
+        new DbQueryNoSqlError({
           message: "no SQL query provided. Pass SQL as an argument, via --file, or pipe to stdin",
         }),
       );
@@ -387,9 +377,9 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     //    must also resolve to JSON here, so values outside `db query`'s own
     //    `json|table|csv` enum (`pretty|yaml|toml|env`) fall through to the
     //    agent/machine default rather than erroring.
-    const agentMode = legacyResolveAgentMode(agentFlag, aiTool.name);
+    const agentMode = resolveAgentMode(agentFlag, aiTool.name);
     const explicit = Option.getOrUndefined(outputFlag);
-    const format: LegacyResolvedFormat =
+    const format: ResolvedFormat =
       explicit === "json"
         ? "json"
         : explicit === "csv"

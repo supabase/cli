@@ -9,28 +9,28 @@ import { V1BulkCreateSecretsInput } from "@supabase/api/effect";
 import { parse as parseDotenv } from "dotenv";
 import { Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyDebugLogger } from "../../../command-internal/legacy-debug-logger.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
-  LegacyInvalidSecretPairError,
-  LegacySecretsEnvFileOpenError,
-  LegacySecretsEnvFileParseError,
-  LegacySecretsNoArgumentsError,
-  LegacySecretsSetInputError,
-  LegacySecretsSetNetworkError,
-  LegacySecretsSetUnexpectedStatusError,
+  InvalidSecretPairError,
+  SecretsEnvFileOpenError,
+  SecretsEnvFileParseError,
+  SecretsNoArgumentsError,
+  SecretsSetInputError,
+  SecretsSetNetworkError,
+  SecretsSetUnexpectedStatusError,
 } from "../secrets.errors.ts";
-import type { LegacySecretsSetFlags } from "./set.command.ts";
+import type { SecretsSetFlags } from "./set.command.ts";
 
-const mapSetError = mapLegacyHttpError({
-  networkError: LegacySecretsSetNetworkError,
-  statusError: LegacySecretsSetUnexpectedStatusError,
+const mapSetError = mapHttpError({
+  networkError: SecretsSetNetworkError,
+  statusError: SecretsSetUnexpectedStatusError,
   networkMessage: (cause) => `failed to set secrets: ${cause}`,
   statusMessage: (_status, body) => `Unexpected error setting project secrets: ${body}`,
 });
@@ -140,15 +140,13 @@ function filterDecodableSecrets(secrets: Record<string, unknown>): Record<string
   return kept;
 }
 
-export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
-  flags: LegacySecretsSetFlags,
-) {
+export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetFlags) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const debugLogger = yield* LegacyDebugLogger;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const debugLogger = yield* DebugLogger;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -197,7 +195,7 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
         // Go prints this from inside config load, before any command output
         // (`pkg/config/config.go:605`) — unconditionally on a matching
         // `[remotes.*]` block, ahead of the (possibly failing) decode. Other
-        // legacy handlers surface it the same way (e.g. `config push`); this
+        // handlers surface it the same way (e.g. `config push`); this
         // path must not silently drop it just because it maps straight down
         // to `.config` below.
         return (
@@ -318,7 +316,7 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
       const content = yield* fs.readFileString(absolutePath).pipe(
         Effect.mapError(
           (cause) =>
-            new LegacySecretsEnvFileOpenError({
+            new SecretsEnvFileOpenError({
               message: `failed to open env file: ${String(cause)}`,
               reason:
                 cause.reason._tag === "NotFound"
@@ -334,7 +332,7 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
         parsed = parseDotenv(content);
       } catch (cause) {
         return yield* Effect.fail(
-          new LegacySecretsEnvFileParseError({
+          new SecretsEnvFileParseError({
             message: `failed to parse env file: ${String(cause)}`,
           }),
         );
@@ -349,7 +347,7 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
       const eqIdx = pair.indexOf("=");
       if (eqIdx === -1) {
         return yield* Effect.fail(
-          new LegacyInvalidSecretPairError({
+          new InvalidSecretPairError({
             pair,
             message: `Invalid secret pair: ${pair}. Must be NAME=VALUE.`,
           }),
@@ -373,7 +371,7 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
 
     if (body.length === 0) {
       return yield* Effect.fail(
-        new LegacySecretsNoArgumentsError({
+        new SecretsNoArgumentsError({
           message: "No arguments found. Use --env-file to read from a .env file.",
         }),
       );
@@ -402,8 +400,7 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
       { discard: true },
     ).pipe(
       Effect.mapError(
-        (cause) =>
-          new LegacySecretsSetInputError({ message: `failed to set secrets: ${String(cause)}` }),
+        (cause) => new SecretsSetInputError({ message: `failed to set secrets: ${String(cause)}` }),
       ),
     );
 

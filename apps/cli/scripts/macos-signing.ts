@@ -29,7 +29,7 @@ export function macIdentifierFor(binary: string): string | undefined {
 }
 
 /**
- * The macOS binaries shipped for the CLI: the legacy shell's Bun SFE alongside
+ * The macOS binaries shipped for the CLI: the CLI's Bun SFE alongside
  * the Go sidecar it proxies a residual command surface to.
  */
 export function darwinBinaries(): MacBinaryName[] {

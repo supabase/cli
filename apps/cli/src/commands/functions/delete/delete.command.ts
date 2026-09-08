@@ -2,9 +2,9 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { FUNCTIONS_PROJECT_REF_SAFE_FLAGS } from "../../../shared/functions/functions.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyFunctionsDelete } from "./delete.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { functionsDelete } from "./delete.handler.ts";
 
 const config = {
   functionName: Argument.string("Function name").pipe(
@@ -16,17 +16,17 @@ const config = {
   ),
 } as const;
 
-export type LegacyFunctionsDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type FunctionsDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 // Exported so integration tests can drive the exact wiring `Command.withHandler`
 // uses below, instead of re-asserting the generic instrumentation mechanism.
-export const legacyFunctionsDeleteHandler = (flags: LegacyFunctionsDeleteFlags) =>
-  legacyFunctionsDelete(flags).pipe(
-    withLegacyCommandInstrumentation({ flags, safeFlags: FUNCTIONS_PROJECT_REF_SAFE_FLAGS }),
+export const functionsDeleteHandler = (flags: FunctionsDeleteFlags) =>
+  functionsDelete(flags).pipe(
+    withCommandTelemetry({ flags, safeFlags: FUNCTIONS_PROJECT_REF_SAFE_FLAGS }),
     withJsonErrorHandling,
   );
 
-export const legacyFunctionsDeleteCommand = Command.make("delete", config).pipe(
+export const functionsDeleteCommand = Command.make("delete", config).pipe(
   Command.withDescription(
     "Delete a Function from the linked Supabase project. This does NOT remove the Function locally.",
   ),
@@ -41,6 +41,6 @@ export const legacyFunctionsDeleteCommand = Command.make("delete", config).pipe(
       description: "Delete a deployed function from a specific project",
     },
   ]),
-  Command.withHandler(legacyFunctionsDeleteHandler),
-  Command.provide(legacyManagementApiRuntimeLayer(["functions", "delete"])),
+  Command.withHandler(functionsDeleteHandler),
+  Command.provide(managementApiRuntimeLayer(["functions", "delete"])),
 );

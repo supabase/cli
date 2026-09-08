@@ -1,14 +1,14 @@
 import { describe, expect, test } from "vitest";
 
 import {
-  legacyBuildImgproxyContainerSpec,
-  legacyBuildImgproxyEnv,
-  type LegacyImgproxyContainerSpecInput,
+  buildImgproxyContainerSpec,
+  buildImgproxyEnv,
+  type ImgproxyContainerSpecInput,
 } from "./imgproxy.service.ts";
 
-describe("legacyBuildImgproxyEnv", () => {
+describe("buildImgproxyEnv", () => {
   test("matches Go's fully static Env literal, including the literal (non-boolean) IMGPROXY_USE_ETAG value", () => {
-    expect(legacyBuildImgproxyEnv()).toEqual({
+    expect(buildImgproxyEnv()).toEqual({
       IMGPROXY_BIND: ":5001",
       IMGPROXY_LOCAL_FILESYSTEM_ROOT: "/",
       IMGPROXY_USE_ETAG: "/",
@@ -22,28 +22,28 @@ describe("legacyBuildImgproxyEnv", () => {
   });
 });
 
-describe("legacyBuildImgproxyContainerSpec", () => {
-  const input: LegacyImgproxyContainerSpecInput = {
+describe("buildImgproxyContainerSpec", () => {
+  const input: ImgproxyContainerSpecInput = {
     projectId: "proj",
     networkId: "supabase_network_proj",
     image: "supabase/imgproxy:v3",
   };
 
   test("derives its own container name and mounts Storage's volumes via VolumesFrom", () => {
-    const spec = legacyBuildImgproxyContainerSpec(input);
+    const spec = buildImgproxyContainerSpec(input);
     expect(spec.containerName).toBe("supabase_imgproxy_proj");
     expect(spec.volumesFrom).toEqual(["supabase_storage_proj"]);
     expect(spec.binds).toEqual([]);
   });
 
   test("has no ports/exposedPorts — reached only via its network alias", () => {
-    const spec = legacyBuildImgproxyContainerSpec(input);
+    const spec = buildImgproxyContainerSpec(input);
     expect(spec.ports).toBeUndefined();
     expect(spec.exposedPorts).toBeUndefined();
   });
 
   test("builds the imgproxy-native healthcheck", () => {
-    const spec = legacyBuildImgproxyContainerSpec(input);
+    const spec = buildImgproxyContainerSpec(input);
     expect(spec.healthcheck).toEqual({
       test: ["CMD", "imgproxy", "health"],
       intervalSeconds: 10,
@@ -53,7 +53,7 @@ describe("legacyBuildImgproxyContainerSpec", () => {
   });
 
   test("network alias is 'imgproxy'", () => {
-    const spec = legacyBuildImgproxyContainerSpec(input);
+    const spec = buildImgproxyContainerSpec(input);
     expect(spec.networkAliases).toEqual(["imgproxy"]);
     expect(spec.networkId).toBe("supabase_network_proj");
     expect(spec.restartPolicy).toBe("unless-stopped");
@@ -61,7 +61,7 @@ describe("legacyBuildImgproxyContainerSpec", () => {
   });
 
   test("derives the storage volume-source name from a different projectId", () => {
-    const spec = legacyBuildImgproxyContainerSpec({ ...input, projectId: "other" });
+    const spec = buildImgproxyContainerSpec({ ...input, projectId: "other" });
     expect(spec.containerName).toBe("supabase_imgproxy_other");
     expect(spec.volumesFrom).toEqual(["supabase_storage_other"]);
   });

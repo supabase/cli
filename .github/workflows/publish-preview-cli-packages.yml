@@ -45,7 +45,6 @@ jobs:
     uses: ./.github/workflows/build-cli-artifacts.yml
     with:
       version: 0.0.0-pr.${{ github.event.pull_request.number }}
-      shell: legacy
     secrets:
       DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
@@ -79,7 +78,7 @@ jobs:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-legacy-${{ env.PREVIEW_VERSION }}-v1
+          key: cli-build-${{ github.run_id }}-${{ env.PREVIEW_VERSION }}-v1
           enableCrossOsArchive: true
           fail-on-cache-miss: true
 
