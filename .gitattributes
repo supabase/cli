@@ -20,6 +20,7 @@ apps/cli-go/api/v1-openapi.yaml linguist-generated=true
 apps/cli-go/pkg/api/*.gen.go linguist-generated=true
 packages/api/src/generated/* linguist-generated=true
 packages/api/scripts/openapi-source.json linguist-generated=true
+apps/cli/src/shared/feedback/database.types.ts linguist-generated=true
 apps/docs/public/cli/config.schema.json linguist-generated=true
 apps/docs/public/cli/project-config.schema.json linguist-generated=true
 
