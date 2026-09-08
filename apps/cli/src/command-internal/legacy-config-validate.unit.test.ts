@@ -255,99 +255,139 @@ describe("legacyResolveEmailTemplateContentPath", () => {
   // rejected (verified exploitable via `start`'s Kong `rw` Docker bind mount). Only the dangling
   // case above is deterministic on every OS/CI environment without special permissions; the other
   // two are covered per their own comments below.
-  it("rejects a content_path that is an in-root dangling symlink pointing to a nonexistent target outside the project root", () => {
-    // The core regression case: `lstatSync` shows the symlink itself genuinely exists, but its
-    // target does not — before the fix, that combination was wrongly folded into "doesn't exist"
-    // (the same bucket as a plain missing file), silently laundering the escape as an ordinary
-    // missing-file resolution instead of rejecting it.
-    const base = setup();
-    outsideDir = mkdtempSync(join(tmpdir(), "legacy-config-validate-email-content-outside-"));
-    const neverCreatedOutsideTarget = join(outsideDir, "never-created.html");
-    const danglingSymlinkPath = join(base, "dangling.html");
-    symlinkSync(neverCreatedOutsideTarget, danglingSymlinkPath);
+  it.each(["template", "notification"] as const)(
+    "rejects a %s content_path that is an in-root dangling symlink pointing to a nonexistent target outside the project root",
+    (section) => {
+      // The core regression case: `lstatSync` shows the symlink itself genuinely exists, but its
+      // target does not — before the fix, that combination was wrongly folded into "doesn't exist"
+      // (the same bucket as a plain missing file), silently laundering the escape as an ordinary
+      // missing-file resolution instead of rejecting it.
+      const base = setup();
+      outsideDir = mkdtempSync(join(tmpdir(), "legacy-config-validate-email-content-outside-"));
+      const neverCreatedOutsideTarget = join(outsideDir, "never-created.html");
+      const danglingSymlinkPath = join(base, "dangling.html");
+      symlinkSync(neverCreatedOutsideTarget, danglingSymlinkPath);
 
-    expect(() => resolveContentPath("template", "./dangling.html", base)).toThrow(
-      LegacyConfigValidateError,
-    );
-    expect(() => resolveContentPath("template", "./dangling.html", base)).toThrow(
-      /resolves outside the project root/,
-    );
-  });
-
-  it("rejects a content_path that is an in-root symlink whose outside target sits behind an unsearchable (EACCES) directory", () => {
-    // A target one level inside a chmod-000 directory makes BOTH `realpathSync` and (per
-    // POSIX pathname resolution, since finding the target's own dirent also needs search
-    // permission on its parent) `lstatSync` fail with EACCES, not ENOENT — this must never be
-    // laundered into "doesn't exist" either. This still fails closed (never returns a path
-    // silently treated as in-root) in every environment this was verified against, including as
-    // an unprivileged, non-root user (the only case that actually exercises the EACCES branch —
-    // as root, chmod 000 is a no-op and the target resolves normally, hitting the ordinary
-    // out-of-root rejection instead). Skip only if this environment doesn't enforce the
-    // permission at all (e.g. running as root) — the deterministic dangling-symlink case above
-    // already covers the core regression without needing any permission trick.
-    const base = setup();
-    outsideDir = mkdtempSync(join(tmpdir(), "legacy-config-validate-email-content-outside-"));
-    const unsearchableDir = join(outsideDir, "locked");
-    mkdirSync(unsearchableDir);
-    const target = join(unsearchableDir, "secret.html");
-    writeFileSync(target, "<p>Locked</p>");
-    chmodSync(unsearchableDir, 0o000);
-
-    try {
-      let permissionEnforced = true;
-      try {
-        readdirSync(unsearchableDir);
-        permissionEnforced = false;
-      } catch {
-        // expected in a normal, unprivileged environment — confirms chmod 000 actually blocks access here.
-      }
-      if (!permissionEnforced) {
-        return;
-      }
-
-      const symlinkPath = join(base, "unsearchable.html");
-      symlinkSync(target, symlinkPath);
-
-      // Never silently accepted as in-root: it must fail closed, one way or another.
-      expect(() => resolveContentPath("template", "./unsearchable.html", base)).toThrow();
-    } finally {
-      chmodSync(unsearchableDir, 0o755);
-    }
-  });
-
-  it("rejects an in-root symlink loop instead of hanging or crashing", () => {
-    // `canonicalPathForContainment` cannot canonicalize a genuine cycle at all — past
-    // `MAX_SYMLINK_FOLLOW_DEPTH` hops it gives up and returns the (lexical, never
-    // realpath-dereferenced) path as-is, per its own contract. Containment then compares that
-    // unverified lexical path against the fully-canonicalized project root. A project root
-    // reached through no symlink of its own could coincidentally still compare equal (since
-    // there's nothing to dereference), so this deliberately reuses the same symlinked-root
-    // fixture as the "missing leaf behind a symlinked project root" test above — guaranteeing
-    // a real canonicalization gap between the root and the un-canonicalizable loop path,
-    // deterministically on every OS, rather than depending on incidental symlinks somewhere in
-    // the ambient tmpdir (e.g. macOS's own /tmp -> /private/tmp).
-    const realDir = mkdtempSync(join(tmpdir(), "legacy-config-validate-email-content-real-"));
-    const linkContainer = mkdtempSync(join(tmpdir(), "legacy-config-validate-email-content-link-"));
-    const symlinkedRoot = join(linkContainer, "project-root");
-    symlinkSync(realDir, symlinkedRoot, "dir");
-
-    try {
-      const loopA = join(symlinkedRoot, "loop-a.html");
-      const loopB = join(symlinkedRoot, "loop-b.html");
-      symlinkSync(loopB, loopA);
-      symlinkSync(loopA, loopB);
-
-      expect(() => resolveContentPath("template", "./loop-a.html", symlinkedRoot)).toThrow(
+      expect(() => resolveContentPath(section, "./dangling.html", base)).toThrow(
         LegacyConfigValidateError,
       );
-      expect(() => resolveContentPath("template", "./loop-a.html", symlinkedRoot)).toThrow(
+      expect(() => resolveContentPath(section, "./dangling.html", base)).toThrow(
         /resolves outside the project root/,
       );
-    } finally {
-      rmSync(linkContainer, { recursive: true, force: true });
-      rmSync(realDir, { recursive: true, force: true });
-    }
-  });
+    },
+  );
+
+  it.each(["template", "notification"] as const)(
+    "rejects a %s content_path that is an in-root symlink whose outside target sits behind an unsearchable (EACCES) directory",
+    (section) => {
+      // A target one level inside a chmod-000 directory makes BOTH `realpathSync` and (per
+      // POSIX pathname resolution, since finding the target's own dirent also needs search
+      // permission on its parent) `lstatSync` fail with EACCES, not ENOENT — this must never be
+      // laundered into "doesn't exist" either. This still fails closed (never returns a path
+      // silently treated as in-root) in every environment this was verified against, including as
+      // an unprivileged, non-root user (the only case that actually exercises the EACCES branch —
+      // as root, chmod 000 is a no-op and the target resolves normally, hitting the ordinary
+      // out-of-root rejection instead). Skip only if this environment doesn't enforce the
+      // permission at all (e.g. running as root) — the deterministic dangling-symlink case above
+      // already covers the core regression without needing any permission trick.
+      const base = setup();
+      outsideDir = mkdtempSync(join(tmpdir(), "legacy-config-validate-email-content-outside-"));
+      const unsearchableDir = join(outsideDir, "locked");
+      mkdirSync(unsearchableDir);
+      const target = join(unsearchableDir, "secret.html");
+      writeFileSync(target, "<p>Locked</p>");
+      chmodSync(unsearchableDir, 0o000);
+
+      try {
+        let permissionEnforced = true;
+        try {
+          readdirSync(unsearchableDir);
+          permissionEnforced = false;
+        } catch {
+          // expected in a normal, unprivileged environment — confirms chmod 000 actually blocks access here.
+        }
+        if (!permissionEnforced) {
+          return;
+        }
+
+        const symlinkPath = join(base, "unsearchable.html");
+        symlinkSync(target, symlinkPath);
+
+        // Converges on the exact same specific error as every other containment-rejection case,
+        // not just "fails closed somehow": the guarded `lstatSync` fallback now folds its own
+        // thrown EACCES into the ordinary out-of-root rejection instead of letting it escape raw.
+        expect(() => resolveContentPath(section, "./unsearchable.html", base)).toThrow(
+          LegacyConfigValidateError,
+        );
+        expect(() => resolveContentPath(section, "./unsearchable.html", base)).toThrow(
+          /resolves outside the project root/,
+        );
+      } finally {
+        chmodSync(unsearchableDir, 0o755);
+      }
+    },
+  );
+
+  it.each(["template", "notification"] as const)(
+    "rejects a %s content_path that is an in-root symlink pointing to an unstattable (ENAMETOOLONG) target name, deterministically on every OS/uid",
+    (section) => {
+      // A permission-free sibling to the EACCES test above, which can silently lose coverage in
+      // any environment that doesn't enforce chmod 000 (root, some containers, Windows): an
+      // over-long filename component makes both `realpathSync` and `lstatSync` throw ENAMETOOLONG
+      // (not ENOENT) regardless of uid or platform, so this always exercises the guarded fallback.
+      const base = setup();
+      outsideDir = mkdtempSync(join(tmpdir(), "legacy-config-validate-email-content-outside-"));
+      const tooLongName = `${"a".repeat(300)}.html`;
+      const symlinkPath = join(base, "toolong.html");
+      symlinkSync(join(outsideDir, tooLongName), symlinkPath);
+
+      expect(() => resolveContentPath(section, "./toolong.html", base)).toThrow(
+        LegacyConfigValidateError,
+      );
+      expect(() => resolveContentPath(section, "./toolong.html", base)).toThrow(
+        /resolves outside the project root/,
+      );
+    },
+  );
+
+  it.each(["template", "notification"] as const)(
+    "rejects an in-root %s symlink loop instead of hanging or crashing",
+    (section) => {
+      // `canonicalPathForContainment` cannot canonicalize a genuine cycle at all — past
+      // `MAX_SYMLINK_FOLLOW_DEPTH` hops it gives up and returns the (lexical, never
+      // realpath-dereferenced) path as-is, per its own contract. Containment then compares that
+      // unverified lexical path against the fully-canonicalized project root. A project root
+      // reached through no symlink of its own could coincidentally still compare equal (since
+      // there's nothing to dereference), so this deliberately reuses the same symlinked-root
+      // fixture as the "missing leaf behind a symlinked project root" test above — guaranteeing
+      // a real canonicalization gap between the root and the un-canonicalizable loop path,
+      // deterministically on every OS, rather than depending on incidental symlinks somewhere in
+      // the ambient tmpdir (e.g. macOS's own /tmp -> /private/tmp).
+      const realDir = mkdtempSync(join(tmpdir(), "legacy-config-validate-email-content-real-"));
+      const linkContainer = mkdtempSync(
+        join(tmpdir(), "legacy-config-validate-email-content-link-"),
+      );
+      const symlinkedRoot = join(linkContainer, "project-root");
+      symlinkSync(realDir, symlinkedRoot, "dir");
+
+      try {
+        const loopA = join(symlinkedRoot, "loop-a.html");
+        const loopB = join(symlinkedRoot, "loop-b.html");
+        symlinkSync(loopB, loopA);
+        symlinkSync(loopA, loopB);
+
+        expect(() => resolveContentPath(section, "./loop-a.html", symlinkedRoot)).toThrow(
+          LegacyConfigValidateError,
+        );
+        expect(() => resolveContentPath(section, "./loop-a.html", symlinkedRoot)).toThrow(
+          /resolves outside the project root/,
+        );
+      } finally {
+        rmSync(linkContainer, { recursive: true, force: true });
+        rmSync(realDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 /**

@@ -1,4 +1,4 @@
-import { lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { lstatSync, readlinkSync, realpathSync, statSync, type Stats } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import {
@@ -791,12 +791,37 @@ const MAX_SYMLINK_FOLLOW_DEPTH = 40;
  * symlink chain past {@link MAX_SYMLINK_FOLLOW_DEPTH}) is returned as-is —
  * refusing to vouch for it lexically; the containment check still compares
  * it honestly, and any subsequent read fails with its own real error.
+ *
+ * `lstatSync` itself can also throw here, for a related reason — resolving
+ * `path`'s own dirent can itself fail (EACCES resolving an ancestor
+ * directory, ENAMETOOLONG, ...), and `throwIfNoEntry: false` only suppresses
+ * `ENOENT`. That's handled the same way as the cases above: returned as-is
+ * rather than laundered into "doesn't exist", so the containment check
+ * still compares it honestly rather than silently accepting it as a plain
+ * miss. A lexical (non-canonicalized) comparison can't see through the
+ * unstattable component, though, so an escaping symlink whose OWN path is
+ * lexically in-root can still pass this particular check — every caller of
+ * this resolution reads the returned path's actual bytes with the CLI's own
+ * privileges before trusting it, which is the real backstop that fails
+ * closed in that case.
  */
 function canonicalizeExistingPath(path: string, depth: number): string | undefined {
   try {
     return realpathSync(path);
   } catch {
-    const entry = lstatSync(path, { throwIfNoEntry: false });
+    // Wraps ONLY the `lstatSync` call, not the recursive
+    // `canonicalPathForContainment` follow-up below: folding that into this
+    // same try would mean a deep throw there returns the OUTER symlink's own
+    // lexically-in-root path, turning a rejection into an accept. Same
+    // reasoning as why `readlinkSync` below stays unguarded — there's no
+    // fail-closed lexical answer on its failure either, so a raw error is
+    // the honest outcome there too.
+    let entry: Stats | undefined;
+    try {
+      entry = lstatSync(path, { throwIfNoEntry: false });
+    } catch {
+      return path;
+    }
     if (entry === undefined) return undefined;
     if (entry.isSymbolicLink() && depth < MAX_SYMLINK_FOLLOW_DEPTH) {
       const target = readlinkSync(path);
@@ -928,9 +953,21 @@ function legacyResolveNotificationContentPath(base: string, contentPath: string)
   return resolved;
 }
 
-/** A directory at the root-resolved path must not suppress the legacy-file fallback. */
+/**
+ * A directory at the root-resolved path must not suppress the legacy-file
+ * fallback. An unstattable dirent (EACCES, ELOOP, or anything else
+ * `throwIfNoEntry: false` doesn't suppress — that flag only suppresses
+ * ENOENT) is treated as present instead: the declared path keeps winning, so
+ * containment and the caller's own read report the real cause rather than
+ * silently retargeting to the legacy `supabase/`-relative twin because of a
+ * permission error.
+ */
 function legacyIsExistingFile(path: string): boolean {
-  return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
+  try {
+    return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
+  } catch {
+    return true;
+  }
 }
 
 /** `Invalid config for auth.email.${section}.${name}.content_path: ${msg(cause)}` */
