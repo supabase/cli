@@ -100,7 +100,7 @@ const legacyReadFunctionEnvironments = (
       const functionEnv = yield* read(path.join(root, entry, ".env"));
       result[entry] = { ...shared, ...functionEnv };
     }
-    return { shared, functions: result, path };
+    return { shared, functions: result };
   });
 
 const section = (document: Readonly<Record<string, unknown>> | undefined, name: string) => {
@@ -212,7 +212,7 @@ const legacyFunctionPathError = (
         path.join(projectRoot, "supabase", value.startsWith("./") ? value.slice(2) : value),
       );
   const relative = path.relative(functionsRoot, target);
-  if (relative === ".." || relative.startsWith(`..${path.sep}`))
+  if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`))
     return `functions.${name}.${field} path must be inside supabase/functions`;
   return undefined;
 };
@@ -690,118 +690,120 @@ const legacyConfigValidationError = (
 
 /** Loads and translates the effective project config for all experimental stack commands. */
 export const legacyLoadStackConfig = (projectRoot: string): LegacyStackConfigEffect =>
-  legacyLoadLocalProjectContext(
-    projectRoot,
-    (message) => new LegacyStackConfigError({ message }),
-  ).pipe(
-    Effect.flatMap((context) =>
-      context.loaded === null
-        ? Effect.fail(
-            new LegacyStackConfigError({
-              message: `No Supabase project configuration found in ${projectRoot}. Run supabase init first.`,
-            }),
-          )
-        : legacyReadFunctionEnvironments(
-            projectRoot,
-            new Set(
-              Object.entries(context.config.functions)
-                .filter(([, functionConfig]) => functionConfig.enabled === false)
-                .map(([name]) => name),
-            ),
-            context.config.edge_runtime.enabled === false,
-          ).pipe(
-            Effect.mapError((cause) => new LegacyStackConfigError({ message: String(cause) })),
-            Effect.flatMap(
-              (
-                environments: Readonly<{
-                  readonly shared: Readonly<Record<string, Redacted.Redacted<string>>>;
-                  readonly functions: Readonly<
-                    Record<string, Readonly<Record<string, Redacted.Redacted<string>>>>
-                  >;
-                  readonly path: Path.Path;
-                }>,
-              ) => {
-                const validationError = legacyConfigValidationError(
-                  environments.path,
-                  projectRoot,
-                  context.config,
-                  context.projectEnvValues,
-                );
-                if (validationError !== undefined)
-                  return Effect.fail(new LegacyStackConfigError({ message: validationError }));
-                const input = legacyConfigInput(
-                  projectRoot,
-                  environments.path,
-                  context.config,
-                  context.loaded?.document,
-                  context.projectEnvValues,
-                );
-                if (input.capabilities.functions.enabled === false) return Effect.succeed(input);
-                const functionSettings = isRecord(input.capabilities.functions.settings)
-                  ? input.capabilities.functions.settings
-                  : {};
-                const functions = isRecord(functionSettings.functions)
-                  ? functionSettings.functions
-                  : {};
-                const allFunctions = {
-                  ...Object.fromEntries(
-                    Object.keys(environments.functions).map((name) => [
-                      name,
-                      { env: environments.functions[name] },
-                    ]),
-                  ),
-                  ...functions,
-                };
-                return Effect.succeed({
-                  ...input,
-                  capabilities: {
-                    ...input.capabilities,
-                    functions: {
-                      ...input.capabilities.functions,
-                      settings: {
-                        ...functionSettings,
-                        edge_runtime: {
-                          ...(isRecord(functionSettings.edge_runtime)
-                            ? functionSettings.edge_runtime
-                            : {}),
-                          secrets: {
-                            ...environments.shared,
-                            ...(isRecord(functionSettings.edge_runtime) &&
-                            isRecord(functionSettings.edge_runtime.secrets)
-                              ? functionSettings.edge_runtime.secrets
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    return yield* legacyLoadLocalProjectContext(
+      projectRoot,
+      (message) => new LegacyStackConfigError({ message }),
+    ).pipe(
+      Effect.flatMap((context) =>
+        context.loaded === null
+          ? Effect.fail(
+              new LegacyStackConfigError({
+                message: `No Supabase project configuration found in ${projectRoot}. Run supabase init first.`,
+              }),
+            )
+          : legacyReadFunctionEnvironments(
+              projectRoot,
+              new Set(
+                Object.entries(context.config.functions)
+                  .filter(([, functionConfig]) => functionConfig.enabled === false)
+                  .map(([name]) => name),
+              ),
+              context.config.edge_runtime.enabled === false,
+            ).pipe(
+              Effect.mapError((cause) => new LegacyStackConfigError({ message: String(cause) })),
+              Effect.flatMap(
+                (
+                  environments: Readonly<{
+                    readonly shared: Readonly<Record<string, Redacted.Redacted<string>>>;
+                    readonly functions: Readonly<
+                      Record<string, Readonly<Record<string, Redacted.Redacted<string>>>>
+                    >;
+                  }>,
+                ) => {
+                  const validationError = legacyConfigValidationError(
+                    path,
+                    projectRoot,
+                    context.config,
+                    context.projectEnvValues,
+                  );
+                  if (validationError !== undefined)
+                    return Effect.fail(new LegacyStackConfigError({ message: validationError }));
+                  const input = legacyConfigInput(
+                    projectRoot,
+                    path,
+                    context.config,
+                    context.loaded?.document,
+                    context.projectEnvValues,
+                  );
+                  if (input.capabilities.functions.enabled === false) return Effect.succeed(input);
+                  const functionSettings = isRecord(input.capabilities.functions.settings)
+                    ? input.capabilities.functions.settings
+                    : {};
+                  const functions = isRecord(functionSettings.functions)
+                    ? functionSettings.functions
+                    : {};
+                  const allFunctions = {
+                    ...Object.fromEntries(
+                      Object.keys(environments.functions).map((name) => [
+                        name,
+                        { env: environments.functions[name] },
+                      ]),
+                    ),
+                    ...functions,
+                  };
+                  return Effect.succeed({
+                    ...input,
+                    capabilities: {
+                      ...input.capabilities,
+                      functions: {
+                        ...input.capabilities.functions,
+                        settings: {
+                          ...functionSettings,
+                          edge_runtime: {
+                            ...(isRecord(functionSettings.edge_runtime)
+                              ? functionSettings.edge_runtime
                               : {}),
-                          },
-                        },
-                        functions: Object.fromEntries(
-                          Object.entries(allFunctions).map(([name, value]) => [
-                            name,
-                            {
-                              ...(isRecord(value) ? value : {}),
-                              env: {
-                                ...environments.functions[name],
-                                ...(isRecord(value) && isRecord(value.env) ? value.env : {}),
-                              },
+                            secrets: {
+                              ...environments.shared,
+                              ...(isRecord(functionSettings.edge_runtime) &&
+                              isRecord(functionSettings.edge_runtime.secrets)
+                                ? functionSettings.edge_runtime.secrets
+                                : {}),
                             },
-                          ]),
-                        ),
+                          },
+                          functions: Object.fromEntries(
+                            Object.entries(allFunctions).map(([name, value]) => [
+                              name,
+                              {
+                                ...(isRecord(value) ? value : {}),
+                                env: {
+                                  ...environments.functions[name],
+                                  ...(isRecord(value) && isRecord(value.env) ? value.env : {}),
+                                },
+                              },
+                            ]),
+                          ),
+                        },
                       },
                     },
-                  },
-                });
-              },
-            ),
-            Effect.flatMap((input) =>
-              Schema.decodeUnknownEffect(StackConfigSchema)(withoutUndefined(input), {
-                onExcessProperty: "error",
-              }).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new LegacyStackConfigError({
-                      message: `invalid stack config: ${String(cause)}`,
-                    }),
+                  });
+                },
+              ),
+              Effect.flatMap((input) =>
+                Schema.decodeUnknownEffect(StackConfigSchema)(withoutUndefined(input), {
+                  onExcessProperty: "error",
+                }).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new LegacyStackConfigError({
+                        message: `invalid stack config: ${String(cause)}`,
+                      }),
+                  ),
                 ),
               ),
             ),
-          ),
-    ),
-  );
+      ),
+    );
+  });
