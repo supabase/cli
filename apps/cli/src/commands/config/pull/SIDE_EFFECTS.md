@@ -167,7 +167,7 @@ to apply, where `counts.written` stays `0` even though `wrote` is `true` (the co
 writes only); `wrote` is `false` for both `--dry-run` and a declined confirmation, block-only or
 not, regardless of `destination.created`.
 
-### `-o/--output` (legacy machine formats)
+### `-o/--output` (machine formats)
 
 **Not supported.** `config pull` is a net-new TS command with no Go parity contract (CLI-2156,
 mirrors `config diff`). Any `-o`/`--output` value — every machine-format value AND `pretty` — is

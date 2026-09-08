@@ -16,7 +16,7 @@ const baseName = (path: string): string => {
 };
 
 /**
- * The exact error strings so the legacy
+ * The exact error strings so the
  * handler can match them on stderr.
  */
 export const ERR_MISSING_REMOTE =

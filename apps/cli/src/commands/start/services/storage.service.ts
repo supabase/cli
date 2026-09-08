@@ -44,10 +44,8 @@ import {
   startInternalDbUrl,
   startInternalDbPassword,
 } from "../../../command-internal/db-bootstrap/internal-db-connection.ts";
-import {
-  slimWgetHealthcheck,
-  usesSlimRuntime,
-} from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { slimWgetHealthcheck } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 
 /** Both the container's `FILE_STORAGE_BACKEND_PATH` and its named-volume mount target. */
 const STORAGE_DOCKER_PATH = "/mnt";
@@ -228,7 +226,7 @@ export function buildStorageContainerSpec(input: StorageContainerSpecInput): Sta
     env,
     binds: [`${containerName}:${STORAGE_DOCKER_PATH}`],
     // IPv4 loopback: localhost can resolve to IPv6 on GitPod and miss the listener.
-    healthcheck: usesSlimRuntime(input.image)
+    healthcheck: usesSlimImageRuntime(input.image)
       ? slimWgetHealthcheck("http://127.0.0.1:5000/status")
       : {
           test: [

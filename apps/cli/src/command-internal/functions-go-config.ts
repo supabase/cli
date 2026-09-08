@@ -11,7 +11,7 @@ function toError(cause: unknown): Error {
  * Go-parity config resolution for the native `functions` Docker paths
  * (`deploy`/`download`/`serve`), injected into `functions-config.ts`'s
  * `loadFunctionsCliConfig` so `shared/functions/` never imports
- * `legacy/`-specific validation directly (same isolation rationale as
+ * the command tree's validation directly (same isolation rationale as
  * `styleEmphasis`/`styleAqua`).
  *
  * Delegates entirely to the SAME two functions `start`/`stop`/`status`

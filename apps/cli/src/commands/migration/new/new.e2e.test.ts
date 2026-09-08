@@ -23,7 +23,6 @@ describe("supabase migration new", () => {
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stdout } = await runSupabase(["migration", "new", "create_widgets"], {
-        entrypoint: "legacy",
         cwd: workdir,
       });
 

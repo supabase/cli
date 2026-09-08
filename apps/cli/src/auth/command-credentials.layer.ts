@@ -337,7 +337,7 @@ const deleteAllKeyringEntries = (
     }
   });
 
-// `SUPABASE_NO_KEYRING=1` disables the OS keyring entirely (matches `next/`'s
+// `SUPABASE_NO_KEYRING=1` disables the OS keyring entirely (matches the shared
 // credentials layer and the cli-e2e harness, which sets it). Without this, any
 // unconditional keyring access — e.g. `unlink`'s credential delete — blocks on a
 // Keychain authorization prompt in non-interactive / CI contexts.

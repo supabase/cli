@@ -14,7 +14,6 @@ describe("supabase link", () => {
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stdout, stderr } = await runSupabase(["link"], {
-        entrypoint: "legacy",
         env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN },
       });
       expect(exitCode).toBe(1);

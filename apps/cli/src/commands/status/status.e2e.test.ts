@@ -40,7 +40,6 @@ describe("supabase status (e2e)", () => {
       const projectDir = project.dir;
 
       const init = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
       });
@@ -49,12 +48,11 @@ describe("supabase status (e2e)", () => {
 
       const start = await runSupabase(
         ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
-        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
+        { cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
       );
       requireCliSuccess(start, "start setup");
 
       const pretty = await runSupabase(["status"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: STATUS_COMMAND_TIMEOUT_MS,
       });
@@ -64,7 +62,6 @@ describe("supabase status (e2e)", () => {
       expect(pretty.stdout).toContain("Database");
 
       const json = await runSupabase(["status", "-o", "json"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: STATUS_COMMAND_TIMEOUT_MS,
       });

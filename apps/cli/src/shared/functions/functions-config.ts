@@ -6,15 +6,14 @@ import { normalizeProjectId } from "./functions-docker.ts";
 
 /**
  * Everything the native `functions` Docker paths (`deploy`/`download`/`serve`)
- * need from project config resolution, unified across both shells. In the
+ * need from project config resolution. In the
  * CLI this also runs the same `Config.Validate`/dotenv pipeline
  * `start`/`stop`/`status` already go through — see {@link FunctionsGoConfigCompat}.
- * `next` keeps its existing plain `loadCliConfig` behavior exactly (no
- * Go-parity claim there).
+ * Callers that omit the hook keep the plain `loadCliConfig` behavior.
  */
 interface FunctionsCliConfigContext {
   readonly loaded: LoadedCliConfig | null;
-  /** Go's post-`loadNestedEnv` merged env (ambient-wins). `undefined` in `next`. */
+  /** Go's post-`loadNestedEnv` merged env (ambient-wins). `undefined` when the hook is not injected. */
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
   /** Go's `Config.ProjectId`, sanitized, after `Config.Validate` in the CLI. */
   readonly projectId: string;
@@ -53,7 +52,7 @@ export interface FunctionsGoConfigCompat {
  * (merging template defaults + env even when the file is absent), and ends in
  * `Config.Validate`, unconditionally, before any Docker/API work. Only the
  * CLI (`goConfigCompat` set) runs that Go-parity dotenv/validate
- * pipeline; `next` keeps today's plain `loadCliConfig` behavior exactly.
+ * pipeline; callers without the hook keep the plain `loadCliConfig` behavior.
  */
 export const loadFunctionsCliConfig = Effect.fnUntraced(function* (input: {
   readonly projectRoot: string;
@@ -72,9 +71,9 @@ export const loadFunctionsCliConfig = Effect.fnUntraced(function* (input: {
       // (`deploy`/`download` always resolve one first); the `basename`
       // fallback only matters if this ever runs with `projectRef`
       // `undefined` and no `project_id` in the file — matching Go's `Eject`
-      // basename default (`pkg/config/config.go:561-570`) and the legacy
+      // basename default (`pkg/config/config.go:561-570`) and the compat
       // branch's own `resolveLocalProjectId` fallback below.
-      // Sanitized like the legacy branch's (`sanitizeProjectId`, run
+      // Sanitized like the compat branch's (`sanitizeProjectId`, run
       // inside its validate pipeline): this id feeds `dockerProjectLabels`'
       // raw label values as well as `localDockerId`'s (self-sanitizing)
       // resource names, and an unsanitized `project_id = "My Project"` would

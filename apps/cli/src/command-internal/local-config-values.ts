@@ -845,7 +845,7 @@ const decodeJwks = Schema.decodeUnknownSync(Schema.Array(JwkSchema));
  * `ResolveJWKS`'s `a.SigningKeys` loop).
  *
  * Uses `node:fs` directly (not the `FileSystem` Effect service other Go-parity
- * resolvers in `legacy/` use for file reads) so this function — and its large
+ * resolvers use for file reads) so this function — and its large
  * existing test surface — can stay a plain synchronous resolver; this is an
  * optional, rarely-configured field, not worth threading Effect dependencies
  * through `statusValues`/`status.handler.ts` for.

@@ -199,7 +199,7 @@ describe("subcommand flag placement suggestions", () => {
   });
 
   it("passes a complete pflag-format diagnostic through verbatim (Go stderr parity, CLI-1983)", () => {
-    // Legacy flags that byte-match Go pflag's parse-time diagnostics
+    // Flags that byte-match Go pflag's parse-time diagnostics
     // (`stringSliceFlag`'s malformed-CSV failure) emit the COMPLETE Go
     // message as `expected`. Wrapping it in the `Invalid value for flag ...`
     // template would double-frame it — pflag prints the bare line.

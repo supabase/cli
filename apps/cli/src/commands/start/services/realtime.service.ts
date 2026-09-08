@@ -17,10 +17,8 @@ import {
   buildRealtimeEnv,
 } from "../../../command-internal/db-bootstrap/realtime-env.ts";
 import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
-import {
-  slimWgetHealthcheck,
-  usesSlimRuntime,
-} from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { slimWgetHealthcheck } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 import { startInternalDbPassword } from "../../../command-internal/db-bootstrap/internal-db-connection.ts";
 
 export interface RealtimeContainerSpecInput {
@@ -59,7 +57,7 @@ export function buildRealtimeContainerSpec(input: RealtimeContainerSpecInput): S
     env,
     binds: [],
     exposedPorts: [{ containerPort: "4000" }],
-    healthcheck: usesSlimRuntime(input.image)
+    healthcheck: usesSlimImageRuntime(input.image)
       ? slimWgetHealthcheck("http://127.0.0.1:4000/api/ping", {
           header: `Host:${REALTIME_TENANT_ID}`,
         })

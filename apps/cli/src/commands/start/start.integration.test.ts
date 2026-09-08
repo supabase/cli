@@ -2186,7 +2186,7 @@ content_path = "./supabase/templates/custom_notice.html"
         // load, before any Docker work — the established error is
         // `'functions[foo]' has invalid keys: env`. `@supabase/config`'s own schema DOES model
         // `[functions.<slug>.env]` (a legitimate next/-only feature), so this must be a
-        // legacy-only rejection.
+        // CLI-side rejection.
         const { layer, child } = setup({
           configContents:
             'project_id = "demo"\n[functions.foo]\nenabled = true\n[functions.foo.env]\nFOO = "env(SOME_VAR)"\n',

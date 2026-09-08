@@ -115,7 +115,7 @@ contain a `.` — plus `class`, `declared`, `local`, `remote`, optional
 `env_variables[]`; unset sides are `null`), `masked[]` and `unmanaged[]`
 (segment-array paths), and `counts` (per class + `total`).
 
-### `-o/--output` (legacy machine formats)
+### `-o/--output` (machine formats)
 
 **Not supported.** `config diff` is a net-new TS command with no Go parity
 contract (CLI-2156, per Colum). Any `-o`/`--output` value — every

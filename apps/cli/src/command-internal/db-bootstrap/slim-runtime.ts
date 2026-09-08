@@ -10,13 +10,6 @@
  * edge-runtime share the docker.io probes (`node` / `pg_isready`).
  */
 
-import { usesSlimImageRuntime } from "../../shared/services/slim-images.ts";
-
-/** {@link usesSlimImageRuntime} under the mandatory `legacy` export prefix. */
-export function usesSlimRuntime(image: string): boolean {
-  return usesSlimImageRuntime(image);
-}
-
 /**
  * In-container HTTP probe for slim images. `-q --spider` is the intersection
  * of BusyBox wget (what slim actually ships) and GNU wget (docker.io leftovers).

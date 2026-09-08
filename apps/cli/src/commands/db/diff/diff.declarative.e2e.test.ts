@@ -49,7 +49,6 @@ describe("supabase db diff (e2e, pg-delta declarative privileges)", () => {
       const projectDir = project.dir;
 
       const init = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
       });
@@ -60,7 +59,7 @@ describe("supabase db diff (e2e, pg-delta declarative privileges)", () => {
       // local Postgres container reachable, same rationale as stop/status.
       const start = await runSupabase(
         ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
-        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
+        { cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
       );
       requireCliSuccess(start, "start setup");
 
@@ -78,19 +77,19 @@ language sql
 as $$ select 1; $$;`,
           "--local",
         ],
-        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS },
+        { cwd: projectDir, exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS },
       );
       requireCliSuccess(createFunction, "db query create-function setup");
 
       const revoke = await runSupabase(
         ["db", "query", "revoke execute on function public.probe_fn() from public;", "--local"],
-        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS },
+        { cwd: projectDir, exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS },
       );
       requireCliSuccess(revoke, "db query revoke setup");
 
       const diff = await runSupabase(
         ["db", "diff", "--local", "--use-pg-delta", "-f", "revoke_public_execute"],
-        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: DIFF_COMMAND_TIMEOUT_MS },
+        { cwd: projectDir, exitTimeoutMs: DIFF_COMMAND_TIMEOUT_MS },
       );
       expect(diff.exitCode, `stdout:\n${diff.stdout}\nstderr:\n${diff.stderr}`).toBe(0);
 

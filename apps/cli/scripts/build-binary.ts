@@ -10,7 +10,7 @@ import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bund
  * release build in `build.ts` injects the same define.
  */
 const entrypoint = "src/main.ts";
-const outfile = "dist/supabase-legacy";
+const outfile = "dist/supabase";
 const packageJson = JSON.parse(
   await Bun.file(new URL("../package.json", import.meta.url)).text(),
 ) as {

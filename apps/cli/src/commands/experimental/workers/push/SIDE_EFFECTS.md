@@ -82,7 +82,7 @@ follow-up hint (`workers status`) is emitted as a success trailer: stderr,
 once, at the end of the run rather than between workers. **Text output
 only** — like the rest of the human deploy report it sits behind
 `output.format === "text"` and the `-o` check, so `--output-format json`,
-`stream-json` and every legacy `-o` mode emit no hint. Machine callers read
+`stream-json` and every `-o` mode emit no hint. Machine callers read
 `build_state` from the payload instead. The hint carries an explicit
 `--project-ref` when the flag supplied one, since it is copy-pasted verbatim.
 

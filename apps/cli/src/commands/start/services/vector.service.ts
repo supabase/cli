@@ -38,8 +38,8 @@ import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/
 import {
   slimWgetHealthcheck,
   slimWgetWaitCommand,
-  usesSlimRuntime,
 } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 import { renderStartVectorYaml } from "../lib/template-render.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
@@ -341,7 +341,7 @@ export interface VectorContainerSpecInput {
  * directory.
  */
 export function buildVectorContainerSpec(input: VectorContainerSpecInput): StartContainerSpec {
-  const slim = usesSlimRuntime(input.image);
+  const slim = usesSlimImageRuntime(input.image);
   const vectorYaml = renderStartVectorYaml({
     apiKey: input.apiKey,
     vectorId: input.containerName,

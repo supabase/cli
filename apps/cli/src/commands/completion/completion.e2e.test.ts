@@ -13,9 +13,10 @@ describe("supabase completion", () => {
     "bash --no-descriptions is accepted and produces the native no-descriptions script",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
-      const { exitCode, stdout } = await runSupabase(["completion", "bash", "--no-descriptions"], {
-        entrypoint: "legacy",
-      });
+      const { exitCode, stdout } = await runSupabase(
+        ["completion", "bash", "--no-descriptions"],
+        {},
+      );
       expect(exitCode).toBe(0);
       expect(stdout).toContain("__completeNoDesc");
     },
@@ -28,9 +29,7 @@ describe("supabase completion", () => {
     "zsh with no flags produces the native default script",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
-      const { exitCode, stdout } = await runSupabase(["completion", "zsh"], {
-        entrypoint: "legacy",
-      });
+      const { exitCode, stdout } = await runSupabase(["completion", "zsh"], {});
       expect(exitCode).toBe(0);
       expect(stdout).toContain("#compdef supabase");
       expect(stdout).toContain("__complete");

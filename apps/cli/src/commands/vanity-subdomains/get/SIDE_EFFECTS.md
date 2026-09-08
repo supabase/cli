@@ -59,7 +59,7 @@ Vanity subdomain: <custom_domain>
 
 The second line is omitted when `custom_domain` is absent.
 
-### Legacy `--output {json,yaml,toml,env}`
+### `--output {json,yaml,toml,env}`
 
 Encodes the response object directly.
 
@@ -73,6 +73,6 @@ One `result` event with the full response object.
 
 ## Notes
 
-- The legacy `--output` flag wins over TS `--output-format` when both are provided.
+- The `--output` flag wins over TS `--output-format` when both are provided.
 - `linked-project.json` is written after ref resolution (once the `--experimental` gate is open),
   even when the API call fails. A closed gate writes nothing.

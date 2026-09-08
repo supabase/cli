@@ -18,7 +18,7 @@ describe("supabase snippets", () => {
     async () => {
       const { exitCode, stdout, stderr } = await runSupabase(
         ["snippets", "download", "not-a-uuid", "--project-ref", TEST_PROJECT_REF],
-        { entrypoint: "legacy", env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
+        { env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
       );
       expect(exitCode).toBe(1);
       expect(`${stdout}${stderr}`).toContain("invalid snippet ID");

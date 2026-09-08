@@ -214,12 +214,12 @@ export interface GoStructDriftMismatch {
  * An empty array means no drift detected.
  */
 export function compareGoTypeToParsedGoType(
-  legacy: GoType,
+  spec: GoType,
   parsed: GoParsedType,
   path = "$",
 ): ReadonlyArray<GoStructDriftMismatch> {
   const mismatches: Array<GoStructDriftMismatch> = [];
-  compareType(legacy, parsed, path, mismatches);
+  compareType(spec, parsed, path, mismatches);
   return mismatches;
 }
 
@@ -254,12 +254,12 @@ function kindToParsedKind(kind: GoType["kind"]): GoParsedKind | undefined {
 }
 
 function compareType(
-  legacy: GoType,
+  spec: GoType,
   parsed: GoParsedType,
   path: string,
   mismatches: Array<GoStructDriftMismatch>,
 ): void {
-  const { pointer, inner } = unwrapPointer(legacy);
+  const { pointer, inner } = unwrapPointer(spec);
   if (pointer !== parsed.pointer) {
     mismatches.push({
       path,

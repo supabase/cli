@@ -21,7 +21,6 @@ describe("supabase unlink", () => {
         writeFileSync(join(projectDir, "supabase", ".temp", "project-ref"), TEST_PROJECT_REF);
 
         const { exitCode, stdout, stderr } = await runSupabase(["unlink"], {
-          entrypoint: "legacy",
           cwd: projectDir,
         });
 
@@ -43,7 +42,6 @@ describe("supabase unlink", () => {
       const projectDir = mkdtempSync(join(tmpdir(), "sb-unlink-e2e-"));
       try {
         const { exitCode, stdout, stderr } = await runSupabase(["unlink"], {
-          entrypoint: "legacy",
           cwd: projectDir,
         });
         expect(exitCode).toBe(1);

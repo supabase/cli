@@ -57,7 +57,7 @@ function fakeConsole(): { readonly console: Console.Console; readonly calls: Arr
 }
 
 /**
- * CLI-1906: `supabase branches` (a legacy "group" command — subcommands, no
+ * CLI-1906: `supabase branches` (a "group" command — subcommands, no
  * runnable handler of its own) used to exit 1 when invoked bare, even though
  * the printed help was identical to `supabase branches --help`, which already
  * exited 0. These tests run the real `branchesCommand` definition

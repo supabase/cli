@@ -26,7 +26,7 @@ export const parseYesNo = (input: string): boolean | undefined => {
 /**
  * Confirm-or-default prompt mirroring Go's `console.PromptYesNo`
  * (`apps/cli-go/internal/utils/console.go:64-82`) — the single Go-faithful
- * confirmation helper for every legacy-parity prompt (CLI-1974). It lives in
+ * confirmation helper for every Go-parity prompt (CLI-1974). It lives in
  * `command-internal/` (not `command-internal/`) because Go-parity confirmations also
  * fire from shell-agnostic shared code (`shared/functions/deploy.ts` prune,
  * `shared/init/project-init.ts` IDE settings):

@@ -82,7 +82,6 @@ jobs:
     outputs:
       should_release: ${{ steps.compute.outputs.should_release }}
       version: ${{ steps.compute.outputs.version }}
-      shell: ${{ steps.compute.outputs.shell }}
       npm_tag: ${{ steps.compute.outputs.npm_tag }}
       prerelease: ${{ steps.compute.outputs.prerelease }}
       brew_name: ${{ steps.compute.outputs.brew_name }}
@@ -152,7 +151,6 @@ jobs:
           fi
           case "$channel" in
             beta)
-              shell=legacy
               npm_tag=beta
               prerelease=true
               brew_name=supabase-beta
@@ -160,7 +158,6 @@ jobs:
               publish_brew_scoop=true
               ;;
             stable)
-              shell=legacy
               npm_tag=latest
               prerelease=false
               brew_name=supabase
@@ -175,7 +172,6 @@ jobs:
           {
             echo "should_release=$should_release"
             echo "version=$version"
-            echo "shell=$shell"
             echo "npm_tag=$npm_tag"
             echo "prerelease=$prerelease"
             echo "brew_name=$brew_name"
@@ -201,7 +197,6 @@ jobs:
     uses: ./.github/workflows/release-shared.yml
     with:
       version: ${{ needs.plan.outputs.version }}
-      shell: ${{ needs.plan.outputs.shell }}
       npm_tag: ${{ needs.plan.outputs.npm_tag }}
       prerelease: ${{ needs.plan.outputs.prerelease == 'true' }}
       publish_brew_scoop: ${{ needs.plan.outputs.publish_brew_scoop == 'true' }}

@@ -28,8 +28,8 @@ export interface DeleteFunctionDependencies<ResolveError, ResolveRequirements> {
   /**
    * Optional shell-specific styling for the slug/ref in the success line.
    * Defaults to identity (plain text). The CLI injects Go's aqua
-   * here; keeping the hook injected preserves next-shell isolation from
-   * `legacy/`-specific rendering.
+   * here; keeping the hook injected keeps this shared module free of
+   * CLI-specific rendering.
    */
   readonly styleIdentifier?: (text: string) => string;
 }

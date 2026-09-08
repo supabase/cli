@@ -703,7 +703,7 @@ describe("respondToComplete", () => {
   describe("--output's choice values are validated per-command, not the widened global union (CLI-1965 review)", () => {
     it("rejects db query's own local values (table/csv) everywhere else", () => {
       // The global OutputFlag's choiceKeys is the UNION of root's
-      // 5-value enum and db query's own 3-value enum (legacy-go-output-
+      // 5-value enum and db query's own 3-value enum (go-output-
       // flag.ts), but the root persistent --output only accepts
       // env|pretty|json|toml|yaml: `--output table ""` -> zero candidates
       // with the Default directive.

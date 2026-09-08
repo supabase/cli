@@ -88,7 +88,7 @@ describe("normalizeCliError", () => {
 
   test("InvalidValue collapses the doubled 'Expected: Expected' prefix (e.g. a bad GlobalFlag.setting value)", () => {
     // Regression test for CLI-1898: `--output-format`/`--dns-resolver`/`--agent`/
-    // legacy `--output` are `GlobalFlag.setting` flags backed by `Flag.choice`.
+    // `--output` are `GlobalFlag.setting` flags backed by `Flag.choice`.
     // `Command.runWith` validates their values in a step that runs outside the
     // `ShowHelp` path, so a bad value never reaches `CliOutput.Formatter` (and
     // `subcommand-flag-suggestions.ts`'s fix) — it surfaces here instead.
@@ -144,7 +144,7 @@ describe("normalizeCliError", () => {
   });
 
   test("InvalidValue passes a complete pflag-format diagnostic through verbatim (Go stderr parity, CLI-1983)", () => {
-    // Legacy flags that byte-match Go pflag's parse-time diagnostics
+    // Flags that byte-match Go pflag's parse-time diagnostics
     // (`stringSliceFlag`'s malformed-CSV failure, `migration down
     // --last`) emit the COMPLETE Go message as `expected`. Wrapping it in
     // Effect's `Invalid value for flag ...: Expected: ...` template would
@@ -202,7 +202,7 @@ describe("normalizeCliError", () => {
   });
 
   test("InvalidValue surfaces a complete pflag-style 'expected' message verbatim (Go flag-parse parity)", () => {
-    // Legacy flags that reproduce Go's flag-parse rejections (e.g.
+    // Flags that reproduce Go's flag-parse rejections (e.g.
     // `storage cp --jobs=-1` via `Flag.mapTryCatch`) put pflag's entire
     // `invalid argument %q for %q flag: %v` string in `expected`. Wrapping it
     // in Effect's `Invalid value for flag --jobs: …` template would break

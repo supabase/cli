@@ -187,7 +187,7 @@ export interface LoadCliProjectEnvironmentOptions {
    * intentionally non-test `.env.local` is invisible to Go in that mode and
    * must not fail config loading here either. Defaults to `false` so
    * existing callers that don't have a `SUPABASE_ENV` gate of their own
-   * (`next/`, `secrets set`) are unaffected.
+   * (`packages/stack`, `secrets set`) are unaffected.
    */
   readonly skipEnvLocal?: boolean;
 }

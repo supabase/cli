@@ -19,7 +19,6 @@ describe("supabase login", () => {
     async () => {
       using home = makeTempHome();
       const { exitCode, stdout } = await runSupabase(["login", "--token", VALID_TOKEN], {
-        entrypoint: "legacy",
         home: home.dir,
         env: { HOME: home.dir },
       });
@@ -36,7 +35,6 @@ describe("supabase login", () => {
     async () => {
       using home = makeTempHome();
       const { exitCode, stdout, stderr } = await runSupabase(["login"], {
-        entrypoint: "legacy",
         home: home.dir,
         env: { HOME: home.dir },
       });

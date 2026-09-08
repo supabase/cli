@@ -29,14 +29,14 @@
 //   subcommand/argument flags, validated while `Command.runWith` parses the
 //   command tree.
 // - `normalize-error.ts` formats errors from `GlobalFlag.setting` flags
-//   (`--output-format`, and the legacy `--output`/`-o`, `--dns-resolver`,
+//   (`--output-format`, and the `--output`/`-o`, `--dns-resolver`,
 //   `--agent`), which `Command.runWith` validates in a later step that runs
 //   *outside* the `ShowHelp` path and therefore never reaches the
 //   formatter — it surfaces as a raw failure through `runCli`'s catch-all
 //   instead.
 const EXPECTED_PREFIX = "Expected ";
 
-// Go-parity passthrough (CLI-1983, CLI-1990): legacy flags that byte-match Go
+// Go-parity passthrough (CLI-1983, CLI-1990): flags that byte-match Go
 // pflag's parse-time diagnostics (`stringSliceFlag`'s malformed-CSV
 // failure, `migration down --last`, and `storage cp --jobs` via
 // `Flag.mapTryCatch`) fail with the COMPLETE Go message as `expected` —

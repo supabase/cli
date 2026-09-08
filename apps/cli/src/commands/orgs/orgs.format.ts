@@ -14,8 +14,7 @@ import { renderGlamourTable } from "../../output/glamour-table.ts";
 // sequences or other terminal control bytes before rendering — diverging
 // here would mean scripts grepping table cells see different bytes than they
 // do today. If a future security review decides to sanitize, it should land
-// for both shells at the renderer (`glamour-table.ts`), not
-// per-command.
+// at the renderer (`glamour-table.ts`), not per-command.
 // ---------------------------------------------------------------------------
 
 const HEADERS = ["ID", "NAME"] as const;

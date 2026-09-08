@@ -47,8 +47,7 @@ type Branch = typeof BranchResponse.Type;
  * the byte output matches the established fixture.
  *
  * `activeRef`, when given, marks the row whose `project_ref` matches by
- * rendering its NAME cell as `<name> (active)` — mirroring the `next/` shell's
- * convention (`next/commands/branches/list/list.handler.ts`). TS-only QoL
+ * rendering its NAME cell as `<name> (active)`. TS-only QoL
  * (CLI-2167 follow-up, no Go counterpart): the pretty table only, never the
  * `-o json|yaml|toml` / `--output-format json|stream-json` payloads.
  */

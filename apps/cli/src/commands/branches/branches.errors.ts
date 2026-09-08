@@ -56,8 +56,7 @@ export class BranchesCreateUnexpectedStatusError extends Data.TaggedError(
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     // A non-gated 409 on `branches create` means the branch name already
-    // exists (the next shell maps this endpoint's 409 to
-    // BranchAlreadyExistsError) — user input, not a raw API status. The gate
+    // exists — user input, not a raw API status. The gate
     // guard stays ahead so a confirmed plan-limited 409 still classifies as
     // plan_limit via the shared policy.
     if (this.upgradeSuggested !== true && this.status === 409) {

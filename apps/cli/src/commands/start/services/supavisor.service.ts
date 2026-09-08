@@ -40,10 +40,8 @@
 
 import { serviceContainerName } from "../../../command-internal/docker-ids.ts";
 import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
-import {
-  slimWgetHealthcheck,
-  usesSlimRuntime,
-} from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { slimWgetHealthcheck } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 import { renderStartPoolerExs, type StartPoolerExsFields } from "../lib/template-render.ts";
 
 /** The Supavisor network alias — also this service's `containerSuffix` in `SERVICE_CATALOG`. */
@@ -178,7 +176,7 @@ export function buildSupavisorContainerSpec(
     ],
     ports: [{ hostPort: String(input.port), containerPort: dockerPort }],
     // Slim pooler ships wget, not curl.
-    healthcheck: usesSlimRuntime(input.image)
+    healthcheck: usesSlimImageRuntime(input.image)
       ? slimWgetHealthcheck("http://127.0.0.1:4000/api/health")
       : {
           test: [

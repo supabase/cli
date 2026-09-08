@@ -65,7 +65,6 @@ describe("supabase start (e2e)", () => {
     // Best-effort cleanup even if an assertion above failed mid-lifecycle — a
     // leaked local stack would otherwise pollute the CI runner for later jobs.
     await runSupabase(["stop", "--no-backup"], {
-      entrypoint: "legacy",
       cwd: projectDir,
     }).catch(() => undefined);
     await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
@@ -95,7 +94,6 @@ describe("supabase start (e2e)", () => {
       ];
 
       const init = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
       });
@@ -103,7 +101,6 @@ describe("supabase start (e2e)", () => {
       await overrideStackPorts(projectDir);
 
       const start = await runSupabase(startArgs, {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: START_TIMEOUT_MS,
       });
@@ -150,7 +147,6 @@ describe("supabase start (e2e)", () => {
       });
 
       const restart = await runSupabase(startArgs, {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: START_TIMEOUT_MS,
       });
@@ -196,7 +192,6 @@ describe("supabase start (e2e)", () => {
       }
 
       const status = await runSupabase(["status"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
       });
@@ -211,7 +206,6 @@ describe("supabase start (e2e)", () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-e2e-proxy-"));
 
       const init = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
       });
@@ -241,7 +235,6 @@ describe("supabase start (e2e)", () => {
         );
         const proxyUrl = `http://127.0.0.1:${address.port}`;
         const start = await runSupabase(["start", ...excludeArgs], {
-          entrypoint: "legacy",
           cwd: projectDir,
           exitTimeoutMs: START_TIMEOUT_MS,
           env: {
@@ -285,7 +278,6 @@ describe("supabase start (e2e)", () => {
       const mailpitImage = getRegistryImageUrl(dockerfileServiceImage("mailpit"));
 
       const init = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
       });
@@ -312,7 +304,6 @@ describe("supabase start (e2e)", () => {
             : ["--exclude", entry.excludeKey],
         );
         const start = await runSupabase(["start", ...excludeArgs], {
-          entrypoint: "legacy",
           cwd: projectDir,
           exitTimeoutMs: START_TIMEOUT_MS,
         });

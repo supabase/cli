@@ -27,7 +27,6 @@ describe("supabase db push --skip-vault", () => {
 
   test("fails during config loading without the flag", { timeout: E2E_TIMEOUT_MS }, async () => {
     const { exitCode, stderr } = await runSupabase(["db", "push", "--db-url", UNREACHABLE_DB_URL], {
-      entrypoint: "legacy",
       cwd: projectDir,
     });
     expect(exitCode).toBe(1);
@@ -41,7 +40,7 @@ describe("supabase db push --skip-vault", () => {
     async () => {
       const { exitCode, stderr } = await runSupabase(
         ["db", "push", "--db-url", UNREACHABLE_DB_URL, "--skip-vault"],
-        { entrypoint: "legacy", cwd: projectDir },
+        { cwd: projectDir },
       );
       expect(exitCode).toBe(1);
       expect(stderr).toContain("Connecting to remote database...");

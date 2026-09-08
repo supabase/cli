@@ -27,7 +27,6 @@ describe("supabase logout", () => {
       using home = makeTempHome();
       const tokenPath = seedTokenFile(home.dir);
       const { exitCode, stderr } = await runSupabase(["logout", "--yes"], {
-        entrypoint: "legacy",
         home: home.dir,
         env: { HOME: home.dir },
       });
@@ -48,7 +47,6 @@ describe("supabase logout", () => {
       using home = makeTempHome();
       seedTokenFile(home.dir);
       const { exitCode, stderr } = await runSupabase(["logout"], {
-        entrypoint: "legacy",
         home: home.dir,
         env: { HOME: home.dir },
         stdin: "n\n",
@@ -67,7 +65,6 @@ describe("supabase logout", () => {
     async () => {
       using home = makeTempHome();
       const { exitCode, stderr } = await runSupabase(["logout", "--yes"], {
-        entrypoint: "legacy",
         home: home.dir,
         env: { HOME: home.dir },
       });

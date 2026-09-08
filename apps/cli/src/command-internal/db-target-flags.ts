@@ -89,7 +89,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "cache-control",
   "content-type",
   "jobs",
-  // legacy global flags (Flag.string / Flag.choice)
+  // global flags (Flag.string / Flag.choice)
   "output",
   "output-format",
   "profile",

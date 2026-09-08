@@ -111,7 +111,7 @@ message. No preamble line.
   (inherited from the old Go CLI's behavior). A malicious or compromised Management API
   could in principle return values containing terminal escape sequences. If sanitization
   is added later it should land at the renderer (and at any shared preamble helper) so
-  both shells inherit the fix.
+  every caller inherits the fix.
 - `--output env` values are escaped via `encodeEnv` (`\n`, `\r`, `\t` → backslash-escaped).
   ESC (`0x1b`) is not escaped.
 - Error response bodies embedded in `OrgsCreateUnexpectedStatusError` are sanitized

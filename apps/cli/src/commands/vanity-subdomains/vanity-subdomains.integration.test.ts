@@ -172,7 +172,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits legacy JSON bytes for --output json", () => {
+  it.live("emits JSON bytes for --output json", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
     const layer = runtimeWith({ out, api, goOutput: "json" });
@@ -184,7 +184,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits legacy YAML for --output yaml", () => {
+  it.live("emits YAML for --output yaml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
     const layer = runtimeWith({ out, api, goOutput: "yaml" });
@@ -197,7 +197,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits legacy TOML bytes for --output toml", () => {
+  it.live("emits TOML bytes for --output toml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
     const layer = runtimeWith({ out, api, goOutput: "toml" });
@@ -221,7 +221,7 @@ describe("vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits legacy env for --output env", () => {
+  it.live("emits env for --output env", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: SAMPLE_GET } });
     const layer = runtimeWith({ out, api, goOutput: "env" });
@@ -311,7 +311,7 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits legacy JSON bytes for --output json", () => {
+  it.live("emits JSON bytes for --output json", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api, goOutput: "json" });
@@ -325,7 +325,7 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits legacy YAML for --output yaml", () => {
+  it.live("emits YAML for --output yaml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api, goOutput: "yaml" });
@@ -339,7 +339,7 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits legacy TOML bytes for --output toml", () => {
+  it.live("emits TOML bytes for --output toml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api, goOutput: "toml" });
@@ -353,7 +353,7 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits legacy env for --output env", () => {
+  it.live("emits env for --output env", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
     const layer = runtimeWith({ out, api, goOutput: "env" });
@@ -480,7 +480,7 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits legacy JSON bytes for --output json", () => {
+  it.live("emits JSON bytes for --output json", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api, goOutput: "json" });
@@ -494,7 +494,7 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits legacy YAML for --output yaml", () => {
+  it.live("emits YAML for --output yaml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api, goOutput: "yaml" });
@@ -509,7 +509,7 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits legacy TOML bytes for --output toml", () => {
+  it.live("emits TOML bytes for --output toml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api, goOutput: "toml" });
@@ -523,7 +523,7 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits legacy env for --output env", () => {
+  it.live("emits env for --output env", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
     const layer = runtimeWith({ out, api, goOutput: "env" });
@@ -665,7 +665,7 @@ describe("vanity-subdomains delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores legacy --output values and prints to stderr", () => {
+  it.live("ignores --output values and prints to stderr", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
     const layer = runtimeWith({ out, api, goOutput: "json" });

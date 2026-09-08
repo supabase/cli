@@ -19,10 +19,8 @@ import { join } from "node:path";
 
 import { serviceContainerName } from "../../../command-internal/docker-ids.ts";
 import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
-import {
-  slimWgetHealthcheck,
-  usesSlimRuntime,
-} from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { slimWgetHealthcheck } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 
 /** The Logflare network alias — also this service's `containerSuffix` in `SERVICE_CATALOG`. */
 const LOGFLARE_CONTAINER_SUFFIX = "analytics";
@@ -136,7 +134,7 @@ export function buildLogflareContainerSpec(input: LogflareContainerSpecInput): S
   };
 
   const binds: Array<string> = [];
-  const slim = usesSlimRuntime(input.image);
+  const slim = usesSlimImageRuntime(input.image);
 
   if (input.backend === "bigquery") {
     const hostJwtPath = join(input.workdir, input.gcpJwtPath);

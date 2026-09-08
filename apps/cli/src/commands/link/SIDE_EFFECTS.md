@@ -1,7 +1,6 @@
 # `supabase link`
 
-Writes flat state files under `<workdir>/supabase/.temp/` — it does **not** use
-the `next/` `.supabase/project.json` model.
+Writes flat state files under `<workdir>/supabase/.temp/`.
 
 TS-only divergence from Go (CLI-2167): `link` accepts an optional `[ref-or-branch]` positional
 argument, and `--project-ref` also accepts a branch name instead of a project ref. A value is

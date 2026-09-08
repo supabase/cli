@@ -92,7 +92,6 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
       // Best-effort cleanup even if an assertion above failed mid-lifecycle — a leaked local
       // stack would otherwise pollute the CI runner for later jobs.
       await runSupabase(["stop", "--no-backup"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: CLEANUP_TIMEOUT_MS,
         ...(home === undefined ? {} : { home: home.dir }),
@@ -118,7 +117,6 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
       const cacheDir = path.join(home.dir, "cache", "shadow-baseline");
 
       const init = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         home: home.dir,
       });
@@ -128,7 +126,7 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
       // container reachable, same rationale as stop/status/diff.
       const start = await runSupabase(
         ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
-        { entrypoint: "legacy", cwd: projectDir, home: home.dir, exitTimeoutMs: START_TIMEOUT_MS },
+        { cwd: projectDir, home: home.dir, exitTimeoutMs: START_TIMEOUT_MS },
       );
       expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
 
@@ -147,7 +145,7 @@ language sql
 as $$ select 1; $$;`,
           "--local",
         ],
-        { entrypoint: "legacy", cwd: projectDir, home: home.dir },
+        { cwd: projectDir, home: home.dir },
       );
       expect(
         createFunction.exitCode,
@@ -165,7 +163,6 @@ as $$ select 1; $$;`,
         // this attempt's first run a warm one.
         await rm(cacheDir, { recursive: true, force: true });
         const diffOptions = {
-          entrypoint: "legacy" as const,
           cwd: projectDir,
           home: home.dir,
           exitTimeoutMs: DIFF_TIMEOUT_MS,

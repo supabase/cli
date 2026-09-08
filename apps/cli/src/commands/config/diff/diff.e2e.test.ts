@@ -22,7 +22,6 @@ describe("config diff CLI surface", () => {
     const cwd = await mkdtemp(join(tmpdir(), "supabase-config-diff-e2e-"));
     try {
       const { stdout, stderr } = await runSupabase(["config", "diff"], {
-        entrypoint: "legacy",
         cwd,
         env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN },
       });

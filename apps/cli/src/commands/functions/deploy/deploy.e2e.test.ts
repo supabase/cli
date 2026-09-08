@@ -39,7 +39,6 @@ describe("supabase functions deploy — argument validation", () => {
       const { exitCode, stderr } = await runSupabase(
         ["functions", "deploy", SLUG, "--project-ref", FAKE_REF, ...flags],
         {
-          entrypoint: "legacy",
           home: home.dir,
           env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
         },
@@ -57,7 +56,6 @@ describe("supabase functions deploy — argument validation", () => {
     const { exitCode, stderr } = await runSupabase(
       ["functions", "deploy", SLUG, "--project-ref", FAKE_REF, "--use-docker", "--jobs", "2"],
       {
-        entrypoint: "legacy",
         home: home.dir,
         env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
       },
@@ -83,7 +81,6 @@ describe("supabase functions deploy — argument validation", () => {
           "2",
         ],
         {
-          entrypoint: "legacy",
           home: home.dir,
           env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
         },
@@ -98,7 +95,6 @@ describe("supabase functions deploy — argument validation", () => {
     const workdir = mkdtempSync(join(tmpdir(), "fn-deploy-nolink-"));
     try {
       const { exitCode, stderr } = await runSupabase(["functions", "deploy", SLUG], {
-        entrypoint: "legacy",
         home: home.dir,
         cwd: workdir,
         env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },

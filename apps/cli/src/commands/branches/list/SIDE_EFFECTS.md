@@ -76,10 +76,8 @@ The `--output {pretty,json,yaml,toml,env}` flag and the `--output-format {text,j
 Prints a Glamour-styled markdown table with columns `ID`, `NAME`, `DEFAULT`, `GIT BRANCH`, `WITH DATA`, `STATUS`, `CREATED AT (UTC)`, `UPDATED AT (UTC)`.
 
 TS-only QoL (CLI-2167 follow-up, no Go counterpart): the row whose `project_ref` matches the
-CURRENTLY linked ref renders its NAME cell as `<name> (active)` — mirrors `next/`'s
-`branches list` convention. Pretty-table only; never applies to `--output json|yaml|toml` or
-`--output-format json|stream-json`, which stay byte-identical (no `active` field is added there,
-unlike `next/`'s JSON payload).
+CURRENTLY linked ref renders its NAME cell as `<name> (active)`. Pretty-table only; never applies to `--output json|yaml|toml` or
+`--output-format json|stream-json`, which stay byte-identical (no `active` field is added there).
 
 ### `--output json`
 

@@ -8,7 +8,7 @@ This document is the operational playbook for releasing the Supabase CLI TypeScr
 
 ```mermaid
 flowchart LR
-    local["Ring 1: Local Verdaccio<br/>pnpm cli-release<br/>--next or --legacy"]
+    local["Ring 1: Local Verdaccio<br/>pnpm cli-release"]
     poc["Ring 2: User-owned PoC repos<br/>avallete/supabase-cli-release-poc<br/>avallete/homebrew-supabase-shim-poc<br/>avallete/scoop-bucket<br/>--name supabase-shim-poc"]
     prod["Ring 3: Production<br/>supabase/cli<br/>supabase/homebrew-tap<br/>supabase/scoop-bucket<br/>(default name: supabase)"]
 
@@ -34,11 +34,8 @@ pnpm local-registry
 Publish the CLI into it from another terminal (current platform only, faster than a cross-platform build):
 
 ```sh
-# TS-native shell only ("next"):
-pnpm cli-release --next
-
-# CLI (TS shim + Go sidecar — requires Go on PATH and `pnpm repos:install`):
-pnpm cli-release --legacy
+# CLI (Bun SFE + Go sidecar — requires Go on PATH and `pnpm repos:install`):
+pnpm cli-release
 ```
 
 Test it:
@@ -47,7 +44,7 @@ Test it:
 npx --registry http://localhost:4873 supabase@<printed-version> --version
 ```
 
-`[tools/release/local-release.ts](../../../tools/release/local-release.ts)` does the heavy lifting: it builds the platform SFE (+ Go binary for `--legacy`) and the umbrella `supabase` package, materialises them in a `tmp` dir (so no workspace `package.json` is modified), and publishes both to Verdaccio. The cleanup is automatic even on failure.
+`[tools/release/local-release.ts](../../../tools/release/local-release.ts)` does the heavy lifting: it builds the platform SFE (+ Go sidecar) and the umbrella `supabase` package, materialises them in a `tmp` dir (so no workspace `package.json` is modified), and publishes both to Verdaccio. The cleanup is automatic even on failure.
 
 This is the right ring for:
 
@@ -90,9 +87,8 @@ The `--dry-run` flag on both updater scripts produces the `Formula/<name>.rb` an
 
 ```sh
 # Build all eight platform archives + linux packages + checksums.txt.
-# Shell = legacy (ship the Go sidecar alongside the Bun SFE); use --shell next
-# once we're actually cutting over to the TS-native CLI.
-bun apps/cli/scripts/build.ts --version 0.0.1 --shell legacy
+# Ships the Go sidecar alongside the Bun SFE.
+bun apps/cli/scripts/build.ts --version 0.0.1
 
 # Render the Homebrew formula against your PoC release host + tap.
 bun apps/cli/scripts/update-homebrew.ts --version 0.0.1 \
@@ -180,13 +176,13 @@ Validated on Windows x64 (`v0.0.1`, 2026-04-21): installed with no SmartScreen b
 
 ### What to validate
 
-Beyond `--version` and `brew test`, exercise a Phase-0 proxied subcommand that requires the `supabase-go` sidecar (`--shell legacy` only):
+Beyond `--version` and `brew test`, exercise a Phase-0 proxied subcommand that requires the `supabase-go` sidecar:
 
 ```sh
 supabase completion bash
 ```
 
-This must spawn the colocated `supabase-go` and print the generated completion script — not return `NotFound: ChildProcess.spawn (supabase ...)`. (`supabase --version` is served by the Bun wrapper and never touches the sidecar, so it is not a sufficient check on its own.) If it fails, the Homebrew install step is wrong: check that `[apps/cli/scripts/update-homebrew.ts](../scripts/update-homebrew.ts)`'s install-lines block ran `bin.install "supabase-go" if File.exist?("supabase-go")`, and that the built archive actually contains `supabase-go` (it should, for any `--shell legacy` build).
+This must spawn the colocated `supabase-go` and print the generated completion script — not return `NotFound: ChildProcess.spawn (supabase ...)`. (`supabase --version` is served by the Bun wrapper and never touches the sidecar, so it is not a sufficient check on its own.) If it fails, the Homebrew install step is wrong: check that `[apps/cli/scripts/update-homebrew.ts](../scripts/update-homebrew.ts)`'s install-lines block ran `bin.install "supabase-go" if File.exist?("supabase-go")`, and that the built archive actually contains `supabase-go` (it should, for any release build).
 
 ### Local-artifact testing (no GitHub Release upload)
 
@@ -212,13 +208,12 @@ scoop install .\dist\supabase-shim-poc.json
 
 Production releases live in a single `[.github/workflows/release.yml](../../../.github/workflows/release.yml)` that dispatches three channels into the shared `[release-shared.yml](../../../.github/workflows/release-shared.yml)`:
 
-| Channel | Trigger              | shell  | npm dist-tag | brew/scoop name | GH release | Version           |
-| ------- | -------------------- | ------ | ------------ | --------------- | ---------- | ----------------- |
-| alpha   | manual dispatch      | next   | alpha        | (skipped)       | prerelease | operator-supplied |
-| beta    | push: develop        | legacy | beta         | supabase-beta   | prerelease | `X.Y.Z-beta.N`    |
-| stable  | push: main (post-FF) | legacy | latest       | supabase        | latest     | `X.Y.Z`           |
+| Channel | Trigger              | npm dist-tag | brew/scoop name | GH release | Version        |
+| ------- | -------------------- | ------------ | --------------- | ---------- | -------------- |
+| beta    | push: develop        | beta         | supabase-beta   | prerelease | `X.Y.Z-beta.N` |
+| stable  | push: main (post-FF) | latest       | supabase        | latest     | `X.Y.Z`        |
 
-`alpha` is reserved for the v3 rewrite (`next` shell), released only on demand. `beta` auto-publishes on every merge to `develop` (CLI). `stable` auto-publishes after a develop→main fast-forward, which itself happens when the weekly `[deploy.yml](../../../.github/workflows/deploy.yml)` cron PR is approved (the FF push to `main` re-fires `release.yml` via the `push: branches: [main]` trigger).
+`beta` auto-publishes on every merge to `develop` (CLI). `stable` auto-publishes after a develop→main fast-forward, which itself happens when the weekly `[deploy.yml](../../../.github/workflows/deploy.yml)` cron PR is approved (the FF push to `main` re-fires `release.yml` via the `push: branches: [main]` trigger).
 
 Beta + stable versions are computed by `cycjimmy/semantic-release-action` from the first line of each squash commit (the PR title). Conventional commit titles use `feat:` → minor, `fix:`, `perf:`, or `revert:` → patch, and `!` after the type or scope (`feat!:` / `fix(scope)!:`) → major. Commit bodies, including `BREAKING CHANGE` notes, are ignored for version calculation. The `release` config lives in `apps/cli/package.json` and is configured with `prerelease: beta` on the `develop` branch, so develop pushes emit `X.Y.Z-beta.N` and main pushes emit `X.Y.Z` (suffix dropped).
 
@@ -230,7 +225,7 @@ flowchart TD
     ff --> pushMain
     dispatch[workflow_dispatch<br/>channel + version] --> plan
 
-    plan["plan (ubuntu-latest)<br/>cycjimmy/semantic-release-action --dry-run<br/>computes channel, version, shell, npm_tag, brew/scoop name"]
+    plan["plan (ubuntu-latest)<br/>cycjimmy/semantic-release-action --dry-run<br/>computes channel, version, npm_tag, brew/scoop name"]
     plan --> shared
 
     shared["release-shared.yml"]
@@ -247,15 +242,9 @@ flowchart TD
 
 ### Trigger
 
-Most releases are automatic — merge a PR into `develop` (beta) or approve the weekly Prod-Deploy PR into `main` (stable). Hotfixes use the same production gate: a reviewed `hotfix/*` PR targets `main`, and the resulting `main` push triggers the stable release path. For an `alpha` cut or a one-off override, dispatch manually:
+Most releases are automatic — merge a PR into `develop` (beta) or approve the weekly Prod-Deploy PR into `main` (stable). Hotfixes use the same production gate: a reviewed `hotfix/*` PR targets `main`, and the resulting `main` push triggers the stable release path. For a one-off override, dispatch manually:
 
 ```sh
-# Manual alpha cut (v3 / next shell):
-gh workflow run release.yml \
-    --field channel=alpha \
-    --field version=3.0.0-alpha.1 \
-    --field dry_run=true   # set false for the real run
-
 # Manual beta or stable override (operator-supplied version):
 gh workflow run release.yml \
     --field channel=beta \
@@ -298,7 +287,7 @@ Do not use `workflow_dispatch dry_run=false` as the normal hotfix path. Manual s
 `**build` (ubuntu-latest):\*\*
 
 1. `[pnpm exec bun apps/cli/scripts/sync-versions.ts --version X.Y.Z](../scripts/sync-versions.ts)` — writes the release version into every `package.json` (umbrella + eight platform packages) and resolves the umbrella's `workspace:`\* `optionalDependencies` to `X.Y.Z`.
-2. `[pnpm exec bun apps/cli/scripts/build.ts --version X.Y.Z --shell <legacy|next>](../scripts/build.ts)` — cross-compiles the Bun SFE for all eight targets (including windows-arm64), cross-compiles the Go sidecar (`--shell legacy` only), **ad-hoc signs the macOS binaries** (see [Code signing (macOS)](#code-signing-macos)), builds the six Linux packages via `nfpm`, produces the tar/zip archives, and writes `dist/checksums.txt`.
+2. `[pnpm exec bun apps/cli/scripts/build.ts --version X.Y.Z](../scripts/build.ts)` — cross-compiles the Bun SFE for all eight targets (including windows-arm64), cross-compiles the Go sidecar, **ad-hoc signs the macOS binaries** (see [Code signing (macOS)](#code-signing-macos)), builds the six Linux packages via `nfpm`, produces the tar/zip archives, and writes `dist/checksums.txt`.
 3. `actions/upload-artifact` preserves `packages/cli-*/bin/` and `dist/` for the downstream jobs.
 
 `**smoke-test` (matrix: `ubuntu-latest`, `macos-latest`, `macos-15-intel`, `windows-latest`):\*\*

@@ -29,7 +29,7 @@ export const LOGGED_IN_MSG = "You are now logged in. Happy coding!\n";
  * attributes it to the user.
  *
  * NOTE: `StitchLogin` only *aliases* — it does NOT call `identify`. Do not add
- * `analytics.identify` here; that is a `next/` behavior and would emit an event Go
+ * `analytics.identify` here; it would emit an event the established telemetry
  * never sends. Shared by the token path (`login`) and the browser flow.
  */
 export const postLoginTelemetry = Effect.fnUntraced(function* (token: string) {

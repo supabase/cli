@@ -159,7 +159,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores legacy --output values and still prints the success line", () => {
+  it.live("ignores --output values and still prints the success line", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
@@ -170,7 +170,7 @@ describe("network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("ignores legacy --output yaml and still prints the success line", () => {
+  it.live("ignores --output yaml and still prints the success line", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* networkBansRemove({

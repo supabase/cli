@@ -25,7 +25,7 @@ describe("supabase inspect db", () => {
       using home = makeTempHome();
       const { exitCode, stderr } = await runSupabase(
         ["inspect", "db", "locks", TEXT_MODE, TEXT_MODE_VALUE, "--db-url", DEAD_DB_URL],
-        { entrypoint: "legacy", home: home.dir, env: { HOME: home.dir } },
+        { home: home.dir, env: { HOME: home.dir } },
       );
       expect(exitCode).toBe(1);
       // The native handler writes the connection diagnostic to stderr
@@ -42,7 +42,7 @@ describe("supabase inspect db", () => {
       using home = makeTempHome();
       const { exitCode, stderr } = await runSupabase(
         ["inspect", "db", "cache-hit", TEXT_MODE, TEXT_MODE_VALUE, "--db-url", DEAD_DB_URL],
-        { entrypoint: "legacy", home: home.dir, env: { HOME: home.dir } },
+        { home: home.dir, env: { HOME: home.dir } },
       );
       expect(exitCode).toBe(1);
       expect(stderr).toContain('Command "cache-hit" is deprecated, use "db-stats" instead.');

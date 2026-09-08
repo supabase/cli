@@ -55,20 +55,20 @@ Prints to stderr:
 Deleted vanity subdomain successfully.
 ```
 
-### Legacy `--output {json,yaml,toml,env}`
+### `--output {json,yaml,toml,env}`
 
 Ignored. The same stderr success line is printed.
 
 ### `--output-format json`
 
-Single structured success event when the legacy `--output` flag is unset.
+Single structured success event when the `--output` flag is unset.
 
 ### `--output-format stream-json`
 
-One `result` event when the legacy `--output` flag is unset.
+One `result` event when the `--output` flag is unset.
 
 ## Notes
 
-- The legacy `--output` flag wins over TS `--output-format` when both are provided.
+- The `--output` flag wins over TS `--output-format` when both are provided.
 - `linked-project.json` is written after ref resolution (once the `--experimental` gate is open),
   even when the API call fails. A closed gate writes nothing.

@@ -16,9 +16,7 @@ export { stripAnsi } from "./ansi.ts";
 
 const BINARY_EXT = process.platform === "win32" ? ".exe" : "";
 const SHIM_PATH = fileURLToPath(new URL("../../dist/supabase.js", import.meta.url));
-const BINARY_PATH = fileURLToPath(
-  new URL(`../../dist/supabase-legacy${BINARY_EXT}`, import.meta.url),
-);
+const BINARY_PATH = fileURLToPath(new URL(`../../dist/supabase${BINARY_EXT}`, import.meta.url));
 
 // E2E subprocesses should only enter agent output mode when a test explicitly
 // opts in via `options.env`. Keep this list aligned with @vercel/detect-agent
@@ -191,14 +189,13 @@ export async function makeTempCliStackProject(
     }
 
     const stopped = await runSupabase(["stop", "--no-backup"], {
-      entrypoint: "legacy",
       cwd: project.dir,
       exitTimeoutMs: cleanupTimeoutMs,
     });
     if (stopped.exitCode !== 0) {
       throw new Error(
         [
-          `Failed to stop legacy stack in ${project.dir} (exit code ${stopped.exitCode}).`,
+          `Failed to stop stack in ${project.dir} (exit code ${stopped.exitCode}).`,
           `stdout:\n${stopped.stdout}`,
           `stderr:\n${stopped.stderr}`,
         ].join("\n"),
@@ -308,8 +305,6 @@ export function spawnSupabase(
     cleanupProcessGroupOnClose?: boolean;
     /** Maximum time to wait for the process to exit before force-killing it. */
     exitTimeoutMs?: number;
-    /** Which source entrypoint to execute. Only the CLI remains. */
-    entrypoint?: "legacy";
   },
 ): SpawnedSupabase {
   const ownHome = options?.home ? null : makeTempHome();
@@ -534,8 +529,6 @@ export async function runSupabase(
     untilTimeoutMs?: number;
     /** Maximum time to wait for the command to exit before force-killing it. */
     exitTimeoutMs?: number;
-    /** Which source entrypoint to execute. Only the CLI remains. */
-    entrypoint?: "legacy";
   },
 ): Promise<RunResult> {
   const spawned = spawnSupabase(args, options);

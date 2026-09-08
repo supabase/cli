@@ -57,7 +57,7 @@ Prints:
 Activated vanity subdomain at <custom_domain>
 ```
 
-### Legacy `--output {json,yaml,toml,env}`
+### `--output {json,yaml,toml,env}`
 
 Encodes the response object directly.
 
@@ -71,7 +71,7 @@ One `result` event with the full response object.
 
 ## Notes
 
-- The legacy `--output` flag wins over TS `--output-format` when both are provided.
+- The `--output` flag wins over TS `--output-format` when both are provided.
 - `linked-project.json` is written after ref resolution (once the `--experimental` gate is open),
   even when the API call fails. A closed gate writes nothing.
 - On gated 4xx responses this command prints an upgrade suggestion and fires `cli_upgrade_suggested`.

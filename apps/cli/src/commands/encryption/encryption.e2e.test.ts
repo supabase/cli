@@ -13,7 +13,6 @@ describe("supabase encryption", () => {
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stdout, stderr } = await runSupabase(["encryption", "get-root-key"], {
-        entrypoint: "legacy",
         env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN },
       });
       expect(exitCode).not.toBe(0);
@@ -28,7 +27,6 @@ describe("supabase encryption", () => {
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stdout, stderr } = await runSupabase(["encryption", "update-root-key"], {
-        entrypoint: "legacy",
         env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN },
         stdin: "newkey\n",
       });

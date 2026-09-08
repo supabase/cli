@@ -12,10 +12,13 @@ describe("supabase db pull", () => {
     "--declarative with --diff-engine exits non-zero (mutually exclusive)",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
-      const { exitCode } = await runSupabase(
-        ["db", "pull", "--declarative", "--diff-engine", "migra"],
-        { entrypoint: "legacy" },
-      );
+      const { exitCode } = await runSupabase([
+        "db",
+        "pull",
+        "--declarative",
+        "--diff-engine",
+        "migra",
+      ]);
       expect(exitCode).not.toBe(0);
     },
   );

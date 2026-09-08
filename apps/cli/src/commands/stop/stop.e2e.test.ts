@@ -55,7 +55,6 @@ describe("supabase stop (e2e)", () => {
       projectId = path.basename(projectDir);
 
       const init = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
       });
@@ -68,20 +67,18 @@ describe("supabase stop (e2e)", () => {
       // exists to stop.
       const start = await runSupabase(
         ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
-        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
+        { cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
       );
       requireCliSuccess(start, "start setup");
 
       // Sanity: confirm the stack is actually up before testing `stop` against it.
       const before = await runSupabase(["status"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
       });
       requireCliSuccess(before, "status setup");
 
       const stop = await runSupabase(["stop"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: STOP_COMMAND_TIMEOUT_MS,
       });
@@ -119,7 +116,6 @@ describe("supabase stop (e2e)", () => {
       projectId = sanitizeProjectId(path.basename(projectDir));
 
       const init = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
       });
@@ -128,7 +124,7 @@ describe("supabase stop (e2e)", () => {
 
       const start = await runSupabase(
         ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
-        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
+        { cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
       );
       requireCliSuccess(start, "start setup");
 
@@ -138,7 +134,6 @@ describe("supabase stop (e2e)", () => {
       // assumption (`Deleted …:` headers, `Total reclaimed space:` trailer)
       // that mocked integration fixtures cannot validate by construction.
       const stop = await runSupabase(["stop", "--no-backup", "--debug"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: STOP_COMMAND_TIMEOUT_MS,
       });

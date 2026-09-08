@@ -29,7 +29,7 @@ describe("supabase db reset", () => {
     async () => {
       const { exitCode, stderr } = await runSupabase(
         ["db", "reset", "--db-url", "postgresql://postgres:postgres@127.0.0.1:9999/postgres"],
-        { entrypoint: "legacy", cwd: workdir, stdin: "n\n" },
+        { cwd: workdir, stdin: "n\n" },
       );
       expect(exitCode).toBe(1);
       // The destructive confirmation (default No → `[y/N]`) actually rendered and

@@ -361,7 +361,6 @@ describe("gen types e2e", () => {
               cwd: project.dir,
               home: home.dir,
               env,
-              entrypoint: "legacy",
               exitTimeoutMs: TYPEGEN_TIMEOUT_MS,
             },
           );
@@ -408,7 +407,6 @@ describe("gen types e2e", () => {
             cwd: project.dir,
             home: home.dir,
             env: remoteEnv(remoteAccessToken, project.dir),
-            entrypoint: "legacy",
             exitTimeoutMs: TYPEGEN_TIMEOUT_MS,
           },
         );

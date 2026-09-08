@@ -32,7 +32,6 @@ describe("supabase migration fetch", () => {
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stderr } = await runSupabase(["migration", "fetch", "--local"], {
-        entrypoint: "legacy",
         cwd: workdir,
         stdin: "n\n",
       });

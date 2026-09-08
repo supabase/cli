@@ -32,7 +32,6 @@ describe("supabase seed buckets", () => {
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stdout } = await runSupabase(["seed", "buckets"], {
-        entrypoint: "legacy",
         cwd: projectDir,
       });
       expect(exitCode).toBe(0);
@@ -43,7 +42,7 @@ describe("supabase seed buckets", () => {
   test("rejects passing both --local and --linked", { timeout: E2E_TIMEOUT_MS }, async () => {
     const { exitCode, stdout, stderr } = await runSupabase(
       ["seed", "buckets", "--local", "--linked"],
-      { entrypoint: "legacy", cwd: projectDir },
+      { cwd: projectDir },
     );
     expect(exitCode).toBe(1);
     expect(`${stdout}${stderr}`).toContain(
@@ -59,7 +58,6 @@ describe("supabase seed buckets", () => {
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stdout, stderr } = await runSupabase(["seed", "--local", "buckets"], {
-        entrypoint: "legacy",
         cwd: projectDir,
       });
       // Parsed (no "Unrecognized flag") and routed to the local no-op path.
@@ -72,7 +70,7 @@ describe("supabase seed buckets", () => {
   test("rejects --local --linked before the subcommand", { timeout: E2E_TIMEOUT_MS }, async () => {
     const { exitCode, stdout, stderr } = await runSupabase(
       ["seed", "--local", "--linked", "buckets"],
-      { entrypoint: "legacy", cwd: projectDir },
+      { cwd: projectDir },
     );
     expect(exitCode).toBe(1);
     expect(`${stdout}${stderr}`).toContain(

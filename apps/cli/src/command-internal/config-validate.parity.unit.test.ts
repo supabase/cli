@@ -57,7 +57,7 @@ function failsWithD(tomlLines: ReadonlyArray<string>, message: string) {
 }
 
 const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
-const WORKDIR = "/tmp/legacy-config-validate-parity-test";
+const WORKDIR = "/tmp/config-validate-parity-test";
 
 function baseConfig(overrides: Record<string, unknown> = {}): CliConfig {
   return decodeConfig({ project_id: "test", ...overrides });

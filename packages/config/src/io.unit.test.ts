@@ -1280,7 +1280,7 @@ port = "env(SUPABASE_DB_PORT_TEST)"
   });
 
   // Regression coverage for the default-off (`goViperCompat` omitted) path —
-  // these pin pre-PR-#5765 behavior so `next/`, `packages/stack`, and the
+  // these pin pre-PR-#5765 behavior so `packages/stack` and the
   // functions manifest (none of which pass `goViperCompat`) don't inherit the
   // Go-parity CLI's stricter/wider semantics.
   test("loads successfully with a duplicate [remotes.*] project_id when goViperCompat is omitted", async () => {

@@ -141,7 +141,7 @@ describe("postgres-config get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits legacy JSON and YAML bytes", () =>
+  it.live("emits JSON and YAML bytes", () =>
     Effect.gen(function* () {
       for (const [goOutput, expected] of [
         ["json", '"max_connections": 100'],

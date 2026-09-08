@@ -44,7 +44,7 @@ function makeStitchLayer(opts: {
 describe("identityStitchLayer — stitchedDistinctId()", () => {
   it.live("populates stitchedDistinctId() after the first response with X-Gotrue-Id", () => {
     const analytics = mockAnalytics();
-    const configDir = "/tmp/legacy-identity-stitch-test-" + String(Date.now());
+    const configDir = "/tmp/identity-stitch-test-" + String(Date.now());
 
     return Effect.gen(function* () {
       // Write a valid telemetry.json so stitchIdentity sees enabled=true.
@@ -79,7 +79,7 @@ describe("identityStitchLayer — stitchedDistinctId()", () => {
 
   it.live("once-only guard: a second stitch call with a different id keeps the first", () => {
     const analytics = mockAnalytics();
-    const configDir = "/tmp/legacy-identity-stitch-test-guard-" + String(Date.now());
+    const configDir = "/tmp/identity-stitch-test-guard-" + String(Date.now());
 
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -112,7 +112,7 @@ describe("identityStitchLayer — stitchedDistinctId()", () => {
 describe("identityStitchLayer — hybrid stamp/alias", () => {
   it.live("ephemeral (CI) runtime stamps the identity but does not alias or persist", () => {
     const analytics = mockAnalytics();
-    const configDir = "/tmp/legacy-identity-stitch-test-ci-" + String(Date.now());
+    const configDir = "/tmp/identity-stitch-test-ci-" + String(Date.now());
 
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -137,7 +137,7 @@ describe("identityStitchLayer — hybrid stamp/alias", () => {
 
   it.live("stamps over a stale persisted identity without aliasing", () => {
     const analytics = mockAnalytics();
-    const configDir = "/tmp/legacy-identity-stitch-test-stale-" + String(Date.now());
+    const configDir = "/tmp/identity-stitch-test-stale-" + String(Date.now());
 
     return Effect.gen(function* () {
       const svc = yield* IdentityStitch;
@@ -159,7 +159,7 @@ describe("identityStitchLayer — hybrid stamp/alias", () => {
 
   it.live("concurrent first responses alias exactly once", () => {
     const analytics = mockAnalytics();
-    const configDir = "/tmp/legacy-identity-stitch-test-conc-" + String(Date.now());
+    const configDir = "/tmp/identity-stitch-test-conc-" + String(Date.now());
 
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

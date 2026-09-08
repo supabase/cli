@@ -34,7 +34,6 @@ describe("supabase migration squash", () => {
       const { exitCode, stderr } = await runSupabase(
         ["migration", "squash", "--version", "0_init"],
         {
-          entrypoint: "legacy",
           cwd: workdir,
         },
       );
@@ -60,7 +59,6 @@ describe("supabase migration squash", () => {
       );
 
       const { exitCode, stdout, stderr } = await runSupabase(["migration", "squash", "--local"], {
-        entrypoint: "legacy",
         cwd: workdir,
       });
 

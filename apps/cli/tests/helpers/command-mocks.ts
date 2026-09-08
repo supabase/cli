@@ -528,7 +528,7 @@ export interface MockCommandPlatformApiResult {
   // it never actually triggers with the defaults this factory supplies, but the
   // type leaks through the Layer.effect signature.
   readonly layer: Layer.Layer<CommandPlatformApi, SupabaseApiConfigError>;
-  // Same recording handler exposed as a standalone HttpClient layer so legacy
+  // Same recording handler exposed as a standalone HttpClient layer so command
   // handlers that bypass the typed client (e.g. sso add/update preserving
   // arbitrary attribute_mapping keys) can hit `httpClient.execute(req)` while
   // still recording requests into the shared `requests` array.
@@ -676,7 +676,7 @@ export function mockCommandPlatformApiService(
   // call (the effective-project-config read) deliberately bypasses the typed
   // `v2.*` surface for `executeRaw` (ADR 0019 rule 2 — the generated client's
   // strict schema would reject the exact forward-compatible shapes the read
-  // needs to tolerate), so any typed `v2.*` call from legacy code is a wiring
+  // needs to tolerate), so any typed `v2.*` call from command code is a wiring
   // bug.
   const v2Proxy = new Proxy({} as ApiClient["v2"], {
     get(_target, prop: string) {

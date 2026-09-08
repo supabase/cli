@@ -92,6 +92,6 @@ One `result` NDJSON event with `{organizations: [...]}`.
   sanitization (inherited from the old Go CLI's rendering behavior). A malicious or
   compromised Management API could in principle return org names containing terminal
   escape sequences. If sanitization is added later it should land at the renderer
-  (`glamour-table.ts`) so both shells inherit the fix.
+  (`glamour-table.ts`) so every caller inherits the fix.
 - Error response bodies embedded in `OrgsListUnexpectedStatusError` are sanitized by
   `mapHttpError` (control chars stripped, capped at 1024 bytes).

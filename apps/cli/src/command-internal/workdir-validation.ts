@@ -31,7 +31,7 @@ export class WorkdirValidationError extends Data.TaggedError("WorkdirValidationE
  * directory fails immediately, before config load or any Docker/API access.
  *
  * Callers that resolve `workdir` via `CommandSettings` only need this check
- * when `--workdir`/`SUPABASE_WORKDIR` was set explicitly — `legacy-cli-settings.
+ * when `--workdir`/`SUPABASE_WORKDIR` was set explicitly — `command-settings.
  * layer.ts`'s default walk-up-for-`supabase/config.toml` resolution always
  * returns a real, already-existing directory (either one containing
  * `supabase/config.toml`, or the process's own `cwd`), so it can never fail

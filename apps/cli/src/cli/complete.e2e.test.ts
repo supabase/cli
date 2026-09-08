@@ -8,9 +8,7 @@ describe("supabase __complete", () => {
     "migration li completes to list with a description and the NoFileComp directive",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
-      const { exitCode, stdout } = await runSupabase(["__complete", "migration", "li"], {
-        entrypoint: "legacy",
-      });
+      const { exitCode, stdout } = await runSupabase(["__complete", "migration", "li"], {});
       expect(exitCode).toBe(0);
       const lines = stdout.trim().split("\n");
       expect(lines[0]).toBe("list\tList local and remote migrations");
@@ -22,9 +20,7 @@ describe("supabase __complete", () => {
     "__completeNoDesc strips the description from the same candidate",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
-      const { exitCode, stdout } = await runSupabase(["__completeNoDesc", "migration", "li"], {
-        entrypoint: "legacy",
-      });
+      const { exitCode, stdout } = await runSupabase(["__completeNoDesc", "migration", "li"], {});
       expect(exitCode).toBe(0);
       const lines = stdout.trim().split("\n");
       expect(lines[0]).toBe("list");
@@ -33,9 +29,7 @@ describe("supabase __complete", () => {
   );
 
   test("root-level flag-name completion offers --debug", { timeout: E2E_TIMEOUT_MS }, async () => {
-    const { exitCode, stdout } = await runSupabase(["__complete", "--d"], {
-      entrypoint: "legacy",
-    });
+    const { exitCode, stdout } = await runSupabase(["__complete", "--d"], {});
     expect(exitCode).toBe(0);
     expect(stdout).toContain("--debug\toutput debug logs to stderr");
   });

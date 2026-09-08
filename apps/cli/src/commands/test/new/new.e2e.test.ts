@@ -31,7 +31,6 @@ describe("supabase test new", () => {
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stdout } = await runSupabase(["test", "new", "pet"], {
-        entrypoint: "legacy",
         cwd: projectDir,
       });
       expect(exitCode).toBe(0);

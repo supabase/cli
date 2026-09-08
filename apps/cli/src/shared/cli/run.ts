@@ -142,7 +142,7 @@ const globalFlagsWithValues: ReadonlySet<string> = GLOBAL_VALUE_FLAG_TOKENS;
 // its real exit status. CLI-1955 removed that seam entirely: `db reset --local` is now fully
 // native TS (`command-internal/db-bootstrap/recreate-local-database.ts`), installing no signal
 // handling of its own. Its only remaining Go child is the niche `--experimental` remote
-// delegate, via the SAME `GoProxy.exec`/`execCapture` every other unlisted legacy
+// delegate, via the SAME `GoProxy.exec`/`execCapture` every other unlisted
 // command already uses safely alongside this global handler — so `db reset` was removed from
 // this list too, matching `db start`'s own precedent exactly.
 const selfManagedSignalCommands: ReadonlyArray<ReadonlyArray<string>> = [["functions", "serve"]];

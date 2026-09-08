@@ -54,7 +54,7 @@ export function buildDockerArgs(opts: DockerRunOpts): ReadonlyArray<string> {
  * when `BITBUCKET_CLONE_DIR` is set,
  * that runner disallows named volumes and `--security-opt`, so Go drops named-volume
  * binds and clears `SecurityOpt` before starting any container. Applied globally to
- * every legacy docker run (matching Go's placement) — e.g. the pg-delta Deno-cache
+ * every docker run (matching Go's placement) — e.g. the pg-delta Deno-cache
  * named volume is dropped while the `<cwd>:/workspace` bind mount is kept.
  */
 export function applyBitbucketDockerFilter(

@@ -43,7 +43,7 @@ import {
 } from "./local-config-values.ts";
 
 const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
-const WORKDIR = "/tmp/legacy-local-config-values-test";
+const WORKDIR = "/tmp/local-config-values-test";
 
 function baseConfig(overrides: Record<string, unknown> = {}): CliConfig {
   return decodeConfig({ project_id: "test", ...overrides });

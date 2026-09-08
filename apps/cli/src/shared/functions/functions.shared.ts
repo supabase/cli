@@ -68,8 +68,8 @@ export function edgeRuntimeImage(tag: string): string {
 /**
  * Go: `Config.EdgeRuntime.Image` reflects `supabase/.temp/edge-runtime-version`
  * when present (`pkg/config/config.go:847-849`) — shared by every `functions`
- * command that resolves a Docker edge-runtime image: `deploy`/`download` in
- * both shells, plus `serve` (legacy-only — `next` has no native `serve`).
+ * command that resolves a Docker edge-runtime image: `deploy`, `download`,
+ * and `serve`.
  * Single home for the file-read rather than several copies of the same
  * `readFile` -> `trim` -> fallback pipeline.
  */

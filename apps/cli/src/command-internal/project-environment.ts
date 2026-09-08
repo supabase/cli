@@ -25,8 +25,8 @@ import { parseDotEnv } from "./dotenv.ts";
  * `loadCliProjectEnvironment` only implements the `supabase/`-dir, plain
  * `.env`/`.env.local` half of this (no project-root pass, no `SUPABASE_ENV`
  * filename selection) — and it's shared infrastructure used well beyond
- * `legacy/` (the `next/` command tree, `secrets set`), so extending its
- * file-resolution semantics is out of scope for a `stop`/`status` port.
+ * `stop`/`status` (`packages/stack`, `secrets set`), so extending its
+ * file-resolution semantics is out of scope here.
  * Instead, this fills in the missing project-root + `SUPABASE_ENV`-selected
  * files locally: `loadCliProjectEnvironment`'s already-resolved `values` (its
  * ambient-wins-over-`supabase/.env`(.local) result) always takes precedence

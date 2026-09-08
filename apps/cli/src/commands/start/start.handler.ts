@@ -643,9 +643,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // must reject any unknown key unconditionally, well before any Docker
     // work, matching the established config-validation contract.
     // `@supabase/config`'s own schema DOES model `[functions.<slug>.env]`
-    // (`packages/config/src/functions.ts`) — a legitimate `next/`-only
-    // feature shared infrastructure the CLI can't remove — so this
-    // is a legacy-only rejection, not a schema change. Confirmed against the
+    // (`packages/config/src/functions.ts`) — a legitimate schema feature the
+    // shared package keeps for other consumers — so this is a CLI-side
+    // rejection, not a schema change. Confirmed against the
     // established parity contract: a config with `[functions.foo.env]`
     // fails with `'functions[foo]' has invalid keys: env`.
     for (const [slug, func] of Object.entries(config.functions)) {

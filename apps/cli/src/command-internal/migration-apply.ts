@@ -596,7 +596,7 @@ const execMigrationBatch = <E>(
     // `buff.write(string, offset, 'utf-8')`, no raw-byte send API), so ANY string
     // representation still gets re-mangled at that boundary, just differently. Faithful
     // byte parity would require patching that shared wire-serializer — infrastructure
-    // every legacy DB command's `session.exec` funnels through, not something scoped to
+    // every DB command's `session.exec` funnels through, not something scoped to
     // this file's read path — so it's flagged here rather than "fixed" underneath it.
     const content = yield* fs.readFileString(migrationPath).pipe(
       Effect.mapError((error) => {

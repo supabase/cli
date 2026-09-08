@@ -7,8 +7,8 @@ import {
 
 /**
  * Per-command `--output`/`-o` enums, mirroring Go. Go registers `--output` per
- * command with a strict `EnumFlag` (`internal/utils/enum.go`); the TS legacy
- * shell instead exposes ONE global `OutputFlag` whose choice is the union
+ * command with a strict `EnumFlag` (`internal/utils/enum.go`); the TS CLI
+ * instead exposes ONE global `OutputFlag` whose choice is the union
  * of every command's values (see `command-internal/global-flags.ts`). Because that
  * single flag cannot vary its accepted set per command, each command declares
  * the subset its Go counterpart accepts and the command wrapper

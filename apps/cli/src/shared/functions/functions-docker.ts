@@ -62,8 +62,8 @@ export function edgeRuntimeCacheVolume(projectId: string) {
  * as a non-empty `explicit` skips it by using the flag's own value. Callers
  * MUST pass a flag reader that preserves this 3-way distinction — see
  * `lastExplicitLongFlagValue` (`shared/cli/cobra-flag-groups.ts`).
- * `envOverride` is `undefined` in `next` (no Go-viper env-binding claim
- * there) — see `resolveDockerNetworkMode`'s callers.
+ * `envOverride` is `undefined` for callers without the Go-viper env-binding
+ * hook — see `resolveDockerNetworkMode`'s callers.
  */
 export function resolveDockerNetworkMode(input: {
   readonly explicit: string | undefined;
@@ -378,7 +378,7 @@ export function resolveEdgeRuntimeVersion(
  * (`internal/utils/docker.go:304-348,366-370`) — checks every registry
  * candidate (ECR/GHCR/Docker Hub) for a local cache hit first, then pulls
  * with 2 retries per candidate (4s/8s backoff), returning whichever
- * candidate answered. Shared by both shells' `functions` Docker paths
+ * candidate answered. Shared by every `functions` Docker path
  * (`deploy`/`download`/`serve`) — `getRegistryImageUrl`'s single-URL
  * mapping is already called unconditionally by both today, so the retry is
  * strictly-better resilience, not a Go-only quirk.

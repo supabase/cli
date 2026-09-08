@@ -744,7 +744,7 @@ const toConnectError = (cfg: PgConnInput, isLocal: boolean, error: unknown): DbC
 
 /**
  * Acquire the winning raw pool through the full Go-compatible connection attempt
- * chain. The pool finalizer is owned by the caller's scope; both the legacy session
+ * chain. The pool finalizer is owned by the caller's scope; both the session
  * adapter and direct-pool consumers use this one acquisition core so their DNS,
  * TLS, fallback, and role behavior cannot drift apart.
  */

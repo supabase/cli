@@ -15,14 +15,12 @@ import { runSupabase } from "../../../tests/helpers/cli.ts";
  */
 describe("CLI process exit codes (CLI-1906)", () => {
   test("bare `branches` (no subcommand, no --help) exits 0", async () => {
-    const { exitCode } = await runSupabase(["branches"], { entrypoint: "legacy" });
+    const { exitCode } = await runSupabase(["branches"]);
     expect(exitCode).toBe(0);
   });
 
   test("a genuine parse error still exits 1", async () => {
-    const { exitCode } = await runSupabase(["branches", "--this-flag-does-not-exist"], {
-      entrypoint: "legacy",
-    });
+    const { exitCode } = await runSupabase(["branches", "--this-flag-does-not-exist"], {});
     expect(exitCode).toBe(1);
   });
 });
@@ -43,10 +41,10 @@ describe("CLI process exit codes (CLI-1906)", () => {
  */
 describe("CLI required-flag/choice parse errors (CLI-1901)", () => {
   test("an unrecognized flag: stdout stays clean, the help/usage content and the single error line land on stderr with no duplicate", async () => {
-    const { exitCode, stdout, stderr } = await runSupabase(
-      ["branches", "--this-flag-does-not-exist"],
-      { entrypoint: "legacy" },
-    );
+    const { exitCode, stdout, stderr } = await runSupabase([
+      "branches",
+      "--this-flag-does-not-exist",
+    ]);
     expect(exitCode).toBe(1);
     expect(stdout).toBe("");
     // Matches Go's still-shown usage block for this error class (see the
@@ -80,21 +78,19 @@ describe("CLI upgrade notice (#5853)", () => {
     writeFileSync(join(workdir, "supabase", ".temp", "cli-latest"), "v99.99.99");
 
     const enabled = await runSupabase(["branches"], {
-      entrypoint: "legacy",
       cwd: workdir,
       env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
     });
     expect(enabled.exitCode).toBe(0);
     expect(enabled.stderr).toContain("A new version of Supabase CLI is available: v99.99.99");
 
-    const suppressed = await runSupabase(["branches"], { entrypoint: "legacy", cwd: workdir });
+    const suppressed = await runSupabase(["branches"], { cwd: workdir });
     expect(suppressed.exitCode).toBe(0);
     expect(suppressed.stderr).not.toContain("A new version of Supabase CLI is available");
 
     // `--help` exits through the plain-success branch, bare `branches` through
     // the clean-ShowHelp one — both handledProgram call sites must fire.
     const helped = await runSupabase(["branches", "--help"], {
-      entrypoint: "legacy",
       cwd: workdir,
       env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
     });
@@ -109,7 +105,6 @@ describe("CLI upgrade notice (#5853)", () => {
     writeFileSync(join(workdir, "supabase", ".temp", "cli-latest"), "v99.99.99");
 
     const { exitCode, stderr } = await runSupabase(["branches", "--nope"], {
-      entrypoint: "legacy",
       cwd: workdir,
       env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
     });
@@ -124,7 +119,6 @@ describe("CLI upgrade notice (#5853)", () => {
     writeFileSync(join(workdir, "supabase", ".temp", "cli-latest"), "v99.99.99");
 
     const { exitCode, stderr } = await runSupabase(["gen", "signing-key"], {
-      entrypoint: "legacy",
       cwd: workdir,
       env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
     });
@@ -136,7 +130,6 @@ describe("CLI upgrade notice (#5853)", () => {
     expect(suggestionIndex).toBeGreaterThan(noticeIndex);
 
     const suppressed = await runSupabase(["gen", "signing-key"], {
-      entrypoint: "legacy",
       cwd: workdir,
     });
     expect(suppressed.exitCode).toBe(0);

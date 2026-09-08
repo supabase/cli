@@ -4,8 +4,8 @@
  * Go defines `--schema` as a Cobra `StringSliceVarP` on both `gen types`
  * (`apps/cli-go/cmd/gen.go:155`) and `db lint` (`apps/cli-go/cmd/db.go:506`).
  * The CSV-per-occurrence parsing itself lives in `string-slice-flag.ts`
- * (shared with every other Go `StringSliceVar` flag ported to the legacy
- * shell); this module re-exports it under the `--schema`-specific names and
+ * (shared with every other Go `StringSliceVar` flag ported to the
+ * CLI); this module re-exports it under the `--schema`-specific names and
  * adds `schemaToCsvField`, the CSV re-encoder used when forwarding
  * `--schema` back to a delegated Go subprocess.
  *

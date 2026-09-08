@@ -27,7 +27,7 @@ describe("supabase inspect report", () => {
       const outputDir = mkdtempSync(join(tmpdir(), "supabase-report-e2e-"));
       const { exitCode, stderr } = await runSupabase(
         ["inspect", "report", ...TEXT_MODE, "--db-url", DEAD_DB_URL, "--output-dir", outputDir],
-        { entrypoint: "legacy", home: home.dir, env: { HOME: home.dir } },
+        { home: home.dir, env: { HOME: home.dir } },
       );
       expect(exitCode).toBe(1);
       // The native handler writes the connect diagnostic to stderr.

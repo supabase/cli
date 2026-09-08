@@ -77,10 +77,10 @@ export interface PgConnInput {
   readonly suggestionContext?: ConnectSuggestionContext;
 }
 
-/** A parameter value supported by the legacy extended-protocol batch path. */
+/** A parameter value supported by the extended-protocol batch path. */
 export type DbBatchValue = string | ReadonlyArray<string> | null;
 
-/** One statement in a legacy extended-protocol batch. */
+/** One statement in an extended-protocol batch. */
 export interface DbBatchStatement {
   readonly sql: string;
   readonly params?: ReadonlyArray<DbBatchValue>;

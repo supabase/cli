@@ -139,7 +139,7 @@ describe("withCommandTelemetry", () => {
     );
   });
 
-  it.live("keeps the TS output format when legacy --output pretty defers to it", () => {
+  it.live("keeps the TS output format when --output pretty defers to it", () => {
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(

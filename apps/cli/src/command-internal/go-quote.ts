@@ -1,6 +1,6 @@
 /**
  * Port of Go's `strconv.Quote` (the `%q` verb) over raw UTF-8 bytes, shared by
- * every legacy error message that must reproduce a Go-side `%q` interpolation
+ * every error message that must reproduce a Go-side `%q` interpolation
  * byte-for-byte (snippets download's `invalid urn prefix: %q`, storage cp's
  * pflag `invalid argument %q … parsing %q`).
  *

@@ -37,7 +37,6 @@ describe("supabase gen signing-key", () => {
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stderr } = await runSupabase(["gen", "signing-key"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         stdin: "n\n",
       });
@@ -52,7 +51,6 @@ describe("supabase gen signing-key", () => {
 
   test("overwrites on a piped 'y'", { timeout: E2E_TIMEOUT_MS }, async () => {
     const { exitCode, stderr } = await runSupabase(["gen", "signing-key"], {
-      entrypoint: "legacy",
       cwd: projectDir,
       stdin: "y\n",
     });

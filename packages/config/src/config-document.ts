@@ -149,7 +149,7 @@ export interface InternalLoadCliConfigOptions extends LoadCliConfigOptions {
    * Opt into the Go/viper-parity decode+validation semantics this loader
    * otherwise omits, so only the Go-parity CLI (and shared modules
    * invoked exclusively by it) pays for them. Defaults to `false` = pre-PR-#5765
-   * behavior, which `next/`, `packages/stack`, and the functions manifest rely
+   * behavior, which `packages/stack` and the functions manifest rely
    * on. When `true`, mirrors Go's `config.Load` exactly:
    *  - runs the unconditional duplicate-`project_id` and project-ref-format
    *    checks across every `[remotes.*]` block (`config.go:594-602,996-1001`),

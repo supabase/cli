@@ -147,7 +147,7 @@ Run the following orchestration commands from the repository root.
 
 ```sh
 # Replay (no credentials needed)
-pnpm exec turbo run @supabase/cli-e2e#test:e2e:run   # ts-legacy target
+pnpm exec turbo run @supabase/cli-e2e#test:e2e:run
 
 # Record (requires staging access)
 SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_STAGING_URL=https://api.supabase.green \
@@ -200,7 +200,7 @@ SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
   pnpm run record
 ```
 
-`SUPABASE_GO_BINARY` is inherited by the ts-legacy subprocess via `exec()` in the harness, so you only need to set it once in the shell.
+`SUPABASE_GO_BINARY` is inherited by the CLI subprocess via `exec()` in the harness, so you only need to set it once in the shell.
 
 Commands currently requiring this — the full proxied surface, nothing else needs a Go binary at all:
 

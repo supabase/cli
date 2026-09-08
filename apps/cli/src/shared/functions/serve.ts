@@ -164,7 +164,7 @@ export interface FunctionsServeDependencies {
   readonly projectIdOverride: Option.Option<string>;
   readonly goViperCompat: boolean;
   /**
-   * `undefined` in `next`; the CLI injects
+   * `undefined` for library callers; the CLI injects
    * `functionsGoConfigCompat` so this file never imports the command tree
    * directly — see {@link FunctionsGoConfigCompat}. Distinct from
    * `goViperCompat` above, which only gates `env(...)` interpolation.
@@ -199,7 +199,7 @@ interface ServeResolvedConfig {
   readonly configFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
   readonly rawConfigFunctions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   readonly configPath?: string;
-  /** Go's post-`loadNestedEnv` merged env (ambient-wins). `undefined` in `next`. */
+  /** Go's post-`loadNestedEnv` merged env (ambient-wins). `undefined` for library callers. */
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
 }
 
@@ -717,7 +717,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
 ) {
   // This single value is what keeps the `.env` discovery, the config load,
   // and the functions-manifest inference from ever resolving three
-  // different roots: `goConfigCompat === undefined` (`next`/library path)
+  // different roots: `goConfigCompat === undefined` (library path)
   // keeps the package-default ancestor search; the CLI's
   // `search: false` below must match `loadFunctionsCliConfig`'s own options
   // exactly (see the config-load comment further down).
@@ -743,8 +743,8 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   // (an ancestor's config.toml vs this dir's; a stray config.json vs
   // config.toml) — one supplying `auth`/`edgeRuntime`/`apiPort` here, the
   // other supplying `denoVersion`/`Config.Validate` below, silently mixing
-  // fields from two different projects. `next` (`goConfigCompat === undefined`)
-  // keeps the package defaults (ancestor search, JSON preferred), unchanged —
+  // fields from two different projects. Library callers (`goConfigCompat === undefined`)
+  // keep the package defaults (ancestor search, JSON preferred), unchanged —
   // `search: searchAncestors` is `search: true` there, identical to the
   // previously-absent default.
   const loadedConfig = yield* loadCliConfig(projectRoot, {
@@ -806,7 +806,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   // — `restartEdgeRuntime` runs this FIRST, before `AssertSupabaseDbIsRunning`
   // (see this function's own caller for that ordering) — so an invalid
   // config must fail here too, before any Docker check. CLI only;
-  // `next` keeps its own package-default config resolution above unchanged.
+  // library callers keep the package-default config resolution above unchanged.
   // A second, independent config/dotenv load (rather than reusing this
   // function's own `loadedConfig`/`projectEnv` above) — that pipeline's
   // `env(...)`-interpolation purpose is unrelated to Go's `SUPABASE_*`
@@ -1918,7 +1918,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
   return yield* Effect.gen(function* () {
     // `SUPABASE_NETWORK_ID` (env or project dotenv) is CLI-only —
     // same Go-viper-parity gate as `resolved.projectEnvValues` itself
-    // (`undefined` in `next`).
+    // (`undefined` for library callers).
     const networkMode = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(input.networkId),
       envOverride:

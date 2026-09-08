@@ -81,10 +81,10 @@ No build step is required to run the CLI from source, but the Go binary must be 
 
 ## Release Workflow
 
-The `scripts/build.ts` script compiles both binaries for all target platforms when `--shell legacy` is passed:
+The `scripts/build.ts` script compiles both binaries for all target platforms:
 
 ```sh
-bun scripts/build.ts --shell legacy --version X.Y.Z
+bun scripts/build.ts --version X.Y.Z
 ```
 
 This:
@@ -113,7 +113,7 @@ For any command or package deleted by CLI-1970, the parity/provenance reference 
 
 ### Binary size
 
-Measured on the CLI-1970 branch with the real release build (`build.ts --shell legacy`, `go build -trimpath -ldflags "-s -w"`, `CGO_ENABLED=0`):
+Measured on the CLI-1970 branch with the real release build (`build.ts`, `go build -trimpath -ldflags "-s -w"`, `CGO_ENABLED=0`):
 
 | Platform      | `supabase-go` size |
 | ------------- | -----------------: |

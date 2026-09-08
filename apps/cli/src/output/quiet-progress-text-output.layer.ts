@@ -4,7 +4,7 @@ import { textOutputLayer } from "../shared/output/output.layer.ts";
 import { Output } from "../shared/output/output.service.ts";
 
 /**
- * Legacy wrapper over the shared text output layer for the Go-compat
+ * Wrapper over the shared text output layer for the Go-compat
  * machine-format flag (`-o json|yaml|toml|env`).
  *
  * `--output` selects a machine encoder that the handler writes via

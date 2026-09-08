@@ -273,7 +273,7 @@ Verify each applicable item when adding or reworking a command:
 
 4. **`SUPABASE_PROFILE` is dual-mode** — accept either a built-in name (`supabase`, `supabase-staging`, `supabase-local`) **or** a filesystem path to a YAML file with `api_url:` / `gotrue_url:` / `db_url:` keys. cli-e2e harness relies on the file-path mode. Reference: commit `288c2937`.
 
-5. **`Layer.provide` does not share to siblings inside `Layer.mergeAll`** — if two sibling layers each require `CommandSettings`, provide it to both explicitly. Smoke-test the bundled binary (`bun run build && ./dist/supabase-legacy …`) when changing production layer wiring; in-process tests don't always catch the missing-service panic. Reference: commit `a816b12e`, `backups.layers.ts:32-46`.
+5. **`Layer.provide` does not share to siblings inside `Layer.mergeAll`** — if two sibling layers each require `CommandSettings`, provide it to both explicitly. Smoke-test the bundled binary (`bun run build && ./dist/supabase …`) when changing production layer wiring; in-process tests don't always catch the missing-service panic. Reference: commit `a816b12e`, `backups.layers.ts:32-46`.
 
 6. **Both `-o`/`--output` (the machine-format flag inherited from the Go CLI) and `--output-format` must be honored** — `--output` (`pretty|json|yaml|toml|env`) takes priority when set. Pattern in `backups/list/list.handler.ts:85-113`: branch on the `--output` flag first, then fall through to `--output-format` text/json/stream-json. Exception: a net-new TS-only command with no Go-compat contract may instead reject `-o`/`--output` outright (every value, including `pretty`) with an error pointing at `--output-format` — decided on CLI-2156, with `config diff` (and, following it, `config pull`) as the precedent.
 

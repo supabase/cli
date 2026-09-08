@@ -52,7 +52,6 @@ describe("db schema declarative sync (e2e)", () => {
     const projectDir = project.dir;
 
     const init = await runSupabase(["init"], {
-      entrypoint: "legacy",
       cwd: projectDir,
       exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
     });
@@ -107,7 +106,7 @@ describe("db schema declarative sync (e2e)", () => {
         "--exclude",
         "storage-api",
       ],
-      { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
+      { cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
     );
     requireCliSuccess(start, "start setup");
   }, BEFORE_ALL_TIMEOUT_MS);
@@ -136,7 +135,6 @@ describe("db schema declarative sync (e2e)", () => {
           "--experimental",
         ],
         {
-          entrypoint: "legacy",
           cwd: projectDir,
           exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
         },
@@ -157,7 +155,6 @@ describe("db schema declarative sync (e2e)", () => {
       );
 
       const reset = await runSupabase(["db", "reset", "--local", "--no-seed"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
       });
@@ -166,7 +163,6 @@ describe("db schema declarative sync (e2e)", () => {
       const converged = await runSupabase(
         ["db", "schema", "declarative", "sync", "--no-apply", "--experimental"],
         {
-          entrypoint: "legacy",
           cwd: projectDir,
           exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
         },
@@ -182,7 +178,6 @@ describe("db schema declarative sync (e2e)", () => {
         runSupabase(
           ["db", "schema", "declarative", "sync", "--no-apply", "--name", name, "--experimental"],
           {
-            entrypoint: "legacy",
             cwd: projectDir,
             exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
           },

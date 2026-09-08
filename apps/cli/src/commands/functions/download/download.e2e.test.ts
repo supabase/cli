@@ -28,7 +28,6 @@ describe("supabase functions download — argument validation", () => {
       const { exitCode, stderr } = await runSupabase(
         ["functions", "download", SLUG, "--project-ref", FAKE_REF, ...flags],
         {
-          entrypoint: "legacy",
           home: home.dir,
           env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
         },

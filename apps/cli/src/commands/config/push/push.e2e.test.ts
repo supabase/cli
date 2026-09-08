@@ -35,7 +35,7 @@ describe("supabase config push", () => {
     async () => {
       const { exitCode, stdout, stderr } = await runSupabase(
         ["config", "push", "--project-ref", TEST_PROJECT_REF],
-        { entrypoint: "legacy", cwd: projectDir, env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
+        { cwd: projectDir, env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
       );
       expect(exitCode).toBe(1);
       expect(`${stdout}${stderr}`).toContain("config.toml");

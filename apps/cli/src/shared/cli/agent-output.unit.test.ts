@@ -42,7 +42,7 @@ describe("resolveAgentOutputFormat", () => {
     ).toBe("json");
   });
 
-  it("keeps legacy --output authoritative over the agent JSON default", () => {
+  it("keeps --output authoritative over the agent JSON default", () => {
     expect(
       resolveAgentOutputFormat({
         explicitOutputFormat: Option.none(),

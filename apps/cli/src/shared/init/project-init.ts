@@ -135,7 +135,7 @@ export interface ProjectInitOptions {
    * `viper.GetBool("YES")` branch inside `PromptYesNo` (`console.go:70-72`):
    * with `--yes`/`SUPABASE_YES`, `init -i` echoes the accepted VS Code prompt
    * to stderr and writes the settings instead of blocking on a TTY (CLI-1974).
-   * The next shell exposes no `--yes` on init and always passes `false`.
+   * Callers without a `--yes` flag pass `false`.
    */
   readonly yes: boolean;
   readonly withVscodeSettings: boolean;
@@ -295,8 +295,8 @@ const ensureSupabaseGitignore = Effect.fnUntraced(function* (cwd: string) {
  * settings). This owns the mechanical filesystem work only — it does not decide
  * how an already-initialized project is reported. When `config.toml` already
  * exists and `force` is not set it short-circuits with `created: false` and
- * writes nothing, leaving each shell free to treat that as a hard error (legacy
- * Go parity) or a graceful no-op (next).
+ * writes nothing, leaving the caller free to treat that as a hard error (Go
+ * parity) or a graceful no-op.
  */
 export const initProject = Effect.fnUntraced(function* (options: ProjectInitOptions) {
   const fs = yield* FileSystem.FileSystem;

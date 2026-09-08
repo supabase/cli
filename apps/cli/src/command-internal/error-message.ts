@@ -1,7 +1,7 @@
 /**
  * Best-effort extraction of a human-readable message from an unknown thrown/failed
  * value — an Effect `PlatformError`, a driver error, a plain `Error`, or anything else.
- * Shared by every legacy module that wraps a raw Effect/driver failure into Go-style
+ * Shared by every command module that wraps a raw Effect/driver failure into Go-style
  * error text (Go's own `err.Error()` equivalent), so wording stays consistent across
  * call sites instead of each one re-deriving its own fallback.
  */
@@ -19,7 +19,7 @@ export const errorMessage = (e: unknown): string =>
  * deliberately never `process.chdir`s, so its own syscalls need a real absolute path to
  * work — but the wrapped message must still report the Go-equivalent path, not the
  * local temp/workdir absolute path the syscall needed, or it leaks a path Go would
- * never show. Shared by every legacy module that wraps a raw filesystem failure this
+ * never show. Shared by every command module that wraps a raw filesystem failure this
  * way (`sql-files-glob.ts`'s matched-file/matched-directory warnings,
  * `migration-apply.ts`'s migration-file read errors).
  */

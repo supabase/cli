@@ -82,7 +82,7 @@ pnpm build:shim
 Output in `dist/`:
 
 - `dist/supabase.js` — base shim that routes to the correct platform binary
-- `dist/supabase-legacy` — CLI compiled binary (Bun single-file executable for the host platform)
+- `dist/supabase` — CLI compiled binary (Bun single-file executable for the host platform)
 
 The shim resolves `SUPABASE_CLI_BINARY_OVERRIDE` (an absolute binary path) before falling back to the `@supabase/cli-<platform>` optional-dependency lookup. The e2e test harness uses this override to invoke the real shim + compiled binary handoff against the per-shell builds in `dist/`.
 
@@ -92,7 +92,7 @@ Used at release time to produce the compiled binaries that go into the platform-
 
 ```sh
 # CLI (TS SFE + Go binary for each platform)
-bun scripts/build.ts --shell legacy --version X.Y.Z
+bun scripts/build.ts --version X.Y.Z
 ```
 
 For the CLI, this also cross-compiles the Go CLI binary from `apps/cli-go/` and places both binaries in `packages/cli-{platform}/bin/`.

@@ -88,7 +88,6 @@ describe("failed command telemetry", () => {
     },
   ])("emits sanitized metadata from the compiled CLI ($command)", async (testCase) => {
     const result = await runSupabase(testCase.args, {
-      entrypoint: "legacy",
       env: {
         SUPABASE_ACCESS_TOKEN: testCase.accessToken,
         SUPABASE_TELEMETRY_DISABLED: "0",

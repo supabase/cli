@@ -190,7 +190,7 @@ async function writeKongConfig(dir: string, edgeRuntimeContainer: string) {
   // Was: read straight from apps/cli-go/internal/start/templates/kong.yml. That
   // package was deleted outright (CLI-1966; unreachable from the TS CLI, directly
   // or indirectly), so this now uses the TS transcription of the same template
-  // that legacy `start`'s Kong service already ports byte-for-byte.
+  // that `start`'s Kong service already ports byte-for-byte.
   const config = START_KONG_YML_TEMPLATE.replaceAll("{{ .EdgeRuntimeId }}", edgeRuntimeContainer)
     .replaceAll("{{ .BearerToken }}", "$((headers.authorization or headers.apikey))")
     .replaceAll("{{ .QueryToken }}", "$((query_params.apikey))")

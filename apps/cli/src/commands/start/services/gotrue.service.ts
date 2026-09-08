@@ -56,10 +56,8 @@ import {
   startInternalDbPassword,
   startInternalDbUrl,
 } from "../../../command-internal/db-bootstrap/internal-db-connection.ts";
-import {
-  slimWgetHealthcheck,
-  usesSlimRuntime,
-} from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { slimWgetHealthcheck } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 
 /** The GoTrue network alias — also this service's `containerSuffix` in `SERVICE_CATALOG`. */
 const GOTRUE_CONTAINER_SUFFIX = "auth";
@@ -622,7 +620,7 @@ export function buildGotrueContainerSpec(input: GotrueContainerSpecInput): Start
     env,
     binds: [],
     exposedPorts: [{ containerPort: GOTRUE_PORT }],
-    healthcheck: usesSlimRuntime(input.image)
+    healthcheck: usesSlimImageRuntime(input.image)
       ? slimWgetHealthcheck(`http://127.0.0.1:${GOTRUE_PORT}/health`)
       : {
           test: [

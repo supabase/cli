@@ -282,7 +282,7 @@ export function parseStringSliceFlag(rawValues: ReadonlyArray<string>): Readonly
 }
 
 /**
- * Builds a legacy flag that ports a pflag `StringSliceVar`/`StringSliceVarP`:
+ * Builds a flag that ports a pflag `StringSliceVar`/`StringSliceVarP`:
  * repeatable, CSV-split per occurrence, accumulated across repeats.
  *
  * On malformed CSV it fails at parse time — matching pflag's

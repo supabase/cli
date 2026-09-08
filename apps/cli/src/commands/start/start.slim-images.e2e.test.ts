@@ -181,7 +181,6 @@ describe("supabase start slim images (e2e)", () => {
   afterEach(async () => {
     if (projectDir === undefined) return;
     await runSupabase(["stop", "--no-backup"], {
-      entrypoint: "legacy",
       cwd: projectDir,
       env: SLIM_ENV,
     }).catch(() => undefined);
@@ -223,7 +222,6 @@ describe("supabase start slim images (e2e)", () => {
       const realtimeContainer = serviceContainerName("realtime", projectId);
 
       const init = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
         env: DOCKER_IO_ENV,
@@ -231,7 +229,6 @@ describe("supabase start slim images (e2e)", () => {
       requireCliSuccess(init, "init");
 
       const created = await runSupabase(["functions", "new", "hello", "--auth", "none"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
         env: { ...DOCKER_IO_ENV, SUPABASE_YES: "1" },
@@ -242,7 +239,6 @@ describe("supabase start slim images (e2e)", () => {
       const apiPort = readSectionPort(config, "api");
 
       const start = await runSupabase(START_ARGS, {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: START_TIMEOUT_MS,
         env: SLIM_ENV,

@@ -308,8 +308,8 @@ export interface SetupDatabaseInput {
    * An already-open session to the local Postgres database, dialed the same way
    * Go's `ConnectLocalPostgres(ctx, pgconn.Config{})` does (`internal/utils/
    * connect.go:144-167`): the HOST-facing address (`getHostname()` +
-   * `db.port`, user `postgres`, `isLocal: true`) — the SAME shape `legacy-db-
-   * config.layer.ts`'s own `--local` branch already dials (`legacy-db-config.
+   * `db.port`, user `postgres`, `isLocal: true`) — the SAME shape `db-
+   * config.layer.ts`'s own `--local` branch already dials (`db-config.
    * layer.ts:518-529`). This is deliberately NOT the internal Docker-network `db`
    * container address the PG15+ one-shot jobs below connect through (see
    * `networkId`/`dbHost`) — the two addressing schemes are independent, exactly

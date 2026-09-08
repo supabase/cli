@@ -53,7 +53,7 @@ const mappedError = (
     }
     case "InvalidValue": {
       // `CliError.InvalidValue` for a `GlobalFlag.setting` flag (e.g.
-      // `--output-format`, or the legacy `--output`/`-o`, `--dns-resolver`,
+      // `--output-format`, or the `--output`/`-o`, `--dns-resolver`,
       // `--agent`) never reaches `CliOutput.Formatter` — `Command.runWith`
       // validates those flags in a step that runs outside the `ShowHelp`
       // path, so the failure lands here instead. Apply the same

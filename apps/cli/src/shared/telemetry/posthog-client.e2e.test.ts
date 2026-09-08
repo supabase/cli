@@ -38,7 +38,6 @@ describe("telemetry against a blackholed PostHog endpoint", () => {
   test("commands exit promptly, cleanly, and quietly", async () => {
     const startedAt = performance.now();
     const { stdout, stderr, exitCode } = await runSupabase(["telemetry", "status"], {
-      entrypoint: "legacy",
       env: {
         // spawnSupabase disables telemetry for every test by default; this
         // test exists to exercise it, so turn it back on explicitly.

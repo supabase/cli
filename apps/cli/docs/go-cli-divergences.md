@@ -12,13 +12,9 @@ not a compatibility promise.
 
 These commands exist in the TS CLI today but have no direct top-level equivalent in the old Go CLI reference.
 
-| TS command        | TS path                                                                                                            | Notes                                                                                                                                                                                         |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dev`             | `planned`                                                                                                          | Reserved for a TS-native long-running local development workflow command that watches files and orchestrates subcommands. Track this as TS-only unless a direct Go equivalent emerges.        |
-| `logs`            | [`../src/next/commands/logs/logs.command.ts`](../src/next/commands/logs/logs.command.ts)                           | Streams local stack logs. No top-level `logs` command exists in the old Go CLI reference.                                                                                                     |
-| `api`             | [`../src/next/commands/platform/api.command.ts`](../src/next/commands/platform/api.command.ts)                     | Low-level Management API client. It supersedes the old generated tree with explicit discovery via `supabase api routes` and execution via `supabase api request <route> [--method <METHOD>]`. |
-| `stack`           | [`../src/next/cli/root.ts`](../src/next/cli/root.ts)                                                               | TS-only local runtime namespace exposing `stack start`, `stack stop`, `stack status`, `stack list`, and `stack update`. Top-level `start`, `stop`, and `status` remain aliases.               |
-| `branches switch` | [`../src/next/commands/branches/switch/switch.command.ts`](../src/next/commands/branches/switch/switch.command.ts) | No direct Go equivalent. Updates local active-branch state so subsequent commands target the selected branch.                                                                                 |
+| TS command | TS path   | Notes                                                                                                                                                                                  |
+| ---------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dev`      | `planned` | Reserved for a TS-native long-running local development workflow command that watches files and orchestrates subcommands. Track this as TS-only unless a direct Go equivalent emerges. |
 
 ## Flag divergences from the Go reference
 
@@ -186,8 +182,8 @@ commit` is now native `db pull`, so it uses pull's flag-then-env-then-dotenv
   (non-branch) project — the cache and the file hold the same ref — so this only changes behavior
   in the previously-403ing branch-linked state (CLI-2167 follow-up, no Go equivalent).
 - `branches list`'s pretty table (not `-o json|yaml|toml`, not `--output-format json|stream-json`)
-  marks the row matching the CURRENTLY linked ref with a `<name> (active)` NAME cell, mirroring
-  `next/`'s convention. TS-only QoL, no Go equivalent (CLI-2167 follow-up).
+  marks the row matching the CURRENTLY linked ref with a `<name> (active)` NAME cell. TS-only
+  QoL, no Go equivalent (CLI-2167 follow-up).
 - `status` prints the current linked project/branch as a "Linked Project:" block on stdout in
   human text mode (Neon-style — `Org:`/`Project:`/`Branch:` lines, each omitted when unknown),
   before any daemon/stack work begins, and folds the same linked state into its machine-readable
@@ -244,7 +240,7 @@ commit` is now native `db pull`, so it uses pull's flag-then-env-then-dotenv
   Linux client more constrained than its daemon (remote `DOCKER_HOST`, mounted socket) just
   gets a smaller fd budget, never a failed start. When the clamp lowers the request, the CLI's
   `functions serve`/`start` bring-up warns with the reduced limit. The `@supabase/stack` service
-  builder (next-shell `stack start`) applies the same clamp silently: its defs are built without
+  builder (`stack start`) applies the same clamp silently: its defs are built without
   an output channel, and in managed mode inside the daemon process, so a user-visible warning
   there needs a diagnostics channel on `BuildResult` first; the applied value stays visible via
   `docker inspect`.

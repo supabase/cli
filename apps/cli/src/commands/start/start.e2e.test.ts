@@ -36,7 +36,6 @@ describe("supabase start", () => {
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stdout, stderr } = await runSupabase(["start", "--exclude", "bogus"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         env: { DOCKER_HOST: "tcp://127.0.0.1:1" },
       });
