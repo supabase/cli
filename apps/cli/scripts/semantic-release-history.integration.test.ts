@@ -88,6 +88,7 @@ async function createHistory(legacyTag: string): Promise<History> {
   await git(repo, ["tag", legacyTag]);
   await git(repo, ["remote", "add", "origin", pathToFileURL(origin).href]);
   await git(repo, ["push", "-u", "origin", "main", "--tags"]);
+  await git(origin, ["symbolic-ref", "HEAD", "refs/heads/main"]);
   await git(repo, ["checkout", "-b", "develop", "-q"]);
   await git(repo, ["push", "-u", "origin", "develop"]);
   return { root, repo, origin, legacyTag, baselineSha, nextFile: 0 };
