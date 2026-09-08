@@ -190,12 +190,12 @@ describe("inspect report", () => {
     return Effect.gen(function* () {
       yield* inspectReport(flags({ outputDir: base }));
       const { dir, files } = dateFolderContents(base);
-      expect(files.length).toBe(14);
+      expect(files.length).toBe(15);
       expect(files).toContain("db_stats.csv");
       expect(files).toContain("unused_indexes.csv");
       expect(files).not.toContain("db-stats.csv");
       // Every query was copied with both placeholders substituted.
-      expect(connection.copiedSql.length).toBe(14);
+      expect(connection.copiedSql.length).toBe(15);
       expect(
         connection.copiedSql.every(
           (s) => s.startsWith("COPY (") && s.endsWith("TO STDOUT WITH CSV HEADER"),
@@ -466,10 +466,10 @@ describe("inspect report", () => {
       const data = (
         success as { data?: { files?: Array<unknown>; outputDir?: string; rules?: Array<unknown> } }
       ).data;
-      expect(data?.files?.length).toBe(14);
+      expect(data?.files?.length).toBe(15);
       expect(typeof data?.outputDir).toBe("string");
       expect(data?.rules?.length).toBe(13);
-      expect(dateFolderContents(base).files.length).toBe(14);
+      expect(dateFolderContents(base).files.length).toBe(15);
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -556,7 +556,7 @@ describe("inspect report", () => {
     return Effect.gen(function* () {
       yield* inspectReport(flags({ outputDir: "reports" }));
       const { files } = dateFolderContents(join(cwd, "reports"));
-      expect(files.length).toBe(14);
+      expect(files.length).toBe(15);
     }).pipe(Effect.provide(layer));
   });
 
@@ -567,7 +567,7 @@ describe("inspect report", () => {
     return Effect.gen(function* () {
       yield* inspectReport(flags({ outputDir: base }));
       // Written under the absolute base, not under the CWD.
-      expect(dateFolderContents(base).files.length).toBe(14);
+      expect(dateFolderContents(base).files.length).toBe(15);
       expect(readdirSync(cwd).length).toBe(0);
     }).pipe(Effect.provide(layer));
   });
