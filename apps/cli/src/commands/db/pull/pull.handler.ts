@@ -145,7 +145,13 @@ export type LegacyDbPullOutcome =
       readonly engine: "pg-delta" | "migra";
     };
 
-export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (
+/**
+ * Runs `db pull`'s target resolution and pull (declarative or migration mode)
+ * without emitting the final `output.success`/"Finished" line — the caller
+ * (`legacyDbPull` for the standalone command, or an in-process orchestrator)
+ * owns that emission based on the returned {@link LegacyDbPullOutcome}.
+ */
+export const legacyRunDbPull = Effect.fn("legacy.db.pull.run")(function* (
   flags: LegacyDbPullFlags,
   invoke?: LegacyDbPullInvoke,
 ) {
@@ -177,7 +183,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (
 
   let linkedRefForCache: string | undefined;
 
-  yield* Effect.gen(function* () {
+  return yield* Effect.gen(function* () {
     // Make an allowlisted `supabase/.env` registry override visible to the
     // synchronous `process.env` reader in `legacyGetRegistryImageUrl` (the pg_dump
     // seed + migra/pg-delta diff images), reverted when this scope closes.
@@ -385,7 +391,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (
     });
 
     // Connectivity check, run before dialing.
-    yield* Effect.scoped(
+    return yield* Effect.scoped(
       Effect.gen(function* () {
         yield* output.raw(
           `Connecting to ${resolved.isLocal ? "local" : "remote"} database...\n`,
@@ -444,17 +450,11 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (
             `Declarative schema written to ${legacyBold(declarativeDirRel)}\n`,
             "stderr",
           );
-          if (output.format !== "text") {
-            yield* output.success("Declarative schema pulled.", {
-              declarative: true,
-              schemaWritten: declarativeDir,
-              remoteHistoryUpdated: false,
-              engine: "pg-delta",
-            });
-          } else if (invoke?.skipFinishedLine !== true) {
-            yield* output.raw(`Finished ${legacyAqua("supabase db pull")}.\n`);
-          }
-          return;
+          return {
+            kind: "declarative",
+            schemaWritten: declarativeDir,
+            engine: "pg-delta",
+          } as const;
         }
 
         // pg-delta ignores schema_paths in favor of the migrations baseline.
@@ -813,29 +813,28 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (
         // never fails the command.
         let remoteHistoryUpdated = false;
         const updateHistoryTitle = "Update remote migration history table?";
-        // Honors `--yes`, scans piped stdin on a non-TTY before falling back to the
-        // default, and otherwise prompts on a real TTY.
-        const shouldUpdate = yield* legacyPromptYesNo(output, yes, updateHistoryTitle, true);
+        // `invoke?.assumeYes` overrides this resolution entirely for an in-process
+        // caller that already ran its own aggregated confirmation. Otherwise, honors
+        // `--yes`, scans piped stdin on a non-TTY before falling back to the default,
+        // and otherwise prompts on a real TTY.
+        const shouldUpdate =
+          invoke?.assumeYes !== undefined
+            ? invoke.assumeYes
+            : yield* legacyPromptYesNo(output, yes, updateHistoryTitle, true);
         if (shouldUpdate) {
           yield* legacyUpdateMigrationHistory(session, fs, path, writtenMigrations);
           remoteHistoryUpdated = true;
         }
 
-        if (output.format !== "text") {
-          yield* output.success("Schema pulled.", {
-            declarative: false,
-            // `schemaWritten` keeps the first written path for released consumers that
-            // read the string field; `schemaFiles` lists EVERY written migration path
-            // in write order (a pg-delta plan writes one file per unit), so machine
-            // callers see all of them, not just the first.
-            schemaWritten: writtenMigrations[0]?.path ?? migrationPath,
-            schemaFiles: writtenMigrations.map((written) => written.path),
-            remoteHistoryUpdated,
-            engine: usePgDeltaDiff ? "pg-delta" : "migra",
-          });
-        } else if (invoke?.skipFinishedLine !== true) {
-          yield* output.raw(`Finished ${legacyAqua("supabase db pull")}.\n`);
-        }
+        return {
+          kind: "migration",
+          // `schemaFiles` lists EVERY written migration path in write order (a
+          // pg-delta plan writes one file per unit); `legacyDbPull`'s emission
+          // derives the released `schemaWritten` string field from its first entry.
+          schemaFiles: writtenMigrations.map((written) => written.path),
+          remoteHistoryUpdated,
+          engine: usePgDeltaDiff ? "pg-delta" : "migra",
+        } as const;
       }),
     );
   }).pipe(
@@ -849,4 +848,42 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (
     // command run: `legacyApplyProjectEnv` registers a finalizer that reverts it.
     Effect.scoped,
   );
+});
+
+/**
+ * `legacyDbPull`'s established external behavior (stdout/stderr, JSON payload,
+ * "Finished" line), reimplemented on top of {@link legacyRunDbPull}: run the
+ * pull, then emit based on the returned outcome.
+ */
+export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (
+  flags: LegacyDbPullFlags,
+  invoke?: LegacyDbPullInvoke,
+) {
+  const output = yield* Output;
+  const outcome = yield* legacyRunDbPull(flags, invoke);
+
+  if (output.format !== "text") {
+    if (outcome.kind === "declarative") {
+      yield* output.success("Declarative schema pulled.", {
+        declarative: true,
+        schemaWritten: outcome.schemaWritten,
+        remoteHistoryUpdated: false,
+        engine: outcome.engine,
+      });
+    } else {
+      yield* output.success("Schema pulled.", {
+        declarative: false,
+        // `schemaWritten` keeps the first written path for released consumers that
+        // read the string field; `schemaFiles` lists EVERY written migration path
+        // in write order (a pg-delta plan writes one file per unit), so machine
+        // callers see all of them, not just the first.
+        schemaWritten: outcome.schemaFiles[0] ?? "",
+        schemaFiles: outcome.schemaFiles,
+        remoteHistoryUpdated: outcome.remoteHistoryUpdated,
+        engine: outcome.engine,
+      });
+    }
+  } else if (invoke?.skipFinishedLine !== true) {
+    yield* output.raw(`Finished ${legacyAqua("supabase db pull")}.\n`);
+  }
 });

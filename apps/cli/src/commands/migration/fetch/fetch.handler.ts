@@ -40,10 +40,10 @@ export interface LegacyMigrationFetchOutcome {
   readonly files: ReadonlyArray<string>;
 }
 
-const runFetch = Effect.fnUntraced(function* (
-  flags: LegacyMigrationFetchFlags,
-  target: ReturnType<typeof resolveLegacyDbTargetFlags>,
+export const legacyRunMigrationFetch = Effect.fnUntraced(function* (
+  input: LegacyMigrationFetchInput,
 ) {
+  const { flags, target, assumeYes } = input;
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
   const connection = yield* LegacyDbConnection;
@@ -136,7 +136,10 @@ const runFetch = Effect.fnUntraced(function* (
     );
     if (existing.length > 0) {
       const title = `Do you want to overwrite existing files in ${legacyBold("supabase/migrations")} directory?`;
-      const overwrite = yield* legacyMigrationConfirm(title, { defaultValue: true, yes });
+      const overwrite =
+        assumeYes !== undefined
+          ? assumeYes
+          : yield* legacyMigrationConfirm(title, { defaultValue: true, yes });
       if (!overwrite) {
         return yield* Effect.fail(
           new LegacyOperationCanceledError({ message: CONTEXT_CANCELED_MESSAGE }),
@@ -192,10 +195,7 @@ const runFetch = Effect.fnUntraced(function* (
       written.push(filePath);
     }
 
-    // Silent on success in text mode.
-    if (output.format !== "text") {
-      yield* output.success("Migration history fetched", { files: written });
-    }
+    return { files: written } satisfies LegacyMigrationFetchOutcome;
   });
 
   return yield* cacheLinkedRef === undefined
@@ -206,8 +206,16 @@ const runFetch = Effect.fnUntraced(function* (
 export const legacyMigrationFetch = Effect.fn("legacy.migration.fetch")(function* (
   flags: LegacyMigrationFetchFlags,
 ) {
+  const output = yield* Output;
   const telemetryState = yield* LegacyTelemetryState;
   const cliArgs = yield* CliArgs;
   const target = resolveLegacyDbTargetFlags(cliArgs.args);
-  yield* runFetch(flags, target).pipe(Effect.ensuring(telemetryState.flush));
+  const outcome = yield* legacyRunMigrationFetch({ flags, target, assumeYes: undefined }).pipe(
+    Effect.ensuring(telemetryState.flush),
+  );
+
+  // Silent on success in text mode.
+  if (output.format !== "text") {
+    yield* output.success("Migration history fetched", { files: outcome.files });
+  }
 });

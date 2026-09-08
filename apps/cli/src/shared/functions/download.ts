@@ -1277,7 +1277,12 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
 
       if (output.format === "text") {
         yield* dependencies.proxyDownload(flags, projectRef, false);
-        return;
+        // The `--legacy-bundle` path is left untouched by the emission-moving
+        // refactor below (its own `output.success` calls stay put) — the
+        // slug list is never resolved in text mode here, so this result is
+        // not meaningful and is unused by callers (the orchestrator never
+        // sets `legacyBundle: true`).
+        return { projectRef, slugs: [], empty: false };
       }
 
       // Resolve the slug list *before* delegating, mirroring Go's own
@@ -1305,7 +1310,7 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
           function_slugs: [],
           project_ref: projectRef,
         });
-        return;
+        return { projectRef, slugs: [], empty: true };
       }
 
       yield* dependencies.proxyDownload(flags, projectRef, true);
@@ -1314,7 +1319,7 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
         function_slugs: slugs,
         project_ref: projectRef,
       });
-      return;
+      return { projectRef, slugs, empty: false };
     }
 
     const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
@@ -1359,13 +1364,11 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
       ? [flags.functionName.value]
       : yield* listRemoteFunctionSlugs(dependencies.api, projectRef);
 
+    // Final-summary emission for the empty-project case moved to the
+    // standalone handler (`legacyFunctionsDownload`) — this only computes and
+    // returns the result now.
     if (slugs.length === 0) {
-      if (output.format === "text") {
-        yield* output.raw(`No functions found in project  ${projectRef}\n`, "stderr");
-        return;
-      }
-      yield* output.success("No functions found.", { function_slugs: [], project_ref: projectRef });
-      return;
+      return { projectRef, slugs: [], empty: true };
     }
 
     if (output.format === "text" && Option.isNone(flags.functionName)) {
@@ -1415,19 +1418,9 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
       }
     }
 
-    if (output.format !== "text") {
-      yield* output.success("Downloaded Edge Function source.", {
-        function_slugs: downloaded,
-        project_ref: projectRef,
-      });
-      return;
-    }
-
-    if (Option.isNone(flags.functionName)) {
-      yield* output.raw(
-        `Successfully downloaded all functions from project ${projectRef}\n`,
-        "stderr",
-      );
-    }
+    // Final-summary emission for the completed download loop moved to the
+    // standalone handler (`legacyFunctionsDownload`) — this only computes and
+    // returns the result now.
+    return { projectRef, slugs: downloaded, empty: false };
   });
 }

@@ -641,7 +641,7 @@ const legacyValidateConfigPullPlan = Effect.fnUntraced(function* (input: {
 
 /** Builds the file-load helpers for one `cliSettings.workdir` — a small
  * factory rather than a shared closure so both `legacyOpenConfigPullSource`
- * (steps 2-3) and `legacyRunConfigPull` (step 6's conditional reload) get
+ * (steps 2-3) and `legacyPlanConfigPullRun` (step 6's conditional reload) get
  * their own, independently testable copy without threading `cliSettings`
  * through {@link LegacyConfigPullInput}. Narrowed to `workdir` +
  * `explicitWorkdir` (rather than the full `LegacyCliSettings` shape) since
@@ -737,12 +737,23 @@ export interface LegacyConfigPullInput {
   readonly source: LegacyConfigPullSource;
 }
 
-export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyConfigPullInput) {
+/**
+ * Steps 5-8 of `config pull` (plan §1.6's plan/apply split): destination
+ * resolution, the conditional `[remotes.*]`-overlay reload, the remote fetch,
+ * the fixpoint-expanded diff/plan, and the planner-defect/schema-validation
+ * gate. Prints the "Pulling config from …" destination line and the
+ * "Comparison scope: …" line to stderr exactly once, here — never repeated by
+ * a caller. Never runs the git dirty guard, never prompts, never writes, and
+ * never calls `output.success`/`emitOutcome`; the caller decides what to do
+ * with the returned {@link LegacyConfigPullRunPlan}.
+ */
+export const legacyPlanConfigPullRun = Effect.fnUntraced(function* (
+  request: LegacyConfigPullPlanRequest,
+) {
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
   const cliSettings = yield* LegacyCliSettings;
-  const fs = yield* FileSystem.FileSystem;
-  const { ref, branch } = input.target;
+  const { ref, branch } = request.target;
   const { loadLocalConfig, relativeConfigPath } = makeConfigLoader(cliSettings);
 
   // 5. Resolve WHERE this pull writes (root vs. an existing/new
@@ -751,19 +762,19 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   const branchLabelCandidate =
     branch !== undefined && !LEGACY_BRANCH_UUID_PATTERN.test(branch) ? branch : undefined;
   const scopeResult = legacyResolveConfigPullDestination({
-    rawRemotes: input.source.loaded.rawDocument?.["remotes"],
-    interpolatedRemotes: input.source.loaded.interpolatedRemotes,
+    rawRemotes: request.source.loaded.rawDocument?.["remotes"],
+    interpolatedRemotes: request.source.loaded.interpolatedRemotes,
     projectRef: ref,
     branchLabelCandidate,
     targetWasBranch: branch !== undefined,
-    requestedLabel: input.remoteLabel,
+    requestedLabel: request.remoteLabel,
   });
   if (!scopeResult.ok) {
     if (scopeResult.reason === "label_collision") {
       return yield* new LegacyConfigPullRemoteLabelCollisionError({
         message: legacyConfigPullLabelCollisionMessage(
           scopeResult,
-          input.remoteLabel !== undefined,
+          request.remoteLabel !== undefined,
         ),
       });
     }
@@ -779,7 +790,7 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
 
   // 6. Reload WITH the `[remotes.*]` overlay only when block reuse selected
   // an EXISTING block — a brand-new block has nothing to overlay yet.
-  let loaded = input.source.loaded;
+  let loaded = request.source.loaded;
   if (destination.kind === "remote" && !destination.created) {
     loaded = yield* loadLocalConfig(ref);
   }
@@ -868,7 +879,7 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   const plan = legacyPlanConfigPull({
     changeSet,
     destination,
-    rootDocument: input.source.loaded.document ?? {},
+    rootDocument: request.source.loaded.document ?? {},
     projectRef: ref,
   });
   const planWithDefectCheck = yield* legacyConfigPullDefectAndUnpushableCheck(
@@ -877,12 +888,103 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   );
   const finalPlan = yield* legacyValidateConfigPullPlan({
     plan: planWithDefectCheck,
-    rawDocument: input.source.loaded.rawDocument ?? {},
+    rawDocument: request.source.loaded.rawDocument ?? {},
     destination,
     projectRef: ref,
     configPath: loaded.path,
     format: loaded.format,
   });
+
+  // `hasBlockToCreate` is why this is `hasWork`, not merely
+  // `writes.length === 0`: a zero-drift branch target still has WORK to do
+  // (creating the block), so it must reach the git guard/confirmation like
+  // any other write (CLI-2064 bug B).
+  const hasBlockToCreate = finalPlan.createdTable !== undefined;
+  const hasWork = finalPlan.writes.length > 0 || hasBlockToCreate;
+
+  return {
+    changeSet,
+    scope,
+    plan: finalPlan,
+    context,
+    configFilePath: loaded.path,
+    hasWork,
+  } satisfies LegacyConfigPullRunPlan;
+});
+
+/**
+ * Steps 12-13 of `config pull`: the TOCTOU re-read against
+ * {@link LegacyConfigPullSource.text} (someone may have edited the file
+ * while the confirmation prompt was on screen), `applyConfigEdits`, and the
+ * atomic write. No emission — the caller renders the final summary/payload
+ * once this succeeds.
+ */
+export const legacyApplyConfigPullRun = Effect.fnUntraced(function* (input: {
+  readonly runPlan: LegacyConfigPullRunPlan;
+  readonly source: LegacyConfigPullSource;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const { plan, context, configFilePath } = input.runPlan;
+
+  // 12. Re-read and compare against the step-3 baseline — someone may have
+  // edited the file while the prompt was on screen.
+  const currentText = yield* fs.readFileString(configFilePath).pipe(
+    Effect.catchTag(
+      "PlatformError",
+      () =>
+        new LegacyConfigPullFileChangedError({
+          message: `${context.configPath} changed on disk while config pull was running; rerun the command to pick up the current file.`,
+        }),
+    ),
+  );
+  if (currentText !== input.source.text) {
+    return yield* new LegacyConfigPullFileChangedError({
+      message: `${context.configPath} changed on disk while config pull was running; rerun the command to pick up the current file.`,
+    });
+  }
+
+  // 13. Apply and write. When this pull CREATES a new `[remotes.<label>]`
+  // block (`plan.createdTable`), the block's own `project_id` is NOT itself a
+  // `ConfigChange` (it is infrastructure for the block's identity, never a
+  // comparable project-config path), so it never reaches `plan.writes`/the
+  // payload — but it still has to be written, or the block has no
+  // `project_id` for `remoteNameForProjectRef` to match on a future run
+  // (this pull's own scope-resolution rule, `pull.scope.ts`).
+  // `applyConfigEdits` only recognizes its "always EOF, project_id first"
+  // `[remotes.*]` placement rule when an edit targets the label root
+  // directly, so this must be its own edit, not folded into an existing one.
+  const edits: ReadonlyArray<ConfigEdit> = [
+    ...plan.writes.map((write) => ({ path: write.documentPath, value: write.value })),
+    ...(plan.createdTable === undefined
+      ? []
+      : [{ path: [...plan.createdTable, "project_id"], value: context.projectRef }]),
+  ];
+  const editOutcome = applyConfigEdits(currentText, context.format, edits);
+  if (editOutcome.kind === "refused") {
+    const { reason, path, detail } = editOutcome.refusal;
+    const location = path.length === 0 ? "" : ` at ${legacyConfigRenderPath(path)}`;
+    return yield* new LegacyConfigPullUnsupportedLayoutError({
+      message: `cannot write ${context.configPath}: ${legacyConfigPullRefusalPhrase(reason)}${location} — ${detail}. ${legacyConfigPullRefusalRemediation(reason)}`,
+    });
+  }
+  yield* writeCliConfigDocumentText(configFilePath, editOutcome.text).pipe(
+    Effect.catchTag(
+      "CliConfigWriteError",
+      (cause) => new LegacyConfigPullWriteError({ message: cause.message }),
+    ),
+  );
+});
+
+export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyConfigPullInput) {
+  const output = yield* Output;
+
+  const runPlan = yield* legacyPlanConfigPullRun({
+    target: input.target,
+    remoteLabel: input.remoteLabel,
+    source: input.source,
+  });
+  const { changeSet, scope, plan: finalPlan, context, configFilePath } = runPlan;
+  const ref = context.projectRef;
 
   // The TEXT one-line disposition drops the caveats (`opts.withCaveats:
   // false`, item F.2 of CLI-2064's fix pass) — the change-by-change body
@@ -912,17 +1014,12 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   }
 
   // 9.5. Nothing planned AT ALL — no value write, no `[remotes.*]` block to
-  // create — success, no git check, no prompt. `hasBlockToCreate` is why this
-  // is `hasWork`, not merely `writes.length === 0`: a zero-drift branch
-  // target still has WORK to do (creating the block), so it must reach the
-  // git guard/confirmation below like any other write (CLI-2064 bug B). Doing
-  // this check BEFORE the git guard (rather than after, as it used to run) is
-  // what fixes bug A: a converged run never spawns `git status` at all, so an
+  // create — success, no git check, no prompt. Doing this check BEFORE the
+  // git guard (rather than after, as it used to run) is what fixes bug A: a
+  // converged run never spawns `git status` at all, so an
   // uncommitted-but-otherwise-clean config file never aborts a pull that was
   // never going to touch it.
-  const hasBlockToCreate = finalPlan.createdTable !== undefined;
-  const hasWork = finalPlan.writes.length > 0 || hasBlockToCreate;
-  if (!hasWork) {
+  if (!runPlan.hasWork) {
     if (output.format === "text") {
       yield* output.raw(
         legacyRenderConfigPullText(changeSet, scope, finalPlan, ref, context.configPath),
@@ -939,7 +1036,7 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   // answers it automatically, on any TTY.
   let dirty = false;
   if (!input.force) {
-    const dirtyOption = yield* legacyConfigFileHasUncommittedChanges(loaded.path);
+    const dirtyOption = yield* legacyConfigFileHasUncommittedChanges(configFilePath);
     dirty = Option.getOrElse(dirtyOption, () => false);
     if (dirty) {
       const tty = yield* Tty;
@@ -977,8 +1074,8 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
   let confirmMessage: string;
   if (planForRender.writes.length > 0) {
     const destinationSuffix =
-      destination.kind === "remote"
-        ? ` [remotes.${legacySanitizeInlineName(destination.label)}]`
+      context.destination.kind === "remote"
+        ? ` [remotes.${legacySanitizeInlineName(context.destination.label)}]`
         : "";
     confirmMessage = `Apply ${planForRender.writes.length} change(s) to ${context.configPath}${destinationSuffix}?`;
   } else if (planForRender.createdTable !== undefined) {
@@ -1006,53 +1103,8 @@ export const legacyRunConfigPull = Effect.fnUntraced(function* (input: LegacyCon
     return;
   }
 
-  // 12. Re-read and compare against the step-3 baseline — someone may have
-  // edited the file while the prompt was on screen.
-  const currentText = yield* fs.readFileString(loaded.path).pipe(
-    Effect.catchTag(
-      "PlatformError",
-      () =>
-        new LegacyConfigPullFileChangedError({
-          message: `${context.configPath} changed on disk while config pull was running; rerun the command to pick up the current file.`,
-        }),
-    ),
-  );
-  if (currentText !== input.source.text) {
-    return yield* new LegacyConfigPullFileChangedError({
-      message: `${context.configPath} changed on disk while config pull was running; rerun the command to pick up the current file.`,
-    });
-  }
-
-  // 13. Apply and write. When this pull CREATES a new `[remotes.<label>]`
-  // block (`planForRender.createdTable`), the block's own `project_id` is
-  // NOT itself a `ConfigChange` (it is infrastructure for the block's
-  // identity, never a comparable project-config path), so it never reaches
-  // `plan.writes`/the payload — but it still has to be written, or the block
-  // has no `project_id` for `remoteNameForProjectRef` to match on a future
-  // run (this pull's own scope-resolution rule, `pull.scope.ts`).
-  // `applyConfigEdits` only recognizes its "always EOF, project_id first"
-  // `[remotes.*]` placement rule when an edit targets the label root
-  // directly, so this must be its own edit, not folded into an existing one.
-  const edits: ReadonlyArray<ConfigEdit> = [
-    ...planForRender.writes.map((write) => ({ path: write.documentPath, value: write.value })),
-    ...(planForRender.createdTable === undefined
-      ? []
-      : [{ path: [...planForRender.createdTable, "project_id"], value: ref }]),
-  ];
-  const editOutcome = applyConfigEdits(currentText, loaded.format, edits);
-  if (editOutcome.kind === "refused") {
-    const { reason, path, detail } = editOutcome.refusal;
-    const location = path.length === 0 ? "" : ` at ${legacyConfigRenderPath(path)}`;
-    return yield* new LegacyConfigPullUnsupportedLayoutError({
-      message: `cannot write ${context.configPath}: ${legacyConfigPullRefusalPhrase(reason)}${location} — ${detail}. ${legacyConfigPullRefusalRemediation(reason)}`,
-    });
-  }
-  yield* writeCliConfigDocumentText(loaded.path, editOutcome.text).pipe(
-    Effect.catchTag(
-      "CliConfigWriteError",
-      (cause) => new LegacyConfigPullWriteError({ message: cause.message }),
-    ),
-  );
+  // 12-13. Re-read against the step-3 baseline, apply, and write.
+  yield* legacyApplyConfigPullRun({ runPlan, source: input.source });
 
   // 14. Final summary/payload.
   yield* emitOutcome(planForRender, { dryRun: false, declined: false });
