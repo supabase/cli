@@ -104,12 +104,9 @@ export function isoLogTimestamp(date: Date): string {
  * and sending neither is an outright error — so there is no valid single-bound
  * call to make.
  */
-export function logWindow(
-  now: Date,
-  spanMinutes: number = WORKER_LOG_WINDOW_MINUTES,
-): { readonly start: string; readonly end: string } {
+export function logWindow(now: Date): { readonly start: string; readonly end: string } {
   return {
-    start: isoLogTimestamp(new Date(now.getTime() - spanMinutes * 60_000)),
+    start: isoLogTimestamp(new Date(now.getTime() - WORKER_LOG_WINDOW_MINUTES * 60_000)),
     end: isoLogTimestamp(now),
   };
 }
@@ -127,16 +124,12 @@ export function logWindow(
 export function followWindow(
   now: Date,
   newestSeenMs: number,
-  options: {
-    readonly graceSeconds?: number;
-    readonly spanMinutes?: number;
-  } = {},
 ): { readonly start: string; readonly end: string } {
-  const grace = (options.graceSeconds ?? WORKER_LOG_CURSOR_GRACE_SECONDS) * 1000;
-  const spanMs = (options.spanMinutes ?? WORKER_LOG_WINDOW_MINUTES) * 60_000;
-  const earliest = now.getTime() - spanMs;
+  const earliest = now.getTime() - WORKER_LOG_WINDOW_MINUTES * 60_000;
   return {
-    start: isoLogTimestamp(new Date(Math.max(newestSeenMs - grace, earliest))),
+    start: isoLogTimestamp(
+      new Date(Math.max(newestSeenMs - WORKER_LOG_CURSOR_GRACE_SECONDS * 1000, earliest)),
+    ),
     end: isoLogTimestamp(now),
   };
 }
@@ -145,7 +138,7 @@ export function followWindow(
  * Single-quoted SQL string literal.
  *
  * Every value this module interpolates is either an internal constant or a name
- * `legacyValidateWorkerName` has already reduced to a DNS label, so this is a
+ * `validateWorkerName` has already reduced to a DNS label, so this is a
  * backstop rather than the guard. It exists so the guarantee does not rest on a
  * caller remembering to validate first.
  */

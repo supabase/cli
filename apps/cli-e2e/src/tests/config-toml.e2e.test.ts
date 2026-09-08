@@ -8,8 +8,8 @@ import { testBehaviour } from "./test-context.ts";
 // that strictly decoded supabase/config.toml through an Effect schema. Any
 // non-string field written as env(VAR) — e.g. a port — was rejected before
 // env-resolution could run, crashing the CLI at boot with
-// CliConfigParseError. This test runs against every CLI_HARNESS_TARGET
-// (ts-legacy, ts-next) so the regression cannot return on any shell.
+// CliConfigParseError. This test runs against the compiled CLI so the
+// regression cannot return.
 //
 // A 401 is injected so the test does not need a real API fixture: pre-fix the
 // TS shells crashed before any API call, post-fix they reach the (faked) API

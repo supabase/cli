@@ -37,7 +37,7 @@ export default defineConfig({
     passWithNoTests: true,
     coverage: {
       enabled: false,
-      provider: "istanbul",
+      provider: "v8",
       include: ["src/**/*.ts"],
       reporter: ["text", "lcov"],
       reportsDirectory: "coverage",
@@ -84,7 +84,6 @@ export default defineConfig({
           include: ["**/*.e2e.test.ts"],
           fileParallelism: false,
           maxWorkers: 1,
-          globalSetup: ["tests/e2e-global-setup.ts"],
           setupFiles: ["tests/e2e-setup.ts"],
           testTimeout: 120_000,
           hookTimeout: 120_000,

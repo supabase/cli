@@ -1,0 +1,45 @@
+/**
+ * SQL constants for `db lint`, an established output contract for the
+ * statements sent to Postgres.
+ *
+ *   - `ENABLE_PGSQL_CHECK` — enables the `plpgsql_check` extension.
+ *   - `CHECK_SCHEMA_SCRIPT` — the per-schema `plpgsql_check_function`
+ *     mass-check.
+ *   - `LIST_SCHEMAS_SQL` + `MANAGED_SCHEMAS` — lists user
+ *     schemas, used when `--schema` is omitted. The query is shared with the
+ *     migra bash fallback and defined once in `db/shared/migra.ts`
+ *     (`listSchemasSql`), re-exported here under this module's
+ *     established constant name. The `\_` / `pg\_%` escapes are preserved
+ *     exactly — they are `LIKE` patterns.
+ */
+
+export { listSchemasSql as LIST_SCHEMAS_SQL } from "../shared/migra.ts";
+
+export const ENABLE_PGSQL_CHECK = "CREATE EXTENSION IF NOT EXISTS plpgsql_check";
+
+export const CHECK_SCHEMA_SCRIPT = `-- Ref: https://github.com/okbob/plpgsql_check#mass-check
+SELECT p.proname, plpgsql_check_function(p.oid, format:='json')
+FROM pg_catalog.pg_namespace n
+JOIN pg_catalog.pg_proc p ON pronamespace = n.oid
+JOIN pg_catalog.pg_language l ON p.prolang = l.oid
+WHERE l.lanname = 'plpgsql' AND p.prorettype <> 2279 AND n.nspname = $1::text;
+`;
+
+/**
+ * Postgres-managed schemas excluded from the user-schema listing. These are
+ * `LIKE` patterns bound as the `$1` text[] parameter — the `\_` / `pg\_%`
+ * escapes are intentional.
+ */
+export const MANAGED_SCHEMAS: ReadonlyArray<string> = [
+  String.raw`information\_schema`,
+  String.raw`pg\_%`,
+  String.raw`\_analytics`,
+  String.raw`\_realtime`,
+  String.raw`\_supavisor`,
+  "pgbouncer",
+  "pgmq",
+  "pgsodium",
+  "pgtle",
+  String.raw`supabase\_migrations`,
+  "vault",
+];

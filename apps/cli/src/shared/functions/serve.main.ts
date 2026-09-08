@@ -48,7 +48,7 @@ const DENO_SB_ERROR_MAP = new Map([
 const GENERIC_FUNCTION_SERVE_MESSAGE = `Serving functions on http://127.0.0.1:${HOST_PORT}/functions/v1/<function-name>`;
 export enum RequestErrors {
   MissingAuthHeader = "UNAUTHORIZED_NO_AUTH_HEADER",
-  InvalidLegacyJWT = "UNAUTHORIZED_LEGACY_JWT",
+  InvalidLegacyJWT = "UNAUTHORIZED_JWT",
   InvalidAsymmetricJWT = "UNAUTHORIZED_ASYMMETRIC_JWT",
   InvalidTokenFormat = "UNAUTHORIZED_INVALID_JWT_FORMAT",
   UnsupportedTokenAlgorithm = "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM",
@@ -161,7 +161,7 @@ function getAuthToken(req: Request): string | AuthFailure {
   const authHeader = req.headers.get("authorization");
   const sbApiKeyCompatibilityToken = req.headers.get("sb-api-key");
 
-  // NOTE:(kallebysantos) Kong on legacy CLI stack pass it down as 'Bearer Token' format
+  // NOTE:(kallebysantos) Kong on CLI stack pass it down as 'Bearer Token' format
   const cleanSbApiKeyCompatibilityToken = sbApiKeyCompatibilityToken?.replace("Bearer", "")?.trim();
 
   if (!authHeader && !cleanSbApiKeyCompatibilityToken) {
@@ -352,7 +352,7 @@ Deno.serve({
       ...Deno.env.toObject(),
       ...Object.fromEntries(
         Object.entries(functionsConfig[functionName].env ?? {}).filter(
-          ([name, _]) => !name.startsWith("SUPABASE_"),
+          ([name]) => !name.startsWith("SUPABASE_"),
         ),
       ),
       // Listed after the spreads so neither the container env nor function config can shadow it
@@ -370,7 +370,7 @@ Deno.serve({
     }
 
     const envVars = Object.entries(envVarsObj).filter(
-      ([name, _]) => !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_"),
+      ([name]) => !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_"),
     );
 
     const forceCreate = false;
@@ -432,7 +432,6 @@ Deno.serve({
         {
           code: STATUS_TEXT[STATUS_CODE.InternalServerError],
           message: "Request failed due to an internal server error",
-          trace: JSON.stringify(e.stack),
         },
         STATUS_CODE.InternalServerError,
       );
@@ -468,11 +467,11 @@ Deno.serve({
   },
 
   onError: (e) => {
+    console.error(e);
     return getResponse(
       {
         code: STATUS_TEXT[STATUS_CODE.InternalServerError],
         message: "Request failed due to an internal server error",
-        trace: JSON.stringify(e.stack),
       },
       STATUS_CODE.InternalServerError,
     );

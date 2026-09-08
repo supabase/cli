@@ -1,6 +1,6 @@
 import { note } from "@clack/prompts";
 import { Effect, Layer, Option, Path } from "effect";
-import { CliSettings } from "../../next/config/cli-settings.service.ts";
+import { CliSettings } from "../config/cli-settings.service.ts";
 import { CLI_VERSION } from "../cli/version.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import { Tty } from "../runtime/tty.service.ts";

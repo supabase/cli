@@ -5,7 +5,7 @@ export default defineConfig({
     passWithNoTests: true,
     coverage: {
       enabled: false,
-      provider: "istanbul",
+      provider: "v8",
       clean: false,
       include: ["src/**/*.ts"],
       reporter: ["text", "lcov"],
@@ -22,15 +22,13 @@ export default defineConfig({
         test: {
           name: "integration",
           include: ["**/*.integration.test.ts"],
-          testTimeout: 60_000,
+          testTimeout: 30_000,
         },
       },
       {
         test: {
           name: "e2e",
           include: ["**/*.e2e.test.ts"],
-          fileParallelism: false,
-          globalSetup: ["./tests/global-setup.ts"],
         },
       },
     ],

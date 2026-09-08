@@ -2,8 +2,10 @@ import { describe, expect, it } from "@effect/vitest";
 import { validateWorkerNameMessage } from "./worker-runtimes.ts";
 import {
   ALL_WORKER_LOG_STREAMS,
+  followWindow,
   isoLogTimestamp,
   logWindow,
+  WORKER_LOG_POLL_SECONDS,
   WORKER_LOG_STREAMS,
   WORKER_LOG_WINDOW_MINUTES,
   workerLogsQuery,
@@ -103,6 +105,50 @@ describe("logWindow", () => {
     const now = new Date("2026-08-31T12:00:00.000Z");
 
     expect(logWindow(now).end).toBe("2026-08-31T12:00:00.000Z");
+  });
+});
+
+/**
+ * The grace and the clamp are written as literals rather than read from the
+ * module. Deriving the expectation from the constant under test would keep these
+ * green through exactly the change they exist to catch.
+ */
+describe("followWindow", () => {
+  const now = new Date("2026-08-31T12:00:00.000Z");
+
+  it("starts a grace period behind the newest line seen", () => {
+    const cursor = Date.parse("2026-08-31T11:59:30.000Z");
+    const window = followWindow(now, cursor);
+
+    // Guest lines are relayed late and out of order, so a window starting exactly
+    // on the cursor drops every straggler permanently.
+    expect(window.start).toBe("2026-08-31T11:58:30.000Z");
+    expect(Date.parse(window.start)).toBe(cursor - 60_000);
+  });
+
+  it("reaches back further than one poll interval, so a line delayed a full cycle still lands", () => {
+    const cursor = now.getTime();
+    const reachMs = cursor - Date.parse(followWindow(now, cursor).start);
+
+    expect(reachMs).toBeGreaterThan(WORKER_LOG_POLL_SECONDS * 1000);
+  });
+
+  it("clamps a cursor left behind by a suspend to the 24 hour span", () => {
+    // The case this clamp exists for: a tail left running across a laptop
+    // suspend resumes with a cursor days old. Unclamped, the server answers an
+    // over-wide request by rewriting `end` to `start + 24h` — returning an older
+    // slice rather than a truncated one, so the tail replays yesterday.
+    const staleCursor = Date.parse("2026-08-28T09:00:00.000Z");
+    const window = followWindow(now, staleCursor);
+
+    expect(Date.parse(window.start)).toBe(now.getTime() - WORKER_LOG_WINDOW_MINUTES * 60_000);
+    expect(Date.parse(window.end) - Date.parse(window.start)).toBeLessThan(24 * 60 * 60 * 1000);
+  });
+
+  it("ends at the given instant, whatever the cursor", () => {
+    expect(followWindow(now, Date.parse("2020-01-01T00:00:00.000Z")).end).toBe(
+      "2026-08-31T12:00:00.000Z",
+    );
   });
 });
 

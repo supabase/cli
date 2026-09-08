@@ -1,14 +1,14 @@
 // Docker orchestration primitives shared by `deploy.ts` and `download.ts`
 // (the `functions` command family root, `src/shared/functions/`) — plus
-// `serve.ts` (same family) and `legacy/shared/db-bootstrap/container-lifecycle.ts`
+// `serve.ts` (same family) and `command-internal/db-bootstrap/container-lifecycle.ts`
 // (a different family, reaching in for the generic `isUserDefinedDockerNetwork`
 // predicate), both of which already imported these primitives from `deploy.ts`
 // before this file existed.
 import { resolve } from "node:path";
 import { Effect, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
-import { legacyMakeDockerImageResolver } from "../../legacy/shared/legacy-docker-image-resolve.ts";
+import { spawnContainerCli } from "../../command-internal/container-cli.ts";
+import { makeDockerImageResolver } from "../../command-internal/docker-image-resolve.ts";
 import { DENO1_EDGE_RUNTIME_VERSION } from "./functions.shared.ts";
 
 const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
@@ -62,8 +62,8 @@ export function edgeRuntimeCacheVolume(projectId: string) {
  * as a non-empty `explicit` skips it by using the flag's own value. Callers
  * MUST pass a flag reader that preserves this 3-way distinction — see
  * `lastExplicitLongFlagValue` (`shared/cli/cobra-flag-groups.ts`).
- * `envOverride` is `undefined` in `next` (no Go-viper env-binding claim
- * there) — see `resolveDockerNetworkMode`'s callers.
+ * `envOverride` is `undefined` for callers without the Go-viper env-binding
+ * hook — see `resolveDockerNetworkMode`'s callers.
  */
 export function resolveDockerNetworkMode(input: {
   readonly explicit: string | undefined;
@@ -378,8 +378,8 @@ export function resolveEdgeRuntimeVersion(
  * (`internal/utils/docker.go:304-348,366-370`) — checks every registry
  * candidate (ECR/GHCR/Docker Hub) for a local cache hit first, then pulls
  * with 2 retries per candidate (4s/8s backoff), returning whichever
- * candidate answered. Shared by both shells' `functions` Docker paths
- * (`deploy`/`download`/`serve`) — `legacyGetRegistryImageUrl`'s single-URL
+ * candidate answered. Shared by every `functions` Docker path
+ * (`deploy`/`download`/`serve`) — `getRegistryImageUrl`'s single-URL
  * mapping is already called unconditionally by both today, so the retry is
  * strictly-better resilience, not a Go-only quirk.
  */
@@ -388,5 +388,5 @@ export const resolveFunctionsDockerImage = Effect.fnUntraced(function* (
   projectEnvValues?: Readonly<Record<string, string>>,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  return yield* legacyMakeDockerImageResolver(spawner, projectEnvValues)(image);
+  return yield* makeDockerImageResolver(spawner, projectEnvValues)(image);
 });

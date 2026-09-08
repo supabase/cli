@@ -19,7 +19,7 @@ import {
 /**
  * The non-auth half of the API↔`CliConfig` mapping table (CLI-2230). Rows are
  * mined from the legacy push-direction sync mappers
- * (`apps/cli/src/legacy/commands/config/push/config-sync/*.sync.ts`), which
+ * (`apps/cli/src/commands/config/push/config-sync/*.sync.ts`), which
  * already encode which API fields correspond to which config fields for
  * `config push`'s diff/apply flow — this registry repurposes that same
  * correspondence for the pull direction. Every `configPath` below was
@@ -209,6 +209,7 @@ const sessionReplicationRoleRow: ProjectConfigMappingRow = {
     const role = expectString(value, sessionReplicationRolePath);
     return role === "origin" || role === "replica" || role === "local" ? role : undefined;
   },
+  dualScope: true,
 };
 
 function dbSettingRow(
@@ -220,6 +221,7 @@ function dbSettingRow(
     configPath: ["db", "settings", key],
     apiPath,
     transform: (value) => narrow(value, apiPath),
+    dualScope: true,
   };
 }
 
@@ -302,6 +304,7 @@ const dbSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     configPath: ["db", "major_version"],
     apiPath: dbMajorVersionPath,
     transform: (value) => (value === null ? undefined : expectInteger(value, dbMajorVersionPath)),
+    dualScope: true,
   },
   // v2 flattens what v1 nested under `currentConfig.database`
   // (db.sync.ts:241 `applyRemoteSslEnforcement`).
@@ -314,12 +317,16 @@ const dbSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     configPath: ["db", "network_restrictions", "allowed_cidrs"],
     apiPath: networkRestrictionsAllowedCidrsPath,
     transform: (value) => filterCidrAddresses(value, networkRestrictionsAllowedCidrsPath, "v4"),
+    // Matches `config push`'s own order-sensitive network-restrictions diff.
+    arrayEquality: "sequence",
     unit: "type-tagged {address,type}[] → filtered string[] (v4)",
   },
   {
     configPath: ["db", "network_restrictions", "allowed_cidrs_v6"],
     apiPath: networkRestrictionsAllowedCidrsPath,
     transform: (value) => filterCidrAddresses(value, networkRestrictionsAllowedCidrsPath, "v6"),
+    // Matches `config push`'s own order-sensitive network-restrictions diff.
+    arrayEquality: "sequence",
     unit: "type-tagged {address,type}[] → filtered string[] (v6)",
   },
   // Deliberately unmapped (no faithful counterpart): database.
@@ -341,18 +348,21 @@ const dbSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
       const mode = expectString(value, poolerPoolModePath);
       return mode === "transaction" || mode === "session" ? mode : undefined;
     },
+    dualScope: true,
   },
   {
     configPath: ["db", "pooler", "default_pool_size"],
     apiPath: poolerDefaultPoolSizePath,
     transform: (value) =>
       value === null ? undefined : expectInteger(value, poolerDefaultPoolSizePath),
+    dualScope: true,
   },
   {
     configPath: ["db", "pooler", "max_client_conn"],
     apiPath: poolerMaxClientConnPath,
     transform: (value) =>
       value === null ? undefined : expectInteger(value, poolerMaxClientConnPath),
+    dualScope: true,
   },
   // Deliberately unmapped (no faithful counterpart): pooler.
   // ignore_startup_parameters, server_idle_timeout, server_lifetime,
@@ -368,8 +378,8 @@ const BINARY_ABBRS = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB
 /**
  * Port of Go's `fmt`-style `%.4g`: at most 4 significant digits, trailing
  * zeros removed, no exponent for the magnitudes `bytesSize` below produces
- * (scaled to `[0, 1024)`). Mirrors the legacy shell's `formatG4`
- * (`apps/cli/src/legacy/shared/legacy-size-units.ts:109-119`).
+ * (scaled to `[0, 1024)`). Mirrors the CLI's `formatG4`
+ * (`apps/cli/src/command-internal/size-units.ts:109-119`).
  */
 function formatSignificantDigits(value: number): string {
   if (value === 0) {
@@ -387,8 +397,8 @@ function formatSignificantDigits(value: number): string {
 
 /**
  * Formats a byte count as a `"<n><unit>"` string — `docker/go-units`'
- * `BytesSize`, ported at `apps/cli/src/legacy/shared/
- * legacy-size-units.ts:127-136` and used by the legacy shell's remote-apply
+ * `BytesSize`, ported at `apps/cli/src/command-internal/
+ * size-units.ts:127-136` and used by the CLI's remote-apply
  * (`storage.sync.ts:214,223` via `bytesSize()`, kept numeric internally and
  * formatted only at TOML-render time — the legacy precedent for reproducing
  * this formatting here rather than just stringifying the byte count) to
@@ -428,7 +438,7 @@ const DIGIT_OR_DOT_OR_SPACE = "0123456789. ";
 
 /**
  * Port of `units.RAMInBytes`, replicated verbatim from
- * `apps/cli/src/legacy/shared/legacy-size-units.ts:32-102` — parses a
+ * `apps/cli/src/command-internal/size-units.ts:32-102` — parses a
  * human-readable RAM size (1024-based, case-insensitive, optional trailing
  * `b`) OR a bare decimal byte count (both spellings `../storage.ts:35-46`'s
  * `fileSizeLimit` schema accepts) into bytes. Throws on an unparseable

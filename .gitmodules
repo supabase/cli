@@ -13,9 +13,6 @@
 [submodule ".repos/cheffect"]
 	path = .repos/cheffect
 	url = https://github.com/tim-smart/cheffect.git
-[submodule ".repos/process-compose"]
-	path = .repos/process-compose
-	url = https://github.com/F1bonacc1/process-compose.git
 [submodule ".repos/t3code"]
 	path = .repos/t3code
 	url = https://github.com/pingdotgg/t3code.git

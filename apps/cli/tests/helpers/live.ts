@@ -2,10 +2,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { Predicate } from "effect";
 import pg from "pg";
-import { inject, test as vitestTest } from "vitest";
+import { expect, inject, test as vitestTest } from "vitest";
 
-import { makeTempHome, runSupabase } from "./cli.ts";
+import { makeTempHome, requireCliSuccess, runSupabase } from "./cli.ts";
 import { LIVE_EXIT_TIMEOUT_MS } from "./live-env.ts";
 import type { LiveCliProjectEnvironment } from "./live-project.ts";
 
@@ -52,7 +53,6 @@ const base = vitestTest.extend<LiveFixtures>({
     const directory = mkdtempSync(path.join(tmpdir(), `supabase-live-${suffix || "test"}-`));
     try {
       const initialized = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: directory,
         home: home.dir,
         env: { SUPABASE_PROFILE: inject("liveProfilePath") },
@@ -71,7 +71,6 @@ const base = vitestTest.extend<LiveFixtures>({
   cli: async ({ workspace, home }, use) => {
     await use((args, options) =>
       runSupabase(args, {
-        entrypoint: "legacy",
         ...options,
         cwd: options?.cwd ?? workspace.path,
         home: home.dir,
@@ -112,13 +111,19 @@ const base = vitestTest.extend<LiveFixtures>({
 /** The sole live fixture. The live global setup owns the shared project. */
 export const test = base;
 
-export function requireLiveSuccess(
-  result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string },
+export { requireCliSuccess as requireLiveSuccess };
+
+/** Parse a command's stdout as JSON, failing with both streams when it is not. */
+export function requireLiveJson(
+  result: { readonly stdout: string; readonly stderr: string },
   command: string,
-): void {
-  if (result.exitCode !== 0) {
+): unknown {
+  try {
+    return JSON.parse(result.stdout);
+  } catch (error) {
     throw new Error(
-      `${command} failed (exit ${result.exitCode})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      `${command} did not print JSON\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      { cause: error },
     );
   }
 }
@@ -143,6 +148,143 @@ export async function removeStorageLiveObject(
   ) {
     throw new Error(`storage rm cleanup failed:\n${removed.stdout}\n${removed.stderr}`);
   }
+}
+
+/** Exact cleanup for branches live tests by name or ref; deleting an already-removed branch is tolerated. */
+export async function removeLiveBranch(
+  cli: LiveFixtures["cli"],
+  project: LiveProject,
+  branch: string,
+): Promise<void> {
+  const removed = await cli(["branches", "delete", branch, "--project-ref", project.ref, "--yes"]);
+  if (
+    removed.exitCode !== 0 &&
+    !/not found|does not exist|status 404\b/i.test(`${removed.stdout}\n${removed.stderr}`)
+  ) {
+    throw new Error(
+      `branches delete cleanup for ${branch} failed (exit ${removed.exitCode})\n${removed.stdout}\n${removed.stderr}`,
+    );
+  }
+}
+
+/** Flags for experimental-gated live tests that address the shared project by
+ * ref rather than linking it (contrast `storageLiveFlags`). */
+export function experimentalProjectLiveFlags(project: LiveProject): ReadonlyArray<string> {
+  return ["--project-ref", project.ref, "--experimental"];
+}
+
+/**
+ * Exact-key cleanup for postgres-config live tests: removes one owned override
+ * without a database restart. Deleting an absent key is a no-op PUT, so the
+ * teardown stays idempotent.
+ */
+export async function removePostgresConfigLiveOverride(
+  cli: (args: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
+  project: LiveProject,
+  key: string,
+): Promise<void> {
+  const removed = await cli([
+    "postgres-config",
+    "delete",
+    "--config",
+    key,
+    ...experimentalProjectLiveFlags(project),
+    "--no-restart",
+  ]);
+  requireCliSuccess(removed, `postgres-config delete cleanup for ${key}`);
+}
+
+/** Exact-version cleanup for migration live tests; reverting an absent row is a no-op delete. */
+export async function removeLiveMigration(
+  cli: LiveFixtures["cli"],
+  project: LiveProject,
+  version: string,
+): Promise<void> {
+  const reverted = await cli([
+    "migration",
+    "repair",
+    version,
+    "--status",
+    "reverted",
+    "--db-url",
+    project.dbUrl,
+  ]);
+  requireCliSuccess(reverted, `migration repair cleanup for ${version}`);
+}
+
+/**
+ * Proves a postgres-config write through `get`. The platform can serve a stale
+ * read right after the PUT, so after one fail-fast read the value is polled
+ * (2s apart, 60s deadline, each attempt bounded) until `key` reads `expected`
+ * (`undefined` for no override).
+ */
+export async function expectPostgresConfigLiveOverride(
+  cli: LiveFixtures["cli"],
+  project: LiveProject,
+  key: string,
+  expected: string | undefined,
+  label: string,
+): Promise<void> {
+  const read = async (): Promise<unknown> => {
+    const proof = await cli(
+      ["postgres-config", "get", ...experimentalProjectLiveFlags(project), "-o", "json"],
+      { exitTimeoutMs: 20_000 },
+    );
+    requireCliSuccess(proof, label);
+    const config = requireLiveJson(proof, label);
+    if (!Predicate.isObject(config)) {
+      throw new Error(
+        `${label}: unexpected postgres-config get payload\nstdout:\n${proof.stdout}\nstderr:\n${proof.stderr}`,
+      );
+    }
+    return config[key];
+  };
+  if (Object.is(await read(), expected)) return;
+  await expect.poll(read, { interval: 2_000, timeout: 60_000, message: label }).toBe(expected);
+}
+
+/**
+ * Waits until `branches list` shows no non-default branch on the live project.
+ * `branches delete` returns before the platform finishes tearing the branch
+ * down, and `branches disable` is refused ("Please delete all non-default
+ * branches before disabling branching.") while any non-default branch still
+ * exists, so a caller that needs an empty branching setup does one fail-fast
+ * read and then polls the list (2s apart, 120s deadline, each attempt bounded).
+ */
+export async function awaitLiveBranchesRemoved(
+  cli: LiveFixtures["cli"],
+  project: LiveProject,
+): Promise<void> {
+  const label = "branches list while awaiting branch removal";
+  const read = async (): Promise<ReadonlyArray<string>> => {
+    const listed = await cli(
+      ["branches", "list", "--output", "json", "--project-ref", project.ref],
+      { exitTimeoutMs: 20_000 },
+    );
+    requireCliSuccess(listed, label);
+    let branches: unknown;
+    try {
+      branches = JSON.parse(listed.stdout);
+    } catch {
+      branches = undefined;
+    }
+    if (!Array.isArray(branches)) {
+      throw new Error(
+        `${label}: unexpected branches list payload\nstdout:\n${listed.stdout}\nstderr:\n${listed.stderr}`,
+      );
+    }
+    return branches
+      .filter((branch: { is_default: boolean }) => !branch.is_default)
+      .map((branch: { name: string }) => branch.name);
+  };
+  if ((await read()).length === 0) return;
+  await expect
+    .poll(read, {
+      interval: 2_000,
+      timeout: 120_000,
+      message: "non-default preview branches still exist",
+    })
+    .toEqual([]);
 }
 
 /**

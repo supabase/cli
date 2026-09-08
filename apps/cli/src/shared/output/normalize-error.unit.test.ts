@@ -2,167 +2,16 @@ import { describe, expect, test } from "vitest";
 import { Cause } from "effect";
 import { CliError, Command } from "effect/unstable/cli";
 import { CliConfigParseError, CliProjectEnvParseError } from "@supabase/config";
-import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
-import { legacyNetworkRestrictionsCommand } from "../../legacy/commands/network-restrictions/network-restrictions.command.ts";
-import { CliProjectHomeNotDirectoryError } from "../../next/config/cli-project-home.service.ts";
+import { branchesCommand } from "../../commands/branches/branches.command.ts";
+import { networkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
+import { CliProjectHomeNotDirectoryError } from "../config/cli-project-home.service.ts";
 import { formatCliError, normalizeCause, normalizeCliError } from "./normalize-error.ts";
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyBranchesCommand, legacyNetworkRestrictionsCommand]),
+  Command.withSubcommands([branchesCommand, networkRestrictionsCommand]),
 );
 
 describe("normalizeCliError", () => {
-  test("maps NoRunningStackError to a user-facing message", () => {
-    const error = {
-      _tag: "NoRunningStackError",
-      cwd: "/tmp/project",
-    };
-
-    const normalized = normalizeCliError(error);
-
-    expect(normalized).toEqual({
-      code: "NoRunningStackError",
-      message: "No local Supabase stack is running for this project.",
-      detail: "The CLI could not find a running stack for the current working directory.",
-      suggestion:
-        "Run `supabase start` in this project, or change into a directory with a running stack.",
-    });
-  });
-
-  test("maps DaemonUpgradeRequired to an actionable start instruction", () => {
-    expect(
-      normalizeCliError({
-        _tag: "DaemonUpgradeRequired",
-        oldCliVersion: "2.60.0",
-        newCliVersion: "2.61.0",
-      }),
-    ).toEqual({
-      code: "DaemonUpgradeRequired",
-      message: "The local Supabase stack is running under 2.60.0, but this CLI is 2.61.0.",
-      suggestion: "Run `supabase start` to restart the stack with the current CLI.",
-    });
-  });
-
-  test("maps an unavailable starting stack to a wait-and-retry instruction", () => {
-    expect(
-      normalizeCliError({
-        _tag: "StackUnavailableError",
-        phase: "starting",
-      }),
-    ).toEqual({
-      code: "StackUnavailableError",
-      message: "The local Supabase stack is still starting.",
-      suggestion: "Wait for `supabase start` to finish, then try again.",
-    });
-  });
-
-  test("maps an unavailable stopping stack to a stop completion instruction", () => {
-    expect(
-      normalizeCliError({
-        _tag: "StackUnavailableError",
-        phase: "stopping",
-      }),
-    ).toEqual({
-      code: "StackUnavailableError",
-      message: "The local Supabase stack is still stopping.",
-      suggestion: "Wait for the current stop operation to finish, then try again.",
-    });
-  });
-
-  test("maps RPC transport failures with the procedure and endpoint", () => {
-    expect(
-      normalizeCliError({
-        _tag: "StackRpcTransportError",
-        endpoint: "http://127.0.0.1:54321",
-        procedure: "GetInfo",
-        cause: new Error("ECONNRESET"),
-      }),
-    ).toEqual({
-      code: "StackRpcTransportError",
-      message: "Could not communicate with the local Supabase stack.",
-      detail: "RPC GetInfo at http://127.0.0.1:54321 failed: ECONNRESET",
-      suggestion: "Check that the stack is running, then retry the command.",
-    });
-  });
-
-  test("maps RPC protocol failures with the procedure, endpoint, and detail", () => {
-    expect(
-      normalizeCliError({
-        _tag: "StackRpcProtocolError",
-        endpoint: "http://127.0.0.1:54321",
-        procedure: "GetInfo",
-        detail: "Invalid GetInfo response",
-      }),
-    ).toEqual({
-      code: "StackRpcProtocolError",
-      message: "The local Supabase stack returned an invalid RPC response.",
-      detail:
-        "RPC GetInfo at http://127.0.0.1:54321 failed protocol validation: Invalid GetInfo response",
-      suggestion: "Restart the stack with `supabase start`, then retry the command.",
-    });
-  });
-
-  test("maps stop timeouts with the endpoint and last observed state", () => {
-    expect(
-      normalizeCliError({
-        _tag: "StopTimeout",
-        endpoint: "http://127.0.0.1:54321",
-        ownerSessionId: "session-123",
-        lastState: "stopping",
-      }),
-    ).toEqual({
-      code: "StopTimeout",
-      message: "Timed out waiting for the local Supabase stack to stop.",
-      detail:
-        "The stack at http://127.0.0.1:54321 did not stop before the timeout (last state: stopping).",
-      suggestion: "Check `supabase status`, then retry `supabase stop`.",
-    });
-  });
-
-  test.each([
-    [
-      "ControlBindError",
-      "Could not start the local Supabase stack control service.",
-      "Check for another local process using the stack control port, then retry `supabase start`.",
-    ],
-    [
-      "ControlTransportError",
-      "Could not communicate with the local Supabase stack control service.",
-      "Run `supabase start` to restore the local stack, then retry the command.",
-    ],
-    [
-      "ControlProtocolError",
-      "The local Supabase stack control service returned an invalid response.",
-      "Restart the stack with `supabase start`, then retry the command.",
-    ],
-    [
-      "ControlProtocolMismatchError",
-      "The local Supabase stack uses an incompatible control protocol.",
-      "Restart the stack with `supabase start`, then retry the command.",
-    ],
-    [
-      "ControlAddressConflictError",
-      "The local Supabase stack control endpoint is occupied by another process.",
-      "Stop the conflicting local stack or process, then retry `supabase start`.",
-    ],
-    [
-      "ControlStopConflictError",
-      "The local Supabase stack changed owners while it was stopping.",
-      "Retry `supabase stop` to stop the current owner.",
-    ],
-    [
-      "ControlMaintenanceBusyError",
-      "The local Supabase stack is being maintained by another command.",
-      "Wait for that command to finish, then retry this command.",
-    ],
-  ])("maps %s to an actionable control-plane error", (tag, message, suggestion) => {
-    expect(normalizeCliError({ _tag: tag })).toEqual({
-      code: tag,
-      message,
-      suggestion,
-    });
-  });
-
   test("falls back to tagged error fields when no explicit mapping exists", () => {
     const error = {
       _tag: "ExampleError",
@@ -239,7 +88,7 @@ describe("normalizeCliError", () => {
 
   test("InvalidValue collapses the doubled 'Expected: Expected' prefix (e.g. a bad GlobalFlag.setting value)", () => {
     // Regression test for CLI-1898: `--output-format`/`--dns-resolver`/`--agent`/
-    // legacy `--output` are `GlobalFlag.setting` flags backed by `Flag.choice`.
+    // `--output` are `GlobalFlag.setting` flags backed by `Flag.choice`.
     // `Command.runWith` validates their values in a step that runs outside the
     // `ShowHelp` path, so a bad value never reaches `CliOutput.Formatter` (and
     // `subcommand-flag-suggestions.ts`'s fix) — it surfaces here instead.
@@ -295,8 +144,8 @@ describe("normalizeCliError", () => {
   });
 
   test("InvalidValue passes a complete pflag-format diagnostic through verbatim (Go stderr parity, CLI-1983)", () => {
-    // Legacy flags that byte-match Go pflag's parse-time diagnostics
-    // (`legacyStringSliceFlag`'s malformed-CSV failure, `migration down
+    // Flags that byte-match Go pflag's parse-time diagnostics
+    // (`stringSliceFlag`'s malformed-CSV failure, `migration down
     // --last`) emit the COMPLETE Go message as `expected`. Wrapping it in
     // Effect's `Invalid value for flag ...: Expected: ...` template would
     // double-frame it — Go prints the bare pflag line.
@@ -353,7 +202,7 @@ describe("normalizeCliError", () => {
   });
 
   test("InvalidValue surfaces a complete pflag-style 'expected' message verbatim (Go flag-parse parity)", () => {
-    // Legacy flags that reproduce Go's flag-parse rejections (e.g.
+    // Flags that reproduce Go's flag-parse rejections (e.g.
     // `storage cp --jobs=-1` via `Flag.mapTryCatch`) put pflag's entire
     // `invalid argument %q for %q flag: %v` string in `expected`. Wrapping it
     // in Effect's `Invalid value for flag --jobs: …` template would break
@@ -595,26 +444,26 @@ describe("normalizeCliError", () => {
   });
 
   test("normalizes a cause via its first failure", () => {
-    const normalized = normalizeCause(Cause.fail({ _tag: "NoRunningStackError", cwd: "/tmp" }));
+    const normalized = normalizeCause(
+      Cause.fail({ _tag: "StackRuntimeError", message: "service failed to start" }),
+    );
 
-    expect(normalized.message).toBe("No local Supabase stack is running for this project.");
+    expect(normalized).toEqual({
+      code: "StackRuntimeError",
+      message: "service failed to start",
+    });
   });
 
   test("formats text output with detail and suggestion", () => {
     const text = formatCliError({
-      code: "NoRunningStackError",
-      message: "No local Supabase stack is running for this project.",
-      detail: "The CLI could not find a running stack for the current working directory.",
-      suggestion:
-        "Run `supabase start` in this project, or change into a directory with a running stack.",
+      code: "StackRuntimeError",
+      message: "The local Supabase stack failed to start.",
+      detail: "The auth workload exited before becoming ready.",
+      suggestion: "Inspect the stack logs, then retry `supabase start`.",
     });
 
-    expect(text).toContain("No local Supabase stack is running for this project.");
-    expect(text).toContain(
-      "Detail: The CLI could not find a running stack for the current working directory.",
-    );
-    expect(text).toContain(
-      "Suggestion: Run `supabase start` in this project, or change into a directory with a running stack.",
-    );
+    expect(text).toContain("The local Supabase stack failed to start.");
+    expect(text).toContain("Detail: The auth workload exited before becoming ready.");
+    expect(text).toContain("Suggestion: Inspect the stack logs, then retry `supabase start`.");
   });
 });

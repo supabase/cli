@@ -3,7 +3,7 @@ import { makeApiClient, type ApiClient } from "@supabase/api/effect";
 import { Data, Duration, Effect, Exit, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { renderGlamourTable } from "../../legacy/output/legacy-glamour-table.ts";
+import { renderGlamourTable } from "../../output/glamour-table.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -227,7 +227,7 @@ export interface ServiceFetchConfig {
 }
 
 /** @public */
-export class ServiceVersionNotFoundError extends Data.TaggedError("ServiceVersionNotFoundError")<{
+class ServiceVersionNotFoundError extends Data.TaggedError("ServiceVersionNotFoundError")<{
   readonly service: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -306,7 +306,7 @@ const authenticatedRequest = (url: string, accessKey: Redacted.Redacted<string>)
   const request = HttpClientRequest.get(url).pipe(HttpClientRequest.setHeader("apikey", key));
   // New-style `sb_…` keys authenticate via the `apikey` header alone; older JWT
   // keys additionally require a bearer token. Mirrors the conditional auth in
-  // `apps/cli-go/pkg/fetcher/gateway.go` and `legacy/shared/legacy-tenant-versions.ts`.
+  // `apps/cli-go/pkg/fetcher/gateway.go` and `command-internal/tenant-versions.ts`.
   return key.startsWith("sb_")
     ? request
     : request.pipe(HttpClientRequest.setHeader("Authorization", `Bearer ${key}`));

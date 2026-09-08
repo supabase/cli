@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   cobraMutuallyExclusiveErrorMessage,
   explicitBooleanLongFlag,
+  GLOBAL_VALUE_FLAG_TOKENS,
   hasExplicitLongFlag,
   lastExplicitLongFlagValue,
   PERSISTENT_VALUE_FLAG_NAMES,
@@ -373,12 +374,38 @@ describe("pflagArgvScan", () => {
 
     test("a persistent global value flag consumes its value token", () => {
       // `--workdir .` must not count `.` as a positional — pflag consumes it
-      // (root persistent flags, `cmd/root.go:324-333`).
+      // (root persistent flags, `cmd/root.go:337-348`).
       const scan = pflagArgvScan(
         ["sso", "update", "--workdir", ".", "id", "--profile", "staging"],
         SSO_UPDATE_PATH,
         SPEC,
       );
+      expect(scan.positionals).toEqual(["id"]);
+    });
+
+    test("the built-in --log-level global consumes its value token", () => {
+      // The real parser consumes `error`, so the scan must too or
+      // `sso update --log-level error <id>` mis-reports
+      // `accepts 1 arg(s), received 2` (issue #6482).
+      const scan = pflagArgvScan(
+        ["sso", "update", "--log-level", "error", "id"],
+        SSO_UPDATE_PATH,
+        SPEC,
+      );
+      expect(scan.occurrences.get("log-level")).toEqual(["error"]);
+      expect(scan.positionals).toEqual(["id"]);
+    });
+
+    test("a pre-path --log-level keeps the scan anchored instead of falling back unscoped", () => {
+      // Unregistered, the anchor walk hit `error` as a stray operand and
+      // fell back to the unanchored scan, skipping the arity re-count.
+      const scan = pflagArgvScan(
+        ["--log-level", "error", "sso", "update", "id"],
+        SSO_UPDATE_PATH,
+        SPEC,
+      );
+      expect(scan.anchored).toBe(true);
+      expect(scan.prePathOccurrences.get("log-level")).toEqual(["error"]);
       expect(scan.positionals).toEqual(["id"]);
     });
 
@@ -576,6 +603,29 @@ describe("pflagArgvScan", () => {
       expect(scan.consumedFlagNames.size).toBe(0);
       expect(scan.positionals).toEqual(["x"]);
     });
+  });
+});
+
+describe("GLOBAL_VALUE_FLAG_TOKENS", () => {
+  // The derived token registry feeds run.ts's argv scanners and
+  // agent-output.ts's format predicates. Pinning its exact contents makes an
+  // accidental edit to the derivation (or its inputs) fail loudly — the
+  // silent-drift trap behind issue #6482.
+  test("holds exactly the value-taking global tokens the TS parser accepts", () => {
+    expect(GLOBAL_VALUE_FLAG_TOKENS).toEqual(
+      new Set([
+        "--workdir",
+        "--network-id",
+        "--profile",
+        "--output",
+        "--dns-resolver",
+        "--agent",
+        "--output-format",
+        "--log-level",
+        "-o",
+        "--completions",
+      ]),
+    );
   });
 });
 

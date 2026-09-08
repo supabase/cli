@@ -79,29 +79,18 @@ jobs:
   live-e2e:
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
-    name: Live e2e (${{ matrix.target }})
+    name: Live e2e
     runs-on: blacksmith-8vcpu-ubuntu-2404
-    # Serialize a target against itself across runs. Per-job-scoped project names
+    # Serialize the job against itself across runs. Per-job-scoped project names
     # mean this is mostly belt-and-braces.
     concurrency:
-      group: live-e2e-${{ matrix.target }}-${{ github.ref }}
+      group: live-e2e-${{ github.ref }}
       cancel-in-progress: true
-    strategy:
-      # Each target is an independent green/red signal.
-      fail-fast: false
-      matrix:
-        # ts-legacy is the only shipped CLI shell, so it's the sole live-e2e
-        # target. It still shells out to the Go binary for the handful of
-        # commands the TS port proxies (db diff, db pull, db branch *, db
-        # remote *, gen keys, functions download). ts-next is a later axis.
-        target:
-          - ts-legacy
     # Non-secret config is job-level; the staging token is scoped to only the two
     # steps that need it (run + cleanup) so build/checkout/docker never see it.
     env:
       SUPABASE_LIVE_API_URL: https://api.supabase.green
-      SUPABASE_LIVE_PROJECT_NAME: supabase-cli-live-${{ matrix.target }}
-      CLI_HARNESS_TARGET: ${{ matrix.target }}
+      SUPABASE_LIVE_PROJECT_NAME: supabase-cli-live
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -127,11 +116,11 @@ jobs:
         if: always()
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
-        run: bash apps/cli/scripts/sweep-live-projects.sh "supabase-cli-live-${CLI_HARNESS_TARGET}-${GITHUB_RUN_ID}-"
+        run: bash apps/cli/scripts/sweep-live-projects.sh "supabase-cli-live-${GITHUB_RUN_ID}-"
 
-  # Record that this beta tested green so the next scheduled run skips it. Needs
-  # the whole matrix: the marker is saved only if the ts-legacy leg passed (a
-  # red leg leaves no marker, so the next day re-runs the same beta).
+  # Record that this beta tested green so the next scheduled run skips it. The
+  # marker is saved only if the live job passed (a red run leaves no marker, so
+  # the next day re-runs the same beta).
   finalize:
     needs: [gate, live-e2e]
     if: github.event_name == 'schedule' && needs.live-e2e.result == 'success'

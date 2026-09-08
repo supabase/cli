@@ -1,0 +1,91 @@
+# `supabase secrets list`
+
+## Files Read
+
+| Path                                      | Format                    | When                                                                                          |
+| ----------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| `/proc/sys/kernel/osrelease` (Linux)      | plain text                | once on layer init — disables keyring on WSL (`WSL` / `Microsoft` substring match)            |
+| keyring `"Supabase CLI"` / `<profile>`    | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile` |
+| keyring `"Supabase CLI"` / `access-token` | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
+| `~/.supabase/access-token`                | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
+| `<workdir>/supabase/.temp/project-ref`    | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                 |
+
+## Files Written
+
+| Path                                             | Format | When                                                         |
+| ------------------------------------------------ | ------ | ------------------------------------------------------------ |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
+| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command              |
+
+## API Routes
+
+| Method | Path                         | Auth         | Request body | Response (used fields)                              |
+| ------ | ---------------------------- | ------------ | ------------ | --------------------------------------------------- |
+| `GET`  | `/v1/projects/{ref}/secrets` | Bearer token | none         | `[{name, value, updated_at?}]` (value is digest)    |
+| `GET`  | `/v1/projects`               | Bearer token | none         | `[{id, ref, name, ...}]` — TTY-prompt fallback only |
+
+## Environment Variables
+
+| Variable                | Purpose                                                                                                                                                                                                                                                                                  | Required?                                                                  |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                                                                                                                                                     | no (falls back to keyring → `~/.supabase/access-token`)                    |
+| `SUPABASE_PROFILE`      | selects API base URL: `supabase` → `api.supabase.com`, `supabase-staging` → `api.supabase.green`, `supabase-local` → `http://localhost:8080`. May alternatively be a filesystem path to a YAML profile with at least `api_url:` and optional `name:` (used by the cli-e2e test harness). | no (defaults to `supabase`)                                                |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset                                                                                                                                                                                                                                       | no (also reads `<workdir>/supabase/.temp/project-ref` then prompts on TTY) |
+| `SUPABASE_WORKDIR`      | base directory for the `.temp/project-ref` lookup                                                                                                                                                                                                                                        | no (walks up from CWD looking for `supabase/config.toml`)                  |
+
+## Exit Codes
+
+| Code | Condition                                                                               |
+| ---- | --------------------------------------------------------------------------------------- |
+| `0`  | success — secrets printed to stdout                                                     |
+| `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                               |
+| `1`  | `InvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`           |
+| `1`  | `ProjectRefNotLinkedError` — `--project-ref` unset, env/file empty, and stdin not a TTY |
+| `1`  | `InvalidProjectRefError` — resolved ref violates `^[a-z]{20}$`                          |
+| `1`  | `SecretsListUnexpectedStatusError` — non-2xx response from the secrets endpoint         |
+| `1`  | `SecretsListNetworkError` — transport-level network failure                             |
+| `1`  | `SecretsEnvNotSupportedError` — `--output env` flag is rejected                         |
+
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties / groups                                          |
+| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
+
+## Output
+
+The `--output {pretty,json,yaml,toml,env}` flag and the `--output-format {text,json,stream-json}` flag are both honored. `--output` wins when both are supplied. `pretty` and `text` map to the same render path.
+
+### `--output pretty` (default) / `--output-format text`
+
+Prints a Glamour-styled markdown table with columns `NAME` and `DIGEST`. The table is rendered byte-for-byte using `glamour.WithStandardStyle(styles.AsciiStyle)`. Secrets are sorted alphabetically by `name`.
+
+### `--output json`
+
+Indented JSON of the sorted `[{name, value, updated_at?}]` array, terminated by a newline. Field order is alphabetical.
+
+### `--output yaml`
+
+YAML document of the sorted secret array.
+
+### `--output toml`
+
+TOML document wrapping the sorted array as `[[secrets]]` (CLI-1975): PascalCase field names (`Name`, `UpdatedAt`, `Value`), 2-space indentation, fields omitted when absent.
+
+### `--output env`
+
+Fails immediately with `SecretsEnvNotSupportedError("--output env flag is not supported")`.
+
+### `--output-format json`
+
+Single JSON object emitted via `Output.success` with `{secrets: [...]}` as the `data` field.
+
+### `--output-format stream-json`
+
+One `result` NDJSON event on success containing `{secrets: [...]}`.
+
+## Notes
+
+- The `value` field returned by the API is a digest/hash of the secret, not the plaintext value.
+- Results are sorted alphabetically by `name` before any encoding.
+- Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.

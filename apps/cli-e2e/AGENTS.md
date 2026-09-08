@@ -147,7 +147,7 @@ Run the following orchestration commands from the repository root.
 
 ```sh
 # Replay (no credentials needed)
-pnpm exec turbo run @supabase/cli-e2e#test:e2e:run   # ts-legacy target
+pnpm exec turbo run @supabase/cli-e2e#test:e2e:run
 
 # Record (requires staging access)
 SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_STAGING_URL=https://api.supabase.green \
@@ -183,7 +183,7 @@ is a single-job operation; parallel shards would race on the shared
 
 ## Go binary version requirement
 
-The ts-legacy CLI proxies a fixed, small set of commands to a Go binary (`SUPABASE_GO_BINARY` → bundled package binary → system `supabase`) — as of CLI-1970, `apps/cli-go/` contains only that residual proxied subset, nothing else, and it is slated for cleanup and removal (the surface only shrinks; never add tests that grow it). If your system `supabase` binary predates a flag or subcommand change on one of these, `testBehaviour` tests for it will fail with "unknown command" or "unknown flag".
+The CLI proxies a fixed, small set of commands to a Go binary (`SUPABASE_GO_BINARY` → bundled package binary → system `supabase`) — as of CLI-1970, `apps/cli-go/` contains only that residual proxied subset, nothing else, and it is slated for cleanup and removal (the surface only shrinks; never add tests that grow it). If your system `supabase` binary predates a flag or subcommand change on one of these, `testBehaviour` tests for it will fail with "unknown command" or "unknown flag".
 
 Build the Go CLI from source and point `SUPABASE_GO_BINARY` at it:
 
@@ -200,13 +200,12 @@ SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
   pnpm run record
 ```
 
-`SUPABASE_GO_BINARY` is inherited by the ts-legacy subprocess via `exec()` in the harness, so you only need to set it once in the shell.
+`SUPABASE_GO_BINARY` is inherited by the CLI subprocess via `exec()` in the harness, so you only need to set it once in the shell.
 
 Commands currently requiring this — the full proxied surface, nothing else needs a Go binary at all:
 
 - `db diff` (for `--use-pg-schema`)
-- `db pull` (for `--experimental`)
 - `db branch create`, `db branch delete`, `db branch list`, `db branch switch`
-- `db remote changes`, `db remote commit`
+- `db remote changes`
 - `gen keys`
 - `functions download` (for the hidden `--legacy-bundle` flag)

@@ -8,14 +8,6 @@ on:
         required: false
         type: string
         default: 0.0.0-smoke
-      shell:
-        description: CLI shell to package as the shipped supabase binary
-        required: false
-        type: choice
-        options:
-          - legacy
-          - next
-        default: legacy
       npm_tag:
         description: npm tag to use for local package smoke tests
         required: false
@@ -38,7 +30,6 @@ jobs:
     uses: ./.github/workflows/release-shared.yml
     with:
       version: ${{ inputs.version }}
-      shell: ${{ inputs.shell }}
       npm_tag: ${{ inputs.npm_tag }}
       channel: beta
       prerelease: true

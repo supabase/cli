@@ -11,7 +11,8 @@ This workspace contains:
 
 ## Status
 
-This workspace currently contains the next/V3 CLI shell and the scaffolding for a legacy shell.
+This workspace contains the stable, shipped `supabase` CLI. Earlier revisions carried two shells
+(a `legacy/` tree and an experimental `next/` tree); both are gone and `src/` is the single CLI tree.
 
 For current migration/parity status, see:
 
@@ -32,29 +33,23 @@ From the workspace:
 
 ```sh
 cd apps/cli
-pnpm dev:next -- --help
+pnpm dev -- --help
 ```
 
 Examples:
 
 ```sh
-pnpm dev:next -- start
-pnpm dev:next -- start --mode docker
-pnpm dev:next -- start --detach
-pnpm dev:next -- status
-pnpm dev:next -- logs
-pnpm dev:next -- login --no-browser
-pnpm dev:legacy -- hello
+pnpm dev -- hello
 ```
 
-### Legacy shell and the Go binary
+### CLI and the Go binary
 
-Phase 0 commands in the legacy shell proxy to the Go CLI binary. To run these commands from source you need `supabase` (the Go CLI) available on your PATH.
+Phase 0 commands in the CLI proxy to the Go CLI binary. To run these commands from source you need `supabase` (the Go CLI) available on your PATH.
 
-For convenience, create a shell alias instead of using `pnpm dev:legacy` directly. For example in `.zshrc`:
+For convenience, create a shell alias instead of using `pnpm dev` directly. For example in `.zshrc`:
 
 ```sh
-alias supabase-dev="bun /absolute/path/to/dx-lab/apps/cli/src/legacy/main.ts"
+alias supabase-dev="bun /absolute/path/to/dx-lab/apps/cli/src/main.ts"
 ```
 
 Then Phase 0 commands resolve the Go binary via PATH automatically:
@@ -80,16 +75,14 @@ From `apps/cli`:
 
 ```sh
 pnpm build
-pnpm build:next
-pnpm build:legacy
+pnpm build:binary
 pnpm build:shim
 ```
 
 Output in `dist/`:
 
 - `dist/supabase.js` — base shim that routes to the correct platform binary
-- `dist/supabase-next` — next shell compiled binary (Bun single-file executable for the host platform)
-- `dist/supabase-legacy` — legacy shell compiled binary (Bun single-file executable for the host platform)
+- `dist/supabase` — CLI compiled binary (Bun single-file executable for the host platform)
 
 The shim resolves `SUPABASE_CLI_BINARY_OVERRIDE` (an absolute binary path) before falling back to the `@supabase/cli-<platform>` optional-dependency lookup. The e2e test harness uses this override to invoke the real shim + compiled binary handoff against the per-shell builds in `dist/`.
 
@@ -98,14 +91,11 @@ The shim resolves `SUPABASE_CLI_BINARY_OVERRIDE` (an absolute binary path) befor
 Used at release time to produce the compiled binaries that go into the platform-specific npm packages:
 
 ```sh
-# next shell (TS only)
-bun scripts/build.ts --shell next --version X.Y.Z
-
-# legacy shell (TS SFE + Go binary for each platform)
-bun scripts/build.ts --shell legacy --version X.Y.Z
+# CLI (TS SFE + Go binary for each platform)
+bun scripts/build.ts --version X.Y.Z
 ```
 
-For the legacy shell, this also cross-compiles the Go CLI binary from `apps/cli-go/` and places both binaries in `packages/cli-{platform}/bin/`.
+For the CLI, this also cross-compiles the Go CLI binary from `apps/cli-go/` and places both binaries in `packages/cli-{platform}/bin/`.
 
 See [`docs/binary-distribution.md`](./docs/binary-distribution.md) for a full explanation of the packaging model.
 
@@ -116,11 +106,10 @@ The CLI is built on `effect/unstable/cli`.
 Important areas:
 
 - `src/shared/cli/` for shared runner logic, roots, and global flags
-- `src/next/commands/` for the next/V3 command tree
-- `src/legacy/commands/` for the legacy command tree
+- `src/commands/` for the command tree
 - `src/shared/output/` for text / JSON / NDJSON output policies
-- `src/shared/runtime/` for TTY, stdin, browser, Ink, and process-control services
-- `src/next/auth/` for login-related services
+- `src/shared/runtime/` for TTY, stdin, browser, and process-control services
+- `src/shared/auth/` for login-related services
 
 The local stack commands use `@supabase/stack` for lifecycle, status, logs, and runtime operations.
 Managed ownership uses stable loopback `GET /owner` and session-fenced `POST /stop`; same-version
@@ -133,7 +122,6 @@ eager startup as its default.
 Useful companion docs:
 
 - [`../../packages/stack/docs/architecture.md`](../../packages/stack/docs/architecture.md)
-- [`docs/ui.md`](./docs/ui.md)
 
 ## Development
 
@@ -155,7 +143,6 @@ Useful subsets:
 
 ```sh
 pnpm run test:unit && pnpm run test:integration  # unit + integration (no binary required)
-pnpm test:legacy-integration   # legacy behavioral tests (requires SUPABASE_GO_BINARY — see CLAUDE.md)
 pnpm test:e2e                  # end-to-end subprocess tests
 ```
 
@@ -165,13 +152,10 @@ This workspace publishes the main `supabase` package.
 
 Release channels are split by npm dist-tag:
 
-- stable publishes the legacy shell to `latest`
-- alpha publishes the next/V3 shell to `alpha`
+- `stable` publishes the CLI to `latest`
+- `beta` publishes the CLI to `beta`
 
-The release automation is split across:
-
-- [`.github/workflows/release-stable.yml`](../../.github/workflows/release-stable.yml)
-- [`.github/workflows/release-alpha.yml`](../../.github/workflows/release-alpha.yml)
+The release automation lives in [`.github/workflows/release.yml`](../../.github/workflows/release.yml).
 
 ### Platform packages
 
@@ -181,7 +165,7 @@ Platform-specific packages live under:
 - `packages/cli-linux-*`
 - `packages/cli-windows-*`
 
-Each platform package ships two binaries for the legacy stable channel:
+Each platform package ships two binaries for the stable channel:
 
 - `bin/supabase` — the compiled TypeScript SFE (Bun single-file executable)
 - `bin/supabase-go` — the compiled Go CLI binary, used by Phase 0 proxy commands

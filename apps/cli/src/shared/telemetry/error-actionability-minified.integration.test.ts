@@ -11,7 +11,7 @@ describe("release-minified error fingerprints", () => {
     const errorModule = resolve(import.meta.dirname, "../functions/delete.errors.ts");
     const plainErrorModule = resolve(
       import.meta.dirname,
-      "../../legacy/shared/legacy-config-validate.ts",
+      "../../command-internal/config-validate.ts",
     );
     const classifierModule = resolve(import.meta.dirname, "error-actionability.ts");
 
@@ -31,15 +31,15 @@ describe("release-minified error fingerprints", () => {
               builder.onLoad({ filter: /.*/, namespace: "actionability-fixture" }, () => ({
                 contents: `
                     import { InvalidFunctionSlugError } from ${JSON.stringify(errorModule)};
-                    import { LegacyConfigValidateError } from ${JSON.stringify(plainErrorModule)};
+                    import { ConfigValidateError } from ${JSON.stringify(plainErrorModule)};
                     import { classifyCliErrorActionability } from ${JSON.stringify(classifierModule)};
                     export const taggedConstructorName = InvalidFunctionSlugError.name;
                     export const taggedClassification = classifyCliErrorActionability(
                       new InvalidFunctionSlugError({ message: "private user input" }),
                     );
-                    export const plainConstructorName = LegacyConfigValidateError.name;
+                    export const plainConstructorName = ConfigValidateError.name;
                     export const plainClassification = classifyCliErrorActionability(
-                      new LegacyConfigValidateError("private user input"),
+                      new ConfigValidateError("private user input"),
                     );
                   `,
                 loader: "ts",
@@ -65,11 +65,11 @@ describe("release-minified error fingerprints", () => {
         has_suggestion: true,
         suggestion_type: "provide_flags",
       });
-      expect(Reflect.get(fixture, "plainConstructorName")).not.toBe("LegacyConfigValidateError");
+      expect(Reflect.get(fixture, "plainConstructorName")).not.toBe("ConfigValidateError");
       expect(Reflect.get(fixture, "plainClassification")).toEqual({
         error_kind: "user_actionable",
         error_category: "invalid_config",
-        error_fingerprint: "error:LegacyConfigValidateError",
+        error_fingerprint: "error:ConfigValidateError",
         has_suggestion: true,
         suggestion_type: "update_config",
       });

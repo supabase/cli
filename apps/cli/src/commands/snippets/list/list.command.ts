@@ -1,0 +1,40 @@
+import { Command, Flag } from "effect/unstable/cli";
+import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { snippetsList } from "./list.handler.ts";
+
+const config = {
+  projectRef: Flag.string("project-ref").pipe(
+    Flag.withDescription("Project ref of the Supabase project."),
+    Flag.optional,
+  ),
+};
+export type SnippetsListFlags = CliCommand.Command.Config.Infer<typeof config>;
+
+export const snippetsListCommand = Command.make("list", config).pipe(
+  Command.withDescription("List all SQL snippets of the linked project."),
+  Command.withShortDescription("List all SQL snippets"),
+  Command.withExamples([
+    {
+      command: "supabase snippets list",
+      description: "List all SQL snippets",
+    },
+    {
+      command: "supabase snippets list --project-ref <ref>",
+      description: "List snippets for a specific project",
+    },
+  ]),
+  Command.withHandler((flags) =>
+    snippetsList(flags).pipe(
+      // No `safeFlags` — `--project-ref` is not on the telemetry-safe list,
+      // so the telemetry payload redacts the value (the default behavior for
+      // unmarked flags).
+      withCommandTelemetry({ flags }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(managementApiRuntimeLayer(["snippets", "list"])),
+);

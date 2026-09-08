@@ -1,5 +1,5 @@
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
-import { CliSettings } from "../../next/config/cli-settings.service.ts";
+import { CliSettings } from "../config/cli-settings.service.ts";
 import { type ConsentState, TelemetryConfigSchema, type TelemetryConfig } from "./types.ts";
 
 export const getConfigDir = CliSettings.useSync((cliSettings) => cliSettings.supabaseHome);

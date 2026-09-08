@@ -2,33 +2,29 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
-import { Deferred, Effect, Layer, Option, PubSub, Redacted, Stream } from "effect";
-import type { ReactElement } from "react";
+import { Deferred, Effect, Layer, Option, Redacted, Stream } from "effect";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
-import { Stack, StackServiceState, type StackInfo } from "@supabase/stack/effect";
-import { HttpTransportClient } from "@supabase/stack/testing";
-import { Api } from "../../src/next/auth/api.service.ts";
-import type { LoginSessionResponse, ProfileResponse } from "../../src/next/auth/api.service.ts";
-import { Credentials } from "../../src/next/auth/credentials.service.ts";
-import { Crypto } from "../../src/next/auth/crypto.service.ts";
-import { ApiError } from "../../src/next/auth/errors.ts";
-import { cliSettingsLayer } from "../../src/next/config/cli-settings.layer.ts";
-import { CliProjectHome } from "../../src/next/config/cli-project-home.service.ts";
+import { Api } from "../../src/shared/auth/api.service.ts";
+import type { LoginSessionResponse, ProfileResponse } from "../../src/shared/auth/api.service.ts";
+import { Credentials } from "../../src/shared/auth/credentials.service.ts";
+import { Crypto } from "../../src/shared/auth/crypto.service.ts";
+import { ApiError } from "../../src/shared/auth/errors.ts";
+import { cliSettingsLayer } from "../../src/shared/config/cli-settings.layer.ts";
+import { CliProjectHome } from "../../src/shared/config/cli-project-home.service.ts";
 import {
   CliProjectLocalServiceVersions,
   type LocalServiceVersionsState,
-} from "../../src/next/config/cli-project-local-service-versions.service.ts";
-import { ProjectLinkRemote } from "../../src/next/config/project-link-remote.service.ts";
+} from "../../src/shared/config/cli-project-local-service-versions.service.ts";
+import { ProjectLinkRemote } from "../../src/shared/config/project-link-remote.service.ts";
 import {
   ProjectLinkState,
   type ProjectLinkStateValue,
-} from "../../src/next/config/project-link-state.service.ts";
-import { CliProjectContext } from "../../src/next/config/cli-project-context.service.ts";
+} from "../../src/shared/config/project-link-state.service.ts";
+import { CliProjectContext } from "../../src/shared/config/cli-project-context.service.ts";
 import { NonInteractiveError } from "../../src/shared/output/errors.ts";
 import { Output } from "../../src/shared/output/output.service.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
 import { Browser } from "../../src/shared/runtime/browser.service.ts";
-import { Ink, type InkInstance } from "../../src/shared/runtime/ink.service.ts";
 import {
   ProcessControl,
   type CliProcessSignal,
@@ -37,6 +33,7 @@ import { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 import { Stdin } from "../../src/shared/runtime/stdin.service.ts";
 import { Tty } from "../../src/shared/runtime/tty.service.ts";
 import { Analytics } from "../../src/shared/telemetry/analytics.service.ts";
+import { CurrentAnalyticsContext } from "../../src/shared/telemetry/analytics-context.ts";
 import { TelemetryRuntime } from "../../src/shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../src/shared/telemetry/identity.ts";
 
@@ -68,7 +65,7 @@ type OutputEvent = {
 // runs or manual CLI invocations — the failure mode the previous fixed literal
 // `/tmp/supabase-cli-test-home` allowed. Tests that really read or write files
 // under homeDir must pass their own per-test temp dir instead (see
-// `useLegacyTempWorkdir` in `legacy-mocks.ts`).
+// `useTempWorkdir` in `command-mocks.ts`).
 const defaultTestHomeDir = join(
   tmpdir(),
   `supabase-cli-test-home-${process.pid.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
@@ -140,11 +137,13 @@ export function mockTty(
   opts: {
     stdinIsTty?: boolean;
     stdoutIsTty?: boolean;
+    stdoutIsPipe?: boolean;
   } = {},
 ): Layer.Layer<Tty> {
   return Layer.succeed(Tty, {
     stdinIsTty: opts.stdinIsTty ?? false,
     stdoutIsTty: opts.stdoutIsTty ?? false,
+    stdoutIsPipe: opts.stdoutIsPipe ?? false,
   });
 }
 
@@ -523,6 +522,53 @@ export function mockApi(
   };
 }
 
+/**
+ * `withCommandTelemetry` threads `flags`/`command`/etc. through
+ * `CurrentAnalyticsContext`, not the direct `capture()` call args. The plain
+ * `mockAnalytics()` below deliberately doesn't merge that context (most
+ * callers don't need it); tests asserting on context-carried properties
+ * (telemetry `flags` maps, `groups`) use this variant instead.
+ * Shape-compatible with `mockAnalytics()`'s return so it's a drop-in
+ * override wherever a setup helper accepts one.
+ */
+export function mockContextualAnalytics(): ReturnType<typeof mockAnalytics> {
+  const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
+  const identified: Array<{ distinctId: string; properties: Record<string, unknown> }> = [];
+  const aliased: Array<{ distinctId: string; alias: string }> = [];
+  const groupIdentified: Array<{
+    groupType: string;
+    groupKey: string;
+    properties: Record<string, unknown>;
+  }> = [];
+  const layer = Layer.succeed(
+    Analytics,
+    Analytics.of({
+      capture: (event: string, properties: Record<string, unknown> = {}) =>
+        Effect.gen(function* () {
+          const context = yield* CurrentAnalyticsContext;
+          captured.push({ event, properties: { ...context, ...properties } });
+        }),
+      identify: (distinctId: string, properties: Record<string, unknown> = {}) =>
+        Effect.sync(() => {
+          identified.push({ distinctId, properties });
+        }),
+      alias: (distinctId: string, alias: string) =>
+        Effect.sync(() => {
+          aliased.push({ distinctId, alias });
+        }),
+      groupIdentify: (
+        groupType: string,
+        groupKey: string,
+        properties: Record<string, unknown> = {},
+      ) =>
+        Effect.sync(() => {
+          groupIdentified.push({ groupType, groupKey, properties });
+        }),
+    }),
+  );
+  return { layer, captured, identified, aliased, groupIdentified };
+}
+
 export function mockAnalytics() {
   const captured: Array<{
     event: string;
@@ -610,209 +656,6 @@ export function mockTelemetryRuntime(
       cliVersion: opts.cliVersion ?? "0.1.0",
     }),
   );
-}
-
-export function mockStack(
-  opts: {
-    info?: Partial<StackInfo>;
-    stateChanges?: Array<{ name: string; status: StackServiceState["status"] }>;
-    startError?: unknown;
-    startPending?: boolean;
-    stopPending?: boolean;
-    liveStateChanges?: boolean;
-  } = {},
-) {
-  let started = false;
-  let stopped = false;
-  const startDeferred = Deferred.makeUnsafe<void>();
-  const stopDeferred = Deferred.makeUnsafe<void>();
-  const stateHistory = [...(opts.stateChanges ?? [])];
-  const statePubSub = Effect.runSync(
-    PubSub.unbounded<StackServiceState>({
-      replay: Math.max(stateHistory.length, 1) + 8,
-    }),
-  );
-  for (const change of stateHistory) {
-    PubSub.publishUnsafe(
-      statePubSub,
-      new StackServiceState({
-        name: change.name,
-        status: change.status,
-        pid: null,
-        exitCode: null,
-        restartCount: 0,
-        startedAt: null,
-        error: null,
-      }),
-    );
-  }
-  const info: StackInfo = {
-    url: "http://127.0.0.1:54321",
-    dbUrl: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
-    publishableKey: "test-publishable-key",
-    secretKey: "test-secret-key",
-    anonJwt: "test-anon-jwt",
-    serviceRoleJwt: "test-service-role-jwt",
-    serviceEndpoints: {},
-    ...opts.info,
-  };
-
-  return {
-    layer: Layer.succeed(Stack, {
-      getInfo: Effect.succeed(info),
-      start: Effect.gen(function* () {
-        started = true;
-        if (opts.startError !== undefined) {
-          return yield* Effect.fail(opts.startError as never);
-        }
-        if (opts.startPending) {
-          yield* Deferred.await(startDeferred);
-        }
-      }),
-      stop: Effect.gen(function* () {
-        stopped = true;
-        if (opts.stopPending) {
-          yield* Deferred.await(stopDeferred);
-        }
-      }),
-      dispose: Effect.gen(function* () {
-        stopped = true;
-        if (opts.stopPending) {
-          yield* Deferred.await(stopDeferred);
-        }
-      }),
-      startService: () => Effect.void,
-      stopService: () => Effect.void,
-      restartService: () => Effect.void,
-      reloadFunctions: () => Effect.void,
-      reloadEdgeRuntime: () => Effect.void,
-      getState: () =>
-        Effect.succeed(
-          new StackServiceState({
-            name: "postgres",
-            status: "Healthy",
-            pid: null,
-            exitCode: null,
-            restartCount: 0,
-            startedAt: null,
-            error: null,
-          }),
-        ),
-      getAllStates: Effect.sync(() => {
-        const latestStates = new Map(
-          (stateHistory.length > 0
-            ? stateHistory
-            : [{ name: "postgres", status: "Pending" as const }]
-          ).map((state) => [state.name, state] as const),
-        );
-        return [...latestStates.values()].map(
-          (state) =>
-            new StackServiceState({
-              name: state.name,
-              status: state.status,
-              pid: null,
-              exitCode: null,
-              restartCount: 0,
-              startedAt: null,
-              error: null,
-            }),
-        );
-      }),
-      stateChanges: () => Effect.succeed(Stream.empty),
-      allStateChanges: opts.liveStateChanges
-        ? Stream.fromPubSub(statePubSub)
-        : opts.stateChanges
-          ? Stream.fromIterable(
-              opts.stateChanges.map(
-                (change) =>
-                  new StackServiceState({
-                    name: change.name,
-                    status: change.status,
-                    pid: null,
-                    exitCode: null,
-                    restartCount: 0,
-                    startedAt: null,
-                    error: null,
-                  }),
-              ),
-            )
-          : Stream.empty,
-      waitReady: () => Effect.void,
-      waitAllReady: () => Effect.void,
-      subscribeLogs: () => Stream.empty,
-      subscribeAllLogs: () => Stream.empty,
-      logHistory: () => Effect.succeed([]),
-      logHistoryAll: () => Effect.succeed([]),
-    }),
-    get started() {
-      return started;
-    },
-    get stopped() {
-      return stopped;
-    },
-    emitStateChange(change: { name: string; status: StackServiceState["status"] }) {
-      stateHistory.push(change);
-      PubSub.publishUnsafe(
-        statePubSub,
-        new StackServiceState({
-          name: change.name,
-          status: change.status,
-          pid: null,
-          exitCode: null,
-          restartCount: 0,
-          startedAt: null,
-          error: null,
-        }),
-      );
-    },
-    resolveStart() {
-      Effect.runSync(Deferred.succeed(startDeferred, void 0));
-    },
-    resolveStop() {
-      Effect.runSync(Deferred.succeed(stopDeferred, void 0));
-    },
-    info,
-  };
-}
-
-export function mockInk(opts: { manualExit?: boolean } = {}) {
-  let rendered = false;
-  let unmounted = false;
-  let element: ReactElement | null = null;
-  let resolveExit = () => {};
-  const exitPromise = new Promise<unknown>((resolve) => {
-    resolveExit = () => resolve(undefined);
-  });
-  return {
-    layer: Layer.succeed(Ink, {
-      render: (nextElement) =>
-        Effect.sync(() => {
-          rendered = true;
-          element = nextElement;
-          return {
-            unmount: () => {
-              unmounted = true;
-            },
-            rerender: (updatedElement) => {
-              element = updatedElement;
-            },
-            waitUntilExit: () => (opts.manualExit ? exitPromise : Promise.resolve()),
-          } satisfies InkInstance;
-        }),
-    }),
-    get rendered() {
-      return rendered;
-    },
-    get unmounted() {
-      return unmounted;
-    },
-    get element() {
-      return element;
-    },
-    exit() {
-      resolveExit();
-    },
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1009,9 +852,6 @@ export function emptyEnv() {
     mockTty(),
     mockProcessControl().layer,
     cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
-    Layer.succeed(HttpTransportClient, {
-      request: () => Effect.die("unexpected HttpTransportClient access in tests"),
-    }),
   );
 }
 

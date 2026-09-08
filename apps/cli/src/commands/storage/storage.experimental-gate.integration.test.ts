@@ -1,0 +1,105 @@
+import { describe, expect, it } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { CliOutput, Command } from "effect/unstable/cli";
+
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
+import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
+import {
+  mockAnalytics,
+  mockOutput,
+  mockProcessControl,
+  mockTelemetryRuntime,
+  mockTty,
+} from "../../../tests/helpers/mocks.ts";
+import { isolatedHomeLayer, useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
+import { ExperimentalRequiredError } from "../../command-internal/experimental-gate.ts";
+import { storageCommand } from "./storage.command.ts";
+import { StorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
+
+// The experimental gate runs before mutual-exclusivity checks. So
+// `supabase storage ls --linked --local` without `--experimental` must
+// surface the experimental-gate error, not the mutex error — this suite
+// proves that ordering is wired into the actual `.command.ts` handler
+// pipeline for all four leaves, not just the shared helper in isolation.
+
+const tempRoot = useTempWorkdir("supabase-storage-experimental-int-");
+
+const testRoot = Command.make("supabase").pipe(
+  Command.withSubcommands([storageCommand]),
+  Command.withGlobalFlags(GLOBAL_FLAGS),
+);
+
+function setup(args: ReadonlyArray<string>) {
+  const out = mockOutput({ format: "text" });
+  const layer = Layer.mergeAll(
+    BunServices.layer,
+    CliOutput.layer(textCliOutputFormatter()),
+    out.layer,
+    Layer.succeed(CliArgs, { args }),
+    // `storageGatewayRuntimeLayer`'s cliSettings/credentials layers read
+    // real env/files when built. Neither check under test ever reaches that
+    // lazy factory, but isolate ambient env and homeDir defensively anyway —
+    // same rationale as the sibling experimental-gate tests (ssl-enforcement,
+    // postgres-config, network-bans).
+    isolatedHomeLayer(tempRoot.current, { SUPABASE_NO_KEYRING: "1" }),
+    mockProcessControl().layer,
+    mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+    mockAnalytics().layer,
+    mockTelemetryRuntime({
+      configDir: `${tempRoot.current}/.supabase`,
+      tracesDir: `${tempRoot.current}/.supabase/traces`,
+    }),
+  );
+  return { layer };
+}
+
+describe("storage experimental gate vs mutual-exclusivity ordering (Go PersistentPreRunE parity)", () => {
+  const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
+    { name: "ls", args: ["storage", "ls", "ss:///bucket"] },
+    { name: "cp", args: ["storage", "cp", "ss:///bucket/a", "ss:///bucket/b"] },
+    { name: "mv", args: ["storage", "mv", "ss:///bucket/a", "ss:///bucket/b"] },
+    { name: "rm", args: ["storage", "rm", "ss:///bucket/a"] },
+  ];
+
+  for (const { name, args } of leaves) {
+    const conflictingArgs = [...args, "--linked", "--local"];
+
+    it.live(
+      `${name} --linked --local without --experimental fails with the gate error, not the mutex error`,
+      () => {
+        const { layer } = setup(conflictingArgs);
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(
+            Command.runWith(testRoot, { version: "0.0.0-test" })(conflictingArgs),
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const failure = Cause.findErrorOption(exit.cause);
+            expect(
+              Option.isSome(failure) && failure.value instanceof ExperimentalRequiredError,
+            ).toBe(true);
+          }
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(`${name} --linked --local with --experimental fails with the mutex error`, () => {
+      const withExperimental = [...conflictingArgs, "--experimental"];
+      const { layer } = setup(withExperimental);
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          Command.runWith(testRoot, { version: "0.0.0-test" })(withExperimental),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const failure = Cause.findErrorOption(exit.cause);
+          expect(
+            Option.isSome(failure) && failure.value instanceof StorageMutuallyExclusiveFlagsError,
+          ).toBe(true);
+        }
+      }).pipe(Effect.provide(layer));
+    });
+  }
+});

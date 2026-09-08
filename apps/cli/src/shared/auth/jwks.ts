@@ -1,11 +1,11 @@
 const remoteJwksTimeoutMs = 10_000;
 
 /**
- * Structural JWK shape shared by both shells' own JWK types
- * (`legacy/shared/legacy-go-jwt.ts`'s `LegacyJwk` and `shared/functions/serve.ts`'s
+ * Structural JWK shape shared by the two in-tree JWK types
+ * (`command-internal/go-jwt.ts`'s `Jwk` and `shared/functions/serve.ts`'s
  * `SigningKeyJwk`) so either can be passed to {@link toPublicJwk} without conversion. Defined
- * locally rather than importing `LegacyJwk` because `shared/` cannot import from `legacy/` (see
- * `apps/cli/CLAUDE.md`'s isolation rules) — both existing types already satisfy this shape
+ * locally rather than importing `Jwk` because `shared/` cannot import from the command tree (see
+ * `apps/cli/CLAUDE.md`'s "Shared Code" rules) — both existing types already satisfy this shape
  * structurally, so no explicit relationship is needed.
  */
 export interface JwkLike {
@@ -76,7 +76,7 @@ export function toPublicJwk(key: JwkLike): JwkLike {
  * One `[auth.third_party.<provider>]` section, structurally matching `@supabase/config`'s
  * `CliConfig["auth"]["third_party"]` — both `shared/functions/serve.ts`'s
  * `PlainServeAuthConfig["third_party"]` (itself typed as `CliConfig["auth"]["third_party"]`)
- * and `legacy/shared/legacy-local-config-values.ts`'s env-override-resolved third-party object
+ * and `command-internal/local-config-values.ts`'s env-override-resolved third-party object
  * satisfy this shape without conversion.
  */
 export interface ThirdPartyProvidersLike {

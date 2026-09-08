@@ -1,0 +1,176 @@
+import { Effect, Option } from "effect";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { Output } from "../../../shared/output/output.service.ts";
+import {
+  encodeGoJson,
+  encodeToml,
+  encodeYaml,
+} from "../../../command-internal/go-output.encoders.ts";
+import { WorkersEnvNotSupportedError } from "./workers.errors.ts";
+
+/**
+ * Emits a command's payload in the format `-o`/`--output` asked for.
+ *
+ * `-o` is a global flag nearly every command family on this shell honours, so
+ * ignoring it would print human text to a stdout the user asked to be
+ * machine-readable.
+ *
+ * The struct-shaped encoders elsewhere reproduce a payload shape their command
+ * is required to match. `workers` has none, so it serialises through the generic
+ * encoders and shapes its payload as the command reads best.
+ *
+ * Returns whether it emitted anything, so the caller can skip its text
+ * rendering — `output.success` writes to stdout in text mode and would corrupt
+ * the payload otherwise.
+ */
+/**
+ * Which `-o` values these commands answer with a payload.
+ *
+ * An allowlist, because the emitter's last branch is TOML: a denylist made every
+ * value it had not heard of serialise as TOML, so the next format the global
+ * flag learns would silently emit TOML from every workers command until somebody
+ * remembered to exclude it. `pretty` is the human default, and `table`/`csv` are
+ * accepted by the global flag only because `db query` reads them — every
+ * resource command falls through to its own text rendering for those, which is
+ * what an unrecognised value should do too.
+ *
+ * `env` is in the set so it reaches the refusal below rather than falling
+ * through to text: it is a format these commands *recognise* and cannot encode,
+ * which is a different answer from one they have never heard of.
+ */
+const PAYLOAD_FORMATS = new Set(["json", "yaml", "toml", "env"]);
+
+function emitsPayloadFor(goFormat: string | undefined): boolean {
+  return goFormat !== undefined && PAYLOAD_FORMATS.has(goFormat);
+}
+
+export const emitWorkersMachineOutput = Effect.fnUntraced(function* (
+  payload: Record<string, unknown>,
+) {
+  const output = yield* Output;
+  const goFormat = Option.getOrUndefined(yield* OutputFlag);
+
+  if (!emitsPayloadFor(goFormat)) {
+    return false;
+  }
+
+  if (goFormat === "env") {
+    // Unreachable when the command called `rejectWorkersEnvOutput` first,
+    // which is where the refusal belongs; here as the backstop that stops a new
+    // command silently emitting TOML for `-o env`.
+    return yield* new WorkersEnvNotSupportedError({
+      message: "--output env flag is not supported",
+    });
+  }
+
+  if (goFormat === "json") {
+    yield* output.raw(encodeGoJson(payload));
+    return true;
+  }
+  if (goFormat === "yaml") {
+    yield* output.raw(encodeYaml(payload));
+    return true;
+  }
+  yield* output.raw(encodeToml(payload));
+  return true;
+});
+
+/**
+ * Whether a machine-readable stdout was requested via `-o`. Callers that emit
+ * human lines *before* their payload need this: the `-o` branch runs at the end,
+ * by which point those lines would already be on stdout.
+ */
+export const workersMachineOutputRequested = Effect.fnUntraced(function* () {
+  return emitsPayloadFor(Option.getOrUndefined(yield* OutputFlag));
+});
+
+/**
+ * The format a run actually renders in, with `-o` given priority over
+ * `--output-format`.
+ *
+ * `-o pretty|table|csv` encode nothing and fall through to the text rendering,
+ * and an explicit `-o` outranks `--output-format` when both are set. Branching
+ * on `output.format` alone therefore emitted JSON for `-o pretty
+ * --output-format json`, which asked for exactly the opposite.
+ *
+ * `-o json|yaml|toml|env` are absent from the result on purpose: those are
+ * handled by `emitWorkersMachineOutput`, which runs before any of this and
+ * owns its own stdout.
+ */
+export const workersRenderFormat = Effect.fnUntraced(function* () {
+  const output = yield* Output;
+  const goFormat = Option.getOrUndefined(yield* OutputFlag);
+  const forcesText = goFormat !== undefined && !emitsPayloadFor(goFormat);
+  return forcesText ? ("text" as const) : output.format;
+});
+
+/**
+ * Refuse `-o env` before the command does anything.
+ *
+ * `env` is a flat `KEY=value` list and every workers payload has structure a
+ * flat list cannot hold — a collection, or a nested instance tally. So it is
+ * refused for the whole command family rather than per payload, and refused up
+ * front: discovering it at emit time means failing after the work is done, which
+ * for `push` is after the remote project has already changed.
+ */
+export const rejectWorkersEnvOutput = Effect.fnUntraced(function* () {
+  if (Option.getOrUndefined(yield* OutputFlag) === "env") {
+    return yield* new WorkersEnvNotSupportedError({
+      message: "--output env flag is not supported",
+    });
+  }
+});
+
+/**
+ * Whether this run renders human text on stdout. Neither flag answers alone:
+ * `-o json|yaml|toml|env` leaves `output.format` as `text`, and
+ * `--output-format` says nothing about `-o`.
+ */
+export const workersRendersText = Effect.fnUntraced(function* () {
+  if (yield* workersMachineOutputRequested()) {
+    return false;
+  }
+  return (yield* workersRenderFormat()) === "text";
+});
+
+/**
+ * Emit `payload` in whichever machine format the run asked for, returning
+ * whether it did — so a caller can skip its text rendering.
+ *
+ * Exactly one structured emission, and only in the structured branch: calling
+ * `output.success` ahead of the machine check emitted the payload twice, which
+ * broke `JSON.parse` and gave `stream-json` two terminal result events.
+ */
+export const emitWorkersPayload = Effect.fnUntraced(function* (payload: Record<string, unknown>) {
+  if (yield* emitWorkersMachineOutput(payload)) {
+    return true;
+  }
+  if ((yield* workersRenderFormat()) === "text") {
+    return false;
+  }
+  const output = yield* Output;
+  yield* output.success("", payload);
+  return true;
+});
+
+/**
+ * The `--project-ref` a retry suggestion has to carry, or `""` when the ref came
+ * from the link.
+ *
+ * A suggested command is copy-pasted verbatim, so one that drops an explicit
+ * `--project-ref` re-resolves to whatever *this* checkout is linked to. On
+ * `delete --yes` that is a same-named worker in a project the user never named,
+ * removed without a prompt.
+ *
+ * Keyed off the flag rather than the resolved ref: when the link supplied it,
+ * appending it again is noise on a command that already resolves correctly.
+ *
+ * An empty `--project-ref ""` counts as "not supplied", the same reading
+ * `ProjectRefResolver` gives it before falling back to the environment or
+ * the linked-project file. Carrying it through would suggest a command ending
+ * in a valueless `--project-ref`, which cannot be pasted back.
+ */
+export const workersProjectRefSuffix = (projectRef: Option.Option<string>): string =>
+  Option.isSome(projectRef) && projectRef.value.length > 0
+    ? ` --project-ref ${projectRef.value}`
+    : "";

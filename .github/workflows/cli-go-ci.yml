@@ -91,9 +91,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
-          version: 2026.7.0
+          version: 2026.9.0
           install: true
           install_args: >-
             go
@@ -119,6 +119,12 @@ jobs:
           go-version-file: apps/cli-go/go.mod
           cache: true
 
+      # Regenerates from the committed api/v1-openapi.yaml snapshot, so this
+      # check is hermetic: it fails only when a pull request leaves pkg/api out
+      # of sync with the snapshot it was generated from. It deliberately does
+      # not compare against the live upstream spec -- doing so made unrelated
+      # pull requests fail together whenever staging drifted ahead of the
+      # committed snapshot. That drift is the API Sync workflow's job.
       - run: go generate
       - run: |
           if ! git diff --ignore-space-at-eol --exit-code --quiet pkg; then

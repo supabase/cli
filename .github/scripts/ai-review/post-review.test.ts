@@ -20,6 +20,7 @@ import {
   type ReviewIo,
   type ReviewPayload,
   sanitizeFilePath,
+  sanitizeModelText,
   supersededBody,
   truncateReviewBody,
 } from "./post-review.ts";
@@ -931,6 +932,20 @@ describe("sanitizeFilePath", () => {
   test("leaves an ordinary repo-relative path untouched", () => {
     expect(sanitizeFilePath("apps/cli/src/commands/login/index.ts")).toBe(
       "apps/cli/src/commands/login/index.ts",
+    );
+  });
+});
+
+describe("sanitizeModelText", () => {
+  test("breaks a comment opener that stripping would have re-formed", () => {
+    expect(sanitizeModelText("Forged <!<!---->-- supabase-ai-review:superseded --> marker")).toBe(
+      "Forged <!<\u200B!---->-- supabase-ai-review:superseded --> marker",
+    );
+  });
+
+  test("keeps the zero-width mention and issue-ref breakers intact", () => {
+    expect(sanitizeModelText("<!-- x --> @user #12")).toBe(
+      "<\u200B!-- x --> @<!---->user #<!---->12",
     );
   });
 });

@@ -83,11 +83,11 @@
     "@semantic-release/release-notes-generator": "^14.1.1",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
-    "@vitest/coverage-istanbul": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
     "effect": "catalog:",
     "semantic-release": "catalog:",
     "typescript": "catalog:",
-    "vite": "^6.0.0 || ^7.0.0 || ^8.0.0",
+    "vite": "^8.2.2",
     "vitest": "catalog:"
   },
   "peerDependencies": {
