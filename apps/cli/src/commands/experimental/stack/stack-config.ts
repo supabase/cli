@@ -77,7 +77,7 @@ const legacyReadFunctionEnvironments = (
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const root = path.join(projectRoot, "supabase", "functions");
-    if (skip) return { shared: {}, functions: {}, path };
+    if (skip) return { shared: {}, functions: {} };
     const read = (file: string) =>
       fs.exists(file).pipe(
         Effect.flatMap((exists) =>

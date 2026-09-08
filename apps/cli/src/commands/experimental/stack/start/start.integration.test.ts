@@ -424,7 +424,7 @@ describe("experimental stack start targeting", () => {
       expect(failure).toBeInstanceOf(LegacyExperimentalStackStartError);
       if (failure instanceof LegacyExperimentalStackStartError) {
         expect(failure.reason).toBe("invalid-config");
-        expect(failure.suggestion).toContain("experimental stack status");
+        expect(failure.suggestion).toContain("restore a valid state record");
         expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
       }
     }).pipe(

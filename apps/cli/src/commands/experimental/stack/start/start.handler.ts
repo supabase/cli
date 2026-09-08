@@ -204,12 +204,12 @@ const legacyStackStartError = (error: unknown) => {
           Match.tag("StackStateInvalidError", () => ({
             reason: "invalid-config" as const,
             suggestion:
-              "Run supabase experimental stack status to inspect the persisted stack state.",
+              "Inspect the reported state error and restore a valid state record before retrying.",
           })),
           Match.tag("StackStateFormatUnsupportedError", () => ({
             reason: "invalid-config" as const,
             suggestion:
-              "Run supabase experimental stack status to inspect the persisted state and use a compatible stack version.",
+              "Use a CLI version compatible with the persisted stack state.",
           })),
           Match.tag("StackNotFoundError", () => ({ reason: "flags" as const })),
           Match.tag(
