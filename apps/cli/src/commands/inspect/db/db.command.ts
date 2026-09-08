@@ -24,6 +24,7 @@ import { inspectDbTotalTableSizesCommand } from "./total-table-sizes/total-table
 import { inspectDbTrafficProfileCommand } from "./traffic-profile/traffic-profile.command.ts";
 import { inspectDbUnusedIndexesCommand } from "./unused-indexes/unused-indexes.command.ts";
 import { inspectDbVacuumStatsCommand } from "./vacuum-stats/vacuum-stats.command.ts";
+import { inspectDbXidAgeCommand } from "./xid-age/xid-age.command.ts";
 
 export const inspectDbCommand = Command.make("db").pipe(
   Command.withDescription("Tools to inspect your Supabase database."),
@@ -54,5 +55,6 @@ export const inspectDbCommand = Command.make("db").pipe(
     inspectDbSeqScansCommand,
     inspectDbRoleConfigsCommand,
     inspectDbRoleConnectionsCommand,
+    inspectDbXidAgeCommand,
   ]),
 );
