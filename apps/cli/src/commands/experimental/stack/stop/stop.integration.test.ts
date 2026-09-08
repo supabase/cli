@@ -1,5 +1,7 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -147,6 +149,7 @@ describe("experimental stack stop", () => {
   });
 
   it.effect("opens an explicit id without finding or reading the current project", () => {
+    // oxlint-disable-next-line effecttsgo/global-date -- unique fixture directory identity
     const root = join(tmpdir(), `supabase-stack-stop-id-${Date.now()}`);
     const id = "c".repeat(64);
     const setupResult = setup({ root, found: { id } });
@@ -262,6 +265,7 @@ describe("experimental stack stop", () => {
   });
 
   it.effect("is idempotent when no current stack exists and does not read config", () => {
+    // oxlint-disable-next-line effecttsgo/global-date -- unique fixture directory identity
     const root = join(tmpdir(), `supabase-stack-stop-missing-${Date.now()}`);
     const setupResult = setup({ root });
     return Effect.gen(function* () {
