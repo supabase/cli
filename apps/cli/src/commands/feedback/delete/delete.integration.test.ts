@@ -25,10 +25,7 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import type { FeedbackDeleteArgs } from "./delete.command.ts";
 import { feedbackDeleteHandler } from "./delete.command.ts";
-import {
-  FEEDBACK_INVALID_TOKEN_MESSAGE,
-  FEEDBACK_NOT_FOUND_MESSAGE,
-} from "./delete.errors.ts";
+import { FEEDBACK_INVALID_TOKEN_MESSAGE, FEEDBACK_NOT_FOUND_MESSAGE } from "./delete.errors.ts";
 import { feedbackDelete } from "./delete.handler.ts";
 
 const tempRoot = useTempWorkdir("supabase-feedback-delete-int-");
@@ -191,9 +188,7 @@ describe("feedback delete", () => {
   it.live("rejects a token that is not a UUID before contacting the backend", () => {
     const { layer, client } = setupFeedbackDelete();
     return Effect.gen(function* () {
-      const error = yield* feedbackDelete(deleteArgs({ token: "not-a-uuid" })).pipe(
-        Effect.flip,
-      );
+      const error = yield* feedbackDelete(deleteArgs({ token: "not-a-uuid" })).pipe(Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "FeedbackInvalidTokenError",
@@ -479,9 +474,7 @@ describe("feedback delete", () => {
       args: ["feedback", "delete", TOKEN, "--project-ref", "abcdefghijklmnopqrst"],
     });
     return Effect.gen(function* () {
-      yield* feedbackDeleteHandler(
-        deleteArgs({ projectRef: Option.some("abcdefghijklmnopqrst") }),
-      );
+      yield* feedbackDeleteHandler(deleteArgs({ projectRef: Option.some("abcdefghijklmnopqrst") }));
 
       expect(client.deleteCalls).toHaveLength(1);
       const events = analytics.captured.filter((c) => c.event === "cli_command_executed");

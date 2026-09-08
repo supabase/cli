@@ -122,10 +122,7 @@ export const feedbackAdd = Effect.fn("feedback.add")(function* (args: FeedbackAd
     const agentFlag = yield* AgentFlag;
     const isAgent = resolveAgentMode(agentFlag, aiTool.name);
     const agentName = isAgent ? Option.getOrUndefined(aiTool.name) : undefined;
-    const projectRef = yield* resolveFeedbackProjectRef(
-      cliSettings.workdir,
-      cliSettings.projectId,
-    );
+    const projectRef = yield* resolveFeedbackProjectRef(cliSettings.workdir, cliSettings.projectId);
 
     const sending = yield* output.task("Sending feedback...");
 

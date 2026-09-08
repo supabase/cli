@@ -19,10 +19,7 @@ import {
   mockTty,
   processEnvLayer,
 } from "../../../tests/helpers/mocks.ts";
-import {
-  mockTelemetryStateTracked,
-  useTempWorkdir,
-} from "../../../tests/helpers/command-mocks.ts";
+import { mockTelemetryStateTracked, useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import { postgresImageForDbMajorVersion } from "../../shared/services/services.shared.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";

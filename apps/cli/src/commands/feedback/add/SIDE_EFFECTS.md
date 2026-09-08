@@ -4,7 +4,7 @@
 
 | Path                                            | Format                              | When                                                                                                                                                                                                                         |
 | ----------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/profile`                           | plain text (profile name)           | when `--profile` and `SUPABASE_PROFILE` are unset (profile resolution via `commandSettingsLayer`)                                                                                                                          |
+| `~/.supabase/profile`                           | plain text (profile name)           | when `--profile` and `SUPABASE_PROFILE` are unset (profile resolution via `commandSettingsLayer`)                                                                                                                            |
 | `$SUPABASE_PROFILE`                             | YAML (`api_url:` / `gotrue_url:` …) | when `SUPABASE_PROFILE` is set to a file path instead of a built-in profile name                                                                                                                                             |
 | `<workdir>/supabase/.temp/project-ref`          | plain text (project ref)            | when `SUPABASE_PROJECT_ID` is unset — supplies the submission's `project_ref`. Absent, blank, or unreadable → `null` (never fails the submission)                                                                            |
 | `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON (telemetry state)              | read at startup by the shared telemetry runtime — its `distinct_id` (gotrue user id stamped at login) supplies the submission's `user_id` when telemetry consent is granted. Absent, logged-out, or consent-denied → omitted |
@@ -36,7 +36,7 @@ request times out after 10 s.
 | ----------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                            | no (falls back to `~/.supabase/profile` → `supabase`)              |
 | `SUPABASE_WORKDIR`      | project directory override                                                         | no (falls back to `--workdir` → cwd)                               |
-| `SUPABASE_ACCESS_TOKEN` | access token captured by `commandSettingsLayer`                                  | no (unused by this command)                                        |
+| `SUPABASE_ACCESS_TOKEN` | access token captured by `commandSettingsLayer`                                    | no (unused by this command)                                        |
 | `SUPABASE_PROJECT_ID`   | overrides the submission's `project_ref`, taking priority over the linked-ref file | no (falls back to `<workdir>/supabase/.temp/project-ref` → `null`) |
 
 Agent-detection env vars (e.g. `CLAUDECODE`) are read indirectly by

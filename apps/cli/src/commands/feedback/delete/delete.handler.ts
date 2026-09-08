@@ -70,9 +70,7 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
     const preview = yield* client.preview(token, rowContext).pipe(settleFeedbackTask(looking));
 
     if (Option.isNone(preview)) {
-      return yield* Effect.fail(
-        new FeedbackNotFoundError({ message: FEEDBACK_NOT_FOUND_MESSAGE }),
-      );
+      return yield* Effect.fail(new FeedbackNotFoundError({ message: FEEDBACK_NOT_FOUND_MESSAGE }));
     }
     const feedbackText = preview.value;
 
@@ -116,9 +114,7 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
 
     // The preview matched but the delete didn't: the row disappeared in between.
     if (!deleted) {
-      return yield* Effect.fail(
-        new FeedbackNotFoundError({ message: FEEDBACK_NOT_FOUND_MESSAGE }),
-      );
+      return yield* Effect.fail(new FeedbackNotFoundError({ message: FEEDBACK_NOT_FOUND_MESSAGE }));
     }
 
     // `-o json` takes priority over `--output-format` (CLI Agent Guide invariant 6):

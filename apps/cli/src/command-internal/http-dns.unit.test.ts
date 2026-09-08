@@ -101,7 +101,7 @@ describe("dohFetch", () => {
 
   it("preserves entries from a WHATWG Headers instance (supabase-js shape)", async () => {
     const captured: CapturedCall[] = [];
-    const fetchFn = legacyDohFetch({
+    const fetchFn = dohFetch({
       dnsResolver: "https",
       resolver: makeFakeResolver(["203.0.113.10"]),
       innerFetch: makeFakeFetch(captured),
@@ -129,7 +129,7 @@ describe("dohFetch", () => {
 
   it("preserves headers embedded on a Request when no init headers are given", async () => {
     const captured: CapturedCall[] = [];
-    const fetchFn = legacyDohFetch({
+    const fetchFn = dohFetch({
       dnsResolver: "https",
       resolver: makeFakeResolver(["203.0.113.10"]),
       innerFetch: makeFakeFetch(captured),
