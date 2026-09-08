@@ -328,18 +328,65 @@ describe("legacyResolveEmailTemplateContentPath", () => {
     },
   );
 
+  it("accepts a genuinely in-root file behind an unsearchable (EACCES) directory, even when the project root itself is reached through a symlink", () => {
+    // Regression test for the CLI-2345 Fix A: `canonicalizeExistingPath`'s inner `lstatSync`-
+    // throws catch now returns `undefined` (deferring to the ancestor walk-up in
+    // `canonicalPathForContainment`) instead of the raw lexical `path`. Before this fix, a
+    // genuinely in-root file sitting behind an unsearchable (chmod 000) ancestor directory could
+    // be wrongly rejected as "resolves outside the project root" whenever the project root
+    // itself was reached through a symlink (e.g. macOS's `/tmp` -> `/private/tmp`), because the
+    // lexical (unresolved) candidate path was compared against a fully-canonicalized base.
+    const realDir = mkdtempSync(join(tmpdir(), "legacy-config-validate-email-content-real-"));
+    const linkContainer = mkdtempSync(join(tmpdir(), "legacy-config-validate-email-content-link-"));
+    const symlinkedRoot = join(linkContainer, "project-root");
+    symlinkSync(realDir, symlinkedRoot, "dir");
+    const lockedDir = join(realDir, "locked");
+    mkdirSync(lockedDir);
+    const target = join(lockedDir, "invite.html");
+    writeFileSync(target, "<h1>Invite</h1>");
+    chmodSync(lockedDir, 0o000);
+
+    try {
+      let permissionEnforced = true;
+      try {
+        readdirSync(lockedDir);
+        permissionEnforced = false;
+      } catch {
+        // expected in a normal, unprivileged environment — confirms chmod 000 actually blocks access here.
+      }
+      if (!permissionEnforced) {
+        return;
+      }
+
+      const resolved = resolveContentPath("template", "./locked/invite.html", symlinkedRoot);
+
+      expect(resolved).toBe(join(realpathSync(symlinkedRoot), "locked", "invite.html"));
+    } finally {
+      chmodSync(lockedDir, 0o755);
+      rmSync(linkContainer, { recursive: true, force: true });
+      rmSync(realDir, { recursive: true, force: true });
+    }
+  });
+
   it.each(["template", "notification"] as const)(
-    "rejects a %s content_path that is an in-root symlink pointing to an unstattable (ENAMETOOLONG) target name, deterministically on every OS/uid",
+    "rejects a %s content_path that is an in-root symlink pointing to an unstattable (ENAMETOOLONG) target name, without relying on directory permissions",
     (section) => {
       // A permission-free sibling to the EACCES test above, which can silently lose coverage in
       // any environment that doesn't enforce chmod 000 (root, some containers, Windows): an
       // over-long filename component makes both `realpathSync` and `lstatSync` throw ENAMETOOLONG
-      // (not ENOENT) regardless of uid or platform, so this always exercises the guarded fallback.
+      // (not ENOENT), so this exercises the guarded fallback on filesystems/platforms where
+      // symlink creation is available to this process.
       const base = setup();
       outsideDir = mkdtempSync(join(tmpdir(), "legacy-config-validate-email-content-outside-"));
       const tooLongName = `${"a".repeat(300)}.html`;
       const symlinkPath = join(base, "toolong.html");
-      symlinkSync(join(outsideDir, tooLongName), symlinkPath);
+      try {
+        symlinkSync(join(outsideDir, tooLongName), symlinkPath);
+      } catch {
+        // Unprivileged symlink creation isn't unconditionally available (e.g. Windows without
+        // Developer Mode/admin) — skip rather than fail an environment that can't set this up.
+        return;
+      }
 
       expect(() => resolveContentPath(section, "./toolong.html", base)).toThrow(
         LegacyConfigValidateError,
@@ -388,6 +435,42 @@ describe("legacyResolveEmailTemplateContentPath", () => {
       }
     },
   );
+
+  it("never selects an unstattable notification legacy-fallback twin behind an unsearchable (EACCES) supabase/ directory", () => {
+    // Regression test for the CLI-2345 Fix B, specific to `legacyResolveNotificationContentPath`
+    // (via its `legacyProbeFile` tri-state helper): the legacy `supabase/`-relative twin must
+    // only ever be selected on a CONFIRMED "exists". Before this fix, when the root-resolved
+    // path was confirmed missing but the legacy twin was itself unstattable (blocked here by an
+    // unsearchable `supabase/` directory, not confirmed to exist), the old code wrongly silently
+    // selected the unverified legacy twin anyway.
+    const base = setup();
+    const supabaseDir = join(base, "supabase");
+    mkdirSync(supabaseDir);
+    chmodSync(supabaseDir, 0o000);
+
+    try {
+      let permissionEnforced = true;
+      try {
+        readdirSync(supabaseDir);
+        permissionEnforced = false;
+      } catch {
+        // expected in a normal, unprivileged environment — confirms chmod 000 actually blocks access here.
+      }
+      if (!permissionEnforced) {
+        return;
+      }
+
+      const resolved = resolveContentPath("notification", "notification.html", base);
+
+      // Proves it did NOT silently retarget to the unverified/unstattable legacy twin
+      // (`<base>/supabase/notification.html`, blocked by the chmod on its parent): the result
+      // must be the ROOT-RESOLVED path. This function only resolves a path — it doesn't validate
+      // that the file exists — so a non-throw here is expected, not a gap.
+      expect(resolved).toBe(join(realpathSync(base), "notification.html"));
+    } finally {
+      chmodSync(supabaseDir, 0o755);
+    }
+  });
 });
 
 /**
