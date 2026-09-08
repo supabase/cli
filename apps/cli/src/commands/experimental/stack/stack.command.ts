@@ -8,6 +8,7 @@ import { legacyExperimentalStackStatusCommand } from "./status/status.command.ts
 import { legacyExperimentalStackListCommand } from "./list/list.command.ts";
 import { legacyExperimentalStackLogsCommand } from "./logs/logs.command.ts";
 import { legacyExperimentalStackPrepareCommand } from "./prepare/prepare.command.ts";
+import { legacyExperimentalStackRestartCommand } from "./restart/restart.command.ts";
 import {
   legacyExperimentalStackApiLayer,
   legacyExperimentalStackTargetResolverLayer,
@@ -23,6 +24,7 @@ export const legacyExperimentalStackCommand = Command.make("stack").pipe(
     legacyExperimentalStackListCommand,
     legacyExperimentalStackLogsCommand,
     legacyExperimentalStackPrepareCommand,
+    legacyExperimentalStackRestartCommand,
   ]),
   Command.provide(legacyExperimentalStackTargetResolverLayer),
   Command.provide(legacyExperimentalStackApiLayer),
