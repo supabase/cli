@@ -83,6 +83,11 @@ CLI is not involved in these runtime tests.
 Podman is supported only on local Linux hosts and must be selected explicitly; the runtime does not
 auto-detect container engines.
 
+Stack identity is the length-delimited SHA-256 tuple of the canonical project root, Git branch
+context (or `ordinary-workspace` outside Git), and stack name. Separate worktree roots, branches,
+projects in a monorepo, and named stacks therefore receive separate managed state. Identity
+resolution is read-only; moving a project creates a new identity.
+
 `createTestStack` gives each test stack a unique temporary project root and identity while sharing
 the managed state root used by ordinary package callers. Automatic ports therefore
 coordinate across all default callers. Helper project roots and identities remain isolated; a

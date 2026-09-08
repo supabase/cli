@@ -89,16 +89,12 @@ describe("deterministic stack identity and state paths", () => {
       Effect.gen(function* () {
         const identity: StackIdentity = {
           projectRoot: "/tmp/project",
-          checkoutRoot: "/tmp/checkout",
-          workspaceId: "workspace",
-          checkoutId: "checkout",
           branchContext: "refs/heads/main",
-          localProjectKey: ".",
           stackName: "default",
         };
 
         expect(yield* stackId(identity)).toBe(
-          "c4c6587af0cd4fb3e5dab47a532023ba81cf1cd24e35b5173634a4539e8dab0f",
+          "64616c83912c48442ec266f86ee2d7f004d2be5c8b7f31a6d6b4c2634f82145f",
         );
       }),
     ),
@@ -122,7 +118,7 @@ describe("deterministic stack identity and state paths", () => {
     ),
   );
 
-  it.live("keeps sibling worktrees distinct while sharing the common repository identity", () =>
+  it.live("keeps sibling worktrees distinct by their canonical project roots", () =>
     withScope(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -133,8 +129,7 @@ describe("deterministic stack identity and state paths", () => {
         const primary = yield* resolveStackIdentity({ projectRoot: repository });
         const linked = yield* resolveStackIdentity({ projectRoot: sibling });
 
-        expect(linked.workspaceId).toBe(primary.workspaceId);
-        expect(linked.checkoutId).not.toBe(primary.checkoutId);
+        expect(linked.projectRoot).not.toBe(primary.projectRoot);
         expect(linked.branchContext).toBe(primary.branchContext);
         expect(yield* stackId(linked)).not.toBe(yield* stackId(primary));
         expect(yield* fs.exists(path.join(sibling, ".git"))).toBe(true);
@@ -182,7 +177,7 @@ describe("deterministic stack identity and state paths", () => {
     ),
   );
 
-  it.live("normalizes a nested project root relative to its checkout", () =>
+  it.live("uses the canonical nested project root as its identity", () =>
     withScope(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -193,7 +188,7 @@ describe("deterministic stack identity and state paths", () => {
         const identity = yield* resolveStackIdentity({ projectRoot: nested });
 
         expect(identity.projectRoot).toBe(yield* fs.realPath(nested));
-        expect(identity.localProjectKey).toBe("apps/web");
+        expect(identity.branchContext).toBe("refs/heads/main");
       }),
     ),
   );
@@ -210,10 +205,7 @@ describe("deterministic stack identity and state paths", () => {
         const identity = yield* resolveStackIdentity({ projectRoot: project });
         const after = yield* fs.readDirectory(project);
 
-        expect(identity.workspaceId).toBe(identity.projectRoot);
-        expect(identity.checkoutId).toBe(identity.projectRoot);
         expect(identity.branchContext).toBe("ordinary-workspace");
-        expect(identity.localProjectKey).toBe(".");
         expect(after).toEqual(before);
       }),
     ),
@@ -232,27 +224,6 @@ describe("deterministic stack identity and state paths", () => {
 
         const identity = yield* resolveStackIdentity({ projectRoot: link });
         expect(identity.projectRoot).toBe(yield* fs.realPath(target));
-      }),
-    ),
-  );
-
-  it.live("rejects linked-worktree metadata whose commondir target is a file", () =>
-    withScope(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const { root, repository } = yield* makeGitWorkspace;
-        const sibling = path.join(root, "sibling");
-        const notDirectory = path.join(root, "not-a-directory");
-        yield* runGit(repository, ["worktree", "add", "--force", sibling, "main"]);
-        const gitEntry = yield* fs.readFileString(path.join(sibling, ".git"));
-        const target = gitEntry.trim().slice("gitdir:".length).trim();
-        const gitDirectory = yield* fs.realPath(path.resolve(sibling, target));
-        yield* fs.writeFileString(notDirectory, "not a directory\n");
-        yield* fs.writeFileString(path.join(gitDirectory, "commondir"), notDirectory);
-
-        const result = yield* resolveStackIdentity({ projectRoot: sibling }).pipe(Effect.exit);
-        expect(Exit.isFailure(result)).toBe(true);
       }),
     ),
   );

@@ -27,8 +27,9 @@ User-authored configuration and migrations live in the repository:
 
 The CLI discovers the active project from the nearest ancestor containing `supabase/config.toml`
 (or the legacy config filename where supported), then passes that canonical project root to the
-managed stack identity. Managed `workspaceId` is local repository/folder lineage and is unrelated
-to the remote Supabase project ID in `config.toml` or link state.
+managed stack identity. A stack ID is derived from the canonical project root, the current Git
+branch context (or `ordinary-workspace` outside Git), and the stack name. This identity is local
+runtime state and is unrelated to the remote Supabase project ID in `config.toml` or link state.
 
 ### Checkout-local caches
 
@@ -42,8 +43,7 @@ Gitignored checkout metadata lives beside the project:
 
 `project.json` is the linked remote version cache. `local-versions.json` contains optional
 checkout-local service-version overrides. Neither file records whether a local stack is running.
-For ordinary non-Git folders, `.supabase/identity.json` stores the managed workspace identity. Git
-checkouts keep checkout identity in Git metadata instead and do not use that marker.
+Stack identity does not write repository or Git markers.
 
 ### Global managed runtime
 
@@ -64,9 +64,9 @@ Managed stack documents and runtime artifacts are shared through the global CLI 
         runtime/
 ```
 
-`stack.json` is the single durable managed record. It contains stack identity, including the
-canonical local-project key relative to the enclosing Git checkout, and sticky port intents
-and assignments, lifecycle, runtime control endpoint, and launch metadata (mode, versions,
+`stack.json` is the single durable managed record. It contains the canonical project root, branch
+context, and stack name that make up stack identity, together with sticky port intents and
+assignments, lifecycle, runtime control endpoint, and launch metadata (mode, versions,
 exclusions, and update-notification fingerprint). Runtime-only service ports are allocated for the
 supervisor run and are not persisted as sticky intents. The deterministic loopback control endpoint
 and ownership protocol are the liveness authority; a stale document is reclaimed by a subsequent

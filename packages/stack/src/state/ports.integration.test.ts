@@ -57,11 +57,7 @@ const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 const makeIdentity = (root: string, name: string): StackIdentity => ({
   projectRoot: root,
-  checkoutRoot: root,
-  workspaceId: root,
-  checkoutId: root,
   branchContext: "ordinary-workspace",
-  localProjectKey: ".",
   stackName: name,
 });
 

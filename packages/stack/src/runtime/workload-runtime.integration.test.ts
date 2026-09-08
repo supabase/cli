@@ -36,11 +36,7 @@ const state: PersistedStackState = {
   identity: {
     stackId: "stack-runtime-spec-test",
     projectRoot: "/tmp/supabase-runtime-spec",
-    checkoutRoot: "/tmp/supabase-runtime-spec",
-    workspaceId: "/tmp/supabase-runtime-spec",
-    checkoutId: ".",
     branchContext: "ordinary-workspace",
-    localProjectKey: ".",
     stackName: "runtime-spec",
   },
   runtime: { kind: "native" },
@@ -298,9 +294,6 @@ describe("workload runtime catalog", () => {
       const identity = {
         ...state.identity,
         projectRoot: root,
-        checkoutRoot: root,
-        workspaceId: root,
-        checkoutId: root,
       };
       const stackId = yield* deriveStackId(identity);
       const store = yield* makeStackStateStore({ stateRoot: root });

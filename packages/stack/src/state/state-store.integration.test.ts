@@ -55,11 +55,7 @@ const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 const identity = {
   projectRoot: "/tmp/project",
-  checkoutRoot: "/tmp/project",
-  workspaceId: "/tmp/project",
-  checkoutId: "/tmp/project",
   branchContext: "ordinary-workspace",
-  localProjectKey: ".",
   stackName: "default",
 } as const;
 
@@ -423,7 +419,7 @@ describe("atomic stack state", () => {
         const original = state(stackId);
         const forged = {
           ...original,
-          identity: { ...original.identity, workspaceId: "/tmp/forged" },
+          identity: { ...original.identity, projectRoot: "/tmp/forged" },
         };
         const exit = yield* store.initialize(stackId, forged).pipe(Effect.exit);
         expect(errorOf(exit)).toBeInstanceOf(StackStateInvalidError);
