@@ -1,4 +1,4 @@
-import { lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { lstatSync, readlinkSync, realpathSync, statSync, type Stats } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import {
@@ -791,21 +791,74 @@ const MAX_SYMLINK_FOLLOW_DEPTH = 40;
  * symlink chain past {@link MAX_SYMLINK_FOLLOW_DEPTH}) is returned as-is —
  * refusing to vouch for it lexically; the containment check still compares
  * it honestly, and any subsequent read fails with its own real error.
+ *
+ * `lstatSync` itself can also throw here, for a related reason — resolving
+ * `path`'s own dirent can itself fail (EACCES resolving an ancestor
+ * directory, ENAMETOOLONG, ...), and `throwIfNoEntry: false` only suppresses
+ * `ENOENT`. That's reported as `undefined` — the same "can't canonicalize
+ * this one, keep walking up" signal as a genuinely missing path — rather
+ * than returned lexically as-is: this path's OWN unstattable dirent doesn't
+ * block resolving an ancestor of it, and {@link canonicalPathForContainment}'s
+ * walk-up loop resolves the deepest ancestor it CAN (e.g. the unsearchable
+ * directory itself, since resolving a directory's own name only requires
+ * search permission on its PARENT) and re-appends the unstattable tail
+ * lexically onto that canonical ancestor. That keeps an honest in-root file
+ * behind an unsearchable ancestor from being falsely rejected merely because
+ * the project root happens to be reached through its own symlink (e.g.
+ * macOS's `/tmp` -> `/private/tmp`), while an escaping symlink whose target
+ * sits behind an unstattable component is still rejected, since that
+ * target's own ancestor still canonicalizes to something outside the root.
+ * The same "defer to the ancestor walk-up" treatment also applies when `lstatSync` itself
+ * succeeds on a NON-symlink entry that `realpathSync` still couldn't resolve (observed on Darwin,
+ * where resolving a chmod-000 directory's own canonical name additionally requires search
+ * permission on itself, not just its parent) — the ONE exception is an unresolved symlink CHAIN
+ * at {@link MAX_SYMLINK_FOLLOW_DEPTH}, which keeps returning the lexical path rather than
+ * deferring, so a genuine loop is never laundered into an accept via the walk-up.
  */
 function canonicalizeExistingPath(path: string, depth: number): string | undefined {
   try {
     return realpathSync(path);
   } catch {
-    const entry = lstatSync(path, { throwIfNoEntry: false });
-    if (entry === undefined) return undefined;
-    if (entry.isSymbolicLink() && depth < MAX_SYMLINK_FOLLOW_DEPTH) {
-      const target = readlinkSync(path);
-      return canonicalPathForContainment(
-        isAbsolute(target) ? target : join(dirname(path), target),
-        depth + 1,
-      );
+    // Wraps ONLY the `lstatSync` call, not the recursive
+    // `canonicalPathForContainment` follow-up below: folding that into this
+    // same try would mean a deep throw there returns the OUTER symlink's own
+    // lexically-in-root path, turning a rejection into an accept. Same
+    // reasoning as why `readlinkSync` below stays unguarded — there's no
+    // fail-closed lexical answer on its failure either, so a raw error is
+    // the honest outcome there too.
+    let entry: Stats | undefined;
+    try {
+      entry = lstatSync(path, { throwIfNoEntry: false });
+    } catch {
+      return undefined;
     }
-    return path;
+    if (entry === undefined) return undefined;
+    if (entry.isSymbolicLink()) {
+      if (depth < MAX_SYMLINK_FOLLOW_DEPTH) {
+        const target = readlinkSync(path);
+        return canonicalPathForContainment(
+          isAbsolute(target) ? target : join(dirname(path), target),
+          depth + 1,
+        );
+      }
+      // A symlink chain still unresolved at MAX_SYMLINK_FOLLOW_DEPTH must NOT be treated as
+      // "doesn't exist" here — returning `undefined` would let the caller's ancestor walk-up
+      // canonicalize past the entire unresolvable loop and could land on an ordinary in-root
+      // ancestor, silently ACCEPTING an unresolvable symlink loop instead of failing closed on
+      // it. This is the one case that must keep returning the lexical, never-canonicalized path.
+      return path;
+    }
+    // A non-symlink entry (plain file or directory) that `lstat` can see but `realpath` still
+    // can't resolve. On Linux this is essentially unreachable; on Darwin it's confirmed
+    // reachable for a chmod-000 directory even when resolving ITS OWN canonical name — Darwin's
+    // realpath(3) requires search permission on the directory itself, not just its parent
+    // (POSIX only requires the latter). Deferring to the same "doesn't exist yet" ancestor
+    // walk-up as a genuinely missing path lets a resolvable ancestor further up (e.g. the
+    // symlinked project root sitting above the restricted directory) canonicalize this
+    // correctly, instead of falling back to an unresolved lexical guess that can misreport an
+    // honest in-root path as escaping. Unlike the symlink-chain case above, there is no
+    // loop-safety property at stake here — a plain entry can't recurse.
+    return undefined;
   }
 }
 
@@ -913,24 +966,46 @@ export function legacyResolveEmailTemplateContentPath(args: {
  * scaffolds documented these paths relative to `supabase/` (the file lives at
  * `<root>/supabase/templates/...` while config says `./templates/...`).
  * Project-root resolution is canonical; when the root-resolved file is
- * missing but the supabase-relative one exists, that path wins so existing
- * configs keep working. Shared by config validation, `config push` content
- * loading, and the Kong template mount builder so every consumer sees the
- * SAME file.
+ * missing (confirmed absent, not merely unverifiable) but the
+ * supabase-relative one exists, that path wins so existing configs keep
+ * working. An unverifiable candidate at either path never causes a silent
+ * switch — see {@link legacyProbeFile}. Shared by config validation, `config
+ * push` content loading, and the Kong template mount builder so every
+ * consumer sees the SAME file.
  */
 function legacyResolveNotificationContentPath(base: string, contentPath: string): string {
   if (isAbsolute(contentPath)) return contentPath;
   const resolved = join(base, contentPath);
-  if (!legacyIsExistingFile(resolved)) {
+  if (legacyProbeFile(resolved) === "missing") {
     const legacyResolved = join(base, "supabase", contentPath);
-    if (legacyIsExistingFile(legacyResolved)) return legacyResolved;
+    if (legacyProbeFile(legacyResolved) === "exists") return legacyResolved;
   }
   return resolved;
 }
 
-/** A directory at the root-resolved path must not suppress the legacy-file fallback. */
-function legacyIsExistingFile(path: string): boolean {
-  return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
+/**
+ * Tri-state existence probe for the notification legacy-fallback decision
+ * above: "exists" (a confirmed regular file), "missing" (confirmed absent —
+ * `ENOENT`, or a directory sitting at this path), or "unknown" (any other
+ * stat failure — EACCES, ELOOP, ENAMETOOLONG, ...; `throwIfNoEntry: false`
+ * only suppresses `ENOENT`). The two call sites need OPPOSITE defaults for
+ * "unknown": the root-resolved path must stay selected on "unknown" (it must
+ * not be silently abandoned for the legacy twin just because it's
+ * unreadable — that's the "directory must not suppress the fallback" case,
+ * generalized to any unstattable dirent), while the legacy twin must only
+ * ever be selected on a CONFIRMED "exists" (an "unknown" legacy twin must
+ * not silently win over the declared path either). A single boolean return
+ * can't express both defaults; returning a tri-state and letting the caller
+ * choose per call site is what fixes it.
+ */
+function legacyProbeFile(path: string): "exists" | "missing" | "unknown" {
+  try {
+    const stats = statSync(path, { throwIfNoEntry: false });
+    if (stats === undefined) return "missing";
+    return stats.isFile() ? "exists" : "missing";
+  } catch {
+    return "unknown";
+  }
 }
 
 /** `Invalid config for auth.email.${section}.${name}.content_path: ${msg(cause)}` */
