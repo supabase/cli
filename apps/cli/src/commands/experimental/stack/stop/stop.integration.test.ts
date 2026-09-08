@@ -106,7 +106,6 @@ function setup(opts: {
     mockLegacyCliSettings({ workdir: opts.root }),
     Layer.succeed(LegacyExperimentalStackApi, {
       createStack: () => Effect.die("must not create"),
-      listStacks: () => Effect.succeed([]),
       findStack: (input) =>
         Effect.sync(() => {
           state.findInputs.push(input);
