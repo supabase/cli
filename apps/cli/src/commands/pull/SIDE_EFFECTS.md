@@ -20,16 +20,16 @@ initial-pull `pg_dump` container). See "Database writes" and "Docker" below.
 
 ## Files Read
 
-| Path                                                       | Format     | When                                                                                                                                                                                                                                          |
-| ----------------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml` or `config.json`          | TOML/JSON  | always, before any network call — `legacyOpenConfigPullSource`, the SAME base load `config pull` itself opens (no `[remotes.*]` overlay yet); see `config/pull/SIDE_EFFECTS.md` for the loader's own rules                                    |
-| `<workdir>/supabase/.env`, `.env.local`                    | dotenv     | always, to resolve `env(VAR)` references inside `config.toml` (via the config step's loader)                                                                                                                                                  |
-| `<workdir>/supabase/.temp/project-ref`                     | plain text | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file) when `--project-ref` is absent; parent-ref candidate for a branch-name `--project-ref` (checked eagerly, before any spinner or branch lookup)                                 |
-| `<workdir>/supabase/.temp/linked-project.json`             | JSON       | parent-ref candidate for a branch-name `--project-ref` (same eager pre-check)                                                                                                                                                                  |
-| `~/.supabase/access-token`                                 | plain text | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                                                                                                     |
-| `<workdir>/supabase/config.toml` or `config.json` (reload) | TOML/JSON  | re-loaded WITH the `[remotes.*]` overlay applied, only when the resolved target ref matches an existing `[remotes.*]` block — the config step's own conditional reload (`config/pull/SIDE_EFFECTS.md`)                                          |
+| Path                                                       | Format     | When                                                                                                                                                                                                                                         |
+| ---------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml` or `config.json`          | TOML/JSON  | always, before any network call — `legacyOpenConfigPullSource`, the SAME base load `config pull` itself opens (no `[remotes.*]` overlay yet); see `config/pull/SIDE_EFFECTS.md` for the loader's own rules                                   |
+| `<workdir>/supabase/.env`, `.env.local`                    | dotenv     | always, to resolve `env(VAR)` references inside `config.toml` (via the config step's loader)                                                                                                                                                 |
+| `<workdir>/supabase/.temp/project-ref`                     | plain text | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file) when `--project-ref` is absent; parent-ref candidate for a branch-name `--project-ref` (checked eagerly, before any spinner or branch lookup)                                |
+| `<workdir>/supabase/.temp/linked-project.json`             | JSON       | parent-ref candidate for a branch-name `--project-ref` (same eager pre-check)                                                                                                                                                                |
+| `~/.supabase/access-token`                                 | plain text | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                                                                                                   |
+| `<workdir>/supabase/config.toml` or `config.json` (reload) | TOML/JSON  | re-loaded WITH the `[remotes.*]` overlay applied, only when the resolved target ref matches an existing `[remotes.*]` block — the config step's own conditional reload (`config/pull/SIDE_EFFECTS.md`)                                       |
 | `<workdir>/supabase/migrations` (directory listing)        | filenames  | once, in the preview phase, to decide whether the migration-history step auto-runs — skipped when `--with-migration-history` is already set (see Notes); a read failure other than "directory missing" fails the whole command at this point |
-| same config file, raw on-disk text (TOCTOU re-read)        | TOML/JSON  | immediately before the config step writes, once the aggregated confirmation is accepted — only reached when the config plan has work; see `config/pull/SIDE_EFFECTS.md`'s TOCTOU row                                                          |
+| same config file, raw on-disk text (TOCTOU re-read)        | TOML/JSON  | immediately before the config step writes, once the aggregated confirmation is accepted — only reached when the config plan has work; see `config/pull/SIDE_EFFECTS.md`'s TOCTOU row                                                         |
 
 Each executed sub-step also performs its own file reads exactly as documented in its own
 `SIDE_EFFECTS.md` (config, db, functions, and — when it runs — migration history), since `pull`
@@ -40,15 +40,15 @@ target-resolution file reads are therefore skipped in practice (the ref is alrea
 
 ## Files Written
 
-| Path                                                                   | Format    | When                                                                                                                                                                                                          |
-| ------------------------------------------------------------------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml` or `config.json`                     | TOML/JSON | config step only, once the aggregated confirmation is accepted AND the plan has work (never on `--dry-run`, never on a declined confirmation) — same atomic surgical-edit write as standalone `config pull` (`config/pull/SIDE_EFFECTS.md`) |
-| `<workdir>/supabase/migrations/<version>_<name>.sql`                  | SQL       | migration-history step only, when it actually runs (bootstrap or `--with-migration-history`) and the confirmation is accepted — see `migration/fetch/SIDE_EFFECTS.md`                                          |
-| `<workdir>/supabase/migrations/<timestamp>_<name>.sql`                | SQL       | db step, migration mode, when it finds schema drift — see `db/pull/SIDE_EFFECTS.md`                                                                                                                          |
-| `<workdir>/supabase/schemas/**`, `.pgdelta-export.json`                | SQL/JSON  | db step, deprecated `--experimental` structured-dump export only — `pull` never sets `--declarative`/`--use-pg-delta` itself, so this path is only reachable via the inherited global `--experimental`/`SUPABASE_EXPERIMENTAL` gate; see Notes and `db/pull/SIDE_EFFECTS.md` |
-| `<workdir>/supabase/functions/<slug>/...`                              | bytes     | functions step, for each function the linked project has — see `functions/download/SIDE_EFFECTS.md`                                                                                                          |
-| `<workdir>/supabase/.temp/linked-project.json`                         | JSON      | `Effect.ensuring` after `pull`'s own run (success and failure), once a target ref has resolved                                                                                                                |
-| `~/.supabase/telemetry.json`                                           | JSON      | `Effect.ensuring` after `pull`'s own run (success and failure)                                                                                                                                                |
+| Path                                                    | Format    | When                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml` or `config.json`       | TOML/JSON | config step only, once the aggregated confirmation is accepted AND the plan has work (never on `--dry-run`, never on a declined confirmation) — same atomic surgical-edit write as standalone `config pull` (`config/pull/SIDE_EFFECTS.md`)                                  |
+| `<workdir>/supabase/migrations/<version>_<name>.sql`    | SQL       | migration-history step only, when it actually runs (bootstrap or `--with-migration-history`) and the confirmation is accepted — see `migration/fetch/SIDE_EFFECTS.md`                                                                                                        |
+| `<workdir>/supabase/migrations/<timestamp>_<name>.sql`  | SQL       | db step, migration mode, when it finds schema drift — see `db/pull/SIDE_EFFECTS.md`                                                                                                                                                                                          |
+| `<workdir>/supabase/schemas/**`, `.pgdelta-export.json` | SQL/JSON  | db step, deprecated `--experimental` structured-dump export only — `pull` never sets `--declarative`/`--use-pg-delta` itself, so this path is only reachable via the inherited global `--experimental`/`SUPABASE_EXPERIMENTAL` gate; see Notes and `db/pull/SIDE_EFFECTS.md` |
+| `<workdir>/supabase/functions/<slug>/...`               | bytes     | functions step, for each function the linked project has — see `functions/download/SIDE_EFFECTS.md`                                                                                                                                                                          |
+| `<workdir>/supabase/.temp/linked-project.json`          | JSON      | `Effect.ensuring` after `pull`'s own run (success and failure), once a target ref has resolved                                                                                                                                                                               |
+| `~/.supabase/telemetry.json`                            | JSON      | `Effect.ensuring` after `pull`'s own run (success and failure)                                                                                                                                                                                                               |
 
 The two rows above are `pull`'s own top-level writes. Because the db and migration-history steps
 are invoked as plain library functions (their run-cores), not as wrapped standalone commands, each
@@ -84,11 +84,11 @@ each step's own documented "when" in its own `SIDE_EFFECTS.md`.
 
 ## API Routes
 
-| #   | Purpose                            | Method | Path                                  | When                                                                                                              |
-| --- | ----------------------------------- | ------ | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| 1a  | branch by UUID                      | GET    | `/v1/branches/{branch_id}`            | `--project-ref` is a branch UUID — resolved once, up front (ADR 0024 "resolve once"); needs no linked project    |
-| 1b  | branch by name                      | GET    | `/v1/projects/{ref}/branches/{name}`  | `--project-ref` is a branch NAME (not a ref/UUID); the parent ref is resolved from local state first             |
-| 2   | effective remote config             | GET    | `/v2/projects/{ref}/config`           | the config step's own fetch (`legacyPlanConfigPullRun`) — guaranteed single by the plan/apply split, never repeated for a dry run or a real apply |
+| #   | Purpose                 | Method | Path                                 | When                                                                                                                                              |
+| --- | ----------------------- | ------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1a  | branch by UUID          | GET    | `/v1/branches/{branch_id}`           | `--project-ref` is a branch UUID — resolved once, up front (ADR 0024 "resolve once"); needs no linked project                                     |
+| 1b  | branch by name          | GET    | `/v1/projects/{ref}/branches/{name}` | `--project-ref` is a branch NAME (not a ref/UUID); the parent ref is resolved from local state first                                              |
+| 2   | effective remote config | GET    | `/v2/projects/{ref}/config`          | the config step's own fetch (`legacyPlanConfigPullRun`) — guaranteed single by the plan/apply split, never repeated for a dry run or a real apply |
 
 Every other route belongs to a reused sub-step, called with the already-resolved `ref` (no
 re-resolution): the db step's own routes (temp login role, IPv4 pooler config, linked-project
@@ -122,14 +122,14 @@ Docker-dependent.
 
 ## Environment Variables
 
-| Variable                 | Purpose                                                                                       | Required?                                                     |
-| ------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `SUPABASE_YES`            | answers `pull`'s own aggregated confirmation "yes" (same as `--yes`); does NOT bypass the dirty guard | no — resolved via the GLOBAL flag (`legacyResolveYes`), no project-`.env` fallback (unlike the sub-steps' own internal prompts, which are all bypassed by `pull` before they can read it) |
-| `SUPABASE_PROJECT_ID`     | project ref (flag → this → `.temp/project-ref` → prompt)                                       | no                                                             |
-| `SUPABASE_WORKDIR`        | working directory `config.toml`/`.json`/`supabase/migrations`/`supabase/functions` are resolved against | no                                                             |
-| `SUPABASE_ACCESS_TOKEN`   | auth token (bypasses credential file/keyring lookup)                                            | no (falls back to keyring → `~/.supabase/access-token`)        |
-| `SUPABASE_PROFILE`        | API profile selection                                                                          | no                                                             |
-| `env(VAR)` references     | interpolated into `config.toml` values by the config step's loader                              | no                                                             |
+| Variable                | Purpose                                                                                                 | Required?                                                                                                                                                                                 |
+| ----------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_YES`          | answers `pull`'s own aggregated confirmation "yes" (same as `--yes`); does NOT bypass the dirty guard   | no — resolved via the GLOBAL flag (`legacyResolveYes`), no project-`.env` fallback (unlike the sub-steps' own internal prompts, which are all bypassed by `pull` before they can read it) |
+| `SUPABASE_PROJECT_ID`   | project ref (flag → this → `.temp/project-ref` → prompt)                                                | no                                                                                                                                                                                        |
+| `SUPABASE_WORKDIR`      | working directory `config.toml`/`.json`/`supabase/migrations`/`supabase/functions` are resolved against | no                                                                                                                                                                                        |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                    | no (falls back to keyring → `~/.supabase/access-token`)                                                                                                                                   |
+| `SUPABASE_PROFILE`      | API profile selection                                                                                   | no                                                                                                                                                                                        |
+| `env(VAR)` references   | interpolated into `config.toml` values by the config step's loader                                      | no                                                                                                                                                                                        |
 
 Once the db and functions steps run, they consume their own established environment variables
 exactly as documented in their own `SIDE_EFFECTS.md` files (e.g. `SUPABASE_DB_PASSWORD`,
@@ -141,16 +141,16 @@ functions) — `pull` does not read or override any of these itself, it only sup
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                   |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | every step succeeded (any mix of `changed`/`unchanged`/`skipped`)                                                                             |
-| `0`  | `--dry-run` (every step reports `planned`/`skipped`, nothing written)                                                                          |
-| `0`  | the aggregated confirmation was declined (every step reports `planned`/`skipped`, nothing written)                                             |
-| `1`  | the `-o`/`--output` global flag passed (any value — not supported by this command, `LegacyPullOutputFlagUnsupportedError`)                     |
-| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`LegacyPullWorkdirError`)                                          |
+| Code | Condition                                                                                                                                                                                                                                                                       |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | every step succeeded (any mix of `changed`/`unchanged`/`skipped`)                                                                                                                                                                                                               |
+| `0`  | `--dry-run` (every step reports `planned`/`skipped`, nothing written)                                                                                                                                                                                                           |
+| `0`  | the aggregated confirmation was declined (every step reports `planned`/`skipped`, nothing written)                                                                                                                                                                              |
+| `1`  | the `-o`/`--output` global flag passed (any value — not supported by this command, `LegacyPullOutputFlagUnsupportedError`)                                                                                                                                                      |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`LegacyPullWorkdirError`)                                                                                                                                                                           |
 | `1`  | branch-name `--project-ref` target-resolution failure (`LegacyPullBranchNotLinkedError` / `LegacyPullParentRefInvalidError` / `LegacyPullBranchNotFoundError` / `LegacyPullBranchNotReadyError` / `LegacyPullBranchResolveNetworkError` / `LegacyPullBranchResolveStatusError`) |
-| `1`  | `supabase/config.toml`/`.json` has uncommitted or untracked changes and no human will read the warning (`LegacyPullUncommittedChangesError`) — see Git above |
-| `1`  | any one step fails (config, migration history, db, or functions) — every OTHER step still runs and is reported, but the process exits non-zero and re-fails with the FIRST original failure's own cause/classification |
+| `1`  | `supabase/config.toml`/`.json` has uncommitted or untracked changes and no human will read the warning (`LegacyPullUncommittedChangesError`) — see Git above                                                                                                                    |
+| `1`  | any one step fails (config, migration history, db, or functions) — every OTHER step still runs and is reported, but the process exits non-zero and re-fails with the FIRST original failure's own cause/classification                                                          |
 
 **Deliberate divergence from standalone `db pull`:** when the db step finds the remote already in
 sync with local migrations (`LegacyDbPullInSyncError`), `pull` reports it as `status: "unchanged"`
@@ -159,8 +159,8 @@ condition. Every other step's failure still counts as a `pull` failure.
 
 ## Telemetry Events Fired
 
-| Event                  | When                                                       | Notable properties / groups                                                                                                                                          |
-| ----------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Event                  | When                                                                  | Notable properties / groups                                                                                                                                                                  |
+| ---------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via `withLegacyCommandInstrumentation`) | `exit_code`, `duration_ms`, `flags`; `--project-ref`'s value is only in `safeFlags` (logged verbatim) when it is ref-shaped (`PROJECT_REF_PATTERN`) — a user-created branch name is redacted |
 
 Exactly one `cli_command_executed` fires per `pull` invocation. None of the four reused steps fire
@@ -208,12 +208,29 @@ Shape (`pull.format.ts`):
   "wrote": true, // true whenever ANY step's status is "changed"
   "step_order": ["config", "migration_history", "db", "functions"],
   "steps": {
-    "config": { "status": "changed", "written": ["supabase/config.toml"], "detail": { /* config pull's own payload, verbatim */ } },
-    "migration_history": { "status": "skipped", "written": [], "detail": { "files": [] }, "reason": "not_needed" },
-    "db": { "status": "changed", "written": ["supabase/migrations/..."], "detail": { "declarative": false, "engine": "pg-delta", "remote_history_updated": true } },
-    "functions": { "status": "unchanged", "written": [], "detail": { "project_ref": "...", "function_slugs": [] } }
+    "config": {
+      "status": "changed",
+      "written": ["supabase/config.toml"],
+      "detail": {/* config pull's own payload, verbatim */},
+    },
+    "migration_history": {
+      "status": "skipped",
+      "written": [],
+      "detail": { "files": [] },
+      "reason": "not_needed",
+    },
+    "db": {
+      "status": "changed",
+      "written": ["supabase/migrations/..."],
+      "detail": { "declarative": false, "engine": "pg-delta", "remote_history_updated": true },
+    },
+    "functions": {
+      "status": "unchanged",
+      "written": [],
+      "detail": { "project_ref": "...", "function_slugs": [] },
+    },
   },
-  "counts": { "changed": 2, "unchanged": 1, "skipped": 1, "planned": 0, "failed": 0 }
+  "counts": { "changed": 2, "unchanged": 1, "skipped": 1, "planned": 0, "failed": 0 },
 }
 ```
 
@@ -257,7 +274,7 @@ the -o/--output flag is not supported by pull; use --output-format json|stream-j
   single aggregated prompt (which always runs, even when the config step itself has no work, since
   the other three steps might).
 - `pull`'s own `--yes`/`SUPABASE_YES` resolution has no project-`.env` fallback (unlike `db
-  pull`/`migration fetch`'s own internal resolution) — this doesn't matter in practice, since every
+pull`/`migration fetch`'s own internal resolution) — this doesn't matter in practice, since every
   reused step's own prompt is unconditionally bypassed (`assumeYes: true`) once `pull`'s own
   confirmation is accepted.
 - The db step runs in migration mode by default — `pull` never sets `--declarative`/`--use-pg-delta`/

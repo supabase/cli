@@ -24,7 +24,7 @@ Three more constraints shaped the design, found only by reading the actual sub-s
 implementations rather than assuming a thin composition layer would do:
 
 1. `config pull`, `db pull`, and `migration fetch` each call `output.success` (or the text-mode
-   equivalent) exactly once *inside their own handler* — calling three of them unmodified from an
+   equivalent) exactly once _inside their own handler_ — calling three of them unmodified from an
    orchestrator would emit three separate JSON objects on `--output-format json`, corrupting the
    "one JSON object per invocation" contract every other command upholds.
 2. `db pull` reads `db.major_version` out of `config.toml` for shadow-container provisioning
@@ -89,7 +89,7 @@ its existing standalone-command emission stays only in that command's own top-le
   `skipFinishedLine`), which suppresses the internal "Update remote migration history table?"
   prompt for a caller whose own confirmation already covers it.
 - `migration fetch`: `legacyRunMigrationFetch(input)`, taking an explicit `{ flags, target,
-  assumeYes? }` rather than deriving its target from raw CLI args (`resolveLegacyDbTargetFlags`),
+assumeYes? }` rather than deriving its target from raw CLI args (`resolveLegacyDbTargetFlags`),
   which an in-process caller has no argv to feed. `assumeYes` is required here, not cosmetic:
   `legacyMigrationConfirm` prompts regardless of `output.format` with a 10-minute stdin timeout —
   without an override, `pull --output-format json` on a TTY would hang waiting for input no
@@ -172,7 +172,7 @@ change to an existing array.
   orchestrate here until one is built.
 - **`--declarative` passthrough for the db step.** `pull`'s own db-step invocation always runs in
   migration mode; a user who wants a declarative pull from a linked project still runs `db pull
-  --declarative` directly. Adding a passthrough flag is a small, independent follow-up, not part of
+--declarative` directly. Adding a passthrough flag is a small, independent follow-up, not part of
   this design.
 - **`--remote-label`.** `config pull`'s own `--remote-label` (writing into a specific
   `[remotes.<label>]` block) has no equivalent on `pull` — `pull`'s target resolution always follows

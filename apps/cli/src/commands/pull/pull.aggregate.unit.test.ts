@@ -94,7 +94,10 @@ describe("legacyPullConfigStepResult", () => {
 
 describe("legacyPullMigrationHistoryStepResult", () => {
   it("reports skipped with reason not_needed", () => {
-    const outcome: LegacyPullMigrationHistoryStepOutcome = { kind: "skipped", reason: "not_needed" };
+    const outcome: LegacyPullMigrationHistoryStepOutcome = {
+      kind: "skipped",
+      reason: "not_needed",
+    };
     expect(legacyPullMigrationHistoryStepResult(outcome)).toEqual({
       step: "migration_history",
       status: "skipped",
@@ -222,9 +225,7 @@ describe("legacyPullDbStepResult", () => {
       kind: "applied",
       outcome: {
         kind: "migration",
-        schemaFiles: [
-          "/home/user/project/supabase/migrations/20240101000000_remote_schema.sql",
-        ],
+        schemaFiles: ["/home/user/project/supabase/migrations/20240101000000_remote_schema.sql"],
         remoteHistoryUpdated: true,
         engine: "migra",
       },
@@ -384,7 +385,10 @@ describe("legacyPullFailedStepResult", () => {
 });
 
 describe("legacyPullCounts", () => {
-  function result(status: LegacyPullStepResult["status"], step: LegacyPullStepResult["step"]): LegacyPullStepResult {
+  function result(
+    status: LegacyPullStepResult["status"],
+    step: LegacyPullStepResult["step"],
+  ): LegacyPullStepResult {
     return { step, status, written: [], detail: {} };
   }
 
@@ -456,7 +460,13 @@ describe("legacyPullAggregate", () => {
   it("does not mutate or reorder the input results array", () => {
     const results: ReadonlyArray<LegacyPullStepResult> = [
       { step: "config", status: "changed", written: [], detail: {} },
-      { step: "migration_history", status: "skipped", written: [], detail: {}, reason: "not_needed" },
+      {
+        step: "migration_history",
+        status: "skipped",
+        written: [],
+        detail: {},
+        reason: "not_needed",
+      },
       { step: "db", status: "unchanged", written: [], detail: {} },
       { step: "functions", status: "planned", written: [], detail: {} },
     ];

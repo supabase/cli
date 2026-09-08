@@ -45,7 +45,11 @@ import {
   legacyPullSummaryMessage,
   legacyRenderPullSummary,
 } from "./pull.format.ts";
-import type { LegacyPullAggregate, LegacyPullStepContext, LegacyPullStepResult } from "./pull.types.ts";
+import type {
+  LegacyPullAggregate,
+  LegacyPullStepContext,
+  LegacyPullStepResult,
+} from "./pull.types.ts";
 import {
   LegacyPullBranchNotFoundError,
   LegacyPullBranchNotLinkedError,
@@ -112,7 +116,8 @@ const legacyPullEmit = (output: typeof Output.Service, aggregate: LegacyPullAggr
 function legacyPullCaptureStep<A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<
-  { readonly kind: "ok"; readonly value: A } | { readonly kind: "failed"; readonly cause: Cause.Cause<E> },
+  | { readonly kind: "ok"; readonly value: A }
+  | { readonly kind: "failed"; readonly cause: Cause.Cause<E> },
   E,
   R
 > {
@@ -156,7 +161,8 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
     // a net-new TS command with no Go parity contract (CLI-2156).
     if (Option.isSome(goOutputFlag)) {
       return yield* new LegacyPullOutputFlagUnsupportedError({
-        message: "the -o/--output flag is not supported by pull; use --output-format json|stream-json instead.",
+        message:
+          "the -o/--output flag is not supported by pull; use --output-format json|stream-json instead.",
       });
     }
 
@@ -240,12 +246,20 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
           legacyConfigPullPayloadFor(runPlan, { dryRun: true, declined: false }),
         ),
         legacyPullMigrationHistoryStepResult(
-          shouldFetchMigrationHistory ? { kind: "planned" } : { kind: "skipped", reason: "not_needed" },
+          shouldFetchMigrationHistory
+            ? { kind: "planned" }
+            : { kind: "skipped", reason: "not_needed" },
         ),
         legacyPullDbStepResult({ kind: "planned" }),
         legacyPullFunctionsStepResult({ kind: "planned" }),
       ];
-      const aggregate = legacyPullAggregate({ ref, branch, dryRun: true, confirmed: false, results });
+      const aggregate = legacyPullAggregate({
+        ref,
+        branch,
+        dryRun: true,
+        confirmed: false,
+        results,
+      });
       yield* legacyPullEmit(output, aggregate);
       return;
     }
@@ -262,7 +276,12 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
     if (output.format === "text") {
       yield* output.raw(confirmBody);
     }
-    const confirmed = yield* legacyPromptYesNo(output, yes, "Proceed with pull?", dirty ? false : true);
+    const confirmed = yield* legacyPromptYesNo(
+      output,
+      yes,
+      "Proceed with pull?",
+      dirty ? false : true,
+    );
     if (!confirmed) {
       const results: ReadonlyArray<LegacyPullStepResult> = [
         legacyPullConfigStepResult(
@@ -281,7 +300,13 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
         legacyPullDbStepResult({ kind: "planned" }),
         legacyPullFunctionsStepResult({ kind: "planned" }),
       ];
-      const aggregate = legacyPullAggregate({ ref, branch, dryRun: false, confirmed: false, results });
+      const aggregate = legacyPullAggregate({
+        ref,
+        branch,
+        dryRun: false,
+        confirmed: false,
+        results,
+      });
       yield* legacyPullEmit(output, aggregate);
       return;
     }

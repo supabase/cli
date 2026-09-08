@@ -125,13 +125,11 @@ export const legacyPullDbStep = Effect.fnUntraced(function* (context: LegacyPull
     assumeYes: context.assumeYes,
     skipFinishedLine: true,
   }).pipe(
-    Effect.map(
-      (outcome): LegacyPullDbStepOutcome => ({
-        kind: "applied",
-        outcome,
-        workdir: cliSettings.workdir,
-      }),
-    ),
+    Effect.map((outcome): LegacyPullDbStepOutcome => ({
+      kind: "applied",
+      outcome,
+      workdir: cliSettings.workdir,
+    })),
     Effect.catchTag("LegacyDbPullInSyncError", () =>
       Effect.succeed<LegacyPullDbStepOutcome>({ kind: "in_sync" }),
     ),

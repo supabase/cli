@@ -8,14 +8,23 @@ import {
   legacyRenderPullSummary,
   type LegacyPullConfirmMessageInput,
 } from "./pull.format.ts";
-import { LEGACY_PULL_STEP_ORDER, type LegacyPullAggregate, type LegacyPullStepResult } from "./pull.types.ts";
+import {
+  LEGACY_PULL_STEP_ORDER,
+  type LegacyPullAggregate,
+  type LegacyPullStepResult,
+} from "./pull.types.ts";
 
 const PROJECT_REF = "abcdefghijklmnopqrst";
 
 describe("legacyPullPayload", () => {
   it("shapes a dry-run aggregate: every step planned, no branch, wrote:false", () => {
     const results: ReadonlyArray<LegacyPullStepResult> = [
-      { step: "config", status: "planned", written: [], detail: { schema_version: 1, wrote: false } },
+      {
+        step: "config",
+        status: "planned",
+        written: [],
+        detail: { schema_version: 1, wrote: false },
+      },
       { step: "migration_history", status: "planned", written: [], detail: { files: [] } },
       { step: "db", status: "planned", written: [], detail: {} },
       { step: "functions", status: "planned", written: [], detail: {} },
@@ -144,7 +153,13 @@ describe("legacyPullPayload", () => {
       detail: { files: [] },
       reason: "declined",
     });
-    expect(payload["counts"]).toEqual({ changed: 0, unchanged: 0, skipped: 1, planned: 3, failed: 0 });
+    expect(payload["counts"]).toEqual({
+      changed: 0,
+      unchanged: 0,
+      skipped: 1,
+      planned: 3,
+      failed: 0,
+    });
   });
 
   it("shapes a mixed-failure aggregate: one step failed, wrote:true from the OTHER changed steps", () => {
@@ -192,7 +207,13 @@ describe("legacyPullPayload", () => {
         suggestion: "Check your network connection and retry.",
       },
     });
-    expect(payload["counts"]).toEqual({ changed: 2, unchanged: 1, skipped: 0, planned: 0, failed: 1 });
+    expect(payload["counts"]).toEqual({
+      changed: 2,
+      unchanged: 1,
+      skipped: 0,
+      planned: 0,
+      failed: 1,
+    });
   });
 
   it("always reports step_order as LEGACY_PULL_STEP_ORDER, verbatim and in order", () => {
@@ -384,7 +405,13 @@ describe("legacyRenderPullSummary", () => {
   it("inlines a skipped step's reason in parentheses", () => {
     const results: ReadonlyArray<LegacyPullStepResult> = [
       { step: "config", status: "unchanged", written: [], detail: {} },
-      { step: "migration_history", status: "skipped", written: [], detail: {}, reason: "not_needed" },
+      {
+        step: "migration_history",
+        status: "skipped",
+        written: [],
+        detail: {},
+        reason: "not_needed",
+      },
       { step: "db", status: "unchanged", written: [], detail: {} },
       { step: "functions", status: "unchanged", written: [], detail: {} },
     ];
@@ -448,9 +475,9 @@ describe("legacyPullConfirmMessage", () => {
       configDiffText: "api.max_rows [update, write]\n  local:  500\n  remote: 1000\n\n\n",
     });
     expect(message).not.toContain("No config differences found.");
-    expect(message.startsWith("api.max_rows [update, write]\n  local:  500\n  remote: 1000\n\n")).toBe(
-      true,
-    );
+    expect(
+      message.startsWith("api.max_rows [update, write]\n  local:  500\n  remote: 1000\n\n"),
+    ).toBe(true);
   });
 
   it("always describes the db and functions steps qualitatively, regardless of other inputs", () => {
