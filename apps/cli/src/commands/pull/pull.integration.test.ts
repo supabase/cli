@@ -28,19 +28,15 @@ import {
   useLegacyTempWorkdir,
 } from "../../../tests/helpers/legacy-mocks.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
-import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { machineErrorContextLayer } from "../../shared/output/machine-error-context.layer.ts";
 import { jsonOutputLayer, streamJsonOutputLayer } from "../../shared/output/output.layer.ts";
 import {
-  LEGACY_GLOBAL_OUTPUT_FORMATS,
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
   LegacyNetworkIdFlag,
   LegacyYesFlag,
 } from "../../shared/legacy/global-flags.ts";
-import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
-import { PROJECT_REF_PATTERN } from "../../config/legacy-project-ref.service.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { LegacyDbConfigResolver } from "../../command-internal/legacy-db-config.service.ts";
 import {
@@ -56,15 +52,15 @@ import {
   LegacyPgDeltaEngineError,
 } from "../db/shared/legacy-pgdelta-engine.service.ts";
 import type { LegacyPullFlags } from "./pull.command.ts";
-import { legacyPull } from "./pull.handler.ts";
+import { legacyPullHandler } from "./pull.command.ts";
 
 /**
  * Scenario-oriented integration coverage for `supabase pull` (CLI-1272,
- * ADR 0024). Drives the real `legacyPull` handler (plus the SAME
- * `withLegacyCommandInstrumentation`/`withJsonErrorHandling` wiring
- * `pull.command.ts` composes — replicated here since `pull.command.ts`
- * doesn't export its wrapped handler, mirroring `config diff`'s own
- * `legacyConfigDiffHandler`-less precedent) against a fully mocked db-pull/
+ * ADR 0024). Drives the real exported `legacyPullHandler` — the SAME
+ * `safeFlags`/`withLegacyCommandInstrumentation`/`withJsonErrorHandling`
+ * wiring `pull.command.ts`'s `Command.withHandler` composes (mirrors
+ * `functions download`'s own exported-handler precedent) — against a fully
+ * mocked db-pull/
  * migration-fetch/functions-download substrate: `LegacyPgDeltaEngine` is
  * mocked directly (so every db step forces the pg-delta diff engine via
  * `[experimental.pgdelta] enabled = true`, skipping both the migra/edge-runtime
@@ -151,20 +147,12 @@ function pullFlags(overrides: Partial<LegacyPullFlags> = {}): LegacyPullFlags {
   };
 }
 
-/** Reproduces `pull.command.ts`'s `legacyPullHandler` wiring, which that file
- *  does not export (mirrors `config diff`'s own bare-handler precedent). */
+/** Drives the exact wiring `pull.command.ts`'s `Command.withHandler` uses —
+ *  imported rather than reimplemented, so this suite can never drift from
+ *  what actually ships (mirrors `functions download`'s own exported-handler
+ *  precedent). */
 function runPull(flags: LegacyPullFlags) {
-  return legacyPull(flags).pipe(
-    withLegacyCommandInstrumentation({
-      flags,
-      safeFlags:
-        Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
-          ? ["project-ref"]
-          : [],
-      outputFormats: LEGACY_GLOBAL_OUTPUT_FORMATS,
-    }),
-    withJsonErrorHandling,
-  );
+  return legacyPullHandler(flags);
 }
 
 // ---------------------------------------------------------------------------
@@ -709,7 +697,7 @@ describe("legacy pull integration", () => {
     "bootstraps a fresh checkout with --output-format json: exactly one JSON object with all four step keys",
     () => {
       writeConfig("[api]\nmax_rows = 500\n");
-      const { layer, capturingStdio } = setup({
+      const { layer, capturingStdio, dbConfig, linkedProjectCache } = setup({
         format: "json",
         yes: true,
         api: { functionSlugs: ["hello"] },
@@ -738,6 +726,25 @@ describe("legacy pull integration", () => {
         expect((steps["db"] as Record<string, unknown>)["status"]).toBe("changed");
         expect((steps["functions"] as Record<string, unknown>)["status"]).toBe("changed");
         expect(payload["wrote"]).toBe(true);
+
+        // The db step's remote write actually happened — not just a local
+        // file write. `historyUpserts` is the mocked Postgres session's own
+        // record of every parameterized write against
+        // `supabase_migrations.schema_migrations` on the (mocked) REMOTE
+        // database, and the payload's own `remote_history_updated` field
+        // (`pull.aggregate.ts`'s `legacyPullDbStepResult`) reports the same
+        // fact back to a machine consumer.
+        expect(dbConfig.historyUpserts.length).toBeGreaterThan(0);
+        const dbDetail = (steps["db"] as Record<string, unknown>)["detail"] as Record<
+          string,
+          unknown
+        >;
+        expect(dbDetail["remote_history_updated"]).toBe(true);
+
+        // The linked-project cache was written with the resolved ref once
+        // target resolution succeeded.
+        expect(linkedProjectCache.cached).toBe(true);
+        expect(linkedProjectCache.cachedRef).toBe(LEGACY_VALID_REF);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -788,6 +795,65 @@ describe("legacy pull integration", () => {
 
         expect(out!.promptConfirmCalls).toHaveLength(1);
         expect(out!.promptConfirmCalls[0]?.message).toBe("Proceed with pull?");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "the single confirmation suppresses BOTH sub-step prompts, and both underlying writes still complete: db updates remote history, migration fetch overwrites the pre-existing file",
+    () => {
+      writeConfig("[api]\nmax_rows = 500\n");
+      // Pre-existing local file sharing the remote row's exact version+name —
+      // `migration fetch`'s own overwrite prompt is only reachable when
+      // `supabase/migrations` is non-empty, and this file is what gets
+      // clobbered.
+      const preExisting = seedLocalMigration(
+        "20260101000000",
+        "init",
+        "create table local_only ();\n",
+      );
+      const { layer, out, dbConfig } = setup({
+        stdinIsTty: true,
+        confirm: [true],
+        remoteMigrations: [
+          {
+            version: "20260101000000",
+            name: "init",
+            statements: ["create table remote_only ();"],
+          },
+        ],
+        // Real schema drift — `db pull`'s own remote-history-update prompt is
+        // only reachable when the diff actually writes a migration file.
+        diffOutcome: () => ({
+          changes: true,
+          files: [{ name: "pull", sql: "alter table remote_only add column bar text;" }],
+        }),
+      });
+      return Effect.gen(function* () {
+        // `--with-migration-history` over an already-populated directory —
+        // the OTHER condition (besides real db drift) that makes both
+        // sub-prompts reachable if `assumeYes` didn't suppress them.
+        yield* runPull(pullFlags({ withMigrationHistory: true }));
+
+        // Exactly one prompt reached the terminal, even though BOTH `db
+        // pull`'s own "Update remote migration history table?" prompt and
+        // `migration fetch`'s own "Do you want to overwrite existing files…?"
+        // prompt would fire on their own if either step ran standalone
+        // against this same drift/pre-existing state.
+        expect(out!.promptConfirmCalls).toHaveLength(1);
+        expect(out!.promptConfirmCalls[0]?.message).toBe("Proceed with pull?");
+
+        // `migration fetch`'s own overwrite prompt was suppressed, but the
+        // overwrite itself still ran to completion: the pre-existing file's
+        // content is now the REMOTE row's statements, not the original local
+        // ones.
+        const rewritten = readFileSync(preExisting, "utf8");
+        expect(rewritten).toContain("create table remote_only");
+        expect(rewritten).not.toContain("create table local_only");
+
+        // `db pull`'s own remote-history-update prompt was suppressed, but
+        // the remote write itself still ran to completion.
+        expect(dbConfig.historyUpserts.length).toBeGreaterThan(0);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -852,7 +918,7 @@ describe("legacy pull integration", () => {
     () => {
       writeConfig();
       seedLocalMigration("20260101000000");
-      const { layer, capturingStdio, processControl } = setup({
+      const { layer, capturingStdio, processControl, telemetry, linkedProjectCache } = setup({
         format: "json",
         yes: true,
         api: { functionsListStatus: 500 },
@@ -878,6 +944,14 @@ describe("legacy pull integration", () => {
         >;
         expect(String(failure["message"])).toContain("500");
         expect(processControl.exitCode).toBe(1);
+
+        // A partial step failure (ref resolved, but a later step failed) still
+        // performs BOTH Legacy Shell Invariant #1 finalizers — the ref
+        // resolved before the functions step ever ran, so the cache write
+        // still fires alongside the telemetry flush.
+        expect(linkedProjectCache.cached).toBe(true);
+        expect(linkedProjectCache.cachedRef).toBe(LEGACY_VALID_REF);
+        expect(telemetry.flushed).toBe(true);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -906,6 +980,45 @@ describe("legacy pull integration", () => {
         expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
         expect(stepLine(out!.stdoutText, "db")).toContain("unchanged");
         expect(stepLine(out!.stdoutText, "functions")).toContain("unchanged");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // 8b. --remote-label.
+  // -------------------------------------------------------------------------
+
+  it.live(
+    "--remote-label creates the named [remotes.*] block even on an otherwise zero-drift config",
+    () => {
+      writeConfig();
+      seedLocalMigration("20260101000000");
+      const { layer } = setup({
+        yes: true,
+        remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
+        diffOutcome: () => ({ changes: false }),
+      });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags({ remoteLabel: Option.some("customname") }));
+        expect(readFileSync(configPath(), "utf8")).toContain("[remotes.customname]");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "an empty-string --remote-label is treated as not provided: no forced [remotes.*] block on an otherwise zero-drift config",
+    () => {
+      writeConfig();
+      seedLocalMigration("20260101000000");
+      const { layer, out } = setup({
+        yes: true,
+        remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
+        diffOutcome: () => ({ changes: false }),
+      });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags({ remoteLabel: Option.some("") }));
+        expect(stepLine(out!.stdoutText, "config")).toContain("unchanged");
+        expect(readFileSync(configPath(), "utf8")).not.toContain("[remotes.");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1088,13 +1201,20 @@ describe("legacy pull integration", () => {
     "a --workdir naming a directory that does not exist fails before any target resolution",
     () => {
       const missing = join(tempRoot.current, "does-not-exist");
-      const { layer, api } = setup({ workdir: missing });
+      const { layer, api, telemetry, linkedProjectCache } = setup({ workdir: missing });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(runPull(pullFlags()));
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
         expect(rendered).toContain("LegacyPullWorkdirError");
         expect(api.requests).toHaveLength(0);
+
+        // Legacy Shell Invariant #1: telemetry flushes on EVERY invocation,
+        // even a target-resolution failure — but the linked-project cache
+        // write only fires once a ref has actually resolved, which never
+        // happened here (the workdir check runs before target resolution).
+        expect(telemetry.flushed).toBe(true);
+        expect(linkedProjectCache.cached).toBe(false);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1108,6 +1228,23 @@ describe("legacy pull integration", () => {
         const exit = yield* Effect.exit(runPull(pullFlags({ projectRef: Option.some("staging") })));
         expect(Exit.isFailure(exit)).toBe(true);
         expect(JSON.stringify(exit)).toContain("LegacyPullBranchResolveNetworkError");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "a supabase/migrations read failure that is NOT 'missing' (a plain file colliding with the directory) fails with a read error, instead of silently treating it as empty",
+    () => {
+      writeConfig();
+      // `fs.readDirectory` against a plain FILE fails with ENOTDIR, not
+      // "NotFound" — the bootstrap-detection read (Phase 0) must propagate
+      // this instead of collapsing it to "no migrations yet".
+      writeFileSync(migrationsDir(), "not a directory");
+      const { layer } = setup({ yes: true });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(runPull(pullFlags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("LegacyMigrationsReadError");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1363,6 +1500,125 @@ describe("legacy pull integration", () => {
         yield* runPull(pullFlags());
         expect(stepLine(out!.stdoutText, "migration_history")).toContain("skipped");
         expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// `--project-ref` telemetry redaction: the raw `--project-ref` VALUE recorded
+// in `cli_command_executed`'s `flags` map depends on the literal argv the
+// wrapper's `changedFlagNames` scan reads from `Stdio.args` — a separate
+// source from the `LegacyPullFlags` object the handler itself runs on — so
+// each case below overrides `Stdio.args` on top of `setup()`'s own default
+// (mirrors `config diff`'s own telemetry-wiring precedent).
+// ---------------------------------------------------------------------------
+
+describe("legacy pull telemetry wiring", () => {
+  const withProjectRefArgs = (base: ReturnType<typeof setup>["layer"], projectRef: string) =>
+    Layer.mergeAll(
+      base,
+      Stdio.layerTest({ args: Effect.succeed(["pull", "--project-ref", projectRef]) }),
+    );
+
+  it.live("logs a ref-shaped --project-ref verbatim in cli_command_executed", () => {
+    writeConfig();
+    const { layer, analytics } = setup({ yes: true });
+    return Effect.gen(function* () {
+      yield* runPull(pullFlags({ projectRef: Option.some(LEGACY_VALID_REF), dryRun: true }));
+      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
+      expect(event?.properties["flags"]).toEqual({ "project-ref": LEGACY_VALID_REF });
+    }).pipe(Effect.provide(withProjectRefArgs(layer, LEGACY_VALID_REF)));
+  });
+
+  it.live("redacts a branch-name-shaped --project-ref in cli_command_executed", () => {
+    // `--project-ref` accepts branch names too (CLI-2167 vocabulary) — a
+    // user-created branch name must never reach PostHog verbatim.
+    writeConfig();
+    const { layer, analytics } = setup({ yes: true });
+    return Effect.gen(function* () {
+      yield* runPull(pullFlags({ projectRef: Option.some("staging"), dryRun: true }));
+      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
+      expect(event?.properties["flags"]).toEqual({ "project-ref": "<redacted>" });
+    }).pipe(Effect.provide(withProjectRefArgs(layer, "staging")));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `--output-format stream-json`: `streamJsonOutputLayer` (`output.layer.ts`)
+// nests the success payload under `data` (`{type: "result", data: {...},
+// timestamp}`), but its `fail` implementation spreads `MachineErrorContext`'s
+// payload at the TOP level, alongside `type`/`error`/`timestamp` — an
+// asymmetry within the SAME output layer, not something to assume matches
+// `success`'s own shape.
+// ---------------------------------------------------------------------------
+
+describe("legacy pull stream-json output", () => {
+  it.live(
+    "a successful run emits exactly one NDJSON result event with the payload nested under data",
+    () => {
+      writeConfig("[api]\nmax_rows = 500\n");
+      const { layer, capturingStdio } = setup({
+        format: "stream-json",
+        yes: true,
+        api: { functionSlugs: ["hello"] },
+        remoteMigrations: [
+          { version: "20260101000000", name: "init", statements: ["create table foo ();"] },
+        ],
+        diffOutcome: () => ({
+          changes: true,
+          files: [{ name: "pull", sql: "alter table foo add column bar text;" }],
+        }),
+      });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags());
+
+        expect(capturingStdio!.stdout).toHaveLength(1);
+        const event = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+        expect(event["type"]).toBe("result");
+        expect(event["steps"]).toBeUndefined();
+        const data = event["data"] as Record<string, unknown>;
+        expect(data["message"]).toContain("Pull complete");
+        const steps = data["steps"] as Record<string, unknown>;
+        expect((steps["config"] as Record<string, unknown>)["status"]).toBe("changed");
+        expect((steps["db"] as Record<string, unknown>)["status"]).toBe("changed");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "a partial step failure emits exactly one NDJSON error event with the payload spread at the top level, NOT nested under data",
+    () => {
+      writeConfig();
+      seedLocalMigration("20260101000000");
+      const { layer, capturingStdio } = setup({
+        format: "stream-json",
+        yes: true,
+        api: { functionsListStatus: 500 },
+        remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
+        diffOutcome: () => ({ changes: false }),
+      });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags());
+
+        expect(capturingStdio!.stdout).toHaveLength(1);
+        const event = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+        expect(event["type"]).toBe("error");
+        expect(event["data"]).toBeUndefined();
+        // `error` is the FIRST failing step's own (re-failed) cause, not the
+        // aggregate's summary message — same underlying cause the payload's
+        // own `steps.functions.failure.message` reports below.
+        const error = event["error"] as Record<string, unknown>;
+        expect(String(error["message"])).toContain("500");
+        // The aggregate payload (`legacyPullPayload`) is spread directly onto
+        // the event, sibling to `type`/`error`/`timestamp` — not nested.
+        const steps = event["steps"] as Record<string, unknown>;
+        expect((steps["functions"] as Record<string, unknown>)["status"]).toBe("failed");
+        const failure = (steps["functions"] as Record<string, unknown>)["failure"] as Record<
+          string,
+          unknown
+        >;
+        expect(String(failure["message"])).toContain("500");
       }).pipe(Effect.provide(layer));
     },
   );

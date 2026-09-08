@@ -45,7 +45,9 @@ const config = {
 
 export type LegacyPullFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-const legacyPullHandler = (flags: LegacyPullFlags) =>
+// Exported so integration tests can drive the exact wiring `Command.withHandler`
+// uses below, instead of re-implementing the `safeFlags`/telemetry wrapper inline.
+export const legacyPullHandler = (flags: LegacyPullFlags) =>
   legacyPull(flags).pipe(
     // `--project-ref` accepts branch names here (CLI-2167 vocabulary), so its
     // value is only safe to log verbatim when it is actually ref-shaped — a
