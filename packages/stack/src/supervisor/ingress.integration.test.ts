@@ -22,7 +22,7 @@ import { makeStackStateStore } from "../state/StackStateStore.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import { makeSupervisorIngress } from "./Ingress.ts";
 import { bindHostListener } from "./HostListener.ts";
-import type { HostListener } from "../state/PortCoordinator.ts";
+import type { HostListener } from "./HostListener.ts";
 import { privateBindingIntentsFor } from "../runtime/WorkloadRuntimeSpec.ts";
 
 const identity: StackIdentity = {
@@ -37,6 +37,9 @@ const identity: StackIdentity = {
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
+
+const bindPrivate = (_address: string, port: number, _binding: string) =>
+  Effect.succeed({ port, close: Effect.void });
 
 const closeServer = (server: ReturnType<typeof createHttpServer>): Effect.Effect<void> =>
   Effect.callback<void>((resume) => {
@@ -117,7 +120,6 @@ describe("Supervisor ingress", () => {
           secrets: {},
         });
         const apiCloseCount = yield* Ref.make(0);
-        const checkHostPort = () => Effect.void;
         const bindHost = (
           address: string,
           port: number,
@@ -157,8 +159,8 @@ describe("Supervisor ingress", () => {
           stateRoot: path.join(root, "managed", "stacks"),
           store,
           context,
-          checkHostPort,
           bindHost,
+          bindPrivate,
         });
         const state = yield* store.read(stackId).pipe(Effect.map((value) => value!));
         const input = {
@@ -249,6 +251,7 @@ describe("Supervisor ingress", () => {
           stateRoot: root,
           store,
           context,
+          bindPrivate,
           apiMaterial: () =>
             Effect.succeed({
               publishableKey: "sb_publishable_test",
@@ -321,6 +324,128 @@ describe("Supervisor ingress", () => {
     ),
   );
 
+  it.live("reuses a wildcard API listener for the internal loopback bind", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const context = Context.make(FileSystem.FileSystem, fs).pipe(
+          Context.add(Path.Path, path),
+          Context.add(Crypto.Crypto, crypto),
+        );
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-ingress-wildcard-" });
+        const stackIdentity = {
+          ...identity,
+          projectRoot: root,
+          checkoutRoot: root,
+          workspaceId: root,
+          checkoutId: root,
+        };
+        const stackId = yield* deriveStackId(stackIdentity);
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+          config: {
+            capabilities: {
+              auth: { enabled: false },
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              functions: { enabled: false },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+              pooler: { enabled: false },
+            },
+            listeners: {
+              api: { address: "0.0.0.0" },
+              database: { enabled: false },
+              pooler: { enabled: false },
+              studio: { enabled: false },
+              mailUi: { enabled: false },
+              smtp: { enabled: false },
+              pop3: { enabled: false },
+              functionsInspector: { enabled: false },
+            },
+          },
+        });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const persisted: PersistedStackState = {
+          format: "supabase-stack-state-v1",
+          identity: { ...stackIdentity, stackId },
+          runtime: { kind: "native" },
+          desiredLifecycle: "running",
+          definition: compiled.definition,
+          ports: [],
+          privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
+            ...binding,
+            port: 30_000 + index,
+          })),
+          secrets: {},
+        };
+        yield* store.initialize(stackId, persisted);
+        const binds: Array<{ readonly address: string; readonly field: HostListener["field"] }> =
+          [];
+        const bindHost = (address: string, port: number, field: HostListener["field"]) =>
+          bindHostListener(address, port, field).pipe(
+            Effect.tap((listener) =>
+              Effect.sync(() => {
+                binds.push({ address: listener.address, field });
+              }),
+            ),
+          );
+        const ingress = yield* makeSupervisorIngress({
+          stackId,
+          stateRoot: root,
+          store,
+          context,
+          bindHost,
+          bindPrivate,
+          apiMaterial: () =>
+            Effect.succeed({
+              publishableKey: "sb_publishable_test",
+              secretKey: "sb_secret_test",
+              anonJwt: "anon-jwt",
+              serviceRoleJwt: "service-jwt",
+            }),
+          resolveInternalApiBindAddress: () => Effect.succeed("127.0.0.1"),
+        });
+        const input = {
+          stackId,
+          desiredLifecycle: "running" as const,
+          state: persisted,
+          definition: compiled.definition,
+          secrets: {},
+          plan: compiled.executionPlan,
+        };
+        const reservation = yield* ingress.acquire(input);
+        const backend = yield* listenBackend(
+          createHttpServer((_request: IncomingMessage, response: ServerResponse) => {
+            response.statusCode = 200;
+            response.end("wildcard-forwarded");
+          }),
+        );
+        const backendAddress = backend.address();
+        if (typeof backendAddress !== "object" || backendAddress === null)
+          return yield* Effect.die("backend did not expose an address");
+        yield* ingress.open(input, reservation, (capability) =>
+          Effect.succeed({
+            capability,
+            endpoint: { host: "127.0.0.1", port: backendAddress.port },
+          }),
+        );
+        const api = reservation.assignments.api;
+        if (api === undefined) return yield* Effect.die("API listener was not assigned");
+        const response = yield* request(api.port);
+        expect(response.status).toBe(200);
+        expect(response.body).toBe("wildcard-forwarded");
+        expect(binds.filter((entry) => entry.field === "api")).toHaveLength(1);
+        expect(binds.find((entry) => entry.field === "api")?.address).toBe("0.0.0.0");
+        yield* ingress.close;
+      }),
+    ),
+  );
+
   it.live("rejects incomplete persisted gateway material before opening", () =>
     run(
       Effect.gen(function* () {
@@ -369,7 +494,13 @@ describe("Supervisor ingress", () => {
           })),
           secrets: {},
         });
-        const ingress = yield* makeSupervisorIngress({ stackId, stateRoot: root, store, context });
+        const ingress = yield* makeSupervisorIngress({
+          stackId,
+          stateRoot: root,
+          store,
+          context,
+          bindPrivate,
+        });
         const state = yield* store.read(stackId).pipe(Effect.map((value) => value!));
         const reservation = yield* ingress.acquire({
           stackId,
@@ -462,6 +593,7 @@ describe("Supervisor ingress", () => {
           stateRoot: root,
           store,
           context,
+          bindPrivate,
           apiMaterial: () =>
             Effect.fail(new StackPreparationError({ message: "API material must not resolve" })),
         });
@@ -568,6 +700,7 @@ describe("Supervisor ingress", () => {
           stateRoot: root,
           store,
           context,
+          bindPrivate,
           apiMaterial: () =>
             Effect.succeed({
               publishableKey: "sb_publishable_test",

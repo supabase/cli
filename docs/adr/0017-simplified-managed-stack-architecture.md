@@ -63,16 +63,37 @@ first removes exact stack-owned remnants and creates fresh resources;
 failure to complete or validate cleanup fails closed. Persistent data, sticky
 ports, secrets, definitions, logs, and artifacts remain identity-scoped.
 
-Before a native cold start creates anything, it verifies every persisted public
+An acquire operation requires persisted `running` state and prevalidates every
+exact public claim and retained public or private assignment still requested.
+Exact values may be
+shared only with other stopped exact owners; a desired-running owner blocks
+regardless of observed process liveness. Conflicts never move retained claims.
+One registry transaction binds public and private claims before one state commit;
+successful public sockets remain held and are adopted directly. Temporary
+private TCP listeners remain held until commit and then close, so a private
+workload gap remains possible. Fresh automatic claims draw from
+`20000..32767` with a random start and stride `257`, making up to 64 bounded
+`EADDRINUSE`/`EACCES` attempts per newly selected binding while skipping durable
+sibling claims. Sticky values do not migrate. Failed acquisition preserves the
+previous successful arrays, including claims removed or reconfigured by the
+new definition, and releases attempted sockets; those arrays change only after
+the next successful acquisition. Candidate retries while holding the registry
+lock use no sleep, and no workload startup runs under the lock. This preserves the fail-closed registry lock and
+does not introduce a process-liveness lock redesign.
+
+Before a native cold start creates anything, it verifies every retained public
 and private port is bindable. PostgreSQL lock evidence containing a live or
 unclassifiable owner PID fails closed; a lock naming a process that no longer
 exists is left for PostgreSQL's own stale-lock recovery. A live stop/start
 composition preflights configuration without trying to bind ports that the
 current Supervisor intentionally owns. Cold recovery never adopts those
-resources. If an authoritative bind loses a race for a fresh automatic public
-assignment, planning retries with a bounded exclusion set; exact assignments
-and previously persisted sticky automatic ports remain hard failures and are
-never silently moved.
+resources. An actual bound wildcard may cover the internal API and avoid a
+duplicate listener or gateway adoption; IPv6 wildcards explicitly use dualstack.
+A remaining separate internal bridge bind can still fail once its topology is
+discovered. The reservation policy does not
+guarantee exclusion from custom dynamic or excluded ranges, or from unrelated
+processes that occupy sticky numbers while the stack is stopped. Focused port
+coverage runs on macOS, Linux, and Windows in CI.
 
 Every managed document records one concrete runtime selection. Native and
 container runtimes never mix. An omitted runtime selects native; when a

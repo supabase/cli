@@ -110,8 +110,7 @@ describe("startup ingress", () => {
           Context.add(Path.Path, path),
           Context.add(Crypto.Crypto, crypto),
         );
-        const listenerBound =
-          yield* Deferred.make<import("../state/PortCoordinator.ts").HostListener>();
+        const listenerBound = yield* Deferred.make<import("./HostListener.ts").HostListener>();
         const startEntered = yield* Deferred.make<void>();
         const releaseStart = yield* Deferred.make<void>();
         const activationCalls = yield* Ref.make(0);

@@ -64,6 +64,7 @@ import {
 import type { NativeProcessSpec } from "./NativeProcess.ts";
 import {
   resolveContainerResolutionFor,
+  privateBindingIntentsFor,
   runtimeSpecFor,
   validatePrivateAssignments,
   validateWorkloadRuntimeInputs,
@@ -807,12 +808,20 @@ export const makeProductionRuntime = (
               ),
             );
           }
-          for (const assignment of input.state.privatePorts)
+          const requestedPrivate = new Set(
+            privateBindingIntentsFor(input.plan).map(
+              (binding) => `${binding.workloadId}\u0000${binding.binding}`,
+            ),
+          );
+          for (const assignment of input.state.privatePorts) {
+            if (!requestedPrivate.has(`${assignment.workloadId}\u0000${assignment.binding}`))
+              continue;
             yield* checkHostPort(
               "127.0.0.1",
               assignment.port,
               `${assignment.workloadId}:${assignment.binding}`,
             );
+          }
           yield* checkNativeDatabaseLockEvidence(
             fileSystem,
             pathService.join(paths.data, "database", "postmaster.pid"),
