@@ -91,6 +91,7 @@ function setup(opts: {
     },
     findStack: () => Effect.die("find not used in prepare test"),
     listStacks: () => Effect.succeed([]),
+    discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
     openStack: () => {
       opts.onOpen?.();
       return Effect.succeed(opts.stack);

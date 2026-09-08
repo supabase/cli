@@ -117,6 +117,7 @@ const runStatus = (options: {
       return Effect.succeed(options.missingTarget ? Option.none() : Option.some(descriptor));
     },
     listStacks: () => Effect.succeed([]),
+    discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
     openStack: () =>
       Effect.succeed({
         id,
@@ -587,6 +588,7 @@ describe("experimental stack status", () => {
       findStack: () =>
         Effect.fail(new StackStateFormatUnsupportedError({ message: "discovery failed" })),
       listStacks: () => Effect.succeed([]),
+      discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
       openStack: () => Effect.die("open must not run"),
       inspectStack: () => Effect.die("inspect must not run"),
     });

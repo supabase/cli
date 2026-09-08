@@ -83,7 +83,10 @@ export const legacyExperimentalStackStop = Effect.fn("legacy.experimental.stack.
   yield* legacyValidateExperimentalStackStopTarget(flags);
 
   if (flags.all) {
-    const stacks = yield* stackApi.listStacks().pipe(Effect.mapError(stopError));
+    const discovered = yield* stackApi.discoverStacks().pipe(Effect.mapError(stopError));
+    for (const issue of discovered.errors)
+      yield* output.warn(`Skipping managed stack ${issue.id}: ${issue.error.message}`);
+    const stacks = discovered.stacks;
     const stopping = yield* output.task(`Stopping ${stacks.length} managed stack(s)...`);
     const results = yield* Effect.forEach(
       stacks,
@@ -98,18 +101,20 @@ export const legacyExperimentalStackStop = Effect.fn("legacy.experimental.stack.
     const failures = results.flatMap(({ descriptor, result }) =>
       Result.isFailure(result) ? [{ descriptor, error: result.failure }] : [],
     );
-    if (failures.length > 0) {
-      const message = `Failed to stop ${failures.length} of ${stacks.length} managed stacks: ${failures
-        .map(
+    const stoppedCount = stacks.length - failures.length;
+    if (failures.length > 0 || discovered.errors.length > 0) {
+      const message = `Stopped ${stoppedCount} managed stack(s); failed to stop ${failures.length} and skipped ${discovered.errors.length}: ${[
+        ...failures.map(
           ({ descriptor, error }) =>
             `${descriptor.id}: ${error instanceof Error ? error.message : String(error)}`,
-        )
-        .join("; ")}`;
+        ),
+        ...discovered.errors.map(({ id, error }) => `${id}: ${error.message}`),
+      ].join("; ")}`;
       yield* stopping.fail(message);
       return yield* new LegacyExperimentalStackStopError({
         reason: "lifecycle",
         message,
-        cause: failures,
+        cause: { failures, discovery: discovered.errors },
       });
     }
     yield* stopping.clear();

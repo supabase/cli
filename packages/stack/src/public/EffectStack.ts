@@ -12,6 +12,7 @@ import {
   Path,
   Predicate,
   Redacted,
+  Result,
   Schedule,
   Schema,
   Stream,
@@ -1067,10 +1068,67 @@ export const findStack = (
     return state === undefined ? Option.none() : Option.some(descriptor(state));
   });
 
-export const listStacks = (
+export interface StackDiscoveryIssue {
+  readonly id: StackId;
+  readonly error: StackDiscoveryError;
+}
+
+/**
+ * The result of reading the managed stack registry. Entry-level state errors are
+ * collected so callers can continue operating on healthy stacks; registry root
+ * enumeration errors remain fatal. Discovery never mutates managed state.
+ */
+export interface StackDiscoveryResult {
+  readonly stacks: ReadonlyArray<StackDescriptor>;
+  readonly errors: ReadonlyArray<StackDiscoveryIssue>;
+}
+
+const enrichStackDiscoveryError = (
+  entry: StackId,
+  error: Effect.Error<ReturnType<StackStateStore["read"]>>,
+): StackDiscoveryError => {
+  const message = `Failed to read managed stack ${entry}: ${error.message}`;
+  return Match.value(error).pipe(
+    Match.tag(
+      "InvalidProjectRootError",
+      (error) =>
+        new InvalidProjectRootError({
+          projectRoot: error.projectRoot,
+          stateRoot: error.stateRoot,
+          message,
+          cause: error,
+        }),
+    ),
+    Match.tag(
+      "StackStateInvalidError",
+      (error) =>
+        new StackStateInvalidError({
+          stackId: entry,
+          path: error.path,
+          code: error.code,
+          slot: error.slot,
+          message,
+          cause: error,
+        }),
+    ),
+    Match.tag(
+      "StackStateFormatUnsupportedError",
+      (error) =>
+        new StackStateFormatUnsupportedError({
+          format: error.format,
+          message,
+          cause: error,
+        }),
+    ),
+    Match.exhaustive,
+  );
+};
+
+/** Reads all managed stacks, retaining healthy descriptors when individual state documents fail. */
+export const discoverStacks = (
   options: ListStacksOptions = {},
 ): Effect.Effect<
-  ReadonlyArray<StackDescriptor>,
+  StackDiscoveryResult,
   StackDiscoveryError,
   FileSystem.FileSystem | Path.Path | Crypto.Crypto
 > =>
@@ -1091,63 +1149,50 @@ export const listStacks = (
         .exists(env.stateRoot)
         .pipe(Effect.mapError((error) => new StackStateInvalidError({ message: error.message }))))
     )
-      return [];
+      return { stacks: [], errors: [] };
     const entries = yield* fs
       .readDirectory(env.stateRoot)
       .pipe(Effect.mapError((error) => new StackStateInvalidError({ message: error.message })));
-    const result: StackDescriptor[] = [];
+    const stacks: StackDescriptor[] = [];
+    const errors: StackDiscoveryIssue[] = [];
     for (const entry of entries) {
       if (!Schema.is(StackIdSchema)(entry)) continue;
-      const state = yield* store.read(entry).pipe(
-        Effect.mapError((error) => {
-          const message = `Failed to read managed stack ${entry}: ${error.message}`;
-          return Match.value(error).pipe(
-            Match.tag(
-              "InvalidProjectRootError",
-              (error) =>
-                new InvalidProjectRootError({
-                  projectRoot: error.projectRoot,
-                  stateRoot: error.stateRoot,
-                  message,
-                  cause: error,
-                }),
-            ),
-            Match.tag(
-              "StackStateInvalidError",
-              (error) =>
-                new StackStateInvalidError({
-                  stackId: entry,
-                  path: error.path,
-                  code: error.code,
-                  slot: error.slot,
-                  message,
-                  cause: error,
-                }),
-            ),
-            Match.tag(
-              "StackStateFormatUnsupportedError",
-              (error) =>
-                new StackStateFormatUnsupportedError({
-                  format: error.format,
-                  message,
-                  cause: error,
-                }),
-            ),
-            Match.exhaustive,
-          );
-        }),
+      const result = yield* store.read(entry).pipe(
         Effect.catchTag("StackStateInvalidError", (error) =>
           isMissingStateRemnantError(error) ? Effect.void : Effect.fail(error),
         ),
+        Effect.result,
       );
+      if (Result.isFailure(result)) {
+        errors.push({
+          id: entry,
+          error: enrichStackDiscoveryError(entry, result.failure),
+        });
+        continue;
+      }
+      const state = result.success;
       if (
         state !== undefined &&
         (projectRoot === undefined || state.identity.projectRoot === projectRoot)
       )
-        result.push(descriptor(state));
+        stacks.push(descriptor(state));
     }
-    return result;
+    return { stacks, errors };
   });
+
+export const listStacks = (
+  options: ListStacksOptions = {},
+): Effect.Effect<
+  ReadonlyArray<StackDescriptor>,
+  StackDiscoveryError,
+  FileSystem.FileSystem | Path.Path | Crypto.Crypto
+> =>
+  discoverStacks(options).pipe(
+    Effect.flatMap(({ stacks, errors }) => {
+      const firstError = errors[0];
+      return firstError === undefined ? Effect.succeed(stacks) : Effect.fail(firstError.error);
+    }),
+  );
 
 type ConfigDrift = NonNullable<StackInspection["configDrift"]>;
 

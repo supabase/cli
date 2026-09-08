@@ -72,6 +72,7 @@ function setup(opts: {
     Layer.succeed(LegacyExperimentalStackApi, {
       createStack: () => Effect.die("unused"),
       listStacks: () => Effect.succeed([]),
+      discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
       findStack: () =>
         Effect.succeed(opts.found === false ? Option.none() : Option.some(descriptor)),
       inspectStack: () => Effect.succeed({ descriptor, owner: "absent" as const }),

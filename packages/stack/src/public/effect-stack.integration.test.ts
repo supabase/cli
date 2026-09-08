@@ -60,6 +60,7 @@ import {
 import type { LogQuery, StackLogBatch, StackLogEntry } from "./Logs.ts";
 import {
   createStack,
+  discoverStacks,
   inspectStack,
   listStacks,
   makeHandle,
@@ -1023,6 +1024,56 @@ describe("Effect stack lifecycle handoff", () => {
             }
           }
         }
+      }),
+    ),
+  );
+
+  it.live("reports corrupt entries while retaining healthy stack discovery", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const env = yield* StackRuntimeEnvironment;
+        const healthy = yield* createStack({ projectRoot: project });
+        const corruptProject = path.join(project, "corrupt");
+        const unsupportedProject = path.join(project, "unsupported");
+        yield* fs.makeDirectory(corruptProject);
+        yield* fs.makeDirectory(unsupportedProject);
+        const corrupt = yield* createStack({ projectRoot: corruptProject });
+        const unsupported = yield* createStack({ projectRoot: unsupportedProject });
+        const corruptPaths = yield* resolveStackPaths({
+          stateRoot: env.stateRoot,
+          stackId: corrupt.id,
+        });
+        const unsupportedPaths = yield* resolveStackPaths({
+          stateRoot: env.stateRoot,
+          stackId: unsupported.id,
+        });
+        yield* fs.writeFileString(corruptPaths.stateDocument, "{ malformed");
+        yield* fs.writeFileString(
+          unsupportedPaths.stateDocument,
+          JSON.stringify({ format: "supabase-stack-state-v2" }),
+        );
+        const corruptContents = yield* fs.readFileString(corruptPaths.stateDocument);
+        const unsupportedContents = yield* fs.readFileString(unsupportedPaths.stateDocument);
+
+        const discovered = yield* discoverStacks();
+
+        expect(discovered.stacks.map(({ id }) => id)).toEqual([healthy.id]);
+        expect(discovered.errors).toHaveLength(2);
+        expect(discovered.errors.map(({ id }) => id)).toEqual(
+          expect.arrayContaining([corrupt.id, unsupported.id]),
+        );
+        expect(discovered.errors.find(({ id }) => id === corrupt.id)?.error).toBeInstanceOf(
+          StackStateInvalidError,
+        );
+        expect(discovered.errors.find(({ id }) => id === unsupported.id)?.error).toBeInstanceOf(
+          StackStateFormatUnsupportedError,
+        );
+        expect(yield* fs.readFileString(corruptPaths.stateDocument)).toBe(corruptContents);
+        expect(yield* fs.readFileString(unsupportedPaths.stateDocument)).toBe(unsupportedContents);
+        const strict = yield* listStacks().pipe(Effect.exit);
+        expect(Exit.isFailure(strict)).toBe(true);
       }),
     ),
   );

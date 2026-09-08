@@ -66,6 +66,8 @@ function setup(opts: {
   findFailure?: StackDiscoveryError;
   allStacks?: ReadonlyArray<string>;
   stopFailureIds?: ReadonlyArray<string>;
+  discoveryErrors?: ReadonlyArray<{ id: string; error: StackDiscoveryError }>;
+  discoveryFailure?: StackDiscoveryError;
 }) {
   const out = mockOutput();
   const state = {
@@ -121,6 +123,16 @@ function setup(opts: {
     Layer.succeed(LegacyExperimentalStackApi, {
       createStack: () => Effect.die("must not create"),
       listStacks: () => Effect.succeed(allDescriptors),
+      discoverStacks: () =>
+        opts.discoveryFailure !== undefined
+          ? Effect.fail(opts.discoveryFailure)
+          : Effect.succeed({
+              stacks: allDescriptors,
+              errors: (opts.discoveryErrors ?? []).map(({ id, error }) => ({
+                id: StackIdSchema.make(id),
+                error,
+              })),
+            }),
       findStack: (input) =>
         Effect.sync(() => {
           state.findInputs.push(input);
@@ -328,9 +340,64 @@ describe("experimental stack stop", () => {
     const setupResult = setup({ root, allStacks: [first, second], stopFailureIds: [first] });
     return Effect.gen(function* () {
       const failure = yield* legacyExperimentalStackStop(flags({ all: true })).pipe(Effect.flip);
-      expect(failure.message).toContain("Failed to stop 1 of 2");
+      expect(failure.message).toContain(
+        "Stopped 1 managed stack(s); failed to stop 1 and skipped 0",
+      );
       expect(setupResult.state.openedIds).toEqual([first, second]);
       expect(setupResult.state.stopCalls).toBe(1);
+    }).pipe(
+      Effect.provide(setupResult.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("stops healthy stacks while warning about skipped discovery entries", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-all-discovery-"));
+    const failed = "3".repeat(64);
+    const healthy = "5".repeat(64);
+    const skipped = "4".repeat(64);
+    const setupResult = setup({
+      root,
+      allStacks: [failed, healthy],
+      stopFailureIds: [failed],
+      discoveryErrors: [
+        {
+          id: skipped,
+          error: new StackStateInvalidError({ message: "malformed state" }),
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      const failure = yield* legacyExperimentalStackStop(flags({ all: true })).pipe(Effect.flip);
+      expect(failure.message).toContain(
+        "Stopped 1 managed stack(s); failed to stop 1 and skipped 1",
+      );
+      expect(setupResult.state.destroyCalled).toBe(false);
+      expect(setupResult.state.openedIds).toEqual([failed, healthy]);
+      expect(setupResult.state.stopCalls).toBe(1);
+      expect(
+        setupResult.out.messages.some(
+          (message) => message.type === "warn" && message.message.includes(skipped),
+        ),
+      ).toBe(true);
+    }).pipe(
+      Effect.provide(setupResult.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("does not stop any stack when registry enumeration fails", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-all-registry-error-"));
+    const setupResult = setup({
+      root,
+      allStacks: ["5".repeat(64)],
+      discoveryFailure: new StackStateInvalidError({ message: "registry unreadable" }),
+    });
+    return Effect.gen(function* () {
+      const failure = yield* legacyExperimentalStackStop(flags({ all: true })).pipe(Effect.flip);
+      expect(failure.message).toContain("registry unreadable");
+      expect(setupResult.state.openedIds).toEqual([]);
+      expect(setupResult.state.stopCalls).toBe(0);
     }).pipe(
       Effect.provide(setupResult.layer),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),

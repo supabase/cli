@@ -79,6 +79,7 @@ function setup(args: ReadonlyArray<string> = []) {
   const api = Layer.succeed(LegacyExperimentalStackApi, {
     createStack: () => Effect.die("unused"),
     listStacks: () => Effect.succeed([descriptor]),
+    discoverStacks: () => Effect.succeed({ stacks: [descriptor], errors: [] }),
     findStack: () => Effect.succeed(Option.some(descriptor)),
     openStack: () => Effect.succeed(stack),
     inspectStack: () => Effect.succeed({ descriptor, owner: "running" as const }),

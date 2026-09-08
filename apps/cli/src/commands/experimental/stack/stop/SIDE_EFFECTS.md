@@ -21,12 +21,12 @@ returning. That process is package-owned and is not managed directly by the CLI.
 ## Output and telemetry
 
 Text mode reports the selected stack and stopped outcome. Structured modes include the selected
-stack id and stopped outcome. For `--all`, registry enumeration must succeed before any stop
-is attempted. An unreadable or unsupported registry entry fails discovery with the affected stack
-id; repair that entry or stop known stacks individually by id. After successful enumeration, all
-stops are attempted and a partial failure returns one aggregate error naming failed stack ids.
+stack id and stopped outcome. For `--all`, a registry-root enumeration failure prevents any stop
+from starting. An unreadable or unsupported entry is reported as a warning with its stack id;
+healthy entries are still stopped. Every healthy stop is attempted, and a partial result returns
+one aggregate error with stopped, failed, and skipped counts. Corrupt entries are never mutated.
 An empty registry succeeds. If no current stack
 exists, the command succeeds with an explicit no-stack result. Exit status is `0` for a
-successful stop or no current stack, `1` for a missing named stack or any typed stop failure,
+successful stop or no current stack, `1` for a missing named stack, a skipped registry entry, or any typed stop failure,
 and `130` if the command is interrupted before the stop completes. Standard command instrumentation records command
 metadata; stack data and credentials are not emitted as telemetry properties.

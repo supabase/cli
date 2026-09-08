@@ -127,6 +127,7 @@ function setup(opts: {
     Layer.succeed(LegacyExperimentalStackApi, {
       createStack: () => Effect.die("must not create"),
       listStacks: () => Effect.succeed([]),
+      discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
       findStack: (query) =>
         opts.findFailure === undefined
           ? Effect.succeed(

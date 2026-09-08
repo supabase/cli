@@ -54,6 +54,7 @@ const runList = (
         listCalls++;
         return stacks;
       }),
+    discoverStacks: () => Effect.succeed({ stacks, errors: [] }),
     openStack: () => {
       otherApiCalls++;
       return Effect.die("open must not run");
@@ -187,6 +188,7 @@ describe("experimental stack list", () => {
       findStack: () => Effect.succeed(Option.none()),
       listStacks: () =>
         Effect.fail(new StackStateFormatUnsupportedError({ message: "registry unreadable" })),
+      discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
       openStack: () => Effect.die("unused"),
       inspectStack: () => Effect.die("unused"),
     });

@@ -131,6 +131,7 @@ const makeFixture = (options: {
   const api = Layer.succeed(LegacyExperimentalStackApi, {
     createStack: () => Effect.die("create must not run"),
     listStacks: () => Effect.succeed([]),
+    discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
     findStack: () =>
       Effect.succeed(options.missingTarget === true ? Option.none() : Option.some(descriptor)),
     openStack: () => {

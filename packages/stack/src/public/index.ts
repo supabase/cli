@@ -7,7 +7,14 @@ export * from "./Logs.ts";
 export * from "./Credentials.ts";
 export * from "./Errors.ts";
 export * from "./Config.ts";
-export { createStack, openStack, findStack, listStacks, inspectStack } from "./EffectStack.ts";
+export {
+  createStack,
+  openStack,
+  findStack,
+  listStacks,
+  discoverStacks,
+  inspectStack,
+} from "./EffectStack.ts";
 export type {
   EffectStack,
   InspectStackOptions,
@@ -16,6 +23,8 @@ export type {
   CreateStackOptions,
   FindStackOptions,
   ListStacksOptions,
+  StackDiscoveryIssue,
+  StackDiscoveryResult,
   PreparedCapability,
   PrepareStackResult,
 } from "./EffectStack.ts";

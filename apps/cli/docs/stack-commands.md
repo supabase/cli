@@ -45,11 +45,11 @@ required. The project file is unchanged. The effective configuration is retained
 in stack state, so stop the stack and start without `--exclude` to restore the
 project’s configured services. `--eager` waits for enabled services to become ready.
 
-`supabase stack stop --all` stops every stack in the new backend’s registry and
-preserves data. It cannot be combined with `--stack` or `--stack-id`. Failures
-are reported after attempting the other stacks once registry enumeration succeeds. If a registry
-entry is unreadable or unsupported, discovery fails before any stack is stopped; repair that
-entry or stop known stacks individually with `--stack-id`.
+`supabase stack stop --all` stops every readable stack in the new backend’s registry and
+preserves data. It cannot be combined with `--stack` or `--stack-id`. All discovered stops are
+attempted; unreadable or unsupported entries produce warnings and are skipped. If any entry is skipped or a stop fails,
+the command exits nonzero with stopped, failed, and skipped counts. A registry-root enumeration failure prevents
+any stack from being stopped.
 
 `supabase stack destroy --stack feature-a` permanently removes exactly that
 stack and its data after confirmation. Use `--yes` for unattended execution.
