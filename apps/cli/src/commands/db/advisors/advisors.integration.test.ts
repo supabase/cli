@@ -3,46 +3,43 @@ import { Cause, Effect, Exit, Layer, Option, Redacted } from "effect";
 
 import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
 import {
-  LEGACY_VALID_REF,
-  LEGACY_VALID_TOKEN,
-  legacyJsonResponse,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  legacySequentialExecBatch,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  VALID_REF,
+  VALID_TOKEN,
+  jsonResponse,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  sequentialExecBatch,
+} from "../../../../tests/helpers/command-mocks.ts";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { LegacyDnsResolverFlag } from "../../../shared/legacy/global-flags.ts";
-import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
-import { LegacyInvalidAccessTokenError } from "../../../auth/legacy-errors.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyDbConfigIpv6Error } from "../../../command-internal/legacy-db-config.errors.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import { LegacyIdentityStitch } from "../../../command-internal/legacy-identity-stitch.ts";
-import type {
-  LegacyDbConfigFlags,
-  LegacyResolvedDbConfig,
-} from "../../../command-internal/legacy-db-config.types.ts";
-import { LegacyDbExecError } from "../../../command-internal/legacy-db-connection.errors.ts";
+import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
+import { InvalidAccessTokenError } from "../../../auth/errors.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { DbConfigIpv6Error } from "../../../command-internal/db-config.errors.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import { IdentityStitch } from "../../../command-internal/identity-stitch.ts";
+import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
-  LegacyDbConnection,
-  type LegacyPgConnInput,
-  type LegacyDbSession,
-} from "../../../command-internal/legacy-db-connection.service.ts";
+  DbConnection,
+  type PgConnInput,
+  type DbSession,
+} from "../../../command-internal/db-connection.service.ts";
 import {
-  LegacyDbAdvisorsFailOnError,
-  LegacyDbAdvisorsInvalidTokenError,
-  LegacyDbAdvisorsNotLoggedInError,
+  DbAdvisorsFailOnError,
+  DbAdvisorsInvalidTokenError,
+  DbAdvisorsNotLoggedInError,
 } from "./advisors.errors.ts";
-import { encodeLegacyAdvisorLints, scanLegacyAdvisorLintRow } from "./advisors.format.ts";
-import { legacyDbAdvisors } from "./advisors.handler.ts";
-import { splitLegacyLintsSql } from "./advisors.lints-sql.ts";
-import type { LegacyDbAdvisorsFlags } from "./advisors.command.ts";
+import { encodeAdvisorLints, scanAdvisorLintRow } from "./advisors.format.ts";
+import { dbAdvisors } from "./advisors.handler.ts";
+import { splitLintsSql } from "./advisors.lints-sql.ts";
+import type { DbAdvisorsFlags } from "./advisors.command.ts";
 
-const LOCAL_CONN: LegacyPgConnInput = {
+const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
   port: 54322,
   user: "postgres",
@@ -50,7 +47,7 @@ const LOCAL_CONN: LegacyPgConnInput = {
   database: "postgres",
 };
 
-const [SETUP_SQL, QUERY_SQL] = splitLegacyLintsSql();
+const [SETUP_SQL, QUERY_SQL] = splitLintsSql();
 
 /** A local lint row keyed by the column names the `lints.sql` query aliases. */
 function lintRow(over: Partial<Record<string, unknown>> = {}) {
@@ -70,14 +67,14 @@ function lintRow(over: Partial<Record<string, unknown>> = {}) {
 }
 
 function mockResolver(opts: { ipv6Error?: boolean } = {}) {
-  const resolveFlags: Array<LegacyDbConfigFlags> = [];
-  const layer = Layer.succeed(LegacyDbConfigResolver, {
-    resolve: (flags: LegacyDbConfigFlags) =>
+  const resolveFlags: Array<DbConfigFlags> = [];
+  const layer = Layer.succeed(DbConfigResolver, {
+    resolve: (flags: DbConfigFlags) =>
       Effect.gen(function* () {
         resolveFlags.push(flags);
         if (opts.ipv6Error === true) {
           return yield* Effect.fail(
-            new LegacyDbConfigIpv6Error({
+            new DbConfigIpv6Error({
               message: "IPv6 is not supported on your current network",
               suggestion: "Run supabase link --project-ref abc to setup IPv4 connection.",
             }),
@@ -86,7 +83,7 @@ function mockResolver(opts: { ipv6Error?: boolean } = {}) {
         return {
           conn: LOCAL_CONN,
           isLocal: flags.connType !== "linked",
-        } satisfies LegacyResolvedDbConfig;
+        } satisfies ResolvedDbConfig;
       }),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
@@ -104,9 +101,9 @@ function mockConnection(opts: {
   queryFails?: boolean;
 }) {
   const execs: Array<string> = [];
-  const layer = Layer.succeed(LegacyDbConnection, {
+  const layer = Layer.succeed(DbConnection, {
     connect: () => {
-      const session: LegacyDbSession = {
+      const session: DbSession = {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
@@ -114,20 +111,20 @@ function mockConnection(opts: {
           Effect.suspend(() => {
             execs.push(sql);
             if (sql === SETUP_SQL && opts.setupFails === true) {
-              return Effect.fail(new LegacyDbExecError({ message: "syntax error at set" }));
+              return Effect.fail(new DbExecError({ message: "syntax error at set" }));
             }
             return Effect.void;
           }),
         query: (sql: string) =>
           Effect.suspend(() => {
             if (sql === QUERY_SQL && opts.queryFails === true) {
-              return Effect.fail(new LegacyDbExecError({ message: "syntax error" }));
+              return Effect.fail(new DbExecError({ message: "syntax error" }));
             }
             return Effect.succeed(opts.rows ?? []);
           }),
         // A migration file's statements arrive as one batch; replay them through
         // `exec`/`query` so this suite's recordings and failure injection still apply.
-        execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+        execBatch: (statements) => sequentialExecBatch(session)(statements),
       };
       return Effect.succeed(session);
     },
@@ -142,25 +139,23 @@ function mockConnection(opts: {
 
 function mockProjectRef() {
   const calls: Array<string> = [];
-  const layer = Layer.succeed(LegacyProjectRefResolver, {
+  const layer = Layer.succeed(ProjectRefResolver, {
     resolve: () =>
       Effect.sync(() => {
         calls.push("resolve");
-        return LEGACY_VALID_REF;
+        return VALID_REF;
       }),
-    resolveForLink: () => Effect.succeed(LEGACY_VALID_REF),
-    resolveOptional: () => Effect.succeed(Option.some(LEGACY_VALID_REF)),
+    resolveForLink: () => Effect.succeed(VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
     // Gives an explicit `--project-ref` flag top precedence, same as Go's
     // `flags.LoadProjectRef` — mirrors the real resolver so a test can prove the
     // flag (not just the hardcoded fallback) drives the linked ref.
     loadProjectRef: (flagValue: Option.Option<string>) =>
       Effect.sync(() => {
         calls.push("loadProjectRef");
-        return Option.isSome(flagValue) && flagValue.value.length > 0
-          ? flagValue.value
-          : LEGACY_VALID_REF;
+        return Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : VALID_REF;
       }),
-    promptProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
+    promptProjectRef: () => Effect.succeed(VALID_REF),
   });
   return {
     layer,
@@ -171,21 +166,21 @@ function mockProjectRef() {
 }
 
 /** Validating credentials mock — the advisors `--linked` token gate calls
- *  `LegacyCredentials.getAccessToken`, which fails hard on a malformed token
+ *  `CommandCredentials.getAccessToken`, which fails hard on a malformed token
  *  and returns None when no token is present. */
 function mockCredentials(opts: { token?: "valid" | "none" | "invalid" } = {}) {
   const state = opts.token ?? "valid";
   const getAccessToken =
     state === "invalid"
       ? Effect.fail(
-          new LegacyInvalidAccessTokenError({
+          new InvalidAccessTokenError({
             message: "Invalid access token format. Must be like `sbp_0102...1920`.",
           }),
         )
       : state === "none"
         ? Effect.sync(() => Option.none<Redacted.Redacted<string>>())
-        : Effect.sync(() => Option.some(Redacted.make(LEGACY_VALID_TOKEN)));
-  const layer = Layer.succeed(LegacyCredentials, {
+        : Effect.sync(() => Option.some(Redacted.make(VALID_TOKEN)));
+  const layer = Layer.succeed(CommandCredentials, {
     getAccessToken,
     saveAccessToken: () => Effect.die("unexpected credentials write in advisors test"),
     deleteAccessToken: Effect.die("unexpected credentials delete in advisors test"),
@@ -199,7 +194,7 @@ function mockCredentials(opts: { token?: "valid" | "none" | "invalid" } = {}) {
 /** Tracks the raw-HTTP advisor path running the identity stitch. */
 function mockIdentityStitch() {
   let calls = 0;
-  const layer = Layer.succeed(LegacyIdentityStitch, {
+  const layer = Layer.succeed(IdentityStitch, {
     stitch: () =>
       Effect.sync(() => {
         calls += 1;
@@ -238,18 +233,18 @@ function setup(opts: SetupOpts = {}) {
     setupFails: opts.setupFails,
     queryFails: opts.queryFails,
   });
-  const telemetry = mockLegacyTelemetryStateTracked();
+  const telemetry = mockTelemetryStateTracked();
   const processControl = mockProcessControl();
   const projectRef = mockProjectRef();
-  const cache = mockLegacyLinkedProjectCacheTracked();
+  const cache = mockLinkedProjectCacheTracked();
 
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     handler: (request) => {
       const url = request.url;
       if (url.includes("/advisors/security")) {
         const status = opts.securityStatus ?? 200;
         if (status !== 200) {
-          return Effect.succeed(legacyJsonResponse(request, status, { message: "boom" }));
+          return Effect.succeed(jsonResponse(request, status, { message: "boom" }));
         }
         if (opts.securityNonJson === true) {
           // 200 with a non-JSON content-type (proxy/header regression).
@@ -263,20 +258,16 @@ function setup(opts: SetupOpts = {}) {
             ),
           );
         }
-        return Effect.succeed(
-          legacyJsonResponse(request, 200, { lints: opts.securityLints ?? [] }),
-        );
+        return Effect.succeed(jsonResponse(request, 200, { lints: opts.securityLints ?? [] }));
       }
       if (url.includes("/advisors/performance")) {
-        return Effect.succeed(
-          legacyJsonResponse(request, 200, { lints: opts.performanceLints ?? [] }),
-        );
+        return Effect.succeed(jsonResponse(request, 200, { lints: opts.performanceLints ?? [] }));
       }
-      return Effect.succeed(legacyJsonResponse(request, 404, {}));
+      return Effect.succeed(jsonResponse(request, 404, {}));
     },
   });
 
-  const cliSettings = mockLegacyCliSettings({
+  const cliSettings = mockCommandSettings({
     workdir: "/tmp/advisors-int",
     accessToken: opts.loggedIn === false ? Option.none() : undefined,
   });
@@ -297,7 +288,7 @@ function setup(opts: SetupOpts = {}) {
     credentials.layer,
     identityStitch.layer,
     api.httpClientLayer,
-    Layer.succeed(LegacyDnsResolverFlag, "native"),
+    Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
   );
   return {
@@ -314,7 +305,7 @@ function setup(opts: SetupOpts = {}) {
   };
 }
 
-const flags = (over: Partial<LegacyDbAdvisorsFlags> = {}): LegacyDbAdvisorsFlags => ({
+const flags = (over: Partial<DbAdvisorsFlags> = {}): DbAdvisorsFlags => ({
   dbUrl: over.dbUrl ?? Option.none<string>(),
   linked: over.linked ?? false,
   local: over.local ?? false,
@@ -328,8 +319,8 @@ describe("legacy db advisors — local", () => {
   it.live("queries the local database and prints the Go pretty JSON array", () => {
     const { layer, out, connection } = setup({ rows: [lintRow()] });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags());
-      const expected = encodeLegacyAdvisorLints([scanLegacyAdvisorLintRow(lintRow())]);
+      yield* dbAdvisors(flags());
+      const expected = encodeAdvisorLints([scanAdvisorLintRow(lintRow())]);
       expect(out.stdoutText).toBe(expected);
       expect(out.stderrText).toContain("Connecting to local database...");
       expect(connection.execs).toEqual(["begin", SETUP_SQL, "rollback"]);
@@ -339,7 +330,7 @@ describe("legacy db advisors — local", () => {
   it.live("prints 'No issues found' to stderr and nothing to stdout when empty", () => {
     const { layer, out } = setup({ rows: [] });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags());
+      yield* dbAdvisors(flags());
       expect(out.stdoutText).toBe("");
       expect(out.stderrText).toContain("No issues found");
     }).pipe(Effect.provide(layer));
@@ -353,7 +344,7 @@ describe("legacy db advisors — local", () => {
       ],
     });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags({ type: Option.some("security"), level: Option.some("info") }));
+      yield* dbAdvisors(flags({ type: Option.some("security"), level: Option.some("info") }));
       expect(out.stdoutText).toContain("sec");
       expect(out.stdoutText).not.toContain('"name": "perf"');
     }).pipe(Effect.provide(layer));
@@ -362,7 +353,7 @@ describe("legacy db advisors — local", () => {
   it.live("fails with 'failed to prepare lint session' on a setup error", () => {
     const { layer } = setup({ setupFails: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
+      const exit = yield* Effect.exit(dbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("failed to prepare lint session");
@@ -373,7 +364,7 @@ describe("legacy db advisors — local", () => {
   it.live("fails with 'failed to query lints' on a query error", () => {
     const { layer } = setup({ queryFails: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
+      const exit = yield* Effect.exit(dbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("failed to query lints");
@@ -385,14 +376,14 @@ describe("legacy db advisors — local", () => {
     const { layer } = setup({ rows: [lintRow({ level: "ERROR" })] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyDbAdvisors(flags({ failOn: Option.some("error"), level: Option.some("info") })),
+        dbAdvisors(flags({ failOn: Option.some("error"), level: Option.some("info") })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         if (Option.isSome(failure)) {
-          expect(failure.value).toBeInstanceOf(LegacyDbAdvisorsFailOnError);
-          expect((failure.value as LegacyDbAdvisorsFailOnError).message).toBe(
+          expect(failure.value).toBeInstanceOf(DbAdvisorsFailOnError);
+          expect((failure.value as DbAdvisorsFailOnError).message).toBe(
             "fail-on is set to error, non-zero exit",
           );
         }
@@ -406,13 +397,13 @@ describe("legacy db advisors — local", () => {
     const { layer } = setup({ rows: [lintRow({ level: "WARN" })] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyDbAdvisors(flags({ failOn: Option.some("warn"), level: Option.some("info") })),
+        dbAdvisors(flags({ failOn: Option.some("warn"), level: Option.some("info") })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         if (Option.isSome(failure)) {
-          expect((failure.value as LegacyDbAdvisorsFailOnError).message).toBe(
+          expect((failure.value as DbAdvisorsFailOnError).message).toBe(
             "fail-on is set to warn, non-zero exit",
           );
         }
@@ -423,9 +414,7 @@ describe("legacy db advisors — local", () => {
   it.live("rejects --db-url together with --local (via args Changed detection)", () => {
     const { layer } = setup({ args: ["--db-url=postgres://x", "--local"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacyDbAdvisors(flags({ dbUrl: Option.some("postgres://x") })),
-      );
+      const exit = yield* Effect.exit(dbAdvisors(flags({ dbUrl: Option.some("postgres://x") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain(
@@ -438,7 +427,7 @@ describe("legacy db advisors — local", () => {
   it.live("emits a success envelope in json mode and writes nothing raw to stdout", () => {
     const { layer, out } = setup({ format: "json", rows: [lintRow()] });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags());
+      yield* dbAdvisors(flags());
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "db advisors" }),
       );
@@ -453,7 +442,7 @@ describe("legacy db advisors — local", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyDbAdvisors(flags({ failOn: Option.some("error"), level: Option.some("info") })),
+        dbAdvisors(flags({ failOn: Option.some("error"), level: Option.some("info") })),
       );
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(processControl.exitCode).toBe(1);
@@ -463,7 +452,7 @@ describe("legacy db advisors — local", () => {
   it.live("flushes telemetry on completion", () => {
     const { layer, telemetry } = setup({ rows: [] });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags());
+      yield* dbAdvisors(flags());
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -479,7 +468,7 @@ describe("legacy db advisors — local", () => {
       performanceLints: [],
     });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags());
+      yield* dbAdvisors(flags());
       expect(projectRef.calls).toContain("loadProjectRef");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -492,7 +481,7 @@ describe("legacy db advisors — local", () => {
       performanceLints: [],
     });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags());
+      yield* dbAdvisors(flags());
       expect(projectRef.calls).toContain("loadProjectRef");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -502,7 +491,7 @@ describe("legacy db advisors — local", () => {
     // Both flags are Changed → mutual exclusion fires with cobra's sorted set.
     const { layer } = setup({ args: ["--local=false", "--linked"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
+      const exit = yield* Effect.exit(dbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain(
@@ -516,7 +505,7 @@ describe("legacy db advisors — local", () => {
     // `--local=false` is Changed for `local` → connType="local".
     const { layer, out, cache } = setup({ rows: [], args: ["--local=false"] });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags());
+      yield* dbAdvisors(flags());
       expect(out.stderrText).toContain("Connecting to local database...");
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -548,7 +537,7 @@ describe("legacy db advisors — linked", () => {
       args: ["--linked"],
     });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags({ level: Option.some("info") }));
+      yield* dbAdvisors(flags({ level: Option.some("info") }));
       const urls = api.requests.map((r) => r.url);
       expect(urls.some((u) => u.includes("/advisors/security"))).toBe(true);
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(true);
@@ -562,7 +551,7 @@ describe("legacy db advisors — linked", () => {
   it.live(
     "fetches advisors for the project given via --project-ref, overriding the workdir's own ref",
     () => {
-      // The fake resolver's own fallback (LEGACY_VALID_REF) represents whatever
+      // The fake resolver's own fallback (VALID_REF) represents whatever
       // the workdir would resolve to absent the flag (e.g. .temp/project-ref) —
       // the flag must win over it and drive both the API path and the cache.
       const FLAG_REF = "flagflagflagflagflag";
@@ -571,7 +560,7 @@ describe("legacy db advisors — linked", () => {
         args: ["--linked"],
       });
       return Effect.gen(function* () {
-        yield* legacyDbAdvisors(
+        yield* dbAdvisors(
           flags({ type: Option.some("security"), projectRef: Option.some(FLAG_REF) }),
         );
         // The request path itself must be scoped to the FLAG ref, not merely
@@ -582,7 +571,7 @@ describe("legacy db advisors — linked", () => {
         ).toBe(true);
         expect(cache.cached).toBe(true);
         expect(cache.cachedRef).toBe(FLAG_REF);
-        expect(cache.cachedRef).not.toBe(LEGACY_VALID_REF);
+        expect(cache.cachedRef).not.toBe(VALID_REF);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -593,9 +582,7 @@ describe("legacy db advisors — linked", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, connection, api, cache } = setup({ rows: [] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacyDbAdvisors(flags({ projectRef: Option.some(FLAG_REF) })),
-      );
+      const exit = yield* Effect.exit(dbAdvisors(flags({ projectRef: Option.some(FLAG_REF) })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain(
@@ -619,7 +606,7 @@ describe("legacy db advisors — linked", () => {
         args: ["--linked"],
       });
       return Effect.gen(function* () {
-        yield* legacyDbAdvisors(flags({ type: Option.some("security") }));
+        yield* dbAdvisors(flags({ type: Option.some("security") }));
         expect(resolver.resolveFlags.some((f) => f.connType === "linked")).toBe(true);
         // The fetch still ran after a successful resolve.
         expect(api.requests.some((r) => r.url.includes("/advisors/security"))).toBe(true);
@@ -635,7 +622,7 @@ describe("legacy db advisors — linked", () => {
     // still written.
     const { layer, api, cache } = setup({ ipv6Error: true, args: ["--linked"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
+      const exit = yield* Effect.exit(dbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("IPv6 is not supported");
@@ -656,7 +643,7 @@ describe("legacy db advisors — linked", () => {
       args: ["--linked"],
     });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags({ level: Option.some("info") }));
+      yield* dbAdvisors(flags({ level: Option.some("info") }));
       expect(identityStitch.calls).toBe(2);
     }).pipe(Effect.provide(layer));
   });
@@ -669,7 +656,7 @@ describe("legacy db advisors — linked", () => {
       args: ["--linked"],
     });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags({ type: Option.some("security") }));
+      yield* dbAdvisors(flags({ type: Option.some("security") }));
       expect(projectRef.calls).toContain("loadProjectRef");
       expect(projectRef.calls).not.toContain("resolve");
     }).pipe(Effect.provide(layer));
@@ -678,7 +665,7 @@ describe("legacy db advisors — linked", () => {
   it.live("fetches only the security endpoint for --type security", () => {
     const { layer, api } = setup({ securityLints: [securityLint], args: ["--linked"] });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags({ type: Option.some("security") }));
+      yield* dbAdvisors(flags({ type: Option.some("security") }));
       const urls = api.requests.map((r) => r.url);
       expect(urls.some((u) => u.includes("/advisors/security"))).toBe(true);
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(false);
@@ -688,7 +675,7 @@ describe("legacy db advisors — linked", () => {
   it.live("fetches only the performance endpoint for --type performance", () => {
     const { layer, api } = setup({ performanceLints: [performanceLint], args: ["--linked"] });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags({ type: Option.some("performance") }));
+      yield* dbAdvisors(flags({ type: Option.some("performance") }));
       const urls = api.requests.map((r) => r.url);
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(true);
       expect(urls.some((u) => u.includes("/advisors/security"))).toBe(false);
@@ -698,13 +685,13 @@ describe("legacy db advisors — linked", () => {
   it.live("fails with a login suggestion when no access token is available", () => {
     const { layer } = setup({ loggedIn: false, args: ["--linked"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
+      const exit = yield* Effect.exit(dbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         if (Option.isSome(failure)) {
-          expect(failure.value).toBeInstanceOf(LegacyDbAdvisorsNotLoggedInError);
-          const error = failure.value as LegacyDbAdvisorsNotLoggedInError;
+          expect(failure.value).toBeInstanceOf(DbAdvisorsNotLoggedInError);
+          const error = failure.value as DbAdvisorsNotLoggedInError;
           expect(error.message).toContain("Access token not provided");
           expect(error.suggestion).toContain("supabase login");
         }
@@ -715,13 +702,13 @@ describe("legacy db advisors — linked", () => {
   it.live("fails with the invalid-token message before any API call (Go LoadAccessTokenFS)", () => {
     const { layer, api } = setup({ invalidToken: true, args: ["--linked"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
+      const exit = yield* Effect.exit(dbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         if (Option.isSome(failure)) {
-          expect(failure.value).toBeInstanceOf(LegacyDbAdvisorsInvalidTokenError);
-          const error = failure.value as LegacyDbAdvisorsInvalidTokenError;
+          expect(failure.value).toBeInstanceOf(DbAdvisorsInvalidTokenError);
+          const error = failure.value as DbAdvisorsInvalidTokenError;
           expect(error.message).toContain("Invalid access token format");
           expect(error.suggestion).toContain("supabase login");
         }
@@ -736,7 +723,7 @@ describe("legacy db advisors — linked", () => {
     // the fetcher returns the status-200 error.
     const { layer } = setup({ securityNonJson: true, args: ["--linked"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbAdvisors(flags({ type: Option.some("security") })));
+      const exit = yield* Effect.exit(dbAdvisors(flags({ type: Option.some("security") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("unexpected security advisors status 200");
@@ -747,7 +734,7 @@ describe("legacy db advisors — linked", () => {
   it.live("fails when the advisors API returns a non-200 status", () => {
     const { layer } = setup({ securityStatus: 500, args: ["--linked"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbAdvisors(flags({ type: Option.some("security") })));
+      const exit = yield* Effect.exit(dbAdvisors(flags({ type: Option.some("security") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("unexpected security advisors status 500");
@@ -762,7 +749,7 @@ describe("legacy db advisors — linked", () => {
       args: ["--linked"],
     });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags({ type: Option.some("security") }));
+      yield* dbAdvisors(flags({ type: Option.some("security") }));
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "db advisors" }),
       );

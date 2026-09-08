@@ -31,13 +31,13 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                       |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — network-restrictions status printed to stdout                                                                                         |
-| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                         |
-| `1`  | API non-200 (`LegacyNetworkRestrictionsGetUnexpectedStatusError`)                                                                               |
-| `1`  | transport failure (`LegacyNetworkRestrictionsGetNetworkError`)                                                                                  |
+| Code | Condition                                                                                                                                 |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — network-restrictions status printed to stdout                                                                                   |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
+| `1`  | project ref unresolved (`ProjectRefNotLinkedError` / `InvalidProjectRefError`)                                                            |
+| `1`  | API non-200 (`NetworkRestrictionsGetUnexpectedStatusError`)                                                                               |
+| `1`  | transport failure (`NetworkRestrictionsGetNetworkError`)                                                                                  |
 
 ## Telemetry Events Fired
 

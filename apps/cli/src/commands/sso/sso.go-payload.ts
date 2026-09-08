@@ -1,64 +1,64 @@
 import {
-  type LegacyGoType,
-  legacyGoAny,
-  legacyGoBool,
-  legacyGoMap,
-  legacyGoPtr,
-  legacyGoSlice,
-  legacyGoString,
-  legacyGoStruct,
-  legacyGoTomlListWrapper,
-} from "../../command-internal/legacy-go-struct-output.encoders.ts";
+  type GoType,
+  goAny,
+  goBool,
+  goMap,
+  goPtr,
+  goSlice,
+  goString,
+  goStruct,
+  goTomlListWrapper,
+} from "../../command-internal/go-struct-output.encoders.ts";
 
 /**
  * Struct spec shared by `sso show`, `sso add`, `sso update`, `sso remove`,
  * and (as list items) `sso list`, driving `-o yaml` / `-o toml` key casing.
  */
-export const LEGACY_GO_SSO_PROVIDER_RESPONSE: LegacyGoType = legacyGoStruct([
-  ["created_at", legacyGoPtr(legacyGoString)],
+export const GO_SSO_PROVIDER_RESPONSE: GoType = goStruct([
+  ["created_at", goPtr(goString)],
   [
     "domains",
-    legacyGoPtr(
-      legacyGoSlice(
-        legacyGoStruct([
-          ["created_at", legacyGoPtr(legacyGoString)],
-          ["domain", legacyGoPtr(legacyGoString)],
-          ["updated_at", legacyGoPtr(legacyGoString)],
+    goPtr(
+      goSlice(
+        goStruct([
+          ["created_at", goPtr(goString)],
+          ["domain", goPtr(goString)],
+          ["updated_at", goPtr(goString)],
         ]),
       ),
     ),
   ],
-  ["id", legacyGoString],
+  ["id", goString],
   [
     "saml",
-    legacyGoPtr(
-      legacyGoStruct([
+    goPtr(
+      goStruct([
         [
           "attribute_mapping",
-          legacyGoPtr(
-            legacyGoStruct([
+          goPtr(
+            goStruct([
               [
                 "keys",
-                legacyGoMap(
-                  legacyGoStruct([
-                    ["array", legacyGoPtr(legacyGoBool)],
-                    ["default", legacyGoAny],
-                    ["name", legacyGoPtr(legacyGoString)],
-                    ["names", legacyGoPtr(legacyGoSlice(legacyGoString))],
+                goMap(
+                  goStruct([
+                    ["array", goPtr(goBool)],
+                    ["default", goAny],
+                    ["name", goPtr(goString)],
+                    ["names", goPtr(goSlice(goString))],
                   ]),
                 ),
               ],
             ]),
           ),
         ],
-        ["entity_id", legacyGoString],
-        ["metadata_url", legacyGoPtr(legacyGoString)],
-        ["metadata_xml", legacyGoPtr(legacyGoString)],
-        ["name_id_format", legacyGoPtr(legacyGoString)],
+        ["entity_id", goString],
+        ["metadata_url", goPtr(goString)],
+        ["metadata_xml", goPtr(goString)],
+        ["name_id_format", goPtr(goString)],
       ]),
     ),
   ],
-  ["updated_at", legacyGoPtr(legacyGoString)],
+  ["updated_at", goPtr(goString)],
 ]);
 
 /**
@@ -66,7 +66,7 @@ export const LEGACY_GO_SSO_PROVIDER_RESPONSE: LegacyGoType = legacyGoStruct([
  * (`list.go:35-37`) — a single lowercase key wrapping the provider structs,
  * which renders identically to a one-field tagged wrapper struct.
  */
-export const LEGACY_GO_SSO_PROVIDERS_WRAPPER: LegacyGoType = legacyGoTomlListWrapper(
+export const GO_SSO_PROVIDERS_WRAPPER: GoType = goTomlListWrapper(
   "providers",
-  LEGACY_GO_SSO_PROVIDER_RESPONSE,
+  GO_SSO_PROVIDER_RESPONSE,
 );

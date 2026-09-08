@@ -4,17 +4,17 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  LEGACY_VALID_REF,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  buildTestRuntime,
+  VALID_REF,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
-import { legacySsoRemove } from "./remove.handler.ts";
+import { ssoRemove } from "./remove.handler.ts";
 
 const VALID_PROVIDER_ID = "b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8";
 
@@ -24,7 +24,7 @@ const PROVIDER = {
   domains: [{ domain: "example.com" }],
 };
 
-const tempRoot = useLegacyTempWorkdir("supabase-sso-remove-int-");
+const tempRoot = useTempWorkdir("supabase-sso-remove-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -54,26 +54,26 @@ function jsonResponse(
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const analytics = mockAnalytics();
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
 
   const status = opts.status ?? 200;
   const body = opts.body ?? PROVIDER;
   const gate = opts.upgradeGate;
 
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     network: opts.network,
     handler: (request) => {
       const url = request.url;
       if (url.includes("/config/auth/sso/providers/") && request.method === "DELETE") {
         return Effect.succeed(jsonResponse(request, status, body, opts.rawBody));
       }
-      if (url.endsWith(`/v1/projects/${LEGACY_VALID_REF}`)) {
+      if (url.endsWith(`/v1/projects/${VALID_REF}`)) {
         if (gate === undefined) return Effect.succeed(jsonResponse(request, 404, {}));
         return Effect.succeed(
           jsonResponse(request, 200, {
-            id: LEGACY_VALID_REF,
-            ref: LEGACY_VALID_REF,
+            id: VALID_REF,
+            ref: VALID_REF,
             organization_id: "org-id",
             organization_slug: "acme",
             name: "Test",
@@ -107,8 +107,8 @@ function setup(opts: SetupOpts = {}) {
     },
   });
 
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -126,11 +126,11 @@ describe("legacy sso remove integration", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoRemove({ projectRef: Option.none(), providerId: "not-a-uuid" }),
+        ssoRemove({ projectRef: Option.none(), providerId: "not-a-uuid" }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoInvalidUuidError");
+        expect(JSON.stringify(exit.cause)).toContain("SsoInvalidUuidError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -138,10 +138,10 @@ describe("legacy sso remove integration", () => {
   it.live("DELETEs the correct path and renders provider in text mode", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
+      yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
       const req = api.requests.find((r) => r.method === "DELETE");
       expect(req?.url).toContain(
-        `/v1/projects/${LEGACY_VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
+        `/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
       );
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
     }).pipe(Effect.provide(layer));
@@ -151,11 +151,11 @@ describe("legacy sso remove integration", () => {
     const { layer } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+        ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoRemoveNotFoundError");
+        expect(JSON.stringify(exit.cause)).toContain("SsoRemoveNotFoundError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -164,12 +164,12 @@ describe("legacy sso remove integration", () => {
     const { layer } = setup({ status: 500, body: { error: "boom" } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+        ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoRemoveUnexpectedStatusError");
+        expect(dump).toContain("SsoRemoveUnexpectedStatusError");
         expect(dump).toContain("Unexpected error removing identity provider");
       }
     }).pipe(Effect.provide(layer));
@@ -178,9 +178,7 @@ describe("legacy sso remove integration", () => {
   it.live("fires cli_upgrade_suggested when gated on 4xx", () => {
     const { layer, analytics } = setup({ status: 404, body: {}, upgradeGate: "gated" });
     return Effect.gen(function* () {
-      yield* Effect.exit(
-        legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
-      );
+      yield* Effect.exit(ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }));
       expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -188,7 +186,7 @@ describe("legacy sso remove integration", () => {
   it.live("Go --output=env emits nothing", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
-      yield* legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
+      yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -196,7 +194,7 @@ describe("legacy sso remove integration", () => {
   it.live("Go --output=json encodes response verbatim", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
-      yield* legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
+      yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
     }).pipe(Effect.provide(layer));
   });
@@ -215,12 +213,12 @@ describe("legacy sso remove integration", () => {
     const { layer, out } = setup({ goOutput: "toml", body });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+        ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoTomlEncodeError");
+        expect(dump).toContain("SsoTomlEncodeError");
         expect(dump).toContain("failed to output toml: toml: cannot encode array with nil element");
       }
       expect(out.stdoutText).toBe("");
@@ -230,7 +228,7 @@ describe("legacy sso remove integration", () => {
   it.live("TS --output-format=json emits success", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
+      yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
       expect(out.messages.some((m) => m.type === "success")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -238,7 +236,7 @@ describe("legacy sso remove integration", () => {
   it.live("flushes telemetry + linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
+      yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -248,11 +246,11 @@ describe("legacy sso remove integration", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+        ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoRemoveNetworkError");
+        expect(JSON.stringify(exit.cause)).toContain("SsoRemoveNetworkError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -261,16 +259,16 @@ describe("legacy sso remove integration", () => {
     const { layer } = setup({ rawBody: "{not json" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+        ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoRemoveUnexpectedStatusError");
+        expect(dump).toContain("SsoRemoveUnexpectedStatusError");
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
           error_kind: "external_service",
           error_category: "api_status",
-          error_fingerprint: "tag:LegacySsoRemoveUnexpectedStatusError:api_status",
+          error_fingerprint: "tag:SsoRemoveUnexpectedStatusError:api_status",
         });
       }
     }).pipe(Effect.provide(layer));
@@ -280,16 +278,16 @@ describe("legacy sso remove integration", () => {
     const { layer } = setup({ body: {} });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+        ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoRemoveNetworkError");
+        expect(dump).toContain("SsoRemoveNetworkError");
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
           error_kind: "external_service",
           error_category: "api_status",
-          error_fingerprint: "tag:LegacySsoRemoveNetworkError:api_response",
+          error_fingerprint: "tag:SsoRemoveNetworkError:api_response",
         });
       }
     }).pipe(Effect.provide(layer));

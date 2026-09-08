@@ -5,18 +5,18 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 
-import type { LegacyDbTomlValues } from "../../../../command-internal/legacy-db-config.toml-read.ts";
+import type { DbTomlValues } from "../../../../command-internal/db-config.toml-read.ts";
 import {
-  LegacyPgDeltaEngine,
-  type LegacyPgDeltaDeclarativePlanInput,
-} from "../../shared/legacy-pgdelta-engine.service.ts";
+  PgDeltaEngine,
+  type PgDeltaDeclarativePlanInput,
+} from "../../shared/pgdelta-engine.service.ts";
 import {
-  type LegacyDeclarativeRunContext,
-  legacyDiffDeclarativeToMigrations,
-  legacyGenerateDeclarativeOutput,
+  type DeclarativeRunContext,
+  diffDeclarativeToMigrations,
+  generateDeclarativeOutput,
 } from "./declarative.orchestrate.ts";
 
-const ctx = (cwd: string, declarativeDir: string): LegacyDeclarativeRunContext => ({
+const ctx = (cwd: string, declarativeDir: string): DeclarativeRunContext => ({
   pgDelta: {
     projectId: "cferry",
     cwd,
@@ -33,11 +33,11 @@ const ctx = (cwd: string, declarativeDir: string): LegacyDeclarativeRunContext =
   dnsResolver: "native",
 });
 
-// A minimal, valid `LegacyDbTomlValues` — matches `legacy-db-config.toml-read.ts`'s
+// A minimal, valid `DbTomlValues` — matches `db-config.toml-read.ts`'s
 // own unconfigured defaults so this fixture doesn't silently drift from what
-// `legacyReadDbToml` would resolve for these tests' bare temp dirs (none of them
+// `readDbToml` would resolve for these tests' bare temp dirs (none of them
 // write a `config.toml`).
-const toml: LegacyDbTomlValues = {
+const toml: DbTomlValues = {
   projectEnv: {},
   envLookup: () => undefined,
   apiSchemas: ["public", "graphql_public"],
@@ -71,9 +71,9 @@ const toml: LegacyDbTomlValues = {
   remoteOverrideKeys: new Set(),
 };
 
-describe("legacyDiffDeclarativeToMigrations", () => {
+describe("diffDeclarativeToMigrations", () => {
   it.effect("loads nested SQL and its manifest in stable order for the engine", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-decl-orch-"));
+    const dir = mkdtempSync(join(tmpdir(), "decl-orch-"));
     const declDir = join(dir, "supabase", "database");
     mkdirSync(join(declDir, "nested"), { recursive: true });
     writeFileSync(join(declDir, "z.sql"), "select 'z';");
@@ -83,10 +83,10 @@ describe("legacyDiffDeclarativeToMigrations", () => {
       join(declDir, ".pgdelta-export.json"),
       JSON.stringify({ formatVersion: 1, redactSecrets: true, scope: "database" }),
     );
-    const calls: LegacyPgDeltaDeclarativePlanInput[] = [];
+    const calls: PgDeltaDeclarativePlanInput[] = [];
     const engine = Layer.succeed(
-      LegacyPgDeltaEngine,
-      LegacyPgDeltaEngine.of({
+      PgDeltaEngine,
+      PgDeltaEngine.of({
         diffExplicit: () => Effect.die("diffExplicit not used"),
         diffDatabase: () => Effect.die("diffDatabase not used"),
         exportDeclarativeSchema: () => Effect.die("exportDeclarativeSchema not used"),
@@ -119,7 +119,7 @@ describe("legacyDiffDeclarativeToMigrations", () => {
         },
       }),
     );
-    return legacyDiffDeclarativeToMigrations(
+    return diffDeclarativeToMigrations(
       { ...ctx(dir, declDir), debug: true, noCache: true, strictCoverage: true },
       toml,
     ).pipe(
@@ -148,10 +148,10 @@ describe("legacyDiffDeclarativeToMigrations", () => {
     );
   });
 
-  const stubEngine = (calls: LegacyPgDeltaDeclarativePlanInput[]) =>
+  const stubEngine = (calls: PgDeltaDeclarativePlanInput[]) =>
     Layer.succeed(
-      LegacyPgDeltaEngine,
-      LegacyPgDeltaEngine.of({
+      PgDeltaEngine,
+      PgDeltaEngine.of({
         diffExplicit: () => Effect.die("diffExplicit not used"),
         diffDatabase: () => Effect.die("diffDatabase not used"),
         exportDeclarativeSchema: () => Effect.die("exportDeclarativeSchema not used"),
@@ -169,13 +169,13 @@ describe("legacyDiffDeclarativeToMigrations", () => {
     );
 
   it.effect("rejects a corrupt export manifest before planning", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-decl-orch-"));
+    const dir = mkdtempSync(join(tmpdir(), "decl-orch-"));
     const declDir = join(dir, "supabase", "database");
     mkdirSync(declDir, { recursive: true });
     writeFileSync(join(declDir, "public.sql"), "create table public.accounts();");
     writeFileSync(join(declDir, ".pgdelta-export.json"), "{ not json at all");
-    const calls: LegacyPgDeltaDeclarativePlanInput[] = [];
-    return legacyDiffDeclarativeToMigrations(ctx(dir, declDir), toml).pipe(
+    const calls: PgDeltaDeclarativePlanInput[] = [];
+    return diffDeclarativeToMigrations(ctx(dir, declDir), toml).pipe(
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
@@ -195,9 +195,9 @@ describe("legacyDiffDeclarativeToMigrations", () => {
   });
 
   it.effect("fails when the declarative dir is absent", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-decl-orch-"));
-    const calls: LegacyPgDeltaDeclarativePlanInput[] = [];
-    return legacyDiffDeclarativeToMigrations(ctx(dir, join(dir, "missing")), toml).pipe(
+    const dir = mkdtempSync(join(tmpdir(), "decl-orch-"));
+    const calls: PgDeltaDeclarativePlanInput[] = [];
+    return diffDeclarativeToMigrations(ctx(dir, join(dir, "missing")), toml).pipe(
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
@@ -217,15 +217,15 @@ describe("legacyDiffDeclarativeToMigrations", () => {
   });
 });
 
-describe("legacyGenerateDeclarativeOutput", () => {
+describe("generateDeclarativeOutput", () => {
   it.effect("propagates debug and strict coverage to the engine", () => {
     const calls: Array<{
       readonly debug: boolean;
       readonly strictCoverage: boolean;
     }> = [];
     const engine = Layer.succeed(
-      LegacyPgDeltaEngine,
-      LegacyPgDeltaEngine.of({
+      PgDeltaEngine,
+      PgDeltaEngine.of({
         diffExplicit: () => Effect.die("diffExplicit not used"),
         diffDatabase: () => Effect.die("diffDatabase not used"),
         exportDeclarativeSchema: (input) => {
@@ -241,8 +241,8 @@ describe("legacyGenerateDeclarativeOutput", () => {
         planDeclarativeSchema: () => Effect.die("planDeclarativeSchema not used"),
       }),
     );
-    const dir = mkdtempSync(join(tmpdir(), "legacy-decl-export-"));
-    return legacyGenerateDeclarativeOutput(
+    const dir = mkdtempSync(join(tmpdir(), "decl-export-"));
+    return generateDeclarativeOutput(
       {
         ...ctx(dir, join(dir, "supabase", "database")),
         debug: true,

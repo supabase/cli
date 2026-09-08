@@ -308,7 +308,7 @@ async function buildMuslBinaries() {
 
       // Go binary is CGO_ENABLED=0 (fully static), so the glibc Linux build works on
       // musl too. Copy it from the matching glibc package so the published musl npm
-      // package contains the supabase-go binary that LegacyGoProxy resolves to.
+      // package contains the supabase-go binary that GoProxy resolves to.
       const glibcTarget = TARGETS.find(
         (candidate) => "nfpmArch" in candidate && candidate.nfpmArch === target.nfpmArch,
       );

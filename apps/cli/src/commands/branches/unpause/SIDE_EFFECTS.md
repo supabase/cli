@@ -25,12 +25,12 @@ Same auth fallback chain as every Management-API legacy command. Project-ref dis
 
 ## Exit Codes
 
-| Code | Condition                                                                             |
-| ---- | ------------------------------------------------------------------------------------- |
-| `0`  | success — branch unpaused                                                             |
-| `1`  | `LegacyBranchesUnpauseUnexpectedStatusError` — non-200 response from restore endpoint |
-| `1`  | `LegacyBranchesUnpauseNetworkError` — transport-level network failure                 |
-| `1`  | Branch-id resolution errors                                                           |
+| Code | Condition                                                                       |
+| ---- | ------------------------------------------------------------------------------- |
+| `0`  | success — branch unpaused                                                       |
+| `1`  | `BranchesUnpauseUnexpectedStatusError` — non-200 response from restore endpoint |
+| `1`  | `BranchesUnpauseNetworkError` — transport-level network failure                 |
+| `1`  | Branch-id resolution errors                                                     |
 
 ## Telemetry Events Fired
 

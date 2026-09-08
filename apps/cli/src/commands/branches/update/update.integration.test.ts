@@ -4,16 +4,16 @@ import { Effect, Exit, Option } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  legacyJsonResponse,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import type { LegacyBranchesUpdateFlags } from "./update.command.ts";
-import { legacyBranchesUpdate } from "./update.handler.ts";
+  buildTestRuntime,
+  jsonResponse,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import type { BranchesUpdateFlags } from "./update.command.ts";
+import { branchesUpdate } from "./update.handler.ts";
 
 type UpdatedBranch = typeof V1UpdateABranchConfigOutput.Type;
 
@@ -79,7 +79,7 @@ const BRANCH_CONFIG = {
   db_port: 5432,
 };
 
-const tempRoot = useLegacyTempWorkdir("supabase-branches-update-int-");
+const tempRoot = useTempWorkdir("supabase-branches-update-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
@@ -89,16 +89,16 @@ interface SetupOpts {
 
 function buildApi(opts: SetupOpts) {
   const patchStatus = opts.patchStatus ?? 200;
-  return mockLegacyPlatformApi({
+  return mockCommandPlatformApi({
     handler: (request) =>
       Effect.sync(() => {
         if (request.method === "PATCH" && request.url.includes("/v1/branches/")) {
-          return legacyJsonResponse(request, patchStatus, patchStatus === 200 ? UPDATED : {});
+          return jsonResponse(request, patchStatus, patchStatus === 200 ? UPDATED : {});
         }
         if (request.method === "GET" && request.url.includes("/v1/branches/")) {
-          return legacyJsonResponse(request, 200, BRANCH_CONFIG);
+          return jsonResponse(request, 200, BRANCH_CONFIG);
         }
-        return legacyJsonResponse(request, 200, null);
+        return jsonResponse(request, 200, null);
       }),
   });
 }
@@ -107,8 +107,8 @@ function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const analytics = mockAnalytics();
   const api = buildApi(opts);
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -122,10 +122,10 @@ function setupTracked(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const analytics = mockAnalytics();
   const api = buildApi(opts);
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -136,7 +136,7 @@ function setupTracked(opts: SetupOpts = {}) {
   return { layer, out, api, analytics, telemetry, cache };
 }
 
-const baseFlags: LegacyBranchesUpdateFlags = {
+const baseFlags: BranchesUpdateFlags = {
   branchId: Option.none(),
   projectRef: Option.none(),
   name: Option.none(),
@@ -150,7 +150,7 @@ describe("legacy branches update integration", () => {
   it.live("updates a branch with --name and emits 'Updated preview branch:' to stderr", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacyBranchesUpdate({
+      yield* branchesUpdate({
         ...baseFlags,
         branchId: Option.some(BRANCH_UUID),
         name: Option.some("renamed"),
@@ -163,7 +163,7 @@ describe("legacy branches update integration", () => {
   it.live("includes optional flags in body only when set", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacyBranchesUpdate({
+      yield* branchesUpdate({
         ...baseFlags,
         branchId: Option.some(BRANCH_UUID),
         name: Option.some("rename-x"),
@@ -184,7 +184,7 @@ describe("legacy branches update integration", () => {
   it.live("sends `persistent: false` when --persistent is explicitly false (demote)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacyBranchesUpdate({
+      yield* branchesUpdate({
         ...baseFlags,
         branchId: Option.some(BRANCH_UUID),
         persistent: Option.some(false),
@@ -197,7 +197,7 @@ describe("legacy branches update integration", () => {
   it.live("omits `persistent` from body when the flag is absent (default)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacyBranchesUpdate({
+      yield* branchesUpdate({
         ...baseFlags,
         branchId: Option.some(BRANCH_UUID),
       });
@@ -210,7 +210,7 @@ describe("legacy branches update integration", () => {
   it.live("emits success event for --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacyBranchesUpdate({
+      yield* branchesUpdate({
         ...baseFlags,
         branchId: Option.some(BRANCH_UUID),
         name: Option.some("renamed"),
@@ -221,16 +221,16 @@ describe("legacy branches update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyBranchesUpdateUnexpectedStatusError on non-200", () => {
+  it.live("fails with BranchesUpdateUnexpectedStatusError on non-200", () => {
     const { layer } = setup({ patchStatus: 500 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyBranchesUpdate({ ...baseFlags, branchId: Option.some(BRANCH_UUID) }),
+        branchesUpdate({ ...baseFlags, branchId: Option.some(BRANCH_UUID) }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyBranchesUpdateUnexpectedStatusError");
+        expect(json).toContain("BranchesUpdateUnexpectedStatusError");
         expect(json).toContain("unexpected update branch status 500");
       }
     }).pipe(Effect.provide(layer));
@@ -239,7 +239,7 @@ describe("legacy branches update integration", () => {
   it.live("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
-      yield* legacyBranchesUpdate({
+      yield* branchesUpdate({
         ...baseFlags,
         branchId: Option.some(BRANCH_UUID),
         name: Option.some("renamed"),
@@ -252,9 +252,7 @@ describe("legacy branches update integration", () => {
   it.live("writes linked-project cache + telemetry state on failure", () => {
     const { layer, telemetry, cache } = setupTracked({ patchStatus: 500 });
     return Effect.gen(function* () {
-      yield* Effect.exit(
-        legacyBranchesUpdate({ ...baseFlags, branchId: Option.some(BRANCH_UUID) }),
-      );
+      yield* Effect.exit(branchesUpdate({ ...baseFlags, branchId: Option.some(BRANCH_UUID) }));
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -271,28 +269,28 @@ describe("legacy branches update integration", () => {
     () => {
       const out = mockOutput({ format: "text" });
       const analytics = mockAnalytics();
-      const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
+      const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
 
-      // `legacySuggestUpgrade` bypasses the typed Management API client to GET
+      // `suggestUpgrade` bypasses the typed Management API client to GET
       // the project + entitlements (see its file-level comment — required so
       // cli-e2e replay fixtures with `__PROJECT_REF__` placeholders don't trip
-      // strict schema decode). Route all three URLs through `mockLegacyPlatformApi`'s
+      // strict schema decode). Route all three URLs through `mockCommandPlatformApi`'s
       // handler so the assertion covers the request log produced by the same
       // HttpClient the production code uses.
-      const apiMock = mockLegacyPlatformApi({
+      const apiMock = mockCommandPlatformApi({
         handler: (request) =>
           Effect.sync(() => {
             if (request.method === "PATCH" && request.url.includes("/v1/branches/")) {
-              return legacyJsonResponse(request, 402, { message: "upgrade required" });
+              return jsonResponse(request, 402, { message: "upgrade required" });
             }
             if (request.method === "GET" && request.url.endsWith(`/v1/projects/${BRANCH_REF}`)) {
-              return legacyJsonResponse(request, 200, projectResponse(BRANCH_REF));
+              return jsonResponse(request, 200, projectResponse(BRANCH_REF));
             }
             if (
               request.method === "GET" &&
               request.url.endsWith(`/v1/organizations/${ORG_SLUG}/entitlements`)
             ) {
-              return legacyJsonResponse(
+              return jsonResponse(
                 request,
                 200,
                 entitlementResponse({
@@ -301,11 +299,11 @@ describe("legacy branches update integration", () => {
                 }),
               );
             }
-            return legacyJsonResponse(request, 200, null);
+            return jsonResponse(request, 200, null);
           }),
       });
 
-      const layer = buildLegacyTestRuntime({
+      const layer = buildTestRuntime({
         out,
         api: apiMock,
         cliSettings,
@@ -314,13 +312,13 @@ describe("legacy branches update integration", () => {
 
       return Effect.gen(function* () {
         yield* Effect.exit(
-          legacyBranchesUpdate({
+          branchesUpdate({
             ...baseFlags,
             branchId: Option.some(BRANCH_REF),
             persistent: Option.some(true),
           }),
         );
-        // The branch ref the resolver returned is what `legacySuggestUpgrade`
+        // The branch ref the resolver returned is what `suggestUpgrade`
         // should query getProject with.
         const projectCall = apiMock.requests.find(
           (r) => r.method === "GET" && r.url.endsWith(`/v1/projects/${BRANCH_REF}`),

@@ -1,20 +1,20 @@
 import type { CliConfig } from "@supabase/config";
 import { describe, expect, test } from "vitest";
 
-import { LEGACY_START_DB_RESTORE_SH } from "./templates/db-restore.sh.ts";
-import { LEGACY_START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
-import { LEGACY_START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
-import { LEGACY_START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
-import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../legacy-local-config-values.ts";
+import { START_DB_RESTORE_SH } from "./templates/db-restore.sh.ts";
+import { START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
+import { START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
+import { START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
+import { POSTGRES_DEFAULT_ROOT_KEY } from "../local-config-values.ts";
 import {
-  LEGACY_SHADOW_ENTRYPOINT_ARGS,
-  legacyBuildPostgresStartContainerSpec,
-  legacyBuildShadowPostgresContainerSpec,
-  legacyPostgresImageVersionTag,
-  legacyPostgresSettingsToPostgresConfig,
-  legacyPostgresVersionCompare,
-  type LegacyPostgresStartServiceInput,
-  type LegacyShadowPostgresContainerSpecInput,
+  SHADOW_ENTRYPOINT_ARGS,
+  buildPostgresStartContainerSpec,
+  buildShadowPostgresContainerSpec,
+  postgresImageVersionTag,
+  postgresSettingsToPostgresConfig,
+  postgresVersionCompare,
+  type PostgresStartServiceInput,
+  type ShadowPostgresContainerSpecInput,
 } from "./postgres.service.ts";
 
 const POSTGRES_CONFIG_HEADER = "\n# supabase [db.settings] configuration\n";
@@ -51,9 +51,7 @@ function baseExperimental(
   };
 }
 
-function baseInput(
-  overrides: Partial<LegacyPostgresStartServiceInput> = {},
-): LegacyPostgresStartServiceInput {
+function baseInput(overrides: Partial<PostgresStartServiceInput> = {}): PostgresStartServiceInput {
   return {
     db: baseDb(),
     experimental: baseExperimental(),
@@ -67,11 +65,9 @@ function baseInput(
   };
 }
 
-describe("legacyBuildPostgresStartContainerSpec", () => {
+describe("buildPostgresStartContainerSpec", () => {
   test("PG >= 15: concatenates schema.sql + webhook.sql + _supabase.sql into the schema heredoc, appends the postgres config, and carries the pgsodium root key as a secretFile instead of a heredoc", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(
-      baseInput({ db: baseDb({ major_version: 17 }) }),
-    );
+    const spec = buildPostgresStartContainerSpec(baseInput({ db: baseDb({ major_version: 17 }) }));
 
     expect(spec.entrypoint).toBe("sh");
     const script = spec.cmd?.[1];
@@ -80,28 +76,26 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
         "cat <<'EOF' > /etc/postgresql.schema.sql && \\\n" +
         "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
         "exec docker-entrypoint.sh postgres -D /etc/postgresql \n" +
-        `${LEGACY_START_DB_SCHEMA_SQL}\n` +
-        `${LEGACY_START_DB_WEBHOOK_SQL}\n` +
-        `${LEGACY_START_DB_SUPABASE_SQL}\n` +
+        `${START_DB_SCHEMA_SQL}\n` +
+        `${START_DB_WEBHOOK_SQL}\n` +
+        `${START_DB_SUPABASE_SQL}\n` +
         "EOF\n" +
         `${POSTGRES_CONFIG_HEADER}\n` +
         "EOF",
     );
-    expect(script).not.toContain(LEGACY_POSTGRES_DEFAULT_ROOT_KEY);
+    expect(script).not.toContain(POSTGRES_DEFAULT_ROOT_KEY);
     expect(script).not.toContain("pgsodium_root.key");
     expect(spec.tmpfs).toBeUndefined();
     expect(spec.secretFiles).toEqual([
       {
         containerPath: "/etc/postgresql-custom/pgsodium_root.key",
-        content: LEGACY_POSTGRES_DEFAULT_ROOT_KEY,
+        content: POSTGRES_DEFAULT_ROOT_KEY,
       },
     ]);
   });
 
   test("PG <= 14: writes only _supabase.sql (no schema.sql/webhook.sql, no pgsodium root key) and sets the initdb tmpfs mount", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(
-      baseInput({ db: baseDb({ major_version: 14 }) }),
-    );
+    const spec = buildPostgresStartContainerSpec(baseInput({ db: baseDb({ major_version: 14 }) }));
 
     const script = spec.cmd?.[1];
     expect(script).toBe(
@@ -109,7 +103,7 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
         "cat <<'EOF' > /docker-entrypoint-initdb.d/supabase_schema.sql && \\\n" +
         "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
         "exec docker-entrypoint.sh postgres -D /etc/postgresql \n" +
-        `${LEGACY_START_DB_SUPABASE_SQL}\n` +
+        `${START_DB_SUPABASE_SQL}\n` +
         "EOF\n" +
         `${POSTGRES_CONFIG_HEADER}\n` +
         "EOF",
@@ -121,18 +115,18 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
   });
 
   test("uses a rootKey override instead of the Go default when provided", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(
+    const spec = buildPostgresStartContainerSpec(
       baseInput({ db: baseDb({ major_version: 17 }), rootKey: "custom-root-key" }),
     );
     expect(spec.secretFiles).toEqual([
       { containerPath: "/etc/postgresql-custom/pgsodium_root.key", content: "custom-root-key" },
     ]);
     expect(spec.cmd?.[1]).not.toContain("custom-root-key");
-    expect(spec.cmd?.[1]).not.toContain(LEGACY_POSTGRES_DEFAULT_ROOT_KEY);
+    expect(spec.cmd?.[1]).not.toContain(POSTGRES_DEFAULT_ROOT_KEY);
   });
 
   test("base env carries password, host, jwt secret, and jwt expiry", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(baseInput());
+    const spec = buildPostgresStartContainerSpec(baseInput());
     expect(spec.env).toMatchObject({
       POSTGRES_PASSWORD: "postgres",
       POSTGRES_HOST: "/var/run/postgresql",
@@ -142,7 +136,7 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
   });
 
   test("OrioleDB branch: adds POSTGRES_INITDB_ARGS + S3 env vars and skips the version-compare branch", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(
+    const spec = buildPostgresStartContainerSpec(
       baseInput({
         experimental: baseExperimental({
           orioledb_version: "17.4.1.030",
@@ -170,7 +164,7 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
   });
 
   test("OrioleDB branch defaults unset S3 fields to empty strings, matching Go's zero-value string fields", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(
+    const spec = buildPostgresStartContainerSpec(
       baseInput({ experimental: baseExperimental({ orioledb_version: "17.4.1.030" }) }),
     );
     expect(spec.env).toMatchObject({
@@ -182,7 +176,7 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
   });
 
   test("version-compare branch: adds POSTGRES_INITDB_ARGS=--lc-collate=C.UTF-8 when the image tag is below the threshold", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(
+    const spec = buildPostgresStartContainerSpec(
       baseInput({
         image: "public.ecr.aws/supabase/postgres:15.1.0.117",
         configImage: "supabase/postgres:15.1.0.117",
@@ -192,7 +186,7 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
   });
 
   test("version-compare branch is skipped when the image tag is at or above the threshold", () => {
-    const atThreshold = legacyBuildPostgresStartContainerSpec(
+    const atThreshold = buildPostgresStartContainerSpec(
       baseInput({
         image: "public.ecr.aws/supabase/postgres:15.8.1.005",
         configImage: "supabase/postgres:15.8.1.005",
@@ -200,7 +194,7 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
     );
     expect(atThreshold.env.POSTGRES_INITDB_ARGS).toBeUndefined();
 
-    const aboveThreshold = legacyBuildPostgresStartContainerSpec(
+    const aboveThreshold = buildPostgresStartContainerSpec(
       baseInput({
         image: "public.ecr.aws/supabase/postgres:17.4.1.030",
         configImage: "supabase/postgres:17.4.1.030",
@@ -210,7 +204,7 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
   });
 
   test("version-compare branch reads the pre-registry-rewrite configImage, not the registry-resolved image (a port-bearing registry override must not break the tag parse)", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(
+    const spec = buildPostgresStartContainerSpec(
       baseInput({
         image: "localhost:5000/supabase/postgres:17.4.1.030",
         configImage: "supabase/postgres:17.4.1.030",
@@ -220,7 +214,7 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
   });
 
   test("version-compare uses docker.io configImage when the pull image is a slim ghcr ref", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(
+    const spec = buildPostgresStartContainerSpec(
       baseInput({
         image: "ghcr.io/supabase/cli/postgres:17.6.1.167",
         configImage: "supabase/postgres:17.6.1.167",
@@ -230,7 +224,7 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
   });
 
   test("healthcheck matches Go's pg_isready probe", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(baseInput());
+    const spec = buildPostgresStartContainerSpec(baseInput());
     expect(spec.healthcheck).toEqual({
       test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1", "-p", "5432"],
       intervalSeconds: 10,
@@ -240,18 +234,18 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
   });
 
   test("port binding maps the configured db.port to container port 5432", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(baseInput({ db: baseDb({ port: 12345 }) }));
+    const spec = buildPostgresStartContainerSpec(baseInput({ db: baseDb({ port: 12345 }) }));
     expect(spec.ports).toEqual([{ hostPort: "12345", containerPort: "5432" }]);
   });
 
   test("binds a named volume keyed by the container's own (sanitized) name", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(baseInput({ projectId: "my project!" }));
+    const spec = buildPostgresStartContainerSpec(baseInput({ projectId: "my project!" }));
     expect(spec.containerName).toBe("supabase_db_my_project_");
     expect(spec.binds).toEqual(["supabase_db_my_project_:/var/lib/postgresql/data"]);
   });
 
   test("--from-backup: PG >= 15 uses the restore entrypoint (schema.sql + _supabase.sql, no webhook.sql), appends migrate.sh/postgresql.conf heredocs and cron.launch_active_jobs=off, and still carries the root key as a secretFile", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(
+    const spec = buildPostgresStartContainerSpec(
       baseInput({ db: baseDb({ major_version: 17 }), fromBackup: "/abs/host/backup.sql" }),
     );
 
@@ -263,21 +257,21 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
         "cat <<'EOF' > /docker-entrypoint-initdb.d/migrate.sh && \\\n" +
         "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
         "exec docker-entrypoint.sh postgres -D /etc/postgresql\n" +
-        `${LEGACY_START_DB_SCHEMA_SQL}\n` +
-        `${LEGACY_START_DB_SUPABASE_SQL}\n` +
+        `${START_DB_SCHEMA_SQL}\n` +
+        `${START_DB_SUPABASE_SQL}\n` +
         "EOF\n" +
-        `${LEGACY_START_DB_RESTORE_SH}\n` +
+        `${START_DB_RESTORE_SH}\n` +
         "EOF\n" +
         `${POSTGRES_CONFIG_HEADER}\n` +
         "cron.launch_active_jobs = off\n" +
         "EOF",
     );
-    expect(script).not.toContain(LEGACY_START_DB_WEBHOOK_SQL);
-    expect(script).not.toContain(LEGACY_POSTGRES_DEFAULT_ROOT_KEY);
+    expect(script).not.toContain(START_DB_WEBHOOK_SQL);
+    expect(script).not.toContain(POSTGRES_DEFAULT_ROOT_KEY);
     expect(spec.secretFiles).toEqual([
       {
         containerPath: "/etc/postgresql-custom/pgsodium_root.key",
-        content: LEGACY_POSTGRES_DEFAULT_ROOT_KEY,
+        content: POSTGRES_DEFAULT_ROOT_KEY,
       },
     ]);
     expect(spec.binds).toEqual([
@@ -287,7 +281,7 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
   });
 
   test("--from-backup: PG <= 14 still uses the restore entrypoint (unconditional override) but keeps the PG<=14 initdb tmpfs mount", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(
+    const spec = buildPostgresStartContainerSpec(
       baseInput({ db: baseDb({ major_version: 14 }), fromBackup: "/abs/host/backup.sql" }),
     );
 
@@ -296,25 +290,25 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
     expect(spec.secretFiles).toEqual([
       {
         containerPath: "/etc/postgresql-custom/pgsodium_root.key",
-        content: LEGACY_POSTGRES_DEFAULT_ROOT_KEY,
+        content: POSTGRES_DEFAULT_ROOT_KEY,
       },
     ]);
   });
 
-  test("--from-backup: converts a Windows-style host path through legacyToDockerPath for the backup bind", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(
+  test("--from-backup: converts a Windows-style host path through toDockerMountPath for the backup bind", () => {
+    const spec = buildPostgresStartContainerSpec(
       baseInput({ fromBackup: "C:\\Users\\me\\backup.sql" }),
     );
     expect(spec.binds).toContain("/Users/me/backup.sql:/etc/backup.sql:ro");
   });
 
   test("no --from-backup: binds only the data volume, matching the pre-existing behavior", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(baseInput());
+    const spec = buildPostgresStartContainerSpec(baseInput());
     expect(spec.binds).toEqual(["supabase_db_myproj:/var/lib/postgresql/data"]);
   });
 
   test("network id, aliases, restart policy, and image pass through unchanged", () => {
-    const spec = legacyBuildPostgresStartContainerSpec(
+    const spec = buildPostgresStartContainerSpec(
       baseInput({ networkId: "supabase_network_myproj", image: "some/resolved-image:17.4.1.030" }),
     );
     expect(spec.networkId).toBe("supabase_network_myproj");
@@ -325,9 +319,9 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
   });
 });
 
-describe("legacyPostgresSettingsToPostgresConfig", () => {
+describe("postgresSettingsToPostgresConfig", () => {
   test("only set values appear, in the configured field's TOML form", () => {
-    const config = legacyPostgresSettingsToPostgresConfig({
+    const config = postgresSettingsToPostgresConfig({
       max_connections: 100,
       max_locks_per_transaction: 64,
       shared_buffers: "128MB",
@@ -343,23 +337,23 @@ describe("legacyPostgresSettingsToPostgresConfig", () => {
   });
 
   test("session_replication_role is single-quoted like every other string field", () => {
-    const config = legacyPostgresSettingsToPostgresConfig({ session_replication_role: "origin" });
+    const config = postgresSettingsToPostgresConfig({ session_replication_role: "origin" });
     expect(config).toContain("session_replication_role = 'origin'");
   });
 
   test("empty settings produce just the header, with no trailing content", () => {
-    const config = legacyPostgresSettingsToPostgresConfig({});
+    const config = postgresSettingsToPostgresConfig({});
     expect(config).toBe(POSTGRES_CONFIG_HEADER);
     expect(config).not.toContain("=");
   });
 
   test("a boolean field is emitted unquoted", () => {
-    const config = legacyPostgresSettingsToPostgresConfig({ track_commit_timestamp: true });
+    const config = postgresSettingsToPostgresConfig({ track_commit_timestamp: true });
     expect(config).toContain("track_commit_timestamp = true");
   });
 });
 
-describe("legacyPostgresVersionCompare", () => {
+describe("postgresVersionCompare", () => {
   test.each([
     ["15.1.0.55", "15.1.0.55", 0],
     ["15.8.1.085", "15.1.0.55", 1],
@@ -374,26 +368,26 @@ describe("legacyPostgresVersionCompare", () => {
     ["17", "oriole-17", 1],
     ["oriole-17", "17", -1],
   ] as const)("VersionCompare(%s, %s) === %d", (a, b, expected) => {
-    expect(legacyPostgresVersionCompare(a, b)).toBe(expected);
+    expect(postgresVersionCompare(a, b)).toBe(expected);
   });
 });
 
-describe("legacyPostgresImageVersionTag", () => {
+describe("postgresImageVersionTag", () => {
   test("extracts the tag after the last colon, ignoring any registry host prefix", () => {
-    expect(legacyPostgresImageVersionTag("public.ecr.aws/supabase/postgres:15.1.0.117")).toBe(
+    expect(postgresImageVersionTag("public.ecr.aws/supabase/postgres:15.1.0.117")).toBe(
       "15.1.0.117",
     );
-    expect(legacyPostgresImageVersionTag("supabase/postgres:17.4.1.030")).toBe("17.4.1.030");
+    expect(postgresImageVersionTag("supabase/postgres:17.4.1.030")).toBe("17.4.1.030");
   });
 
   test("degrades to the whole string when there is no colon at all, matching Go's Image[i+1:] with i=-1", () => {
-    expect(legacyPostgresImageVersionTag("supabase/postgres")).toBe("supabase/postgres");
+    expect(postgresImageVersionTag("supabase/postgres")).toBe("supabase/postgres");
   });
 });
 
 function baseShadowInput(
-  overrides: Partial<LegacyShadowPostgresContainerSpecInput> = {},
-): LegacyShadowPostgresContainerSpecInput {
+  overrides: Partial<ShadowPostgresContainerSpecInput> = {},
+): ShadowPostgresContainerSpecInput {
   return {
     db: { major_version: 17, settings: {} },
     experimental: baseExperimental(),
@@ -408,38 +402,38 @@ function baseShadowInput(
   };
 }
 
-describe("legacyBuildShadowPostgresContainerSpec", () => {
+describe("buildShadowPostgresContainerSpec", () => {
   test("PG >= 15: splices the shadow entrypoint args into the SAME trailing-space join point the real db container uses, and still carries the pgsodium root key as a secretFile", () => {
-    const spec = legacyBuildShadowPostgresContainerSpec(
+    const spec = buildShadowPostgresContainerSpec(
       baseShadowInput({ db: { major_version: 17, settings: {} } }),
     );
     const script = spec.cmd?.[1];
     expect(script).toContain(
-      `exec docker-entrypoint.sh postgres -D /etc/postgresql ${LEGACY_SHADOW_ENTRYPOINT_ARGS}\n`,
+      `exec docker-entrypoint.sh postgres -D /etc/postgresql ${SHADOW_ENTRYPOINT_ARGS}\n`,
     );
     expect(spec.secretFiles).toEqual([
       {
         containerPath: "/etc/postgresql-custom/pgsodium_root.key",
-        content: LEGACY_POSTGRES_DEFAULT_ROOT_KEY,
+        content: POSTGRES_DEFAULT_ROOT_KEY,
       },
     ]);
     expect(spec.tmpfs).toBeUndefined();
   });
 
   test("PG <= 14: splices the same args, no pgsodium secretFile, and sets the initdb tmpfs mount", () => {
-    const spec = legacyBuildShadowPostgresContainerSpec(
+    const spec = buildShadowPostgresContainerSpec(
       baseShadowInput({ db: { major_version: 14, settings: {} } }),
     );
     const script = spec.cmd?.[1];
     expect(script).toContain(
-      `exec docker-entrypoint.sh postgres -D /etc/postgresql ${LEGACY_SHADOW_ENTRYPOINT_ARGS}\n`,
+      `exec docker-entrypoint.sh postgres -D /etc/postgresql ${SHADOW_ENTRYPOINT_ARGS}\n`,
     );
     expect(spec.secretFiles).toBeUndefined();
     expect(spec.tmpfs).toEqual({ "/docker-entrypoint-initdb.d": "" });
   });
 
   test("has no name (Docker auto-generates one), no network aliases, no volume bind, and no restart policy — unlike the real db container", () => {
-    const spec = legacyBuildShadowPostgresContainerSpec(baseShadowInput());
+    const spec = buildShadowPostgresContainerSpec(baseShadowInput());
     expect(spec.containerName).toBe("");
     expect(spec.networkAliases).toBeUndefined();
     expect(spec.binds).toEqual([]);
@@ -447,18 +441,18 @@ describe("legacyBuildShadowPostgresContainerSpec", () => {
   });
 
   test("sets autoRemove and publishes the shadow port to 5432/tcp", () => {
-    const spec = legacyBuildShadowPostgresContainerSpec(baseShadowInput({ shadowPort: 54399 }));
+    const spec = buildShadowPostgresContainerSpec(baseShadowInput({ shadowPort: 54399 }));
     expect(spec.autoRemove).toBe(true);
     expect(spec.ports).toEqual([{ hostPort: "54399", containerPort: "5432" }]);
   });
 
   test("labels are still applied (empty map here — the caller merges project/compose labels in, same as every other container)", () => {
-    const spec = legacyBuildShadowPostgresContainerSpec(baseShadowInput());
+    const spec = buildShadowPostgresContainerSpec(baseShadowInput());
     expect(spec.labels).toEqual({});
   });
 
   test("initializes POSTGRES_PASSWORD from the resolved [db] password, not a hardcoded literal — the deliberate TS extension the input's own doc describes (Go rejects the toml key at config load and always uses 'postgres')", () => {
-    const spec = legacyBuildShadowPostgresContainerSpec(baseShadowInput({ password: "hunter2" }));
+    const spec = buildShadowPostgresContainerSpec(baseShadowInput({ password: "hunter2" }));
     expect(spec.env?.["POSTGRES_PASSWORD"]).toBe("hunter2");
   });
 });

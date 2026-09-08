@@ -1,42 +1,42 @@
 import { Layer } from "effect";
 
-import { legacyCredentialsLayer } from "../../auth/legacy-credentials.layer.ts";
-import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
-import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.ts";
-import { legacyDebugLoggerLayer } from "../../command-internal/legacy-debug-logger.layer.ts";
-import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
+import { commandCredentialsLayer } from "../../auth/command-credentials.layer.ts";
+import { httpClientLayer } from "../../auth/http-debug.layer.ts";
+import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
+import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
+import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { browserLayer } from "../../shared/runtime/browser.layer.ts";
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
-import { legacyLoginApiLayer } from "../../command-internal/legacy-login-api.layer.ts";
-import { legacyLoginCryptoLayer } from "../../command-internal/legacy-login-crypto.layer.ts";
+import { loginApiLayer } from "../../command-internal/login-api.layer.ts";
+import { loginCryptoLayer } from "../../command-internal/login-crypto.layer.ts";
 
 // `login` is the only command that writes the access token, so it builds its own
-// lean runtime instead of `legacyManagementApiRuntimeLayer` — it must NOT eagerly
+// lean runtime instead of `managementApiRuntimeLayer` — it must NOT eagerly
 // construct the platform-API client (which fails when no token exists yet).
 //
-// `legacyCliSettingsLayer` is provided to both `legacyCredentialsLayer` and
-// `legacyLoginApiLayer`, and exposed at the top level for the handler's direct
-// `LegacyCliSettings` reads. `Layer.provide` does not share to siblings inside a
+// `commandSettingsLayer` is provided to both `commandCredentialsLayer` and
+// `loginApiLayer`, and exposed at the top level for the handler's direct
+// `CommandSettings` reads. `Layer.provide` does not share to siblings inside a
 // `Layer.mergeAll` (legacy CLAUDE.md item 5), so the shared sub-layers are
 // memoised by reference to avoid building two keyring readers / config loaders.
 // `Analytics`, `Output`, `Stdio`, `Tty`, `TelemetryRuntime`, `FileSystem`, and
 // `Path` come from the root layer.
-const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
-const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
-const credentials = legacyCredentialsLayer.pipe(
+const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
+const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
+const credentials = commandCredentialsLayer.pipe(
   Layer.provide(cliSettings),
-  Layer.provide(legacyDebugLoggerLayer),
+  Layer.provide(debugLoggerLayer),
 );
-const loginApi = legacyLoginApiLayer.pipe(Layer.provide(httpClient), Layer.provide(cliSettings));
+const loginApi = loginApiLayer.pipe(Layer.provide(httpClient), Layer.provide(cliSettings));
 
-export const legacyLoginRuntimeLayer = Layer.mergeAll(
+export const loginRuntimeLayer = Layer.mergeAll(
   credentials,
   cliSettings,
   httpClient,
   loginApi,
-  legacyLoginCryptoLayer,
-  legacyTelemetryStateLayer,
+  loginCryptoLayer,
+  telemetryStateLayer,
   commandRuntimeLayer(["login"]),
   browserLayer,
   stdinLayer,

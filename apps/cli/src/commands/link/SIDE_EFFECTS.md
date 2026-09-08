@@ -13,7 +13,7 @@ counterpart exists for this behavior.
 
 | Path                                 | Format              | When                                                                                                                                                                     |
 | ------------------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `supabase/config.toml`               | TOML (`project_id`) | NOT read for ref resolution itself — read by `LegacyCliSettings` for workdir/project-id discovery generally (`--workdir` resolution, `SUPABASE_PROJECT_ID` passthrough)  |
+| `supabase/config.toml`               | TOML (`project_id`) | NOT read for ref resolution itself — read by `CommandSettings` for workdir/project-id discovery generally (`--workdir` resolution, `SUPABASE_PROJECT_ID` passthrough)    |
 | `supabase/.temp/linked-project.json` | JSON (`ref` field)  | only when the given `[ref-or-branch]`/`--project-ref` value is not ref-shaped, as the 2nd parent-project candidate for branch-name resolution (CLI-2167, TS-only)        |
 | `supabase/.temp/project-ref`         | plain text          | only when the given `[ref-or-branch]`/`--project-ref` value is not ref-shaped, as the 3rd (last) parent-project candidate for branch-name resolution (CLI-2167, TS-only) |
 | `~/.supabase/access-token`           | plain text          | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring is unavailable                                                                                                     |
@@ -22,19 +22,19 @@ counterpart exists for this behavior.
 > read — `link` never falls back to it there. It **is** read for the TS-only branch-name lookup above, which resolves
 > the currently-linked _parent_ project (env `SUPABASE_PROJECT_ID` → `linked-project.json` →
 > `project-ref` file, first ref-shaped candidate wins) before searching its branches. This
-> deliberately does NOT reuse `LegacyProjectRefResolver.resolveOptional` — that resolves the
+> deliberately does NOT reuse `ProjectRefResolver.resolveOptional` — that resolves the
 > FINAL linked ref, which right after linking a branch would be the branch's own ref, breaking a
 > second `link <other-branch>` (CLI-2167 follow-up). `linked-project.json` works as the parent
 > candidate because `link`'s plain-project arm writes it for a real (non-404) project, and the 404
 > (branch) arm ALSO best-effort maintains it now (PR #6168 review — see Files Written below for the
 > two 404-path cases): without this, a `link <branch-name>` whose parent was resolved from the
 > `project-ref` FILE (env/cache absent or malformed) would never persist that parent evidence
-> anywhere — the branch ref 404s at `LegacyLinkedProjectCache.cache`'s own GET too — so it would be
-> lost until a real (non-404) `link` run. `LegacyLinkedProjectCache.cache` (the post-run
+> anywhere — the branch ref 404s at `LinkedProjectCache.cache`'s own GET too — so it would be
+> lost until a real (non-404) `link` run. `LinkedProjectCache.cache` (the post-run
 > PersistentPostRun-parity fill) never overwrites an EXISTING file either way, so between the two,
 > the cache reliably tracks the last known-good parent project even across subsequent branch links.
-> This parent resolution is hoisted into `command-internal/legacy-parent-project-ref.ts`
-> (`legacyResolveLinkedParentRef`), shared with the `branches` command family, which is
+> This parent resolution is hoisted into `command-internal/parent-project-ref.ts`
+> (`resolveLinkedParentRef`), shared with the `branches` command family, which is
 > PARENT-scoped for the same reason — see `branches/list/SIDE_EFFECTS.md`.
 
 ## Files Written
@@ -77,7 +77,7 @@ All under `<workdir>/supabase/.temp/` (plain text, created with parent dirs as n
 
 ## API Routes
 
-Management API (base `LegacyCliSettings.apiUrl`, `Authorization: Bearer <access-token>`):
+Management API (base `CommandSettings.apiUrl`, `Authorization: Bearer <access-token>`):
 
 | Method | Path                                        | When                                                                                                                                                                       |
 | ------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

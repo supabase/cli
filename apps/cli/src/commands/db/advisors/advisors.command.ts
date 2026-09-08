@@ -1,9 +1,9 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyDbAdvisors } from "./advisors.handler.ts";
-import { legacyDbAdvisorsRuntimeLayer } from "./advisors.layers.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { dbAdvisors } from "./advisors.handler.ts";
+import { dbAdvisorsRuntimeLayer } from "./advisors.layers.ts";
 
 const config = {
   dbUrl: Flag.string("db-url").pipe(
@@ -39,14 +39,14 @@ const config = {
   ),
 } as const;
 
-export type LegacyDbAdvisorsFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DbAdvisorsFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDbAdvisorsCommand = Command.make("advisors", config).pipe(
+export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
   Command.withDescription("Checks database for security and performance issues."),
   Command.withShortDescription("Checks database for security and performance issues"),
   Command.withHandler((flags) =>
-    legacyDbAdvisors(flags).pipe(
-      withLegacyCommandInstrumentation({
+    dbAdvisors(flags).pipe(
+      withCommandTelemetry({
         flags: {
           "db-url": flags.dbUrl,
           linked: flags.linked,
@@ -65,5 +65,5 @@ export const legacyDbAdvisorsCommand = Command.make("advisors", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyDbAdvisorsRuntimeLayer),
+  Command.provide(dbAdvisorsRuntimeLayer),
 );

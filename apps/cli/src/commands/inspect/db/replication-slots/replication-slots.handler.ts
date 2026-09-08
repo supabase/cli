@@ -1,7 +1,7 @@
-import { legacyMakeInspectDbHandler } from "../legacy-inspect-query.ts";
-import { legacyReplicationSlotsSpec } from "./replication-slots.query.ts";
+import { makeInspectDbHandler } from "../inspect-query.ts";
+import { replicationSlotsSpec } from "./replication-slots.query.ts";
 
-export const legacyInspectDbReplicationSlots = legacyMakeInspectDbHandler(
-  legacyReplicationSlotsSpec,
-  "legacy.inspect.db.replication-slots",
+export const inspectDbReplicationSlots = makeInspectDbHandler(
+  replicationSlotsSpec,
+  "inspect.db.replication-slots",
 );

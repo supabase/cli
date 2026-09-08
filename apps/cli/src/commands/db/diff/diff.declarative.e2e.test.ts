@@ -4,7 +4,7 @@ import { afterEach, expect, test } from "vitest";
 
 import { describe } from "vitest";
 import {
-  makeTempLegacyStackProject,
+  makeTempCliStackProject,
   overrideStackPorts,
   requireCliSuccess,
   runSupabase,
@@ -34,7 +34,7 @@ const DIFF_TEST_TIMEOUT_MS =
 // Docker-stack e2e coverage and never calls the Management API. See AGENTS.md's
 // "E2e tests" section.
 describe("supabase db diff (e2e, pg-delta declarative privileges)", () => {
-  let project: Awaited<ReturnType<typeof makeTempLegacyStackProject>> | undefined;
+  let project: Awaited<ReturnType<typeof makeTempCliStackProject>> | undefined;
 
   afterEach(async () => {
     await project?.cleanup().catch(() => undefined);
@@ -45,7 +45,7 @@ describe("supabase db diff (e2e, pg-delta declarative privileges)", () => {
     "keeps REVOKE ... FROM PUBLIC on a function when diffing a declarative schema against local",
     { timeout: DIFF_TEST_TIMEOUT_MS },
     async () => {
-      project = await makeTempLegacyStackProject("sb-db-diff-e2e-");
+      project = await makeTempCliStackProject("sb-db-diff-e2e-");
       const projectDir = project.dir;
 
       const init = await runSupabase(["init"], {

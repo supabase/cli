@@ -15,7 +15,7 @@ import {
  * (`shared/output/errors.ts`) is what makes the text `Output.fail` withhold
  * the debug hint (CLI-1973).
  */
-export class LegacyLogoutCancelledError extends Data.TaggedError("LegacyLogoutCancelledError")<{
+export class LogoutCancelledError extends Data.TaggedError("LogoutCancelledError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

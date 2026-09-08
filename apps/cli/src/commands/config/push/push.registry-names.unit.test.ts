@@ -7,18 +7,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  LEGACY_EMAIL_NOTIFICATION_NAMES,
-  LEGACY_EMAIL_TEMPLATE_NAMES,
-  LEGACY_EXTERNAL_PROVIDER_IDS,
-  LEGACY_PROVIDERS_WITH_EMAIL_OPTIONAL,
-  LEGACY_PROVIDERS_WITH_SKIP_NONCE_CHECK,
-  LEGACY_PROVIDERS_WITH_URL,
-  LEGACY_SMS_PROVIDER_NAMES,
+  EMAIL_NOTIFICATION_NAMES,
+  EMAIL_TEMPLATE_NAMES,
+  EXTERNAL_PROVIDER_IDS,
+  PROVIDERS_WITH_EMAIL_OPTIONAL,
+  PROVIDERS_WITH_SKIP_NONCE_CHECK,
+  PROVIDERS_WITH_URL,
+  SMS_PROVIDER_NAMES,
 } from "./push.registry-names.ts";
 
-describe("LEGACY_EXTERNAL_PROVIDER_IDS", () => {
+describe("EXTERNAL_PROVIDER_IDS", () => {
   it("names exactly the 20 external provider ids", () => {
-    expect(LEGACY_EXTERNAL_PROVIDER_IDS).toEqual([
+    expect(EXTERNAL_PROVIDER_IDS).toEqual([
       "apple",
       "azure",
       "bitbucket",
@@ -43,30 +43,30 @@ describe("LEGACY_EXTERNAL_PROVIDER_IDS", () => {
   });
 });
 
-describe("LEGACY_PROVIDERS_WITH_URL", () => {
+describe("PROVIDERS_WITH_URL", () => {
   it("names exactly azure, gitlab, keycloak, workos", () => {
-    expect(LEGACY_PROVIDERS_WITH_URL).toEqual(["azure", "gitlab", "keycloak", "workos"]);
+    expect(PROVIDERS_WITH_URL).toEqual(["azure", "gitlab", "keycloak", "workos"]);
   });
 });
 
-describe("LEGACY_PROVIDERS_WITH_SKIP_NONCE_CHECK", () => {
+describe("PROVIDERS_WITH_SKIP_NONCE_CHECK", () => {
   it("names exactly google", () => {
-    expect(LEGACY_PROVIDERS_WITH_SKIP_NONCE_CHECK).toEqual(["google"]);
+    expect(PROVIDERS_WITH_SKIP_NONCE_CHECK).toEqual(["google"]);
   });
 });
 
-describe("LEGACY_PROVIDERS_WITH_EMAIL_OPTIONAL", () => {
+describe("PROVIDERS_WITH_EMAIL_OPTIONAL", () => {
   it("names every external provider except workos", () => {
-    expect(LEGACY_PROVIDERS_WITH_EMAIL_OPTIONAL).toEqual(
-      LEGACY_EXTERNAL_PROVIDER_IDS.filter((id) => id !== "workos"),
+    expect(PROVIDERS_WITH_EMAIL_OPTIONAL).toEqual(
+      EXTERNAL_PROVIDER_IDS.filter((id) => id !== "workos"),
     );
-    expect(LEGACY_PROVIDERS_WITH_EMAIL_OPTIONAL).not.toContain("workos");
+    expect(PROVIDERS_WITH_EMAIL_OPTIONAL).not.toContain("workos");
   });
 });
 
-describe("LEGACY_SMS_PROVIDER_NAMES", () => {
+describe("SMS_PROVIDER_NAMES", () => {
   it("names exactly the 5 SMS providers", () => {
-    expect(LEGACY_SMS_PROVIDER_NAMES).toEqual([
+    expect(SMS_PROVIDER_NAMES).toEqual([
       "twilio",
       "twilio_verify",
       "messagebird",
@@ -76,9 +76,9 @@ describe("LEGACY_SMS_PROVIDER_NAMES", () => {
   });
 });
 
-describe("LEGACY_EMAIL_TEMPLATE_NAMES", () => {
+describe("EMAIL_TEMPLATE_NAMES", () => {
   it("names exactly the 6 email templates", () => {
-    expect(LEGACY_EMAIL_TEMPLATE_NAMES).toEqual([
+    expect(EMAIL_TEMPLATE_NAMES).toEqual([
       "invite",
       "confirmation",
       "recovery",
@@ -89,9 +89,9 @@ describe("LEGACY_EMAIL_TEMPLATE_NAMES", () => {
   });
 });
 
-describe("LEGACY_EMAIL_NOTIFICATION_NAMES", () => {
+describe("EMAIL_NOTIFICATION_NAMES", () => {
   it("names exactly the 7 email notifications", () => {
-    expect(LEGACY_EMAIL_NOTIFICATION_NAMES).toEqual([
+    expect(EMAIL_NOTIFICATION_NAMES).toEqual([
       "password_changed",
       "email_changed",
       "phone_changed",

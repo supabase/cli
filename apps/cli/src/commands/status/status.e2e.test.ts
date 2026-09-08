@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "vitest";
 
 import { describe } from "vitest";
 import {
-  makeTempLegacyStackProject,
+  makeTempCliStackProject,
   overrideStackPorts,
   requireCliSuccess,
   runSupabase,
@@ -25,7 +25,7 @@ const STATUS_TEST_TIMEOUT_MS =
 // Docker daemon the cli-e2e-ci runner provides. See AGENTS.md's "e2e tests"
 // section for the full convention.
 describe("supabase status (e2e)", () => {
-  let project: Awaited<ReturnType<typeof makeTempLegacyStackProject>> | undefined;
+  let project: Awaited<ReturnType<typeof makeTempCliStackProject>> | undefined;
 
   afterEach(async () => {
     await project?.cleanup().catch(() => undefined);
@@ -36,7 +36,7 @@ describe("supabase status (e2e)", () => {
     "reports a running local stack in pretty and json modes",
     { timeout: STATUS_TEST_TIMEOUT_MS },
     async () => {
-      project = await makeTempLegacyStackProject("sb-status-e2e-");
+      project = await makeTempCliStackProject("sb-status-e2e-");
       const projectDir = project.dir;
 
       const init = await runSupabase(["init"], {

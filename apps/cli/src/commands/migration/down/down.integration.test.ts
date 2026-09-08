@@ -7,33 +7,27 @@ import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
-  LEGACY_VALID_REF,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-  legacySequentialExecBatch,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  VALID_REF,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+  sequentialExecBatch,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../shared/legacy/global-flags.ts";
+import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import type {
-  LegacyDbConfigFlags,
-  LegacyResolvedDbConfig,
-} from "../../../command-internal/legacy-db-config.types.ts";
-import { LegacyDbExecError } from "../../../command-internal/legacy-db-connection.errors.ts";
-import {
-  type LegacyDbSession,
-  LegacyDbConnection,
-} from "../../../command-internal/legacy-db-connection.service.ts";
-import { LegacyMigrationDropError } from "../../../command-internal/legacy-drop-objects.ts";
-import { LegacyMigrationSeedError } from "../../../command-internal/legacy-seed.ts";
-import { legacyMigrationDown } from "./down.handler.ts";
-import type { LegacyMigrationDownFlags } from "./down.command.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
+import { type DbSession, DbConnection } from "../../../command-internal/db-connection.service.ts";
+import { MigrationDropError } from "../../../command-internal/drop-objects.ts";
+import { MigrationSeedError } from "../../../command-internal/seed.ts";
+import { migrationDown } from "./down.handler.ts";
+import type { MigrationDownFlags } from "./down.command.ts";
 
 const LIST_SQL = "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
 
@@ -63,16 +57,16 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     format: opts.format ?? "text",
     promptConfirmResponses: opts.confirm === undefined ? undefined : [opts.confirm],
   });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
   const execs: Array<string> = [];
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
 
-  const resolver = Layer.succeed(LegacyDbConfigResolver, {
-    resolve: (_flags: LegacyDbConfigFlags) =>
+  const resolver = Layer.succeed(DbConfigResolver, {
+    resolve: (_flags: DbConfigFlags) =>
       opts.failResolve === true
         ? Effect.fail(
-            new LegacyProjectNotLinkedError({
+            new ProjectRefNotLinkedError({
               message: "Cannot find project ref. Have you run link?",
             }),
           )
@@ -86,21 +80,21 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             },
             isLocal: true,
             ref: Option.none(),
-          } satisfies LegacyResolvedDbConfig),
+          } satisfies ResolvedDbConfig),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
-  const connection = Layer.succeed(LegacyDbConnection, {
+  const connection = Layer.succeed(DbConnection, {
     connect: () => {
-      const session: LegacyDbSession = {
+      const session: DbSession = {
         exec: (sql: string) =>
           Effect.suspend(() => {
             execs.push(sql);
             if (opts.failDrop === true && sql.startsWith("do $$")) {
-              return Effect.fail(new LegacyDbExecError({ message: "permission denied" }));
+              return Effect.fail(new DbExecError({ message: "permission denied" }));
             }
             if (opts.failSeed === true && sql.startsWith("insert into")) {
-              return Effect.fail(new LegacyDbExecError({ message: "boom" }));
+              return Effect.fail(new DbExecError({ message: "boom" }));
             }
             return Effect.void;
           }),
@@ -117,7 +111,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
         // A migration file's statements arrive as one batch; replay them through
         // `exec`/`query` so this suite's recordings and failure injection still apply.
-        execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+        execBatch: (statements) => sequentialExecBatch(session)(statements),
       };
       return Effect.succeed(session);
     },
@@ -125,16 +119,16 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
   // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
-  // (not just the hardcoded `LEGACY_VALID_REF` fallback) drives the linked ref.
-  const projectRef = Layer.succeed(LegacyProjectRefResolver, {
-    resolve: () => Effect.succeed(LEGACY_VALID_REF),
-    resolveForLink: () => Effect.succeed(LEGACY_VALID_REF),
-    resolveOptional: () => Effect.succeed(Option.some(LEGACY_VALID_REF)),
+  // (not just the hardcoded `VALID_REF` fallback) drives the linked ref.
+  const projectRef = Layer.succeed(ProjectRefResolver, {
+    resolve: () => Effect.succeed(VALID_REF),
+    resolveForLink: () => Effect.succeed(VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
     loadProjectRef: (flagValue: Option.Option<string>) =>
       Effect.succeed(
-        Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : LEGACY_VALID_REF,
+        Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : VALID_REF,
       ),
-    promptProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
+    promptProjectRef: () => Effect.succeed(VALID_REF),
   });
 
   const layer = Layer.mergeAll(
@@ -144,9 +138,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolver,
     connection,
     projectRef,
-    mockLegacyCliSettings({ workdir }),
-    Layer.succeed(LegacyDnsResolverFlag, "native"),
-    Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    mockCommandSettings({ workdir }),
+    Layer.succeed(DnsResolverFlag, "native"),
+    Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     mockTty({ stdinIsTty: opts.isTTY ?? true }),
     mockStdin(
@@ -160,7 +154,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   return { layer, out, telemetry, execs, queries, cache };
 }
 
-const flags = (over: Partial<LegacyMigrationDownFlags> = {}): LegacyMigrationDownFlags => ({
+const flags = (over: Partial<MigrationDownFlags> = {}): MigrationDownFlags => ({
   last: over.last ?? 1,
   dbUrl: over.dbUrl ?? Option.none(),
   linked: over.linked ?? false,
@@ -174,17 +168,17 @@ const seed = (workdir: string, name: string, body = "create table a;\n") => {
   writeFileSync(join(dir, name), body);
 };
 
-const tmp = useLegacyTempWorkdir();
+const tmp = useTempWorkdir();
 
 describe("legacy migration down", () => {
   it.live("rejects --last 0", () => {
     const { layer } = setup(tmp.current);
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationDown(flags({ last: 0 })).pipe(Effect.exit);
+      const exit = yield* migrationDown(flags({ last: 0 })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyMigrationLastZeroError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationLastZeroError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -194,12 +188,12 @@ describe("legacy migration down", () => {
     // check, so an unlinked/invalid target error wins over --last 0.
     const { layer } = setup(tmp.current, { failResolve: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationDown(flags({ last: 0 })).pipe(Effect.exit);
+      const exit = yield* migrationDown(flags({ last: 0 })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         // The target/config error surfaces first, NOT the --last 0 error.
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyProjectNotLinkedError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("ProjectRefNotLinkedError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -207,13 +201,11 @@ describe("legacy migration down", () => {
   it.live("rejects --last >= total applied migrations", () => {
     const { layer } = setup(tmp.current, { remote: ["20240101000000"] });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationDown(flags({ last: 1 })).pipe(Effect.exit);
+      const exit = yield* migrationDown(flags({ last: 1 })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe(
-          "LegacyMigrationLastTooLargeError",
-        );
+        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationLastTooLargeError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -225,7 +217,7 @@ describe("legacy migration down", () => {
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
-      yield* legacyMigrationDown(flags({ last: 1 }));
+      yield* migrationDown(flags({ last: 1 }));
       // The connection banner prints to stderr before dialing.
       expect(stripAnsi(out.stderrText)).toContain("Connecting to local database...");
       expect(stripAnsi(out.stderrText)).toContain("Resetting database to version: 20240101000000");
@@ -244,7 +236,7 @@ describe("legacy migration down", () => {
     "reverts on the project given via --project-ref --linked, overriding the linked ref",
     () => {
       // down defaults to local; only with --linked does the flag's ref get
-      // cached. The fake resolver's own fallback (LEGACY_VALID_REF) represents
+      // cached. The fake resolver's own fallback (VALID_REF) represents
       // whatever the workdir would resolve to absent the flag.
       const FLAG_REF = "flagflagflagflagflag";
       seed(tmp.current, "20240101000000_a.sql");
@@ -254,12 +246,12 @@ describe("legacy migration down", () => {
         remote: ["20240101000000", "20240102000000"],
       });
       return Effect.gen(function* () {
-        yield* legacyMigrationDown(
+        yield* migrationDown(
           flags({ last: 1, linked: true, local: false, projectRef: Option.some(FLAG_REF) }),
         );
         expect(cache.cached).toBe(true);
         expect(cache.cachedRef).toBe(FLAG_REF);
-        expect(cache.cachedRef).not.toBe(LEGACY_VALID_REF);
+        expect(cache.cachedRef).not.toBe(VALID_REF);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -272,15 +264,13 @@ describe("legacy migration down", () => {
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationDown(
-        flags({ last: 1, projectRef: Option.some(FLAG_REF) }),
-      ).pipe(Effect.exit);
+      const exit = yield* migrationDown(flags({ last: 1, projectRef: Option.some(FLAG_REF) })).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe(
-          "LegacyMigrationTargetFlagsError",
-        );
+        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationTargetFlagsError");
         expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
@@ -298,11 +288,11 @@ describe("legacy migration down", () => {
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationDown(flags({ last: 1 })).pipe(Effect.exit);
+      const exit = yield* migrationDown(flags({ last: 1 })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
       }
       expect(execs.some((sql) => sql.startsWith("do $$"))).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -316,11 +306,11 @@ describe("legacy migration down", () => {
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationDown(flags({ last: 1 })).pipe(Effect.exit);
+      const exit = yield* migrationDown(flags({ last: 1 })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
       }
       expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -334,7 +324,7 @@ describe("legacy migration down", () => {
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
-      yield* legacyMigrationDown(flags({ last: 1 }));
+      yield* migrationDown(flags({ last: 1 }));
       expect(out.messages).toContainEqual(
         expect.objectContaining({
           type: "success",
@@ -355,7 +345,7 @@ describe("legacy migration down", () => {
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
-      yield* legacyMigrationDown(flags({ last: 1 }));
+      yield* migrationDown(flags({ last: 1 }));
       expect(out.messages).toContainEqual(
         expect.objectContaining({
           type: "success",
@@ -374,13 +364,11 @@ describe("legacy migration down", () => {
       failDrop: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationDown(flags({ last: 1 })).pipe(Effect.exit);
+      const exit = yield* migrationDown(flags({ last: 1 })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value instanceof LegacyMigrationDropError).toBe(
-          true,
-        );
+        expect(Option.isSome(failure) && failure.value instanceof MigrationDropError).toBe(true);
       }
     }).pipe(Effect.provide(layer));
   });
@@ -393,7 +381,7 @@ describe("legacy migration down", () => {
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
-      yield* legacyMigrationDown(flags({ last: 1 }));
+      yield* migrationDown(flags({ last: 1 }));
       expect(stripAnsi(out.stderrText)).toContain("Seeding data from supabase/seed.sql...");
       expect(
         queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files")),
@@ -410,13 +398,11 @@ describe("legacy migration down", () => {
       failSeed: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationDown(flags({ last: 1 })).pipe(Effect.exit);
+      const exit = yield* migrationDown(flags({ last: 1 })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value instanceof LegacyMigrationSeedError).toBe(
-          true,
-        );
+        expect(Option.isSome(failure) && failure.value instanceof MigrationSeedError).toBe(true);
       }
     }).pipe(Effect.provide(layer));
   });
@@ -432,7 +418,7 @@ describe("legacy migration down", () => {
       seedTable: [{ path: "supabase/seed.sql", hash }],
     });
     return Effect.gen(function* () {
-      yield* legacyMigrationDown(flags({ last: 1 }));
+      yield* migrationDown(flags({ last: 1 }));
       expect(stripAnsi(out.stderrText)).not.toContain("Seeding data from");
       expect(
         queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files")),
@@ -449,7 +435,7 @@ describe("legacy migration down", () => {
       seedTable: [{ path: "supabase/seed.sql", hash: "stale-hash-does-not-match" }],
     });
     return Effect.gen(function* () {
-      yield* legacyMigrationDown(flags({ last: 1 }));
+      yield* migrationDown(flags({ last: 1 }));
       // Dirty seed → "Updating seed hash" + hash UPSERT, but the seed SQL is NOT re-run.
       expect(stripAnsi(out.stderrText)).toContain("Updating seed hash to supabase/seed.sql...");
       expect(
@@ -467,7 +453,7 @@ describe("legacy migration down", () => {
       config: "[db.migrations]\nenabled = false\n",
     });
     return Effect.gen(function* () {
-      yield* legacyMigrationDown(flags({ last: 1 }));
+      yield* migrationDown(flags({ last: 1 }));
       expect(queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });

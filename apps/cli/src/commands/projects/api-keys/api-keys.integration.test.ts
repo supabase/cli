@@ -4,13 +4,13 @@ import { Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  LEGACY_VALID_REF,
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyPlatformApi,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { legacyProjectsApiKeys } from "./api-keys.handler.ts";
+  VALID_REF,
+  buildTestRuntime,
+  mockCommandSettings,
+  mockCommandPlatformApi,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { projectsApiKeys } from "./api-keys.handler.ts";
 
 type ApiKeys = typeof V1GetProjectApiKeysOutput.Type;
 
@@ -26,7 +26,7 @@ const REVEALED_KEYS: ApiKeys = [
 
 const FLAG_REF = "qrstuvwxyzabcdefghij";
 
-const tempRoot = useLegacyTempWorkdir("supabase-projects-apikeys-int-");
+const tempRoot = useTempWorkdir("supabase-projects-apikeys-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
@@ -39,15 +39,15 @@ interface SetupOpts {
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 200, body: opts.response ?? SAMPLE_KEYS },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({
+  const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
-    projectId: opts.projectId ?? Option.some(LEGACY_VALID_REF),
+    projectId: opts.projectId ?? Option.some(VALID_REF),
   });
-  const layer = buildLegacyTestRuntime({
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -60,7 +60,7 @@ describe("legacy projects api-keys integration", () => {
   it.live("lists api keys as a NAME / KEY VALUE table and masks null values", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacyProjectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
       expect(out.stdoutText).toContain("NAME");
       expect(out.stdoutText).toContain("KEY VALUE");
       expect(out.stdoutText).toContain("anon-secret");
@@ -71,7 +71,7 @@ describe("legacy projects api-keys integration", () => {
   it.live("resolves the ref from --project-ref", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacyProjectsApiKeys({ projectRef: Option.some(FLAG_REF), reveal: false });
+      yield* projectsApiKeys({ projectRef: Option.some(FLAG_REF), reveal: false });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${FLAG_REF}/api-keys`);
     }).pipe(Effect.provide(layer));
   });
@@ -79,15 +79,15 @@ describe("legacy projects api-keys integration", () => {
   it.live("resolves the ref from the linked project when --project-ref is omitted", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacyProjectsApiKeys({ projectRef: Option.none(), reveal: false });
-      expect(api.requests[0]?.url).toContain(`/v1/projects/${LEGACY_VALID_REF}/api-keys`);
+      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
+      expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/api-keys`);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("omits the reveal query param by default (Go request parity)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacyProjectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
       expect(api.requests[0]?.urlWithParams).not.toContain("reveal");
     }).pipe(Effect.provide(layer));
   });
@@ -95,7 +95,7 @@ describe("legacy projects api-keys integration", () => {
   it.live("sends reveal=true when --reveal is passed", () => {
     const { layer, api } = setup({ response: REVEALED_KEYS });
     return Effect.gen(function* () {
-      yield* legacyProjectsApiKeys({ projectRef: Option.none(), reveal: true });
+      yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
       expect(api.requests[0]?.urlWithParams).toContain("reveal=true");
     }).pipe(Effect.provide(layer));
   });
@@ -103,7 +103,7 @@ describe("legacy projects api-keys integration", () => {
   it.live("renders the revealed secret key in full in the text table", () => {
     const { layer, out } = setup({ response: REVEALED_KEYS });
     return Effect.gen(function* () {
-      yield* legacyProjectsApiKeys({ projectRef: Option.none(), reveal: true });
+      yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
       expect(out.stdoutText).toContain("sb_secret_revealed");
       expect(out.stdoutText).not.toContain("******");
     }).pipe(Effect.provide(layer));
@@ -112,7 +112,7 @@ describe("legacy projects api-keys integration", () => {
   it.live("includes the revealed secret in the env map for --output env --reveal", () => {
     const { layer, out } = setup({ goOutput: "env", response: REVEALED_KEYS });
     return Effect.gen(function* () {
-      yield* legacyProjectsApiKeys({ projectRef: Option.none(), reveal: true });
+      yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
       expect(out.stdoutText).toContain('SUPABASE_SERVICE_ROLE_KEY="sb_secret_revealed"');
     }).pipe(Effect.provide(layer));
   });
@@ -120,7 +120,7 @@ describe("legacy projects api-keys integration", () => {
   it.live("carries the revealed secret in the { keys } payload for --output-format json", () => {
     const { layer, out } = setup({ format: "json", response: REVEALED_KEYS });
     return Effect.gen(function* () {
-      yield* legacyProjectsApiKeys({ projectRef: Option.none(), reveal: true });
+      yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ keys: REVEALED_KEYS });
     }).pipe(Effect.provide(layer));
@@ -129,20 +129,20 @@ describe("legacy projects api-keys integration", () => {
   it.live("emits the revealed secret in the Go json array for --output json --reveal", () => {
     const { layer, out } = setup({ goOutput: "json", response: REVEALED_KEYS });
     return Effect.gen(function* () {
-      yield* legacyProjectsApiKeys({ projectRef: Option.none(), reveal: true });
+      yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
       expect(out.stdoutText).toContain('"api_key": "sb_secret_revealed"');
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyProjectNotLinkedError when no ref can be resolved", () => {
+  it.live("fails with ProjectRefNotLinkedError when no ref can be resolved", () => {
     const { layer } = setup({ projectId: Option.none() });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyProjectsApiKeys({ projectRef: Option.none(), reveal: false }),
+        projectsApiKeys({ projectRef: Option.none(), reveal: false }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectNotLinkedError");
+        expect(JSON.stringify(exit.cause)).toContain("ProjectRefNotLinkedError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -150,7 +150,7 @@ describe("legacy projects api-keys integration", () => {
   it.live("emits a success event with { keys } for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacyProjectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ keys: SAMPLE_KEYS });
     }).pipe(Effect.provide(layer));
@@ -159,7 +159,7 @@ describe("legacy projects api-keys integration", () => {
   it.live("emits a success event for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
-      yield* legacyProjectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
       expect(out.messages.find((m) => m.type === "success")).toBeDefined();
     }).pipe(Effect.provide(layer));
   });
@@ -167,7 +167,7 @@ describe("legacy projects api-keys integration", () => {
   it.live("encodes the SUPABASE_<NAME>_KEY map for --output env", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
-      yield* legacyProjectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
       expect(out.stdoutText).toContain('SUPABASE_ANON_KEY="anon-secret"');
       expect(out.stdoutText).toContain('SUPABASE_SERVICE_ROLE_KEY="******"');
     }).pipe(Effect.provide(layer));
@@ -176,7 +176,7 @@ describe("legacy projects api-keys integration", () => {
   it.live("encodes the SUPABASE_<NAME>_KEY map for --output toml", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
-      yield* legacyProjectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
       expect(out.stdoutText).toContain('SUPABASE_ANON_KEY = "anon-secret"');
     }).pipe(Effect.provide(layer));
   });
@@ -184,7 +184,7 @@ describe("legacy projects api-keys integration", () => {
   it.live("emits a JSON array of api keys for --output json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
-      yield* legacyProjectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
       expect(out.stdoutText).toContain('"name": "anon"');
       expect(out.stdoutText.startsWith("[\n")).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -193,21 +193,21 @@ describe("legacy projects api-keys integration", () => {
   it.live("emits a YAML array for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
-      yield* legacyProjectsApiKeys({ projectRef: Option.none(), reveal: false });
+      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
       expect(out.stdoutText).toContain("name: anon");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyProjectsApiKeysNetworkError on transport failure", () => {
+  it.live("fails with ProjectsApiKeysNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyProjectsApiKeys({ projectRef: Option.none(), reveal: false }),
+        projectsApiKeys({ projectRef: Option.none(), reveal: false }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyProjectsApiKeysNetworkError");
+        expect(json).toContain("ProjectsApiKeysNetworkError");
         expect(json).toContain("failed to get api keys");
       }
     }).pipe(Effect.provide(layer));
@@ -217,12 +217,12 @@ describe("legacy projects api-keys integration", () => {
     const { layer } = setup({ status: 503, response: [] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyProjectsApiKeys({ projectRef: Option.none(), reveal: false }),
+        projectsApiKeys({ projectRef: Option.none(), reveal: false }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyProjectsApiKeysUnexpectedStatusError");
+        expect(json).toContain("ProjectsApiKeysUnexpectedStatusError");
         expect(json).toContain("unexpected get api keys status 503");
       }
     }).pipe(Effect.provide(layer));

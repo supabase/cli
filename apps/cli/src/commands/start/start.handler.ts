@@ -18,176 +18,170 @@ import {
   type StartedRuntime,
 } from "../../shared/functions/serve.ts";
 import {
-  LegacyDebugFlag,
-  LegacyNetworkIdFlag,
-  legacyResolveExperimentalWithProjectEnv,
-} from "../../shared/legacy/global-flags.ts";
+  DebugFlag,
+  NetworkIdFlag,
+  resolveExperimentalWithProjectEnv,
+} from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { EventStackStarted } from "../../shared/telemetry/event-catalog.ts";
-import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
-import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyResolveStudioApiUrl } from "../../command-internal/legacy-api-url.ts";
-import { legacyIsBitbucketPipeline } from "../../command-internal/legacy-bitbucket-pipeline.ts";
-import { legacyAqua, legacyYellow } from "../../command-internal/legacy-colors.ts";
+import { CommandSettings } from "../../config/command-settings.service.ts";
+import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
+import { resolveStudioApiUrl } from "../../command-internal/api-url.ts";
+import { isBitbucketPipeline } from "../../command-internal/bitbucket-pipeline.ts";
+import { aqua, yellow } from "../../command-internal/colors.ts";
 import {
-  legacyApiTlsCertReadErrorMessage,
-  legacyApiTlsKeyReadErrorMessage,
-  legacyEmailContentPathReadErrorMessage,
-  legacyResolveApiTlsPath,
-  legacyResolveEmailTemplateContentPath,
-} from "../../command-internal/legacy-config-validate.ts";
-import { legacyIsContainerNotFoundMessage } from "../../command-internal/legacy-container-cli.ts";
-import { legacyCheckDbToml } from "../../command-internal/legacy-db-config.toml-read.ts";
-import { legacyResolveEdgeRuntimeImage } from "../../command-internal/legacy-edge-runtime-image.ts";
+  apiTlsCertReadErrorMessage,
+  apiTlsKeyReadErrorMessage,
+  emailContentPathReadErrorMessage,
+  resolveApiTlsPath,
+  resolveEmailTemplateContentPath,
+} from "../../command-internal/config-validate.ts";
+import { isContainerNotFoundMessage } from "../../command-internal/container-cli.ts";
+import { checkDbToml } from "../../command-internal/db-config.toml-read.ts";
+import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
 import {
-  legacyResolveStorageCredentials,
-  legacyStorageGatewayFetch,
-} from "../../command-internal/legacy-storage-credentials.ts";
+  resolveStorageCredentials,
+  storageGatewayFetch,
+} from "../../command-internal/storage-credentials.ts";
 import {
-  legacyCollectDotenvPrivateKeys,
-  legacyDecryptSecret,
-  legacyIsEncryptedSecret,
-} from "../../command-internal/legacy-vault-decrypt.ts";
-import { legacyParseGoDuration } from "../../command-internal/legacy-go-duration.ts";
-import { legacyConfigureLoopbackProxyBypass } from "../../command-internal/legacy-hostname.ts";
+  collectDotenvPrivateKeys,
+  decryptSecret,
+  isEncryptedSecret,
+} from "../../command-internal/vault-decrypt.ts";
+import { parseGoDuration } from "../../command-internal/go-duration.ts";
+import { configureLoopbackProxyBypass } from "../../command-internal/hostname.ts";
 import {
-  legacyCliProjectFilterValue,
-  legacyServiceContainerIds,
-  legacyServiceContainerName,
+  cliProjectFilterValue,
+  serviceContainerIds,
+  serviceContainerName,
   localDbContainerId,
-} from "../../command-internal/legacy-docker-ids.ts";
+} from "../../command-internal/docker-ids.ts";
 import { resolveDockerNetworkMode } from "../../shared/functions/functions-docker.ts";
-import { legacyViperEnvStringWithProjectFallback } from "../../shared/legacy/legacy-viper-env.ts";
+import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
 import {
-  legacyInspectContainerState,
-  legacyListContainersByLabel,
-  type LegacyContainerIdName,
-} from "../../command-internal/legacy-docker-lifecycle.ts";
-import { legacyDockerRemoveAll } from "../../command-internal/legacy-docker-remove-all.ts";
+  inspectContainerState,
+  listContainersByLabel,
+  type ContainerIdName,
+} from "../../command-internal/docker-lifecycle.ts";
+import { dockerRemoveAll } from "../../command-internal/docker-remove-all.ts";
 import {
-  legacyEnvOverride,
-  legacyEnvOverrideApiMaxRows,
-  legacyEnvOverrideBool,
-  legacyEnvOverrideDefaultPoolSize,
-  legacyEnvOverrideDenoVersion,
-  legacyEnvOverrideEdgeRuntimePolicy,
-  legacyEnvOverrideMaxClientConn,
-  legacyEnvOverridePoolMode,
-  legacyEnvOverridePort,
-  legacyEnvOverrideUint,
-  legacyResolveAuthCaptcha,
-  legacyResolveAuthEmail,
-  legacyResolveAuthEmailSmtp,
-  legacyResolveAuthExternalProviders,
-  legacyResolveAuthHooks,
-  legacyResolveAuthMfa,
-  legacyResolveAuthSms,
-  legacyResolveConfiguredSigningKeys,
-  legacyResolveAuthExternalUrl,
-  legacyResolveDbSettingsEnvOverrides,
-  legacyResolveGotrueOAuthServer,
-  legacyResolveGotruePasskeyWebauthn,
-  legacyResolveGotrueRateLimit as resolveGotrueRateLimit,
-  legacyResolveGotrueSessions as resolveGotrueSessions,
-  legacyResolveGotrueWeb3,
-  legacyResolveLocalConfigValues,
-  legacyResolveLocalJwks,
-  legacyResolveThirdPartyProviders,
-  type LegacyLocalConfigValues,
-  type LegacyResolvedAuthEmail,
-} from "../../command-internal/legacy-local-config-values.ts";
+  envOverride,
+  envOverrideApiMaxRows,
+  envOverrideBool,
+  envOverrideDefaultPoolSize,
+  envOverrideDenoVersion,
+  envOverrideEdgeRuntimePolicy,
+  envOverrideMaxClientConn,
+  envOverridePoolMode,
+  envOverridePort,
+  envOverrideUint,
+  resolveAuthCaptcha,
+  resolveAuthEmail,
+  resolveAuthEmailSmtp,
+  resolveAuthExternalProviders,
+  resolveAuthHooks,
+  resolveAuthMfa,
+  resolveAuthSms,
+  resolveConfiguredSigningKeys,
+  resolveAuthExternalUrl,
+  resolveDbSettingsEnvOverrides,
+  resolveGotrueOAuthServer,
+  resolveGotruePasskeyWebauthn,
+  resolveGotrueRateLimit,
+  resolveGotrueSessions,
+  resolveGotrueWeb3,
+  resolveLocalConfigValues,
+  resolveLocalJwks,
+  resolveThirdPartyProviders,
+  type LocalConfigValues,
+  type ResolvedAuthEmail,
+} from "../../command-internal/local-config-values.ts";
 import {
-  legacyLoadLocalProjectContext,
-  type LegacyLocalProjectContext,
-} from "../../command-internal/legacy-local-project-context.ts";
-import { legacySeedBucketsRun } from "../../command-internal/legacy-seed-buckets.ts";
-import { legacyCleanupStartSecrets } from "../../command-internal/legacy-start-secrets-cleanup.ts";
+  loadLocalProjectContext,
+  type LocalProjectContext,
+} from "../../command-internal/local-project-context.ts";
+import { seedBucketsRun } from "../../command-internal/seed-buckets.ts";
+import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
 import {
-  LegacyStatusDbInspectError,
-  LegacyStatusDbNotReadyError,
-  LegacyStatusDbNotRunningError,
-  LegacyStatusInvalidConfigError,
-  LegacyStatusListError,
-} from "../../command-internal/legacy-status-errors.ts";
-import { legacyRenderStatusPretty } from "../../command-internal/legacy-status-pretty.ts";
+  StatusDbInspectError,
+  StatusDbNotReadyError,
+  StatusDbNotRunningError,
+  StatusInvalidConfigError,
+  StatusListError,
+} from "../../command-internal/status-errors.ts";
+import { renderStatusPretty } from "../../command-internal/status-pretty.ts";
 import {
-  legacyGateStatusState,
-  legacyResolveStatusLocalState,
-  legacyStatusContainerIds,
-  legacyStatusValuesFromState,
-} from "../../command-internal/legacy-status-values.ts";
-import { legacyValidateWorkdirIsDirectory } from "../../command-internal/legacy-workdir-validation.ts";
-import type { LegacyStartFlags } from "./start.command.ts";
+  gateStatusState,
+  resolveStatusLocalState,
+  statusContainerIds,
+  statusValuesFromState,
+} from "../../command-internal/status-values.ts";
+import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
+import type { StartFlags } from "./start.command.ts";
 import {
-  LegacyStartConfigLoadError,
-  LegacyStartInvalidConfigError,
-  LegacyStartWorkdirError,
+  StartConfigLoadError,
+  StartInvalidConfigError,
+  StartWorkdirError,
 } from "./start.errors.ts";
-import { legacyPartitionStartExcludeFlags } from "./start.exclude.ts";
+import { partitionStartExcludeFlags } from "./start.exclude.ts";
 import {
-  legacyStartAlreadyRunningMessage,
-  legacyStartCompletedMessage,
-  legacyStartSecurityNotice,
-  LEGACY_START_STARTING_CONTAINERS_MESSAGE,
-  LEGACY_START_WAITING_FOR_HEALTH_CHECKS_MESSAGE,
+  startAlreadyRunningMessage,
+  startCompletedMessage,
+  startSecurityNotice,
+  START_STARTING_CONTAINERS_MESSAGE,
+  START_WAITING_FOR_HEALTH_CHECKS_MESSAGE,
 } from "./start.format.ts";
-import { legacyResolveStartGates, legacyResolveStartImagePlan } from "./start.gates.ts";
+import { resolveStartGates, resolveStartImagePlan } from "./start.gates.ts";
 import {
-  legacyIsUnhealthyStartError,
-  legacyRollbackStart,
+  isUnhealthyStartError,
+  rollbackStart,
 } from "../../command-internal/db-bootstrap/rollback.ts";
-import { legacyResolveDbBootstrapConfig } from "../../command-internal/db-bootstrap/bootstrap-config.ts";
-import { legacyStartDatabase } from "../../command-internal/db-bootstrap/start-database.ts";
-import { LEGACY_START_SERVICES } from "./start.services.ts";
+import { resolveDbBootstrapConfig } from "../../command-internal/db-bootstrap/bootstrap-config.ts";
+import { startDatabase } from "../../command-internal/db-bootstrap/start-database.ts";
+import { START_SERVICES } from "./start.services.ts";
 import {
-  legacyCreateContainer,
-  type LegacyContainerOpts,
+  createContainer,
+  type ContainerOpts,
 } from "../../command-internal/db-bootstrap/container-lifecycle.ts";
-import { legacyEnsureImagesCached } from "../../command-internal/db-bootstrap/image-prepull.ts";
+import { ensureImagesCached } from "../../command-internal/db-bootstrap/image-prepull.ts";
 import {
-  legacyWaitForHealthyServices,
-  type LegacyHealthCheckPostgrestGateway,
-  type LegacyHealthCheckTimeoutError,
+  waitForHealthyServices,
+  type HealthCheckPostgrestGateway,
+  type HealthCheckTimeoutError,
 } from "../../command-internal/db-bootstrap/health-check.ts";
 import {
-  legacyStartInternalDbPassword,
-  LEGACY_START_INTERNAL_DB_NAME,
-  LEGACY_START_INTERNAL_DB_PORT,
+  startInternalDbPassword,
+  START_INTERNAL_DB_NAME,
+  START_INTERNAL_DB_PORT,
 } from "../../command-internal/db-bootstrap/internal-db-connection.ts";
+import { KONG_LOCAL_TLS_CERT, KONG_LOCAL_TLS_KEY } from "./templates/kong-local-tls.ts";
+import { buildLogflareContainerSpec } from "./services/logflare.service.ts";
 import {
-  LEGACY_KONG_LOCAL_TLS_CERT,
-  LEGACY_KONG_LOCAL_TLS_KEY,
-} from "./templates/kong-local-tls.ts";
-import { legacyBuildLogflareContainerSpec } from "./services/logflare.service.ts";
-import {
-  legacyBuildVectorContainerSpec,
-  legacyResolveDockerDaemonHost,
-  legacyResolveVectorDockerSocketPlan,
+  buildVectorContainerSpec,
+  resolveDockerDaemonHost,
+  resolveVectorDockerSocketPlan,
 } from "./services/vector.service.ts";
 import {
-  legacyBuildKongContainerSpec,
-  legacyResolveKongNginxWorkerProcesses,
-  type LegacyKongEmailTemplateMount,
+  buildKongContainerSpec,
+  resolveKongNginxWorkerProcesses,
+  type KongEmailTemplateMount,
 } from "./services/kong.service.ts";
 import {
-  legacyStartEdgeRuntimeContainer,
-  type LegacyEdgeRuntimeBringUpInput,
+  startStackEdgeRuntimeContainer,
+  type EdgeRuntimeBringUpInput,
 } from "./services/edge-runtime.service.ts";
-import {
-  legacyBuildGotrueContainerSpec,
-  type LegacyBuildGotrueEnvInput,
-} from "./services/gotrue.service.ts";
-import { legacyBuildMailpitContainerSpec } from "./services/mailpit.service.ts";
-import { legacyBuildRealtimeContainerSpec } from "./services/realtime.service.ts";
-import { LEGACY_REALTIME_TENANT_ID } from "../../command-internal/db-bootstrap/realtime-env.ts";
-import { legacyBuildPostgrestContainerSpec } from "./services/postgrest.service.ts";
-import { legacyBuildStorageContainerSpec } from "./services/storage.service.ts";
-import { legacyBuildImgproxyContainerSpec } from "./services/imgproxy.service.ts";
-import { legacyBuildPgMetaContainerSpec } from "./services/pg-meta.service.ts";
-import { legacyBuildStudioContainerSpec } from "./services/studio.service.ts";
-import { legacyBuildSupavisorContainerSpec } from "./services/supavisor.service.ts";
+import { buildGotrueContainerSpec, type BuildGotrueEnvInput } from "./services/gotrue.service.ts";
+import { buildMailpitContainerSpec } from "./services/mailpit.service.ts";
+import { buildRealtimeContainerSpec } from "./services/realtime.service.ts";
+import { REALTIME_TENANT_ID } from "../../command-internal/db-bootstrap/realtime-env.ts";
+import { buildPostgrestContainerSpec } from "./services/postgrest.service.ts";
+import { buildStorageContainerSpec } from "./services/storage.service.ts";
+import { buildImgproxyContainerSpec } from "./services/imgproxy.service.ts";
+import { buildPgMetaContainerSpec } from "./services/pg-meta.service.ts";
+import { buildStudioContainerSpec } from "./services/studio.service.ts";
+import { buildSupavisorContainerSpec } from "./services/supavisor.service.ts";
 
 /**
  * The analytics API key's only possible value — never configurable.
@@ -196,7 +190,7 @@ import { legacyBuildSupavisorContainerSpec } from "./services/supavisor.service.
  * matching that existing precedent instead of introducing a new shared
  * constant for it.
  */
-const LEGACY_ANALYTICS_API_KEY = "api-key";
+const ANALYTICS_API_KEY = "api-key";
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -205,8 +199,8 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 /**
- * Wraps a synchronous `legacyEnvOverride*`/`legacyEnvOverride*` config-override read that throws on a
- * malformed value into a typed `LegacyStartInvalidConfigError` failure —
+ * Wraps a synchronous `envOverride*`/`envOverride*` config-override read that throws on a
+ * malformed value into a typed `StartInvalidConfigError` failure —
  * config validation hard-fails on a bad decode before any Docker work runs —
  * instead of leaking an untyped Effect defect that bypasses
  * `withJsonErrorHandling`'s `Effect.catch` (which, unlike this pipeline's `Effect.onError`
@@ -215,18 +209,18 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 function wrapConfigOverride<T>(
   dottedFieldPath: string,
   thunk: () => T,
-): Effect.Effect<T, LegacyStartInvalidConfigError> {
+): Effect.Effect<T, StartInvalidConfigError> {
   return Effect.try({
     try: thunk,
     catch: (cause) =>
-      new LegacyStartInvalidConfigError({
+      new StartInvalidConfigError({
         message: `invalid config for ${dottedFieldPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
       }),
   });
 }
 
 /**
- * Every value {@link legacyBuildGotrueContainerSpec} needs from `config`/
+ * Every value {@link buildGotrueContainerSpec} needs from `config`/
  * `values`, minus `dbHost`/`dbPassword` (which that builder derives itself
  * from `projectId`/`dbUrl`). See this module's header for the `@supabase/
  * config` schema gaps (`captcha`/`passkey`/`webauthn`/`email.smtp` presence,
@@ -234,31 +228,31 @@ function wrapConfigOverride<T>(
  * documents — reused here.
  *
  * A configured `auth.signing_keys_path` is honored for anon/service_role JWT
- * SIGNING (`values.jwtSecret`/`legacyResolveLocalConfigValues`'s own
+ * SIGNING (`values.jwtSecret`/`resolveLocalConfigValues`'s own
  * `loadFirstSigningKey`), for the stack-wide JWKS document
- * (`legacyResolveLocalJwks`), AND here as GoTrue's own `GOTRUE_JWT_KEYS` —
+ * (`resolveLocalJwks`), AND here as GoTrue's own `GOTRUE_JWT_KEYS` —
  * all three resolve the SAME file via
- * {@link legacyResolveConfiguredSigningKeys}, so GoTrue always signs with
+ * {@link resolveConfiguredSigningKeys}, so GoTrue always signs with
  * (one of) the key(s) the published JWKS advertises. `undefined` (the
  * default ES256 key, matching `gotrue.service.ts`'s hardcoded
- * `LEGACY_GOTRUE_DEFAULT_SIGNING_KEY`) only when no `signing_keys_path` is
+ * `GOTRUE_DEFAULT_SIGNING_KEY`) only when no `signing_keys_path` is
  * configured or auth is disabled.
  */
 
 function resolveGotrueEnvInput(params: {
-  readonly context: LegacyLocalProjectContext;
-  readonly values: LegacyLocalConfigValues;
+  readonly context: LocalProjectContext;
+  readonly values: LocalConfigValues;
   readonly workdir: string;
   readonly kongContainerName: string;
   readonly mailpitContainerName: string;
-  readonly resolvedEmail: LegacyResolvedAuthEmail;
-}): Omit<LegacyBuildGotrueEnvInput, "dbHost" | "dbPassword"> {
+  readonly resolvedEmail: ResolvedAuthEmail;
+}): Omit<BuildGotrueEnvInput, "dbHost" | "dbPassword"> {
   const { context, values, workdir, kongContainerName, mailpitContainerName, resolvedEmail } =
     params;
   const { config, projectEnvValues, loaded } = context;
   const document = loaded?.document;
 
-  const inbucketEnabled = legacyEnvOverrideBool(
+  const inbucketEnabled = envOverrideBool(
     "SUPABASE_LOCAL_SMTP_ENABLED",
     config.local_smtp.enabled,
     "local_smtp.enabled",
@@ -268,10 +262,10 @@ function resolveGotrueEnvInput(params: {
   // schema-decoded `config.auth.email.smtp` here would always see `enabled:
   // false` when the key is merely absent from the TOML table (`@supabase/
   // config`'s decode-time default), silently falling back to Mailpit even
-  // when a real SMTP server is configured. `legacyResolveAuthEmailSmtp`
+  // when a real SMTP server is configured. `resolveAuthEmailSmtp`
   // resolves this correctly off the raw document, same as the passkey/
   // webauthn/external-provider reads below.
-  const resolvedSmtp = legacyResolveAuthEmailSmtp(asRecord(document?.["auth"]), projectEnvValues);
+  const resolvedSmtp = resolveAuthEmailSmtp(asRecord(document?.["auth"]), projectEnvValues);
   const smtp =
     resolvedSmtp?.enabled === true
       ? {
@@ -287,12 +281,12 @@ function resolveGotrueEnvInput(params: {
   // `local_smtp.admin_email`/`sender_name` — value-typed fields, so no
   // raw-document presence gate needed, matching `local_smtp.port`'s
   // existing treatment.
-  const mailpitAdminEmail = legacyEnvOverride(
+  const mailpitAdminEmail = envOverride(
     "SUPABASE_LOCAL_SMTP_ADMIN_EMAIL",
     config.local_smtp.admin_email,
     projectEnvValues,
   );
-  const mailpitSenderName = legacyEnvOverride(
+  const mailpitSenderName = envOverride(
     "SUPABASE_LOCAL_SMTP_SENDER_NAME",
     config.local_smtp.sender_name,
     projectEnvValues,
@@ -306,16 +300,13 @@ function resolveGotrueEnvInput(params: {
         }
       : undefined;
 
-  const { passkeyEnabled, webauthn } = legacyResolveGotruePasskeyWebauthn(
-    document,
-    projectEnvValues,
-  );
-  const externalProviders = legacyResolveAuthExternalProviders(
+  const { passkeyEnabled, webauthn } = resolveGotruePasskeyWebauthn(document, projectEnvValues);
+  const externalProviders = resolveAuthExternalProviders(
     asRecord(document?.["auth"]),
     config.auth.external,
     projectEnvValues,
   );
-  const authExternalUrl = legacyResolveAuthExternalUrl(document, projectEnvValues);
+  const authExternalUrl = resolveAuthExternalUrl(document, projectEnvValues);
 
   return {
     apiUrl: values.apiUrl,
@@ -336,14 +327,14 @@ function resolveGotrueEnvInput(params: {
     kongContainerName,
     smtp,
     mailpit,
-    sms: legacyResolveAuthSms(asRecord(document?.["auth"]), config.auth.sms, projectEnvValues),
+    sms: resolveAuthSms(asRecord(document?.["auth"]), config.auth.sms, projectEnvValues),
     sessions: resolveGotrueSessions(config.auth.sessions, projectEnvValues),
-    mfa: legacyResolveAuthMfa(config.auth.mfa, projectEnvValues),
+    mfa: resolveAuthMfa(config.auth.mfa, projectEnvValues),
     rateLimit: resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
-    web3: legacyResolveGotrueWeb3(config.auth.web3, projectEnvValues),
-    oauthServer: legacyResolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
-    hooks: legacyResolveAuthHooks(asRecord(document?.["auth"]), config.auth.hook, projectEnvValues),
-    captcha: legacyResolveAuthCaptcha(
+    web3: resolveGotrueWeb3(config.auth.web3, projectEnvValues),
+    oauthServer: resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
+    hooks: resolveAuthHooks(asRecord(document?.["auth"]), config.auth.hook, projectEnvValues),
+    captcha: resolveAuthCaptcha(
       asRecord(document?.["auth"]),
       config.auth.captcha,
       projectEnvValues,
@@ -351,13 +342,13 @@ function resolveGotrueEnvInput(params: {
     passkeyEnabled,
     webauthn,
     externalProviders,
-    signingKeys: legacyResolveConfiguredSigningKeys(config, workdir, projectEnvValues),
+    signingKeys: resolveConfiguredSigningKeys(config, workdir, projectEnvValues),
   };
 }
 
 /**
  * Read-and-discard existence/readability check for one already-resolved
- * `content_path` — same pattern as `legacy-local-config-values.ts`'s
+ * `content_path` — same pattern as `local-config-values.ts`'s
  * `readAuthEmailTemplateContent` and `push.auth-email-content.ts`'s
  * `readTemplateContent`, reusing their established error message shape.
  * Closes the gap where a resolved-but-never-read path (e.g. a `content_path`
@@ -374,7 +365,7 @@ function readKongEmailTemplateContent(
   try {
     readFileSync(resolvedPath, "utf8");
   } catch (cause) {
-    throw new Error(legacyEmailContentPathReadErrorMessage(section, name, cause));
+    throw new Error(emailContentPathReadErrorMessage(section, name, cause));
   }
 }
 
@@ -382,10 +373,10 @@ function readKongEmailTemplateContent(
  * Kong's email template mounts: every configured template, then every
  * ENABLED notification, suffixed `_notification`. Resolves, containment-
  * checks, and read-verifies each `content_path` HERE — once, before any
- * Docker work — via `legacyResolveEmailTemplateContentPath` (the same check
+ * Docker work — via `resolveEmailTemplateContentPath` (the same check
  * config validation and `config push` apply) followed by
  * `readKongEmailTemplateContent`. The resulting `resolvedPath` is what the
- * caller threads straight into `legacyBuildKongEmailTemplateBind`; nothing
+ * caller threads straight into `buildKongEmailTemplateBind`; nothing
  * re-derives it later, right before the `docker create` call for Kong
  * (potentially minutes later, after image pulls/Postgres bring-up/
  * migrations) — closing the TOCTOU window between an earlier
@@ -397,12 +388,12 @@ function readKongEmailTemplateContent(
  * entries, but this omits the mount defensively rather than crashing.
  */
 function resolveKongEmailTemplateMounts(
-  email: LegacyResolvedAuthEmail,
+  email: ResolvedAuthEmail,
   workdir: string,
-): ReadonlyArray<LegacyKongEmailTemplateMount> {
-  const mounts: Array<LegacyKongEmailTemplateMount> = [];
+): ReadonlyArray<KongEmailTemplateMount> {
+  const mounts: Array<KongEmailTemplateMount> = [];
   for (const [id, template] of Object.entries(email.template)) {
-    const resolvedPath = legacyResolveEmailTemplateContentPath({
+    const resolvedPath = resolveEmailTemplateContentPath({
       section: "template",
       name: id,
       contentPath: template.content_path,
@@ -415,7 +406,7 @@ function resolveKongEmailTemplateMounts(
   }
   for (const [id, notification] of Object.entries(email.notification)) {
     if (!notification.enabled) continue;
-    const resolvedPath = legacyResolveEmailTemplateContentPath({
+    const resolvedPath = resolveEmailTemplateContentPath({
       section: "notification",
       name: id,
       contentPath: notification.content_path,
@@ -436,28 +427,28 @@ function resolveKongEmailTemplateMounts(
  * stderr — bypassing the `Output.fail` renderer that would otherwise append the
  * error's `suggestion` for it.
  */
-function legacyHealthWarningText(error: LegacyHealthCheckTimeoutError): string {
+function healthWarningText(error: HealthCheckTimeoutError): string {
   return error.suggestion === undefined ? error.message : `${error.message}\n${error.suggestion}`;
 }
 
-export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacyStartFlags) {
+export const start = Effect.fn("start")(function* (flags: StartFlags) {
   const output = yield* Output;
-  const cliSettings = yield* LegacyCliSettings;
-  const telemetryState = yield* LegacyTelemetryState;
+  const cliSettings = yield* CommandSettings;
+  const telemetryState = yield* TelemetryState;
   const analytics = yield* Analytics;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
-  // Threaded into every `legacyDockerRemoveAll` teardown below — `--debug`
+  // Threaded into every `dockerRemoveAll` teardown below — `--debug`
   // gates that function's `Pruned …:` stderr reports.
-  const debug = yield* LegacyDebugFlag;
+  const debug = yield* DebugFlag;
 
   yield* Effect.gen(function* () {
     // 0. Change into the resolved workdir — unconditional, before `start`'s
     // own flag validation (see step 1).
-    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
-      Effect.mapError((error) => new LegacyStartWorkdirError({ message: error.message })),
+    yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
+      Effect.mapError((error) => new StartWorkdirError({ message: error.message })),
     );
 
     // 1. `--exclude` validation runs as the VERY FIRST step — before config
@@ -466,7 +457,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // `--exclude` value, including the already-running short-circuit below.
     // `excludedKeys` (the VALID subset) is what actually gates container
     // bring-up later.
-    const partition = legacyPartitionStartExcludeFlags(flags.exclude);
+    const partition = partitionStartExcludeFlags(flags.exclude);
     if (partition.warning !== undefined && output.format === "text") {
       yield* output.raw(partition.warning, "stderr");
     }
@@ -474,13 +465,13 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
 
     // 2. Config load + validate — same config-load/env/project-id
     // resolution sequence as `stop`/`status`.
-    const context = yield* legacyLoadLocalProjectContext(
+    const context = yield* loadLocalProjectContext(
       cliSettings.workdir,
-      (message) => new LegacyStartConfigLoadError({ message }),
+      (message) => new StartConfigLoadError({ message }),
     );
     const values = yield* Effect.try({
       try: () =>
-        legacyResolveLocalConfigValues(
+        resolveLocalConfigValues(
           context.config,
           context.hostname,
           cliSettings.workdir,
@@ -488,28 +479,28 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           context.loaded?.document,
         ),
       catch: (cause) =>
-        new LegacyStartInvalidConfigError({
+        new StartInvalidConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
         }),
     });
     const { config, projectId, projectEnvValues } = context;
     // `SUPABASE_EXPERIMENTAL`/`--experimental`, read deep inside
-    // `legacyStartDatabase`'s fresh-volume setup pipeline — resolved here
+    // `startDatabase`'s fresh-volume setup pipeline — resolved here
     // (project `.env` aware, like `db reset`'s identical gate) so it can be
-    // threaded straight through to `legacyStartDatabase`'s own
+    // threaded straight through to `startDatabase`'s own
     // `setup.experimental` below.
-    const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnvValues);
+    const experimental = yield* resolveExperimentalWithProjectEnv(projectEnvValues);
     // Single source resolved once, fed to both Kong's template mounts and GoTrue's env builder —
-    // see {@link legacyResolveAuthEmail}'s doc comment.
+    // see {@link resolveAuthEmail}'s doc comment.
     const resolvedEmail = yield* Effect.try({
       try: () =>
-        legacyResolveAuthEmail(
+        resolveAuthEmail(
           config.auth.email,
           asRecord(context.loaded?.document?.["auth"]),
           projectEnvValues,
         ),
       catch: (cause) =>
-        new LegacyStartInvalidConfigError({
+        new StartInvalidConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
         }),
     });
@@ -517,17 +508,17 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // Kong is the stack's mandatory gateway) and every ENABLED notification's
     // `content_path`, unconditionally. Resolving, containment-checking, AND
     // read-verifying every path happens exactly ONCE, here, before any Docker
-    // work — not only inside `legacyResolveLocalConfigValues`'s own
+    // work — not only inside `resolveLocalConfigValues`'s own
     // `auth.enabled`-gated `readAuthEmailTemplateContent` call. The resulting
     // `resolvedPath`s are threaded straight into the Kong container-spec
     // input below instead of being discarded and re-derived later inside
-    // `legacyBuildKongEmailTemplateBind`, which closes the TOCTOU window
+    // `buildKongEmailTemplateBind`, which closes the TOCTOU window
     // between this pass and Kong's `docker create` call (potentially minutes
     // later, after image pulls/Postgres bring-up/migrations).
     const kongEmailTemplateMounts = yield* Effect.try({
       try: () => resolveKongEmailTemplateMounts(resolvedEmail, cliSettings.workdir),
       catch: (cause) =>
-        new LegacyStartInvalidConfigError({
+        new StartInvalidConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
         }),
     });
@@ -545,30 +536,30 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       projectEnvValues,
     );
     yield* wrapConfigOverride("auth.email.max_frequency", () =>
-      legacyParseGoDuration(resolvedEmail.max_frequency),
+      parseGoDuration(resolvedEmail.max_frequency),
     );
-    // Wrapped like `resolvedEmail` above: `legacyResolveLocalConfigValues`'s own SMS validation
-    // only runs `if (authEnabled)` (`legacy-local-config-values.ts`), so this direct call is the
+    // Wrapped like `resolvedEmail` above: `resolveLocalConfigValues`'s own SMS validation
+    // only runs `if (authEnabled)` (`local-config-values.ts`), so this direct call is the
     // ONLY place a malformed `auth.sms.*` override is ever caught when auth is disabled — an
     // unwrapped throw here would surface as an Effect defect instead of the normal
-    // `LegacyStartInvalidConfigError` config-load failure.
+    // `StartInvalidConfigError` config-load failure.
     const smsForValidation = yield* Effect.try({
       try: () =>
-        legacyResolveAuthSms(
+        resolveAuthSms(
           asRecord(context.loaded?.document?.["auth"]),
           config.auth.sms,
           projectEnvValues,
         ),
       catch: (cause) =>
-        new LegacyStartInvalidConfigError({
+        new StartInvalidConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
         }),
     });
     yield* wrapConfigOverride("auth.sms.max_frequency", () =>
-      legacyParseGoDuration(smsForValidation.max_frequency),
+      parseGoDuration(smsForValidation.max_frequency),
     );
     // SMS validation downgrades `EnableSignup` to `false` and prints a
-    // warning when no provider is enabled — `legacyResolveAuthSms` already
+    // warning when no provider is enabled — `resolveAuthSms` already
     // applies the downgrade itself, so this only needs to detect whether
     // that branch fired (the user configured `enable_signup = true` with
     // every provider disabled) to print the matching warning.
@@ -578,7 +569,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       !smsForValidation.messagebird.enabled &&
       !smsForValidation.textlocal.enabled &&
       !smsForValidation.vonage.enabled &&
-      legacyEnvOverrideBool(
+      envOverrideBool(
         "SUPABASE_AUTH_SMS_ENABLE_SIGNUP",
         config.auth.sms.enable_signup,
         "auth.sms.enable_signup",
@@ -589,24 +580,22 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     }
     if (gotrueSessionsForValidation?.timebox !== undefined) {
       yield* wrapConfigOverride("auth.sessions.timebox", () =>
-        legacyParseGoDuration(gotrueSessionsForValidation.timebox!),
+        parseGoDuration(gotrueSessionsForValidation.timebox!),
       );
     }
     if (gotrueSessionsForValidation?.inactivity_timeout !== undefined) {
       yield* wrapConfigOverride("auth.sessions.inactivity_timeout", () =>
-        legacyParseGoDuration(gotrueSessionsForValidation.inactivity_timeout!),
+        parseGoDuration(gotrueSessionsForValidation.inactivity_timeout!),
       );
     }
     yield* wrapConfigOverride("auth.mfa.phone.max_frequency", () =>
-      legacyParseGoDuration(
-        legacyResolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency,
-      ),
+      parseGoDuration(resolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency),
     );
     // Same gap for the remaining GoTrue overrides: `auth.rate_limit.*` (plain `uint`s) and
     // `auth.web3.*.enabled`/`auth.oauth_server.{enabled,allow_dynamic_registration}` (plain
     // `bool`s) must all validate unconditionally, regardless of
     // `auth.enabled`/`--exclude gotrue`.
-    // `resolveGotrueRateLimit`/`legacyResolveGotrueWeb3`/`legacyResolveGotrueOAuthServer` already
+    // `resolveGotrueRateLimit`/`resolveGotrueWeb3`/`resolveGotrueOAuthServer` already
     // throw internally on a bad override, so — unlike the duration fields above — calling each
     // whole (pure) function once here is simpler than re-deriving every field individually;
     // `resolveGotrueEnvInput` below re-resolves them a second time for the real container build,
@@ -616,24 +605,24 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
     );
     yield* wrapConfigOverride("auth.web3", () =>
-      legacyResolveGotrueWeb3(config.auth.web3, projectEnvValues),
+      resolveGotrueWeb3(config.auth.web3, projectEnvValues),
     );
     yield* wrapConfigOverride("auth.oauth_server", () =>
-      legacyResolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
+      resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
     );
     // Same gap for `auth.passkey.enabled`/`auth.webauthn.*` and per-provider `auth.external.
     // <name>.{enabled,skip_nonce_check,email_optional}` — these raw
     // (unmodeled by `@supabase/config`) booleans must validate
     // unconditionally too, regardless of `auth.enabled`/`--exclude gotrue`.
-    // Both resolvers already throw internally on a bad raw bool (`legacyRawUnmodeledBool`)
+    // Both resolvers already throw internally on a bad raw bool (`rawUnmodeledBool`)
     // and are otherwise only reached from `resolveGotrueEnvInput`'s `case "gotrue":` branch below —
     // itself gated on auth being enabled and gotrue not excluded — so calling each here, once,
     // eagerly and discarding the result, closes the same "validates but doesn't reach it" gap.
     yield* wrapConfigOverride("auth.passkey", () =>
-      legacyResolveGotruePasskeyWebauthn(context.loaded?.document, projectEnvValues),
+      resolveGotruePasskeyWebauthn(context.loaded?.document, projectEnvValues),
     );
     yield* wrapConfigOverride("auth.external", () =>
-      legacyResolveAuthExternalProviders(
+      resolveAuthExternalProviders(
         asRecord(context.loaded?.document?.["auth"]),
         config.auth.external,
         projectEnvValues,
@@ -642,13 +631,13 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // Same gap for `auth.third_party.<provider>.{enabled,...}` — this must
     // validate unconditionally regardless of `auth.enabled`, even though
     // validation itself is otherwise only meaningful when auth is enabled.
-    // `legacyResolveThirdPartyProviders` is otherwise never called by this
+    // `resolveThirdPartyProviders` is otherwise never called by this
     // handler at all (GoTrue's own container build never wires third-party
     // JWT settings) — so a malformed override (e.g.
     // `SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED=bogus`) would otherwise
     // never fail this command at all (review: PRRT_kwDOErm0O86WXFqj).
     yield* wrapConfigOverride("auth.third_party", () =>
-      legacyResolveThirdPartyProviders(config.auth.third_party, projectEnvValues),
+      resolveThirdPartyProviders(config.auth.third_party, projectEnvValues),
     );
     // `[functions.<slug>.env]` has no supported meaning for `start` — this
     // must reject any unknown key unconditionally, well before any Docker
@@ -662,27 +651,27 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     for (const [slug, func] of Object.entries(config.functions)) {
       if (Object.keys(func.env).length > 0) {
         yield* Effect.fail(
-          new LegacyStartInvalidConfigError({
+          new StartInvalidConfigError({
             message: `failed to parse config: decoding failed due to the following error(s):\n\n'functions[${slug}]' has invalid keys: env`,
           }),
         );
       }
     }
-    // `legacyCheckDbToml` resolves `[db.vault]`/`[db.seed]`/`db.migrations.enabled`/the effective
+    // `checkDbToml` resolves `[db.vault]`/`[db.seed]`/`db.migrations.enabled`/the effective
     // `api.auto_expose_new_tables` tri-state — this must run unconditionally,
     // before any Docker work. The port only ran this inside
-    // `legacyStartSetupLocalDatabase`, which is itself gated on the DB container's
+    // `startSetupLocalDatabase`, which is itself gated on the DB container's
     // healthcheck passing AND a fresh volume (the `NoBackupVolume` gate) — so a malformed
     // `SUPABASE_DB_SEED_ENABLED`/an undecryptable `[db.vault]` secret went completely unvalidated
     // whenever `start` reused an existing volume. The resolved Webhooks flag is also retained so
-    // existing volumes can converge `pg_net`; `legacyStartSetupLocalDatabase`'s own internal call
+    // existing volumes can converge `pg_net`; `startSetupLocalDatabase`'s own internal call
     // (an already-accepted duplicate config-load pass, matching `db start`'s own independent
     // resolution — see `../../shared/db-bootstrap/db-setup.ts`'s header) still resolves fresh-setup
     // values for its own use when it runs.
-    const dbTomlValues = yield* legacyCheckDbToml(fs, path, cliSettings.workdir);
+    const dbTomlValues = yield* checkDbToml(fs, path, cliSettings.workdir);
 
     const dbContainerId = localDbContainerId(projectId);
-    const filterValue = legacyCliProjectFilterValue(projectId);
+    const filterValue = cliProjectFilterValue(projectId);
 
     // Shared status-values helper — reused by BOTH the already-running branch
     // (full status pipeline, health-checked + "stopped" diffed) and the
@@ -698,15 +687,15 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // straight from the already-populated config — so it must reuse the
     // SAME `values` that were already used to build every container spec,
     // instead of re-deriving (and, for asymmetric JWTs, re-signing with a
-    // new `exp`) a second time. See {@link legacyResolveStatusLocalState}'s
+    // new `exp`) a second time. See {@link resolveStatusLocalState}'s
     // `precomputedLocal` param doc for why a second derivation is unsafe.
     const buildStatusValues = Effect.fnUntraced(function* (
       excluded: ReadonlyArray<string>,
-      precomputedLocal?: LegacyLocalConfigValues,
+      precomputedLocal?: LocalConfigValues,
     ) {
       const localState = yield* Effect.try({
         try: () =>
-          legacyResolveStatusLocalState(
+          resolveStatusLocalState(
             context.config,
             context.hostname,
             cliSettings.workdir,
@@ -715,25 +704,23 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             precomputedLocal,
           ),
         catch: (cause) =>
-          new LegacyStatusInvalidConfigError({
+          new StatusInvalidConfigError({
             message: cause instanceof Error ? cause.message : String(cause),
           }),
       });
-      const containerIds = legacyStatusContainerIds(projectId);
-      const state = legacyGateStatusState(localState, containerIds, excluded);
-      return legacyStatusValuesFromState(state, new Map());
+      const containerIds = statusContainerIds(projectId);
+      const state = gateStatusState(localState, containerIds, excluded);
+      return statusValuesFromState(state, new Map());
     });
 
-    const isBitbucketPipeline = legacyIsBitbucketPipeline();
+    const inBitbucketPipeline = isBitbucketPipeline();
 
     // 3. Missing proceeds to startup; other inspect failures propagate.
     // Verified stopped stacks are recovered unless Bitbucket's lack of named volumes
     // makes removing the Postgres container destructive.
-    const inspectDbState = legacyInspectContainerState(spawner, dbContainerId).pipe(
+    const inspectDbState = inspectContainerState(spawner, dbContainerId).pipe(
       Effect.catch((error) =>
-        legacyIsContainerNotFoundMessage(error.message)
-          ? Effect.succeed(undefined)
-          : Effect.fail(error),
+        isContainerNotFoundMessage(error.message) ? Effect.succeed(undefined) : Effect.fail(error),
       ),
     );
     const dbState = yield* inspectDbState;
@@ -742,7 +729,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     ) =>
       // `created` may own a just-provisioned volume that Postgres never initialized.
       state?.running === false && state.status.length > 0 && state.status !== "created";
-    const shouldRecoverStoppedStack = isRecoverableStoppedState(dbState) && !isBitbucketPipeline;
+    const shouldRecoverStoppedStack = isRecoverableStoppedState(dbState) && !inBitbucketPipeline;
 
     const reportAlreadyRunningStatus = Effect.fnUntraced(function* () {
       // Gated here on text mode for internal consistency
@@ -751,7 +738,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       // port's `--output-format json|stream-json` callers get a clean
       // structured payload with no extra text noise.
       if (output.format === "text") {
-        yield* output.raw(legacyStartAlreadyRunningMessage(), "stderr");
+        yield* output.raw(startAlreadyRunningMessage(), "stderr");
       }
 
       // The full status pipeline for this branch: health-check +
@@ -759,32 +746,32 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       // pretty-print call below (see that branch's own comment for why the
       // two differ).
       if (!flags.ignoreHealthCheck) {
-        const state = yield* legacyInspectContainerState(spawner, dbContainerId).pipe(
-          Effect.mapError((cause) => new LegacyStatusDbInspectError({ message: cause.message })),
+        const state = yield* inspectContainerState(spawner, dbContainerId).pipe(
+          Effect.mapError((cause) => new StatusDbInspectError({ message: cause.message })),
         );
         if (!state.running) {
           return yield* Effect.fail(
-            new LegacyStatusDbNotRunningError({
+            new StatusDbNotRunningError({
               message: `${dbContainerId} container is not running: ${state.status}`,
             }),
           );
         }
         if (state.health !== undefined && state.health !== "healthy") {
           return yield* Effect.fail(
-            new LegacyStatusDbNotReadyError({
+            new StatusDbNotReadyError({
               message: `${dbContainerId} container is not ready: ${state.health}`,
             }),
           );
         }
       }
 
-      const runningNames = yield* legacyListContainersByLabel(spawner, {
+      const runningNames = yield* listContainersByLabel(spawner, {
         projectIdFilter: filterValue,
         all: false,
         format: "names",
-      }).pipe(Effect.mapError((cause) => new LegacyStatusListError({ message: cause.message })));
+      }).pipe(Effect.mapError((cause) => new StatusListError({ message: cause.message })));
       const runningSet = new Set(runningNames);
-      const serviceIds = legacyServiceContainerIds(projectId);
+      const serviceIds = serviceContainerIds(projectId);
       const stopped = serviceIds.filter((id) => !runningSet.has(id));
       // Unconditional here — stderr text, never corrupts a JSON stdout payload.
       if (stopped.length > 0) {
@@ -794,14 +781,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
 
       if (output.format === "text") {
         // The pretty-branch banner -- distinct from (and printed in
-        // ADDITION to) `legacyStartAlreadyRunningMessage()` above; both
+        // ADDITION to) `startAlreadyRunningMessage()` above; both
         // lines really do stack in this branch.
-        yield* output.raw(
-          `${legacyAqua("supabase")} local development setup is running.\n\n`,
-          "stderr",
-        );
+        yield* output.raw(`${aqua("supabase")} local development setup is running.\n\n`, "stderr");
         const { values: statusValues, names } = yield* buildStatusValues(excluded);
-        yield* output.raw(legacyRenderStatusPretty(statusValues, names));
+        yield* output.raw(renderStatusPretty(statusValues, names));
       } else {
         const { values: statusValues } = yield* buildStatusValues(excluded);
         yield* output.success("", statusValues);
@@ -819,20 +803,20 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // dependency by design.
 
     // 5. Gate evaluation — see `start.gates.ts` for the full boolean table.
-    // `legacyEnvOverrideBool` throws synchronously on an unparsable value —
-    // wrapped so that throw becomes the typed `LegacyStartInvalidConfigError`
+    // `envOverrideBool` throws synchronously on an unparsable value —
+    // wrapped so that throw becomes the typed `StartInvalidConfigError`
     // every other malformed-config path in this handler uses, not an
     // untyped Effect defect.
     const gates = yield* Effect.try({
       try: () =>
-        legacyResolveStartGates({
+        resolveStartGates({
           config,
           projectEnvValues,
           excludedKeys,
           document: context.loaded?.document,
         }),
       catch: (cause) =>
-        new LegacyStartInvalidConfigError({
+        new StartInvalidConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
         }),
     });
@@ -840,10 +824,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // 6. JWKS resolution — runs UNCONDITIONALLY, before any image pull,
     // regardless of whether auth/realtime/postgrest/storage end up enabled.
     const jwks = yield* Effect.tryPromise({
-      try: () =>
-        legacyResolveLocalJwks(config, cliSettings.workdir, values.jwtSecret, projectEnvValues),
+      try: () => resolveLocalJwks(config, cliSettings.workdir, values.jwtSecret, projectEnvValues),
       catch: (cause) =>
-        new LegacyStartInvalidConfigError({
+        new StartInvalidConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
         }),
     });
@@ -853,17 +836,14 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // at the end of config loading. Start-only (Edge Runtime has no
     // `db start` equivalent), so it stays outside the shared bootstrap-config
     // derivation below.
-    const denoVersion = legacyEnvOverrideDenoVersion(
-      config.edge_runtime.deno_version,
-      projectEnvValues,
-    );
+    const denoVersion = envOverrideDenoVersion(config.edge_runtime.deno_version, projectEnvValues);
 
     // Every field the fresh-DB bootstrap needs, already resolved — major
     // version, orioledb/S3 overrides, the fresh-DB setup jobs' own
     // `enabled`/`ip_version`/`max_header_length`/`file_size_limit`
     // overrides, the Postgres image + linked-service version pins,
     // `db.health_timeout`, and the Storage migration pin. Shared with
-    // `db start`'s own native container bootstrap (`legacyStartDatabase`,
+    // `db start`'s own native container bootstrap (`startDatabase`,
     // `command-internal/db-bootstrap/start-database.ts`) — see
     // `bootstrap-config.ts`'s own header for exactly why this is a single
     // TS home instead of two independently-drifting copies.
@@ -885,27 +865,27 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       serviceVersionOverrides,
       dbHealthTimeoutSeconds,
       storageTargetMigration,
-    } = yield* legacyResolveDbBootstrapConfig(
+    } = yield* resolveDbBootstrapConfig(
       fs,
       path,
       { config, projectEnvValues, workdir: cliSettings.workdir },
-      (message) => new LegacyStartInvalidConfigError({ message }),
+      (message) => new StartInvalidConfigError({ message }),
     );
 
     // 7. Resolve every image that will actually be pulled BEFORE any
     // container is created.
-    const imagePlan = legacyResolveStartImagePlan(gates, serviceVersionOverrides);
-    // Edge Runtime doesn't go through `legacyResolveStartImagePlan` (see
+    const imagePlan = resolveStartImagePlan(gates, serviceVersionOverrides);
+    // Edge Runtime doesn't go through `resolveStartImagePlan` (see
     // `start.gates.ts`'s header) — its default image is resolved
     // independently, pre-pulled whenever it's enabled and not excluded.
     const edgeRuntimeDefaultImage = gates.edgeRuntime
-      ? yield* legacyResolveEdgeRuntimeImage(fs, path, cliSettings.workdir, denoVersion)
+      ? yield* resolveEdgeRuntimeImage(fs, path, cliSettings.workdir, denoVersion)
       : undefined;
     // Pre-pull only ever touches non-excluded services, and the
     // one-shot setup-job images are resolved lazily, only when the
     // fresh-DB setup job actually runs (see the conditional resolve further
     // down, gated the same way that job itself is gated).
-    const resolvedImages = yield* legacyEnsureImagesCached(
+    const resolvedImages = yield* ensureImagesCached(
       spawner,
       [
         postgresImage,
@@ -941,7 +921,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       cwd: cliSettings.workdir,
       config: { ...config, functions: configDeclaredFunctions },
       // `search: false`: `cliSettings.workdir` is already the fully-resolved chdir target (same
-      // reasoning as `legacy-local-project-context.ts`'s `loadCliProjectEnvironment` call) — letting
+      // reasoning as `local-project-context.ts`'s `loadCliProjectEnvironment` call) — letting
       // `findCliProjectPaths` climb ancestors again here would let an unrelated ancestor project's
       // `supabase/functions` win when `--workdir`/`SUPABASE_WORKDIR` points at a subdirectory with
       // no `supabase/config.toml` of its own.
@@ -971,10 +951,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // See {@link resolveDockerNetworkMode}'s doc comment for the full 3-way
     // flag/env precedence (shared with `db start` and the `functions`
     // Docker paths).
-    const networkIdFlag = yield* LegacyNetworkIdFlag;
+    const networkIdFlag = yield* NetworkIdFlag;
     const networkId = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(networkIdFlag),
-      envOverride: legacyViperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+      envOverride: viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
       projectId,
     });
     // Every container unconditionally gets the Linux-only
@@ -982,45 +962,40 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // darwin/windows, where Docker Desktop already resolves that hostname)
     // — same expression already used for the one-shot migrate jobs
     // (`db-setup.ts`) and Edge Runtime bring-up
-    // (`legacy-edge-runtime-script.layer.ts`).
+    // (`edge-runtime-script.layer.ts`).
     const extraHosts =
       runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
-    const startOpts: LegacyContainerOpts = {
+    const startOpts: ContainerOpts = {
       projectId,
-      isBitbucketPipeline,
+      isBitbucketPipeline: inBitbucketPipeline,
       workdir: cliSettings.workdir,
       extraHosts,
     };
     const dbHost = dbContainerId;
-    const dbPassword = legacyStartInternalDbPassword(values.dbUrl);
+    const dbPassword = startInternalDbPassword(values.dbUrl);
 
-    const kongContainerName = legacyServiceContainerName("kong", projectId);
-    const gotrueContainerName = legacyServiceContainerName("auth", projectId);
-    const restContainerName = legacyServiceContainerName("rest", projectId);
-    const realtimeContainerName = legacyServiceContainerName("realtime", projectId);
-    const storageContainerName = legacyServiceContainerName("storage", projectId);
-    const studioContainerName = legacyServiceContainerName("studio", projectId);
-    const pgMetaContainerName = legacyServiceContainerName("pg_meta", projectId);
-    const edgeRuntimeContainerName = legacyServiceContainerName("edge_runtime", projectId);
-    const logflareContainerName = legacyServiceContainerName("analytics", projectId);
-    const poolerContainerName = legacyServiceContainerName("pooler", projectId);
-    const vectorContainerName = legacyServiceContainerName("vector", projectId);
-    const mailpitContainerName = legacyServiceContainerName("inbucket", projectId);
+    const kongContainerName = serviceContainerName("kong", projectId);
+    const gotrueContainerName = serviceContainerName("auth", projectId);
+    const restContainerName = serviceContainerName("rest", projectId);
+    const realtimeContainerName = serviceContainerName("realtime", projectId);
+    const storageContainerName = serviceContainerName("storage", projectId);
+    const studioContainerName = serviceContainerName("studio", projectId);
+    const pgMetaContainerName = serviceContainerName("pg_meta", projectId);
+    const edgeRuntimeContainerName = serviceContainerName("edge_runtime", projectId);
+    const logflareContainerName = serviceContainerName("analytics", projectId);
+    const poolerContainerName = serviceContainerName("pooler", projectId);
+    const vectorContainerName = serviceContainerName("vector", projectId);
+    const mailpitContainerName = serviceContainerName("inbucket", projectId);
 
     // The TLS cert/key disk read is gated on the post-override
     // `api.enabled` itself, not just `api.tls.enabled`: when API is
     // disabled, `CertContent`/`KeyContent` stay at their embedded defaults.
-    // Not the SAME `apiEnabled` `legacyResolveStartGates` (`start.gates.ts:87-92`)
+    // Not the SAME `apiEnabled` `resolveStartGates` (`start.gates.ts:87-92`)
     // computes for its own `gates.postgrest` — that one is additionally
     // ANDed with `--exclude postgrest`, which has no equivalent in config
     // validation — so this is resolved separately here.
     const apiEnabled = yield* wrapConfigOverride("api.enabled", () =>
-      legacyEnvOverrideBool(
-        "SUPABASE_API_ENABLED",
-        config.api.enabled,
-        "api.enabled",
-        projectEnvValues,
-      ),
+      envOverrideBool("SUPABASE_API_ENABLED", config.api.enabled, "api.enabled", projectEnvValues),
     );
     // Hoisted out of the "kong" case below (it used to be computed only
     // there): the post-bring-up health-probe CA-trust lookup near the end of
@@ -1029,7 +1004,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // since the health probe's trust pool and its target URL both read
     // that same already-overridden value.
     const apiTlsEnabled = yield* wrapConfigOverride("api.tls.enabled", () =>
-      legacyEnvOverrideBool(
+      envOverrideBool(
         "SUPABASE_API_TLS_ENABLED",
         config.api.tls.enabled,
         "api.tls.enabled",
@@ -1040,22 +1015,22 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // cert/key path fields — `SUPABASE_API_TLS_CERT_PATH`/
     // `SUPABASE_API_TLS_KEY_PATH` must apply before reading `CertPath`/
     // `KeyPath` from disk into `CertContent`/`KeyContent`. Mirrors the
-    // identical resolution `legacy-local-config-values.ts` already does for
+    // identical resolution `local-config-values.ts` already does for
     // `status`/`stop`.
-    const apiTlsCertPath = legacyEnvOverride(
+    const apiTlsCertPath = envOverride(
       "SUPABASE_API_TLS_CERT_PATH",
       config.api.tls.cert_path,
       projectEnvValues,
     );
-    const apiTlsKeyPath = legacyEnvOverride(
+    const apiTlsKeyPath = envOverride(
       "SUPABASE_API_TLS_KEY_PATH",
       config.api.tls.key_path,
       projectEnvValues,
     );
     // These seed from the embedded defaults, then get replaced from disk
     // (below) before any Docker mutation.
-    let tlsCertContent = LEGACY_KONG_LOCAL_TLS_CERT;
-    let tlsKeyContent = LEGACY_KONG_LOCAL_TLS_KEY;
+    let tlsCertContent = KONG_LOCAL_TLS_CERT;
+    let tlsKeyContent = KONG_LOCAL_TLS_KEY;
     if (
       apiEnabled &&
       apiTlsEnabled &&
@@ -1065,32 +1040,32 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       apiTlsKeyPath.length > 0
     ) {
       tlsCertContent = yield* fs
-        .readFileString(legacyResolveApiTlsPath(cliSettings.workdir, apiTlsCertPath))
+        .readFileString(resolveApiTlsPath(cliSettings.workdir, apiTlsCertPath))
         .pipe(
           Effect.mapError(
             (cause) =>
-              new LegacyStartInvalidConfigError({
-                message: legacyApiTlsCertReadErrorMessage(cause),
+              new StartInvalidConfigError({
+                message: apiTlsCertReadErrorMessage(cause),
               }),
           ),
         );
       tlsKeyContent = yield* fs
-        .readFileString(legacyResolveApiTlsPath(cliSettings.workdir, apiTlsKeyPath))
+        .readFileString(resolveApiTlsPath(cliSettings.workdir, apiTlsKeyPath))
         .pipe(
           Effect.mapError(
             (cause) =>
-              new LegacyStartInvalidConfigError({
-                message: legacyApiTlsKeyReadErrorMessage(cause),
+              new StartInvalidConfigError({
+                message: apiTlsKeyReadErrorMessage(cause),
               }),
           ),
         );
     }
 
     // Same gap for `storage.vector.enabled` — both the long-running Storage
-    // container AND `legacySeedBucketsRun`'s `effectiveLocalStorageConfig`
+    // container AND `seedBucketsRun`'s `effectiveLocalStorageConfig`
     // splice further down must see the same already-overridden value.
     const storageVectorEnabled = yield* wrapConfigOverride("storage.vector.enabled", () =>
-      legacyEnvOverrideBool(
+      envOverrideBool(
         "SUPABASE_STORAGE_VECTOR_ENABLED",
         config.storage.vector.enabled,
         "storage.vector.enabled",
@@ -1105,7 +1080,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // `storage.file_size_limit`, the GoTrue duration fields, and
     // `db.health_timeout`.
     const storageS3ProtocolEnabled = yield* wrapConfigOverride("storage.s3_protocol.enabled", () =>
-      legacyEnvOverrideBool(
+      envOverrideBool(
         "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
         config.storage.s3_protocol.enabled,
         "storage.s3_protocol.enabled",
@@ -1121,7 +1096,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // purely for fail-fast parity and discard the result, same as the uint
     // siblings below.
     yield* wrapConfigOverride("storage.analytics.enabled", () =>
-      legacyEnvOverrideBool(
+      envOverrideBool(
         "SUPABASE_STORAGE_ANALYTICS_ENABLED",
         config.storage.analytics.enabled,
         "storage.analytics.enabled",
@@ -1136,7 +1111,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // there is no downstream re-resolution to reuse — validate purely for
     // fail-fast parity and discard the result.
     yield* wrapConfigOverride("storage.analytics.max_namespaces", () =>
-      legacyEnvOverrideUint(
+      envOverrideUint(
         "SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES",
         "storage.analytics.max_namespaces",
         config.storage.analytics.max_namespaces,
@@ -1144,7 +1119,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       ),
     );
     yield* wrapConfigOverride("storage.analytics.max_tables", () =>
-      legacyEnvOverrideUint(
+      envOverrideUint(
         "SUPABASE_STORAGE_ANALYTICS_MAX_TABLES",
         "storage.analytics.max_tables",
         config.storage.analytics.max_tables,
@@ -1152,7 +1127,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       ),
     );
     yield* wrapConfigOverride("storage.analytics.max_catalogs", () =>
-      legacyEnvOverrideUint(
+      envOverrideUint(
         "SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS",
         "storage.analytics.max_catalogs",
         config.storage.analytics.max_catalogs,
@@ -1160,7 +1135,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       ),
     );
     yield* wrapConfigOverride("storage.vector.max_buckets", () =>
-      legacyEnvOverrideUint(
+      envOverrideUint(
         "SUPABASE_STORAGE_VECTOR_MAX_BUCKETS",
         "storage.vector.max_buckets",
         config.storage.vector.max_buckets,
@@ -1168,7 +1143,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       ),
     );
     yield* wrapConfigOverride("storage.vector.max_indexes", () =>
-      legacyEnvOverrideUint(
+      envOverrideUint(
         "SUPABASE_STORAGE_VECTOR_MAX_INDEXES",
         "storage.vector.max_indexes",
         config.storage.vector.max_indexes,
@@ -1181,14 +1156,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // PGRST_DB_* env must see the same already-overridden values. The two
     // array fields use the same comma-split-override pattern as
     // `auth.additional_redirect_urls`/`auth.webauthn.rp_origins` above.
-    const apiSchemasOverride = legacyEnvOverride(
-      "SUPABASE_API_SCHEMAS",
-      undefined,
-      projectEnvValues,
-    );
+    const apiSchemasOverride = envOverride("SUPABASE_API_SCHEMAS", undefined, projectEnvValues);
     const apiSchemas =
       apiSchemasOverride !== undefined ? apiSchemasOverride.split(",") : config.api.schemas;
-    const apiExtraSearchPathOverride = legacyEnvOverride(
+    const apiExtraSearchPathOverride = envOverride(
       "SUPABASE_API_EXTRA_SEARCH_PATH",
       undefined,
       projectEnvValues,
@@ -1198,7 +1169,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         ? apiExtraSearchPathOverride.split(",")
         : config.api.extra_search_path;
     const apiMaxRows = yield* wrapConfigOverride("api.max_rows", () =>
-      legacyEnvOverrideApiMaxRows(config.api.max_rows, projectEnvValues),
+      envOverrideApiMaxRows(config.api.max_rows, projectEnvValues),
     );
 
     // Same gap for Mailpit's three ports — `SUPABASE_LOCAL_SMTP_PORT`/
@@ -1207,7 +1178,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // `mailpit.service.ts`'s own `!== 0` publish guard, so `?? 0` here
     // preserves that "unconfigured" signal.
     const mailpitPort = yield* wrapConfigOverride("local_smtp.port", () =>
-      legacyEnvOverridePort(
+      envOverridePort(
         "SUPABASE_LOCAL_SMTP_PORT",
         config.local_smtp.port,
         "local_smtp.port",
@@ -1215,7 +1186,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       ),
     );
     const mailpitSmtpPort = yield* wrapConfigOverride("local_smtp.smtp_port", () =>
-      legacyEnvOverridePort(
+      envOverridePort(
         "SUPABASE_LOCAL_SMTP_SMTP_PORT",
         config.local_smtp.smtp_port ?? 0,
         "local_smtp.smtp_port",
@@ -1223,7 +1194,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       ),
     );
     const mailpitPop3Port = yield* wrapConfigOverride("local_smtp.pop3_port", () =>
-      legacyEnvOverridePort(
+      envOverridePort(
         "SUPABASE_LOCAL_SMTP_POP3_PORT",
         config.local_smtp.pop3_port ?? 0,
         "local_smtp.pop3_port",
@@ -1234,7 +1205,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // Same gap for Logflare's port — `SUPABASE_ANALYTICS_PORT` must apply
     // before building Logflare's host port binding.
     const analyticsPort = yield* wrapConfigOverride("analytics.port", () =>
-      legacyEnvOverridePort(
+      envOverridePort(
         "SUPABASE_ANALYTICS_PORT",
         config.analytics.port,
         "analytics.port",
@@ -1248,7 +1219,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // fail before any Docker work. Result discarded — no native code path
     // consumes it.
     yield* wrapConfigOverride("analytics.vector_port", () =>
-      legacyEnvOverridePort(
+      envOverridePort(
         "SUPABASE_ANALYTICS_VECTOR_PORT",
         config.analytics.vector_port ?? 0,
         "analytics.vector_port",
@@ -1261,13 +1232,13 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // specifically decides the published host port (5432 session vs 6543
     // transaction). All four throw synchronously on a malformed override —
     // wrapped via `wrapConfigOverride` so a bad value fails as a typed
-    // `LegacyStartInvalidConfigError` instead of an untyped Effect defect
+    // `StartInvalidConfigError` instead of an untyped Effect defect
     // bypassing `withJsonErrorHandling`'s `Effect.catch`
     // (see `wrapConfigOverride`'s doc comment) — same bug class already fixed
     // for `dbHealthTimeoutSeconds`/`db.settings`/the Edge Runtime
     // `policy`/`inspector_port` overrides elsewhere in this function.
     const poolerPort = yield* wrapConfigOverride("db.pooler.port", () =>
-      legacyEnvOverridePort(
+      envOverridePort(
         "SUPABASE_DB_POOLER_PORT",
         config.db.pooler.port,
         "db.pooler.port",
@@ -1275,17 +1246,17 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       ),
     );
     const poolMode = yield* wrapConfigOverride("db.pooler.pool_mode", () =>
-      legacyEnvOverridePoolMode(config.db.pooler.pool_mode, projectEnvValues),
+      envOverridePoolMode(config.db.pooler.pool_mode, projectEnvValues),
     );
     const poolerDefaultPoolSize = yield* wrapConfigOverride("db.pooler.default_pool_size", () =>
-      legacyEnvOverrideDefaultPoolSize(config.db.pooler.default_pool_size, projectEnvValues),
+      envOverrideDefaultPoolSize(config.db.pooler.default_pool_size, projectEnvValues),
     );
     const poolerMaxClientConn = yield* wrapConfigOverride("db.pooler.max_client_conn", () =>
-      legacyEnvOverrideMaxClientConn(config.db.pooler.max_client_conn, projectEnvValues),
+      envOverrideMaxClientConn(config.db.pooler.max_client_conn, projectEnvValues),
     );
 
     // Same bug class as `dbHealthTimeoutSeconds` (now resolved by the shared
-    // `legacyResolveDbBootstrapConfig` call above): `edge_runtime.policy`
+    // `resolveDbBootstrapConfig` call above): `edge_runtime.policy`
     // (an enum) and `edge_runtime.inspector_port` (a plain uint) decode during
     // the same unconditional config-load pass, before
     // any Docker work — regardless of `--exclude edge-runtime`. The Edge Runtime
@@ -1293,10 +1264,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // for the real container build; this eager call only needs the raw `config.edge_runtime`
     // value to prove it parses.
     const edgeRuntimePolicy = yield* wrapConfigOverride("edge_runtime.policy", () =>
-      legacyEnvOverrideEdgeRuntimePolicy(config.edge_runtime.policy, projectEnvValues),
+      envOverrideEdgeRuntimePolicy(config.edge_runtime.policy, projectEnvValues),
     );
     const edgeRuntimeInspectorPort = yield* wrapConfigOverride("edge_runtime.inspector_port", () =>
-      legacyEnvOverridePort(
+      envOverridePort(
         "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
         config.edge_runtime.inspector_port,
         "edge_runtime.inspector_port",
@@ -1306,7 +1277,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
 
     /**
      * Every case returns `{ spec, excludeFromHealthWatch? }`: `spec` is the
-     * {@link LegacyStartContainerSpec} to bring up; `excludeFromHealthWatch`
+     * {@link StartContainerSpec} to bring up; `excludeFromHealthWatch`
      * (only ever set by "vector") is returned explicitly instead of a
      * captured mutable variable — Vector's `npipe`-scheme exception is the
      * only case that ever sets it.
@@ -1315,7 +1286,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       switch (service) {
         case "logflare":
           return {
-            spec: legacyBuildLogflareContainerSpec({
+            spec: buildLogflareContainerSpec({
               image,
               projectId,
               networkId,
@@ -1326,30 +1297,30 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               gcpJwtPath: values.gcpJwtPath,
               workdir: cliSettings.workdir,
               dbHost,
-              dbPort: LEGACY_START_INTERNAL_DB_PORT,
+              dbPort: START_INTERNAL_DB_PORT,
               dbUser: "postgres",
               dbPassword,
             }),
           };
 
         case "vector": {
-          const daemonHost = yield* legacyResolveDockerDaemonHost(spawner);
-          const dockerSocketPlan = legacyResolveVectorDockerSocketPlan(daemonHost);
+          const daemonHost = yield* resolveDockerDaemonHost(spawner);
+          const dockerSocketPlan = resolveVectorDockerSocketPlan(daemonHost);
           // A Windows-only warning — gated on text mode for the same reason
           // as every other supplementary line here.
           if (dockerSocketPlan.isNpipe && output.format === "text") {
             yield* output.raw(
-              `${legacyYellow("WARNING:")} Analytics on Windows requires Docker daemon exposed on tcp://localhost:2375.\n` +
+              `${yellow("WARNING:")} Analytics on Windows requires Docker daemon exposed on tcp://localhost:2375.\n` +
                 "See https://supabase.com/docs/guides/local-development/cli/getting-started?queryGroups=platform&platform=windows#running-supabase-locally for more details.\n",
               "stderr",
             );
           }
           return {
-            spec: legacyBuildVectorContainerSpec({
+            spec: buildVectorContainerSpec({
               image,
               containerName: vectorContainerName,
               networkId,
-              apiKey: LEGACY_ANALYTICS_API_KEY,
+              apiKey: ANALYTICS_API_KEY,
               logflareId: logflareContainerName,
               kongId: kongContainerName,
               gotrueId: gotrueContainerName,
@@ -1368,7 +1339,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
 
         case "kong": {
           return {
-            spec: legacyBuildKongContainerSpec({
+            spec: buildKongContainerSpec({
               image,
               containerName: kongContainerName,
               networkId,
@@ -1385,14 +1356,14 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               },
               gotrueId: gotrueContainerName,
               restId: restContainerName,
-              realtimeTenantId: LEGACY_REALTIME_TENANT_ID,
+              realtimeTenantId: REALTIME_TENANT_ID,
               storageId: storageContainerName,
               studioId: studioContainerName,
               pgmetaId: pgMetaContainerName,
               edgeRuntimeId: edgeRuntimeContainerName,
               logflareId: logflareContainerName,
               poolerId: poolerContainerName,
-              nginxWorkerProcesses: legacyResolveKongNginxWorkerProcesses(projectEnvValues),
+              nginxWorkerProcesses: resolveKongNginxWorkerProcesses(projectEnvValues),
               emailTemplateMounts: kongEmailTemplateMounts,
             }),
           };
@@ -1400,7 +1371,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
 
         case "gotrue":
           return {
-            spec: legacyBuildGotrueContainerSpec({
+            spec: buildGotrueContainerSpec({
               image,
               projectId,
               networkId,
@@ -1418,7 +1389,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
 
         case "mailpit":
           return {
-            spec: legacyBuildMailpitContainerSpec({
+            spec: buildMailpitContainerSpec({
               image,
               projectId,
               networkId,
@@ -1430,7 +1401,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
 
         case "realtime":
           return {
-            spec: legacyBuildRealtimeContainerSpec({
+            spec: buildRealtimeContainerSpec({
               projectId,
               networkId,
               image,
@@ -1444,7 +1415,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
 
         case "postgrest":
           return {
-            spec: legacyBuildPostgrestContainerSpec({
+            spec: buildPostgrestContainerSpec({
               projectId,
               networkId,
               image,
@@ -1458,7 +1429,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
 
         case "storage":
           return {
-            spec: legacyBuildStorageContainerSpec({
+            spec: buildStorageContainerSpec({
               projectId,
               networkId,
               image,
@@ -1480,25 +1451,25 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           };
 
         case "imgproxy":
-          return { spec: legacyBuildImgproxyContainerSpec({ projectId, networkId, image }) };
+          return { spec: buildImgproxyContainerSpec({ projectId, networkId, image }) };
 
         case "pgMeta":
           return {
-            spec: legacyBuildPgMetaContainerSpec({
+            spec: buildPgMetaContainerSpec({
               image,
               containerName: pgMetaContainerName,
               dbHost,
-              dbPort: LEGACY_START_INTERNAL_DB_PORT,
+              dbPort: START_INTERNAL_DB_PORT,
               dbUser: "postgres",
               dbPassword,
-              dbName: LEGACY_START_INTERNAL_DB_NAME,
+              dbName: START_INTERNAL_DB_NAME,
               networkId,
             }),
           };
 
         case "studio": {
           return {
-            spec: legacyBuildStudioContainerSpec({
+            spec: buildStudioContainerSpec({
               image,
               containerName: studioContainerName,
               networkId,
@@ -1513,12 +1484,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
                 pgMetaContainerName,
                 kongContainerName,
                 logflareContainerName,
-                studioApiUrl: legacyResolveStudioApiUrl(
-                  legacyEnvOverride(
-                    "SUPABASE_STUDIO_API_URL",
+                studioApiUrl: resolveStudioApiUrl(
+                  envOverride("SUPABASE_STUDIO_API_URL", config.studio.api_url, projectEnvValues) ??
                     config.studio.api_url,
-                    projectEnvValues,
-                  ) ?? config.studio.api_url,
                   context.hostname,
                   values.apiUrl,
                 ),
@@ -1542,7 +1510,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
 
         case "supavisor":
           return {
-            spec: legacyBuildSupavisorContainerSpec({
+            spec: buildSupavisorContainerSpec({
               image,
               projectId,
               networkId,
@@ -1552,15 +1520,15 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               maxClientConn: poolerMaxClientConn,
               jwtSecret: values.jwtSecret,
               dbHost,
-              dbPort: LEGACY_START_INTERNAL_DB_PORT,
+              dbPort: START_INTERNAL_DB_PORT,
               dbUser: "postgres",
               dbPassword,
-              dbDatabase: LEGACY_START_INTERNAL_DB_NAME,
+              dbDatabase: START_INTERNAL_DB_NAME,
             }),
           };
 
         default:
-          return yield* Effect.die(`legacyStart: unrecognized service "${service}"`);
+          return yield* Effect.die(`start: unrecognized service "${service}"`);
       }
     });
 
@@ -1595,17 +1563,17 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // early from the whole command.
     const bringUp = Effect.gen(function* () {
       // `--debug` — threaded into `setup.debug` below so a failed fresh-volume
-      // Realtime/Storage/Auth migrate job (see `db-setup.ts`'s `legacyRunStartMigrateJob`
+      // Realtime/Storage/Auth migrate job (see `db-setup.ts`'s `runStartMigrateJob`
       // doc comment) tees its own stderr.
-      const bringUpDebug = yield* LegacyDebugFlag;
+      const bringUpDebug = yield* DebugFlag;
 
       // Runs the DB bootstrap sequence (network -> volume probe -> container
       // create+start -> health wait -> fresh-volume setup -> `_current_branch`) — shared
-      // with `db start`'s own native container bootstrap, see `legacyStartDatabase`'s own
+      // with `db start`'s own native container bootstrap, see `startDatabase`'s own
       // header (`command-internal/db-bootstrap/start-database.ts`) for the full call order and
       // for why this function has zero knowledge of `--ignore-health-check`: that decision
       // belongs entirely to THIS caller, immediately below.
-      const dbBootstrapResult = yield* legacyStartDatabase(spawner, {
+      const dbBootstrapResult = yield* startDatabase(spawner, {
         fs,
         path,
         workdir: cliSettings.workdir,
@@ -1624,11 +1592,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             ...config.db,
             port: values.dbPort,
             major_version: majorVersion,
-            settings: legacyResolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
+            settings: resolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
           },
           // `orioledb_version` overridden by SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION,
           // matching the value already used to select `postgresImage` above —
-          // `legacyPostgresExtraEnv` reads this same field, and its four sibling
+          // `postgresExtraEnv` reads this same field, and its four sibling
           // S3 fields, for its S3/`POSTGRES_INITDB_ARGS` branch.
           experimental: {
             ...config.experimental,
@@ -1653,7 +1621,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         },
         // Already resolved as part of THIS run's own batched pre-pull (`resolvedImages`,
         // above) — `supabase start` has no per-container lazy resolve of its own, unlike
-        // `db start` (see `legacyStartDatabase`'s header for why this is caller-supplied).
+        // `db start` (see `startDatabase`'s header for why this is caller-supplied).
         resolvePostgresImage: Effect.succeed(resolveImage(postgresImage)),
         dbHealthTimeoutSeconds,
         webhooksEnabled: dbTomlValues.webhooksEnabled,
@@ -1688,10 +1656,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           jwtSecret: values.jwtSecret,
           // Already resolved, unconditionally, near the top of THIS handler's own prelude
           // (feeding the long-running Realtime/GoTrue/PostgREST containers too) — reused
-          // here rather than re-resolved, see `legacyStartDatabase`'s header for why.
+          // here rather than re-resolved, see `startDatabase`'s header for why.
           jwks: Effect.succeed(jwks),
           apiUrl: values.apiUrl,
-          authExternalUrl: legacyResolveAuthExternalUrl(context.loaded?.document, projectEnvValues),
+          authExternalUrl: resolveAuthExternalUrl(context.loaded?.document, projectEnvValues),
           siteUrl: values.authSiteUrl,
           anonKey: values.anonKey,
           serviceRoleKey: values.serviceRoleKey,
@@ -1710,8 +1678,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
 
       if (Result.isFailure(dbBootstrapResult)) {
         const error = dbBootstrapResult.failure;
-        if (flags.ignoreHealthCheck && legacyIsUnhealthyStartError(error)) {
-          // `ignoreHealthCheck && legacyIsUnhealthyStartError(error)` applies
+        if (flags.ignoreHealthCheck && isUnhealthyStartError(error)) {
+          // `ignoreHealthCheck && isUnhealthyStartError(error)` applies
           // uniformly to whatever the DB bootstrap returns AS A WHOLE —
           // including Postgres's own health-wait error, which propagates
           // immediately, before any of the steps below (fresh-volume setup,
@@ -1720,14 +1688,14 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           // this phase, falling through to the SAME unconditional tail
           // every other path reaches, not an early return from the whole
           // command.
-          yield* output.raw(`${legacyHealthWarningText(error)}\n`, "stderr");
+          yield* output.raw(`${healthWarningText(error)}\n`, "stderr");
           return { kind: "postgresUnhealthyIgnored" as const };
         }
         return yield* Effect.fail(error);
       }
 
       if (output.format === "text") {
-        yield* output.raw(LEGACY_START_STARTING_CONTAINERS_MESSAGE, "stderr");
+        yield* output.raw(START_STARTING_CONTAINERS_MESSAGE, "stderr");
       }
 
       // An insertion-ordered container NAME -> resolved image map. Watches
@@ -1736,11 +1704,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       // hex characters. Keying the images by that same name keeps the watch
       // list and its images from drifting apart.
       const started = new Map<string, string>();
-      let postgrestGateway: LegacyHealthCheckPostgrestGateway | undefined;
-      let edgeRuntimeGateway: LegacyHealthCheckPostgrestGateway | undefined;
+      let postgrestGateway: HealthCheckPostgrestGateway | undefined;
+      let edgeRuntimeGateway: HealthCheckPostgrestGateway | undefined;
       let storageContainerId: string | undefined;
       const imagePlanByService = new Map(imagePlan.map((entry) => [entry.service, entry.image]));
-      for (const entry of LEGACY_START_SERVICES) {
+      for (const entry of START_SERVICES) {
         if (entry.service === "postgres") continue;
 
         // Edge Runtime doesn't go through `imagePlan`/`buildSpecForService` —
@@ -1769,27 +1737,27 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           // `toPlainEdgeRuntimeConfig` only does `env()` interpolation and
           // `Redacted`-unwrapping — it never decrypts a dotenvx `encrypted:`
           // value — so without this step the literal ciphertext would reach
-          // the container's env file. `legacyCheckDbToml` (called
+          // the container's env file. `checkDbToml` (called
           // unconditionally, before any Docker work) already validates
           // every `edge_runtime.secrets.*` entry is decryptable via
-          // `legacyAssertDecryptableSecrets`, but only for that validation's
+          // `assertDecryptableSecrets`, but only for that validation's
           // own side effect — the decrypted plaintext is discarded there,
           // not threaded back into this value.
           const rawEdgeRuntimeSecrets = toPlainEdgeRuntimeConfig(resolvedEdgeRuntime).secrets;
-          const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({
+          const dotenvPrivateKeys = collectDotenvPrivateKeys({
             ...projectEnvValues,
             ...process.env,
           });
           const edgeRuntimeSecrets: Record<string, string> = {};
           for (const [secretName, secretValue] of Object.entries(rawEdgeRuntimeSecrets)) {
-            if (!legacyIsEncryptedSecret(secretValue)) {
+            if (!isEncryptedSecret(secretValue)) {
               edgeRuntimeSecrets[secretName] = secretValue;
               continue;
             }
-            const decrypted = legacyDecryptSecret(secretValue, dotenvPrivateKeys);
+            const decrypted = decryptSecret(secretValue, dotenvPrivateKeys);
             if (!decrypted.ok) {
               return yield* Effect.fail(
-                new LegacyStartInvalidConfigError({
+                new StartInvalidConfigError({
                   message: `failed to parse config: ${decrypted.error}`,
                 }),
               );
@@ -1799,7 +1767,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           // `edgeRuntimePolicy`/`edgeRuntimeInspectorPort` are resolved eagerly, before any
           // Docker work — see their hoisted `wrapConfigOverride` calls next to
           // `dbHealthTimeoutSeconds` above.
-          const edgeRuntimeInput: LegacyEdgeRuntimeBringUpInput = {
+          const edgeRuntimeInput: EdgeRuntimeBringUpInput = {
             projectId,
             networkId,
             image: resolveImage(edgeRuntimeDefaultImage),
@@ -1823,14 +1791,14 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             debug,
             platform: runtimeInfo.platform,
           };
-          const runtime: StartedRuntime = yield* legacyStartEdgeRuntimeContainer(edgeRuntimeInput);
+          const runtime: StartedRuntime = yield* startStackEdgeRuntimeContainer(edgeRuntimeInput);
           // Deliberately NOT calling `runtime.cleanup` here — see
           // `edge-runtime.service.ts`'s header for why. Unlike every other
-          // service built here (`legacyCreateContainer`'s `restartPolicy:
+          // service built here (`createContainer`'s `restartPolicy:
           // "unless-stopped"`), Edge Runtime's own bring-up sets no Docker
           // restart policy at all — but its bind-mounted host temp files
           // (env-file/multiline-env-script staging) must still exist for
-          // as long as the container can be reattached to; `legacyStart
+          // as long as the container can be reattached to; `start
           // EdgeRuntimeContainer` already runs `cleanup` on a failed or
           // interrupted bring-up internally, so only the success path must
           // leave it alone.
@@ -1868,13 +1836,13 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         ).pipe(
           Effect.catchDefect((defect) =>
             Effect.fail(
-              new LegacyStartInvalidConfigError({
+              new StartInvalidConfigError({
                 message: `invalid config for ${entry.service}: ${defect instanceof Error ? defect.message : String(defect)}`,
               }),
             ),
           ),
         );
-        yield* legacyCreateContainer(spawner, spec, startOpts);
+        yield* createContainer(spawner, spec, startOpts);
         if (excludeFromHealthWatch !== true) {
           started.set(spec.containerName, spec.image);
         }
@@ -1912,7 +1880,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       // uninterruptibly, matching the unconditional rollback check every
       // other failure path in this handler needs.
       Effect.onError(() =>
-        legacyRollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
+        rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
       ),
     );
 
@@ -1922,16 +1890,16 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       if (recheckedState !== undefined && !isRecoverableStoppedState(recheckedState)) {
         return yield* reportAlreadyRunningStatus();
       }
-      // legacyCliProjectFilterValue("") targets every CLI-managed project; never use it here.
+      // cliProjectFilterValue("") targets every CLI-managed project; never use it here.
       if (projectId.length === 0) {
         return yield* Effect.fail(
-          new LegacyStartInvalidConfigError({
+          new StartInvalidConfigError({
             message: "Invalid config: project_id must contain at least one alphanumeric character.",
           }),
         );
       }
-      let removedContainers: ReadonlyArray<LegacyContainerIdName> = [];
-      yield* legacyDockerRemoveAll(
+      let removedContainers: ReadonlyArray<ContainerIdName> = [];
+      yield* dockerRemoveAll(
         spawner,
         filterValue,
         false,
@@ -1945,7 +1913,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         debug,
       ).pipe(
         Effect.ensuring(
-          Effect.suspend(() => legacyCleanupStartSecrets(removedContainers, cliSettings.workdir)),
+          Effect.suspend(() => cleanupStartSecrets(removedContainers, cliSettings.workdir)),
         ),
       );
     }
@@ -1966,7 +1934,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       // `bringUp`'s own pipe uses above. This whole tail must be checked for
       // a single failure outcome exactly once — a SIGINT/SIGTERM landing
       // anywhere in this tail, not just during bring-up, must roll back
-      // too. Per-step manual `legacyRollbackStart` calls would miss a pure
+      // too. Per-step manual `rollbackStart` calls would miss a pure
       // fiber interrupt between steps (see the `bringUp` pipe's doc comment
       // for why `onError`, not `tapError`, is required), so every fail path
       // below just fails and lets this single outer `onError` roll back.
@@ -1974,16 +1942,16 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         // 9. Bulk health check over every non-Postgres started container, at
         // the generic 30s service timeout.
         if (output.format === "text") {
-          yield* output.raw(LEGACY_START_WAITING_FOR_HEALTH_CHECKS_MESSAGE, "stderr");
+          yield* output.raw(START_WAITING_FOR_HEALTH_CHECKS_MESSAGE, "stderr");
         }
         // The PostgREST/Edge Runtime readiness probes go through Kong over HTTP(S) —
         // when `api.tls.enabled`, Kong's local cert is self-signed, so the root
         // runtime's `HttpClient.HttpClient` (built from `FetchHttpClient.layer` over
         // plain `fetch`) would fail TLS verification on every probe and the health
         // check would exhaust its full timeout even though the services are
-        // actually healthy. Resolve the same local Kong CA `legacySeedBucketsRun`'s
+        // actually healthy. Resolve the same local Kong CA `seedBucketsRun`'s
         // own gateway calls already trust (`projectRef: ""` never touches the
-        // network — see `legacyResolveStorageCredentials`'s local branch) and
+        // network — see `resolveStorageCredentials`'s local branch) and
         // override just the underlying `FetchHttpClient.Fetch` primitive — NOT the
         // whole `HttpClient.HttpClient` layer — so this only takes effect for a
         // `FetchHttpClient`-backed client (production) and is a no-op against a
@@ -1996,9 +1964,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         // `SUPABASE_API_TLS_{ENABLED,CERT_PATH,KEY_PATH}`/`SUPABASE_API_EXTERNAL_URL`
         // override that actually brought Kong up on a different port/TLS/cert/
         // external URL also reaches every local Storage-gateway caller below.
-        // `legacyResolveStorageCredentials` now folds the same `SUPABASE_API_*`
+        // `resolveStorageCredentials` now folds the same `SUPABASE_API_*`
         // overrides itself (`resolveLocalApiConfig`,
-        // `legacy-storage-credentials.ts` — #6452) and re-resolves this
+        // `storage-credentials.ts` — #6452) and re-resolves this
         // pre-folded config to identical values, so the api fold here is what
         // guarantees the exact resolved-URL/TLS/cert locals Kong's own spec used
         // (`apiEnabled`/`apiTlsCertPath`/`apiTlsKeyPath`) are the ones handed
@@ -2006,16 +1974,16 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         // already-resolved `values.jwtSecret`/`values.serviceRoleKey` (decrypted,
         // env/dotenv-overridden — the same values the real GoTrue/Storage containers
         // were started with) instead of the raw `config.auth.*`
-        // `legacyResolveStorageCredentials`'s local branch would otherwise
+        // `resolveStorageCredentials`'s local branch would otherwise
         // re-derive from a narrower, dotenv-blind `process.env`-only check.
         // Also folds in `storageFileSizeLimit`/
-        // `storageVectorEnabled` so `legacySeedBucketsRun` (which reads
+        // `storageVectorEnabled` so `seedBucketsRun` (which reads
         // `config.storage.file_size_limit`/`config.storage.vector.enabled` to fill
-        // bucket defaults and gate vector-upsert seeding, `legacy-seed-buckets.ts`)
+        // bucket defaults and gate vector-upsert seeding, `seed-buckets.ts`)
         // sees the same values the real Storage container was started with, not the
         // raw un-overridden config.
         // Reused for both this health-check CA lookup and the two
-        // `legacySeedBucketsRun` calls below (`resolvedConfig`), so bucket
+        // `seedBucketsRun` calls below (`resolvedConfig`), so bucket
         // seeding never independently reloads config.toml and silently drops
         // these same overrides.
         const effectiveLocalStorageConfig = {
@@ -2046,7 +2014,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             },
           },
         };
-        const { localKongCa } = yield* legacyResolveStorageCredentials({
+        const { localKongCa } = yield* resolveStorageCredentials({
           projectRef: "",
           config: effectiveLocalStorageConfig,
           projectEnvValues,
@@ -2057,15 +2025,12 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           localKongCa === undefined
             ? effect
             : effect.pipe(
-                Effect.provideService(
-                  FetchHttpClient.Fetch,
-                  legacyStorageGatewayFetch(localKongCa),
-                ),
+                Effect.provideService(FetchHttpClient.Fetch, storageGatewayFetch(localKongCa)),
               );
         // Keep the synthetic value out of project dotenv resolution and container environments.
-        legacyConfigureLoopbackProxyBypass();
+        configureLoopbackProxyBypass();
         const healthResult = yield* withLocalKongCa(
-          legacyWaitForHealthyServices(spawner, [...started.keys()], {
+          waitForHealthyServices(spawner, [...started.keys()], {
             postgrest: postgrestGateway,
             edgeRuntime: edgeRuntimeGateway,
             images: started,
@@ -2073,8 +2038,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         ).pipe(Effect.result);
         if (Result.isFailure(healthResult)) {
           const error = healthResult.failure;
-          if (flags.ignoreHealthCheck && legacyIsUnhealthyStartError(error)) {
-            // `ignoreHealthCheck`/`legacyIsUnhealthyStartError` only gates THIS
+          if (flags.ignoreHealthCheck && isUnhealthyStartError(error)) {
+            // `ignoreHealthCheck`/`isUnhealthyStartError` only gates THIS
             // wait, not Postgres's own earlier one. There's additionally a
             // narrower, storage-only recheck-and-seed here: when it's a fresh
             // volume and Storage was among the
@@ -2082,7 +2047,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             // if it does, seed buckets. A seed FAILURE there REPLACES this
             // original health error and hard-fails (with rollback) —
             // since a plain seed error never satisfies
-            // `legacyIsUnhealthyStartError` and so never gets this branch's own
+            // `isUnhealthyStartError` and so never gets this branch's own
             // downgrade-to-warning treatment. A seed SUCCESS (or a storage
             // recheck that never turns healthy) changes nothing: fall through to
             // the same downgrade-to-warning as every other ignored-unhealthy
@@ -2092,12 +2057,12 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               // this one-container watch list — the hint can only ever key off
               // containers that actually appear in this call's own failures.
               const storageHealthResult = yield* withLocalKongCa(
-                legacyWaitForHealthyServices(spawner, [storageContainerId], {
+                waitForHealthyServices(spawner, [storageContainerId], {
                   images: started,
                 }),
               ).pipe(Effect.result);
               if (Result.isSuccess(storageHealthResult)) {
-                const seedResult = yield* legacySeedBucketsRun({
+                const seedResult = yield* seedBucketsRun({
                   projectRef: "",
                   emitSummary: false,
                   interactive: false,
@@ -2109,16 +2074,16 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
                   projectEnvValues,
                 }).pipe(Effect.result);
                 if (Result.isFailure(seedResult)) {
-                  // No manual `legacyRollbackStart` here — the outer
+                  // No manual `rollbackStart` here — the outer
                   // `Effect.onError` below rolls back on this failure too.
                   return yield* Effect.fail(seedResult.failure);
                 }
               }
             }
             // Downgrade to a warning and fall through to the success path, no rollback.
-            yield* output.raw(`${legacyHealthWarningText(error)}\n`, "stderr");
+            yield* output.raw(`${healthWarningText(error)}\n`, "stderr");
           } else {
-            // No manual `legacyRollbackStart` here — the outer `Effect.onError`
+            // No manual `rollbackStart` here — the outer `Effect.onError`
             // below rolls back on this failure too.
             return yield* Effect.fail(error);
           }
@@ -2140,10 +2105,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         // still rolls back via the same outer `Effect.onError` as
         // everything else in this tail: a plain seed error (unlike the
         // health-check timeout above) never satisfies
-        // `legacyIsUnhealthyStartError`, so it always takes that branch
+        // `isUnhealthyStartError`, so it always takes that branch
         // regardless of `--ignore-health-check`.
         if (Result.isSuccess(healthResult) && isFreshVolume && storageContainerId !== undefined) {
-          yield* legacySeedBucketsRun({
+          yield* seedBucketsRun({
             projectRef: "",
             emitSummary: false,
             interactive: false,
@@ -2167,7 +2132,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }
       }).pipe(
         Effect.onError(() =>
-          legacyRollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
+          rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
         ),
       );
     }
@@ -2187,7 +2152,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     const statusExcluded = flags.exclude;
 
     if (output.format === "text") {
-      yield* output.raw(legacyStartCompletedMessage(), "stderr");
+      yield* output.raw(startCompletedMessage(), "stderr");
       // Called DIRECTLY, unlike the already-running branch's `status.Run`: no
       // re-health-check, no "stopped services" diffing, just the raw
       // `--exclude` values against the config/values already resolved (and
@@ -2195,8 +2160,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       // `precomputedLocal` so this reuses the exact keys already baked into
       // the containers `bringUp` just created, instead of re-deriving them.
       const { values: statusValues, names } = yield* buildStatusValues(statusExcluded, values);
-      yield* output.raw(legacyRenderStatusPretty(statusValues, names));
-      yield* output.raw(legacyStartSecurityNotice(), "stderr");
+      yield* output.raw(renderStatusPretty(statusValues, names));
+      yield* output.raw(startSecurityNotice(), "stderr");
     } else {
       const { values: statusValues } = yield* buildStatusValues(statusExcluded, values);
       yield* output.success("", statusValues);

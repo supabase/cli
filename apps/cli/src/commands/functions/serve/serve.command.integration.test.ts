@@ -3,17 +3,17 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit, Layer } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
-import { legacyFunctionsServeCommand } from "./serve.command.ts";
+import { functionsServeCommand } from "./serve.command.ts";
 
 describe("legacy functions serve command", () => {
   it.live("accepts all legacy function name positional arguments", () => {
     let handlerRan = false;
     let parsedFunctionNames: ReadonlyArray<string> = [];
-    const command = legacyFunctionsServeCommand.pipe(
-      Command.withHandler(({ legacyFunctionNames }) =>
+    const command = functionsServeCommand.pipe(
+      Command.withHandler(({ functionNames }) =>
         Effect.sync(() => {
           handlerRan = true;
-          parsedFunctionNames = legacyFunctionNames;
+          parsedFunctionNames = functionNames;
         }),
       ),
     );

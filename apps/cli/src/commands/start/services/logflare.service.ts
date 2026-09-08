@@ -17,32 +17,32 @@
 
 import { join } from "node:path";
 
-import { legacyServiceContainerName } from "../../../command-internal/legacy-docker-ids.ts";
-import type { LegacyStartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
+import { serviceContainerName } from "../../../command-internal/docker-ids.ts";
+import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
 import {
-  legacySlimWgetHealthcheck,
-  legacyUsesSlimRuntime,
+  slimWgetHealthcheck,
+  usesSlimRuntime,
 } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
 
-/** The Logflare network alias — also this service's `containerSuffix` in `LEGACY_SERVICE_CATALOG`. */
-const LEGACY_LOGFLARE_CONTAINER_SUFFIX = "analytics";
+/** The Logflare network alias — also this service's `containerSuffix` in `SERVICE_CATALOG`. */
+const LOGFLARE_CONTAINER_SUFFIX = "analytics";
 
 /**
  * The superuser role — the DB user Logflare's own Ecto connection
  * authenticates as. Distinct from
- * {@link LegacyLogflareContainerSpecInput.dbUser} (`"postgres"`), which is
+ * {@link LogflareContainerSpecInput.dbUser} (`"postgres"`), which is
  * used only for the Postgres-backend `POSTGRES_BACKEND_URL` below — two
  * different DB users really are used for two different env vars in this one
  * block.
  */
-const LEGACY_LOGFLARE_DB_USERNAME = "supabase_admin";
+const LOGFLARE_DB_USERNAME = "supabase_admin";
 
 /**
  * The analytics API key's only possible value. It's never decoded from
  * `config.toml`, so this can never actually vary; hardcoding it here
  * (rather than threading it through as an input) reflects that.
  */
-const LEGACY_LOGFLARE_API_KEY = "api-key";
+const LOGFLARE_API_KEY = "api-key";
 
 /**
  * The Logflare entrypoint script: the image's own entrypoint conflicts with
@@ -60,7 +60,7 @@ const LEGACY_LOGFLARE_API_KEY = "api-key";
  * KILL. Interrupted `wait` is >128; a second `wait` recovers the BEAM's
  * status unless it was already reaped (127).
  */
-const LEGACY_LOGFLARE_ENTRYPOINT_SCRIPT =
+const LOGFLARE_ENTRYPOINT_SCRIPT =
   "cat <<'EOF' > run.sh && exec sh run.sh\n" +
   "./logflare eval Logflare.Release.migrate || exit $?\n" +
   "./logflare start --sname logflare &\n" +
@@ -72,13 +72,13 @@ const LEGACY_LOGFLARE_ENTRYPOINT_SCRIPT =
   'exit "$code"\n' +
   "EOF\n";
 
-export interface LegacyLogflareContainerSpecInput {
+export interface LogflareContainerSpecInput {
   /**
    * The already-resolved `config.analytics.image`. Not part of the decoded
    * `@supabase/config` schema; resolution is the caller's responsibility.
    */
   readonly image: string;
-  /** The project id, used to derive this container's own name via {@link legacyServiceContainerName}. */
+  /** The project id, used to derive this container's own name via {@link serviceContainerName}. */
   readonly projectId: string;
   /** `container.HostConfig.NetworkMode`'s target — resolved once per `start` run, not per-container. */
   readonly networkId: string;
@@ -106,7 +106,7 @@ export interface LegacyLogflareContainerSpecInput {
   /**
    * Hardcoded `"postgres"` — used only for the Postgres-backend
    * `POSTGRES_BACKEND_URL` env var, NOT for `DB_USERNAME` (see
-   * {@link LEGACY_LOGFLARE_DB_USERNAME}'s doc comment).
+   * {@link LOGFLARE_DB_USERNAME}'s doc comment).
    */
   readonly dbUser: string;
   /** `config.db.password`. */
@@ -114,20 +114,18 @@ export interface LegacyLogflareContainerSpecInput {
 }
 
 /** Builds the `docker create` spec for the Logflare/analytics container. */
-export function legacyBuildLogflareContainerSpec(
-  input: LegacyLogflareContainerSpecInput,
-): LegacyStartContainerSpec {
+export function buildLogflareContainerSpec(input: LogflareContainerSpecInput): StartContainerSpec {
   const env: Record<string, string> = {
     DB_DATABASE: "_supabase",
     DB_HOSTNAME: input.dbHost,
     DB_PORT: String(input.dbPort),
     DB_SCHEMA: "_analytics",
-    DB_USERNAME: LEGACY_LOGFLARE_DB_USERNAME,
+    DB_USERNAME: LOGFLARE_DB_USERNAME,
     DB_PASSWORD: input.dbPassword,
     LOGFLARE_MIN_CLUSTER_SIZE: "1",
     LOGFLARE_SINGLE_TENANT: "true",
     LOGFLARE_SUPABASE_MODE: "true",
-    LOGFLARE_PRIVATE_ACCESS_TOKEN: LEGACY_LOGFLARE_API_KEY,
+    LOGFLARE_PRIVATE_ACCESS_TOKEN: LOGFLARE_API_KEY,
     LOGFLARE_LOG_LEVEL: "warn",
     LOGFLARE_NODE_HOST: "127.0.0.1",
     // The literal env VALUE includes the single quotes — this is set directly
@@ -138,7 +136,7 @@ export function legacyBuildLogflareContainerSpec(
   };
 
   const binds: Array<string> = [];
-  const slim = legacyUsesSlimRuntime(input.image);
+  const slim = usesSlimRuntime(input.image);
 
   if (input.backend === "bigquery") {
     const hostJwtPath = join(input.workdir, input.gcpJwtPath);
@@ -153,16 +151,16 @@ export function legacyBuildLogflareContainerSpec(
 
   return {
     image: input.image,
-    containerName: legacyServiceContainerName(LEGACY_LOGFLARE_CONTAINER_SUFFIX, input.projectId),
+    containerName: serviceContainerName(LOGFLARE_CONTAINER_SUFFIX, input.projectId),
     hostname: "127.0.0.1",
     env,
     entrypoint: "sh",
-    cmd: ["-c", LEGACY_LOGFLARE_ENTRYPOINT_SCRIPT],
+    cmd: ["-c", LOGFLARE_ENTRYPOINT_SCRIPT],
     binds,
     exposedPorts: [{ containerPort: "4000" }],
     ports: [{ hostPort: String(input.port), containerPort: "4000" }],
     healthcheck: slim
-      ? legacySlimWgetHealthcheck("http://127.0.0.1:4000/health", {
+      ? slimWgetHealthcheck("http://127.0.0.1:4000/health", {
           startPeriodSeconds: 10,
         })
       : {
@@ -182,7 +180,7 @@ export function legacyBuildLogflareContainerSpec(
         },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
-    networkAliases: [LEGACY_LOGFLARE_CONTAINER_SUFFIX],
+    networkAliases: [LOGFLARE_CONTAINER_SUFFIX],
     labels: {},
   };
 }

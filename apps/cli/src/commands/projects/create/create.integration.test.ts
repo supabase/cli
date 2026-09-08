@@ -4,22 +4,19 @@ import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { Command } from "effect/unstable/cli";
 
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { GLOBAL_FLAGS, ExperimentalFlag } from "../../../command-internal/global-flags.ts";
 import {
-  LEGACY_GLOBAL_FLAGS,
-  LegacyExperimentalFlag,
-} from "../../../shared/legacy/global-flags.ts";
-import {
-  type LegacyApiResponse,
-  type LegacyHttpMethod,
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { legacyProjectsCreateCommand, type LegacyProjectsCreateFlags } from "./create.command.ts";
-import { legacyProjectsCreate } from "./create.handler.ts";
+  type ApiResponse,
+  type HttpMethod,
+  buildTestRuntime,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { projectsCreateCommand, type ProjectsCreateFlags } from "./create.command.ts";
+import { projectsCreate } from "./create.handler.ts";
 
 const CREATED: typeof V1CreateAProjectOutput.Type = {
   id: "abcdefghijklmnopqrst",
@@ -36,7 +33,7 @@ const ORGS: ReadonlyArray<typeof OrganizationResponseV1.Type> = [
   { id: "org-abc", slug: "acme", name: "Acme Inc" },
 ];
 
-const BASE_FLAGS: LegacyProjectsCreateFlags = {
+const BASE_FLAGS: ProjectsCreateFlags = {
   name: Option.none(),
   orgId: Option.none(),
   dbPassword: Option.none(),
@@ -49,13 +46,13 @@ const BASE_FLAGS: LegacyProjectsCreateFlags = {
   plan: Option.none(),
 };
 
-const tempRoot = useLegacyTempWorkdir("supabase-projects-create-int-");
+const tempRoot = useTempWorkdir("supabase-projects-create-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
   readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
   readonly stdinIsTty?: boolean;
-  readonly byMethod?: Partial<Record<LegacyHttpMethod, LegacyApiResponse>>;
+  readonly byMethod?: Partial<Record<HttpMethod, ApiResponse>>;
   readonly network?: "fail";
   readonly promptTextResponses?: ReadonlyArray<string>;
   readonly promptSelectResponses?: ReadonlyArray<string>;
@@ -71,21 +68,21 @@ function setup(opts: SetupOpts = {}) {
     promptSelectResponses: opts.promptSelectResponses,
     promptPasswordResponses: opts.promptPasswordResponses,
   });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     network: opts.network,
     byMethod: opts.byMethod ?? {
       POST: { status: 201, body: CREATED },
       GET: { status: 200, body: ORGS },
     },
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const tty = mockTty({
     stdinIsTty: opts.stdinIsTty ?? false,
     stdoutIsTty: opts.stdinIsTty ?? false,
   });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
-  const runtime = buildLegacyTestRuntime({
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
+  const runtime = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -96,7 +93,7 @@ function setup(opts: SetupOpts = {}) {
   });
   const layer = Layer.mergeAll(
     runtime,
-    Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
+    Layer.succeed(ExperimentalFlag, opts.experimental ?? false),
   );
   return { layer, out, api, telemetry, cache };
 }
@@ -121,7 +118,7 @@ describe("legacy projects create integration", () => {
   it.live("creates a project non-interactively from flags", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
-      yield* legacyProjectsCreate({
+      yield* projectsCreate({
         ...BASE_FLAGS,
         name: Option.some("alpha"),
         orgId: Option.some("acme"),
@@ -146,7 +143,7 @@ describe("legacy projects create integration", () => {
   it.live("includes desired_instance_size only when --size is set", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacyProjectsCreate({
+      yield* projectsCreate({
         ...BASE_FLAGS,
         name: Option.some("alpha"),
         orgId: Option.some("acme"),
@@ -161,7 +158,7 @@ describe("legacy projects create integration", () => {
   it.live("includes high_availability only when --high-availability is set", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacyProjectsCreate({
+      yield* projectsCreate({
         ...BASE_FLAGS,
         name: Option.some("alpha"),
         orgId: Option.some("acme"),
@@ -176,7 +173,7 @@ describe("legacy projects create integration", () => {
   it.live("forwards --high-availability=false when explicitly set", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacyProjectsCreate({
+      yield* projectsCreate({
         ...BASE_FLAGS,
         name: Option.some("alpha"),
         orgId: Option.some("acme"),
@@ -193,7 +190,7 @@ describe("legacy projects create integration", () => {
     () => {
       const { layer, api } = setup({ experimental: true });
       return Effect.gen(function* () {
-        yield* legacyProjectsCreate({
+        yield* projectsCreate({
           ...BASE_FLAGS,
           name: Option.some("alpha"),
           orgId: Option.some("acme"),
@@ -213,7 +210,7 @@ describe("legacy projects create integration", () => {
     () => {
       const { layer, api } = setup({ experimental: true });
       return Effect.gen(function* () {
-        yield* legacyProjectsCreate({
+        yield* projectsCreate({
           ...BASE_FLAGS,
           name: Option.some("alpha"),
           orgId: Option.some("acme"),
@@ -228,12 +225,12 @@ describe("legacy projects create integration", () => {
   );
 
   it.live(
-    "fails with LegacyExperimentalRequiredError when --release-channel is set without --experimental",
+    "fails with ExperimentalRequiredError when --release-channel is set without --experimental",
     () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacyProjectsCreate({
+          projectsCreate({
             ...BASE_FLAGS,
             name: Option.some("alpha"),
             orgId: Option.some("acme"),
@@ -243,7 +240,7 @@ describe("legacy projects create integration", () => {
           }),
         );
         const failure = findFailure(exit);
-        expect(failure["_tag"]).toBe("LegacyExperimentalRequiredError");
+        expect(failure["_tag"]).toBe("ExperimentalRequiredError");
         expect(failure["message"]).toBe("must set the --experimental flag to run this command");
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
@@ -251,12 +248,12 @@ describe("legacy projects create integration", () => {
   );
 
   it.live(
-    "fails with LegacyExperimentalRequiredError when --postgres-engine is set without --experimental",
+    "fails with ExperimentalRequiredError when --postgres-engine is set without --experimental",
     () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacyProjectsCreate({
+          projectsCreate({
             ...BASE_FLAGS,
             name: Option.some("alpha"),
             orgId: Option.some("acme"),
@@ -266,7 +263,7 @@ describe("legacy projects create integration", () => {
           }),
         );
         const failure = findFailure(exit);
-        expect(failure["_tag"]).toBe("LegacyExperimentalRequiredError");
+        expect(failure["_tag"]).toBe("ExperimentalRequiredError");
         expect(failure["message"]).toBe("must set the --experimental flag to run this command");
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
@@ -280,7 +277,7 @@ describe("legacy projects create integration", () => {
       const previous = process.env["SUPABASE_EXPERIMENTAL"];
       process.env["SUPABASE_EXPERIMENTAL"] = "true";
       return Effect.gen(function* () {
-        yield* legacyProjectsCreate({
+        yield* projectsCreate({
           ...BASE_FLAGS,
           name: Option.some("alpha"),
           orgId: Option.some("acme"),
@@ -309,7 +306,7 @@ describe("legacy projects create integration", () => {
   it.live("excludes release_channel and postgres_engine when neither flag is set", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacyProjectsCreate({
+      yield* projectsCreate({
         ...BASE_FLAGS,
         name: Option.some("alpha"),
         orgId: Option.some("acme"),
@@ -324,7 +321,7 @@ describe("legacy projects create integration", () => {
   it.live("ignores the hidden --plan flag (no-op)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacyProjectsCreate({
+      yield* projectsCreate({
         ...BASE_FLAGS,
         name: Option.some("alpha"),
         orgId: Option.some("acme"),
@@ -340,12 +337,12 @@ describe("legacy projects create integration", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyProjectsCreate({ ...BASE_FLAGS, name: Option.some("alpha") }),
+        projectsCreate({ ...BASE_FLAGS, name: Option.some("alpha") }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyProjectsCreateMissingArgError");
+        expect(json).toContain("ProjectsCreateMissingArgError");
         expect(json).toContain("--org-id");
       }
     }).pipe(Effect.provide(layer));
@@ -357,7 +354,7 @@ describe("legacy projects create integration", () => {
       // On a TTY but with --interactive=false and a required flag missing, Go's
       // PreRunE marks the flags required and never prompts.
       const exit = yield* Effect.exit(
-        legacyProjectsCreate({
+        projectsCreate({
           ...BASE_FLAGS,
           name: Option.some("alpha"),
           interactive: Option.some(false),
@@ -365,7 +362,7 @@ describe("legacy projects create integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsCreateMissingArgError");
+        expect(JSON.stringify(exit.cause)).toContain("ProjectsCreateMissingArgError");
       }
       // No prompts and no org fetch happened.
       expect(api.requests.some((r) => r.method === "GET")).toBe(false);
@@ -380,7 +377,7 @@ describe("legacy projects create integration", () => {
       promptPasswordResponses: [""],
     });
     return Effect.gen(function* () {
-      yield* legacyProjectsCreate({ ...BASE_FLAGS });
+      yield* projectsCreate({ ...BASE_FLAGS });
       // org list was fetched for the interactive prompt
       expect(api.requests.some((r) => r.method === "GET")).toBe(true);
       const body = postBody(api);
@@ -394,13 +391,13 @@ describe("legacy projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyProjectsCreateNameEmptyError when the name prompt is blank", () => {
+  it.live("fails with ProjectsCreateNameEmptyError when the name prompt is blank", () => {
     const { layer } = setup({ stdinIsTty: true, promptTextResponses: [""] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyProjectsCreate({ ...BASE_FLAGS }));
+      const exit = yield* Effect.exit(projectsCreate({ ...BASE_FLAGS }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsCreateNameEmptyError");
+        expect(JSON.stringify(exit.cause)).toContain("ProjectsCreateNameEmptyError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -412,11 +409,11 @@ describe("legacy projects create integration", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyProjectsCreate({ ...BASE_FLAGS, name: Option.some("alpha") }),
+        projectsCreate({ ...BASE_FLAGS, name: Option.some("alpha") }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsOrgsListUnexpectedStatusError");
+        expect(JSON.stringify(exit.cause)).toContain("ProjectsOrgsListUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -424,7 +421,7 @@ describe("legacy projects create integration", () => {
   it.live("emits a success event for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacyProjectsCreate({
+      yield* projectsCreate({
         ...BASE_FLAGS,
         name: Option.some("alpha"),
         orgId: Option.some("acme"),
@@ -440,7 +437,7 @@ describe("legacy projects create integration", () => {
   it.live("encodes the created project for --output env", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
-      yield* legacyProjectsCreate({
+      yield* projectsCreate({
         ...BASE_FLAGS,
         name: Option.some("alpha"),
         orgId: Option.some("acme"),
@@ -454,7 +451,7 @@ describe("legacy projects create integration", () => {
   it.live("encodes the created project for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
-      yield* legacyProjectsCreate({
+      yield* projectsCreate({
         ...BASE_FLAGS,
         name: Option.some("alpha"),
         orgId: Option.some("acme"),
@@ -468,7 +465,7 @@ describe("legacy projects create integration", () => {
   it.live("emits Go-byte-exact indented JSON for --output json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
-      yield* legacyProjectsCreate({
+      yield* projectsCreate({
         ...BASE_FLAGS,
         name: Option.some("alpha"),
         orgId: Option.some("acme"),
@@ -483,7 +480,7 @@ describe("legacy projects create integration", () => {
   it.live("wraps the created project under [project]-style toml output", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
-      yield* legacyProjectsCreate({
+      yield* projectsCreate({
         ...BASE_FLAGS,
         name: Option.some("alpha"),
         orgId: Option.some("acme"),
@@ -495,11 +492,11 @@ describe("legacy projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyProjectsCreateNetworkError on transport failure", () => {
+  it.live("fails with ProjectsCreateNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyProjectsCreate({
+        projectsCreate({
           ...BASE_FLAGS,
           name: Option.some("alpha"),
           orgId: Option.some("acme"),
@@ -510,17 +507,17 @@ describe("legacy projects create integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyProjectsCreateNetworkError");
+        expect(json).toContain("ProjectsCreateNetworkError");
         expect(json).toContain("failed to create project");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyProjectsCreateUnexpectedStatusError on HTTP 500", () => {
+  it.live("fails with ProjectsCreateUnexpectedStatusError on HTTP 500", () => {
     const { layer } = setup({ byMethod: { POST: { status: 500, body: {} } } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyProjectsCreate({
+        projectsCreate({
           ...BASE_FLAGS,
           name: Option.some("alpha"),
           orgId: Option.some("acme"),
@@ -530,7 +527,7 @@ describe("legacy projects create integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsCreateUnexpectedStatusError");
+        expect(JSON.stringify(exit.cause)).toContain("ProjectsCreateUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -538,7 +535,7 @@ describe("legacy projects create integration", () => {
   it.live("sends the request body with Go-sorted keys", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacyProjectsCreate({
+      yield* projectsCreate({
         ...BASE_FLAGS,
         name: Option.some("alpha"),
         orgId: Option.some("acme"),
@@ -565,7 +562,7 @@ describe("legacy projects create integration", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* legacyProjectsCreate({
+      yield* projectsCreate({
         ...BASE_FLAGS,
         name: Option.some("alpha"),
         orgId: Option.some("acme"),
@@ -581,7 +578,7 @@ describe("legacy projects create integration", () => {
   it.live("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
-      yield* legacyProjectsCreate({
+      yield* projectsCreate({
         ...BASE_FLAGS,
         name: Option.some("alpha"),
         orgId: Option.some("acme"),
@@ -597,7 +594,7 @@ describe("legacy projects create integration", () => {
     const { layer, telemetry, cache } = setup({ network: "fail" });
     return Effect.gen(function* () {
       yield* Effect.exit(
-        legacyProjectsCreate({
+        projectsCreate({
           ...BASE_FLAGS,
           name: Option.some("alpha"),
           orgId: Option.some("acme"),
@@ -616,8 +613,8 @@ describe("legacy projects create integration", () => {
   // it should error.
   it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
     const root = Command.make("supabase").pipe(
-      Command.withSubcommands([legacyProjectsCreateCommand]),
-      Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
+      Command.withSubcommands([projectsCreateCommand]),
+      Command.withGlobalFlags(GLOBAL_FLAGS),
     );
 
     return Effect.gen(function* () {

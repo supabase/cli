@@ -445,8 +445,8 @@ function parseUint16(s: string): number | undefined {
 /**
  * Port of Go `sms.fromAuthConfig`'s `envToMap`, replicated from
  * `auth.sync.ts:1736-1747`: splits on `,` (empty string → no entries, no
- * trimming — same as the shared `legacyStrToArr`,
- * `apps/cli/src/command-internal/legacy-local-config-values.ts:2790-2792`) then
+ * trimming — same as the shared `strToArr`,
+ * `apps/cli/src/command-internal/local-config-values.ts:2790-2792`) then
  * each entry on the first `=`; entries without a `=` (or with `=` at index 0)
  * are dropped. Used for `sms.test_otp`.
  */

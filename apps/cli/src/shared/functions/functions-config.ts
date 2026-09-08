@@ -28,8 +28,8 @@ interface FunctionsCliConfigContext {
  * `styleAqua`. `undefined` marks the `next` shell.
  *
  * A single method (not one hook per step) so the legacy implementation can
- * delegate its dotenv/config-load work to `legacy-local-project-context.ts`'s
- * `legacyLoadLocalProjectContext` end to end — the same pipeline `start`/
+ * delegate its dotenv/config-load work to `local-project-context.ts`'s
+ * `loadLocalProjectContext` end to end — the same pipeline `start`/
  * `stop`/`status` already share — rather than re-implementing it here.
  */
 export interface FunctionsGoConfigCompat {
@@ -74,8 +74,8 @@ export const loadFunctionsCliConfig = Effect.fnUntraced(function* (input: {
       // fallback only matters if this ever runs with `projectRef`
       // `undefined` and no `project_id` in the file — matching Go's `Eject`
       // basename default (`pkg/config/config.go:561-570`) and the legacy
-      // branch's own `legacyResolveLocalProjectId` fallback below.
-      // Sanitized like the legacy branch's (`legacySanitizeProjectId`, run
+      // branch's own `resolveLocalProjectId` fallback below.
+      // Sanitized like the legacy branch's (`sanitizeProjectId`, run
       // inside its validate pipeline): this id feeds `dockerProjectLabels`'
       // raw label values as well as `localDockerId`'s (self-sanitizing)
       // resource names, and an unsanitized `project_id = "My Project"` would

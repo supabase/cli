@@ -13,9 +13,9 @@
  */
 import path from "node:path";
 import process from "node:process";
-import { legacyReadDocsContent } from "../src/docs/legacy-docs-spec.content.ts";
-import { legacyBuildDocsSpec, legacyStringifyDocsSpec } from "../src/docs/legacy-docs-spec.ts";
-import { legacyRoot } from "../src/cli/root.ts";
+import { readDocsContent } from "../src/docs/docs-spec.content.ts";
+import { buildDocsSpec, stringifyDocsSpec } from "../src/docs/docs-spec.ts";
+import { rootCommand } from "../src/cli/root.ts";
 
 function resolveVersion(): string {
   const argument = process.argv[2];
@@ -23,13 +23,13 @@ function resolveVersion(): string {
   return argument.startsWith("v") ? argument.slice(1) : argument;
 }
 
-const content = legacyReadDocsContent(path.resolve(import.meta.dir, "../docs"));
+const content = readDocsContent(path.resolve(import.meta.dir, "../docs"));
 
-const spec = legacyBuildDocsSpec({
-  root: legacyRoot,
+const spec = buildDocsSpec({
+  root: rootCommand,
   version: resolveVersion(),
   overlays: content.overlays,
   examples: content.examples,
 });
 
-process.stdout.write(legacyStringifyDocsSpec(spec));
+process.stdout.write(stringifyDocsSpec(spec));

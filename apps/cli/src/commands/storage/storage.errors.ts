@@ -5,22 +5,22 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
-import { legacyAqua } from "../../command-internal/legacy-colors.ts";
-import { legacyGoQuote } from "../../command-internal/legacy-go-quote.ts";
+import { aqua } from "../../command-internal/colors.ts";
+import { goQuote } from "../../command-internal/go-quote.ts";
 
 /**
  * Domain errors for `supabase storage ls/cp/mv/rm`. Each `message` is an
  * established stderr text.
  *
- * The Storage gateway errors (`LegacyStorageGateway{Network,Status}Error`) and
+ * The Storage gateway errors (`StorageGateway{Network,Status}Error`) and
  * credential-derivation errors live in the shared modules
- * `command-internal/legacy-storage-gateway.errors.ts` and
- * `command-internal/legacy-storage-credentials.errors.ts`; the url-parse failures
- * are thrown by `command-internal/legacy-storage-url.ts` and mapped here.
+ * `command-internal/storage-gateway.errors.ts` and
+ * `command-internal/storage-credentials.errors.ts`; the url-parse failures
+ * are thrown by `command-internal/storage-url.ts` and mapped here.
  */
 
 /** `client.ErrInvalidURL` (`internal/storage/client/scheme.go:12`). */
-export class LegacyStorageInvalidUrlError extends Data.TaggedError("LegacyStorageInvalidUrlError")<{
+export class StorageInvalidUrlError extends Data.TaggedError("StorageInvalidUrlError")<{
   readonly message: string;
 }> {
   constructor() {
@@ -37,7 +37,7 @@ export class LegacyStorageInvalidUrlError extends Data.TaggedError("LegacyStorag
  * `errors.Errorf("failed to parse … url: %w", err)`. The `message` already
  * contains the full `failed to parse storage url: parse "…": …` text.
  */
-export class LegacyStorageUrlParseError extends Data.TaggedError("LegacyStorageUrlParseError")<{
+export class StorageUrlParseError extends Data.TaggedError("StorageUrlParseError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -50,8 +50,8 @@ export class LegacyStorageUrlParseError extends Data.TaggedError("LegacyStorageU
  * `utils.CmdSuggestion` to the aqua `cp -r` hint, printed verbatim after the
  * error — the legacy text error renderer prints `suggestion` the same way.
  */
-export class LegacyStorageUnsupportedOperationError extends Data.TaggedError(
-  "LegacyStorageUnsupportedOperationError",
+export class StorageUnsupportedOperationError extends Data.TaggedError(
+  "StorageUnsupportedOperationError",
 )<{
   readonly message: string;
   readonly suggestion: string;
@@ -59,7 +59,7 @@ export class LegacyStorageUnsupportedOperationError extends Data.TaggedError(
   constructor() {
     super({
       message: "Unsupported operation",
-      suggestion: `Run ${legacyAqua("cp -r <src> <dst>")} to copy between local directories.`,
+      suggestion: `Run ${aqua("cp -r <src> <dst>")} to copy between local directories.`,
     });
   }
 
@@ -82,14 +82,14 @@ export class LegacyStorageUnsupportedOperationError extends Data.TaggedError(
  * rejection happens during command parsing — `formatInvalidValueMessage`
  * surfaces the resulting `CliError.InvalidValue`'s message verbatim.
  */
-export function legacyStorageInvalidJobsMessage(token: string, cause: string): string {
-  const quoted = legacyGoQuote(new TextEncoder().encode(token));
+export function storageInvalidJobsMessage(token: string, cause: string): string {
+  const quoted = goQuote(new TextEncoder().encode(token));
   return `invalid argument ${quoted} for "-j, --jobs" flag: strconv.ParseUint: parsing ${quoted}: ${cause}`;
 }
 
 /** `cp`'s remote→remote branch (`internal/storage/cp/cp.go:57`). */
-export class LegacyStorageCopyBetweenBucketsError extends Data.TaggedError(
-  "LegacyStorageCopyBetweenBucketsError",
+export class StorageCopyBetweenBucketsError extends Data.TaggedError(
+  "StorageCopyBetweenBucketsError",
 )<{
   readonly message: string;
 }> {
@@ -103,9 +103,7 @@ export class LegacyStorageCopyBetweenBucketsError extends Data.TaggedError(
 }
 
 /** `mv`'s cross-bucket branch (`internal/storage/mv/mv.go:19,38`). */
-export class LegacyStorageUnsupportedMoveError extends Data.TaggedError(
-  "LegacyStorageUnsupportedMoveError",
-)<{
+export class StorageUnsupportedMoveError extends Data.TaggedError("StorageUnsupportedMoveError")<{
   readonly message: string;
 }> {
   constructor() {
@@ -118,9 +116,7 @@ export class LegacyStorageUnsupportedMoveError extends Data.TaggedError(
 }
 
 /** `mv`'s both-root branch (`internal/storage/mv/mv.go:20,35`). */
-export class LegacyStorageMissingPathError extends Data.TaggedError(
-  "LegacyStorageMissingPathError",
-)<{
+export class StorageMissingPathError extends Data.TaggedError("StorageMissingPathError")<{
   readonly message: string;
 }> {
   constructor() {
@@ -133,9 +129,7 @@ export class LegacyStorageMissingPathError extends Data.TaggedError(
 }
 
 /** `rm`'s root-arg branch (`internal/storage/rm/rm.go:21,41`). */
-export class LegacyStorageMissingBucketError extends Data.TaggedError(
-  "LegacyStorageMissingBucketError",
-)<{
+export class StorageMissingBucketError extends Data.TaggedError("StorageMissingBucketError")<{
   readonly message: string;
 }> {
   constructor() {
@@ -148,9 +142,7 @@ export class LegacyStorageMissingBucketError extends Data.TaggedError(
 }
 
 /** `rm`'s directory-without-`-r` branch (`internal/storage/rm/rm.go:22,44,53`). */
-export class LegacyStorageMissingFlagError extends Data.TaggedError(
-  "LegacyStorageMissingFlagError",
-)<{
+export class StorageMissingFlagError extends Data.TaggedError("StorageMissingFlagError")<{
   readonly message: string;
 }> {
   constructor() {
@@ -167,9 +159,7 @@ export class LegacyStorageMissingFlagError extends Data.TaggedError(
  * (`cp.go:94`), `mv` recursive with no objects (`mv.go:85`), `rm` recursive on
  * an empty prefix (`rm.go:114`).
  */
-export class LegacyStorageObjectNotFoundError extends Data.TaggedError(
-  "LegacyStorageObjectNotFoundError",
-)<{
+export class StorageObjectNotFoundError extends Data.TaggedError("StorageObjectNotFoundError")<{
   readonly message: string;
 }> {
   constructor(path: string) {
@@ -182,7 +172,7 @@ export class LegacyStorageObjectNotFoundError extends Data.TaggedError(
 }
 
 /** `failed to read file:` / `failed to create file:` (`pkg/storage/objects.go`). */
-export class LegacyStorageFileError extends Data.TaggedError("LegacyStorageFileError")<{
+export class StorageFileError extends Data.TaggedError("StorageFileError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -193,8 +183,8 @@ export class LegacyStorageFileError extends Data.TaggedError("LegacyStorageFileE
 /**
  * Both `--linked` and `--local` set — mutually exclusive.
  */
-export class LegacyStorageMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "LegacyStorageMutuallyExclusiveFlagsError",
+export class StorageMutuallyExclusiveFlagsError extends Data.TaggedError(
+  "StorageMutuallyExclusiveFlagsError",
 )<{
   readonly message: string;
 }> {
@@ -205,10 +195,10 @@ export class LegacyStorageMutuallyExclusiveFlagsError extends Data.TaggedError(
 
 /**
  * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
- * directory (`legacyValidateWorkdirIsDirectory`). Only reachable when the
+ * directory (`validateWorkdirIsDirectory`). Only reachable when the
  * user explicitly set it — beats every other guard in `ls`/`mv`/`rm`/`cp`.
  */
-export class LegacyStorageWorkdirError extends Data.TaggedError("LegacyStorageWorkdirError")<{
+export class StorageWorkdirError extends Data.TaggedError("StorageWorkdirError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -222,8 +212,8 @@ export class LegacyStorageWorkdirError extends Data.TaggedError("LegacyStorageWo
  * whose default `api.port` could otherwise point the operation at a
  * different, possibly running, local stack.
  */
-export class LegacyStorageMissingProjectConfigError extends Data.TaggedError(
-  "LegacyStorageMissingProjectConfigError",
+export class StorageMissingProjectConfigError extends Data.TaggedError(
+  "StorageMissingProjectConfigError",
 )<{
   readonly message: string;
 }> {

@@ -5,9 +5,9 @@ import type {
   V1GetABranchConfigOutput,
 } from "@supabase/api/effect";
 
-import { renderGlamourTable } from "../../output/legacy-glamour-table.ts";
-import { apiKeysToEnv } from "../../command-internal/legacy-api-keys.format.ts";
-import { formatLegacyTimestamp } from "../../command-internal/legacy-timestamp.format.ts";
+import { renderGlamourTable } from "../../output/glamour-table.ts";
+import { apiKeysToEnv } from "../../command-internal/api-keys.format.ts";
+import { formatTimestamp } from "../../command-internal/timestamp.format.ts";
 
 // ---------------------------------------------------------------------------
 // Pure formatters — no Effect / no service dependencies, kept unit-testable.
@@ -63,8 +63,8 @@ export function renderBranchesListTable(
     b.git_branch ?? " ",
     b.with_data ? "true" : "false",
     b.status,
-    formatLegacyTimestamp(b.created_at),
-    formatLegacyTimestamp(b.updated_at),
+    formatTimestamp(b.created_at),
+    formatTimestamp(b.updated_at),
   ]);
   return renderGlamourTable(LIST_HEADERS, rows);
 }
@@ -115,7 +115,7 @@ export type PoolerParseResult =
  * pooler username, host, and port into stderr logs.
  *
  * This display-only parser intentionally does not enforce the profile-domain or
- * tenant-ref guards used by `legacyPoolerConfigFromConnectionString`.
+ * tenant-ref guards used by `poolerConfigFromConnectionString`.
  */
 export function parsePoolerConnectionString(connString: string): PoolerParseResult {
   const sanitized = connString.replaceAll(POOLER_PASSWORD_PLACEHOLDER, "");

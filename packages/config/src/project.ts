@@ -111,7 +111,7 @@ function parseDotEnv(
       // godotenv-style quoted value spanning multiple physical lines (e.g. a
       // PEM block); Go's `loadNestedEnv` parses this fine (`godotenv@v1.5.1`'s
       // cursor-based scanner never splits into lines up front; see
-      // `legacy-dotenv.ts` for the Go-compatible reference implementation used
+      // `dotenv.ts` for the Go-compatible reference implementation used
       // elsewhere in this repo). Accumulate subsequent lines until the opened
       // quote closes (or EOF), then match the same per-line pattern against
       // the joined multiline chunk — its quoted-value alternatives use

@@ -60,7 +60,7 @@ describe("failed command telemetry", () => {
       expected: {
         error_kind: "user_actionable",
         error_category: "project_not_linked",
-        error_fingerprint: "tag:LegacyProjectNotLinkedError",
+        error_fingerprint: "tag:ProjectRefNotLinkedError",
         has_suggestion: true,
         suggestion_type: "link_project",
         suggested_command: "supabase link",
@@ -80,7 +80,7 @@ describe("failed command telemetry", () => {
       expected: {
         error_kind: "user_actionable",
         error_category: "db_connection",
-        error_fingerprint: "tag:LegacyDbConnectError",
+        error_fingerprint: "tag:DbConnectError",
         has_suggestion: true,
         suggestion_type: "update_config",
       },

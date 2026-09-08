@@ -1,0 +1,39 @@
+import type { Effect } from "effect";
+import { Context } from "effect";
+
+interface TelemetryStateShape {
+  /**
+   * Persists the legacy telemetry state to disk (matches Go's
+   * `LoadOrCreateState` in `apps/cli-go/internal/telemetry/state.go:74-98`).
+   *
+   * Best-effort: any filesystem error is swallowed.
+   */
+  readonly flush: Effect.Effect<void>;
+  /**
+   * Aliases the device id to the resolved gotrue id and persists it as the
+   * telemetry `distinct_id`. Mirrors Go's `Service.StitchLogin`
+   * (`service.go:132-143`): the alias is sent through the Analytics layer
+   * (which gates delivery on consent), and `distinct_id` is **always** written
+   * to `telemetry.json` — replacing any stale value.
+   *
+   * Best-effort: filesystem / analytics errors are swallowed.
+   */
+  readonly stitchLogin: (distinctId: string) => Effect.Effect<void>;
+  /**
+   * Logout-only: forgets the user and rotates the persisted `device_id`, so a
+   * later login as a different account aliases a fresh device instead of one
+   * already merged into the previous user's person graph.
+   */
+  readonly resetIdentity: Effect.Effect<void>;
+  /**
+   * Clears the persisted telemetry `distinct_id`. Mirrors Go's
+   * `Service.ClearDistinctID` (`service.go:145-151`).
+   *
+   * Best-effort: any filesystem error is swallowed.
+   */
+  readonly clearDistinctId: Effect.Effect<void>;
+}
+
+export class TelemetryState extends Context.Service<TelemetryState, TelemetryStateShape>()(
+  "supabase/cli/TelemetryState",
+) {}

@@ -1961,7 +1961,7 @@ enabled = true
 `);
     try {
       const loaded = await runConfigEffect(loadCliConfig(cwd, { projectRef: PREVIEW_REF }));
-      // `legacyPresenceIn` reads `document` to detect optional pointer sections;
+      // `presenceIn` reads `document` to detect optional pointer sections;
       // a remote-introduced `db.ssl_enforcement` must be present there.
       const db = loaded!.document?.db;
       expect(typeof db === "object" && db !== null && "ssl_enforcement" in db).toBe(true);

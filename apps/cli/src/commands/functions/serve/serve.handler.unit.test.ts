@@ -1,12 +1,12 @@
 import { Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
-  legacyBuildFunctionsServeInspectArgs,
-  legacyResolveFunctionsServeInspectMode,
-  type LegacyFunctionsServeFlags,
-} from "./serve.handler.ts";
+  buildFunctionsServeInspectArgs,
+  type FunctionsServeFlags,
+  resolveFunctionsServeInspectMode,
+} from "../../../shared/functions/serve.ts";
 
-function baseFlags(): LegacyFunctionsServeFlags {
+function baseFlags(): FunctionsServeFlags {
   return {
     noVerifyJwt: Option.none(),
     envFile: Option.none(),
@@ -19,13 +19,13 @@ function baseFlags(): LegacyFunctionsServeFlags {
 }
 
 describe("legacy functions serve inspect flags", () => {
-  it("treats --inspect as inspect-mode brk", () => {
-    expect(legacyResolveFunctionsServeInspectMode({ ...baseFlags(), inspect: true })).toBe("brk");
+  it("treats --inspect-mode brk", () => {
+    expect(resolveFunctionsServeInspectMode({ ...baseFlags(), inspect: true })).toBe("brk");
   });
 
   it("uses the explicit inspect mode when set", () => {
     expect(
-      legacyResolveFunctionsServeInspectMode({
+      resolveFunctionsServeInspectMode({
         ...baseFlags(),
         inspectMode: Option.some("wait"),
       }),
@@ -34,7 +34,7 @@ describe("legacy functions serve inspect flags", () => {
 
   it("rejects setting both --inspect and --inspect-mode", () => {
     expect(() =>
-      legacyResolveFunctionsServeInspectMode({
+      resolveFunctionsServeInspectMode({
         ...baseFlags(),
         inspect: true,
         inspectMode: Option.some("run"),
@@ -45,16 +45,16 @@ describe("legacy functions serve inspect flags", () => {
   });
 
   it("rejects --inspect-main without an inspect mode", () => {
-    expect(() => legacyBuildFunctionsServeInspectArgs(undefined, true)).toThrow(
+    expect(() => buildFunctionsServeInspectArgs(undefined, true)).toThrow(
       "--inspect-main must be used together with one of these flags: [inspect inspect-mode]",
     );
   });
 
   it("builds the edge-runtime inspect flags for explicit modes", () => {
-    expect(legacyBuildFunctionsServeInspectArgs("wait", true)).toEqual([
+    expect(buildFunctionsServeInspectArgs("wait", true)).toEqual([
       "--inspect-wait=0.0.0.0:8083",
       "--inspect-main",
     ]);
-    expect(legacyBuildFunctionsServeInspectArgs("run", false)).toEqual(["--inspect=0.0.0.0:8083"]);
+    expect(buildFunctionsServeInspectArgs("run", false)).toEqual(["--inspect=0.0.0.0:8083"]);
   });
 });

@@ -2,13 +2,13 @@ import { describe, expect, test } from "vitest";
 import { Cause } from "effect";
 import { CliError, Command } from "effect/unstable/cli";
 import { CliConfigParseError, CliProjectEnvParseError } from "@supabase/config";
-import { legacyBranchesCommand } from "../../commands/branches/branches.command.ts";
-import { legacyNetworkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
+import { branchesCommand } from "../../commands/branches/branches.command.ts";
+import { networkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
 import { CliProjectHomeNotDirectoryError } from "../config/cli-project-home.service.ts";
 import { formatCliError, normalizeCause, normalizeCliError } from "./normalize-error.ts";
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyBranchesCommand, legacyNetworkRestrictionsCommand]),
+  Command.withSubcommands([branchesCommand, networkRestrictionsCommand]),
 );
 
 describe("normalizeCliError", () => {
@@ -145,7 +145,7 @@ describe("normalizeCliError", () => {
 
   test("InvalidValue passes a complete pflag-format diagnostic through verbatim (Go stderr parity, CLI-1983)", () => {
     // Legacy flags that byte-match Go pflag's parse-time diagnostics
-    // (`legacyStringSliceFlag`'s malformed-CSV failure, `migration down
+    // (`stringSliceFlag`'s malformed-CSV failure, `migration down
     // --last`) emit the COMPLETE Go message as `expected`. Wrapping it in
     // Effect's `Invalid value for flag ...: Expected: ...` template would
     // double-frame it — Go prints the bare pflag line.

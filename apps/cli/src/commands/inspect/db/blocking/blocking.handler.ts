@@ -1,7 +1,4 @@
-import { legacyMakeInspectDbHandler } from "../legacy-inspect-query.ts";
-import { legacyBlockingSpec } from "./blocking.query.ts";
+import { makeInspectDbHandler } from "../inspect-query.ts";
+import { blockingSpec } from "./blocking.query.ts";
 
-export const legacyInspectDbBlocking = legacyMakeInspectDbHandler(
-  legacyBlockingSpec,
-  "legacy.inspect.db.blocking",
-);
+export const inspectDbBlocking = makeInspectDbHandler(blockingSpec, "inspect.db.blocking");

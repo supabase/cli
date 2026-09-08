@@ -29,9 +29,9 @@ records the earlier transition policy).
 
 ## Mechanics
 
-All delegation goes through the shared `LegacyGoProxy` service
-([`src/shared/legacy/go-proxy.service.ts`](../src/shared/legacy/go-proxy.service.ts),
-[`go-proxy.layer.ts`](../src/shared/legacy/go-proxy.layer.ts)):
+All delegation goes through the shared `GoProxy` service
+([`src/command-internal/go-proxy.service.ts`](../src/command-internal/go-proxy.service.ts),
+[`go-proxy.layer.ts`](../src/command-internal/go-proxy.layer.ts)):
 
 - **Binary resolution order**: `SUPABASE_GO_BINARY` env var → binary co-located with the compiled
   shim → the platform's `@supabase/cli-<platform>` npm package. There is deliberately **no**
@@ -51,7 +51,7 @@ The spawn surface is guarded by
 trimming the binary past this surface fails CI.
 
 The former pg-delta `__catalog`/`db start` seam (spawned directly by `db schema declarative
-generate|sync`, outside `LegacyGoProxy`) was ported native in CLI-1970 and no longer exists.
+generate|sync`, outside `GoProxy`) was ported native in CLI-1970 and no longer exists.
 
 ## See also
 

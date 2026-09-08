@@ -45,7 +45,7 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   `seed buckets`; `storage ls`/`cp`/`mv`/`rm`; every `inspect db` subcommand and
   `inspect report`; and `test db` (and its hidden `db test` alias, which shares
   `test db`'s flag config verbatim). It feeds
-  `LegacyProjectRefResolver.loadProjectRef`, keeping Go's precedence (flag >
+  `ProjectRefResolver.loadProjectRef`, keeping Go's precedence (flag >
   `SUPABASE_PROJECT_ID` > `supabase/.temp/project-ref`) and taking effect only on
   the linked path. It shares ONLY that ref-resolution precedence with
   `SUPABASE_PROJECT_ID` — unlike the env var, it does not affect the local
@@ -162,7 +162,7 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   location when the root-resolved file is missing. Go resolves notifications from `supabase/` only
   (`(*baseConfig).resolve`'s own `// FIXME`-flagged asymmetry). Config validation, `config push`
   content loading, and Kong's template mount builder all share one resolver
-  (`legacyResolveNotificationContentPath`), so every consumer reads the SAME file — the drift the
+  (`resolveNotificationContentPath`), so every consumer reads the SAME file — the drift the
   asymmetry caused (validated against `<root>/supabase/...`, mounted from `<root>/...`) is gone.
   The `init` scaffold ejects the root-relative form, which is incompatible with Go if uncommented
   (#6159/#6160).
@@ -199,7 +199,7 @@ commit` is now native `db pull`, so it uses pull's flag-then-env-then-dotenv
   keeps showing the parent/org fields even when the branch-name lookup itself degrades (no
   token, offline, API error) — only the branch's own name is ever missing, so the user always
   sees they're on a branch. The Management API client for that lookup is acquired lazily
-  (`LegacyPlatformApiFactory`, not the eager `LegacyPlatformApi`) so `status` stays fully
+  (`CommandPlatformApiFactory`, not the eager `CommandPlatformApi`) so `status` stays fully
   functional offline/token-less. Intent: let an agent driving `status` discover which
   project/branch it's on without a separate `link`/`branches` call. Read-only, never affects
   `status`'s exit code, and never alters any of its existing failure behavior — a Docker/daemon

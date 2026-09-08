@@ -2,7 +2,7 @@ import type { LoadedCliConfig } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option, Path, Predicate, Stdio, Stream } from "effect";
-import { LegacyDnsResolverFlag, LegacyNetworkIdFlag } from "../../../shared/legacy/global-flags.ts";
+import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
@@ -10,52 +10,49 @@ import {
   PERSISTENT_VALUE_FLAG_SHORTHANDS,
   pflagArgvScan,
 } from "../../../shared/cli/cobra-flag-groups.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import {
-  LegacyProjectRefResolver,
+  ProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
-} from "../../../config/legacy-project-ref.service.ts";
-import { spawnContainerCli } from "../../../command-internal/legacy-container-cli.ts";
-import { legacyMakeDockerImageResolver } from "../../../command-internal/legacy-docker-image-resolve.ts";
+} from "../../../config/project-ref.service.ts";
+import { spawnContainerCli } from "../../../command-internal/container-cli.ts";
+import { makeDockerImageResolver } from "../../../command-internal/docker-image-resolve.ts";
 import {
-  legacyIsIPv6ConnectivityError,
-  legacyIsIPv6ConnectivityErrorCause,
-} from "../../../command-internal/legacy-connect-errors.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import type { LegacyDbConfigFlags } from "../../../command-internal/legacy-db-config.types.ts";
-import { legacyPoolerConfigFromConnectionString } from "../../../command-internal/legacy-db-config.parse.ts";
+  isIPv6ConnectivityError,
+  isIPv6ConnectivityErrorCause,
+} from "../../../command-internal/connect-errors.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type { DbConfigFlags } from "../../../command-internal/db-config.types.ts";
+import { poolerConfigFromConnectionString } from "../../../command-internal/db-config.parse.ts";
+import { applyProjectEnv, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
+import { tempPaths } from "../../../command-internal/temp-paths.ts";
 import {
-  legacyApplyProjectEnv,
-  legacyReadDbToml,
-} from "../../../command-internal/legacy-db-config.toml-read.ts";
-import type { LegacyPgConnInput } from "../../../command-internal/legacy-db-connection.service.ts";
-import { legacyToPostgresURL } from "../../../command-internal/legacy-postgres-url.ts";
-import { legacyTempPaths } from "../../../command-internal/legacy-temp-paths.ts";
+  missingProjectConfigMessageEffect,
+  relativeConfigPath,
+} from "../../../command-internal/workdir-project.ts";
+import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
+import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.service.ts";
 import {
-  legacyMissingProjectConfigMessageEffect,
-  legacyRelativeConfigPath,
-} from "../../../command-internal/legacy-workdir-project.ts";
-import { legacyShouldSearchAncestors } from "../../../command-internal/legacy-workdir-search.ts";
-import { legacyValidateWorkdirIsDirectory } from "../../../command-internal/legacy-workdir-validation.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyPgDeltaSslProbe } from "../../../command-internal/legacy-pgdelta-ssl-probe.service.ts";
+  isDirectDbHost,
+  runWithPoolerFallback,
+} from "../../../command-internal/pooler-fallback.ts";
+import type { GenTypesFlags } from "./types.command.ts";
 import {
-  legacyIsDirectDbHost,
-  legacyRunWithPoolerFallback,
-} from "../../../command-internal/legacy-pooler-fallback.ts";
-import type { LegacyGenTypesFlags } from "./types.command.ts";
-import {
-  LegacyGenTypesMissingProjectConfigError,
-  LegacyGenTypesNetworkError,
-  LegacyGenTypesParseConfigError,
-  LegacyGenTypesUnexpectedStatusError,
-  LegacyGenTypesWorkdirError,
+  GenTypesMissingProjectConfigError,
+  GenTypesNetworkError,
+  GenTypesParseConfigError,
+  GenTypesUnexpectedStatusError,
+  GenTypesWorkdirError,
 } from "./types.errors.ts";
-import { legacyGetHostname } from "../../../command-internal/legacy-hostname.ts";
-import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
+import { getHostname } from "../../../command-internal/hostname.ts";
+import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import {
   defaultSchemas,
   buildPostgresUrl,
@@ -64,27 +61,27 @@ import {
   localNetworkId,
   parseDatabaseUrl,
   parseQueryTimeoutSeconds,
-  legacyRootCaBundle,
+  rootCaBundle,
   resolvePgmetaImage,
 } from "./types.shared.ts";
 
-const mapProjectTypesError = mapLegacyHttpError({
-  networkError: LegacyGenTypesNetworkError,
-  statusError: LegacyGenTypesUnexpectedStatusError,
+const mapProjectTypesError = mapHttpError({
+  networkError: GenTypesNetworkError,
+  statusError: GenTypesUnexpectedStatusError,
   networkMessage: (cause) => `failed to get typescript types: ${cause}`,
   statusMessage: (_status, body) => `failed to retrieve generated types: ${body}`,
 });
 
-const mapProjectDatabaseHostError = mapLegacyHttpError({
-  networkError: LegacyGenTypesNetworkError,
-  statusError: LegacyGenTypesUnexpectedStatusError,
+const mapProjectDatabaseHostError = mapHttpError({
+  networkError: GenTypesNetworkError,
+  statusError: GenTypesUnexpectedStatusError,
   networkMessage: (cause) => `failed to get project database config: ${cause}`,
   statusMessage: (status, body) => `unexpected project database config status ${status}: ${body}`,
 });
 
-const mapBranchDatabaseConfigError = mapLegacyHttpError({
-  networkError: LegacyGenTypesNetworkError,
-  statusError: LegacyGenTypesUnexpectedStatusError,
+const mapBranchDatabaseConfigError = mapHttpError({
+  networkError: GenTypesNetworkError,
+  statusError: GenTypesUnexpectedStatusError,
   networkMessage: (cause) => `failed to get preview branch database config: ${cause}`,
   statusMessage: (status, body) =>
     `unexpected preview branch database config status ${status}: ${body}`,
@@ -96,12 +93,12 @@ const mapBranchDatabaseConfigError = mapLegacyHttpError({
 // do not narrow on the response body, since the Management API's 404 wording
 // is not guaranteed.
 function isProjectNotFound(cause: unknown) {
-  return cause instanceof LegacyGenTypesUnexpectedStatusError && cause.status === 404;
+  return cause instanceof GenTypesUnexpectedStatusError && cause.status === 404;
 }
 
 const GEN_TYPES_COMMAND_PATH = ["gen", "types"] as const;
 
-type LegacyGenTypesMutexFlag =
+type GenTypesMutexFlag =
   | "local"
   | "linked"
   | "project-id"
@@ -115,7 +112,7 @@ type LegacyGenTypesMutexFlag =
 // are listed here in that sorted order — e.g. `--db-url X
 // --postgrest-v9-compat --project-id Y` reports the postgrest group, not the
 // local/linked/project-id/db-url group.
-const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<LegacyGenTypesMutexFlag>> = [
+const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<GenTypesMutexFlag>> = [
   ["linked", "project-id", "postgrest-v9-compat"],
   ["linked", "project-id", "query-timeout"],
   ["linked", "project-id", "swift-access-control"],
@@ -166,8 +163,8 @@ function collectByteStream(stream: Stream.Stream<Uint8Array, unknown>) {
 }
 
 // Keep these two sets in sync with the value-bearing flags on the root command
-// (shared/legacy/global-flags.ts) and the `gen types` command (types.command.ts).
-// They let `findLegacyPositionalLanguage` skip a flag's value so it is not
+// (command-internal/global-flags.ts) and the `gen types` command (types.command.ts).
+// They let `findPositionalLanguage` skip a flag's value so it is not
 // mistaken for the legacy positional language argument (e.g. `gen types typescript`).
 const LONG_FLAGS_WITH_VALUES = new Set([
   "db-url",
@@ -189,7 +186,7 @@ const LONG_FLAGS_WITH_VALUES = new Set([
 
 const SHORT_FLAGS_WITH_VALUES = new Set(["s", "o"]);
 
-function findLegacyPositionalLanguage(rawArgs: ReadonlyArray<string>): Option.Option<string> {
+function findPositionalLanguage(rawArgs: ReadonlyArray<string>): Option.Option<string> {
   const commandIndex = rawArgs.findIndex(
     (value, index) => value === "types" && rawArgs[index - 1] === "gen",
   );
@@ -230,23 +227,23 @@ function findLegacyPositionalLanguage(rawArgs: ReadonlyArray<string>): Option.Op
   return Option.none();
 }
 
-export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: LegacyGenTypesFlags) {
+export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) {
   const output = yield* Output;
-  const cliSettings = yield* LegacyCliSettings;
-  const telemetryState = yield* LegacyTelemetryState;
+  const cliSettings = yield* CommandSettings;
+  const telemetryState = yield* TelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const stdio = yield* Stdio.Stdio;
-  const networkId = yield* LegacyNetworkIdFlag;
-  const dnsResolver = yield* LegacyDnsResolverFlag;
+  const networkId = yield* NetworkIdFlag;
+  const dnsResolver = yield* DnsResolverFlag;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const resolveImage = legacyMakeDockerImageResolver(spawner);
+  const resolveImage = makeDockerImageResolver(spawner);
   const rawArgs = yield* stdio.args;
-  const platformApi = yield* LegacyPlatformApiFactory;
-  const projectRef = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const dbConfig = yield* LegacyDbConfigResolver;
-  const sslProbe = yield* LegacyPgDeltaSslProbe;
+  const platformApi = yield* CommandPlatformApiFactory;
+  const projectRef = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const dbConfig = yield* DbConfigResolver;
+  const sslProbe = yield* PgDeltaSslProbe;
 
   // "Set" follows cobra's `pflag.Changed` semantics — whether the flag was
   // passed at all — not the resulting value: `--linked=false` still counts
@@ -264,7 +261,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   // followed by a telemetry flush.
   const queryTimeoutSeconds = yield* parseQueryTimeoutSeconds(flags.queryTimeout);
 
-  // flags.schema is already CSV-parsed and validated by `Flag.mapTryCatch(legacyParseSchemaFlags)`
+  // flags.schema is already CSV-parsed and validated by `Flag.mapTryCatch(parseSchemaFlags)`
   // in types.command.ts — use it directly.
   const schemas = flags.schema;
   const lang = flags.lang;
@@ -272,7 +269,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
 
   // Resolved against `cliSettings.workdir`, the root every config load in
   // this handler uses.
-  const relativeConfigPath = (path: string) => legacyRelativeConfigPath(cliSettings.workdir, path);
+  const toRelativeConfigPath = (path: string) => relativeConfigPath(cliSettings.workdir, path);
 
   // `projectRef` is only ever passed for the `--linked`/`--project-id` paths
   // below (so a matching `[remotes.*]` overlay is merged in the SAME load);
@@ -282,7 +279,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     loadCliConfig(cliSettings.workdir, {
       ...(projectRef === undefined ? {} : { projectRef }),
       goViperCompat: true,
-      search: legacyShouldSearchAncestors(cliSettings),
+      search: shouldSearchAncestors(cliSettings),
     }).pipe(
       // `cause.path` names the file that actually failed to parse — `loadCliConfig`
       // probes `supabase/config.json` before falling back to `supabase/config.toml`
@@ -294,13 +291,13 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       Effect.catchTag(
         "CliConfigParseError",
         (cause) =>
-          new LegacyGenTypesParseConfigError({
-            message: `failed to parse ${relativeConfigPath(cause.path)}: ${String(cause.cause)}`,
+          new GenTypesParseConfigError({
+            message: `failed to parse ${toRelativeConfigPath(cause.path)}: ${String(cause.cause)}`,
           }),
       ),
       Effect.catchTag(
         "DuplicateRemoteProjectIdError",
-        (cause) => new LegacyGenTypesParseConfigError({ message: cause.message }),
+        (cause) => new GenTypesParseConfigError({ message: cause.message }),
       ),
       Effect.flatMap(requireProjectConfigWhenExplicit),
     );
@@ -312,8 +309,8 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const requireProjectConfigWhenExplicit = (loaded: LoadedCliConfig | null) =>
     loaded === null && cliSettings.explicitWorkdir
       ? Effect.gen(function* () {
-          return yield* new LegacyGenTypesMissingProjectConfigError({
-            message: yield* legacyMissingProjectConfigMessageEffect(cliSettings),
+          return yield* new GenTypesMissingProjectConfigError({
+            message: yield* missingProjectConfigMessageEffect(cliSettings),
           });
         })
       : Effect.succeed(loaded);
@@ -345,7 +342,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         );
         if (projectResult === "branch") return;
 
-        const resolveFlags: LegacyDbConfigFlags = {
+        const resolveFlags: DbConfigFlags = {
           dbUrl: Option.none(),
           connType: "linked",
           dnsResolver,
@@ -355,7 +352,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         const resolved = yield* dbConfig.resolve(resolveFlags);
         const conn = resolved.conn;
         yield* runPgMeta({
-          url: legacyToPostgresURL(conn),
+          url: toPostgresURL(conn),
           host: conn.host,
           port: conn.port,
           probeHost: conn.host,
@@ -365,7 +362,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           postgrestV9Compat: flags.postgrestV9Compat,
           poolerFallback: {
             directHost: conn.host,
-            eligible: !resolved.isLocal && legacyIsDirectDbHost(conn.host, cliSettings.projectHost),
+            eligible: !resolved.isLocal && isDirectDbHost(conn.host, cliSettings.projectHost),
             resolve: dbConfig.resolvePoolerFallback(resolveFlags),
           },
         });
@@ -398,21 +395,21 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       const poolerFallback = api.v1.getPoolerConfig({ ref: branch.ref }).pipe(
         Effect.map((configs) => {
           const primary = configs.find((config) => config.database_type === "PRIMARY");
-          if (primary === undefined) return Option.none<LegacyPgConnInput>();
-          const parsed = legacyPoolerConfigFromConnectionString(
+          if (primary === undefined) return Option.none<PgConnInput>();
+          const parsed = poolerConfigFromConnectionString(
             branch.ref,
             primary.connection_string,
             cliSettings.poolerHost,
           );
           return parsed._tag === "ok"
             ? Option.some({ ...parsed.conn, password: branchPassword })
-            : Option.none<LegacyPgConnInput>();
+            : Option.none<PgConnInput>();
         }),
-        Effect.orElseSucceed(() => Option.none<LegacyPgConnInput>()),
+        Effect.orElseSucceed(() => Option.none<PgConnInput>()),
       );
 
       yield* runPgMeta({
-        url: legacyToPostgresURL({
+        url: toPostgresURL({
           host: branch.db_host,
           port: branch.db_port,
           user: branchUser,
@@ -428,7 +425,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         postgrestV9Compat: flags.postgrestV9Compat,
         poolerFallback: {
           directHost: branch.db_host,
-          eligible: legacyIsDirectDbHost(branch.db_host, cliSettings.projectHost),
+          eligible: isDirectDbHost(branch.db_host, cliSettings.projectHost),
           resolve: poolerFallback,
         },
       });
@@ -447,7 +444,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     readonly poolerFallback?: {
       readonly directHost: string;
       readonly eligible: boolean;
-      readonly resolve: Effect.Effect<Option.Option<LegacyPgConnInput>, unknown>;
+      readonly resolve: Effect.Effect<Option.Option<PgConnInput>, unknown>;
     };
   }) =>
     Effect.scoped(
@@ -495,7 +492,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
 
             const useTls = yield* sslProbe.requireSslForHost(target.probeHost, target.probePort);
             if (useTls) {
-              env.push(`PG_META_DB_SSL_ROOT_CERT=${legacyRootCaBundle()}`);
+              env.push(`PG_META_DB_SSL_ROOT_CERT=${rootCaBundle()}`);
             }
             // After the TLS probe, so an unreachable database fails before any image pull.
             const pgmetaImage = yield* resolvedImage;
@@ -535,9 +532,9 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
             return { exitCode, stderrText };
           });
 
-        const runTarget = (conn: LegacyPgConnInput) =>
+        const runTarget = (conn: PgConnInput) =>
           buildRun({
-            url: legacyToPostgresURL(conn),
+            url: toPostgresURL(conn),
             host: conn.host,
             port: conn.port,
             probeHost: conn.host,
@@ -547,7 +544,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         const result =
           input.poolerFallback === undefined
             ? yield* buildRun(input)
-            : yield* legacyRunWithPoolerFallback({
+            : yield* runWithPoolerFallback({
                 run: buildRun(input),
                 retry: runTarget,
                 directHost: input.poolerFallback.directHost,
@@ -555,10 +552,10 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
                 resolveFallback: input.poolerFallback.resolve,
                 // A registry failure carries docker stderr that can read like an IPv6 error.
                 classifyError: (error) =>
-                  !Predicate.isTagged(error, "LegacyDockerRunError") &&
-                  legacyIsIPv6ConnectivityErrorCause(error),
+                  !Predicate.isTagged(error, "DockerRunError") &&
+                  isIPv6ConnectivityErrorCause(error),
                 classifyResult: (result) =>
-                  result.exitCode !== 0 && legacyIsIPv6ConnectivityError(result.stderrText),
+                  result.exitCode !== 0 && isIPv6ConnectivityError(result.stderrText),
               });
 
         if (result.exitCode !== 0) {
@@ -607,8 +604,8 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     // directory before the command's own guard or flag-group validation —
     // the query-timeout parse failure above still precedes it (parsed at
     // flag-parse time, before the telemetry context).
-    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
-      Effect.mapError((error) => new LegacyGenTypesWorkdirError({ message: error.message })),
+    yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
+      Effect.mapError((error) => new GenTypesWorkdirError({ message: error.message })),
     );
 
     // The command's own guard runs next, then flag-group validation — so
@@ -624,12 +621,8 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         new Error("--postgrest-v9-compat must used together with --db-url"),
       );
     }
-    const legacyLang = findLegacyPositionalLanguage(rawArgs);
-    if (
-      Option.isSome(legacyLang) &&
-      legacyLang.value !== "typescript" &&
-      !occurrences.has("lang")
-    ) {
+    const lang = findPositionalLanguage(rawArgs);
+    if (Option.isSome(lang) && lang.value !== "typescript" && !occurrences.has("lang")) {
       return yield* Effect.fail(new Error("use --lang flag to specify the typegen language"));
     }
 
@@ -639,7 +632,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     // the parsed flags: neither has a boolean-vs-default ambiguity, and
     // reconciling them against the scan is unnecessary here — every guard
     // test drives the handler with argv that matches its flags.
-    const changedMutexFlags: Record<LegacyGenTypesMutexFlag, boolean> = {
+    const changedMutexFlags: Record<GenTypesMutexFlag, boolean> = {
       local: occurrences.has("local"),
       linked: occurrences.has("linked"),
       "project-id": Option.isSome(flags.projectId),
@@ -656,8 +649,8 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     }
 
     if (flags.local) {
-      const config = yield* legacyReadDbToml(fs, path, cliSettings.workdir);
-      yield* legacyApplyProjectEnv(
+      const config = yield* readDbToml(fs, path, cliSettings.workdir);
+      yield* applyProjectEnv(
         config.projectEnv,
         Object.keys(config.projectEnv).filter((key) => key !== "SUPABASE_DB_PASSWORD"),
       );
@@ -665,7 +658,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         path.basename(cliSettings.workdir),
       );
 
-      const paths = legacyTempPaths(path, cliSettings.workdir);
+      const paths = tempPaths(path, cliSettings.workdir);
       // Go resolves Config.Api.Image from the rest-version file only when
       // Db.MajorVersion > 14, then forces v9 compat when that image tag contains "v9"
       // (pkg/config/config.go:657-666, internal/gen/types/types.go:69). Gate and trim
@@ -696,7 +689,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         }),
         host: "db",
         port: 5432,
-        probeHost: legacyGetHostname(),
+        probeHost: getHostname(),
         probePort: config.port,
         networkMode: localNetworkId(projectId),
         includedSchemas,
@@ -756,7 +749,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     const resolvedRef = yield* projectRef.resolve(Option.none()).pipe(
       Effect.catch((cause) => {
         if (
-          cause instanceof LegacyProjectNotLinkedError &&
+          cause instanceof ProjectRefNotLinkedError &&
           cause.message === PROJECT_NOT_LINKED_MESSAGE
         ) {
           return Effect.fail(

@@ -1,11 +1,11 @@
 import { CliError, Command } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
-import { legacyBranchesCommand } from "../../commands/branches/branches.command.ts";
-import { legacyNetworkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
+import { branchesCommand } from "../../commands/branches/branches.command.ts";
+import { networkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
 import { formatCliErrorsForDisplay } from "./subcommand-flag-suggestions.ts";
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyBranchesCommand, legacyNetworkRestrictionsCommand]),
+  Command.withSubcommands([branchesCommand, networkRestrictionsCommand]),
 );
 
 describe("subcommand flag placement suggestions", () => {
@@ -200,7 +200,7 @@ describe("subcommand flag placement suggestions", () => {
 
   it("passes a complete pflag-format diagnostic through verbatim (Go stderr parity, CLI-1983)", () => {
     // Legacy flags that byte-match Go pflag's parse-time diagnostics
-    // (`legacyStringSliceFlag`'s malformed-CSV failure) emit the COMPLETE Go
+    // (`stringSliceFlag`'s malformed-CSV failure) emit the COMPLETE Go
     // message as `expected`. Wrapping it in the `Invalid value for flag ...`
     // template would double-frame it — pflag prints the bare line.
     const pflagMessage =

@@ -2,12 +2,12 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit } from "effect";
 import { describe, expect, test } from "vitest";
 import { normalizeCause } from "../../../shared/output/normalize-error.ts";
-import { legacyPostgresConfigDeleteConfigFlag } from "./delete.command.ts";
+import { postgresConfigDeleteConfigFlag } from "./delete.command.ts";
 
 describe("legacy postgres-config delete --config flag (pflag StringSlice parity)", () => {
   test("splits a comma-separated value into multiple keys", async () => {
     const [, values] = await Effect.runPromise(
-      legacyPostgresConfigDeleteConfigFlag
+      postgresConfigDeleteConfigFlag
         .parse({
           flags: { config: ["max_connections,statement_timeout"] },
           arguments: [],
@@ -20,7 +20,7 @@ describe("legacy postgres-config delete --config flag (pflag StringSlice parity)
 
   test("accumulates repeated occurrences, each CSV-split", async () => {
     const [, values] = await Effect.runPromise(
-      legacyPostgresConfigDeleteConfigFlag
+      postgresConfigDeleteConfigFlag
         .parse({
           flags: { config: ["max_connections,statement_timeout", "custom_key"] },
           arguments: [],
@@ -36,7 +36,7 @@ describe("legacy postgres-config delete --config flag (pflag StringSlice parity)
     // raises no parse error — pflag calls `csv.Reader.Read()` once, so the
     // malformed second line is silently dropped.
     const [, values] = await Effect.runPromise(
-      legacyPostgresConfigDeleteConfigFlag
+      postgresConfigDeleteConfigFlag
         .parse({
           flags: { config: ['a\nb"c'] },
           arguments: [],
@@ -49,7 +49,7 @@ describe("legacy postgres-config delete --config flag (pflag StringSlice parity)
 
   test("rejects malformed CSV (bare quote) with pflag's exact diagnostic", async () => {
     const exit = await Effect.runPromise(
-      legacyPostgresConfigDeleteConfigFlag
+      postgresConfigDeleteConfigFlag
         .parse({
           flags: { config: ['max"connections'] },
           arguments: [],
@@ -71,7 +71,7 @@ describe("legacy postgres-config delete --config flag (pflag StringSlice parity)
     // Go-verified (CLI-2005): `postgres-config delete --config $'\n'` →
     // `invalid argument "\n" for "--config" flag: EOF`.
     const exit = await Effect.runPromise(
-      legacyPostgresConfigDeleteConfigFlag
+      postgresConfigDeleteConfigFlag
         .parse({
           flags: { config: ["\n"] },
           arguments: [],

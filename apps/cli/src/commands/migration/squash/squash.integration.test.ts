@@ -9,16 +9,16 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
-  LEGACY_FAKE_SHADOW_CONTAINER_ID,
-  LEGACY_VALID_REF,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyShadowContainerCliSpawner,
-  mockLegacyTelemetryStateTracked,
-  useLegacyShadowCacheDisabled,
-  useLegacyTempWorkdir,
-  legacySequentialExecBatch,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  FAKE_SHADOW_CONTAINER_ID,
+  VALID_REF,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockShadowContainerCliSpawner,
+  mockTelemetryStateTracked,
+  useShadowCacheDisabled,
+  useTempWorkdir,
+  sequentialExecBatch,
+} from "../../../../tests/helpers/command-mocks.ts";
 import {
   mockOutput,
   mockRuntimeInfo,
@@ -27,43 +27,37 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { legacyGetRegistryImageUrl } from "../../../command-internal/legacy-docker-registry.ts";
+import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
 import {
-  LegacyDebugFlag,
-  LegacyDnsResolverFlag,
-  LegacyExperimentalFlag,
-  LegacyNetworkIdFlag,
-  LegacyYesFlag,
-} from "../../../shared/legacy/global-flags.ts";
+  DebugFlag,
+  DnsResolverFlag,
+  ExperimentalFlag,
+  NetworkIdFlag,
+  YesFlag,
+} from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
-import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LEGACY_INTERNAL_SCHEMAS } from "../../../command-internal/legacy-pg-dump.env.ts";
-import { legacyDumpSchemaScript } from "../../../command-internal/legacy-pg-dump.scripts.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import type {
-  LegacyDbConfigFlags,
-  LegacyResolvedDbConfig,
-} from "../../../command-internal/legacy-db-config.types.ts";
-import { LegacyDbExecError } from "../../../command-internal/legacy-db-connection.errors.ts";
+import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { INTERNAL_SCHEMAS } from "../../../command-internal/pg-dump.env.ts";
+import { dumpSchemaScript } from "../../../command-internal/pg-dump.scripts.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
-  LegacyDbConnection,
-  type LegacyDbSession,
-  type LegacyPgConnInput,
-} from "../../../command-internal/legacy-db-connection.service.ts";
-import { LegacyDebugLogger } from "../../../command-internal/legacy-debug-logger.service.ts";
-import {
-  LegacyDockerRun,
-  type LegacyDockerRunOpts,
-} from "../../../command-internal/legacy-docker-run.service.ts";
-import type { LegacyMigrationSquashFlags } from "./squash.command.ts";
-import { legacyMigrationSquash } from "./squash.handler.ts";
+  DbConnection,
+  type DbSession,
+  type PgConnInput,
+} from "../../../command-internal/db-connection.service.ts";
+import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
+import type { MigrationSquashFlags } from "./squash.command.ts";
+import { migrationSquash } from "./squash.handler.ts";
 
 // ---------------------------------------------------------------------------
-// A fake `LegacyDockerRun` that distinguishes squash's own three one-shot
+// A fake `DockerRun` that distinguishes squash's own three one-shot
 // `pg_dump` containers from the shadow's PG15+ platform-baseline setup jobs
 // purely by their env matrix: only a `pg_dump` invocation ever carries
-// `PGDATABASE` (`legacyToDumpEnv`) — none of the realtime/storage/auth
+// `PGDATABASE` (`toDumpEnv`) — none of the realtime/storage/auth
 // one-shot jobs do (`db-setup.ts`). Among the dump calls, the first two
 // sharing `EXTRA_FLAGS=--schema=auth|storage` are the before/after diff dumps
 // (in that call order — `squashMigrations` dumps `before` strictly before
@@ -80,13 +74,13 @@ function mockSquashDockerRun(
     readonly failSetupJob?: boolean;
   } = {},
 ) {
-  const dumpCalls: Array<LegacyDockerRunOpts> = [];
-  const setupJobCalls: Array<LegacyDockerRunOpts> = [];
+  const dumpCalls: Array<DockerRunOpts> = [];
+  const setupJobCalls: Array<DockerRunOpts> = [];
   let authStorageCalls = 0;
 
-  const layer = Layer.succeed(LegacyDockerRun, {
-    run: () => Effect.die("LegacyDockerRun.run is unused by migration squash"),
-    runCapture: () => Effect.die("LegacyDockerRun.runCapture is unused by migration squash"),
+  const layer = Layer.succeed(DockerRun, {
+    run: () => Effect.die("DockerRun.run is unused by migration squash"),
+    runCapture: () => Effect.die("DockerRun.runCapture is unused by migration squash"),
     runStream: (dockerOpts, streamOpts) => {
       const isDump = dockerOpts.env["PGDATABASE"] !== undefined;
       if (!isDump) {
@@ -119,8 +113,8 @@ function mockSquashDockerRun(
 // Filesystem fault injection — a single wrapper layer covering every
 // filesystem failure squash's own scenarios need, keyed by exact absolute
 // path so unrelated reads/writes elsewhere in the setup pipeline are
-// unaffected. Follows `tests/helpers/legacy-mocks.ts`'s own
-// `legacyFailWriteStringOnNthCallFsLayer` pattern.
+// unaffected. Follows `tests/helpers/command-mocks.ts`'s own
+// `failWriteStringOnNthCallFsLayer` pattern.
 // ---------------------------------------------------------------------------
 
 const simulatedFsError = (path: string, method: string) =>
@@ -225,7 +219,7 @@ interface SetupOpts {
   readonly args?: ReadonlyArray<string>;
   readonly isLocal?: boolean;
   readonly linkedRef?: string;
-  /** Omits `ref` entirely from the resolved config, matching the real resolver's own `--local`/`--db-url` shape (`ref` is an optional field, not always `None` — see `legacy-db-config.types.ts`). */
+  /** Omits `ref` entirely from the resolved config, matching the real resolver's own `--local`/`--db-url` shape (`ref` is an optional field, not always `None` — see `db-config.types.ts`). */
   readonly omitRef?: boolean;
   readonly failResolve?: boolean;
   readonly failSql?: string;
@@ -243,10 +237,10 @@ interface SetupOpts {
 
 function setup(workdir: string, opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
 
-  const spawner = mockLegacyShadowContainerCliSpawner({
+  const spawner = mockShadowContainerCliSpawner({
     neverHealthy: opts.neverHealthyShadow ?? false,
     failCreate: opts.failCreateShadow ?? false,
     failRemove: opts.failRemoveShadow ?? false,
@@ -267,17 +261,17 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // (CLI-1969 review item #7).
   const statements: Array<{ readonly sql: string; readonly params?: ReadonlyArray<unknown> }> = [];
   const connectedDatabases: Array<string> = [];
-  const connection = Layer.succeed(LegacyDbConnection, {
-    connect: (cfg: LegacyPgConnInput) =>
+  const connection = Layer.succeed(DbConnection, {
+    connect: (cfg: PgConnInput) =>
       Effect.sync(() => {
         connectedDatabases.push(cfg.database);
-        const session: LegacyDbSession = {
+        const session: DbSession = {
           exec: (sql: string) =>
             Effect.suspend(() => {
               execs.push(sql);
               statements.push({ sql });
               return opts.failSql !== undefined && sql.includes(opts.failSql)
-                ? Effect.fail(new LegacyDbExecError({ message: "boom" }))
+                ? Effect.fail(new DbExecError({ message: "boom" }))
                 : Effect.void;
             }),
           query: (sql: string, params?: ReadonlyArray<unknown>) =>
@@ -285,12 +279,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
               queries.push({ sql, params });
               statements.push({ sql, params });
               return opts.failSql !== undefined && sql.includes(opts.failSql)
-                ? Effect.fail(new LegacyDbExecError({ message: "boom" }))
+                ? Effect.fail(new DbExecError({ message: "boom" }))
                 : Effect.succeed<ReadonlyArray<Record<string, unknown>>>([]);
             }),
           // A migration file's statements arrive as one batch; replay them through
           // `exec`/`query` so the call-order log and failure injection still apply.
-          execBatch: (batch) => legacySequentialExecBatch(session)(batch),
+          execBatch: (batch) => sequentialExecBatch(session)(batch),
           extensionExists: () => Effect.succeed(false),
           copyToCsv: () => Effect.succeed(new Uint8Array()),
           queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
@@ -299,13 +293,13 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
-  const resolverCalls: Array<LegacyDbConfigFlags> = [];
-  const resolver = Layer.succeed(LegacyDbConfigResolver, {
-    resolve: (flags: LegacyDbConfigFlags) => {
+  const resolverCalls: Array<DbConfigFlags> = [];
+  const resolver = Layer.succeed(DbConfigResolver, {
+    resolve: (flags: DbConfigFlags) => {
       resolverCalls.push(flags);
       if (opts.failResolve === true) {
         return Effect.fail(
-          new LegacyProjectNotLinkedError({
+          new ProjectRefNotLinkedError({
             message: "Cannot find project ref. Have you run link?",
           }),
         );
@@ -325,29 +319,29 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         ...(opts.omitRef === true
           ? {}
           : { ref: opts.linkedRef !== undefined ? Option.some(opts.linkedRef) : Option.none() }),
-      } satisfies LegacyResolvedDbConfig);
+      } satisfies ResolvedDbConfig);
     },
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
   // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
   // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
-  // (not just the `opts.linkedRef`/`LEGACY_VALID_REF` fallback) drives the linked ref.
-  const projectRef = Layer.succeed(LegacyProjectRefResolver, {
-    resolve: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
-    resolveForLink: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
-    resolveOptional: () => Effect.succeed(Option.some(opts.linkedRef ?? LEGACY_VALID_REF)),
+  // (not just the `opts.linkedRef`/`VALID_REF` fallback) drives the linked ref.
+  const projectRef = Layer.succeed(ProjectRefResolver, {
+    resolve: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
+    resolveForLink: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(opts.linkedRef ?? VALID_REF)),
     loadProjectRef: (flagValue: Option.Option<string>) =>
       Effect.succeed(
         Option.isSome(flagValue) && flagValue.value.length > 0
           ? flagValue.value
-          : (opts.linkedRef ?? LEGACY_VALID_REF),
+          : (opts.linkedRef ?? VALID_REF),
       ),
-    promptProjectRef: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
+    promptProjectRef: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
   });
 
   const debugLogs: Array<string> = [];
-  const debugLogger = Layer.succeed(LegacyDebugLogger, {
+  const debugLogger = Layer.succeed(DebugLogger, {
     debug: (message: string) =>
       Effect.sync(() => {
         debugLogs.push(message);
@@ -370,13 +364,13 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     docker.layer,
     debugLogger,
     alwaysReadyHttpClientLayer,
-    mockLegacyCliSettings({ workdir }),
-    Layer.succeed(LegacyDnsResolverFlag, "native"),
-    Layer.succeed(LegacyDebugFlag, false),
-    Layer.succeed(LegacyExperimentalFlag, false),
-    Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    mockCommandSettings({ workdir }),
+    Layer.succeed(DnsResolverFlag, "native"),
+    Layer.succeed(DebugFlag, false),
+    Layer.succeed(ExperimentalFlag, false),
+    Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(
-      LegacyNetworkIdFlag,
+      NetworkIdFlag,
       opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
     ),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
@@ -408,7 +402,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   };
 }
 
-const flags = (over: Partial<LegacyMigrationSquashFlags> = {}): LegacyMigrationSquashFlags => ({
+const flags = (over: Partial<MigrationSquashFlags> = {}): MigrationSquashFlags => ({
   version: over.version ?? Option.none(),
   dbUrl: over.dbUrl ?? Option.none(),
   linked: over.linked ?? false,
@@ -432,18 +426,16 @@ const failureTag = (exit: Exit.Exit<unknown, unknown>): string | undefined => {
   return Option.isSome(failure) ? (failure.value as { readonly _tag?: string })._tag : undefined;
 };
 
-const tmp = useLegacyTempWorkdir();
-useLegacyShadowCacheDisabled();
+const tmp = useTempWorkdir();
+useShadowCacheDisabled();
 
 describe("legacy migration squash", () => {
   describe("flag surface & ordering", () => {
     it.effect("rejects --linked combined with --local", () => {
       const s = setup(tmp.current, { args: ["--linked", "--local"] });
       return Effect.gen(function* () {
-        const exit = yield* legacyMigrationSquash(flags({ linked: true, local: true })).pipe(
-          Effect.exit,
-        );
-        expect(failureTag(exit)).toBe("LegacyMigrationTargetFlagsError");
+        const exit = yield* migrationSquash(flags({ linked: true, local: true })).pipe(Effect.exit);
+        expect(failureTag(exit)).toBe("MigrationTargetFlagsError");
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
           expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
@@ -456,10 +448,10 @@ describe("legacy migration squash", () => {
     it.effect("rejects --db-url combined with --password", () => {
       const s = setup(tmp.current, { args: ["--db-url", "postgresql://x", "--password", "y"] });
       return Effect.gen(function* () {
-        const exit = yield* legacyMigrationSquash(
+        const exit = yield* migrationSquash(
           flags({ dbUrl: Option.some("postgresql://x"), password: Option.some("y") }),
         ).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("LegacyMigrationPasswordFlagsError");
+        expect(failureTag(exit)).toBe("MigrationPasswordFlagsError");
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
           expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
@@ -474,10 +466,10 @@ describe("legacy migration squash", () => {
       // guard must fire from the flag alone, with no explicit --local needed.
       const s = setup(tmp.current);
       return Effect.gen(function* () {
-        const exit = yield* legacyMigrationSquash(
-          flags({ projectRef: Option.some(LEGACY_VALID_REF) }),
-        ).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("LegacyMigrationTargetFlagsError");
+        const exit = yield* migrationSquash(flags({ projectRef: Option.some(VALID_REF) })).pipe(
+          Effect.exit,
+        );
+        expect(failureTag(exit)).toBe("MigrationTargetFlagsError");
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
           expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
@@ -495,16 +487,16 @@ describe("legacy migration squash", () => {
 
     it.effect("rejects --project-ref combined with an explicit --db-url target", () => {
       const s = setup(tmp.current, {
-        args: ["--db-url", "postgresql://x", "--project-ref", LEGACY_VALID_REF],
+        args: ["--db-url", "postgresql://x", "--project-ref", VALID_REF],
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyMigrationSquash(
+        const exit = yield* migrationSquash(
           flags({
             dbUrl: Option.some("postgresql://x"),
-            projectRef: Option.some(LEGACY_VALID_REF),
+            projectRef: Option.some(VALID_REF),
           }),
         ).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("LegacyMigrationTargetFlagsError");
+        expect(failureTag(exit)).toBe("MigrationTargetFlagsError");
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
           expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
@@ -524,10 +516,10 @@ describe("legacy migration squash", () => {
       () => {
         const s = setup(tmp.current);
         return Effect.gen(function* () {
-          const exit = yield* legacyMigrationSquash(flags({ version: Option.some("0_init") })).pipe(
+          const exit = yield* migrationSquash(flags({ version: Option.some("0_init") })).pipe(
             Effect.exit,
           );
-          expect(failureTag(exit)).toBe("LegacyMigrationInvalidVersionError");
+          expect(failureTag(exit)).toBe("MigrationInvalidVersionError");
           if (Exit.isFailure(exit)) {
             const failure = Cause.findErrorOption(exit.cause);
             expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
@@ -541,10 +533,10 @@ describe("legacy migration squash", () => {
     it.effect("rejects an out-of-int64-range --version with the same bare message", () => {
       const s = setup(tmp.current);
       return Effect.gen(function* () {
-        const exit = yield* legacyMigrationSquash(
+        const exit = yield* migrationSquash(
           flags({ version: Option.some("99999999999999999999") }),
         ).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("LegacyMigrationInvalidVersionError");
+        expect(failureTag(exit)).toBe("MigrationInvalidVersionError");
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
           expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
@@ -558,10 +550,8 @@ describe("legacy migration squash", () => {
       seedMigration(tmp.current, "0_init.sql");
       const s = setup(tmp.current);
       return Effect.gen(function* () {
-        const exit = yield* legacyMigrationSquash(flags({ version: Option.some("9") })).pipe(
-          Effect.exit,
-        );
-        expect(failureTag(exit)).toBe("LegacyMigrationFileNotFoundError");
+        const exit = yield* migrationSquash(flags({ version: Option.some("9") })).pipe(Effect.exit);
+        expect(failureTag(exit)).toBe("MigrationFileNotFoundError");
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
           expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
@@ -577,10 +567,10 @@ describe("legacy migration squash", () => {
       // bad version, matching `migration repair`'s identical ordering test.
       const s = setup(tmp.current, { failResolve: true });
       return Effect.gen(function* () {
-        const exit = yield* legacyMigrationSquash(
-          flags({ version: Option.some("not-a-number") }),
-        ).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("LegacyProjectNotLinkedError");
+        const exit = yield* migrationSquash(flags({ version: Option.some("not-a-number") })).pipe(
+          Effect.exit,
+        );
+        expect(failureTag(exit)).toBe("ProjectRefNotLinkedError");
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -590,7 +580,7 @@ describe("legacy migration squash", () => {
       // not merely `None` — exercising the `cfg.ref ?? Option.none()` fallback.
       const s = setup(tmp.current, { args: [], omitRef: true });
       return Effect.gen(function* () {
-        yield* legacyMigrationSquash(flags());
+        yield* migrationSquash(flags());
         expect(s.resolverCalls[0]?.connType).toBe("local");
       }).pipe(Effect.provide(s.layer));
     });
@@ -600,8 +590,8 @@ describe("legacy migration squash", () => {
     it.effect("fails with 'version not found' when the migrations directory is empty", () => {
       const s = setup(tmp.current);
       return Effect.gen(function* () {
-        const exit = yield* legacyMigrationSquash(flags()).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("LegacyMigrationSquashMissingVersionError");
+        const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
+        expect(failureTag(exit)).toBe("MigrationSquashMissingVersionError");
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
           expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
@@ -617,8 +607,8 @@ describe("legacy migration squash", () => {
         seedMigration(tmp.current, "20211208000000_init.sql");
         const s = setup(tmp.current);
         return Effect.gen(function* () {
-          const exit = yield* legacyMigrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("LegacyMigrationSquashMissingVersionError");
+          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
+          expect(failureTag(exit)).toBe("MigrationSquashMissingVersionError");
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -630,7 +620,7 @@ describe("legacy migration squash", () => {
         writeFileSync(join(tmp.current, "supabase", "migrations"), "not a directory");
         const s = setup(tmp.current);
         return Effect.gen(function* () {
-          const error = yield* legacyMigrationSquash(flags()).pipe(Effect.flip);
+          const error = yield* migrationSquash(flags()).pipe(Effect.flip);
           expect((error as { message: string }).message).toContain("failed to read directory");
         }).pipe(Effect.provide(s.layer));
       },
@@ -642,7 +632,7 @@ describe("legacy migration squash", () => {
         seedMigration(tmp.current, "0_init.sql");
         const s = setup(tmp.current);
         return Effect.gen(function* () {
-          yield* legacyMigrationSquash(flags());
+          yield* migrationSquash(flags());
           expect(stderr(s.out)).toContain(
             "supabase/migrations/0_init.sql is already the earliest migration.",
           );
@@ -681,7 +671,7 @@ describe("legacy migration squash", () => {
       () => {
         const s = setupHappyPath();
         return Effect.gen(function* () {
-          yield* legacyMigrationSquash(flags());
+          yield* migrationSquash(flags());
 
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
@@ -716,7 +706,7 @@ describe("legacy migration squash", () => {
       () => {
         const s = setupHappyPath();
         return Effect.gen(function* () {
-          yield* legacyMigrationSquash(flags());
+          yield* migrationSquash(flags());
           expect(s.dumpCalls).toHaveLength(3);
           const [before, after, full] = s.dumpCalls;
           expect(before?.env["EXTRA_FLAGS"]).toBe("--schema=auth|storage");
@@ -724,7 +714,7 @@ describe("legacy migration squash", () => {
           expect(after?.env["EXTRA_FLAGS"]).toBe("--schema=auth|storage");
           expect(after?.env["EXCLUDED_SCHEMAS"]).toBeUndefined();
           expect(full?.env["EXTRA_FLAGS"]).toBeUndefined();
-          expect(full?.env["EXCLUDED_SCHEMAS"]).toBe(LEGACY_INTERNAL_SCHEMAS.join("|"));
+          expect(full?.env["EXCLUDED_SCHEMAS"]).toBe(INTERNAL_SCHEMAS.join("|"));
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -734,21 +724,21 @@ describe("legacy migration squash", () => {
       () => {
         const s = setupHappyPath();
         return Effect.gen(function* () {
-          yield* legacyMigrationSquash(flags());
+          yield* migrationSquash(flags());
           expect(s.dumpCalls).toHaveLength(3);
           for (const call of s.dumpCalls) {
             expect(call.env["PGPORT"]).toBe("54320");
             expect(call.env["PGUSER"]).toBe("postgres");
             expect(call.env["PGDATABASE"]).toBe("postgres");
             expect(call.network).toEqual({ _tag: "host" });
-            expect(call.cmd).toEqual(["bash", "-c", legacyDumpSchemaScript, "--"]);
-            // `legacyStreamPgDump` applies the registry mirror itself —
+            expect(call.cmd).toEqual(["bash", "-c", dumpSchemaScript, "--"]);
+            // `streamPgDump` applies the registry mirror itself —
             // the default (no override) registry rewrites
             // to the ECR mirror, not the bare Dockerfile-manifest tag.
-            expect(call.image).toBe(legacyGetRegistryImageUrl(dockerfileServiceImage("pg")));
+            expect(call.image).toBe(getRegistryImageUrl(dockerfileServiceImage("pg")));
           }
           // Every dump dials the SAME shadow host, whatever this machine's Docker
-          // context resolves it to (`legacyGetHostname`) — self-consistency avoids
+          // context resolves it to (`getHostname`) — self-consistency avoids
           // hardcoding the host-dependent value.
           const hosts = new Set(s.dumpCalls.map((c) => c.env["PGHOST"]));
           expect(hosts.size).toBe(1);
@@ -763,8 +753,8 @@ describe("legacy migration squash", () => {
       () => {
         const s = setupHappyPath();
         return Effect.gen(function* () {
-          yield* legacyMigrationSquash(flags());
-          const expectedHost = LEGACY_FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
+          yield* migrationSquash(flags());
+          const expectedHost = FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
           expect(s.setupJobCalls.length).toBeGreaterThan(0);
           let sawHost = false;
           for (const call of s.setupJobCalls) {
@@ -789,7 +779,7 @@ describe("legacy migration squash", () => {
       () => {
         const s = setupHappyPath({ networkId: "custom-net" });
         return Effect.gen(function* () {
-          yield* legacyMigrationSquash(flags());
+          yield* migrationSquash(flags());
           expect(s.dumpCalls).toHaveLength(3);
           for (const call of s.dumpCalls) {
             expect(call.network).toEqual({ _tag: "named", name: "custom-net" });
@@ -804,7 +794,7 @@ describe("legacy migration squash", () => {
         // The project `.env` is applied before any of
         // squash's three pg_dump containers start; each one resolves its image through
         // the same registry-mirror lookup — so a registry mirror set only in `supabase/.env`
-        // reaches all three. The handler applies that with `legacyApplyProjectEnv`, scoped to
+        // reaches all three. The handler applies that with `applyProjectEnv`, scoped to
         // the run and reverted when it completes.
         const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
         delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
@@ -814,7 +804,7 @@ describe("legacy migration squash", () => {
           "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\n",
         );
         return Effect.gen(function* () {
-          yield* legacyMigrationSquash(flags());
+          yield* migrationSquash(flags());
           expect(s.dumpCalls).toHaveLength(3);
           for (const call of s.dumpCalls) {
             expect(call.image).toMatch(/^my-mirror\.example\.com\/supabase\//u);
@@ -845,7 +835,7 @@ describe("legacy migration squash", () => {
         const s = setupHappyPath();
         writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_NETWORK_ID=dotenv-net\n");
         return Effect.gen(function* () {
-          yield* legacyMigrationSquash(flags());
+          yield* migrationSquash(flags());
           expect(s.dumpCalls).toHaveLength(3);
           for (const call of s.dumpCalls) {
             expect(call.network).toEqual({ _tag: "named", name: "dotenv-net" });
@@ -872,7 +862,7 @@ describe("legacy migration squash", () => {
         fullDumpSql: FULL_SQL,
       });
       return Effect.gen(function* () {
-        yield* legacyMigrationSquash(flags({ version: Option.some("1") }));
+        yield* migrationSquash(flags({ version: Option.some("1") }));
         const migrationsDir = join(tmp.current, "supabase", "migrations");
         expect(existsSync(join(migrationsDir, "0_init.sql"))).toBe(false);
         expect(existsSync(join(migrationsDir, "1_target.sql"))).toBe(true);
@@ -893,11 +883,11 @@ describe("legacy migration squash", () => {
       seedMigration(tmp.current, "1_target.sql");
       const s = setup(tmp.current, { failCreateShadow: true });
       return Effect.gen(function* () {
-        const exit = yield* legacyMigrationSquash(flags()).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("LegacyShadowDbError");
+        const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
+        expect(failureTag(exit)).toBe("ShadowDbError");
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         // Nothing to release — the container was never created (the established
-        // leak-on-create-failure behavior, see `legacyCreateShadowDatabase`'s doc).
+        // leak-on-create-failure behavior, see `createShadowDatabase`'s doc).
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toEqual([]);
         expect(s.dumpCalls).toEqual([]);
       }).pipe(Effect.provide(s.layer));
@@ -917,8 +907,8 @@ describe("legacy migration squash", () => {
         );
         const s = setup(tmp.current, { neverHealthyShadow: true });
         return Effect.gen(function* () {
-          const exit = yield* legacyMigrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("LegacyHealthCheckTimeoutError");
+          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
+          expect(failureTag(exit)).toBe("HealthCheckTimeoutError");
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
           expect(s.dumpCalls).toEqual([]);
@@ -933,8 +923,8 @@ describe("legacy migration squash", () => {
         seedMigration(tmp.current, "1_target.sql");
         const s = setup(tmp.current, { failSetupJob: true });
         return Effect.gen(function* () {
-          const exit = yield* legacyMigrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("LegacyDbSetupError");
+          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
+          expect(failureTag(exit)).toBe("DbSetupError");
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
           expect(s.dumpCalls).toEqual([]);
@@ -947,8 +937,8 @@ describe("legacy migration squash", () => {
       seedMigration(tmp.current, "1_target.sql");
       const s = setup(tmp.current, { failSql: "create table boom" });
       return Effect.gen(function* () {
-        const exit = yield* legacyMigrationSquash(flags()).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("LegacyMigrationApplyError");
+        const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
+        expect(failureTag(exit)).toBe("MigrationApplyError");
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
       }).pipe(Effect.provide(s.layer));
@@ -961,8 +951,8 @@ describe("legacy migration squash", () => {
         seedMigration(tmp.current, "1_target.sql");
         const s = setup(tmp.current, { failDumpKind: "before" });
         return Effect.gen(function* () {
-          const exit = yield* legacyMigrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("LegacyMigrationSquashDumpError");
+          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
+          expect(failureTag(exit)).toBe("MigrationSquashDumpError");
           if (Exit.isFailure(exit)) {
             const failure = Cause.findErrorOption(exit.cause);
             expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
@@ -986,8 +976,8 @@ describe("legacy migration squash", () => {
           failDumpKind: "full",
         });
         return Effect.gen(function* () {
-          const exit = yield* legacyMigrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("LegacyMigrationSquashDumpError");
+          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
+          expect(failureTag(exit)).toBe("MigrationSquashDumpError");
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
           const targetPath = join(tmp.current, "supabase", "migrations", "1_target.sql");
           // Truncated (by the earlier `O_TRUNC`), then only the partial stream the
@@ -1014,8 +1004,8 @@ describe("legacy migration squash", () => {
           fsFaults: { failOpenPath: targetPath },
         });
         return Effect.gen(function* () {
-          const exit = yield* legacyMigrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("LegacyMigrationSquashWriteError");
+          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
+          expect(failureTag(exit)).toBe("MigrationSquashWriteError");
           if (Exit.isFailure(exit)) {
             const failure = Cause.findErrorOption(exit.cause);
             const message =
@@ -1045,8 +1035,8 @@ describe("legacy migration squash", () => {
           fsFaults: { failWriteAllFromCall: { path: targetPath, fromCall: 1 } },
         });
         return Effect.gen(function* () {
-          const exit = yield* legacyMigrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("LegacyMigrationSquashWriteError");
+          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
+          expect(failureTag(exit)).toBe("MigrationSquashWriteError");
           if (Exit.isFailure(exit)) {
             const failure = Cause.findErrorOption(exit.cause);
             expect(
@@ -1073,8 +1063,8 @@ describe("legacy migration squash", () => {
           fsFaults: { failWriteAllFromCall: { path: targetPath, fromCall: 2 } },
         });
         return Effect.gen(function* () {
-          const exit = yield* legacyMigrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("LegacyMigrationSquashWriteError");
+          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
+          expect(failureTag(exit)).toBe("MigrationSquashWriteError");
           if (Exit.isFailure(exit)) {
             const failure = Cause.findErrorOption(exit.cause);
             const message =
@@ -1101,7 +1091,7 @@ describe("legacy migration squash", () => {
         fsFaults: { failRemovePath: earlierPath },
       });
       return Effect.gen(function* () {
-        yield* legacyMigrationSquash(flags());
+        yield* migrationSquash(flags());
         // Non-fatal: the command still finishes successfully.
         expect(stdout(s.out)).toContain("Finished supabase migration squash.");
         // The failed removal's relativized error text reached stderr — pinned, not just
@@ -1126,7 +1116,7 @@ describe("legacy migration squash", () => {
           fsFaults: { failRemovePath: earlierPath },
         });
         return Effect.gen(function* () {
-          yield* legacyMigrationSquash(flags());
+          yield* migrationSquash(flags());
           const success = s.out.messages.find((m) => m.type === "success");
           const data = success?.data as {
             readonly removed: ReadonlyArray<string>;
@@ -1155,11 +1145,9 @@ describe("legacy migration squash", () => {
         failRemoveShadow: true,
       });
       return Effect.gen(function* () {
-        yield* legacyMigrationSquash(flags());
+        yield* migrationSquash(flags());
         expect(stdout(s.out)).toContain("Finished supabase migration squash.");
-        expect(stderr(s.out)).toContain(
-          `Failed to remove container: ${LEGACY_FAKE_SHADOW_CONTAINER_ID}`,
-        );
+        expect(stderr(s.out)).toContain(`Failed to remove container: ${FAKE_SHADOW_CONTAINER_ID}`);
       }).pipe(Effect.provide(s.layer));
     });
   });
@@ -1173,7 +1161,7 @@ describe("legacy migration squash", () => {
         seedMigration(tmp.current, "0_init.sql");
         const s = setup(tmp.current, { isLocal: true });
         return Effect.gen(function* () {
-          yield* legacyMigrationSquash(flags());
+          yield* migrationSquash(flags());
           expect(stdout(s.out)).toContain("Finished supabase migration squash.");
           expect(stderr(s.out)).toContain(
             "Run supabase migration repair --status applied to update your remote migration history table.",
@@ -1187,7 +1175,7 @@ describe("legacy migration squash", () => {
       seedMigration(tmp.current, "0_init.sql");
       const s = setup(tmp.current, { isLocal: true, args: ["--db-url", "postgresql://local"] });
       return Effect.gen(function* () {
-        yield* legacyMigrationSquash(flags({ dbUrl: Option.some("postgresql://local") }));
+        yield* migrationSquash(flags({ dbUrl: Option.some("postgresql://local") }));
         expect(stdout(s.out)).toContain("Finished supabase migration squash.");
       }).pipe(Effect.provide(s.layer));
     });
@@ -1198,13 +1186,13 @@ describe("legacy migration squash", () => {
   describe("remote target", () => {
     function setupRemote(opts: SetupOpts = {}) {
       seedMigration(tmp.current, "0_init.sql");
-      return setup(tmp.current, { isLocal: false, linkedRef: LEGACY_VALID_REF, ...opts });
+      return setup(tmp.current, { isLocal: false, linkedRef: VALID_REF, ...opts });
     }
 
     it.effect("prompts to update the remote history table and baselines on 'y'", () => {
       const s = setupRemote({ confirm: true, args: ["--linked"] });
       return Effect.gen(function* () {
-        yield* legacyMigrationSquash(flags({ linked: true }));
+        yield* migrationSquash(flags({ linked: true }));
         expect(stderr(s.out)).toContain("Update remote migration history table? [Y/n] ");
         expect(s.queries.some((q) => q.sql.includes("DELETE FROM supabase_migrations"))).toBe(true);
         expect(s.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations"))).toBe(true);
@@ -1216,7 +1204,7 @@ describe("legacy migration squash", () => {
       () => {
         const s = setupRemote({ confirm: true });
         return Effect.gen(function* () {
-          yield* legacyMigrationSquash(flags());
+          yield* migrationSquash(flags());
           const text = stderr(s.out);
           const baseliningAt = text.indexOf("Baselining migration history to 0");
           const connectingAt = text.indexOf("Connecting to remote database...");
@@ -1231,11 +1219,11 @@ describe("legacy migration squash", () => {
       () => {
         const s = setupRemote({ confirm: true });
         return Effect.gen(function* () {
-          yield* legacyMigrationSquash(flags());
+          yield* migrationSquash(flags());
           // ONE ordered log (not `execs`/`queries` separately — `.toContain`/`.find` are
           // order-blind, so an INSERT-before-DELETE regression would ship green against
           // them) — the baseline's own transaction is the LAST 4 statements sent, after
-          // `legacyCreateMigrationTable`'s own (exec-only) setup transaction.
+          // `createMigrationTable`'s own (exec-only) setup transaction.
           const baseline = s.statements.slice(-4);
           expect(baseline.map((entry) => entry.sql)).toEqual([
             "BEGIN",
@@ -1254,8 +1242,8 @@ describe("legacy migration squash", () => {
       () => {
         const s = setupRemote({ confirm: true, failSql: "INSERT INTO supabase_migrations" });
         return Effect.gen(function* () {
-          const exit = yield* legacyMigrationSquash(flags()).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("LegacyMigrationSquashBaselineError");
+          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
+          expect(failureTag(exit)).toBe("MigrationSquashBaselineError");
           if (Exit.isFailure(exit)) {
             const failure = Cause.findErrorOption(exit.cause);
             expect(
@@ -1263,7 +1251,7 @@ describe("legacy migration squash", () => {
             ).toContain("failed to update migration history:");
           }
           expect(s.execs).toContain("ROLLBACK");
-          // Exactly one COMMIT — `legacyCreateMigrationTable`'s own setup transaction,
+          // Exactly one COMMIT — `createMigrationTable`'s own setup transaction,
           // which runs (and commits) BEFORE the baseline's own BEGIN/DELETE/INSERT
           // batch; the baseline's OWN transaction never reaches COMMIT.
           expect(s.execs.filter((e) => e === "COMMIT")).toHaveLength(1);
@@ -1277,7 +1265,7 @@ describe("legacy migration squash", () => {
       () => {
         const s = setupRemote({ confirm: false });
         return Effect.gen(function* () {
-          const exit = yield* legacyMigrationSquash(flags()).pipe(Effect.exit);
+          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
           expect(Exit.isSuccess(exit)).toBe(true);
           expect(s.execs).not.toContain("BEGIN");
           expect(s.queries).toEqual([]);
@@ -1289,7 +1277,7 @@ describe("legacy migration squash", () => {
     it.effect("--yes auto-confirms by echoing the prompt with 'y' and reads no stdin", () => {
       const s = setupRemote({ yes: true, pipedInput: undefined });
       return Effect.gen(function* () {
-        yield* legacyMigrationSquash(flags());
+        yield* migrationSquash(flags());
         expect(stderr(s.out)).toContain("Update remote migration history table? [Y/n] y");
         expect(s.execs).toContain("BEGIN");
       }).pipe(Effect.provide(s.layer));
@@ -1298,7 +1286,7 @@ describe("legacy migration squash", () => {
     it.effect("a non-TTY run with no piped answer takes the default (yes) and baselines", () => {
       const s = setupRemote({ isTTY: false, pipedInput: undefined });
       return Effect.gen(function* () {
-        yield* legacyMigrationSquash(flags());
+        yield* migrationSquash(flags());
         expect(s.execs).toContain("BEGIN");
         expect(s.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations"))).toBe(true);
       }).pipe(Effect.provide(s.layer));
@@ -1311,11 +1299,11 @@ describe("legacy migration squash", () => {
         seedMigration(tmp.current, "1_newer.sql");
         const s = setup(tmp.current, {
           isLocal: false,
-          linkedRef: LEGACY_VALID_REF,
+          linkedRef: VALID_REF,
           confirm: true,
         });
         return Effect.gen(function* () {
-          yield* legacyMigrationSquash(flags({ version: Option.some("0") }));
+          yield* migrationSquash(flags({ version: Option.some("0") }));
           const insert = s.queries.find((q) => q.sql.includes("INSERT INTO supabase_migrations"));
           expect(insert?.params?.[0]).toBe("0");
         }).pipe(Effect.provide(s.layer));
@@ -1332,7 +1320,7 @@ describe("legacy migration squash", () => {
       const earlierPath = join(tmp.current, "supabase", "migrations", "0_init.sql");
       const s = setup(tmp.current, {
         isLocal: false,
-        linkedRef: LEGACY_VALID_REF,
+        linkedRef: VALID_REF,
         confirm: true,
         beforeDumpSql: "before;\n",
         afterDumpSql: "after;\n",
@@ -1340,7 +1328,7 @@ describe("legacy migration squash", () => {
         fsFaults: { failRemovePath: earlierPath },
       });
       return Effect.gen(function* () {
-        yield* legacyMigrationSquash(flags());
+        yield* migrationSquash(flags());
         const insert = s.queries.find((q) => q.sql.includes("INSERT INTO supabase_migrations"));
         // "0" (the surviving older file), NOT "1" (the squash target).
         expect(insert?.params?.[0]).toBe("0");
@@ -1355,7 +1343,7 @@ describe("legacy migration squash", () => {
         const migrationsDir = join(tmp.current, "supabase", "migrations");
         const s = setup(tmp.current, {
           isLocal: false,
-          linkedRef: LEGACY_VALID_REF,
+          linkedRef: VALID_REF,
           confirm: true,
           beforeDumpSql: "before;\n",
           afterDumpSql: "after;\n",
@@ -1363,12 +1351,12 @@ describe("legacy migration squash", () => {
           // The FIRST `readDirectory(migrationsDir)` call is `squashToVersion`'s own
           // listing (must succeed so the squash itself completes); the SECOND is
           // `baselineMigrations`'s post-removal re-list, which this fails — the
-          // THIRD (inside `legacyResolveMigrationFile`, resolving the now-empty
+          // THIRD (inside `resolveMigrationFile`, resolving the now-empty
           // version) must succeed again so the scenario isolates the reload failure.
           fsFaults: { failReadDirectoryAtCall: { path: migrationsDir, atCall: 2 } },
         });
         return Effect.gen(function* () {
-          const exit = yield* legacyMigrationSquash(flags()).pipe(Effect.exit);
+          const exit = yield* migrationSquash(flags()).pipe(Effect.exit);
           expect(s.debugLogs).toHaveLength(1);
           expect(s.debugLogs[0]).toContain("failed to read directory");
           expect(s.debugLogs[0]).toContain("simulated failure");
@@ -1377,7 +1365,7 @@ describe("legacy migration squash", () => {
           // glob fails, which surfaces as the baseline's own missing-file error,
           // proving `resolvedVersion` genuinely stayed "" rather than falling back
           // to the squash target.
-          expect(failureTag(exit)).toBe("LegacyMigrationFileNotFoundError");
+          expect(failureTag(exit)).toBe("MigrationFileNotFoundError");
           if (Exit.isFailure(exit)) {
             const failure = Cause.findErrorOption(exit.cause);
             expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
@@ -1391,39 +1379,39 @@ describe("legacy migration squash", () => {
     it.effect("--linked caches the linked project ref even when the squash fails", () => {
       const s = setup(tmp.current, {
         isLocal: false,
-        linkedRef: LEGACY_VALID_REF,
+        linkedRef: VALID_REF,
         args: ["--linked"],
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyMigrationSquash(
+        const exit = yield* migrationSquash(
           flags({ linked: true, version: Option.some("bad") }),
         ).pipe(Effect.exit);
-        expect(failureTag(exit)).toBe("LegacyMigrationInvalidVersionError");
+        expect(failureTag(exit)).toBe("MigrationInvalidVersionError");
         expect(s.cache.cached).toBe(true);
-        expect(s.cache.cachedRef).toBe(LEGACY_VALID_REF);
+        expect(s.cache.cachedRef).toBe(VALID_REF);
       }).pipe(Effect.provide(s.layer));
     });
 
     it.effect(
       "--linked --project-ref overrides the workdir's own linked ref for resolution and caching",
       () => {
-        // `opts.linkedRef` (LEGACY_VALID_REF) represents whatever the workdir would
+        // `opts.linkedRef` (VALID_REF) represents whatever the workdir would
         // resolve to absent the flag — the explicit --project-ref flag must win over
         // it, both for the resolver call and for what ultimately gets cached.
         const FLAG_REF = "flagflagflagflagflag";
         const s = setup(tmp.current, {
           isLocal: false,
-          linkedRef: LEGACY_VALID_REF,
+          linkedRef: VALID_REF,
           args: ["--linked", "--project-ref", FLAG_REF],
         });
         return Effect.gen(function* () {
-          const exit = yield* legacyMigrationSquash(
+          const exit = yield* migrationSquash(
             flags({ linked: true, projectRef: Option.some(FLAG_REF), version: Option.some("bad") }),
           ).pipe(Effect.exit);
-          expect(failureTag(exit)).toBe("LegacyMigrationInvalidVersionError");
+          expect(failureTag(exit)).toBe("MigrationInvalidVersionError");
           expect(s.cache.cached).toBe(true);
           expect(s.cache.cachedRef).toBe(FLAG_REF);
-          expect(s.cache.cachedRef).not.toBe(LEGACY_VALID_REF);
+          expect(s.cache.cachedRef).not.toBe(VALID_REF);
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -1434,17 +1422,17 @@ describe("legacy migration squash", () => {
         mkdirSync(join(tmp.current, "supabase"), { recursive: true });
         writeFileSync(
           join(tmp.current, "supabase", "config.toml"),
-          ["[remotes.dev]", `project_id = "${LEGACY_VALID_REF}"`, ""].join("\n"),
+          ["[remotes.dev]", `project_id = "${VALID_REF}"`, ""].join("\n"),
         );
         seedMigration(tmp.current, "0_init.sql");
         const s = setup(tmp.current, {
           isLocal: false,
-          linkedRef: LEGACY_VALID_REF,
+          linkedRef: VALID_REF,
           confirm: true,
           args: ["--linked"],
         });
         return Effect.gen(function* () {
-          yield* legacyMigrationSquash(flags({ linked: true }));
+          yield* migrationSquash(flags({ linked: true }));
           const text = stderr(s.out);
           expect(text).toContain("Loading config override: [remotes.dev]");
           const overrideAt = text.indexOf("Loading config override: [remotes.dev]");
@@ -1460,7 +1448,7 @@ describe("legacy migration squash", () => {
       seedMigration(tmp.current, "0_init.sql");
       const s = setup(tmp.current, { format: "json", isLocal: true });
       return Effect.gen(function* () {
-        yield* legacyMigrationSquash(flags());
+        yield* migrationSquash(flags());
         expect(s.out.messages).toContainEqual(
           expect.objectContaining({
             type: "success",
@@ -1482,7 +1470,7 @@ describe("legacy migration squash", () => {
       seedMigration(tmp.current, "0_init.sql");
       const s = setup(tmp.current, { format: "json", isLocal: true });
       return Effect.gen(function* () {
-        yield* legacyMigrationSquash(flags());
+        yield* migrationSquash(flags());
         expect(stdout(s.out)).not.toContain("Finished");
         expect(stderr(s.out)).not.toContain("Run supabase migration repair");
       }).pipe(Effect.provide(s.layer));
@@ -1492,7 +1480,7 @@ describe("legacy migration squash", () => {
       seedMigration(tmp.current, "0_init.sql");
       const s = setup(tmp.current, { format: "stream-json", isLocal: true });
       return Effect.gen(function* () {
-        yield* legacyMigrationSquash(flags());
+        yield* migrationSquash(flags());
         expect(s.out.messages.some((m) => m.type === "success")).toBe(true);
         expect(stderr(s.out)).toContain("is already the earliest migration.");
       }).pipe(Effect.provide(s.layer));
@@ -1503,11 +1491,11 @@ describe("legacy migration squash", () => {
       const s = setup(tmp.current, {
         format: "json",
         isLocal: false,
-        linkedRef: LEGACY_VALID_REF,
+        linkedRef: VALID_REF,
         confirm: true,
       });
       return Effect.gen(function* () {
-        yield* legacyMigrationSquash(flags());
+        yield* migrationSquash(flags());
         expect(stderr(s.out)).toContain("Update remote migration history table? [Y/n] ");
         expect(s.execs).toContain("BEGIN");
       }).pipe(Effect.provide(s.layer));
@@ -1520,11 +1508,11 @@ describe("legacy migration squash", () => {
         const s = setup(tmp.current, {
           format: "json",
           isLocal: false,
-          linkedRef: LEGACY_VALID_REF,
+          linkedRef: VALID_REF,
           confirm: false,
         });
         return Effect.gen(function* () {
-          yield* legacyMigrationSquash(flags());
+          yield* migrationSquash(flags());
           const success = s.out.messages.find((m) => m.type === "success");
           expect(success?.data).toMatchObject({ isLocal: false, baselinedVersion: null });
         }).pipe(Effect.provide(s.layer));
@@ -1537,17 +1525,17 @@ describe("legacy migration squash", () => {
       const s = setup(tmp.current, {
         format: "json",
         isLocal: false,
-        linkedRef: LEGACY_VALID_REF,
+        linkedRef: VALID_REF,
         confirm: true,
         beforeDumpSql: "before;\n",
         afterDumpSql: "after;\n",
         fullDumpSql: "full;\n",
       });
       return Effect.gen(function* () {
-        yield* legacyMigrationSquash(flags());
+        yield* migrationSquash(flags());
         const success = s.out.messages.find((m) => m.type === "success");
         // "1_target.sql" is the sole surviving local file once "0_init.sql" is removed, so
-        // the empty-`--version` baseline reload (`legacyLoadLocalVersions`, run AFTER the
+        // the empty-`--version` baseline reload (`loadLocalVersions`, run AFTER the
         // removal) resolves to its own version, "1" — matching `squashedInto` below, NOT
         // the removed file's "0".
         expect(success?.data).toEqual({

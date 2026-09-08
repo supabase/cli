@@ -4,20 +4,20 @@ import { Effect, Exit, Option } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  LEGACY_VALID_REF,
-  buildLegacyTestRuntime,
-  legacyJsonResponse,
-  legacyTransportFailure,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { legacyDomainsCreate } from "./create.handler.ts";
+  VALID_REF,
+  buildTestRuntime,
+  jsonResponse,
+  transportFailure,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { domainsCreate } from "./create.handler.ts";
 
 const CUSTOM_HOSTNAME = "shop.acme.dev";
-const EXPECTED_CNAME = `${LEGACY_VALID_REF}.supabase.co.`;
+const EXPECTED_CNAME = `${VALID_REF}.supabase.co.`;
 
 const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
   status: "4_origin_setup_completed",
@@ -48,39 +48,39 @@ interface SetupOpts {
   readonly apiResponse?: unknown;
 }
 
-const tempRoot = useLegacyTempWorkdir("supabase-domains-create-int-");
+const tempRoot = useTempWorkdir("supabase-domains-create-int-");
 
 function setup(opts: SetupOpts = {}) {
   const cname = opts.cname ?? "ok";
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     handler: (request) => {
       if (request.url.includes("1.1.1.1")) {
         if (cname === "transport-fail") {
-          return Effect.fail(legacyTransportFailure(request));
+          return Effect.fail(transportFailure(request));
         }
         if (cname === "status-error") {
-          return Effect.succeed(legacyJsonResponse(request, 500, { error: "dns down" }));
+          return Effect.succeed(jsonResponse(request, 500, { error: "dns down" }));
         }
         const answer =
           cname === "no-cname"
             ? [{ type: 1, data: "1.2.3.4" }]
             : [{ type: 5, data: cname === "mismatch" ? "wrong.example.com." : EXPECTED_CNAME }];
-        return Effect.succeed(legacyJsonResponse(request, 200, { Answer: answer }));
+        return Effect.succeed(jsonResponse(request, 200, { Answer: answer }));
       }
       if (opts.apiNetwork === "fail") {
-        return Effect.fail(legacyTransportFailure(request));
+        return Effect.fail(transportFailure(request));
       }
       return Effect.succeed(
-        legacyJsonResponse(request, opts.apiStatus ?? 201, opts.apiResponse ?? HOSTNAME_RESPONSE),
+        jsonResponse(request, opts.apiStatus ?? 201, opts.apiResponse ?? HOSTNAME_RESPONSE),
       );
     },
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const analytics = mockAnalytics();
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const linkedProjectCache = mockLegacyLinkedProjectCacheTracked();
-  const layer = buildLegacyTestRuntime({
+  const telemetry = mockTelemetryStateTracked();
+  const linkedProjectCache = mockLinkedProjectCacheTracked();
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -108,7 +108,7 @@ describe("legacy domains create integration", () => {
   it.live("verifies the CNAME, creates the hostname, and prints status to stderr", () => {
     const { layer, out, api, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
-      yield* legacyDomainsCreate(flags());
+      yield* domainsCreate(flags());
       expect(out.stderrText).toContain("Custom hostname configuration complete");
       expect(out.stdoutText).toBe("");
       expect(postedToInitialize(api)).toBe(true);
@@ -131,7 +131,7 @@ describe("legacy domains create integration", () => {
       },
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
+      const exit = yield* Effect.exit(domainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(2);
       expect(postedToInitialize(api)).toBe(true);
@@ -152,7 +152,7 @@ describe("legacy domains create integration", () => {
       apiResponse: { message: "invalid hostname" },
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
+      const exit = yield* Effect.exit(domainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(2);
       expect(analytics.captured).toHaveLength(0);
@@ -163,11 +163,11 @@ describe("legacy domains create integration", () => {
   it.live("fails before any POST when the CNAME lookup transport fails", () => {
     const { layer, api } = setup({ cname: "transport-fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
+      const exit = yield* Effect.exit(domainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyDomainsCnameError");
+        expect(json).toContain("DomainsCnameError");
         expect(json).toContain("but it failed to resolve");
       }
       expect(postedToInitialize(api)).toBe(false);
@@ -177,7 +177,7 @@ describe("legacy domains create integration", () => {
   it.live("fails before any POST when no CNAME record resolves", () => {
     const { layer, api } = setup({ cname: "no-cname" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
+      const exit = yield* Effect.exit(domainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("failed to locate appropriate CNAME record");
@@ -189,7 +189,7 @@ describe("legacy domains create integration", () => {
   it.live("fails before any POST when the CNAME points elsewhere", () => {
     const { layer, api, telemetry } = setup({ cname: "mismatch" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
+      const exit = yield* Effect.exit(domainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain(
@@ -205,7 +205,7 @@ describe("legacy domains create integration", () => {
   it.live("fails before any POST when the DNS query returns a non-200 status", () => {
     const { layer, api } = setup({ cname: "status-error" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
+      const exit = yield* Effect.exit(domainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
@@ -219,7 +219,7 @@ describe("legacy domains create integration", () => {
   it.live("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
-      yield* legacyDomainsCreate(flags());
+      yield* domainsCreate(flags());
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
@@ -228,7 +228,7 @@ describe("legacy domains create integration", () => {
   it.live("emits YAML to stdout with no status on stderr for -o yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
-      yield* legacyDomainsCreate(flags());
+      yield* domainsCreate(flags());
       // yaml.v3 lowercases the whole field name (CLI-1975).
       expect(out.stdoutText).toContain(`customhostname: ${CUSTOM_HOSTNAME}`);
       expect(out.stderrText).toBe("");
@@ -238,7 +238,7 @@ describe("legacy domains create integration", () => {
   it.live("forces Go JSON output when --include-raw-output is set", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacyDomainsCreate(flags({ includeRawOutput: true }));
+      yield* domainsCreate(flags({ includeRawOutput: true }));
       expect(out.stdoutText.startsWith("{")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -246,16 +246,16 @@ describe("legacy domains create integration", () => {
   it.live("emits a structured success object for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacyDomainsCreate(flags());
+      yield* domainsCreate(flags());
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ custom_hostname: CUSTOM_HOSTNAME });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyDomainsUnexpectedStatusError when the API returns 503", () => {
+  it.live("fails with DomainsUnexpectedStatusError when the API returns 503", () => {
     const { layer } = setup({ apiStatus: 503 });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
+      const exit = yield* Effect.exit(domainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("unexpected create hostname status 503");
@@ -263,10 +263,10 @@ describe("legacy domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyDomainsNetworkError when the create request fails", () => {
+  it.live("fails with DomainsNetworkError when the create request fails", () => {
     const { layer } = setup({ apiNetwork: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
+      const exit = yield* Effect.exit(domainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("failed to create custom hostname");
@@ -277,7 +277,7 @@ describe("legacy domains create integration", () => {
   it.live("maps an API error without a spinner in json mode", () => {
     const { layer, out } = setup({ format: "json", apiStatus: 503 });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
+      const exit = yield* Effect.exit(domainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(out.progressEvents).toHaveLength(0);
     }).pipe(Effect.provide(layer));

@@ -27,12 +27,12 @@ Same auth fallback chain as every Management-API legacy command. Project-ref dis
 
 ## Exit Codes
 
-| Code | Condition                                                                               |
-| ---- | --------------------------------------------------------------------------------------- |
-| `0`  | success — branch updated                                                                |
-| `1`  | `LegacyBranchesUpdateUnexpectedStatusError` — non-200 response from the update endpoint |
-| `1`  | `LegacyBranchesUpdateNetworkError` — transport-level network failure                    |
-| `1`  | Branch-id resolution errors (find / config endpoints failed)                            |
+| Code | Condition                                                                         |
+| ---- | --------------------------------------------------------------------------------- |
+| `0`  | success — branch updated                                                          |
+| `1`  | `BranchesUpdateUnexpectedStatusError` — non-200 response from the update endpoint |
+| `1`  | `BranchesUpdateNetworkError` — transport-level network failure                    |
+| `1`  | Branch-id resolution errors (find / config endpoints failed)                      |
 
 ## Telemetry Events Fired
 
@@ -51,4 +51,4 @@ For `--output {json,yaml,toml,env}`, the header goes to stderr followed by the e
 
 ## Notes
 
-The upgrade-suggest call uses the branch's own resolved project ref (`legacyResolveBranchProjectRef`) — not the parent `--project-ref` value — so the entitlements check is scoped to the branch's org.
+The upgrade-suggest call uses the branch's own resolved project ref (`resolveBranchProjectRef`) — not the parent `--project-ref` value — so the entitlements check is scoped to the branch's org.

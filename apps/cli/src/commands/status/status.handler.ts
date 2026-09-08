@@ -1,54 +1,54 @@
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option } from "effect";
 
-import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
-import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../shared/legacy/global-flags.ts";
+import { CommandSettings } from "../../config/command-settings.service.ts";
+import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { MachineErrorContext } from "../../shared/output/machine-error-context.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import { legacyAqua } from "../../command-internal/legacy-colors.ts";
+import { aqua } from "../../command-internal/colors.ts";
 import {
-  legacyCliProjectFilterValue,
-  legacyServiceContainerIds,
+  cliProjectFilterValue,
+  serviceContainerIds,
   localDbContainerId,
-} from "../../command-internal/legacy-docker-ids.ts";
+} from "../../command-internal/docker-ids.ts";
 import {
-  legacyInspectContainerState,
-  legacyListContainersByLabel,
-} from "../../command-internal/legacy-docker-lifecycle.ts";
+  inspectContainerState,
+  listContainersByLabel,
+} from "../../command-internal/docker-lifecycle.ts";
 import {
   encodeEnv,
   encodeGoJson,
   encodeToml,
   encodeYaml,
-} from "../../command-internal/legacy-go-output.encoders.ts";
+} from "../../command-internal/go-output.encoders.ts";
 import {
-  legacyFormatLinkedStateBlock,
-  legacyLinkedStateGoFields,
-  legacyLinkedStateJsonField,
-  legacyResolveLinkedState,
-} from "../../command-internal/legacy-linked-state.ts";
-import { legacyLoadLocalProjectContext } from "../../command-internal/legacy-local-project-context.ts";
+  formatLinkedStateBlock,
+  linkedStateGoFields,
+  linkedStateJsonField,
+  resolveLinkedState,
+} from "../../command-internal/linked-state.ts";
+import { loadLocalProjectContext } from "../../command-internal/local-project-context.ts";
 import {
-  LegacyStatusConfigLoadError,
-  LegacyStatusDbInspectError,
-  LegacyStatusDbNotReadyError,
-  LegacyStatusDbNotRunningError,
-  LegacyStatusInvalidConfigError,
-  LegacyStatusListError,
-  LegacyStatusOverrideParseError,
-  LegacyStatusWorkdirError,
-} from "../../command-internal/legacy-status-errors.ts";
-import { legacyRenderStatusPretty } from "../../command-internal/legacy-status-pretty.ts";
+  StatusConfigLoadError,
+  StatusDbInspectError,
+  StatusDbNotReadyError,
+  StatusDbNotRunningError,
+  StatusInvalidConfigError,
+  StatusListError,
+  StatusOverrideParseError,
+  StatusWorkdirError,
+} from "../../command-internal/status-errors.ts";
+import { renderStatusPretty } from "../../command-internal/status-pretty.ts";
 import {
-  LEGACY_STATUS_FIELDS,
-  legacyGateStatusState,
-  legacyResolveStatusLocalState,
-  legacyStatusContainerIds,
-  legacyStatusValuesFromState,
-} from "../../command-internal/legacy-status-values.ts";
-import { legacyValidateWorkdirIsDirectory } from "../../command-internal/legacy-workdir-validation.ts";
-import type { LegacyStatusFlags } from "./status.command.ts";
+  STATUS_FIELDS,
+  gateStatusState,
+  resolveStatusLocalState,
+  statusContainerIds,
+  statusValuesFromState,
+} from "../../command-internal/status-values.ts";
+import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
+import type { StatusFlags } from "./status.command.ts";
 
 /**
  * Parses `--override-name api.url=NEXT_PUBLIC_SUPABASE_URL` entries into a
@@ -60,14 +60,14 @@ import type { LegacyStatusFlags } from "./status.command.ts";
  */
 function parseOverrides(
   entries: ReadonlyArray<string>,
-): Effect.Effect<ReadonlyMap<string, string>, LegacyStatusOverrideParseError> {
-  const knownKeys = new Set(LEGACY_STATUS_FIELDS.map((field) => field.fieldKey));
+): Effect.Effect<ReadonlyMap<string, string>, StatusOverrideParseError> {
+  const knownKeys = new Set(STATUS_FIELDS.map((field) => field.fieldKey));
   const overrides = new Map<string, string>();
   for (const entry of entries) {
     const separatorIndex = entry.indexOf("=");
     if (separatorIndex <= 0) {
       return Effect.fail(
-        new LegacyStatusOverrideParseError({
+        new StatusOverrideParseError({
           message: `invalid override-name entry, expected KEY=VALUE: ${entry}`,
         }),
       );
@@ -87,11 +87,11 @@ function formatGoStringSlice(items: ReadonlyArray<string>): string {
   return `[${items.join(" ")}]`;
 }
 
-export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyStatusFlags) {
+export const status = Effect.fn("status")(function* (flags: StatusFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const cliSettings = yield* LegacyCliSettings;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const cliSettings = yield* CommandSettings;
+  const telemetryState = yield* TelemetryState;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
 
@@ -111,9 +111,9 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // is visible even when status subsequently fails to connect to Docker.
     // Lives INSIDE the telemetry-ensured scope: an interruption during the
     // (bounded) lookup must still flush telemetry state (PR #6168 review).
-    const linkedState = yield* legacyResolveLinkedState();
+    const linkedState = yield* resolveLinkedState();
     if (output.format === "text" && (goFmt === undefined || goFmt === "pretty")) {
-      yield* output.raw(legacyFormatLinkedStateBlock(linkedState));
+      yield* output.raw(formatLinkedStateBlock(linkedState));
     }
     if (output.format === "json" || output.format === "stream-json") {
       // TS-only QoL (CLI-2167 follow-up): the agent-discovery use case for this
@@ -128,7 +128,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
       const machineErrorContext = yield* Effect.serviceOption(MachineErrorContext);
       if (Option.isSome(machineErrorContext)) {
         yield* machineErrorContext.value.set({
-          linked_project: legacyLinkedStateJsonField(linkedState),
+          linked_project: linkedStateJsonField(linkedState),
         });
       }
     }
@@ -137,8 +137,8 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // unconditionally — before `status`'s own
     // override-name parsing or handler body. A missing or non-directory
     // path fails immediately, so this must win over every later error.
-    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
-      Effect.mapError((error) => new LegacyStatusWorkdirError({ message: error.message })),
+    yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
+      Effect.mapError((error) => new StatusWorkdirError({ message: error.message })),
     );
 
     // 1. `--override-name KEY=VALUE` parsing runs before config load or any
@@ -147,35 +147,35 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // touches Docker — it must win over
     // a config-load error or a Docker/DB health-check error, not be masked by
     // either. `overrides` itself is only consumed much later, by
-    // `legacyStatusValuesFromState` below.
+    // `statusValuesFromState` below.
     const overrides = yield* parseOverrides(flags.overrideName);
 
     // 2. `status` always needs config, unlike `stop`. An
     // ABSENT config.toml is not a hard failure: config loading treats a missing
     // file as a no-op and proceeds with template defaults. Only a MALFORMED
     // file is a hard error.
-    // `legacyLoadLocalProjectContext` mirrors that (decoding an empty document
+    // `loadLocalProjectContext` mirrors that (decoding an empty document
     // through the schema for its defaults) and also resolves the sanitized,
     // config/env-derived project id used below — see its own doc comment for
     // the full rationale (including why workdir validation stays out
     // of it and is instead handled by step 0 above).
-    const context = yield* legacyLoadLocalProjectContext(
+    const context = yield* loadLocalProjectContext(
       cliSettings.workdir,
-      (message) => new LegacyStatusConfigLoadError({ message }),
+      (message) => new StatusConfigLoadError({ message }),
     );
 
     // 3. Resolve + VALIDATE config-derived state before any Docker call —
     // config load + validation run entirely before the health check/container
-    // listing below. `legacyResolveStatusLocalState`
-    // can throw `LegacyInvalidJwtSecretError` (a short `auth.jwt_secret`),
-    // `LegacyInvalidPortEnvOverrideError`/`LegacyInvalidBoolEnvOverrideError`
+    // listing below. `resolveStatusLocalState`
+    // can throw `InvalidJwtSecretError` (a short `auth.jwt_secret`),
+    // `InvalidPortEnvOverrideError`/`InvalidBoolEnvOverrideError`
     // (a malformed `SUPABASE_*_PORT`/`SUPABASE_*_ENABLED` override), or a
     // signing-keys-file read/parse error — all of these must fail here, not
     // be masked by a Docker/DB error when the local stack happens to be
     // unavailable.
     const localState = yield* Effect.try({
       try: () =>
-        legacyResolveStatusLocalState(
+        resolveStatusLocalState(
           context.config,
           context.hostname,
           cliSettings.workdir,
@@ -183,7 +183,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
           context.loaded?.document,
         ),
       catch: (cause) =>
-        new LegacyStatusInvalidConfigError({
+        new StatusInvalidConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
         }),
     });
@@ -193,7 +193,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // validation produces once at config-load time — every reader, including
     // the Docker LABEL `start` writes, sees that same
     // sanitized string, so `status` must filter on it too (see
-    // `legacyCliProjectFilterValue`'s doc comment).
+    // `cliProjectFilterValue`'s doc comment).
     const projectId = context.projectId;
     const dbContainerId = localDbContainerId(projectId);
 
@@ -202,22 +202,22 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // container fails the inspect call itself, which surfaces as the generic
     // inspect error, not the "not running" branch (which
     // only applies to a present-but-stopped container).
-    // `legacyInspectContainerState` mirrors that: a missing container is just
+    // `inspectContainerState` mirrors that: a missing container is just
     // another non-zero exit, mapped below with the real Docker stderr text.
     if (!flags.ignoreHealthCheck) {
-      const state = yield* legacyInspectContainerState(spawner, dbContainerId).pipe(
-        Effect.mapError((cause) => new LegacyStatusDbInspectError({ message: cause.message })),
+      const state = yield* inspectContainerState(spawner, dbContainerId).pipe(
+        Effect.mapError((cause) => new StatusDbInspectError({ message: cause.message })),
       );
       if (!state.running) {
         return yield* Effect.fail(
-          new LegacyStatusDbNotRunningError({
+          new StatusDbNotRunningError({
             message: `${dbContainerId} container is not running: ${state.status}`,
           }),
         );
       }
       if (state.health !== undefined && state.health !== "healthy") {
         return yield* Effect.fail(
-          new LegacyStatusDbNotReadyError({
+          new StatusDbNotReadyError({
             message: `${dbContainerId} container is not ready: ${state.health}`,
           }),
         );
@@ -226,14 +226,14 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
 
     // 6. List running containers, diff against the 13 expected service ids,
     // and report any that are stopped.
-    const filterValue = legacyCliProjectFilterValue(projectId);
-    const runningNames = yield* legacyListContainersByLabel(spawner, {
+    const filterValue = cliProjectFilterValue(projectId);
+    const runningNames = yield* listContainersByLabel(spawner, {
       projectIdFilter: filterValue,
       all: false,
       format: "names",
-    }).pipe(Effect.mapError((cause) => new LegacyStatusListError({ message: cause.message })));
+    }).pipe(Effect.mapError((cause) => new StatusListError({ message: cause.message })));
     const runningSet = new Set(runningNames);
-    const serviceIds = legacyServiceContainerIds(projectId);
+    const serviceIds = serviceContainerIds(projectId);
     const stopped = serviceIds.filter((id) => !runningSet.has(id));
     if (stopped.length > 0) {
       yield* output.raw(`Stopped services: ${formatGoStringSlice(stopped)}\n`, "stderr");
@@ -244,12 +244,12 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
 
     // 8. Apply the exclude-based gating on top of the already-validated
     // `localState`.
-    // Pure/non-throwing — see `legacyGateStatusState`'s doc comment. Reused
+    // Pure/non-throwing — see `gateStatusState`'s doc comment. Reused
     // for both the real and pretty-mode (empty-override) value maps below,
     // matching this handler's pre-split behavior.
-    const containerIds = legacyStatusContainerIds(projectId);
-    const state = legacyGateStatusState(localState, containerIds, excluded);
-    const { values } = legacyStatusValuesFromState(state, overrides);
+    const containerIds = statusContainerIds(projectId);
+    const state = gateStatusState(localState, containerIds, excluded);
+    const { values } = statusValuesFromState(state, overrides);
 
     // The pretty renderer always uses a FRESH, empty override map
     // rather than reusing the CLI-supplied, override-populated `names` —
@@ -259,12 +259,9 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // rendered table stays consistent without leaking `--override-name` into
     // pretty-mode output, and without a second (throwing) state resolution.
     const renderPretty = Effect.fnUntraced(function* () {
-      yield* output.raw(
-        `${legacyAqua("supabase")} local development setup is running.\n\n`,
-        "stderr",
-      );
-      const pretty = legacyStatusValuesFromState(state, new Map());
-      yield* output.raw(legacyRenderStatusPretty(pretty.values, pretty.names));
+      yield* output.raw(`${aqua("supabase")} local development setup is running.\n\n`, "stderr");
+      const pretty = statusValuesFromState(state, new Map());
+      yield* output.raw(renderStatusPretty(pretty.values, pretty.names));
     });
 
     // 9. Output branching (goFmt hoisted above): Go's -o (env|json|toml|yaml|pretty)
@@ -284,7 +281,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // would otherwise silently overwrite our additive field with the API URL,
     // or vice versa depending on spread order. The existing/overridden payload
     // always takes priority over this extension, never the other way round.
-    const valuesWithLinkedState = { ...legacyLinkedStateGoFields(linkedState), ...values };
+    const valuesWithLinkedState = { ...linkedStateGoFields(linkedState), ...values };
 
     if (goFmt === "env") {
       yield* output.raw(encodeEnv(valuesWithLinkedState) + "\n");
@@ -315,7 +312,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
       // `linked_project` always wins over this extension (PR #6168 review) —
       // same existing-payload-always-wins rule as `valuesWithLinkedState` above.
       yield* output.success("", {
-        linked_project: legacyLinkedStateJsonField(linkedState),
+        linked_project: linkedStateJsonField(linkedState),
         ...values,
       });
       return;

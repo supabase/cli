@@ -14,9 +14,7 @@ import {
  * makes for the same reason, rather than emitting output that silently omits
  * the data.
  */
-export class LegacyWorkersEnvNotSupportedError extends Data.TaggedError(
-  "LegacyWorkersEnvNotSupportedError",
-)<{
+export class WorkersEnvNotSupportedError extends Data.TaggedError("WorkersEnvNotSupportedError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -31,13 +29,13 @@ export class LegacyWorkersEnvNotSupportedError extends Data.TaggedError(
  * `-o json|yaml|toml` and `--output-format json` each promise exactly one
  * terminal payload, and an unbounded tail has no last element to put in it.
  * Refused up front rather than at the first emission, for the same reason
- * {@link LegacyWorkersEnvNotSupportedError} is: discovering it later means
+ * {@link WorkersEnvNotSupportedError} is: discovering it later means
  * failing after the first query has been paid for.
  *
  * `--output-format stream-json` is the streaming machine format and is allowed.
  */
-export class LegacyWorkersFollowNotSupportedError extends Data.TaggedError(
-  "LegacyWorkersFollowNotSupportedError",
+export class WorkersFollowNotSupportedError extends Data.TaggedError(
+  "WorkersFollowNotSupportedError",
 )<{
   readonly message: string;
 }> {

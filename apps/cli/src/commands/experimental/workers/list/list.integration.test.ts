@@ -4,18 +4,18 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option } from "effect";
 import {
   makeWorkersProject,
-  setupLegacyWorkers,
+  setupWorkers,
   workerResource,
   workersRoute,
   WORKERS_PROJECT_REF,
-} from "../../../../../tests/helpers/legacy-workers.ts";
-import { LegacyProjectNotLinkedError } from "../../../../config/legacy-project-ref.errors.ts";
-import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
+} from "../../../../../tests/helpers/workers.ts";
+import { ProjectRefNotLinkedError } from "../../../../config/project-ref.errors.ts";
+import { WorkersEnvNotSupportedError } from "../workers.errors.ts";
 import {
   WorkersApiUnexpectedStatusError,
   WorkersUnavailableError,
 } from "../../../../shared/workers/workers.errors.ts";
-import { legacyWorkersList } from "./list.handler.ts";
+import { workersList } from "./list.handler.ts";
 
 const CONFIG = `project_id = "demo"
 
@@ -40,7 +40,7 @@ const listRoute = `GET ${workersRoute()}`;
 describe("legacy workers list", () => {
   it.live("shows configured and deployed workers as one inventory", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [listRoute]: {
@@ -61,7 +61,7 @@ describe("legacy workers list", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersList({ projectRef: Option.none() });
+      yield* workersList({ projectRef: Option.none() });
 
       const stdout = out.stdoutText;
       expect(stdout).toContain("NAME");
@@ -80,13 +80,13 @@ describe("legacy workers list", () => {
 
   it.live("does not assert a runtime for a worker that has never been deployed", () => {
     const repo = project(`project_id = "demo"\n\n[workers.ghost]\n`);
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: { [listRoute]: { status: 200, body: { data: [] } } },
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersList({ projectRef: Option.none() });
+      yield* workersList({ projectRef: Option.none() });
 
       const row = out.stdoutText.split("\n").find((line) => line.includes("ghost"));
       expect(row).toBeDefined();
@@ -106,7 +106,7 @@ describe("legacy workers list", () => {
       dir: created.dir,
       cleanup: () => rmSync(created.dir, { recursive: true, force: true }),
     };
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [listRoute]: {
@@ -117,7 +117,7 @@ describe("legacy workers list", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersList({ projectRef: Option.none() });
+      yield* workersList({ projectRef: Option.none() });
 
       expect(out.stderrText).toContain("stray");
       expect(out.stderrText).toContain("guess the runtime");
@@ -136,7 +136,7 @@ describe("legacy workers list", () => {
       dir: created.dir,
       cleanup: () => rmSync(created.dir, { recursive: true, force: true }),
     };
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [listRoute]: {
@@ -152,7 +152,7 @@ describe("legacy workers list", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersList({ projectRef: Option.none() });
+      yield* workersList({ projectRef: Option.none() });
 
       expect(out.stderrText).toContain("spare, stray are deployed but not in");
       expect(out.stderrText).toContain("guess the runtime");
@@ -164,7 +164,7 @@ describe("legacy workers list", () => {
   // way out.
   it.live("shows a worker being torn down as deleting", () => {
     const repo = project(`project_id = "demo"\n\n[workers.api]\nruntime = "node"\n`);
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [listRoute]: {
@@ -175,7 +175,7 @@ describe("legacy workers list", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersList({ projectRef: Option.none() });
+      yield* workersList({ projectRef: Option.none() });
 
       expect(out.stdoutText).toContain("deleting");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -186,7 +186,7 @@ describe("legacy workers list", () => {
   // wrong prerequisite for this one.
   it.live("tells a worker with no local source to restore it, not to expect a guess", () => {
     const repo = project(`project_id = "demo"\n`);
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [listRoute]: {
@@ -197,7 +197,7 @@ describe("legacy workers list", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersList({ projectRef: Option.none() });
+      yield* workersList({ projectRef: Option.none() });
 
       expect(out.stderrText).toContain("no source in this project");
       expect(out.stderrText).not.toContain("guess the runtime");
@@ -206,13 +206,13 @@ describe("legacy workers list", () => {
 
   it.live("says so when the project has no workers at all", () => {
     const repo = project(`project_id = "demo"\n`);
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: { [listRoute]: { status: 200, body: { data: [] } } },
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersList({ projectRef: Option.none() });
+      yield* workersList({ projectRef: Option.none() });
 
       expect(out.stdoutText).toContain(
         "No workers found. Scaffold one with supabase experimental workers new <name>.",
@@ -222,7 +222,7 @@ describe("legacy workers list", () => {
 
   it.live("emits the inventory as structured data in json mode", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       format: "json",
       routes: {
@@ -234,7 +234,7 @@ describe("legacy workers list", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersList({ projectRef: Option.none() });
+      yield* workersList({ projectRef: Option.none() });
 
       const success = out.messages.findLast(
         (message) => message.type === "success" && message.data !== undefined,
@@ -269,7 +269,7 @@ describe("legacy workers list", () => {
 
   it.live("serialises the inventory for the Go -o flag", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       goOutput: "json",
       routes: {
@@ -281,7 +281,7 @@ describe("legacy workers list", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersList({ projectRef: Option.none() });
+      yield* workersList({ projectRef: Option.none() });
 
       // `-o` payloads own stdout outright: no clack success line may share it.
       const parsed = JSON.parse(out.stdoutText);
@@ -293,23 +293,23 @@ describe("legacy workers list", () => {
 
   it.live("refuses -o env before making any request at all", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       goOutput: "env",
       routes: { [listRoute]: { status: 200, body: { data: [] } } },
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersList({ projectRef: Option.none() }).pipe(Effect.flip);
+      const error = yield* workersList({ projectRef: Option.none() }).pipe(Effect.flip);
 
-      expect(error).toBeInstanceOf(LegacyWorkersEnvNotSupportedError);
+      expect(error).toBeInstanceOf(WorkersEnvNotSupportedError);
       expect(http.routeKeys).toEqual([]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
   it.live("reports a project outside the alpha as unavailable", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [listRoute]: {
@@ -325,7 +325,7 @@ describe("legacy workers list", () => {
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersList({ projectRef: Option.none() }).pipe(Effect.flip);
+      const error = yield* workersList({ projectRef: Option.none() }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkersUnavailableError);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -333,13 +333,13 @@ describe("legacy workers list", () => {
 
   it.live("surfaces an unexpected status rather than showing an empty list", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: { [listRoute]: { status: 500, body: { message: "boom" } } },
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersList({ projectRef: Option.none() }).pipe(Effect.flip);
+      const error = yield* workersList({ projectRef: Option.none() }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkersApiUnexpectedStatusError);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -347,7 +347,7 @@ describe("legacy workers list", () => {
 
   it.live("uses an explicit --project-ref without a linked project", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       linked: false,
       routes: {
@@ -356,7 +356,7 @@ describe("legacy workers list", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersList({ projectRef: Option.some("qrstuvwxyzabcdefghij") });
+      yield* workersList({ projectRef: Option.some("qrstuvwxyzabcdefghij") });
 
       expect(http.routeKeys).toEqual(["GET /v2/projects/qrstuvwxyzabcdefghij/workers"]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -364,12 +364,12 @@ describe("legacy workers list", () => {
 
   it.live("requires a linked project when no ref is given", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({ workdir: repo.dir, linked: false });
+    const { layer } = setupWorkers({ workdir: repo.dir, linked: false });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersList({ projectRef: Option.none() }).pipe(Effect.flip);
+      const error = yield* workersList({ projectRef: Option.none() }).pipe(Effect.flip);
 
-      expect(error).toBeInstanceOf(LegacyProjectNotLinkedError);
+      expect(error).toBeInstanceOf(ProjectRefNotLinkedError);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -380,13 +380,13 @@ describe("legacy workers list", () => {
     const repo = project('project_id = "demo"\n');
     mkdirSync(join(repo.dir, "supabase", "workers", "scaffolded"), { recursive: true });
     writeFileSync(join(repo.dir, "supabase", "workers", "scaffolded", "index.js"), "export {};\n");
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: { [listRoute]: { status: 200, body: { data: [] } } },
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersList({ projectRef: Option.none() });
+      yield* workersList({ projectRef: Option.none() });
 
       expect(out.stdoutText).toContain("scaffolded");
       expect(out.stdoutText).not.toContain("No workers found");
@@ -401,7 +401,7 @@ describe("legacy workers list", () => {
   // config there made `-o json` report a runtime the text table contradicted.
   it.live("reports a deployed dockerfile worker as dockerfile in both renderings", () => {
     const repo = project('project_id = "demo"\n\n[workers.api]\nruntime = "node"\n');
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       format: "json",
       routes: {
@@ -410,7 +410,7 @@ describe("legacy workers list", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersList({ projectRef: Option.none() });
+      yield* workersList({ projectRef: Option.none() });
 
       const success = out.messages.findLast(
         (message) => message.type === "success" && message.data !== undefined,
@@ -424,7 +424,7 @@ describe("legacy workers list", () => {
   // that they are omitted rather than rendered or thrown on.
   it.live("encodes TOML for an inventory holding undeployed and private workers", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       goOutput: "toml",
       routes: {
@@ -438,7 +438,7 @@ describe("legacy workers list", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersList({ projectRef: Option.none() });
+      yield* workersList({ projectRef: Option.none() });
 
       expect(out.stdoutText).toContain("project_ref = ");
       expect(out.stdoutText).not.toContain("undefined");
@@ -447,7 +447,7 @@ describe("legacy workers list", () => {
 
   it.live("encodes YAML when -o yaml asks for it", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       goOutput: "yaml",
       routes: {
@@ -459,7 +459,7 @@ describe("legacy workers list", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersList({ projectRef: Option.none() });
+      yield* workersList({ projectRef: Option.none() });
 
       expect(out.stdoutText).toContain("project_ref:");
       expect(out.stdoutText).toContain("name: api");
@@ -476,7 +476,7 @@ describe("legacy workers list", () => {
     "renders text rather than TOML for -o %s",
     (goOutput) => {
       const repo = project();
-      const { layer, out } = setupLegacyWorkers({
+      const { layer, out } = setupWorkers({
         workdir: repo.dir,
         goOutput,
         routes: {
@@ -488,7 +488,7 @@ describe("legacy workers list", () => {
       });
 
       return Effect.gen(function* () {
-        yield* legacyWorkersList({ projectRef: Option.none() });
+        yield* workersList({ projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("NAME");
         expect(out.stdoutText).not.toContain("project_ref = ");
@@ -498,16 +498,16 @@ describe("legacy workers list", () => {
 
   it.live("flushes telemetry when the project config cannot be loaded", () => {
     const repo = project("project_id = [unclosed\n");
-    const { layer, telemetry } = setupLegacyWorkers({ workdir: repo.dir });
+    const { layer, telemetry } = setupWorkers({ workdir: repo.dir });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersList({ projectRef: Option.none() }).pipe(Effect.flip);
+      yield* workersList({ projectRef: Option.none() }).pipe(Effect.flip);
 
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // CLI-2285: `legacyLoadWorkersProject`'s JSON-capable read must thread the
+  // CLI-2285: `loadWorkersProject`'s JSON-capable read must thread the
   // ancestor-search predicate — the workdir's own default resolution only
   // probes config.toml, so a config.json-only project invoked from a
   // subdirectory relied on this second climb to be found at all.
@@ -523,14 +523,14 @@ describe("legacy workers list", () => {
       const sub = join(created.dir, "nested", "dir");
       mkdirSync(sub, { recursive: true });
       const cleanup = () => rmSync(created.dir, { recursive: true, force: true });
-      const { layer, out } = setupLegacyWorkers({
+      const { layer, out } = setupWorkers({
         workdir: sub,
         explicitWorkdir: false,
         routes: { [listRoute]: { status: 200, body: { data: [] } } },
       });
 
       return Effect.gen(function* () {
-        yield* legacyWorkersList({ projectRef: Option.none() });
+        yield* workersList({ projectRef: Option.none() });
 
         const row = out.stdoutText.split("\n").find((line) => line.includes("api"));
         expect(row).toBeDefined();
@@ -552,14 +552,14 @@ describe("legacy workers list", () => {
       const sub = join(created.dir, "nested", "dir");
       mkdirSync(sub, { recursive: true });
       const cleanup = () => rmSync(created.dir, { recursive: true, force: true });
-      const { layer, out } = setupLegacyWorkers({
+      const { layer, out } = setupWorkers({
         workdir: sub,
         explicitWorkdir: true,
         routes: { [listRoute]: { status: 200, body: { data: [] } } },
       });
 
       return Effect.gen(function* () {
-        yield* legacyWorkersList({ projectRef: Option.none() });
+        yield* workersList({ projectRef: Option.none() });
 
         expect(out.stdoutText).not.toContain("api");
         expect(out.stdoutText).toContain("No workers found.");

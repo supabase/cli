@@ -1,47 +1,47 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import type { LegacyDbConnType } from "../../../command-internal/legacy-db-target-flags.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
 import {
-  legacyApplyProjectEnv,
-  legacyLoadProjectEnv,
-  legacyReadDbToml,
-} from "../../../command-internal/legacy-db-config.toml-read.ts";
-import { legacyResolveDbImage } from "../../../command-internal/legacy-db-image.ts";
+  applyProjectEnv,
+  loadProjectEnv,
+  readDbToml,
+} from "../../../command-internal/db-config.toml-read.ts";
+import { resolveDbImage } from "../../../command-internal/db-image.ts";
 import {
-  legacyIpv6Suggestion,
-  legacyIsIPv6ConnectivityError,
-} from "../../../command-internal/legacy-connect-errors.ts";
-import { legacyBold, legacyYellow } from "../../../command-internal/legacy-colors.ts";
-import { LegacyDnsResolverFlag } from "../../../shared/legacy/global-flags.ts";
+  ipv6Suggestion,
+  isIPv6ConnectivityError,
+} from "../../../command-internal/connect-errors.ts";
+import { bold, yellow } from "../../../command-internal/colors.ts";
+import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import type { LegacyDbDumpFlags } from "./dump.command.ts";
+import type { DbDumpFlags } from "./dump.command.ts";
 import {
-  LegacyDbDumpMutuallyExclusiveFlagsError,
-  LegacyDbDumpOpenFileError,
-  LegacyDbDumpRequiresDataOnlyError,
-  LegacyDbDumpRunError,
+  DbDumpMutuallyExclusiveFlagsError,
+  DbDumpOpenFileError,
+  DbDumpRequiresDataOnlyError,
+  DbDumpRunError,
 } from "./dump.errors.ts";
 import {
-  legacyBuildDataDumpEnv,
-  legacyBuildRoleDumpEnv,
-  legacyBuildSchemaDumpEnv,
-  legacyExpandScript,
-} from "../../../command-internal/legacy-pg-dump.env.ts";
-import { legacyStreamPgDump } from "../../../command-internal/legacy-pg-dump.run.ts";
-import { legacyRunWithPoolerFallback } from "../shared/legacy-pooler-fallback.ts";
+  buildDataDumpEnv,
+  buildRoleDumpEnv,
+  buildSchemaDumpEnv,
+  expandScript,
+} from "../../../command-internal/pg-dump.env.ts";
+import { streamPgDump } from "../../../command-internal/pg-dump.run.ts";
+import { runWithPoolerFallback } from "../shared/pooler-fallback.ts";
 import {
-  legacyDumpDataScript,
-  legacyDumpRoleScript,
-  legacyDumpSchemaScript,
-} from "../../../command-internal/legacy-pg-dump.scripts.ts";
+  dumpDataScript,
+  dumpRoleScript,
+  dumpSchemaScript,
+} from "../../../command-internal/pg-dump.scripts.ts";
 
 /**
  * Mutually-exclusive flag groups, in the established check order (the group
@@ -49,7 +49,7 @@ import {
  * order, matching the `[group]` in the error text; the set of violating
  * flags is alphabetised separately by `cobraMutuallyExclusiveErrorMessage`.
  */
-const LEGACY_DUMP_EXCLUSIVE_GROUPS = [
+const DUMP_EXCLUSIVE_GROUPS = [
   ["db-url", "linked", "local"],
   ["keep-comments", "data-only"],
   ["role-only", "data-only"],
@@ -60,17 +60,17 @@ const DUMP_FILE_MODE = 0o644;
 
 /** Map a filesystem error to the `--file` open-failure error. */
 const toOpenFileError = (cause: { readonly message: string }) =>
-  new LegacyDbDumpOpenFileError({ message: `failed to open dump file: ${cause.message}` });
+  new DbDumpOpenFileError({ message: `failed to open dump file: ${cause.message}` });
 
-export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: LegacyDbDumpFlags) {
+export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
   const output = yield* Output;
-  const resolver = yield* LegacyDbConfigResolver;
-  const cliSettings = yield* LegacyCliSettings;
-  const telemetryState = yield* LegacyTelemetryState;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
+  const resolver = yield* DbConfigResolver;
+  const cliSettings = yield* CommandSettings;
+  const telemetryState = yield* TelemetryState;
+  const linkedProjectCache = yield* LinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const dnsResolver = yield* LegacyDnsResolverFlag;
+  const dnsResolver = yield* DnsResolverFlag;
   const tty = yield* Tty;
   const runtimeInfo = yield* RuntimeInfo;
 
@@ -80,12 +80,12 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
 
   yield* Effect.gen(function* () {
     // Make an allowlisted `supabase/.env` registry override visible to the
-    // synchronous `process.env` reader in `legacyGetRegistryImageUrl` (the pg_dump
-    // image), reverted when this scope closes. The pure `legacyLoadProjectEnv` does
+    // synchronous `process.env` reader in `getRegistryImageUrl` (the pg_dump
+    // image), reverted when this scope closes. The pure `loadProjectEnv` does
     // not apply the env as a side effect of `resolveDbPassword`, so `db dump` opts
     // in explicitly here.
-    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
-    yield* legacyApplyProjectEnv(projectEnv);
+    const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+    yield* applyProjectEnv(projectEnv);
 
     // The grouped boolean flags are modelled as `Option` (presence = explicitly
     // set) for the mutex/target checks; resolve their effective values here for
@@ -100,7 +100,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     //    dump with dataOnly=false. Gate on absence, not the resolved value.
     if ((flags.useCopy || flags.exclude.length > 0) && Option.isNone(flags.dataOnly)) {
       return yield* Effect.fail(
-        new LegacyDbDumpRequiresDataOnlyError({
+        new DbDumpRequiresDataOnlyError({
           message: `required flag(s) "data-only" not set`,
         }),
       );
@@ -129,11 +129,11 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
           return false;
       }
     };
-    for (const group of LEGACY_DUMP_EXCLUSIVE_GROUPS) {
+    for (const group of DUMP_EXCLUSIVE_GROUPS) {
       const set = group.filter(isSet);
       if (set.length > 1) {
         return yield* Effect.fail(
-          new LegacyDbDumpMutuallyExclusiveFlagsError({
+          new DbDumpMutuallyExclusiveFlagsError({
             message: cobraMutuallyExclusiveErrorMessage(group, set),
           }),
         );
@@ -148,7 +148,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // `connType` selects the resolver branch (explicitly-set-first precedence):
     // a `--db-url` wins, then explicit `--local`; otherwise dump defaults to
     // linked (unlike the other db commands, whose unset default is local).
-    const connType: LegacyDbConnType = Option.isSome(flags.dbUrl)
+    const connType: DbConnType = Option.isSome(flags.dbUrl)
       ? "db-url"
       : useLocal
         ? "local"
@@ -158,7 +158,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // for the full TS-only rationale.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
       return yield* Effect.fail(
-        new LegacyDbDumpMutuallyExclusiveFlagsError({
+        new DbDumpMutuallyExclusiveFlagsError({
           message:
             "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         }),
@@ -174,7 +174,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // is unchanged, and an unvalidated raw `--project-ref` value is never stored for
     // the cache finalizer to send to the Management API.
     if (connType === "linked") {
-      const refResolver = yield* LegacyProjectRefResolver;
+      const refResolver = yield* ProjectRefResolver;
       linkedRefForCache = yield* refResolver.loadProjectRef(flags.projectRef);
     }
     const {
@@ -202,11 +202,11 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // dry-run print. The merged config is validated even for `--dry-run`, so an
     // invalid merged config (e.g. an unsupported remote `db.major_version` or a
     // malformed remote `project_id`) fails rather than silently printing a script.
-    const tomlValues = yield* legacyReadDbToml(fs, path, cliSettings.workdir, linkedRef);
+    const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
 
-    // 4. Pick the mode-specific script + env (pure builders, `legacy-pg-dump.env.ts`).
+    // 4. Pick the mode-specific script + env (pure builders, `pg-dump.env.ts`).
     //    --schema/-s and --exclude/-x are CSV string-slice values, CSV-parsed at
-    //    the flag level via `legacyParseSchemaFlags` (quoted commas preserved,
+    //    the flag level via `parseSchemaFlags` (quoted commas preserved,
     //    malformed CSV rejected at parse time), so they arrive here already
     //    split — matching `gen types` / `db lint` / declarative.
     const opt = {
@@ -218,17 +218,17 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // The script + diagnostic verb are connection-independent; the env is rebuilt
     // per connection so the pooler-fallback retry can target a different host.
     const mode = dataOnly
-      ? ({ verb: "data", script: legacyDumpDataScript, buildEnv: legacyBuildDataDumpEnv } as const)
+      ? ({ verb: "data", script: dumpDataScript, buildEnv: buildDataDumpEnv } as const)
       : roleOnly
         ? ({
             verb: "roles",
-            script: legacyDumpRoleScript,
-            buildEnv: legacyBuildRoleDumpEnv,
+            script: dumpRoleScript,
+            buildEnv: buildRoleDumpEnv,
           } as const)
         : ({
             verb: "schemas",
-            script: legacyDumpSchemaScript,
-            buildEnv: legacyBuildSchemaDumpEnv,
+            script: dumpSchemaScript,
+            buildEnv: buildSchemaDumpEnv,
           } as const);
     const modeEnv = mode.buildEnv(conn, opt);
 
@@ -241,14 +241,14 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     if (flags.dryRun) {
       yield* output.raw("DRY RUN: *only* printing the pg_dump script to console.\n", "stderr");
       yield* output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr");
-      yield* output.raw(`${legacyExpandScript(mode.script, modeEnv)}\n`);
+      yield* output.raw(`${expandScript(mode.script, modeEnv)}\n`);
       // The file is never opened on dry-run, but `Dumped schema to <abs>.` is
       // still printed when `--file` is set, with no dry-run guard. Emit the
       // same stderr line here WITHOUT creating/truncating the file. Resolve
       // the path like the real path (absolute, relative to the workdir).
       if (Option.isSome(fileFlag)) {
         const dryRunFile = path.resolve(cliSettings.workdir, fileFlag.value);
-        yield* output.raw(`Dumped schema to ${legacyBold(dryRunFile)}.\n`, "stderr");
+        yield* output.raw(`Dumped schema to ${bold(dryRunFile)}.\n`, "stderr");
       }
       return;
     }
@@ -257,7 +257,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // real container path; the dry-run script above is image-independent). The
     // file is never opened on dry-run, so it is created/truncated only here,
     // after the dry-run early return.
-    const { image } = yield* legacyResolveDbImage(
+    const { image } = yield* resolveDbImage(
       fs,
       path,
       cliSettings.workdir,
@@ -292,7 +292,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // 6. Diagnostic to stderr (printed for both real and dry-run paths).
     yield* output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr");
 
-    // 7. Run the pg_dump container, streaming stdout. `legacyStreamPgDump` applies
+    // 7. Run the pg_dump container, streaming stdout. `streamPgDump` applies
     //    the registry mirror + host networking (overridden by `--network-id`) and
     //    tees stderr.
     //
@@ -314,7 +314,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
                     const file = yield* fs
                       .open(resolvedFile.value, { flag: "a" })
                       .pipe(Effect.mapError(toOpenFileError));
-                    return yield* legacyStreamPgDump({
+                    return yield* streamPgDump({
                       image,
                       script: mode.script,
                       env,
@@ -329,7 +329,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
         : // stdout: write each chunk straight to stdout (binary-safe, no decode).
           // On a pooler retry the partial first-attempt bytes are left on
           // stdout (a pipe can't be rewound); streaming matches that.
-          legacyStreamPgDump({
+          streamPgDump({
             image,
             script: mode.script,
             env,
@@ -353,7 +353,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     //     actionable pg_dump failure is surfaced at step 9 rather than a
     //     fallback-setup error. `db dump` re-prints the "Dumping …" line on
     //     the retry.
-    const result = yield* legacyRunWithPoolerFallback({
+    const result = yield* runWithPoolerFallback({
       result: yield* runContainer(modeEnv),
       connType,
       host: conn.host,
@@ -388,23 +388,21 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     //    generic hint is restored.)
     if (result.exitCode !== 0) {
       return yield* Effect.fail(
-        new LegacyDbDumpRunError({
+        new DbDumpRunError({
           message: `error running container: exit ${result.exitCode}`,
-          ...(legacyIsIPv6ConnectivityError(result.stderr)
-            ? { suggestion: legacyIpv6Suggestion() }
-            : {}),
+          ...(isIPv6ConnectivityError(result.stderr) ? { suggestion: ipv6Suggestion() } : {}),
         }),
       );
     }
 
     // Report the absolute output path on stderr.
     if (Option.isSome(resolvedFile)) {
-      yield* output.raw(`Dumped schema to ${legacyBold(resolvedFile.value)}.\n`, "stderr");
+      yield* output.raw(`Dumped schema to ${bold(resolvedFile.value)}.\n`, "stderr");
     }
 
     if (sawNonAscii) {
       yield* output.raw(
-        `${legacyYellow("WARNING:")} The dump contains non-ASCII characters. ` +
+        `${yellow("WARNING:")} The dump contains non-ASCII characters. ` +
           "Some Windows shells (notably Windows PowerShell 5.1) corrupt them when redirecting " +
           "or piping output. If the result looks garbled, re-run with --file (e.g. -f dump.sql) " +
           "to write the dump directly to disk.\n",
@@ -422,7 +420,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     ),
     Effect.ensuring(telemetryState.flush),
     // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply above to this
-    // command run: `legacyApplyProjectEnv` registers a finalizer that reverts it.
+    // command run: `applyProjectEnv` registers a finalizer that reverts it.
     Effect.scoped,
   );
 });

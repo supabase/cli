@@ -5,62 +5,60 @@ import { Effect, Exit, Option } from "effect";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  LEGACY_VALID_REF,
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { legacyNetworkBansRemoveDbUnbanIpFlag } from "./remove.command.ts";
-import { legacyNetworkBansRemove } from "./remove.handler.ts";
+  VALID_REF,
+  buildTestRuntime,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { networkBansRemoveDbUnbanIpFlag } from "./remove.command.ts";
+import { networkBansRemove } from "./remove.handler.ts";
 
 // Runs the real `--db-unban-ip` flag pipeline (pflag StringSlice CSV parity —
 // `cmd/bans.go:48`) so these scenarios cover raw CLI values → request body.
 const parseDbUnbanIp = (rawValues: ReadonlyArray<string>) =>
-  legacyNetworkBansRemoveDbUnbanIpFlag
-    .parse({ flags: { "db-unban-ip": rawValues }, arguments: [] })
-    .pipe(
-      Effect.map(([, values]) => values),
-      Effect.provide(BunServices.layer),
-    );
+  networkBansRemoveDbUnbanIpFlag.parse({ flags: { "db-unban-ip": rawValues }, arguments: [] }).pipe(
+    Effect.map(([, values]) => values),
+    Effect.provide(BunServices.layer),
+  );
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  legacyOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
   status?: number;
   network?: "fail";
 }
 
-const tempRoot = useLegacyTempWorkdir("supabase-network-bans-remove-int-");
+const tempRoot = useTempWorkdir("supabase-network-bans-remove-int-");
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 200, body: null },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
-    goOutput: opts.legacyOutput === undefined ? Option.none() : Option.some(opts.legacyOutput),
+    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
   return { layer, out, api };
 }
 
 function setupTracked(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 200, body: null },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -74,14 +72,14 @@ describe("legacy network-bans remove integration", () => {
   it.live("removes bans and prints the success line in text mode", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
-      yield* legacyNetworkBansRemove({
+      yield* networkBansRemove({
         projectRef: Option.none(),
         dbUnbanIp: [],
       });
       expect(out.stdoutText).toBe("Successfully removed network bans.\n");
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.method).toBe("DELETE");
-      expect(api.requests[0]?.url).toContain(`/v1/projects/${LEGACY_VALID_REF}/network-bans`);
+      expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/network-bans`);
       expect(api.requests[0]?.body).toEqual({ ipv4_addresses: [], requester_ip: true });
     }).pipe(Effect.provide(layer));
   });
@@ -89,7 +87,7 @@ describe("legacy network-bans remove integration", () => {
   it.live("sends the expected request body when explicit IPs are provided", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacyNetworkBansRemove({
+      yield* networkBansRemove({
         projectRef: Option.none(),
         dbUnbanIp: ["12.3.4.5", "2001:db8:abcd:0012::0"],
       });
@@ -104,7 +102,7 @@ describe("legacy network-bans remove integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5,5.6.7.8"]);
-      yield* legacyNetworkBansRemove({ projectRef: Option.none(), dbUnbanIp });
+      yield* networkBansRemove({ projectRef: Option.none(), dbUnbanIp });
       expect(api.requests[0]?.body).toEqual({
         ipv4_addresses: ["12.3.4.5", "5.6.7.8"],
         requester_ip: false,
@@ -116,7 +114,7 @@ describe("legacy network-bans remove integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5", "5.6.7.8"]);
-      yield* legacyNetworkBansRemove({ projectRef: Option.none(), dbUnbanIp });
+      yield* networkBansRemove({ projectRef: Option.none(), dbUnbanIp });
       expect(api.requests[0]?.body).toEqual({
         ipv4_addresses: ["12.3.4.5", "5.6.7.8"],
         requester_ip: false,
@@ -128,7 +126,7 @@ describe("legacy network-bans remove integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5,5.6.7.8", "9.9.9.9"]);
-      yield* legacyNetworkBansRemove({ projectRef: Option.none(), dbUnbanIp });
+      yield* networkBansRemove({ projectRef: Option.none(), dbUnbanIp });
       expect(api.requests[0]?.body).toEqual({
         ipv4_addresses: ["12.3.4.5", "5.6.7.8", "9.9.9.9"],
         requester_ip: false,
@@ -140,7 +138,7 @@ describe("legacy network-bans remove integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5"]);
-      yield* legacyNetworkBansRemove({ projectRef: Option.none(), dbUnbanIp });
+      yield* networkBansRemove({ projectRef: Option.none(), dbUnbanIp });
       expect(api.requests[0]?.body).toEqual({
         ipv4_addresses: ["12.3.4.5"],
         requester_ip: false,
@@ -152,9 +150,7 @@ describe("legacy network-bans remove integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5,notanip"]);
-      const exit = yield* Effect.exit(
-        legacyNetworkBansRemove({ projectRef: Option.none(), dbUnbanIp }),
-      );
+      const exit = yield* Effect.exit(networkBansRemove({ projectRef: Option.none(), dbUnbanIp }));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(0);
       if (Exit.isFailure(exit)) {
@@ -164,9 +160,9 @@ describe("legacy network-bans remove integration", () => {
   });
 
   it.live("ignores legacy --output values and still prints the success line", () => {
-    const { layer, out } = setup({ legacyOutput: "json" });
+    const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
-      yield* legacyNetworkBansRemove({
+      yield* networkBansRemove({
         projectRef: Option.none(),
         dbUnbanIp: [],
       });
@@ -175,9 +171,9 @@ describe("legacy network-bans remove integration", () => {
   });
 
   it.live("ignores legacy --output yaml and still prints the success line", () => {
-    const { layer, out } = setup({ legacyOutput: "yaml" });
+    const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
-      yield* legacyNetworkBansRemove({
+      yield* networkBansRemove({
         projectRef: Option.none(),
         dbUnbanIp: [],
       });
@@ -188,7 +184,7 @@ describe("legacy network-bans remove integration", () => {
   it.live("emits a JSON success event for --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacyNetworkBansRemove({
+      yield* networkBansRemove({
         projectRef: Option.none(),
         dbUnbanIp: [],
       });
@@ -200,7 +196,7 @@ describe("legacy network-bans remove integration", () => {
   it.live("emits a result event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
-      yield* legacyNetworkBansRemove({
+      yield* networkBansRemove({
         projectRef: Option.none(),
         dbUnbanIp: [],
       });
@@ -210,9 +206,9 @@ describe("legacy network-bans remove integration", () => {
   });
 
   it.live("Go --output wins over TS --output-format when both are set", () => {
-    const { layer, out } = setup({ format: "json", legacyOutput: "yaml" });
+    const { layer, out } = setup({ format: "json", goOutput: "yaml" });
     return Effect.gen(function* () {
-      yield* legacyNetworkBansRemove({
+      yield* networkBansRemove({
         projectRef: Option.none(),
         dbUnbanIp: [],
       });
@@ -225,7 +221,7 @@ describe("legacy network-bans remove integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyNetworkBansRemove({
+        networkBansRemove({
           projectRef: Option.none(),
           dbUnbanIp: ["12.3.4"],
         }),
@@ -234,7 +230,7 @@ describe("legacy network-bans remove integration", () => {
       expect(api.requests).toHaveLength(0);
       if (Exit.isFailure(exit)) {
         const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("LegacyNetworkBansInvalidIpError");
+        expect(errJson).toContain("NetworkBansInvalidIpError");
         expect(errJson).toContain("invalid IP address: 12.3.4");
       }
     }).pipe(Effect.provide(layer));
@@ -247,16 +243,16 @@ describe("legacy network-bans remove integration", () => {
       // validation ever runs (cmd/root.go:108-114 vs internal/bans/update/update.go:12-25),
       // so a bad ref must win over a bad IP — this is the regression CLI-1856 guards.
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi({ response: { status: 200, body: null } });
-      const cliSettings = mockLegacyCliSettings({
+      const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
+      const cliSettings = mockCommandSettings({
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildLegacyTestRuntime({ out, api, cliSettings });
+      const layer = buildTestRuntime({ out, api, cliSettings });
 
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacyNetworkBansRemove({
+          networkBansRemove({
             projectRef: Option.none(),
             dbUnbanIp: ["12.3.4"],
           }),
@@ -265,8 +261,8 @@ describe("legacy network-bans remove integration", () => {
         expect(api.requests).toHaveLength(0);
         if (Exit.isFailure(exit)) {
           const errJson = JSON.stringify(exit.cause);
-          expect(errJson).toContain("LegacyProjectNotLinkedError");
-          expect(errJson).not.toContain("LegacyNetworkBansInvalidIpError");
+          expect(errJson).toContain("ProjectRefNotLinkedError");
+          expect(errJson).not.toContain("NetworkBansInvalidIpError");
         }
       }).pipe(Effect.provide(layer));
     },
@@ -278,7 +274,7 @@ describe("legacy network-bans remove integration", () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacyNetworkBansRemove({
+          networkBansRemove({
             projectRef: Option.some("BADREF"),
             dbUnbanIp: ["12.3.4"],
           }),
@@ -287,18 +283,18 @@ describe("legacy network-bans remove integration", () => {
         expect(api.requests).toHaveLength(0);
         if (Exit.isFailure(exit)) {
           const errJson = JSON.stringify(exit.cause);
-          expect(errJson).toContain("LegacyInvalidProjectRefError");
-          expect(errJson).not.toContain("LegacyNetworkBansInvalidIpError");
+          expect(errJson).toContain("InvalidProjectRefError");
+          expect(errJson).not.toContain("NetworkBansInvalidIpError");
         }
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("fails with LegacyNetworkBansRemoveUnexpectedStatusError on HTTP 503", () => {
+  it.live("fails with NetworkBansRemoveUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyNetworkBansRemove({
+        networkBansRemove({
           projectRef: Option.none(),
           dbUnbanIp: [],
         }),
@@ -306,7 +302,7 @@ describe("legacy network-bans remove integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("LegacyNetworkBansRemoveUnexpectedStatusError");
+        expect(errJson).toContain("NetworkBansRemoveUnexpectedStatusError");
         expect(errJson).toContain("unexpected unban status 503");
       }
     }).pipe(Effect.provide(layer));
@@ -316,7 +312,7 @@ describe("legacy network-bans remove integration", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyNetworkBansRemove({
+        networkBansRemove({
           projectRef: Option.none(),
           dbUnbanIp: [],
         }),
@@ -324,7 +320,7 @@ describe("legacy network-bans remove integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("LegacyNetworkBansRemoveNetworkError");
+        expect(errJson).toContain("NetworkBansRemoveNetworkError");
         expect(errJson).toContain("failed to remove network bans:");
       }
     }).pipe(Effect.provide(layer));
@@ -333,7 +329,7 @@ describe("legacy network-bans remove integration", () => {
   it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
-      yield* legacyNetworkBansRemove({
+      yield* networkBansRemove({
         projectRef: Option.none(),
         dbUnbanIp: [],
       }).pipe(withJsonErrorHandling);
@@ -344,7 +340,7 @@ describe("legacy network-bans remove integration", () => {
   it.live("flushes telemetry and writes linked-project cache on success", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
-      yield* legacyNetworkBansRemove({
+      yield* networkBansRemove({
         projectRef: Option.none(),
         dbUnbanIp: [],
       });
@@ -357,7 +353,7 @@ describe("legacy network-bans remove integration", () => {
     const { layer, telemetry, cache } = setupTracked({ status: 500 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyNetworkBansRemove({
+        networkBansRemove({
           projectRef: Option.none(),
           dbUnbanIp: [],
         }).pipe(Effect.provide(layer)),

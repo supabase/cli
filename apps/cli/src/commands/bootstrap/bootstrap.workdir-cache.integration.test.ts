@@ -16,43 +16,40 @@ import {
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
 import {
-  type LegacyApiHandler,
-  LEGACY_VALID_REF,
-  legacyJsonResponse,
-  mockLegacyCredentialsTracked,
-  mockLegacyLoginApi,
-  mockLegacyLoginCrypto,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-} from "../../../tests/helpers/legacy-mocks.ts";
+  type ApiHandler,
+  VALID_REF,
+  jsonResponse,
+  mockCommandCredentialsTracked,
+  mockLoginApi,
+  mockLoginCrypto,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+} from "../../../tests/helpers/command-mocks.ts";
 import {
-  LegacyDebugFlag,
-  LegacyDnsResolverFlag,
-  LegacyNetworkIdFlag,
-  LegacyOutputFlag,
-  LegacyProfileFlag,
-  LegacyWorkdirFlag,
-  LegacyYesFlag,
-} from "../../shared/legacy/global-flags.ts";
+  DebugFlag,
+  DnsResolverFlag,
+  NetworkIdFlag,
+  OutputFlag,
+  ProfileFlag,
+  WorkdirFlag,
+  YesFlag,
+} from "../../command-internal/global-flags.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { SuccessTrailer, successTrailerLayer } from "../../shared/cli/success-trailer.ts";
-import {
-  LegacyDbConnection,
-  type LegacyPgConnInput,
-} from "../../command-internal/legacy-db-connection.service.ts";
-import { legacyDebugLoggerLayer } from "../../command-internal/legacy-debug-logger.layer.ts";
-import { legacyIdentityStitchLayer } from "../../command-internal/legacy-identity-stitch.ts";
-import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.ts";
-import { legacyLinkedProjectCacheLayer } from "../../telemetry/legacy-linked-project-cache.layer.ts";
-import { LegacyTemplateService } from "./bootstrap.templates.ts";
-import { legacyBootstrap } from "./bootstrap.handler.ts";
-import type { LegacyBootstrapFlags } from "./bootstrap.command.ts";
+import { DbConnection, type PgConnInput } from "../../command-internal/db-connection.service.ts";
+import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
+import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
+import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
+import { linkedProjectCacheLayer } from "../../telemetry/linked-project-cache.layer.ts";
+import { TemplateService } from "./bootstrap.templates.ts";
+import { bootstrap } from "./bootstrap.handler.ts";
+import type { BootstrapFlags } from "./bootstrap.command.ts";
 
 const FAST_BACKOFF = Schedule.exponential("1 milli");
 
 const PROJECT = {
-  id: LEGACY_VALID_REF,
-  ref: LEGACY_VALID_REF,
+  id: VALID_REF,
+  ref: VALID_REF,
   organization_id: "org-1",
   organization_slug: "acme",
   name: "alpha",
@@ -78,7 +75,7 @@ describe("legacy bootstrap linked-project cache location", () => {
       const bootstrapWorkdir = join(parent, subdir);
 
       // Pre-seed a migration file at the bootstrap workdir (before it even exists) so
-      // the push step's migrations lookup is empirically provable: `legacyDbPushCore`
+      // the push step's migrations lookup is empirically provable: `dbPushCore`
       // must find it via the `workdir` local variable — the prompted bootstrap
       // workdir — never `cliSettings.workdir` (the cwd-walk result from `parent`, which
       // has no `supabase/migrations` of its own and would wrongly report "up to date").
@@ -99,30 +96,30 @@ describe("legacy bootstrap linked-project cache location", () => {
 
       const out = mockOutput({ format: "text", promptTextResponses: [subdir] });
 
-      const handler: LegacyApiHandler = (request, recorded) => {
+      const handler: ApiHandler = (request, recorded) => {
         const url = recorded.urlWithParams;
         if (recorded.method === "POST" && /\/v1\/projects(\?|$)/.test(url)) {
-          return Effect.succeed(legacyJsonResponse(request, 201, PROJECT));
+          return Effect.succeed(jsonResponse(request, 201, PROJECT));
         }
         if (url.includes("/api-keys")) {
-          return Effect.succeed(legacyJsonResponse(request, 200, API_KEYS));
+          return Effect.succeed(jsonResponse(request, 200, API_KEYS));
         }
         if (url.includes("/health")) {
-          return Effect.succeed(legacyJsonResponse(request, 200, HEALTHY));
+          return Effect.succeed(jsonResponse(request, 200, HEALTHY));
         }
         if (url.includes("/v1/organizations")) {
-          return Effect.succeed(legacyJsonResponse(request, 200, ORGS));
+          return Effect.succeed(jsonResponse(request, 200, ORGS));
         }
         // Pooler config: the direct db host is never reachable in-process, so
-        // `legacyResolveLinkedConn`'s push-connection resolution always falls
-        // back to the IPv4 pooler (CLI-1953). `legacyLinkServicesCore`'s own
+        // `resolveLinkedConn`'s push-connection resolution always falls
+        // back to the IPv4 pooler (CLI-1953). `linkServicesCore`'s own
         // `linkPooler` step (step I) fetches this same route and saves it to
         // `<bootstrapWorkdir>/supabase/.temp/pooler-url`, which the fallback reads.
         // Checked before the broader `/v1/projects/{ref}` GET below, which would
         // otherwise also match this path.
         if (recorded.method === "GET" && url.includes("/config/database/pooler")) {
           return Effect.succeed(
-            legacyJsonResponse(request, 200, [
+            jsonResponse(request, 200, [
               {
                 identifier: "primary",
                 database_type: "PRIMARY",
@@ -131,8 +128,8 @@ describe("legacy bootstrap linked-project cache location", () => {
                 db_host: "db.example",
                 db_port: 5432,
                 db_name: "postgres",
-                connection_string: `postgres://postgres.${LEGACY_VALID_REF}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
-                connectionString: `postgres://postgres.${LEGACY_VALID_REF}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+                connection_string: `postgres://postgres.${VALID_REF}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+                connectionString: `postgres://postgres.${VALID_REF}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
                 default_pool_size: null,
                 max_client_conn: null,
                 pool_mode: "transaction",
@@ -141,19 +138,19 @@ describe("legacy bootstrap linked-project cache location", () => {
           );
         }
         // GET /v1/projects/{ref} — read by the linked-project cache.
-        if (recorded.method === "GET" && url.includes(`/v1/projects/${LEGACY_VALID_REF}`)) {
-          return Effect.succeed(legacyJsonResponse(request, 200, PROJECT));
+        if (recorded.method === "GET" && url.includes(`/v1/projects/${VALID_REF}`)) {
+          return Effect.succeed(jsonResponse(request, 200, PROJECT));
         }
-        return Effect.succeed(legacyJsonResponse(request, 404, {}));
+        return Effect.succeed(jsonResponse(request, 404, {}));
       };
-      const api = mockLegacyPlatformApi({ handler });
+      const api = mockCommandPlatformApi({ handler });
 
-      // Native push (CLI-1953): `legacyDbPushCore` needs a `LegacyDbConnection` —
+      // Native push (CLI-1953): `dbPushCore` needs a `DbConnection` —
       // tracked here so the test can assert it targets the created project's ref,
       // not a divergent one.
-      const pushConnectCalls: Array<LegacyPgConnInput> = [];
-      const dbConnectionLayer = Layer.succeed(LegacyDbConnection, {
-        connect: (conn: LegacyPgConnInput) =>
+      const pushConnectCalls: Array<PgConnInput> = [];
+      const dbConnectionLayer = Layer.succeed(DbConnection, {
+        connect: (conn: PgConnInput) =>
           Effect.sync(() => {
             pushConnectCalls.push(conn);
             return {
@@ -166,7 +163,7 @@ describe("legacy bootstrap linked-project cache location", () => {
             };
           }),
       });
-      const templateLayer = Layer.succeed(LegacyTemplateService, {
+      const templateLayer = Layer.succeed(TemplateService, {
         listSamples: Effect.succeed([]),
         download: () => Effect.void,
       });
@@ -174,34 +171,34 @@ describe("legacy bootstrap linked-project cache location", () => {
       // GlobalFlag services don't cross sibling boundaries in Layer.mergeAll
       // (apps/cli/CLAUDE.md item 5), so provide them explicitly into the real config layer.
       const flagsLayer = Layer.mergeAll(
-        Layer.succeed(LegacyProfileFlag, "supabase"),
-        Layer.succeed(LegacyWorkdirFlag, Option.none()),
-        Layer.succeed(LegacyYesFlag, false),
-        Layer.succeed(LegacyOutputFlag, Option.none()),
-        Layer.succeed(LegacyDebugFlag, false),
-        Layer.succeed(LegacyDnsResolverFlag, "native"),
-        Layer.succeed(LegacyNetworkIdFlag, Option.none()),
+        Layer.succeed(ProfileFlag, "supabase"),
+        Layer.succeed(WorkdirFlag, Option.none()),
+        Layer.succeed(YesFlag, false),
+        Layer.succeed(OutputFlag, Option.none()),
+        Layer.succeed(DebugFlag, false),
+        Layer.succeed(DnsResolverFlag, "native"),
+        Layer.succeed(NetworkIdFlag, Option.none()),
         Layer.succeed(CliArgs, { args: [] }),
       );
       const runtime = mockRuntimeInfo({ cwd: parent });
-      const credentials = mockLegacyCredentialsTracked();
-      const debugLoggerLayer = legacyDebugLoggerLayer.pipe(Layer.provide(flagsLayer));
+      const credentials = mockCommandCredentialsTracked();
+      const debugLogger = debugLoggerLayer.pipe(Layer.provide(flagsLayer));
 
-      const configLayer = legacyCliSettingsLayer.pipe(
+      const configLayer = commandSettingsLayer.pipe(
         Layer.provide(flagsLayer),
-        Layer.provide(debugLoggerLayer),
+        Layer.provide(debugLogger),
         Layer.provide(runtime),
         Layer.provide(BunServices.layer),
       );
-      const cacheLayer = legacyLinkedProjectCacheLayer.pipe(
+      const cacheLayer = linkedProjectCacheLayer.pipe(
         Layer.provide(configLayer),
         Layer.provide(credentials.layer),
         Layer.provide(api.httpClientLayer),
         // The cache GET stitches identity from X-Gotrue-Id (the established
-        // identityTransport) via the single `LegacyIdentityStitch` service. Consent "denied" makes the
+        // identityTransport) via the single `IdentityStitch` service. Consent "denied" makes the
         // stitch a no-op so this workdir-caching test's assertions are unchanged.
         Layer.provide(
-          legacyIdentityStitchLayer.pipe(
+          identityStitchLayer.pipe(
             Layer.provide(mockAnalytics().layer),
             Layer.provide(mockTelemetryRuntime({ consent: "denied" })),
             Layer.provide(BunServices.layer),
@@ -224,27 +221,27 @@ describe("legacy bootstrap linked-project cache location", () => {
         credentials.layer,
         mockTty({ stdinIsTty: true, stdoutIsTty: false }),
         runtime,
-        mockLegacyTelemetryStateTracked().layer,
+        mockTelemetryStateTracked().layer,
         mockAnalytics().layer,
         templateLayer,
         dbConnectionLayer,
-        mockLegacyLoginApi({ gotrueId: "gotrue-user" }).layer,
-        mockLegacyLoginCrypto().layer,
+        mockLoginApi({ gotrueId: "gotrue-user" }).layer,
+        mockLoginCrypto().layer,
         mockBrowser(),
         mockStdin(true),
         flagsLayer,
-        debugLoggerLayer,
+        debugLogger,
         successTrailerLayer,
       );
 
-      const flags: LegacyBootstrapFlags = {
+      const flags: BootstrapFlags = {
         template: Option.some("scratch"),
         password: Option.some("s3cret"),
       };
 
       return Effect.gen(function* () {
         const successTrailer = yield* SuccessTrailer;
-        yield* legacyBootstrap(flags, FAST_BACKOFF);
+        yield* bootstrap(flags, FAST_BACKOFF);
 
         expect(yield* successTrailer.workingDirectory).toBe(bootstrapWorkdir);
 
@@ -258,20 +255,20 @@ describe("legacy bootstrap linked-project cache location", () => {
         expect(existsSync(cacheInWorkdir)).toBe(true);
         expect(existsSync(cacheInParent)).toBe(false);
 
-        // Native push (CLI-1953) correctness: `legacyDbPushCore` connects to the
+        // Native push (CLI-1953) correctness: `dbPushCore` connects to the
         // just-created project (the `projectRef` bootstrap already holds in
-        // memory, never re-resolved via `LegacyProjectRefResolver`) and finds the
+        // memory, never re-resolved via `ProjectRefResolver`) and finds the
         // pre-seeded migration under `<bootstrapWorkdir>/supabase/migrations` — the
         // `workdir` local variable, not `cliSettings.workdir` (which cwd-walks from
         // `parent` and would find nothing, wrongly reporting "up to date"). The
-        // direct db host is never reachable in-process, so `legacyResolveLinkedConn`
+        // direct db host is never reachable in-process, so `resolveLinkedConn`
         // falls back to the IPv4 pooler (CLI-1953) — reading the saved
-        // `<bootstrapWorkdir>/supabase/.temp/pooler-url` `legacyLinkServicesCore`
+        // `<bootstrapWorkdir>/supabase/.temp/pooler-url` `linkServicesCore`
         // (step I) wrote, which is itself proof the fallback is workdir-scoped
         // correctly too.
         expect(pushConnectCalls).toHaveLength(1);
         expect(pushConnectCalls[0]?.host).toBe("aws-0-us-east-1.pooler.supabase.com");
-        expect(pushConnectCalls[0]?.user).toBe(`postgres.${LEGACY_VALID_REF}`);
+        expect(pushConnectCalls[0]?.user).toBe(`postgres.${VALID_REF}`);
         expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
         // Pins `includeRoles: true` (the pre-seeded `supabase/roles.sql` above):
         // without it, the custom-roles prompt/apply below is unreachable and

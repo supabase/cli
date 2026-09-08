@@ -14,8 +14,8 @@ import {
   lastExplicitLongFlagValue,
   hasExplicitLongFlag,
 } from "../cli/cobra-flag-groups.ts";
-import { legacyDescribeContainerCliFailure } from "../../command-internal/legacy-container-cli.ts";
-import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-env.ts";
+import { describeContainerCliFailure } from "../../command-internal/container-cli.ts";
+import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
 import {
   buildFunctionsDockerRunArgs,
   edgeRuntimeCacheVolume,
@@ -99,7 +99,7 @@ interface EdgeRuntimeImageDependencies {
   readonly projectRoot: string;
   /**
    * `undefined` in `next`; the legacy shell injects
-   * `legacyFunctionsGoConfigCompat` so this file never imports `legacy/`
+   * `functionsGoConfigCompat` so this file never imports `legacy/`
    * directly — see {@link FunctionsGoConfigCompat}.
    */
   readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
@@ -128,7 +128,7 @@ export interface DownloadFunctionsDependencies<
    * child's raw stdout must not reach the terminal (it would corrupt the
    * JSON/NDJSON envelope, CLI-1546's "stdout is payload-only in machine
    * mode" invariant), so the dependency must capture/discard it (e.g. via
-   * `LegacyGoProxy.execCapture`) instead of inheriting stdio. Only invoked
+   * `GoProxy.execCapture`) instead of inheriting stdio. Only invoked
    * for `--legacy-bundle` today — `--use-docker` now runs natively (CLI-1963).
    */
   readonly proxyDownload: (
@@ -913,11 +913,11 @@ function suggestDenoV2(styleEmphasis: (text: string) => string = (text) => text)
  * code. `ensureDockerNetwork`/`ensureDockerNamedVolume` already prefix their
  * own "failed to create docker network/volume: ..." context on the failures
  * they raise themselves (`functions-docker.ts`), so this only normalizes
- * (never re-prefixes) whatever `legacyDescribeContainerCliFailure` reports.
+ * (never re-prefixes) whatever `describeContainerCliFailure` reports.
  */
 function withLegacyBundleSuggestion(slug: string, styleAqua?: (text: string) => string) {
   return (cause: unknown): Error =>
-    Object.assign(new Error(legacyDescribeContainerCliFailure(cause)), {
+    Object.assign(new Error(describeContainerCliFailure(cause)), {
       suggestion: suggestLegacyBundle(slug, styleAqua),
     });
 }
@@ -932,7 +932,7 @@ function withLegacyBundleSuggestion(slug: string, styleAqua?: (text: string) => 
  */
 function withDockerStepFailure(step: string, slug: string, styleAqua?: (text: string) => string) {
   return (cause: unknown): Error =>
-    Object.assign(new Error(`${step}: ${legacyDescribeContainerCliFailure(cause)}`), {
+    Object.assign(new Error(`${step}: ${describeContainerCliFailure(cause)}`), {
       suggestion: suggestLegacyBundle(slug, styleAqua),
     });
 }
@@ -1082,7 +1082,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     envOverride:
       projectEnvValues === undefined
         ? undefined
-        : legacyViperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+        : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
     projectId,
   });
 

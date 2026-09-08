@@ -13,7 +13,7 @@
 import { usesSlimImageRuntime } from "../../shared/services/slim-images.ts";
 
 /** {@link usesSlimImageRuntime} under the mandatory `legacy` export prefix. */
-export function legacyUsesSlimRuntime(image: string): boolean {
+export function usesSlimRuntime(image: string): boolean {
   return usesSlimImageRuntime(image);
 }
 
@@ -21,7 +21,7 @@ export function legacyUsesSlimRuntime(image: string): boolean {
  * In-container HTTP probe for slim images. `-q --spider` is the intersection
  * of BusyBox wget (what slim actually ships) and GNU wget (docker.io leftovers).
  */
-export function legacySlimWgetHealthcheck(
+export function slimWgetHealthcheck(
   url: string,
   opts: { readonly header?: string; readonly startPeriodSeconds?: number } = {},
 ): {
@@ -48,6 +48,6 @@ export function legacySlimWgetHealthcheck(
 }
 
 /** BusyBox-safe wait used by Vector's entrypoint until Logflare answers. */
-export function legacySlimWgetWaitCommand(url: string): string {
+export function slimWgetWaitCommand(url: string): string {
   return `wget -q -T 2 --spider ${url}`;
 }

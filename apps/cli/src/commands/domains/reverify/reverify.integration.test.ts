@@ -4,14 +4,14 @@ import { Effect, Exit, Option } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { legacyDomainsReverify } from "./reverify.handler.ts";
+  buildTestRuntime,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { domainsReverify } from "./reverify.handler.ts";
 
 const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
   status: "2_initiated",
@@ -41,19 +41,19 @@ interface SetupOpts {
   readonly response?: unknown;
 }
 
-const tempRoot = useLegacyTempWorkdir("supabase-domains-reverify-int-");
+const tempRoot = useTempWorkdir("supabase-domains-reverify-int-");
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const analytics = mockAnalytics();
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 201, body: opts.response ?? HOSTNAME_RESPONSE },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const linkedProjectCache = mockLegacyLinkedProjectCacheTracked();
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const telemetry = mockTelemetryStateTracked();
+  const linkedProjectCache = mockLinkedProjectCacheTracked();
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -82,7 +82,7 @@ describe("legacy domains reverify integration", () => {
       },
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsReverify(baseFlags));
+      const exit = yield* Effect.exit(domainsReverify(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(1);
       expect(out.stderrText).toContain("Upgrade your plan:");
@@ -99,7 +99,7 @@ describe("legacy domains reverify integration", () => {
   it.live("prints the initializing status to stderr in text mode", () => {
     const { layer, out, api, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
-      yield* legacyDomainsReverify(baseFlags);
+      yield* domainsReverify(baseFlags);
       expect(out.stderrText).toContain("being initialized");
       expect(out.stdoutText).toBe("");
       expect(api.requests[0]?.url).toContain("/custom-hostname/reverify");
@@ -111,7 +111,7 @@ describe("legacy domains reverify integration", () => {
   it.live("emits a structured success object for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacyDomainsReverify(baseFlags);
+      yield* domainsReverify(baseFlags);
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ custom_hostname: "shop.acme.dev" });
     }).pipe(Effect.provide(layer));
@@ -120,7 +120,7 @@ describe("legacy domains reverify integration", () => {
   it.live("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
-      yield* legacyDomainsReverify(baseFlags);
+      yield* domainsReverify(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
@@ -129,15 +129,15 @@ describe("legacy domains reverify integration", () => {
   it.live("forces Go JSON output when --include-raw-output is set", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacyDomainsReverify({ projectRef: Option.none(), includeRawOutput: true });
+      yield* domainsReverify({ projectRef: Option.none(), includeRawOutput: true });
       expect(out.stdoutText.startsWith("{")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyDomainsUnexpectedStatusError on HTTP 503", () => {
+  it.live("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
     const { layer, telemetry } = setup({ status: 503 });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsReverify(baseFlags));
+      const exit = yield* Effect.exit(domainsReverify(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("unexpected re-verify hostname status 503");
@@ -146,10 +146,10 @@ describe("legacy domains reverify integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyDomainsNetworkError on transport failure", () => {
+  it.live("fails with DomainsNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsReverify(baseFlags));
+      const exit = yield* Effect.exit(domainsReverify(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("failed to re-verify custom hostname");
@@ -160,7 +160,7 @@ describe("legacy domains reverify integration", () => {
   it.live("maps an HTTP error without a spinner in json mode", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsReverify(baseFlags));
+      const exit = yield* Effect.exit(domainsReverify(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(out.progressEvents).toHaveLength(0);
     }).pipe(Effect.provide(layer));

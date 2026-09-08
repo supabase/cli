@@ -7,8 +7,8 @@
 import { resolve } from "node:path";
 import { Effect, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { spawnContainerCli } from "../../command-internal/legacy-container-cli.ts";
-import { legacyMakeDockerImageResolver } from "../../command-internal/legacy-docker-image-resolve.ts";
+import { spawnContainerCli } from "../../command-internal/container-cli.ts";
+import { makeDockerImageResolver } from "../../command-internal/docker-image-resolve.ts";
 import { DENO1_EDGE_RUNTIME_VERSION } from "./functions.shared.ts";
 
 const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
@@ -379,7 +379,7 @@ export function resolveEdgeRuntimeVersion(
  * candidate (ECR/GHCR/Docker Hub) for a local cache hit first, then pulls
  * with 2 retries per candidate (4s/8s backoff), returning whichever
  * candidate answered. Shared by both shells' `functions` Docker paths
- * (`deploy`/`download`/`serve`) — `legacyGetRegistryImageUrl`'s single-URL
+ * (`deploy`/`download`/`serve`) — `getRegistryImageUrl`'s single-URL
  * mapping is already called unconditionally by both today, so the retry is
  * strictly-better resilience, not a Go-only quirk.
  */
@@ -388,5 +388,5 @@ export const resolveFunctionsDockerImage = Effect.fnUntraced(function* (
   projectEnvValues?: Readonly<Record<string, string>>,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  return yield* legacyMakeDockerImageResolver(spawner, projectEnvValues)(image);
+  return yield* makeDockerImageResolver(spawner, projectEnvValues)(image);
 });

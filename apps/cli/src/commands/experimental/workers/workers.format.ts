@@ -15,14 +15,14 @@
  * include a URL and a source path: `branches get` gets away with laying its
  * seven narrow columns out horizontally, and these would not fit. Labels are
  * Title Case to match the other vertical key/value view this CLI renders,
- * `supabase status` (`legacy-status-pretty.ts`), rather than inventing a third
+ * `supabase status` (`status-pretty.ts`), rather than inventing a third
  * casing.
  *
  * Rows whose value is empty are dropped: several fields are optional strings in
  * the API contract (`state_reason`, for one), so an empty one would otherwise
  * render as a label, two spaces of padding and nothing else.
  */
-export function legacyRenderWorkerDetails(rows: ReadonlyArray<readonly [string, string]>): string {
+export function renderWorkerDetails(rows: ReadonlyArray<readonly [string, string]>): string {
   const present = rows.filter(([, value]) => value !== "");
   if (present.length === 0) {
     return "";

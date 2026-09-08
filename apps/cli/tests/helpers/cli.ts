@@ -16,7 +16,7 @@ export { stripAnsi } from "./ansi.ts";
 
 const BINARY_EXT = process.platform === "win32" ? ".exe" : "";
 const SHIM_PATH = fileURLToPath(new URL("../../dist/supabase.js", import.meta.url));
-const LEGACY_BINARY_PATH = fileURLToPath(
+const BINARY_PATH = fileURLToPath(
   new URL(`../../dist/supabase-legacy${BINARY_EXT}`, import.meta.url),
 );
 
@@ -75,7 +75,7 @@ type RunResult = {
 };
 
 const DEFAULT_EXIT_TIMEOUT_MS = 60_000;
-const DEFAULT_LEGACY_STACK_CLEANUP_TIMEOUT_MS = 120_000;
+const DEFAULT_STACK_CLEANUP_TIMEOUT_MS = 120_000;
 const OUTPUT_TAIL_LENGTH = 4_000;
 
 interface SpawnedSupabase {
@@ -175,9 +175,9 @@ export async function makeTempCliProject(prefix = "supabase-cli-e2e-") {
   return project;
 }
 
-export async function makeTempLegacyStackProject(
-  prefix = "supabase-legacy-stack-e2e-",
-  cleanupTimeoutMs = DEFAULT_LEGACY_STACK_CLEANUP_TIMEOUT_MS,
+export async function makeTempCliStackProject(
+  prefix = "supabase-stack-e2e-",
+  cleanupTimeoutMs = DEFAULT_STACK_CLEANUP_TIMEOUT_MS,
 ) {
   const project = await makeTempProject(prefix);
   const cleanup = async () => {
@@ -338,8 +338,8 @@ export function spawnSupabase(
   for (const [key, value] of Object.entries(mergedEnv)) {
     if (value !== undefined) env[key] = value;
   }
-  assertBuildArtifactsExist(LEGACY_BINARY_PATH);
-  env["SUPABASE_CLI_BINARY_OVERRIDE"] = LEGACY_BINARY_PATH;
+  assertBuildArtifactsExist(BINARY_PATH);
+  env["SUPABASE_CLI_BINARY_OVERRIDE"] = BINARY_PATH;
   execCmd = "node";
   execArgs = [SHIM_PATH, ...args];
   const proc = spawn(execCmd, execArgs, {

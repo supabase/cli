@@ -9,12 +9,12 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import { overrideStackPorts, requireCliSuccess, runSupabase } from "../../../tests/helpers/cli.ts";
 import {
-  legacySanitizeProjectId,
-  legacyServiceContainerName,
+  sanitizeProjectId,
+  serviceContainerName,
   localDbContainerId,
-} from "../../command-internal/legacy-docker-ids.ts";
-import { legacyGetRegistryImageUrl } from "../../command-internal/legacy-docker-registry.ts";
-import { LEGACY_SERVICE_CATALOG } from "../../command-internal/legacy-service-catalog.ts";
+} from "../../command-internal/docker-ids.ts";
+import { getRegistryImageUrl } from "../../command-internal/docker-registry.ts";
+import { SERVICE_CATALOG } from "../../command-internal/service-catalog.ts";
 import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";
 
 const execFileAsync = promisify(execFile);
@@ -78,10 +78,10 @@ describe("supabase start (e2e)", () => {
     async () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-e2e-"));
       // No `project_id` override, so the cli resolves it from the workdir
-      // basename (see legacy-docker-ids.ts). Sanitizing is a no-op for a
+      // basename (see docker-ids.ts). Sanitizing is a no-op for a
       // `mkdtemp`-generated basename (already alphanumeric/`-`), but mirrors
       // the port's actual resolution rather than assuming that stays true.
-      const projectId = legacySanitizeProjectId(path.basename(projectDir));
+      const projectId = sanitizeProjectId(path.basename(projectDir));
       const projectFilter = `label=com.supabase.cli.project=${projectId}`;
       const dbContainerId = localDbContainerId(projectId);
       const startArgs = [
@@ -184,8 +184,8 @@ describe("supabase start (e2e)", () => {
       ]);
       const runningNames = new Set(splitNonEmptyLines(psOutput));
 
-      for (const entry of LEGACY_SERVICE_CATALOG) {
-        const containerName = legacyServiceContainerName(entry.containerSuffix, projectId);
+      for (const entry of SERVICE_CATALOG) {
+        const containerName = serviceContainerName(entry.containerSuffix, projectId);
         const isExcluded =
           (entry.excludeKey !== undefined && EXCLUDED_SERVICE_KEYS.has(entry.excludeKey)) ||
           NEVER_RUNNING_SERVICE_KEYS.has(entry.service);
@@ -232,7 +232,7 @@ describe("supabase start (e2e)", () => {
         }
         await overrideStackPorts(projectDir);
 
-        const excludeArgs = LEGACY_SERVICE_CATALOG.flatMap((entry) =>
+        const excludeArgs = SERVICE_CATALOG.flatMap((entry) =>
           entry.excludeKey === undefined ||
           entry.excludeKey === "kong" ||
           entry.excludeKey === "postgrest"
@@ -278,11 +278,11 @@ describe("supabase start (e2e)", () => {
     { timeout: START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS },
     async () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-e2e-exec-"));
-      const projectId = legacySanitizeProjectId(path.basename(projectDir));
-      const mailpitContainer = legacyServiceContainerName("inbucket", projectId);
+      const projectId = sanitizeProjectId(path.basename(projectDir));
+      const mailpitContainer = serviceContainerName("inbucket", projectId);
       // The exact tag `start` resolves for Mailpit, so its already-cached check
       // finds this deliberately broken build and never reaches a registry.
-      const mailpitImage = legacyGetRegistryImageUrl(dockerfileServiceImage("mailpit"));
+      const mailpitImage = getRegistryImageUrl(dockerfileServiceImage("mailpit"));
 
       const init = await runSupabase(["init"], {
         entrypoint: "legacy",
@@ -306,7 +306,7 @@ describe("supabase start (e2e)", () => {
       try {
         // Everything except Postgres and Mailpit is excluded: this scenario only
         // needs one container that cannot start.
-        const excludeArgs = LEGACY_SERVICE_CATALOG.flatMap((entry) =>
+        const excludeArgs = SERVICE_CATALOG.flatMap((entry) =>
           entry.excludeKey === undefined || entry.excludeKey === "mailpit"
             ? []
             : ["--exclude", entry.excludeKey],

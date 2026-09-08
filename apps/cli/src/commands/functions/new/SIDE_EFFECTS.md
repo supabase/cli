@@ -43,13 +43,13 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                        |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                          |
-| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`LegacyFunctionsNewWorkdirError`) — beats slug validation and every filesystem write |
-| `1`  | invalid function name                                                                                                                                            |
-| `1`  | function entrypoint already exists                                                                                                                               |
-| `1`  | local file write failed                                                                                                                                          |
+| Code | Condition                                                                                                                                                  |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                    |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`FunctionsNewWorkdirError`) — beats slug validation and every filesystem write |
+| `1`  | invalid function name                                                                                                                                      |
+| `1`  | function entrypoint already exists                                                                                                                         |
+| `1`  | local file write failed                                                                                                                                    |
 
 ## Telemetry Events Fired
 

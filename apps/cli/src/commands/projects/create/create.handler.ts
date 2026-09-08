@@ -1,24 +1,22 @@
 import { Effect, Option } from "effect";
 
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
-import { legacyRequireExperimental } from "../../../command-internal/legacy-experimental-gate.ts";
-import { legacyProjectCreateCore } from "../../../command-internal/legacy-project-create-core.ts";
-import { LegacyProjectsCreateMissingArgError } from "../projects.errors.ts";
-import type { LegacyProjectsCreateFlags } from "./create.command.ts";
+import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
+import { projectCreateCore } from "../../../command-internal/project-create-core.ts";
+import { ProjectsCreateMissingArgError } from "../projects.errors.ts";
+import type { ProjectsCreateFlags } from "./create.command.ts";
 
-export const legacyProjectsCreate = Effect.fn("legacy.projects.create")(function* (
-  flags: LegacyProjectsCreateFlags,
-) {
+export const projectsCreate = Effect.fn("projects.create")(function* (flags: ProjectsCreateFlags) {
   const output = yield* Output;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
   const tty = yield* Tty;
 
   if (Option.isSome(flags.releaseChannel) || Option.isSome(flags.postgresEngine)) {
-    yield* legacyRequireExperimental;
+    yield* requireExperimental;
   }
 
   let createdRef: string | undefined;
@@ -48,13 +46,13 @@ export const legacyProjectsCreate = Effect.fn("legacy.projects.create")(function
       if (dbPassword.length === 0) missing.push("--db-password");
       if (region === undefined) missing.push("--region");
       if (missing.length > 0) {
-        return yield* new LegacyProjectsCreateMissingArgError({
+        return yield* new ProjectsCreateMissingArgError({
           message: `non-interactive mode requires the following to be set: ${missing.join(", ")}`,
         });
       }
     }
 
-    const { ref } = yield* legacyProjectCreateCore({
+    const { ref } = yield* projectCreateCore({
       name,
       orgId,
       dbPassword,

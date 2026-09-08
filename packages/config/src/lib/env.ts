@@ -80,8 +80,8 @@ type ExpectedType = "number" | "boolean" | "string" | "array" | "unknown";
 // Go decodes an env()-substituted boolean via mapstructure's weakly-typed
 // `decodeBool`, which runs `strconv.ParseBool` on the string — a wider
 // acceptance set than the literal `"true"`/`"false"` this module used to
-// require. Mirrors `legacyParseGoBool`'s `GO_BOOL_TRUE`/`GO_BOOL_FALSE`
-// (`apps/cli/src/command-internal/legacy-db-config.toml-read.ts:615-616`);
+// require. Mirrors `parseGoBool`'s `GO_BOOL_TRUE`/`GO_BOOL_FALSE`
+// (`apps/cli/src/command-internal/db-config.toml-read.ts:615-616`);
 // duplicated here (not imported) so `packages/config` doesn't depend on
 // `apps/cli`.
 const GO_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);

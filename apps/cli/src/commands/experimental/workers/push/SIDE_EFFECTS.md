@@ -109,5 +109,5 @@ while `build_state` is `building`. The deploy response may carry an
 it is serving now — and that is the previous build's, not this one's.
 
 The presigned `PUT` above is the one request whose URL is itself a credential.
-`--debug` logs every request URL, so `legacyHttpClientLayer` redacts query
+`--debug` logs every request URL, so `httpClientLayer` redacts query
 strings that carry a signature.

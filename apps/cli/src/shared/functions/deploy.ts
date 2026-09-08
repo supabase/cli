@@ -15,11 +15,11 @@ import {
 import { Duration, Effect, Option, Schema } from "effect";
 import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import { legacyPromptYesNo } from "../legacy/legacy-prompt-yes-no.ts";
+import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
-import { legacyBold } from "../../command-internal/legacy-colors.ts";
-import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-env.ts";
+import { bold } from "../../command-internal/colors.ts";
+import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
 import { findGitRootPath } from "../git/git-root.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
@@ -89,7 +89,7 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   readonly dashboardUrl: string;
   /**
    * `undefined` in `next`; the legacy shell injects
-   * `legacyFunctionsGoConfigCompat` so this file never imports `legacy/`
+   * `functionsGoConfigCompat` so this file never imports `legacy/`
    * directly — see {@link FunctionsGoConfigCompat}.
    */
   readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
@@ -288,12 +288,12 @@ function explicitBooleanFlag(
 }
 
 /**
- * Must stay in sync with `LEGACY_CLI_WORKDIR_LABEL`
- * (`command-internal/legacy-docker-ids.ts:95`) — same string literal, kept as a
+ * Must stay in sync with `CLI_WORKDIR_LABEL`
+ * (`command-internal/docker-ids.ts:95`) — same string literal, kept as a
  * separate copy here rather than imported to respect the `next`/`legacy`
  * isolation boundary (this file has no Go equivalent for the other two
- * labels either). Read back by `legacyCleanupStartSecrets` so a later
- * `stop`/`legacyRollbackStart` can reclaim this container's staged-secret
+ * labels either). Read back by `cleanupStartSecrets` so a later
+ * `stop`/`rollbackStart` can reclaim this container's staged-secret
  * directory using its OWN workdir rather than the caller's cwd.
  */
 export const dockerWorkdirLabel = "com.supabase.cli.workdir";
@@ -2261,14 +2261,14 @@ const pruneFunctions = Effect.fnUntraced(function* (
 
   // Go's `confirmPruneAll` + `fmt.Sprintln` (`deploy.go:189,206-212`): header, one
   // ` • <bold slug>` line per function, and a trailing blank line before the
-  // `[y/N]` choices. Routed through `legacyPromptYesNo` (Go `PromptYesNo(msg,
+  // `[y/N]` choices. Routed through `promptYesNo` (Go `PromptYesNo(msg,
   // false)`, `console.go:64-82`) so `--yes`/`SUPABASE_YES` auto-confirms with the
   // stderr echo and a non-TTY stdin honors a piped `y`/`n` answer (CLI-1974).
   const prompt = `${[
     "Do you want to delete the following Functions from your project?",
-    ...toDelete.map((slug) => ` • ${legacyBold(slug)}`),
+    ...toDelete.map((slug) => ` • ${bold(slug)}`),
   ].join("\n")}\n\n`;
-  const confirmed = yield* legacyPromptYesNo(output, yes, prompt, false);
+  const confirmed = yield* promptYesNo(output, yes, prompt, false);
   if (!confirmed) {
     return yield* Effect.fail(
       new FunctionDeployCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
@@ -2459,7 +2459,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
             envOverride:
               context.projectEnvValues === undefined
                 ? undefined
-                : legacyViperEnvStringWithProjectFallback(
+                : viperEnvStringWithProjectFallback(
                     "SUPABASE_NETWORK_ID",
                     context.projectEnvValues,
                   ),

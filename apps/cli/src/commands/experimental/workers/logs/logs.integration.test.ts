@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option, Schedule } from "effect";
 import {
   makeWorkersProject,
-  setupLegacyWorkers,
+  setupWorkers,
   workerApiLogRow,
   workerIngressLogRow,
   workerLogRow,
@@ -11,8 +11,8 @@ import {
   workerResource,
   workersRoute,
   WORKERS_PROJECT_REF,
-} from "../../../../../tests/helpers/legacy-workers.ts";
-import { LegacyWorkersFollowNotSupportedError } from "../workers.errors.ts";
+} from "../../../../../tests/helpers/workers.ts";
+import { WorkersFollowNotSupportedError } from "../workers.errors.ts";
 import {
   InvalidWorkerNameError,
   WorkerLogsQueryFailedError,
@@ -23,8 +23,8 @@ import {
   WorkersApiUnexpectedStatusError,
   WorkersUnavailableError,
 } from "../../../../shared/workers/workers.errors.ts";
-import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
-import { legacyWorkersLogs } from "./logs.handler.ts";
+import { WorkersEnvNotSupportedError } from "../workers.errors.ts";
+import { workersLogs } from "./logs.handler.ts";
 
 const ESCAPE = "\u001b";
 const CONFIG = 'project_id = "demo"\n\n[workers.api]\nruntime = "node"\n';
@@ -51,7 +51,7 @@ function flags(overrides: Record<string, unknown> = {}) {
     kind: Option.none(),
     tail: 100,
     ...overrides,
-  } as Parameters<typeof legacyWorkersLogs>[0];
+  } as Parameters<typeof workersLogs>[0];
 }
 
 /**
@@ -84,7 +84,7 @@ function sentQuery(request: { readonly urlParams: Readonly<Record<string, string
 describe("legacy workers logs", () => {
   it.live("prints a worker's own output oldest first", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: logsResponse([
@@ -96,7 +96,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags());
+      yield* workersLogs(flags());
 
       // `<time>  [app]    <message>` — the tag is present because no --kind
       // pinned a stream.
@@ -110,7 +110,7 @@ describe("legacy workers logs", () => {
 
   it.live("composes a request line from attributes rather than the message", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: logsResponse([
@@ -126,7 +126,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags());
+      yield* workersLogs(flags());
 
       expect(out.stdoutText).toContain("500 POST /checkout 7ms");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -134,7 +134,7 @@ describe("legacy workers logs", () => {
 
   it.live("prints a build event with its reason", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: logsResponse([
@@ -144,7 +144,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags());
+      yield* workersLogs(flags());
 
       expect(out.stdoutText).toContain("build_failed exit status 1");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -152,13 +152,13 @@ describe("legacy workers logs", () => {
 
   it.live("always sends both timestamp bounds, under a 24 hour span", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       routes: { [LOGS_ROUTE]: logsResponse([workerLogRow({})]) },
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags());
+      yield* workersLogs(flags());
 
       const query = sentQuery(http.requests[0]!);
       const start = query.iso_timestamp_start;
@@ -178,13 +178,13 @@ describe("legacy workers logs", () => {
 
   it.live("filters on log_attributes, never the empty source column", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       routes: { [LOGS_ROUTE]: logsResponse([workerLogRow({})]) },
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags());
+      yield* workersLogs(flags());
 
       const sql = sentQuery(http.requests[0]!).sql ?? "";
       expect(sql).toContain("log_attributes['worker'] = 'api'");
@@ -195,17 +195,17 @@ describe("legacy workers logs", () => {
 
   it.live("narrows to one stream for --kind, and to all three without it", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       routes: { [LOGS_ROUTE]: logsResponse([workerLogRow({})]) },
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ kind: Option.some("requests") }));
+      yield* workersLogs(flags({ kind: Option.some("requests") }));
       const narrowed = sentQuery(http.requests[0]!).sql ?? "";
       expect(narrowed).toContain("in ('worker_ingress_logs')");
 
-      yield* legacyWorkersLogs(flags());
+      yield* workersLogs(flags());
       const all = sentQuery(http.requests[1]!).sql ?? "";
       expect(all).toContain("'worker_guest_logs'");
       expect(all).toContain("'worker_ingress_logs'");
@@ -215,7 +215,7 @@ describe("legacy workers logs", () => {
 
   it.live("renders a stream it has never heard of rather than failing", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: logsResponse([
@@ -227,7 +227,7 @@ describe("legacy workers logs", () => {
     return Effect.gen(function* () {
       // The log contract is additive-only: unknown streams must be ignored, not
       // rejected.
-      yield* legacyWorkersLogs(flags());
+      yield* workersLogs(flags());
 
       expect(out.stdoutText).toContain("from the future");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -235,7 +235,7 @@ describe("legacy workers logs", () => {
 
   it.live("strips escape sequences a worker printed", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: logsResponse([
@@ -245,7 +245,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags());
+      yield* workersLogs(flags());
 
       expect(out.stdoutText).toContain("ERROR: not really");
       expect(out.stdoutText).not.toContain(ESCAPE);
@@ -254,7 +254,7 @@ describe("legacy workers logs", () => {
 
   it.live("keeps a blank guest line as a line", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: logsResponse([
@@ -266,7 +266,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags());
+      yield* workersLogs(flags());
 
       expect(out.stdoutText.trimEnd().split("\n")).toHaveLength(3);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -274,7 +274,7 @@ describe("legacy workers logs", () => {
 
   it.live("makes no request at all for --tail 0", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [GET_WORKER_ROUTE]: { status: 200, body: { data: workerResource({ name: "api" }) } },
@@ -283,7 +283,7 @@ describe("legacy workers logs", () => {
 
     return Effect.gen(function* () {
       // `limit 0` would be a 400, so no-history has to mean no query.
-      yield* legacyWorkersLogs(flags({ tail: 0 }));
+      yield* workersLogs(flags({ tail: 0 }));
 
       expect(http.routeKeys).not.toContain(workerLogsRoute());
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -291,13 +291,13 @@ describe("legacy workers logs", () => {
 
   it.live("passes --tail through as the row limit", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       routes: { [LOGS_ROUTE]: logsResponse([workerLogRow({})]) },
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ tail: 7 }));
+      yield* workersLogs(flags({ tail: 7 }));
 
       expect(sentQuery(http.requests[0]!).sql).toContain("limit 7");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -305,7 +305,7 @@ describe("legacy workers logs", () => {
 
   it.live("reports a worker that is not deployed rather than an empty screen", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: logsResponse([]),
@@ -314,7 +314,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersLogs(flags()).pipe(Effect.flip);
+      const error = yield* workersLogs(flags()).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerNotDeployedError);
       const suggestion = error instanceof WorkerNotDeployedError ? error.suggestion : "";
@@ -324,7 +324,7 @@ describe("legacy workers logs", () => {
 
   it.live("says so when a deployed worker has simply been quiet", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: logsResponse([]),
@@ -333,7 +333,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags());
+      yield* workersLogs(flags());
 
       expect(out.stdoutText).toContain('No logs for "api" in the last 24 hours.');
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -341,7 +341,7 @@ describe("legacy workers logs", () => {
 
   it.live("treats absent, null and empty result identically", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: [
@@ -355,7 +355,7 @@ describe("legacy workers logs", () => {
 
     return Effect.gen(function* () {
       for (const _ of [0, 1, 2]) {
-        yield* legacyWorkersLogs(flags());
+        yield* workersLogs(flags());
       }
 
       expect(out.stdoutText.match(/No logs for/gu)).toHaveLength(3);
@@ -364,7 +364,7 @@ describe("legacy workers logs", () => {
 
   it.live("fails on a 200 that carries a query error", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: { status: 200, body: { result: null, error: "query timed out" } },
@@ -374,7 +374,7 @@ describe("legacy workers logs", () => {
     return Effect.gen(function* () {
       // The endpoint reports a failed query with a 200, so reading `result`
       // first would report success.
-      const error = yield* legacyWorkersLogs(flags()).pipe(Effect.flip);
+      const error = yield* workersLogs(flags()).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerLogsQueryFailedError);
       const detail = error instanceof WorkerLogsQueryFailedError ? error.detail : "";
@@ -384,7 +384,7 @@ describe("legacy workers logs", () => {
 
   it.live("reads the structured form of a query error too", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: {
@@ -398,7 +398,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersLogs(flags()).pipe(Effect.flip);
+      const error = yield* workersLogs(flags()).pipe(Effect.flip);
 
       const detail = error instanceof WorkerLogsQueryFailedError ? error.detail : "";
       expect(detail).toContain("Unknown expression");
@@ -407,14 +407,14 @@ describe("legacy workers logs", () => {
 
   it.live("maps 402 to a usage error and 429 to a rate limit error", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: { [LOGS_ROUTE]: [{ status: 402 }, { status: 429 }] },
     });
 
     return Effect.gen(function* () {
-      const usage = yield* legacyWorkersLogs(flags()).pipe(Effect.flip);
-      const limited = yield* legacyWorkersLogs(flags()).pipe(Effect.flip);
+      const usage = yield* workersLogs(flags()).pipe(Effect.flip);
+      const limited = yield* workersLogs(flags()).pipe(Effect.flip);
 
       expect(usage).toBeInstanceOf(WorkerLogsUsageExceededError);
       expect(limited).toBeInstanceOf(WorkerLogsRateLimitedError);
@@ -423,13 +423,13 @@ describe("legacy workers logs", () => {
 
   it.live("reports a project outside the alpha for a 404", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: { [LOGS_ROUTE]: { status: 404 } },
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersLogs(flags()).pipe(Effect.flip);
+      const error = yield* workersLogs(flags()).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkersUnavailableError);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -437,13 +437,13 @@ describe("legacy workers logs", () => {
 
   it.live("reports an unexpected status, which is where a rejected query lands", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: { [LOGS_ROUTE]: { status: 500, body: { message: "query rejected" } } },
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersLogs(flags()).pipe(Effect.flip);
+      const error = yield* workersLogs(flags()).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkersApiUnexpectedStatusError);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -451,13 +451,13 @@ describe("legacy workers logs", () => {
 
   it.live("reports a transport failure", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: { [LOGS_ROUTE]: { transportError: "connection reset" } },
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersLogs(flags()).pipe(Effect.flip);
+      const error = yield* workersLogs(flags()).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkersApiNetworkError);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -465,10 +465,10 @@ describe("legacy workers logs", () => {
 
   it.live("rejects an impossible worker name before any request", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: {} });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: {} });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersLogs(flags({ name: "Not A Name" })).pipe(Effect.flip);
+      const error = yield* workersLogs(flags({ name: "Not A Name" })).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(InvalidWorkerNameError);
       expect(http.requests).toHaveLength(0);
@@ -477,23 +477,23 @@ describe("legacy workers logs", () => {
 
   it.live("refuses -o env before spending the query", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       goOutput: "env",
       routes: { [LOGS_ROUTE]: logsResponse([workerLogRow({})]) },
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersLogs(flags()).pipe(Effect.flip);
+      const error = yield* workersLogs(flags()).pipe(Effect.flip);
 
-      expect(error).toBeInstanceOf(LegacyWorkersEnvNotSupportedError);
+      expect(error).toBeInstanceOf(WorkersEnvNotSupportedError);
       expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
   it.live("emits only the payload on stdout for -o json", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       goOutput: "json",
       routes: {
@@ -504,7 +504,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags());
+      yield* workersLogs(flags());
 
       const payload = JSON.parse(out.stdoutText) as {
         worker_name: string;
@@ -522,14 +522,14 @@ describe("legacy workers logs", () => {
 
   it.live("emits exactly one structured result for --output-format json", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       format: "json",
       routes: { [LOGS_ROUTE]: logsResponse([workerLogRow({ tsMs: T1 })]) },
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags());
+      yield* workersLogs(flags());
 
       expect(out.stdoutText).toBe("");
       const results = out.messages.filter((message) => message.type === "success");
@@ -539,13 +539,13 @@ describe("legacy workers logs", () => {
 
   it.live("flushes telemetry even when the query fails", () => {
     const repo = project();
-    const { layer, telemetry } = setupLegacyWorkers({
+    const { layer, telemetry } = setupWorkers({
       workdir: repo.dir,
       routes: { [LOGS_ROUTE]: { status: 500 } },
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags()).pipe(Effect.ignore);
+      yield* workersLogs(flags()).pipe(Effect.ignore);
 
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -556,14 +556,14 @@ describe("legacy workers logs", () => {
   // failing-query test above does not cover this path.
   it.live("flushes telemetry when the project ref cannot be resolved", () => {
     const repo = project();
-    const { layer, telemetry, http } = setupLegacyWorkers({
+    const { layer, telemetry, http } = setupWorkers({
       workdir: repo.dir,
       linked: false,
       routes: {},
     });
 
     return Effect.gen(function* () {
-      const exit = yield* legacyWorkersLogs(flags()).pipe(Effect.exit);
+      const exit = yield* workersLogs(flags()).pipe(Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
       expect(telemetry.flushed).toBe(true);
@@ -573,7 +573,7 @@ describe("legacy workers logs", () => {
 
   it.live("uses the project ref from the flag and echoes it in suggestions", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       linked: false,
       routes: {
@@ -583,7 +583,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersLogs(
+      const error = yield* workersLogs(
         flags({ projectRef: Option.some(WORKERS_PROJECT_REF) }),
       ).pipe(Effect.flip);
 
@@ -596,7 +596,7 @@ describe("legacy workers logs", () => {
 
   it.live("keeps printing new lines, sending both bounds on every poll", () => {
     const repo = project();
-    const { layer, out, http } = setupLegacyWorkers({
+    const { layer, out, http } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: [
@@ -608,7 +608,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ follow: true }), followFor(2));
+      yield* workersLogs(flags({ follow: true }), followFor(2));
 
       expect(out.stdoutText).toContain("first");
       expect(out.stdoutText).toContain("second");
@@ -629,7 +629,7 @@ describe("legacy workers logs", () => {
 
   it.live("does not reprint a line an overlapping window returns again", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: [
@@ -644,7 +644,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ follow: true }), followFor(1));
+      yield* workersLogs(flags({ follow: true }), followFor(1));
 
       expect(out.stdoutText.match(/only once/gu)).toHaveLength(1);
       expect(out.stdoutText).toContain("and this");
@@ -653,7 +653,7 @@ describe("legacy workers logs", () => {
 
   it.live("still emits a line that arrived late, inside the grace window", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: [
@@ -665,7 +665,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ follow: true }), followFor(1));
+      yield* workersLogs(flags({ follow: true }), followFor(1));
 
       expect(out.stdoutText).toContain("arrived late");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -673,7 +673,7 @@ describe("legacy workers logs", () => {
 
   it.live("skips history for --tail 0 but still follows", () => {
     const repo = project();
-    const { layer, out, http } = setupLegacyWorkers({
+    const { layer, out, http } = setupWorkers({
       workdir: repo.dir,
       routes: {
         // A tail-zero follow still asks whether the worker exists: with no history
@@ -687,7 +687,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ follow: true, tail: 0 }), followFor(1));
+      yield* workersLogs(flags({ follow: true, tail: 0 }), followFor(1));
 
       expect(out.stdoutText).toContain("brand new");
       // No history request; every log request belongs to the poll loop, and none
@@ -702,7 +702,7 @@ describe("legacy workers logs", () => {
 
   it.live("emits a log-entry event per line under stream-json", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       format: "stream-json",
       routes: {
@@ -714,7 +714,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ follow: true }), followFor(1));
+      yield* workersLogs(flags({ follow: true }), followFor(1));
 
       const entries = out.events.filter((event) => event.type === "log-entry");
       expect(entries).toHaveLength(2);
@@ -734,7 +734,7 @@ describe("legacy workers logs", () => {
   // nothing — so this pair asks for the text rendering, not for JSON.
   it.live("renders text when -o pretty overrides --output-format json", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       goOutput: "pretty",
       format: "json",
@@ -742,7 +742,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags());
+      yield* workersLogs(flags());
 
       expect(out.stdoutText).not.toBe("");
       expect(out.messages.filter((message) => message.type === "success")).toHaveLength(0);
@@ -753,7 +753,7 @@ describe("legacy workers logs", () => {
   // run has no single-payload format to be incompatible with.
   it.live("allows --follow when -o pretty overrides --output-format json", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       goOutput: "pretty",
       format: "json",
@@ -761,7 +761,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ follow: true }), followFor(1));
+      yield* workersLogs(flags({ follow: true }), followFor(1));
 
       expect(out.stdoutText).not.toBe("");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -772,15 +772,15 @@ describe("legacy workers logs", () => {
 
     return Effect.gen(function* () {
       for (const setup of [
-        setupLegacyWorkers({ workdir: repo.dir, goOutput: "json", routes: {} }),
-        setupLegacyWorkers({ workdir: repo.dir, format: "json", routes: {} }),
+        setupWorkers({ workdir: repo.dir, goOutput: "json", routes: {} }),
+        setupWorkers({ workdir: repo.dir, format: "json", routes: {} }),
       ]) {
-        const error = yield* legacyWorkersLogs(flags({ follow: true })).pipe(
+        const error = yield* workersLogs(flags({ follow: true })).pipe(
           Effect.flip,
           Effect.provide(setup.layer),
         );
 
-        expect(error).toBeInstanceOf(LegacyWorkersFollowNotSupportedError);
+        expect(error).toBeInstanceOf(WorkersFollowNotSupportedError);
         // Refused before any query is paid for.
         expect(setup.http.requests).toHaveLength(0);
       }
@@ -792,7 +792,7 @@ describe("legacy workers logs", () => {
   // the floor has to be the line's own timestamp rather than a narrower window.
   it.live("does not replay pre-invocation lines for --tail 0 --follow", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [GET_WORKER_ROUTE]: { status: 200, body: { data: workerResource({ name: "api" }) } },
@@ -806,7 +806,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ tail: 0, follow: true }), followFor(0));
+      yield* workersLogs(flags({ tail: 0, follow: true }), followFor(0));
 
       expect(out.stdoutText).toContain("written after");
       expect(out.stdoutText).not.toContain("written before");
@@ -817,13 +817,13 @@ describe("legacy workers logs", () => {
   // directly — otherwise a typo waits forever on logs that cannot arrive.
   it.live("still checks the worker exists for --tail 0 --follow", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: { [GET_WORKER_ROUTE]: { status: 404 } },
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersLogs(flags({ tail: 0, follow: true }), followFor(0)).pipe(
+      const error = yield* workersLogs(flags({ tail: 0, follow: true }), followFor(0)).pipe(
         Effect.flip,
       );
 
@@ -840,7 +840,7 @@ describe("legacy workers logs", () => {
   // is a defect rather than the typed unreadable-response failure.
   it.live("fails typed rather than throwing on an out-of-range timestamp", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: logsResponse([workerLogRow({ id: "bad", tsMs: 8.7e15 })]),
@@ -848,7 +848,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersLogs(flags()).pipe(Effect.flip);
+      const error = yield* workersLogs(flags()).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkersApiUnexpectedStatusError);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -858,7 +858,7 @@ describe("legacy workers logs", () => {
   // minute and spent the endpoint's ten-per-minute allowance getting nowhere.
   it.live("surfaces a definitive poll failure without retrying it", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: [logsResponse([workerLogRow({ id: "a", tsMs: T1 })]), { status: 404 }],
@@ -866,7 +866,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ follow: true }), {
+      yield* workersLogs(flags({ follow: true }), {
         pollSchedule: Schedule.recurs(0),
         // Would retry three times over if the failure were treated as transient.
         retrySchedule: Schedule.recurs(3),
@@ -880,7 +880,7 @@ describe("legacy workers logs", () => {
   // A rate limit is the server asking for exactly that, so it still rides out.
   it.live("retries a rate-limited poll", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: [
@@ -892,7 +892,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ follow: true }), {
+      yield* workersLogs(flags({ follow: true }), {
         pollSchedule: Schedule.recurs(0),
         retrySchedule: Schedule.recurs(3),
       });
@@ -905,7 +905,7 @@ describe("legacy workers logs", () => {
   // meant `--tail 1 --follow` asked each poll for a single row.
   it.live("polls with a page size independent of --tail", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: [
@@ -916,7 +916,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ tail: 1, follow: true }), followFor(0));
+      yield* workersLogs(flags({ tail: 1, follow: true }), followFor(0));
 
       expect(sentQuery(http.requests[0]!).sql ?? "").toContain("limit 1");
       expect(sentQuery(http.requests[1]!).sql ?? "").toContain("limit 1000");
@@ -930,7 +930,7 @@ describe("legacy workers logs", () => {
     const fullPage = Array.from({ length: 1000 }, (_, index) =>
       workerLogRow({ id: `burst-${index}`, tsMs: T2 + index, message: `burst ${index}` }),
     );
-    const { layer, out, http } = setupLegacyWorkers({
+    const { layer, out, http } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: [
@@ -944,7 +944,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ follow: true }), followFor(0));
+      yield* workersLogs(flags({ follow: true }), followFor(0));
 
       // The second page is only requested because the first came back full.
       expect(http.requests).toHaveLength(3);
@@ -976,7 +976,7 @@ describe("legacy workers logs", () => {
         ),
       ),
     );
-    const { layer, out, http } = setupLegacyWorkers({
+    const { layer, out, http } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: [
@@ -987,7 +987,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ follow: true }), followFor(0));
+      yield* workersLogs(flags({ follow: true }), followFor(0));
 
       // The budget, and not one request more: the sixth page is never asked for.
       expect(http.requests).toHaveLength(6);
@@ -1012,7 +1012,7 @@ describe("legacy workers logs", () => {
         ),
       );
     const burst = (poll: number) => Array.from({ length: 5 }, (_u, page) => fullPage(page, poll));
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: [
@@ -1024,7 +1024,7 @@ describe("legacy workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ follow: true }), followFor(1));
+      yield* workersLogs(flags({ follow: true }), followFor(1));
 
       // A sustained burst would otherwise repeat the notice every interval and
       // bury the very lines it is warning about.
@@ -1035,14 +1035,14 @@ describe("legacy workers logs", () => {
 
   it.live("records exit 130 on SIGINT and still runs its finalizers", () => {
     const repo = project();
-    const { layer, processControl, telemetry } = setupLegacyWorkers({
+    const { layer, processControl, telemetry } = setupWorkers({
       workdir: repo.dir,
       signal: "SIGINT",
       routes: { [LOGS_ROUTE]: logsResponse([workerLogRow({ id: "a", tsMs: T1 })]) },
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersLogs(flags({ follow: true }), {
+      yield* workersLogs(flags({ follow: true }), {
         pollSchedule: Schedule.forever,
         retrySchedule: Schedule.recurs(0),
       });

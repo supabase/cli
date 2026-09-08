@@ -1,21 +1,21 @@
 import { Effect, Layer } from "effect";
 import { CliOutput, Command, type HelpDoc } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
-import { legacyBranchesCommand } from "../../commands/branches/branches.command.ts";
-import { legacyDbCommand } from "../../commands/db/db.command.ts";
-import { legacyFunctionsCommand } from "../../commands/functions/functions.command.ts";
-import { legacyFunctionsDeployCommand } from "../../commands/functions/deploy/deploy.command.ts";
-import { legacyFunctionsDownloadCommand } from "../../commands/functions/download/download.command.ts";
-import { legacyFunctionsServeCommand } from "../../commands/functions/serve/serve.command.ts";
-import { legacyInitCommand } from "../../commands/init/init.command.ts";
-import { legacyProjectsCommand } from "../../commands/projects/projects.command.ts";
-import { legacyProjectsCreateCommand } from "../../commands/projects/create/create.command.ts";
-import { legacyStartCommand } from "../../commands/start/start.command.ts";
-import { legacyStopCommand } from "../../commands/stop/stop.command.ts";
-import { LEGACY_VALID_TOKEN } from "../../../tests/helpers/legacy-mocks.ts";
+import { branchesCommand } from "../../commands/branches/branches.command.ts";
+import { dbCommand } from "../../commands/db/db.command.ts";
+import { functionsCommand } from "../../commands/functions/functions.command.ts";
+import { functionsDeployCommand } from "../../commands/functions/deploy/deploy.command.ts";
+import { functionsDownloadCommand } from "../../commands/functions/download/download.command.ts";
+import { functionsServeCommand } from "../../commands/functions/serve/serve.command.ts";
+import { initCommand } from "../../commands/init/init.command.ts";
+import { projectsCommand } from "../../commands/projects/projects.command.ts";
+import { projectsCreateCommand } from "../../commands/projects/create/create.command.ts";
+import { startCommand } from "../../commands/start/start.command.ts";
+import { stopCommand } from "../../commands/stop/stop.command.ts";
+import { VALID_TOKEN } from "../../../tests/helpers/command-mocks.ts";
 import { mockOutput, withEnv } from "../../../tests/helpers/mocks.ts";
-import { LEGACY_GLOBAL_FLAGS } from "../legacy/global-flags.ts";
-import { LegacyGoProxy } from "../legacy/go-proxy.service.ts";
+import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
+import { GoProxy } from "../../command-internal/go-proxy.service.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 
 interface CommandImpl {
@@ -26,9 +26,9 @@ const buildHelpDoc = <Name extends string, Input, ContextInput, E, R>(
   cmd: Command.Command<Name, Input, ContextInput, E, R>,
 ): HelpDoc.HelpDoc => (cmd as unknown as CommandImpl).buildHelpDoc([]);
 
-function mockLegacyGoProxy() {
+function mockGoProxy() {
   const calls: Array<ReadonlyArray<string>> = [];
-  const layer = Layer.succeed(LegacyGoProxy, {
+  const layer = Layer.succeed(GoProxy, {
     exec: (args) =>
       Effect.sync(() => {
         calls.push([...args]);
@@ -39,17 +39,17 @@ function mockLegacyGoProxy() {
   return { layer, calls };
 }
 
-const legacyTestRoot = Command.make("supabase").pipe(
+const testRoot = Command.make("supabase").pipe(
   Command.withSubcommands([
-    legacyStartCommand,
-    legacyStopCommand,
-    legacyInitCommand,
-    legacyFunctionsCommand,
-    legacyProjectsCommand,
-    legacyBranchesCommand,
-    legacyDbCommand,
+    startCommand,
+    stopCommand,
+    initCommand,
+    functionsCommand,
+    projectsCommand,
+    branchesCommand,
+    dbCommand,
   ]),
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
+  Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
 const silentCliOutputFormatter: CliOutput.Formatter = {
@@ -61,35 +61,35 @@ const silentCliOutputFormatter: CliOutput.Formatter = {
 };
 
 const authenticatedEnv = {
-  SUPABASE_ACCESS_TOKEN: LEGACY_VALID_TOKEN,
+  SUPABASE_ACCESS_TOKEN: VALID_TOKEN,
   ...(process.env["SystemRoot"] === undefined ? {} : { SystemRoot: process.env["SystemRoot"] }),
 };
 
 describe("native hidden flags", () => {
   it("omits hidden flags from help docs for every legacy command that still carries one", () => {
-    expect(buildHelpDoc(legacyStartCommand).flags.map((flag) => flag.name)).toEqual([
+    expect(buildHelpDoc(startCommand).flags.map((flag) => flag.name)).toEqual([
       "exclude",
       "ignore-health-check",
     ]);
 
-    expect(buildHelpDoc(legacyStopCommand).flags.map((flag) => flag.name)).toEqual([
+    expect(buildHelpDoc(stopCommand).flags.map((flag) => flag.name)).toEqual([
       "project-id",
       "no-backup",
       "all",
     ]);
 
-    expect(buildHelpDoc(legacyInitCommand).flags.map((flag) => flag.name)).toEqual([
+    expect(buildHelpDoc(initCommand).flags.map((flag) => flag.name)).toEqual([
       "interactive",
       "use-orioledb",
       "force",
     ]);
 
-    expect(buildHelpDoc(legacyFunctionsDownloadCommand).flags.map((flag) => flag.name)).toEqual([
+    expect(buildHelpDoc(functionsDownloadCommand).flags.map((flag) => flag.name)).toEqual([
       "project-ref",
       "use-api",
     ]);
 
-    expect(buildHelpDoc(legacyFunctionsDeployCommand).flags.map((flag) => flag.name)).toEqual([
+    expect(buildHelpDoc(functionsDeployCommand).flags.map((flag) => flag.name)).toEqual([
       "project-ref",
       "no-verify-jwt",
       "use-api",
@@ -98,7 +98,7 @@ describe("native hidden flags", () => {
       "jobs",
     ]);
 
-    expect(buildHelpDoc(legacyFunctionsServeCommand).flags.map((flag) => flag.name)).toEqual([
+    expect(buildHelpDoc(functionsServeCommand).flags.map((flag) => flag.name)).toEqual([
       "no-verify-jwt",
       "env-file",
       "import-map",
@@ -107,7 +107,7 @@ describe("native hidden flags", () => {
       "inspect-main",
     ]);
 
-    expect(buildHelpDoc(legacyProjectsCreateCommand).flags.map((flag) => flag.name)).toEqual([
+    expect(buildHelpDoc(projectsCreateCommand).flags.map((flag) => flag.name)).toEqual([
       "org-id",
       "db-password",
       "region",
@@ -117,28 +117,28 @@ describe("native hidden flags", () => {
   });
 
   it("still parses and forwards every hidden flag by exact name", async () => {
-    const proxy = mockLegacyGoProxy();
+    const proxy = mockGoProxy();
 
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          // `start` and `stop` are both natively ported (no longer `LegacyGoProxy` forwards),
+          // `start` and `stop` are both natively ported (no longer `GoProxy` forwards),
           // so they can fail for workdir/Docker-related reasons in this proxy-only test layer —
           // the point here is only to prove the hidden `--preview`/`--backup` flags still parse
           // by exact name, not that the commands succeed, matching the `functions deploy`/`serve`
           // assertions below.
-          const startExit = yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+          const startExit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })([
             "start",
             "--preview",
           ]).pipe(Effect.exit);
           expect(JSON.stringify(startExit)).not.toContain("UnrecognizedFlag");
-          const stopExit = yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+          const stopExit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })([
             "stop",
             "--backup=false",
           ]).pipe(Effect.exit);
           expect(JSON.stringify(stopExit)).not.toContain("UnrecognizedFlag");
           // `functions download --use-docker` now runs the native Docker-unbundle
-          // path (CLI-1963) instead of forwarding to `LegacyGoProxy` — the
+          // path (CLI-1963) instead of forwarding to `GoProxy` — the
           // deliberately-invalid slug makes it fail at `validateSlug`
           // (`download.ts`, checked BEFORE `isDockerRunning`/any image pull),
           // so the invocation stays fast and side-effect-free even on a CI
@@ -147,7 +147,7 @@ describe("native hidden flags", () => {
           // still proving the hidden flag parses by exact name.
           // `--legacy-bundle` is the one remaining case that still forwards to the
           // proxy, asserted below.
-          const downloadUseDockerExit = yield* Command.runWith(legacyTestRoot, {
+          const downloadUseDockerExit = yield* Command.runWith(testRoot, {
             version: "0.0.0-test",
           })([
             "functions",
@@ -158,7 +158,7 @@ describe("native hidden flags", () => {
             "--use-docker",
           ]).pipe(Effect.exit);
           expect(JSON.stringify(downloadUseDockerExit)).not.toContain("UnrecognizedFlag");
-          yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+          yield* Command.runWith(testRoot, { version: "0.0.0-test" })([
             "functions",
             "download",
             "hello",
@@ -166,15 +166,15 @@ describe("native hidden flags", () => {
             "abcdefghijklmnopqrst",
             "--legacy-bundle",
           ]);
-          const useDockerExit = yield* Command.runWith(legacyTestRoot, {
+          const useDockerExit = yield* Command.runWith(testRoot, {
             version: "0.0.0-test",
           })(["functions", "deploy", "hello", "--use-docker"]).pipe(Effect.exit);
-          const legacyBundleExit = yield* Command.runWith(legacyTestRoot, {
+          const legacyBundleExit = yield* Command.runWith(testRoot, {
             version: "0.0.0-test",
           })(["functions", "deploy", "hello", "--legacy-bundle"]).pipe(Effect.exit);
           expect(JSON.stringify(useDockerExit)).not.toContain("UnrecognizedFlag");
           expect(JSON.stringify(legacyBundleExit)).not.toContain("UnrecognizedFlag");
-          const serveExit = yield* Command.runWith(legacyTestRoot, {
+          const serveExit = yield* Command.runWith(testRoot, {
             version: "0.0.0-test",
           })(["functions", "serve", "--all=false"]).pipe(Effect.exit);
           expect(JSON.stringify(serveExit)).not.toContain("UnrecognizedFlag");
@@ -207,10 +207,10 @@ describe("native hidden flags", () => {
   }, 30_000);
 
   it("does not leak hidden flag names through unknown-flag suggestions", async () => {
-    const proxy = mockLegacyGoProxy();
+    const proxy = mockGoProxy();
 
     const exit = await Effect.runPromise(
-      Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+      Command.runWith(testRoot, { version: "0.0.0-test" })([
         "projects",
         "create",
         "demo",
@@ -229,7 +229,7 @@ describe("native hidden flags", () => {
 
 describe("legacy hidden subcommands", () => {
   it("omits hidden branch and db subcommands from help docs", () => {
-    const branchesHelp = buildHelpDoc(legacyBranchesCommand);
+    const branchesHelp = buildHelpDoc(branchesCommand);
     expect(branchesHelp.subcommands?.[0]?.commands.map((command) => command.name)).toEqual([
       "list",
       "create",
@@ -240,7 +240,7 @@ describe("legacy hidden subcommands", () => {
       "delete",
     ]);
 
-    const dbHelp = buildHelpDoc(legacyDbCommand);
+    const dbHelp = buildHelpDoc(dbCommand);
     expect(dbHelp.subcommands?.[0]?.commands.map((command) => command.name)).toEqual([
       "diff",
       "dump",
@@ -259,16 +259,12 @@ describe("legacy hidden subcommands", () => {
     // `db branch *` / `db remote *` are still Phase 0 proxy wrappers, so a
     // successful proxy call is direct proof that cobra-style `Hidden` doesn't
     // block exact-name dispatch through `effect/unstable/cli`.
-    const proxy = mockLegacyGoProxy();
+    const proxy = mockGoProxy();
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "branch", "list"]);
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
-          "db",
-          "remote",
-          "changes",
-        ]);
+        yield* Command.runWith(testRoot, { version: "0.0.0-test" })(["db", "branch", "list"]);
+        yield* Command.runWith(testRoot, { version: "0.0.0-test" })(["db", "remote", "changes"]);
       }).pipe(
         Effect.provide(Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()))),
       ) as Effect.Effect<void>,
@@ -282,7 +278,7 @@ describe("legacy hidden subcommands", () => {
 
   it("still executes the native `db test` hidden alias by exact name (CLI-1962)", async () => {
     // `db test` was ported off the Go proxy in CLI-1962, so it no longer calls
-    // `LegacyGoProxy` — this test only needs to prove dispatch still reaches the
+    // `GoProxy` — this test only needs to prove dispatch still reaches the
     // real (now-native) handler, not that the handler fully succeeds (this file's
     // minimal layer doesn't wire the docker/db/telemetry services the native
     // handler needs, matching how `start`/`stop` are treated above). A genuinely
@@ -290,7 +286,7 @@ describe("legacy hidden subcommands", () => {
     // `UnknownSubcommand` CliError; the native handler instead defects on a
     // missing service once dispatch has already succeeded — that defect is the
     // proof, mirrored against a deliberately unknown sibling subcommand below.
-    const proxy = mockLegacyGoProxy();
+    const proxy = mockGoProxy();
     const layer = Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()));
 
     const causeOf = (exit: unknown) =>
@@ -298,7 +294,7 @@ describe("legacy hidden subcommands", () => {
         .cause;
 
     const dbTestExit = await Effect.runPromise(
-      Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "test"]).pipe(
+      Command.runWith(testRoot, { version: "0.0.0-test" })(["db", "test"]).pipe(
         Effect.provide(layer),
         Effect.exit,
       ) as Effect.Effect<unknown, never, never>,
@@ -315,7 +311,7 @@ describe("legacy hidden subcommands", () => {
     );
 
     const unknownExit = await Effect.runPromise(
-      Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "not-a-real-command"]).pipe(
+      Command.runWith(testRoot, { version: "0.0.0-test" })(["db", "not-a-real-command"]).pipe(
         Effect.provide(layer),
         Effect.exit,
       ) as Effect.Effect<unknown, never, never>,

@@ -6,30 +6,24 @@ import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
-  LEGACY_VALID_REF,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-  legacySequentialExecBatch,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  VALID_REF,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+  sequentialExecBatch,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../shared/legacy/global-flags.ts";
+import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
-import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import type {
-  LegacyDbConfigFlags,
-  LegacyResolvedDbConfig,
-} from "../../../command-internal/legacy-db-config.types.ts";
-import { LegacyDbExecError } from "../../../command-internal/legacy-db-connection.errors.ts";
-import {
-  type LegacyDbSession,
-  LegacyDbConnection,
-} from "../../../command-internal/legacy-db-connection.service.ts";
-import { legacyMigrationRepair, type LegacyMigrationRepairInput } from "./repair.handler.ts";
+import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
+import { type DbSession, DbConnection } from "../../../command-internal/db-connection.service.ts";
+import { migrationRepair, type MigrationRepairInput } from "./repair.handler.ts";
 
 interface SetupOpts {
   readonly format?: OutputFormat;
@@ -47,17 +41,17 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     format: opts.format ?? "text",
     promptConfirmResponses: opts.confirm === undefined ? undefined : [opts.confirm],
   });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
 
   const execs: Array<string> = [];
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
 
-  const resolver = Layer.succeed(LegacyDbConfigResolver, {
-    resolve: (_flags: LegacyDbConfigFlags) =>
+  const resolver = Layer.succeed(DbConfigResolver, {
+    resolve: (_flags: DbConfigFlags) =>
       opts.failResolve === true
         ? Effect.fail(
-            new LegacyProjectNotLinkedError({
+            new ProjectRefNotLinkedError({
               message: "Cannot find project ref. Have you run link?",
             }),
           )
@@ -70,26 +64,26 @@ function setup(workdir: string, opts: SetupOpts = {}) {
               database: "postgres",
             },
             isLocal: false,
-            ref: Option.some(LEGACY_VALID_REF),
-          } satisfies LegacyResolvedDbConfig),
+            ref: Option.some(VALID_REF),
+          } satisfies ResolvedDbConfig),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
-  const connection = Layer.succeed(LegacyDbConnection, {
+  const connection = Layer.succeed(DbConnection, {
     connect: () => {
-      const session: LegacyDbSession = {
+      const session: DbSession = {
         exec: (sql: string) =>
           Effect.suspend(() => {
             execs.push(sql);
             return opts.failSql !== undefined && sql.includes(opts.failSql)
-              ? Effect.fail(new LegacyDbExecError({ message: "boom" }))
+              ? Effect.fail(new DbExecError({ message: "boom" }))
               : Effect.void;
           }),
         query: (sql: string, params?: ReadonlyArray<unknown>) =>
           Effect.suspend(() => {
             queries.push({ sql, params });
             return opts.failSql !== undefined && sql.includes(opts.failSql)
-              ? Effect.fail(new LegacyDbExecError({ message: "boom" }))
+              ? Effect.fail(new DbExecError({ message: "boom" }))
               : Effect.succeed<ReadonlyArray<Record<string, unknown>>>([]);
           }),
         extensionExists: () => Effect.succeed(false),
@@ -97,7 +91,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
         // A migration file's statements arrive as one batch; replay them through
         // `exec`/`query` so this suite's recordings and failure injection still apply.
-        execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+        execBatch: (statements) => sequentialExecBatch(session)(statements),
       };
       return Effect.succeed(session);
     },
@@ -105,16 +99,16 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
   // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
-  // (not just the hardcoded `LEGACY_VALID_REF` fallback) drives the linked ref.
-  const projectRef = Layer.succeed(LegacyProjectRefResolver, {
-    resolve: () => Effect.succeed(LEGACY_VALID_REF),
-    resolveForLink: () => Effect.succeed(LEGACY_VALID_REF),
-    resolveOptional: () => Effect.succeed(Option.some(LEGACY_VALID_REF)),
+  // (not just the hardcoded `VALID_REF` fallback) drives the linked ref.
+  const projectRef = Layer.succeed(ProjectRefResolver, {
+    resolve: () => Effect.succeed(VALID_REF),
+    resolveForLink: () => Effect.succeed(VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
     loadProjectRef: (flagValue: Option.Option<string>) =>
       Effect.succeed(
-        Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : LEGACY_VALID_REF,
+        Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : VALID_REF,
       ),
-    promptProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
+    promptProjectRef: () => Effect.succeed(VALID_REF),
   });
 
   const layer = Layer.mergeAll(
@@ -124,9 +118,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolver,
     connection,
     projectRef,
-    mockLegacyCliSettings({ workdir }),
-    Layer.succeed(LegacyDnsResolverFlag, "native"),
-    Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    mockCommandSettings({ workdir }),
+    Layer.succeed(DnsResolverFlag, "native"),
+    Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     mockTty({ stdinIsTty: opts.isTTY ?? true }),
     mockStdin(
@@ -140,7 +134,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   return { layer, out, telemetry, execs, queries, cache };
 }
 
-const input = (over: Partial<LegacyMigrationRepairInput> = {}): LegacyMigrationRepairInput => ({
+const input = (over: Partial<MigrationRepairInput> = {}): MigrationRepairInput => ({
   versions: over.versions ?? [],
   status: over.status ?? "applied",
   dbUrl: over.dbUrl ?? Option.none(),
@@ -156,14 +150,14 @@ const seedMigration = (workdir: string, name: string, body: string) => {
   writeFileSync(join(dir, name), body);
 };
 
-const tmp = useLegacyTempWorkdir();
+const tmp = useTempWorkdir();
 
 describe("legacy migration repair", () => {
   it.live("marks a version as applied by upserting from its local file", () => {
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, execs, queries, out } = setup(tmp.current);
     return Effect.gen(function* () {
-      yield* legacyMigrationRepair(input({ versions: ["20240101000000"], status: "applied" }));
+      yield* migrationRepair(input({ versions: ["20240101000000"], status: "applied" }));
       // The connection banner prints to stderr before dialing.
       expect(stripAnsi(out.stderrText)).toContain("Connecting to remote database...");
       // One transaction: BEGIN ... COMMIT, no ROLLBACK.
@@ -180,14 +174,14 @@ describe("legacy migration repair", () => {
     // version parsing, so an unlinked target error wins over a bad version.
     const { layer } = setup(tmp.current, { failResolve: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationRepair(
+      const exit = yield* migrationRepair(
         input({ versions: ["not-a-number"], status: "applied" }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         // The config/target error surfaces first, NOT the invalid-version error.
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyProjectNotLinkedError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("ProjectRefNotLinkedError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -197,23 +191,23 @@ describe("legacy migration repair", () => {
     // handler's own failure, so a declined repair-all (cancellation) still caches the ref.
     const { layer, cache } = setup(tmp.current, { confirm: false });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationRepair(input({ versions: [], status: "applied" })).pipe(
+      const exit = yield* migrationRepair(input({ versions: [], status: "applied" })).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
       }
       expect(cache.cached).toBe(true);
-      expect(cache.cachedRef).toBe(LEGACY_VALID_REF);
+      expect(cache.cachedRef).toBe(VALID_REF);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("marks versions as reverted by deleting them", () => {
     const { layer, queries } = setup(tmp.current);
     return Effect.gen(function* () {
-      yield* legacyMigrationRepair(
+      yield* migrationRepair(
         input({ versions: ["20240101000000", "20240102000000"], status: "reverted" }),
       );
       const del = queries.find((q) => q.sql.includes("WHERE version = ANY"));
@@ -224,15 +218,13 @@ describe("legacy migration repair", () => {
   it.live("rejects a non-numeric version", () => {
     const { layer } = setup(tmp.current);
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationRepair(
+      const exit = yield* migrationRepair(
         input({ versions: ["not-a-number"], status: "applied" }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe(
-          "LegacyMigrationInvalidVersionError",
-        );
+        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationInvalidVersionError");
         // Guard: unlike `db reset` (bare `invalid version number`),
         // `migration repair` keeps the established `failed to parse <v>:` wrapper.
         expect(Option.isSome(failure) && failure.value.message).toBe(
@@ -248,15 +240,13 @@ describe("legacy migration repair", () => {
       // Explicit versions validate with a strict integer parse, which
       // rejects values above the int64 range; a 20-digit version must fail
       // `invalid version number` before any glob/upsert/delete.
-      const exit = yield* legacyMigrationRepair(
+      const exit = yield* migrationRepair(
         input({ versions: ["99999999999999999999"], status: "applied" }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe(
-          "LegacyMigrationInvalidVersionError",
-        );
+        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationInvalidVersionError");
       }
       // Validation runs before connecting, so no transaction or upsert occurred.
       expect(execs).not.toContain("BEGIN");
@@ -268,7 +258,7 @@ describe("legacy migration repair", () => {
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, execs, queries } = setup(tmp.current, { confirm: true });
     return Effect.gen(function* () {
-      yield* legacyMigrationRepair(input({ versions: [], status: "applied" }));
+      yield* migrationRepair(input({ versions: [], status: "applied" }));
       expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
       expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -283,7 +273,7 @@ describe("legacy migration repair", () => {
       seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       const { layer, execs, queries } = setup(tmp.current, { confirm: true });
       return Effect.gen(function* () {
-        yield* legacyMigrationRepair(input({ versions: [], status: "reverted" }));
+        yield* migrationRepair(input({ versions: [], status: "reverted" }));
         expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
         expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(false);
         expect(queries.some((q) => q.sql.includes("WHERE version = ANY"))).toBe(false);
@@ -295,13 +285,13 @@ describe("legacy migration repair", () => {
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, execs } = setup(tmp.current, { confirm: false });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationRepair(input({ versions: [], status: "applied" })).pipe(
+      const exit = yield* migrationRepair(input({ versions: [], status: "applied" })).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
       }
       expect(execs).not.toContain("TRUNCATE supabase_migrations.schema_migrations");
     }).pipe(Effect.provide(layer));
@@ -312,13 +302,13 @@ describe("legacy migration repair", () => {
     // with no piped answer the empty read falls back to the default (NO) → cancel.
     const { layer, out } = setup(tmp.current, { isTTY: false });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationRepair(input({ versions: [], status: "applied" })).pipe(
+      const exit = yield* migrationRepair(input({ versions: [], status: "applied" })).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
       }
       expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -330,7 +320,7 @@ describe("legacy migration repair", () => {
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, execs, queries } = setup(tmp.current, { isTTY: false, pipedInput: "y\n" });
     return Effect.gen(function* () {
-      yield* legacyMigrationRepair(input({ versions: [], status: "applied" }));
+      yield* migrationRepair(input({ versions: [], status: "applied" }));
       // Proceeded: repair-all truncates then upserts the local file.
       expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
       expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
@@ -344,7 +334,7 @@ describe("legacy migration repair", () => {
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, execs, queries } = setup(tmp.current);
     return Effect.gen(function* () {
-      yield* legacyMigrationRepair(input({ versions: [], status: "applied" }));
+      yield* migrationRepair(input({ versions: [], status: "applied" }));
       expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
       expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
     }).pipe(
@@ -367,7 +357,7 @@ describe("legacy migration repair", () => {
       writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_YES=true\n");
       const { layer, execs, queries } = setup(tmp.current);
       return Effect.gen(function* () {
-        yield* legacyMigrationRepair(input({ versions: [], status: "applied" }));
+        yield* migrationRepair(input({ versions: [], status: "applied" }));
         expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
         expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
       }).pipe(Effect.provide(layer));
@@ -377,13 +367,13 @@ describe("legacy migration repair", () => {
   it.live("surfaces a DB-config error before prompting (repair-all, unlinked)", () => {
     const { layer, out } = setup(tmp.current, { failResolve: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationRepair(input({ versions: [], status: "applied" })).pipe(
+      const exit = yield* migrationRepair(input({ versions: [], status: "applied" })).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyProjectNotLinkedError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("ProjectRefNotLinkedError");
       }
       // The DB config resolves before any prompt, so the
       // config error surfaces immediately and the repair-all confirmation is never shown.
@@ -395,7 +385,7 @@ describe("legacy migration repair", () => {
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, out } = setup(tmp.current);
     return Effect.gen(function* () {
-      yield* legacyMigrationRepair(input({ versions: ["20240101000000"], status: "applied" }));
+      yield* migrationRepair(input({ versions: ["20240101000000"], status: "applied" }));
       const stderr = stripAnsi(out.stderrText);
       const stdout = stripAnsi(out.stdoutText);
       expect(stderr).toContain("Repaired migration history: [20240101000000] => applied");
@@ -414,7 +404,7 @@ describe("legacy migration repair", () => {
     seedMigration(tmp.current, "20240102000000_more.sql", "create table b;\n");
     const { layer, out } = setup(tmp.current);
     return Effect.gen(function* () {
-      yield* legacyMigrationRepair(
+      yield* migrationRepair(
         input({ versions: ["20240101000000", "20240102000000"], status: "applied" }),
       );
       expect(stripAnsi(out.stderrText)).toContain(
@@ -426,15 +416,13 @@ describe("legacy migration repair", () => {
   it.live("reports a missing local file in applied mode", () => {
     const { layer } = setup(tmp.current); // no seeded file
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationRepair(
+      const exit = yield* migrationRepair(
         input({ versions: ["20240101000000"], status: "applied" }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe(
-          "LegacyMigrationFileNotFoundError",
-        );
+        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationFileNotFoundError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -442,15 +430,13 @@ describe("legacy migration repair", () => {
   it.live("rolls back and reports an update failure", () => {
     const { layer, execs } = setup(tmp.current, { failSql: "WHERE version = ANY" });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationRepair(
+      const exit = yield* migrationRepair(
         input({ versions: ["20240101000000"], status: "reverted" }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe(
-          "LegacyMigrationRepairUpdateError",
-        );
+        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationRepairUpdateError");
       }
       expect(execs).toContain("ROLLBACK");
     }).pipe(Effect.provide(layer));
@@ -459,7 +445,7 @@ describe("legacy migration repair", () => {
   it.live("rejects --db-url combined with --linked", () => {
     const { layer } = setup(tmp.current, { args: ["--db-url", "postgresql://x", "--linked"] });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationRepair(
+      const exit = yield* migrationRepair(
         input({
           versions: ["20240101000000"],
           status: "applied",
@@ -469,22 +455,20 @@ describe("legacy migration repair", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe(
-          "LegacyMigrationTargetFlagsError",
-        );
+        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationTargetFlagsError");
       }
     }).pipe(Effect.provide(layer));
   });
 
   it.live("repairs the project given via --project-ref, overriding the default linked ref", () => {
-    // The fake resolver's own fallback (LEGACY_VALID_REF) represents whatever
+    // The fake resolver's own fallback (VALID_REF) represents whatever
     // the workdir would resolve to absent the flag — the flag must win over it
     // and drive the cached ref.
     const FLAG_REF = "flagflagflagflagflag";
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, cache } = setup(tmp.current);
     return Effect.gen(function* () {
-      yield* legacyMigrationRepair(
+      yield* migrationRepair(
         input({
           versions: ["20240101000000"],
           status: "applied",
@@ -493,7 +477,7 @@ describe("legacy migration repair", () => {
       );
       expect(cache.cached).toBe(true);
       expect(cache.cachedRef).toBe(FLAG_REF);
-      expect(cache.cachedRef).not.toBe(LEGACY_VALID_REF);
+      expect(cache.cachedRef).not.toBe(VALID_REF);
     }).pipe(Effect.provide(layer));
   });
 
@@ -501,7 +485,7 @@ describe("legacy migration repair", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, execs, queries, cache } = setup(tmp.current, { args: ["--local"] });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationRepair(
+      const exit = yield* migrationRepair(
         input({
           versions: ["20240101000000"],
           status: "applied",
@@ -513,9 +497,7 @@ describe("legacy migration repair", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe(
-          "LegacyMigrationTargetFlagsError",
-        );
+        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationTargetFlagsError");
         expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
@@ -529,7 +511,7 @@ describe("legacy migration repair", () => {
   it.live("emits a structured result in json mode", () => {
     const { layer, out } = setup(tmp.current, { format: "json" });
     return Effect.gen(function* () {
-      yield* legacyMigrationRepair(input({ versions: ["20240101000000"], status: "reverted" }));
+      yield* migrationRepair(input({ versions: ["20240101000000"], status: "reverted" }));
       expect(out.messages).toContainEqual(
         expect.objectContaining({
           type: "success",

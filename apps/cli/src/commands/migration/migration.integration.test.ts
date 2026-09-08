@@ -3,14 +3,14 @@ import { Effect, Exit } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
-import { LEGACY_GLOBAL_FLAGS } from "../../shared/legacy/global-flags.ts";
-import { legacyMigrationCommand } from "./migration.command.ts";
+import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
+import { migrationCommand } from "./migration.command.ts";
 
 // `withGlobalFlags` must come AFTER `withSubcommands` — see
 // `start.string-slice-flags.integration.test.ts`'s identical comment.
-const legacyTestRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyMigrationCommand]),
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
+const testRoot = Command.make("supabase").pipe(
+  Command.withSubcommands([migrationCommand]),
+  Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
 describe("legacy migration command integration", () => {
@@ -20,7 +20,7 @@ describe("legacy migration command integration", () => {
     // `migrations squash --nope` must fail with squash's own unknown-flag error,
     // which never builds the command's `Command.provide` runtime layer.
     const run = Effect.gen(function* () {
-      const exit = yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+      const exit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })([
         "migrations",
         "squash",
         "--nope",

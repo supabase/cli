@@ -3,15 +3,15 @@ import { Effect, Exit } from "effect";
 import { describe, expect, test } from "vitest";
 import { normalizeCause } from "../../../shared/output/normalize-error.ts";
 import {
-  legacySsoUpdateAddDomainsFlag,
-  legacySsoUpdateDomainsFlag,
-  legacySsoUpdateRemoveDomainsFlag,
+  ssoUpdateAddDomainsFlag,
+  ssoUpdateDomainsFlag,
+  ssoUpdateRemoveDomainsFlag,
 } from "./update.command.ts";
 
 describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
   test("--domains splits a comma-separated value into multiple domains", async () => {
     const [, domains] = await Effect.runPromise(
-      legacySsoUpdateDomainsFlag
+      ssoUpdateDomainsFlag
         .parse({
           flags: { domains: ["example.com,example.org"] },
           arguments: [],
@@ -24,7 +24,7 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
 
   test("--add-domains splits a comma-separated value into multiple domains", async () => {
     const [, addDomains] = await Effect.runPromise(
-      legacySsoUpdateAddDomainsFlag
+      ssoUpdateAddDomainsFlag
         .parse({
           flags: { "add-domains": ["example.com,example.org"] },
           arguments: [],
@@ -37,7 +37,7 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
 
   test("--remove-domains splits a comma-separated value into multiple domains", async () => {
     const [, removeDomains] = await Effect.runPromise(
-      legacySsoUpdateRemoveDomainsFlag
+      ssoUpdateRemoveDomainsFlag
         .parse({
           flags: { "remove-domains": ["example.com,example.org"] },
           arguments: [],
@@ -50,7 +50,7 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
 
   test("--domains defaults to an empty array when unset", async () => {
     const [, domains] = await Effect.runPromise(
-      legacySsoUpdateDomainsFlag
+      ssoUpdateDomainsFlag
         .parse({
           flags: {},
           arguments: [],
@@ -63,7 +63,7 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
 
   test("--add-domains defaults to an empty array when unset", async () => {
     const [, addDomains] = await Effect.runPromise(
-      legacySsoUpdateAddDomainsFlag
+      ssoUpdateAddDomainsFlag
         .parse({
           flags: {},
           arguments: [],
@@ -76,7 +76,7 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
 
   test("--remove-domains defaults to an empty array when unset", async () => {
     const [, removeDomains] = await Effect.runPromise(
-      legacySsoUpdateRemoveDomainsFlag
+      ssoUpdateRemoveDomainsFlag
         .parse({
           flags: {},
           arguments: [],
@@ -93,7 +93,7 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
     // indistinguishable from the flag never being passed at all if you only
     // looked at `.length`.
     const [, domains] = await Effect.runPromise(
-      legacySsoUpdateDomainsFlag
+      ssoUpdateDomainsFlag
         .parse({
           flags: { domains: [""] },
           arguments: [],
@@ -109,7 +109,7 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
     // pflag calls `csv.Reader.Read()` once, so the malformed second line is
     // silently dropped.
     const [, domains] = await Effect.runPromise(
-      legacySsoUpdateDomainsFlag
+      ssoUpdateDomainsFlag
         .parse({
           flags: { domains: ['a.com\nb"c'] },
           arguments: [],
@@ -122,7 +122,7 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
 
   test("--domains rejects malformed CSV (bare quote) with pflag's exact diagnostic", async () => {
     const exit = await Effect.runPromise(
-      legacySsoUpdateDomainsFlag
+      ssoUpdateDomainsFlag
         .parse({
           flags: { domains: ['example"com'] },
           arguments: [],
@@ -141,7 +141,7 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
 
   test("--add-domains rejects malformed CSV with pflag's exact diagnostic", async () => {
     const exit = await Effect.runPromise(
-      legacySsoUpdateAddDomainsFlag
+      ssoUpdateAddDomainsFlag
         .parse({
           flags: { "add-domains": ['"x'] },
           arguments: [],
@@ -161,7 +161,7 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
 
   test("--remove-domains rejects malformed CSV with pflag's exact diagnostic", async () => {
     const exit = await Effect.runPromise(
-      legacySsoUpdateRemoveDomainsFlag
+      ssoUpdateRemoveDomainsFlag
         .parse({
           flags: { "remove-domains": ['"x'] },
           arguments: [],
@@ -182,7 +182,7 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
     // Go-verified (CLI-2005): `sso update <id> --add-domains $'\n\n'` →
     // `invalid argument "\n\n" for "--add-domains" flag: EOF`.
     const exit = await Effect.runPromise(
-      legacySsoUpdateAddDomainsFlag
+      ssoUpdateAddDomainsFlag
         .parse({
           flags: { "add-domains": ["\n\n"] },
           arguments: [],

@@ -1,5 +1,5 @@
 import { Effect, FileSystem, Path, Schema } from "effect";
-import { legacyPromptYesNo } from "../legacy/legacy-prompt-yes-no.ts";
+import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
 import { Output } from "../output/output.service.ts";
 import { Tty } from "../runtime/tty.service.ts";
 import {
@@ -236,12 +236,12 @@ export const writeIntelliJConfig = Effect.fnUntraced(function* (
 const promptForIdeSettings = Effect.fnUntraced(function* (cwd: string, yes: boolean) {
   const output = yield* Output;
 
-  if (yield* legacyPromptYesNo(output, yes, "Generate VS Code settings for Deno?", true)) {
+  if (yield* promptYesNo(output, yes, "Generate VS Code settings for Deno?", true)) {
     yield* writeVscodeConfig(cwd);
     return;
   }
 
-  if (yield* legacyPromptYesNo(output, yes, "Generate IntelliJ IDEA settings for Deno?", false)) {
+  if (yield* promptYesNo(output, yes, "Generate IntelliJ IDEA settings for Deno?", false)) {
     yield* writeIntelliJConfig(cwd);
   }
 });

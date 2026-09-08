@@ -10,9 +10,7 @@ import {
  * Writing a fetched migration file failed. Matches the established
  * `failed to write migration: %w` text.
  */
-export class LegacyMigrationFetchWriteError extends Data.TaggedError(
-  "LegacyMigrationFetchWriteError",
-)<{
+export class MigrationFetchWriteError extends Data.TaggedError("MigrationFetchWriteError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

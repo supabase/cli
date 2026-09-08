@@ -37,7 +37,7 @@
 const EXPECTED_PREFIX = "Expected ";
 
 // Go-parity passthrough (CLI-1983, CLI-1990): legacy flags that byte-match Go
-// pflag's parse-time diagnostics (`legacyStringSliceFlag`'s malformed-CSV
+// pflag's parse-time diagnostics (`stringSliceFlag`'s malformed-CSV
 // failure, `migration down --last`, and `storage cp --jobs` via
 // `Flag.mapTryCatch`) fail with the COMPLETE Go message as `expected` —
 // pflag's `invalid argument %q for %q flag: %v` (pflag v1.0.10

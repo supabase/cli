@@ -41,7 +41,7 @@ const PFLAG_BOOLEAN_FALSE_VALUES: ReadonlySet<string> = new Set([
  * Last explicit `--<flagName>`/`--<flagName>=<value>` boolean occurrence in
  * argv, or `undefined` when the flag never appears — matching pflag/viper's
  * shared-variable last-`Set()`-wins semantics (mirrors
- * `legacyExperimentalFlagFromArgs`, `shared/legacy/global-flags.ts`). A bare
+ * `experimentalFlagFromArgs`, `command-internal/global-flags.ts`). A bare
  * `--<flagName>` records pflag's bool `NoOptDefVal` (`true`); an inline value
  * is parsed through pflag's `strconv.ParseBool` false set — anything else
  * (including garbage) is truthy, same as `cast.ToBool`'s permissive default.

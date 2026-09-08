@@ -3497,7 +3497,7 @@ describe("fromConfigDocument — raw-presence masking (CliConfigWithRawPresence,
   });
 
   // Engineer review round on PR #6339, item 3: an own key set to an
-  // EXPLICIT `undefined` must read as absent, matching `legacyPresenceIn`'s
+  // EXPLICIT `undefined` must read as absent, matching `presenceIn`'s
   // own `x?.["key"] !== undefined` predicate exactly (a value comparison,
   // not `Object.hasOwn`) — the degenerate case a naive `Object.hasOwn`
   // check would get wrong.

@@ -4,17 +4,17 @@ import { CliOutput, Command } from "effect/unstable/cli";
 
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
-import { LEGACY_GLOBAL_FLAGS } from "../../shared/legacy/global-flags.ts";
+import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../shared/telemetry/identity.ts";
 import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyPlatformApi,
-  useLegacyTempWorkdir,
-} from "../../../tests/helpers/legacy-mocks.ts";
-import { legacyStartCommand } from "./start.command.ts";
+  buildTestRuntime,
+  mockCommandSettings,
+  mockCommandPlatformApi,
+  useTempWorkdir,
+} from "../../../tests/helpers/command-mocks.ts";
+import { startCommand } from "./start.command.ts";
 
 // `--exclude`/`-x` is a string-slice flag (CLI-2005), so malformed CSV
 // aborts flag parsing before the handler runs — before any Docker
@@ -24,28 +24,28 @@ import { legacyStartCommand } from "./start.command.ts";
 // These scenarios run the whole command tree (`Command.runWith`), mirroring
 // the network-bans/network-restrictions prior art from CLI-1983.
 
-const tempRoot = useLegacyTempWorkdir("supabase-start-string-slice-int-");
+const tempRoot = useTempWorkdir("supabase-start-string-slice-int-");
 
 // `withGlobalFlags` must come AFTER `withSubcommands`: it only excludes each
 // global flag's context requirement from the R accumulated on the command
 // SO FAR, and `withSubcommands` unions in every subcommand's own requirements
-// (including `start`'s handler-chain reads of `LegacyDebugFlag`/
-// `LegacyNetworkIdFlag`/`LegacyDnsResolverFlag`/`LegacyProfileFlag`/
-// `LegacyWorkdirFlag`/`LegacyYesFlag`). Reversing the order leaves those
+// (including `start`'s handler-chain reads of `DebugFlag`/
+// `NetworkIdFlag`/`DnsResolverFlag`/`ProfileFlag`/
+// `WorkdirFlag`/`YesFlag`). Reversing the order leaves those
 // context tags in `Command.runWith`'s Environment type even though this
 // parse-failure path never reaches the handler at runtime.
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyStartCommand]),
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
+  Command.withSubcommands([startCommand]),
+  Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
 function setup() {
   const out = mockOutput({ format: "text" });
-  const api = mockLegacyPlatformApi({ response: { status: 200, body: {} } });
-  const runtime = buildLegacyTestRuntime({
+  const api = mockCommandPlatformApi({ response: { status: 200, body: {} } });
+  const runtime = buildTestRuntime({
     out,
     api,
-    cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+    cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
     runtimeInfo: mockRuntimeInfo({ homeDir: tempRoot.current }),
   });
   const layer = Layer.mergeAll(

@@ -53,7 +53,7 @@ const DENO_SB_ERROR_MAP = new Map([
 
 export enum RequestErrors {
   MissingAuthHeader = "UNAUTHORIZED_NO_AUTH_HEADER",
-  InvalidLegacyJWT = "UNAUTHORIZED_LEGACY_JWT",
+  InvalidLegacyJWT = "UNAUTHORIZED_JWT",
   InvalidAsymmetricJWT = "UNAUTHORIZED_ASYMMETRIC_JWT",
   InvalidTokenFormat = "UNAUTHORIZED_INVALID_JWT_FORMAT",
   UnsupportedTokenAlgorithm = "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM",

@@ -5,15 +5,15 @@ import { Effect, Exit, Option } from "effect";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  LEGACY_VALID_REF,
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { legacyNetworkRestrictionsGet } from "./get.handler.ts";
+  VALID_REF,
+  buildTestRuntime,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { networkRestrictionsGet } from "./get.handler.ts";
 
 const APPLIED_WITH_CIDRS: typeof V1GetNetworkRestrictionsOutput.Type = {
   entitlement: "allowed",
@@ -44,16 +44,16 @@ interface SetupOpts {
   network?: "fail";
 }
 
-const tempRoot = useLegacyTempWorkdir("supabase-network-restrictions-get-int-");
+const tempRoot = useTempWorkdir("supabase-network-restrictions-get-int-");
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 200, body: opts.response ?? APPLIED_WITH_CIDRS },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -64,14 +64,14 @@ function setup(opts: SetupOpts = {}) {
 
 function setupTracked(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 200, body: opts.response ?? APPLIED_WITH_CIDRS },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -85,7 +85,7 @@ describe("legacy network-restrictions get integration", () => {
   it.live("prints the Go-format text block when the response has v4 and v6 entries", () => {
     const { layer, out } = setup({ response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsGet({ projectRef: Option.none() });
+      yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(out.stdoutText).toBe(
         "DB Allowed IPv4 CIDRs: &[1.2.3.0/24 5.6.7.0/24]\n" +
           "DB Allowed IPv6 CIDRs: &[2001:db8::/64]\n" +
@@ -97,7 +97,7 @@ describe("legacy network-restrictions get integration", () => {
   it.live("prints `&[]` for both arrays when the API returns empty arrays", () => {
     const { layer, out } = setup({ response: APPLIED_NO_CIDRS });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsGet({ projectRef: Option.none() });
+      yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(out.stdoutText).toBe(
         "DB Allowed IPv4 CIDRs: &[]\n" +
           "DB Allowed IPv6 CIDRs: &[]\n" +
@@ -109,7 +109,7 @@ describe("legacy network-restrictions get integration", () => {
   it.live("prints `<nil>` when the API omits the dbAllowedCidrs fields", () => {
     const { layer, out } = setup({ response: STORED_WITH_OMITTED_CIDRS });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsGet({ projectRef: Option.none() });
+      yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(out.stdoutText).toBe(
         "DB Allowed IPv4 CIDRs: <nil>\n" +
           "DB Allowed IPv6 CIDRs: <nil>\n" +
@@ -126,7 +126,7 @@ describe("legacy network-restrictions get integration", () => {
     };
     const { layer, out } = setup({ response: stored });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsGet({ projectRef: Option.none() });
+      yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(out.stdoutText).toBe(
         "DB Allowed IPv4 CIDRs: &[1.2.3.0/24]\n" +
           "DB Allowed IPv6 CIDRs: &[]\n" +
@@ -138,7 +138,7 @@ describe("legacy network-restrictions get integration", () => {
   it.live("emits a structured JSON success payload via --output-format=json", () => {
     const { layer, out } = setup({ format: "json", response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsGet({ projectRef: Option.none() });
+      yield* networkRestrictionsGet({ projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({
@@ -154,7 +154,7 @@ describe("legacy network-restrictions get integration", () => {
   it.live("emits a result event via --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsGet({ projectRef: Option.none() });
+      yield* networkRestrictionsGet({ projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({ status: "applied" });
@@ -164,7 +164,7 @@ describe("legacy network-restrictions get integration", () => {
   it.live("emits Go-compatible JSON when --output=json", () => {
     const { layer, out } = setup({ goOutput: "json", response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsGet({ projectRef: Option.none() });
+      yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stdoutText.endsWith("\n")).toBe(true);
       expect(out.stdoutText).toContain('"status": "applied"');
@@ -175,7 +175,7 @@ describe("legacy network-restrictions get integration", () => {
   it.live("emits Go-compatible YAML when --output=yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml", response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsGet({ projectRef: Option.none() });
+      yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("status: applied");
     }).pipe(Effect.provide(layer));
   });
@@ -183,7 +183,7 @@ describe("legacy network-restrictions get integration", () => {
   it.live("emits Go-compatible TOML when --output=toml", () => {
     const { layer, out } = setup({ goOutput: "toml", response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsGet({ projectRef: Option.none() });
+      yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("status = ");
     }).pipe(Effect.provide(layer));
   });
@@ -191,7 +191,7 @@ describe("legacy network-restrictions get integration", () => {
   it.live("emits Go-compatible env output when --output=env", () => {
     const { layer, out } = setup({ goOutput: "env", response: APPLIED_NO_CIDRS });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsGet({ projectRef: Option.none() });
+      yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(out.stdoutText).toContain('STATUS="applied"');
     }).pipe(Effect.provide(layer));
   });
@@ -199,7 +199,7 @@ describe("legacy network-restrictions get integration", () => {
   it.live("treats --output pretty identically to text mode", () => {
     const { layer, out } = setup({ goOutput: "pretty", response: APPLIED_NO_CIDRS });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsGet({ projectRef: Option.none() });
+      yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(out.stdoutText).toBe(
         "DB Allowed IPv4 CIDRs: &[]\n" +
           "DB Allowed IPv6 CIDRs: &[]\n" +
@@ -215,7 +215,7 @@ describe("legacy network-restrictions get integration", () => {
       response: APPLIED_WITH_CIDRS,
     });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsGet({ projectRef: Option.none() });
+      yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(out.stdoutText.startsWith("{")).toBe(false);
       expect(out.stdoutText).toContain("status: applied");
     }).pipe(Effect.provide(layer));
@@ -224,20 +224,18 @@ describe("legacy network-restrictions get integration", () => {
   it.live("hits the GET /v1/projects/{ref}/network-restrictions URL", () => {
     const { layer, api } = setup({ response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsGet({ projectRef: Option.none() });
+      yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.method).toBe("GET");
-      expect(api.requests[0]?.url).toContain(
-        `/v1/projects/${LEGACY_VALID_REF}/network-restrictions`,
-      );
+      expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/network-restrictions`);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses --project-ref flag value over LegacyCliSettings.projectId", () => {
+  it.live("uses --project-ref flag value over CommandSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsGet({ projectRef: Option.some(flagRef) });
+      yield* networkRestrictionsGet({ projectRef: Option.some(flagRef) });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${flagRef}/`);
     }).pipe(Effect.provide(layer));
   });
@@ -245,11 +243,11 @@ describe("legacy network-restrictions get integration", () => {
   it.live("reports a Go-compatible error message when the API returns a non-200 status", () => {
     const { layer } = setup({ status: 503, response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyNetworkRestrictionsGet({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(networkRestrictionsGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("LegacyNetworkRestrictionsGetUnexpectedStatusError");
+        expect(errorJson).toContain("NetworkRestrictionsGetUnexpectedStatusError");
         expect(errorJson).toContain("failed to retrieve network restrictions; received:");
       }
     }).pipe(Effect.provide(layer));
@@ -258,11 +256,11 @@ describe("legacy network-restrictions get integration", () => {
   it.live("reports a Go-compatible error message when the network is unreachable", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyNetworkRestrictionsGet({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(networkRestrictionsGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("LegacyNetworkRestrictionsGetNetworkError");
+        expect(errorJson).toContain("NetworkRestrictionsGetNetworkError");
         expect(errorJson).toContain("failed to retrieve network restrictions:");
       }
     }).pipe(Effect.provide(layer));
@@ -271,9 +269,7 @@ describe("legacy network-restrictions get integration", () => {
   it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503, response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsGet({ projectRef: Option.none() }).pipe(
-        withJsonErrorHandling,
-      );
+      yield* networkRestrictionsGet({ projectRef: Option.none() }).pipe(withJsonErrorHandling);
       expect(out.messages.some((m) => m.type === "fail")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -281,7 +277,7 @@ describe("legacy network-restrictions get integration", () => {
   it.live("flushes telemetry and writes linked-project cache on success", () => {
     const { layer, telemetry, cache } = setupTracked({ response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsGet({ projectRef: Option.none() });
+      yield* networkRestrictionsGet({ projectRef: Option.none() });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -294,7 +290,7 @@ describe("legacy network-restrictions get integration", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyNetworkRestrictionsGet({ projectRef: Option.none() }).pipe(Effect.provide(layer)),
+        networkRestrictionsGet({ projectRef: Option.none() }).pipe(Effect.provide(layer)),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(telemetry.flushed).toBe(true);

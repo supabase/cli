@@ -63,7 +63,7 @@ run, where the old CLI at least made the failure visible as an empty file.
 
 Queries run directly against Postgres (server-side `COPY (<query>) TO STDOUT WITH
 CSV HEADER`). The Management API is used lazily only on the `--linked` path, to
-resolve the connection (via `LegacyDbConfigResolver`).
+resolve the connection (via `DbConfigResolver`).
 
 ## Environment Variables
 
@@ -125,7 +125,7 @@ instead a structured result is emitted:
 ## Notes
 
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
-  overrides ONLY the linked-ref resolution `LegacyDbConfigResolver` performs
+  overrides ONLY the linked-ref resolution `DbConfigResolver` performs
   (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies
   `--linked`: passing it with a resolved `--local`/`--db-url` target is a hard
   error rather than a silently discarded flag (deliberately stricter than

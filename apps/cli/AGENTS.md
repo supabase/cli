@@ -107,15 +107,15 @@ Always check `src/shared/` before writing new infrastructure. Do not duplicate w
 
 Also check the following `legacy/` infrastructure before writing equivalent helpers from scratch:
 
-| Path                                             | What it provides                                                                                                                                                                          |
-| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config/legacy-cli-settings.layer.ts`            | `LegacyCliSettings` — resolves `SUPABASE_PROFILE` (built-in name **or** YAML file path), `--workdir`, `--experimental`, project-id from `supabase/config.toml`                            |
-| `config/legacy-project-ref.layer.ts`             | `LegacyProjectRefResolver` — `--project-ref` flag → env → `supabase/.temp/project-ref` file → prompt                                                                                      |
-| `telemetry/legacy-telemetry-state.layer.ts`      | `LegacyTelemetryState.flush` — writes `~/.supabase/telemetry.json`, runs in every command's `Effect.ensuring`                                                                             |
-| `telemetry/legacy-linked-project-cache.layer.ts` | `LegacyLinkedProjectCache.cache(ref)` — writes `<workdir>/supabase/.temp/linked-project.json` after `--project-ref` resolves; bypasses generated schema validation (uses raw HTTP client) |
-| `auth/legacy-http-debug.layer.ts`                | `legacyHttpClientLayer` — wraps the HTTP transport with a `--debug` stderr logger (`log.LstdFlags`-style timestamp format)                                                                |
-| `output/legacy-glamour-table.ts`                 | `renderGlamourTable(headers, rows)` — the CLI's established ASCII table format                                                                                                            |
-| `command-internal/legacy-upgrade-notice.ts`      | `legacyUpgradeNoticeHook` — post-success upgrade notice (GitHub latest-release fetch, 10h `supabase/.temp/cli-latest` cache, `SUPABASE_NO_UPDATE_NOTIFIER` opt-out)                       |
+| Path                                      | What it provides                                                                                                                                                                    |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config/command-settings.layer.ts`        | `CommandSettings` — resolves `SUPABASE_PROFILE` (built-in name **or** YAML file path), `--workdir`, `--experimental`, project-id from `supabase/config.toml`                        |
+| `config/project-ref.layer.ts`             | `ProjectRefResolver` — `--project-ref` flag → env → `supabase/.temp/project-ref` file → prompt                                                                                      |
+| `telemetry/telemetry-state.layer.ts`      | `TelemetryState.flush` — writes `~/.supabase/telemetry.json`, runs in every command's `Effect.ensuring`                                                                             |
+| `telemetry/linked-project-cache.layer.ts` | `LinkedProjectCache.cache(ref)` — writes `<workdir>/supabase/.temp/linked-project.json` after `--project-ref` resolves; bypasses generated schema validation (uses raw HTTP client) |
+| `auth/http-debug.layer.ts`                | `httpClientLayer` — wraps the HTTP transport with a `--debug` stderr logger (`log.LstdFlags`-style timestamp format)                                                                |
+| `output/glamour-table.ts`                 | `renderGlamourTable(headers, rows)` — the CLI's established ASCII table format                                                                                                      |
+| `command-internal/upgrade-notice.ts`      | `upgradeNoticeHook` — post-success upgrade notice (GitHub latest-release fetch, 10h `supabase/.temp/cli-latest` cache, `SUPABASE_NO_UPDATE_NOTIFIER` opt-out)                       |
 
 ---
 
@@ -130,13 +130,11 @@ While a proxied command exists, its TS command/flag definition gates which invoc
 Go binary and must keep matching that binary exactly — this is the one remaining case where
 `apps/cli-go/` is authoritative.
 
-A proxy handler passes argv through to the Go binary, forwarding stdin/stdout/stderr and propagating the exit code, via the shared `LegacyGoProxy` service:
+A proxy handler passes argv through to the Go binary, forwarding stdin/stdout/stderr and propagating the exit code, via the shared `GoProxy` service:
 
 ```ts
-export const legacyOrgsList = Effect.fn("legacy.orgs.list")(function* (
-  _flags: LegacyOrgsListFlags,
-) {
-  const proxy = yield* LegacyGoProxy;
+export const orgsList = Effect.fn("legacy.orgs.list")(function* (_flags: OrgsListFlags) {
+  const proxy = yield* GoProxy;
   yield* proxy.exec(["orgs", "list"]);
 });
 ```
@@ -201,12 +199,12 @@ src/commands/branches/
 Register every command in `src/cli/root.ts`:
 
 ```ts
-import { legacyBranchesCommand } from "../commands/branches/branches.command.ts";
+import { branchesCommand } from "../commands/branches/branches.command.ts";
 
-export const legacyRoot = Command.make("supabase").pipe(
+export const rootCommand = Command.make("supabase").pipe(
   Command.withSubcommands([
     helloLegacyCommand,
-    legacyBranchesCommand, // ← add here
+    branchesCommand, // ← add here
   ]),
   // ...
 );
@@ -218,11 +216,11 @@ Every exported token from a `legacy/` file must carry the `Legacy` (PascalCase) 
 
 | Export kind                    | Convention                                                  |
 | ------------------------------ | ----------------------------------------------------------- |
-| Command constant               | `export const legacyBranchesCommand`                        |
+| Command constant               | `export const branchesCommand`                              |
 | Handler function               | `export const legacyCreate`                                 |
 | Error class                    | `export class LegacyBranchAlreadyExistsError`               |
 | Service class                  | `export class LegacyProjectState`                           |
-| Layer                          | `export const legacyCredentialsLayer`                       |
+| Layer                          | `export const commandCredentialsLayer`                      |
 | Integration test setup helpers | `function setupLegacyTty()`, `function setupLegacyNonTty()` |
 | Type aliases                   | `export type LegacyCreateFlags`                             |
 
@@ -244,14 +242,14 @@ Concrete examples worth watching for:
 
 - HTTP-error → tagged-error mapping (`backups.errors.ts:mapLegacyBackupHttpError`) — almost every Management API command needs this shape.
 - Machine-format encoders (`backups.encoders.ts`) — the `--output {json,yaml,toml,env}` flag is supported by many subcommands.
-- Glamour-table rendering helpers and column padding — in `output/legacy-glamour-table.ts`, already correctly hoisted.
+- Glamour-table rendering helpers and column padding — in `output/glamour-table.ts`, already correctly hoisted.
 - Timestamp / region / boolean formatters (`backups.format.ts`) — shared the moment a second command renders a backup/project/region field.
 
 This rule is consistent with the repo-wide **Refactoring Policy** ("delete obsolete helpers, shims, and parallel code paths as part of the refactor").
 
 ### Config validation has one home
 
-Config validation is implemented exactly once: `src/command-internal/legacy-config-validate.ts` (`legacyValidateResolvedConfig`). Both the db/migration loader (`legacy-db-config.toml-read.ts`) and the status/stop resolver (`legacy-local-config-values.ts`) build a `LegacyConfigValidationInput` from their own pipelines and call it — do not add per-command reimplementations of these checks. When a validation branch or message changes, change it there. `legacy-config-validate.parity.unit.test.ts` feeds the same broken configs through both real pipelines and asserts identical error strings; extend it when adding a branch both callers share. `content_path` project-root containment (absolute paths, `..` escapes, and in-root symlinks pointing outside all rejected) is part of this same home, enforced inside `legacyResolveEmailTemplateContentPath` — any new consumer of `content_path` resolution gets containment for free and must not re-derive it locally.
+Config validation is implemented exactly once: `src/command-internal/config-validate.ts` (`validateResolvedConfig`). Both the db/migration loader (`db-config.toml-read.ts`) and the status/stop resolver (`local-config-values.ts`) build a `ConfigValidationInput` from their own pipelines and call it — do not add per-command reimplementations of these checks. When a validation branch or message changes, change it there. `config-validate.parity.unit.test.ts` feeds the same broken configs through both real pipelines and asserts identical error strings; extend it when adding a branch both callers share. `content_path` project-root containment (absolute paths, `..` escapes, and in-root symlinks pointing outside all rejected) is part of this same home, enforced inside `resolveEmailTemplateContentPath` — any new consumer of `content_path` resolution gets containment for free and must not re-derive it locally.
 
 ---
 
@@ -284,11 +282,11 @@ Verify each applicable item when adding or reworking a command:
 
 2. **Errors go to stderr in text mode** — `Output.fail` writes a frame-free message to stderr followed by the "Try rerunning the command with --debug to get more details." suggestion when `--debug` is unset. Don't reintroduce clack's `■ … │` frame. Reference: commits `ee041834`, `cf4f574b`.
 
-3. **`--debug` logs every HTTP request on stderr** — format `"HTTP YYYY/MM/DD HH:MM:SS <METHOD>: <URL>\n"`. Provided automatically by `legacyHttpClientLayer`; ensure that layer (not the raw `HttpClient.layer`) is what every legacy command's runtime composes. Reference: commit `39cfec20`.
+3. **`--debug` logs every HTTP request on stderr** — format `"HTTP YYYY/MM/DD HH:MM:SS <METHOD>: <URL>\n"`. Provided automatically by `httpClientLayer`; ensure that layer (not the raw `HttpClient.layer`) is what every legacy command's runtime composes. Reference: commit `39cfec20`.
 
 4. **`SUPABASE_PROFILE` is dual-mode** — accept either a built-in name (`supabase`, `supabase-staging`, `supabase-local`) **or** a filesystem path to a YAML file with `api_url:` / `gotrue_url:` / `db_url:` keys. cli-e2e harness relies on the file-path mode. Reference: commit `288c2937`.
 
-5. **`Layer.provide` does not share to siblings inside `Layer.mergeAll`** — if two sibling layers each require `LegacyCliSettings`, provide it to both explicitly. Smoke-test the bundled binary (`bun run build && ./dist/supabase-legacy …`) when changing production layer wiring; in-process tests don't always catch the missing-service panic. Reference: commit `a816b12e`, `backups.layers.ts:32-46`.
+5. **`Layer.provide` does not share to siblings inside `Layer.mergeAll`** — if two sibling layers each require `CommandSettings`, provide it to both explicitly. Smoke-test the bundled binary (`bun run build && ./dist/supabase-legacy …`) when changing production layer wiring; in-process tests don't always catch the missing-service panic. Reference: commit `a816b12e`, `backups.layers.ts:32-46`.
 
 6. **Both `--output` (legacy machine formats) and `--output-format` must be honored** — `--output` (`pretty|json|yaml|toml|env`) takes priority when set. Pattern in `backups/list/list.handler.ts:85-113`: branch on the `--output` flag first, then fall through to `--output-format` text/json/stream-json. Exception: a net-new TS-only command with no Go-compat contract may instead reject `-o`/`--output` outright (every value, including `pretty`) with an error pointing at `--output-format` — decided on CLI-2156, with `config diff` (and, following it, `config pull`) as the precedent.
 
@@ -301,17 +299,17 @@ Verify each applicable item when adding or reworking a command:
 The legacy shell sends PostHog events to the product analytics pipeline. Drift is silent (no test will catch it) and breaks dashboards. The rules:
 
 - **The canonical catalog is `shared/telemetry/event-catalog.ts`.** Reference its exported constants (`EventCommandExecuted`, `PropFlags`, `EnvSignalPresenceKeys`, …) instead of writing bare strings. The TS catalog is the source of truth for event names and property keys.
-- **Native legacy commands wrap with `withLegacyCommandInstrumentation`** (from `telemetry/legacy-command-instrumentation.ts`) — _not_ the shared `withCommandInstrumentation`. The legacy variant emits the established property shape: a single `flags` map (vs `flags_used`/`flag_values`), `is_agent: boolean` (vs `ai_tool: string`), and `env_signals`.
-- **Pass `flags` to the wrapper** so boolean flag values can be detected and logged verbatim: `handler(flags).pipe(withLegacyCommandInstrumentation({ flags }), ...)`. Sensitive values become the literal string `"<redacted>"`.
+- **Native legacy commands wrap with `withCommandTelemetry`** (from `telemetry/command-telemetry.ts`) — _not_ the shared `withCommandInstrumentation`. The legacy variant emits the established property shape: a single `flags` map (vs `flags_used`/`flag_values`), `is_agent: boolean` (vs `ai_tool: string`), and `env_signals`.
+- **Pass `flags` to the wrapper** so boolean flag values can be detected and logged verbatim: `handler(flags).pipe(withCommandTelemetry({ flags }), ...)`. Sensitive values become the literal string `"<redacted>"`.
 - **Use `safeFlags: ["flag-name"]`** to whitelist flags whose values are safe to log verbatim. The established list: `--project-ref` (sso, branches, link, functions, projects/api-keys, config push/diff/pull), `--project-id` (gen/types), `--org-id` (projects/create), and `--version` (migration/squash). Extend it only for flags whose values carry no user data. When a `--project-ref` also accepts branch names (link, config diff, config pull — CLI-2167 vocabulary), gate the whitelist on `PROJECT_REF_PATTERN.test(...)` so a user-created branch name is never logged verbatim.
-- **Pass `config` (the command's own flag config record) to the wrapper** if it has any `Flag.choice`/`Flag.choiceWithValue` flags: `withLegacyCommandInstrumentation({ flags, config })`. Every choice flag declared in that command's own `config` is auto-detected and treated as safe — closed enums carry no user data — and it stays correct as choices are added or removed. A command's own `config` only ever contains its own locally-declared flags, so this cannot cover the 3 global choice flags (`--output`, `--dns-resolver`, `--agent` in `shared/legacy/global-flags.ts`) — those are handled separately, see below.
-- **Global/persistent flags (`shared/legacy/global-flags.ts`) resolve automatically** — the wrapper reads `legacyGlobalFlagValues` (via `Effect.serviceOption`, so it's a no-op outside the real CLI tree) and falls back to it whenever a changed flag name isn't in the handler's own `flags` record. No per-command wiring needed. This gives two flag families their real value automatically, via the boolean-is-safe rule and the choice-is-safe rule (`GLOBAL_CHOICE_FLAG_NAMES` — CLI-1904) respectively:
+- **Pass `config` (the command's own flag config record) to the wrapper** if it has any `Flag.choice`/`Flag.choiceWithValue` flags: `withCommandTelemetry({ flags, config })`. Every choice flag declared in that command's own `config` is auto-detected and treated as safe — closed enums carry no user data — and it stays correct as choices are added or removed. A command's own `config` only ever contains its own locally-declared flags, so this cannot cover the 3 global choice flags (`--output`, `--dns-resolver`, `--agent` in `command-internal/global-flags.ts`) — those are handled separately, see below.
+- **Global/persistent flags (`command-internal/global-flags.ts`) resolve automatically** — the wrapper reads `globalFlagValues` (via `Effect.serviceOption`, so it's a no-op outside the real CLI tree) and falls back to it whenever a changed flag name isn't in the handler's own `flags` record. No per-command wiring needed. This gives two flag families their real value automatically, via the boolean-is-safe rule and the choice-is-safe rule (`GLOBAL_CHOICE_FLAG_NAMES` — CLI-1904) respectively:
   - Boolean globals: `--debug`, `--yes`, `--experimental`, `--create-ticket`.
   - Choice globals: `--output`, `--dns-resolver`, `--agent`.
 
   Both rules apply ONLY when a command's own `flags` record doesn't already declare that CLI name — a command's own flag always wins. Example: `db diff` declares its own local `output: Flag.string("output")` (a file path, not a choice) in its `flags` record, so `db diff --output diff.sql` stays redacted.
 
-- **Proxy handlers (`LegacyGoProxy.exec`) must NOT wrap with any instrumentation.** The Go subprocess fires its own telemetry; a TS wrapper would double-count `cli_command_executed`.
+- **Proxy handlers (`GoProxy.exec`) must NOT wrap with any instrumentation.** The Go subprocess fires its own telemetry; a TS wrapper would double-count `cli_command_executed`.
 - **Custom events are established behavior — do not drop, rename, or reshape them.** Beyond `cli_command_executed`, the legacy shell fires:
 
   | Command                                                                                                                                       | Event                   | Identity / groups                                                                                                                          |
@@ -431,9 +429,9 @@ yield * creating.succeed("Branch created");
 
 ### Invariant: `-o json|yaml|toml|env` must suppress the spinner (CLI-1546)
 
-The legacy machine-format `-o`/`--output` flag (`LegacyOutputFlag`, values `env|pretty|json|toml|yaml`) is **independent** of `--output-format`. It does not change `output.format`, so a command run with `-o json` (and no `--output-format`) keeps `output.format === "text"` and the spinner gate `output.format === "text"` stays `true`. If the plain `textOutputLayer` is active, clack writes spinner ANSI (e.g. the hide-cursor `\x1b[?25l`) to **stdout** and corrupts the machine payload the handler emits via `output.raw` — exactly the CLI-1546 regression (`branches list -o json` → broken `JSON.parse`).
+The legacy machine-format `-o`/`--output` flag (`OutputFlag`, values `env|pretty|json|toml|yaml`) is **independent** of `--output-format`. It does not change `output.format`, so a command run with `-o json` (and no `--output-format`) keeps `output.format === "text"` and the spinner gate `output.format === "text"` stays `true`. If the plain `textOutputLayer` is active, clack writes spinner ANSI (e.g. the hide-cursor `\x1b[?25l`) to **stdout** and corrupts the machine payload the handler emits via `output.raw` — exactly the CLI-1546 regression (`branches list -o json` → broken `JSON.parse`).
 
-`cli/root.ts` therefore selects **`legacyQuietProgressTextOutputLayer`** (in `output/`) for any machine format (`json|yaml|toml|env`). It is a legacy-only wrapper over the shared `textOutputLayer` that no-ops only `task` and `progress`; everything else — `format: "text"`, `raw`, logs, and error rendering (red text on **stderr**) — delegates unchanged, so established output stays byte-identical.
+`cli/root.ts` therefore selects **`quietProgressTextOutputLayer`** (in `output/`) for any machine format (`json|yaml|toml|env`). It is a legacy-only wrapper over the shared `textOutputLayer` that no-ops only `task` and `progress`; everything else — `format: "text"`, `raw`, logs, and error rendering (red text on **stderr**) — delegates unchanged, so established output stays byte-identical.
 
 Rules:
 
@@ -477,7 +475,7 @@ Read https://www.effect.solutions/testing for Effect testing patterns. Note that
 - If a test needs multiple service replacements or `Layer.mergeAll(...)`, it likely belongs in `*.integration.test.ts`.
 - Prefer assertions on outputs and accumulated state over spy-heavy interaction tests.
 - Keep `*.e2e.test.ts` focused on golden paths, CLI surface behavior, and subprocess correctness, not branch-by-branch coverage.
-- **Hermeticity:** a test whose layer graph includes a real filesystem (`BunServices.layer`) and code that reads or writes under `RuntimeInfo.homeDir` or `TelemetryRuntime.configDir` must pin those paths to a per-test temp dir — never rely on the mock defaults (`mockRuntimeInfo` / `mockTelemetryRuntime` default to a path that is intentionally never created). Use `useLegacyTempWorkdir` for the temp dir, and `legacyIsolatedHomeLayer` (in `tests/helpers/legacy-mocks.ts`) when the test builds the real `legacyCliSettingsLayer` / `legacyCredentialsLayer`, since those also resolve `SUPABASE_HOME` / `SUPABASE_PROFILE` / tokens from ambient `process.env`.
+- **Hermeticity:** a test whose layer graph includes a real filesystem (`BunServices.layer`) and code that reads or writes under `RuntimeInfo.homeDir` or `TelemetryRuntime.configDir` must pin those paths to a per-test temp dir — never rely on the mock defaults (`mockRuntimeInfo` / `mockTelemetryRuntime` default to a path that is intentionally never created). Use `useTempWorkdir` for the temp dir, and `isolatedHomeLayer` (in `tests/helpers/command-mocks.ts`) when the test builds the real `commandSettingsLayer` / `commandCredentialsLayer`, since those also resolve `SUPABASE_HOME` / `SUPABASE_PROFILE` / tokens from ambient `process.env`.
 - **Forbidden pattern (do not add):** spawning the CLI to assert that `--help` renders a flag. Help text is dynamic over flag wiring and is exercised by the integration test's flag parser. The two backups e2e files removed alongside this guidance update are the canonical example of what not to write.
 
 ### Live tests (`*.live.test.ts`)

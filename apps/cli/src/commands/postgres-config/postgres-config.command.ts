@@ -1,14 +1,14 @@
 import { Command } from "effect/unstable/cli";
-import { legacyPostgresConfigDeleteCommand } from "./delete/delete.command.ts";
-import { legacyPostgresConfigGetCommand } from "./get/get.command.ts";
-import { legacyPostgresConfigUpdateCommand } from "./update/update.command.ts";
+import { postgresConfigDeleteCommand } from "./delete/delete.command.ts";
+import { postgresConfigGetCommand } from "./get/get.command.ts";
+import { postgresConfigUpdateCommand } from "./update/update.command.ts";
 
-export const legacyPostgresConfigCommand = Command.make("postgres-config").pipe(
+export const postgresConfigCommand = Command.make("postgres-config").pipe(
   Command.withDescription("Manage Postgres database config."),
   Command.withShortDescription("Manage Postgres database config"),
   Command.withSubcommands([
-    legacyPostgresConfigGetCommand,
-    legacyPostgresConfigUpdateCommand,
-    legacyPostgresConfigDeleteCommand,
+    postgresConfigGetCommand,
+    postgresConfigUpdateCommand,
+    postgresConfigDeleteCommand,
   ]),
 );

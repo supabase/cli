@@ -31,14 +31,14 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                       |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                         |
-| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                         |
-| `1`  | `--desired-subdomain` omitted (`LegacyDesiredSubdomainRequiredError`) — checked after gate/login/ref resolution; telemetry still fires          |
-| `1`  | API non-2xx (`LegacyVanitySubdomainsCheckUnexpectedStatusError`)                                                                                |
-| `1`  | transport failure (`LegacyVanitySubdomainsCheckNetworkError`)                                                                                   |
+| Code | Condition                                                                                                                                 |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                   |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
+| `1`  | project ref unresolved (`ProjectRefNotLinkedError` / `InvalidProjectRefError`)                                                            |
+| `1`  | `--desired-subdomain` omitted (`DesiredSubdomainRequiredError`) — checked after gate/login/ref resolution; telemetry still fires          |
+| `1`  | API non-2xx (`VanitySubdomainsCheckUnexpectedStatusError`)                                                                                |
+| `1`  | transport failure (`VanitySubdomainsCheckNetworkError`)                                                                                   |
 
 ## Telemetry Events Fired
 

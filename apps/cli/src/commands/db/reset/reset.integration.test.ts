@@ -16,45 +16,42 @@ import {
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import {
-  LEGACY_VALID_REF,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApiService,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-  legacySequentialExecBatch,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
-import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
+  VALID_REF,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApiService,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+  sequentialExecBatch,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
+import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import {
-  LegacyProjectRefResolver,
+  ProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
-} from "../../../config/legacy-project-ref.service.ts";
+} from "../../../config/project-ref.service.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
-  LegacyDebugFlag,
-  LegacyDnsResolverFlag,
-  LegacyExperimentalFlag,
-  LegacyNetworkIdFlag,
-  LegacyYesFlag,
-} from "../../../shared/legacy/global-flags.ts";
+  DebugFlag,
+  DnsResolverFlag,
+  ExperimentalFlag,
+  NetworkIdFlag,
+  YesFlag,
+} from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
-import { legacyDockerRunLayer } from "../../../command-internal/legacy-docker-run.layer.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import type {
-  LegacyDbConfigFlags,
-  LegacyResolvedDbConfig,
-} from "../../../command-internal/legacy-db-config.types.ts";
-import { LegacyDbConfigConnectTempRoleError } from "../../../command-internal/legacy-db-config.errors.ts";
-import { LegacyDbExecError } from "../../../command-internal/legacy-db-connection.errors.ts";
+import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
+import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
-  LegacyDbConnection,
-  type LegacyPgConnInput,
-  type LegacyDbSession,
-} from "../../../command-internal/legacy-db-connection.service.ts";
-import { legacyDbReset } from "./reset.handler.ts";
-import type { LegacyDbResetFlags } from "./reset.command.ts";
+  DbConnection,
+  type PgConnInput,
+  type DbSession,
+} from "../../../command-internal/db-connection.service.ts";
+import { dbReset } from "./reset.handler.ts";
+import type { DbResetFlags } from "./reset.command.ts";
 
 const LIST_MIGRATIONS =
   "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
@@ -62,7 +59,7 @@ const SELECT_SEEDS = "SELECT path, hash FROM supabase_migrations.seed_files";
 const COUNT_REPLICATION_SLOTS =
   "SELECT COUNT(*) FROM pg_replication_slots WHERE database IN ('postgres', '_supabase')";
 
-const CONN: LegacyPgConnInput = {
+const CONN: PgConnInput = {
   host: "db.example.supabase.co",
   port: 5432,
   user: "postgres",
@@ -70,7 +67,7 @@ const CONN: LegacyPgConnInput = {
   database: "postgres",
 };
 
-const DEFAULT_FLAGS: LegacyDbResetFlags = {
+const DEFAULT_FLAGS: DbResetFlags = {
   dbUrl: Option.none(),
   linked: false,
   local: false,
@@ -93,8 +90,8 @@ function mockResolver(opts: {
   resolveFails?: boolean;
 }) {
   let calls = 0;
-  const layer = Layer.succeed(LegacyDbConfigResolver, {
-    resolve: (flags: LegacyDbConfigFlags) => {
+  const layer = Layer.succeed(DbConfigResolver, {
+    resolve: (flags: DbConfigFlags) => {
       calls++;
       // A threaded `--project-ref` flag takes the same top precedence a real
       // resolver would give it, so a test can prove the flag (not just the
@@ -106,7 +103,7 @@ function mockResolver(opts: {
           : opts.ref;
       return opts.resolveFails === true
         ? Effect.fail(
-            new LegacyDbConfigConnectTempRoleError({
+            new DbConfigConnectTempRoleError({
               message: "failed to create login role: network error",
             }),
           )
@@ -117,7 +114,7 @@ function mockResolver(opts: {
                   conn: CONN,
                   isLocal: opts.isLocal,
                   ref: resolvedRef !== undefined ? Option.some(resolvedRef) : Option.none(),
-                }) satisfies LegacyResolvedDbConfig,
+                }) satisfies ResolvedDbConfig,
           );
     },
     resolvePoolerFallback: () => {
@@ -134,10 +131,10 @@ function mockResolver(opts: {
 }
 
 /**
- * A single `LegacyDbConnection` mock shared by BOTH the remote path (tracks
+ * A single `DbConnection` mock shared by BOTH the remote path (tracks
  * `execs`/`queries` for the drop-schema/migrate/seed assertions) and the native
  * local recreate path (the PG14 branch's `session.exec`/`.query` calls) —
- * `legacyDbReset` composes exactly one `LegacyDbConnection` layer, so tests must
+ * `dbReset` composes exactly one `DbConnection` layer, so tests must
  * not register two competing ones (the second would silently shadow the first
  * in `Layer.mergeAll`).
  */
@@ -158,23 +155,23 @@ function mockConnection(
   const execs: Array<string> = [];
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
   let replicationCallIndex = 0;
-  const layer = Layer.succeed(LegacyDbConnection, {
+  const layer = Layer.succeed(DbConnection, {
     connect: () => {
-      const session: LegacyDbSession = {
+      const session: DbSession = {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-        exec: (sql: string): Effect.Effect<void, LegacyDbExecError> =>
-          Effect.suspend((): Effect.Effect<void, LegacyDbExecError> => {
+        exec: (sql: string): Effect.Effect<void, DbExecError> =>
+          Effect.suspend((): Effect.Effect<void, DbExecError> => {
             if (opts.execFailsOn !== undefined && sql.includes(opts.execFailsOn)) {
               return Effect.fail(
-                new LegacyDbExecError({ message: opts.execFailsMessage ?? "syntax error" }),
+                new DbExecError({ message: opts.execFailsMessage ?? "syntax error" }),
               );
             }
             execs.push(sql);
             if (opts.failStatement !== undefined && sql === opts.failStatement.sql) {
               return Effect.fail(
-                new LegacyDbExecError({
+                new DbExecError({
                   message: opts.failStatement.message,
                   code: opts.failStatement.code,
                 }),
@@ -185,31 +182,29 @@ function mockConnection(
         query: (
           sql: string,
           params?: ReadonlyArray<unknown>,
-        ): Effect.Effect<ReadonlyArray<Record<string, unknown>>, LegacyDbExecError> =>
-          Effect.suspend(
-            (): Effect.Effect<ReadonlyArray<Record<string, unknown>>, LegacyDbExecError> => {
-              queries.push({ sql, params });
-              if (sql === SELECT_SEEDS) {
-                return Effect.succeed(
-                  Object.entries(opts.remoteSeeds ?? {}).map(([path, hash]) => ({ path, hash })),
-                );
+        ): Effect.Effect<ReadonlyArray<Record<string, unknown>>, DbExecError> =>
+          Effect.suspend((): Effect.Effect<ReadonlyArray<Record<string, unknown>>, DbExecError> => {
+            queries.push({ sql, params });
+            if (sql === SELECT_SEEDS) {
+              return Effect.succeed(
+                Object.entries(opts.remoteSeeds ?? {}).map(([path, hash]) => ({ path, hash })),
+              );
+            }
+            if (sql === LIST_MIGRATIONS) return Effect.succeed([]);
+            if (sql === COUNT_REPLICATION_SLOTS) {
+              if (opts.replicationSlotQueryFails === true) {
+                return Effect.fail(new DbExecError({ message: "connection reset" }));
               }
-              if (sql === LIST_MIGRATIONS) return Effect.succeed([]);
-              if (sql === COUNT_REPLICATION_SLOTS) {
-                if (opts.replicationSlotQueryFails === true) {
-                  return Effect.fail(new LegacyDbExecError({ message: "connection reset" }));
-                }
-                const counts = opts.replicationSlotCounts ?? [0];
-                const count = counts[Math.min(replicationCallIndex, counts.length - 1)] ?? 0;
-                replicationCallIndex++;
-                return Effect.succeed([{ count: String(count) }]);
-              }
-              return Effect.succeed([]);
-            },
-          ),
+              const counts = opts.replicationSlotCounts ?? [0];
+              const count = counts[Math.min(replicationCallIndex, counts.length - 1)] ?? 0;
+              replicationCallIndex++;
+              return Effect.succeed([{ count: String(count) }]);
+            }
+            return Effect.succeed([]);
+          }),
         // A migration file's statements arrive as one batch; replay them through
         // `exec`/`query` so this suite's recordings and failure injection still apply.
-        execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+        execBatch: (statements) => sequentialExecBatch(session)(statements),
       };
       return Effect.succeed(session);
     },
@@ -333,7 +328,7 @@ const restartedContainers = (spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray
 const kongReloadCalls = (spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<SpawnRecord> =>
   spawned.filter((s) => s.args[0] === "exec" && s.args[1] === KONG_ID);
 
-/** The three PG15+ one-shot migrate jobs (`legacyStartSetupLocalDatabase`'s `LegacyDockerRun` calls). */
+/** The three PG15+ one-shot migrate jobs (`startSetupLocalDatabase`'s `DockerRun` calls). */
 const dbSetupJobCalls = (spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<SpawnRecord> =>
   spawned.filter((s) => s.args[0] === "run" && s.args[1] === "--rm");
 
@@ -433,8 +428,8 @@ function setup(
     replicationSlotQueryFails?: boolean;
     failStatement?: { readonly sql: string; readonly code?: string; readonly message: string };
     // Simulates a genuinely unlinked workdir: `loadProjectRef` fails with
-    // `LegacyProjectNotLinkedError` absent an explicit `--project-ref` flag,
-    // instead of silently falling back to `opts.ref ?? LEGACY_VALID_REF`.
+    // `ProjectRefNotLinkedError` absent an explicit `--project-ref` flag,
+    // instead of silently falling back to `opts.ref ?? VALID_REF`.
     linkedFails?: boolean;
   },
 ) {
@@ -450,14 +445,14 @@ function setup(
 
   const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
   const conn = mockConnection(opts);
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const linkedCache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const linkedCache = mockLinkedProjectCacheTracked();
   // The local-reset bucket-seed core statically requires the (lazy) Management-API
   // factory; never invoked on `--local` (projectRef === "").
-  const platformApi = mockLegacyPlatformApiService({});
+  const platformApi = mockCommandPlatformApiService({});
   const resolver = mockResolver({
     isLocal: opts.isLocal ?? false,
-    ref: opts.ref ?? LEGACY_VALID_REF,
+    ref: opts.ref ?? VALID_REF,
     omitRef: opts.omitRef,
     resolveFails: opts.resolveFails,
   });
@@ -467,20 +462,17 @@ function setup(
     out.layer,
     conn.layer,
     resolver.layer,
-    mockLegacyCliSettings({ workdir }),
+    mockCommandSettings({ workdir }),
     BunServices.layer,
     child.layer,
     mockRuntimeInfo({ platform: "linux" }),
     mockProcessControl().layer,
     alwaysReadyHttpClientLayer,
-    legacyDockerRunLayer.pipe(
-      Layer.provide(child.layer),
-      Layer.provide(mockProcessControl().layer),
-    ),
-    Layer.succeed(LegacyNetworkIdFlag, Option.none()),
+    dockerRunLayer.pipe(Layer.provide(child.layer), Layer.provide(mockProcessControl().layer)),
+    Layer.succeed(NetworkIdFlag, Option.none()),
     // The remote-reset confirmation is answered through mockOutput's
     // `promptConfirmResponses` (the TTY/clack path), so mark stdin a TTY. Stdin is
-    // only referenced by legacyPromptYesNo's non-TTY branch (unreached here) but must
+    // only referenced by promptYesNo's non-TTY branch (unreached here) but must
     // be present to satisfy the effect's requirements.
     mockTty({ stdinIsTty: true }),
     mockStdin(true),
@@ -488,26 +480,26 @@ function setup(
     // config is resolved. `loadProjectRef` gives an explicit `--project-ref`
     // flag top precedence — mirror that so a test can prove the flag (not just
     // `opts.ref`) drives the linked ref.
-    Layer.succeed(LegacyProjectRefResolver, {
-      resolve: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
-      resolveForLink: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
-      resolveOptional: () => Effect.succeed(Option.some(opts.ref ?? LEGACY_VALID_REF)),
+    Layer.succeed(ProjectRefResolver, {
+      resolve: () => Effect.succeed(opts.ref ?? VALID_REF),
+      resolveForLink: () => Effect.succeed(opts.ref ?? VALID_REF),
+      resolveOptional: () => Effect.succeed(Option.some(opts.ref ?? VALID_REF)),
       loadProjectRef: (flagValue: Option.Option<string>) =>
         Option.isSome(flagValue) && flagValue.value.length > 0
           ? Effect.succeed(flagValue.value)
           : opts.linkedFails === true
-            ? Effect.fail(new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
-            : Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
-      promptProjectRef: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
+            ? Effect.fail(new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
+            : Effect.succeed(opts.ref ?? VALID_REF),
+      promptProjectRef: () => Effect.succeed(opts.ref ?? VALID_REF),
     }),
-    Layer.succeed(LegacyPlatformApiFactory, {
-      make: LegacyPlatformApi.pipe(Effect.provide(platformApi.layer)),
+    Layer.succeed(CommandPlatformApiFactory, {
+      make: CommandPlatformApi.pipe(Effect.provide(platformApi.layer)),
     }),
     Layer.succeed(CliArgs, { args: opts.args ?? ["db", "reset", "--linked"] }),
-    Layer.succeed(LegacyYesFlag, opts.yes ?? false),
-    Layer.succeed(LegacyDnsResolverFlag, "native"),
-    Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
-    Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
+    Layer.succeed(YesFlag, opts.yes ?? false),
+    Layer.succeed(DnsResolverFlag, "native"),
+    Layer.succeed(ExperimentalFlag, opts.experimental ?? false),
+    Layer.succeed(DebugFlag, opts.debug ?? false),
     telemetry.layer,
     linkedCache.layer,
   );
@@ -530,7 +522,7 @@ const PG14_TOML = 'project_id = "test"\n[db]\nmajor_version = 14\n';
 const FAST_HEALTH_TOML = '[db]\nhealth_timeout = "1s"\n';
 
 describe("legacy db reset", () => {
-  const tmp = useLegacyTempWorkdir("supabase-db-reset-");
+  const tmp = useTempWorkdir("supabase-db-reset-");
 
   describe("local reset — PG15+", () => {
     it.live("recreates the container, waits healthy, and runs the setup pipeline", () => {
@@ -540,7 +532,7 @@ describe("legacy db reset", () => {
         isLocal: true,
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Resetting local database...");
         expect(out.stderrText).toContain("Recreating database...\n");
         expect(removedContainers(child.spawned)).toContain(DB_ID);
@@ -562,7 +554,7 @@ describe("legacy db reset", () => {
         expect(out.stderrText).toContain("Finished ");
         expect(out.stderrText).toContain("on branch ");
         // The local-reset composition now lives in the shared
-        // `legacyResetLocalDatabase` (CLI-2062) — confirm this handler's own
+        // `resetLocalDatabase` (CLI-2062) — confirm this handler's own
         // single `Effect.ensuring` finalizer still fires exactly once through it.
         expect(telemetry.flushCount).toBe(1);
       });
@@ -581,7 +573,7 @@ describe("legacy db reset", () => {
           isLocal: true,
         });
         return Effect.gen(function* () {
-          yield* legacyDbReset({
+          yield* dbReset({
             ...DEFAULT_FLAGS,
             local: true,
             version: Option.some("20240101000000"),
@@ -611,7 +603,7 @@ describe("legacy db reset", () => {
         isLocal: true,
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(conn.execs.some((sql) => sql.includes("create table pg15_marker ()"))).toBe(true);
         expect(
           conn.execs.some((sql) => sql.includes("insert into pg15_seed_marker values (1)")),
@@ -627,9 +619,7 @@ describe("legacy db reset", () => {
         isLocal: true,
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, local: true, noSeed: true }).pipe(
-          Effect.provide(layer),
-        );
+        yield* dbReset({ ...DEFAULT_FLAGS, local: true, noSeed: true }).pipe(Effect.provide(layer));
         expect(conn.execs.some((sql) => sql.includes("insert into t values (1)"))).toBe(false);
       });
     });
@@ -642,7 +632,7 @@ describe("legacy db reset", () => {
         isLocal: true,
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({
+        yield* dbReset({
           ...DEFAULT_FLAGS,
           local: true,
           sqlPaths: ["custom-seed.sql"],
@@ -661,7 +651,7 @@ describe("legacy db reset", () => {
           routeOpts: { running: false },
         });
         return Effect.gen(function* () {
-          const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("is not running.");
           expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
@@ -680,7 +670,7 @@ describe("legacy db reset", () => {
           isLocal: true,
         });
         return Effect.gen(function* () {
-          const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             expect(JSON.stringify(exit.cause)).toContain("failed to load config");
@@ -702,7 +692,7 @@ describe("legacy db reset", () => {
         // No buckets configured -> the seed-buckets core short-circuits, but
         // the storage gate is still consulted (storage is inspected before
         // buckets are seeded).
-        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(
           child.spawned.some(
             (s) => s.args[0] === "container" && s.args[1] === "inspect" && s.args[2] === STORAGE_ID,
@@ -719,7 +709,7 @@ describe("legacy db reset", () => {
         routeOpts: { storageMissing: true },
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Finished ");
       });
     });
@@ -733,7 +723,7 @@ describe("legacy db reset", () => {
       const previous = process.env["GITHUB_HEAD_REF"];
       process.env["GITHUB_HEAD_REF"] = "feature-x";
       return Effect.gen(function* () {
-        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("on branch ");
         expect(out.stderrText).toContain("feature-x");
       }).pipe(
@@ -754,7 +744,7 @@ describe("legacy db reset", () => {
         format: "json",
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         const success = out.messages.find((m) => m.type === "success");
         expect(success?.data?.["target"]).toBe("local");
       });
@@ -773,7 +763,7 @@ describe("legacy db reset", () => {
         },
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(JSON.stringify(exit.cause)).toContain("failed to remove container");
@@ -792,7 +782,7 @@ describe("legacy db reset", () => {
         routeOpts: { kongReloadFails: true },
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const error = Cause.squash(exit.cause) as { message: string; suggestion?: string };
@@ -814,7 +804,7 @@ describe("legacy db reset", () => {
         routeOpts: { kongMissing: true },
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Finished ");
         expect(kongReloadCalls(child.spawned)).toHaveLength(0);
       });
@@ -828,7 +818,7 @@ describe("legacy db reset", () => {
         routeOpts: { kongNotRunning: true },
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Finished ");
         expect(kongReloadCalls(child.spawned)).toHaveLength(0);
       });
@@ -842,7 +832,7 @@ describe("legacy db reset", () => {
         routeOpts: { restartFails: ["supabase_storage_test"] },
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(JSON.stringify(exit.cause)).toContain("failed to restart supabase_storage_test");
@@ -861,7 +851,7 @@ describe("legacy db reset", () => {
           isLocal: true,
         });
         return Effect.gen(function* () {
-          yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
           // recreateDatabase: no container/volume removal at all on this branch.
           expect(removedContainers(child.spawned)).toHaveLength(0);
           expect(
@@ -911,7 +901,7 @@ describe("legacy db reset", () => {
           },
         });
         return Effect.gen(function* () {
-          const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const cause = JSON.stringify(exit.cause);
@@ -935,7 +925,7 @@ describe("legacy db reset", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         // The reset still completes: the swallowed failure does not abort the recreate.
         expect(
           conn.execs.some((sql) => sql === "CREATE DATABASE postgres WITH OWNER postgres"),
@@ -955,7 +945,7 @@ describe("legacy db reset", () => {
         },
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(JSON.stringify(exit.cause)).toContain("failed to disconnect clients");
@@ -976,7 +966,7 @@ describe("legacy db reset", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         // Swallowed: no PgError code at all -> the reset still completes.
         expect(
           conn.execs.some((sql) => sql === "CREATE DATABASE postgres WITH OWNER postgres"),
@@ -987,11 +977,11 @@ describe("legacy db reset", () => {
     it.live(
       "swallows a disconnect-clients failure carrying a node system errno, not a real SQLSTATE",
       () => {
-        // `legacyToExecError`'s fallback (`legacy-db-connection.sql-pg.layer.ts`) sets `code`
-        // from `legacyExtractSqlState`, which returns ANY string `code` found in the cause
+        // `toExecError`'s fallback (`db-connection.sql-pg.layer.ts`) sets `code`
+        // from `extractSqlState`, which returns ANY string `code` found in the cause
         // chain — including a bare node system errno like `ECONNRESET`/`ETIMEDOUT`, which is
         // NOT a Postgres SQLSTATE. A socket error should never match as a real
-        // SQLSTATE either, so the discriminator must check `legacyIsSqlState(code)`
+        // SQLSTATE either, so the discriminator must check `isSqlState(code)`
         // before comparing against `3D000`, not just `code !== undefined`.
         const { layer, conn } = setup(tmp.current, {
           toml: PG14_TOML,
@@ -1004,7 +994,7 @@ describe("legacy db reset", () => {
           },
         });
         return Effect.gen(function* () {
-          yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
           // Swallowed: a node errno is not a SQLSTATE -> the reset still completes.
           expect(
             conn.execs.some((sql) => sql === "CREATE DATABASE postgres WITH OWNER postgres"),
@@ -1023,7 +1013,7 @@ describe("legacy db reset", () => {
           replicationSlotCounts: [2, 1, 0],
         });
         return Effect.gen(function* () {
-          yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
           const countCalls = conn.queries.filter((q) => q.sql === COUNT_REPLICATION_SLOTS);
           expect(countCalls).toHaveLength(3);
         });
@@ -1039,7 +1029,7 @@ describe("legacy db reset", () => {
         replicationSlotQueryFails: true,
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(JSON.stringify(exit.cause)).toContain("failed to count replication slots");
@@ -1060,7 +1050,7 @@ describe("legacy db reset", () => {
           replicationSlotCounts: [1],
         });
         return Effect.gen(function* () {
-          const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             expect(JSON.stringify(exit.cause)).toContain("replication slots still active");
@@ -1078,9 +1068,7 @@ describe("legacy db reset", () => {
         isLocal: true,
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, local: true, noSeed: true }).pipe(
-          Effect.provide(layer),
-        );
+        yield* dbReset({ ...DEFAULT_FLAGS, local: true, noSeed: true }).pipe(Effect.provide(layer));
         expect(conn.execs.some((sql) => sql.includes("insert into t values (9)"))).toBe(false);
       });
     });
@@ -1100,7 +1088,7 @@ describe("legacy db reset", () => {
         isLocal: true,
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(conn.execs.some((sql) => sql.includes("create table pg14_marker ()"))).toBe(true);
         expect(
           conn.execs.some((sql) => sql.includes("insert into pg14_seed_marker values (1)")),
@@ -1119,7 +1107,7 @@ describe("legacy db reset", () => {
         isLocal: true,
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         const pgNetIndex = conn.execs.findIndex((sql) =>
           sql.includes("create extension if not exists pg_net schema extensions"),
         );
@@ -1147,7 +1135,7 @@ describe("legacy db reset", () => {
         isLocal: true,
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(conn.execs.some((sql) => sql.includes("drop extension if exists pg_net"))).toBe(
           true,
         );
@@ -1172,7 +1160,7 @@ describe("legacy db reset", () => {
           isLocal: true,
         });
         return Effect.gen(function* () {
-          yield* legacyDbReset({
+          yield* dbReset({
             ...DEFAULT_FLAGS,
             local: true,
             version: Option.some("20240101000000"),
@@ -1198,10 +1186,10 @@ describe("legacy db reset", () => {
           isLocal: true,
         });
         return Effect.gen(function* () {
-          yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
           // PG14 reset's own init calls the schema-init step directly — unlike
           // `db start`'s own PG14 path, which execs globals.sql first. A fingerprint unique
-          // to `LEGACY_START_DB_GLOBALS_SQL` (see `templates/db-globals.sql.ts`) must never
+          // to `START_DB_GLOBALS_SQL` (see `templates/db-globals.sql.ts`) must never
           // appear in this reset's execs.
           expect(conn.execs.some((sql) => sql.includes("CREATE ROLE anon"))).toBe(false);
         });
@@ -1211,9 +1199,9 @@ describe("legacy db reset", () => {
     it.live(
       "resolves db.migrations.schema_paths against supabase/ before applying it on an experimental PG14 reset",
       () => {
-        // `legacyRecreateLocalDatabase14` must pass the NORMALIZED `toml.schemaPaths`
-        // (`supabase/`-prefix-resolved by `legacyCheckDbToml`) into the final
-        // `legacyMigrateAndSeed` call, not the raw, unresolved config value — the raw
+        // `recreateLocalDatabase14` must pass the NORMALIZED `toml.schemaPaths`
+        // (`supabase/`-prefix-resolved by `checkDbToml`) into the final
+        // `migrateAndSeed` call, not the raw, unresolved config value — the raw
         // `["schema.sql"]` pattern would glob-match against the WORKDIR root (where no
         // such file exists), failing the whole reset, instead of `supabase/schema.sql`
         // (where this test actually places the file).
@@ -1225,7 +1213,7 @@ describe("legacy db reset", () => {
           experimental: true,
         });
         return Effect.gen(function* () {
-          yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
           expect(
             conn.execs.some((sql) => sql.includes("create table schema_paths_marker ()")),
           ).toBe(true);
@@ -1243,7 +1231,7 @@ describe("legacy db reset", () => {
         routeOpts: { neverHealthy: true },
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
       });
     });
@@ -1253,13 +1241,13 @@ describe("legacy db reset", () => {
     it.live("fails a remote reset on a malformed config.toml", () => {
       const { layer } = setup(tmp.current, { toml: 'project_id = "unterminated\n' });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+        const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
           Effect.provide(layer),
           Effect.exit,
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          // Config loads through the established reader (`legacyCheckDbToml`),
+          // Config loads through the established reader (`checkDbToml`),
           // so a malformed config aborts with `failed to load config`, same
           // as the other db commands (diff/dump/pull/migration).
           expect(JSON.stringify(exit.cause)).toContain("failed to load config");
@@ -1269,7 +1257,7 @@ describe("legacy db reset", () => {
 
     it.live("loads a Go-style env() boolean in config for a remote reset", () => {
       // Regression: `enabled = "env(VAR)"` must load via env-expansion + boolean
-      // parsing (`legacyCheckDbToml`) instead of the strict @supabase/config
+      // parsing (`checkDbToml`) instead of the strict @supabase/config
       // loader rejecting it.
       const previous = process.env["MIGRATIONS_ENABLED"];
       process.env["MIGRATIONS_ENABLED"] = "true";
@@ -1279,7 +1267,7 @@ describe("legacy db reset", () => {
         confirm: [true],
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
       }).pipe(
         Effect.ensuring(
@@ -1297,7 +1285,7 @@ describe("legacy db reset", () => {
         args: ["db", "reset", "--linked", "--local"],
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
       });
     });
@@ -1305,7 +1293,7 @@ describe("legacy db reset", () => {
     it.live("rejects --version together with --last", () => {
       const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset({
+        const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
           version: Option.some("20240101000000"),
@@ -1319,7 +1307,7 @@ describe("legacy db reset", () => {
     it.live("rejects a non-integer --version", () => {
       const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset({
+        const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
           version: Option.some("not-a-number"),
@@ -1327,9 +1315,7 @@ describe("legacy db reset", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && failure.value._tag).toBe(
-            "LegacyDbResetInvalidVersionError",
-          );
+          expect(Option.isSome(failure) && failure.value._tag).toBe("DbResetInvalidVersionError");
           // The bare "invalid version number" is returned unwrapped — no
           // `failed to parse <v>:` wrapper (that belongs to `migration repair`).
           expect(Option.isSome(failure) && failure.value.message).toBe("invalid version number");
@@ -1340,7 +1326,7 @@ describe("legacy db reset", () => {
     it.live("fails when --version has no matching migration file", () => {
       const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset({
+        const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
           version: Option.some("20240101000000"),
@@ -1360,7 +1346,7 @@ describe("legacy db reset", () => {
       // fallen through to the glob check instead.
       const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset({
+        const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
           version: Option.some("99999999999999999999"),
@@ -1368,9 +1354,7 @@ describe("legacy db reset", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && failure.value._tag).toBe(
-            "LegacyDbResetInvalidVersionError",
-          );
+          expect(Option.isSome(failure) && failure.value._tag).toBe("DbResetInvalidVersionError");
           expect(Option.isSome(failure) && failure.value.message).toBe("invalid version number");
         }
       });
@@ -1385,7 +1369,7 @@ describe("legacy db reset", () => {
         confirm: [true],
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({
+        yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
           version: Option.some(""),
@@ -1401,7 +1385,7 @@ describe("legacy db reset", () => {
         confirm: [false],
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+        const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
           Effect.provide(layer),
           Effect.exit,
         );
@@ -1421,7 +1405,7 @@ describe("legacy db reset", () => {
         confirm: [true],
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Resetting remote database...");
         // No "Connecting to ... database..." line (established output contract).
         expect(out.stderrText).not.toContain("Connecting to");
@@ -1434,17 +1418,17 @@ describe("legacy db reset", () => {
     });
 
     it.live("fails a remote reset before dropping schemas on an undecryptable secret", () => {
-      // Regression: the old point-of-use vault decryption ran AFTER `legacyDropUserSchemas`,
+      // Regression: the old point-of-use vault decryption ran AFTER `dropUserSchemas`,
       // so an undecryptable `encrypted:` secret dropped the schemas before failing.
       // Every secret is decrypted while loading config before the reset runs,
       // so the reset must abort before any destructive work — matched here by
-      // `legacyCheckDbToml` at load time.
+      // `checkDbToml` at load time.
       const { layer, conn } = setup(tmp.current, {
         toml: 'project_id = "test"\n\n[db.vault]\nmy_secret = "encrypted:anything"\n',
         confirm: [true],
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+        const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
           Effect.provide(layer),
           Effect.exit,
         );
@@ -1462,13 +1446,13 @@ describe("legacy db reset", () => {
     it.live("fails a remote reset before dropping schemas on an empty project_id", () => {
       // Config validation rejects an explicit `project_id = ""` before the
       // reset prompt, so the native remote reset must abort before
-      // `legacyDropUserSchemas`.
+      // `dropUserSchemas`.
       const { layer, conn } = setup(tmp.current, {
         toml: 'project_id = ""\n',
         confirm: [true],
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+        const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
           Effect.provide(layer),
           Effect.exit,
         );
@@ -1492,7 +1476,7 @@ describe("legacy db reset", () => {
         // Deliberately no `confirm` responses — the prompt must be auto-confirmed.
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
         expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
       });
     });
@@ -1507,18 +1491,18 @@ describe("legacy db reset", () => {
         resolveFails: true,
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+        const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
           Effect.provide(layer),
           Effect.exit,
         );
         expect(Exit.isFailure(exit)).toBe(true);
         expect(linkedCache.cached).toBe(true);
-        expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+        expect(linkedCache.cachedRef).toBe(VALID_REF);
       });
     });
 
     it.live("resets the project given via --project-ref without a linked workdir", () => {
-      // The fake resolver fails as "unlinked" (`LegacyProjectNotLinkedError`)
+      // The fake resolver fails as "unlinked" (`ProjectRefNotLinkedError`)
       // absent the flag — only the flag can resolve a ref here.
       const FLAG_REF = "flagflagflagflagflag";
       const { layer, conn, linkedCache } = setup(tmp.current, {
@@ -1527,7 +1511,7 @@ describe("legacy db reset", () => {
         linkedFails: true,
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({
+        yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
           projectRef: Option.some(FLAG_REF),
@@ -1540,22 +1524,22 @@ describe("legacy db reset", () => {
 
     it.live("--project-ref overrides an already-linked workdir's project ref", () => {
       const FLAG_REF = "flagflagflagflagflag";
-      // The workdir already resolves to LEGACY_VALID_REF (e.g. via
+      // The workdir already resolves to VALID_REF (e.g. via
       // .temp/project-ref) — the flag must win over it.
       const { layer, linkedCache } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
-        ref: LEGACY_VALID_REF,
+        ref: VALID_REF,
         confirm: [true],
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({
+        yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
           projectRef: Option.some(FLAG_REF),
         }).pipe(Effect.provide(layer));
         expect(linkedCache.cached).toBe(true);
         expect(linkedCache.cachedRef).toBe(FLAG_REF);
-        expect(linkedCache.cachedRef).not.toBe(LEGACY_VALID_REF);
+        expect(linkedCache.cachedRef).not.toBe(VALID_REF);
       });
     });
 
@@ -1568,7 +1552,7 @@ describe("legacy db reset", () => {
         args: ["db", "reset"],
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset({
+        const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
           projectRef: Option.some(FLAG_REF),
         }).pipe(Effect.provide(layer), Effect.exit);
@@ -1594,7 +1578,7 @@ describe("legacy db reset", () => {
         confirm: [true],
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({
+        yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
           version: Option.some("20240101000000"),
@@ -1617,7 +1601,7 @@ describe("legacy db reset", () => {
       });
       return Effect.gen(function* () {
         // last=1 → revert the most recent → reset to version 20240101000000.
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true, last: Option.some(1) }).pipe(
+        yield* dbReset({ ...DEFAULT_FLAGS, linked: true, last: Option.some(1) }).pipe(
           Effect.provide(layer),
         );
         expect(out.stderrText).toContain("Resetting remote database to version: 20240101000000");
@@ -1632,7 +1616,7 @@ describe("legacy db reset", () => {
       });
       return Effect.gen(function* () {
         // last=2 with 2 local migrations → revert all → version "-".
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true, last: Option.some(2) }).pipe(
+        yield* dbReset({ ...DEFAULT_FLAGS, linked: true, last: Option.some(2) }).pipe(
           Effect.provide(layer),
         );
         expect(out.stderrText).toContain("Resetting remote database to version: -");
@@ -1649,7 +1633,7 @@ describe("legacy db reset", () => {
         confirm: [true],
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true, noSeed: true }).pipe(
+        yield* dbReset({ ...DEFAULT_FLAGS, linked: true, noSeed: true }).pipe(
           Effect.provide(layer),
         );
         expect(out.stderrText).not.toContain("Seeding data from");
@@ -1671,10 +1655,10 @@ describe("legacy db reset", () => {
           experimental: true,
           args: ["db", "reset", "--linked=false"],
           confirm: [true],
-          ref: LEGACY_VALID_REF,
+          ref: VALID_REF,
         });
         return Effect.gen(function* () {
-          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: false }).pipe(Effect.provide(layer));
+          yield* dbReset({ ...DEFAULT_FLAGS, linked: false }).pipe(Effect.provide(layer));
           // The configured schema file ran...
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
           // ...but the timestamped migration did NOT — the if/else-if is
@@ -1688,7 +1672,7 @@ describe("legacy db reset", () => {
           // delegated one that discarded the resolve (CLI-1958 removed the delegate).
           expect(resolver.calls).toBe(1);
           expect(linkedCache.cached).toBe(true);
-          expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+          expect(linkedCache.cachedRef).toBe(VALID_REF);
         });
       },
     );
@@ -1711,7 +1695,7 @@ describe("legacy db reset", () => {
           confirm: [true],
         });
         return Effect.gen(function* () {
-          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
           const order = conn.execs
             .map((s) => /create table (\w+) \(\)/.exec(s)?.[1])
             .filter((name): name is string => name !== undefined);
@@ -1736,7 +1720,7 @@ describe("legacy db reset", () => {
           confirm: [true],
         });
         return Effect.gen(function* () {
-          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
           expect(conn.execs.some((s) => s.includes("create table dir_top"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("create table dir_nested"))).toBe(true);
         });
@@ -1756,7 +1740,7 @@ describe("legacy db reset", () => {
           confirm: [true],
         });
         return Effect.gen(function* () {
-          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
           // Schemas are still dropped (ResetAll drops before MigrateAndSeed)...
           expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
           // ...but the local migration is silently skipped, not applied.
@@ -1779,7 +1763,7 @@ describe("legacy db reset", () => {
           confirm: [true],
         });
         return Effect.gen(function* () {
-          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
           // pg-delta being enabled disables the schema-files branch even
           // though `--experimental` and `schema_paths` are both set.
           expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(true);
@@ -1802,7 +1786,7 @@ describe("legacy db reset", () => {
           confirm: [true],
         });
         return Effect.gen(function* () {
-          yield* legacyDbReset({
+          yield* dbReset({
             ...DEFAULT_FLAGS,
             linked: true,
             version: Option.some("20240101000000"),
@@ -1824,7 +1808,7 @@ describe("legacy db reset", () => {
           confirm: [true],
         });
         return Effect.gen(function* () {
-          const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+          const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
             Effect.provide(layer),
             Effect.exit,
           );
@@ -1856,7 +1840,7 @@ describe("legacy db reset", () => {
         confirm: [true],
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
         expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
         expect(out.stderrText).not.toContain("no files matched pattern");
       });
@@ -1874,7 +1858,7 @@ describe("legacy db reset", () => {
           execFailsMessage: 'syntax error at or near "not"',
         });
         return Effect.gen(function* () {
-          const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+          const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
             Effect.provide(layer),
             Effect.exit,
           );
@@ -1908,7 +1892,7 @@ describe("legacy db reset", () => {
         });
         chmodSync(schemaFile, 0o000);
         return Effect.gen(function* () {
-          const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+          const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
             Effect.provide(layer),
             Effect.exit,
           );
@@ -1940,7 +1924,7 @@ describe("legacy db reset", () => {
         });
         chmodSync(schemasDir, 0o000);
         return Effect.gen(function* () {
-          const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+          const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
             Effect.provide(layer),
             Effect.exit,
           );
@@ -1976,7 +1960,7 @@ describe("legacy db reset", () => {
           // No experimental flag / shell env — only the project .env sets it.
         });
         return Effect.gen(function* () {
-          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
           expect(out.stderrText).not.toContain("Applying migration");
@@ -1994,7 +1978,7 @@ describe("legacy db reset", () => {
     it.live("attaches the Go seed-flag conflict suggestion to --no-seed + --sql-paths", () => {
       const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset({
+        const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
           noSeed: true,
           sqlPaths: ["seed.sql"],
@@ -2019,7 +2003,7 @@ describe("legacy db reset", () => {
           confirm: [true],
         });
         return Effect.gen(function* () {
-          yield* legacyDbReset({
+          yield* dbReset({
             ...DEFAULT_FLAGS,
             dbUrl: Option.some("postgresql://db.example.com:5432/postgres"),
             noSeed: true,
@@ -2041,7 +2025,7 @@ describe("legacy db reset", () => {
         isLocal: true,
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({
+        yield* dbReset({
           ...DEFAULT_FLAGS,
           dbUrl: Option.some("postgresql://localhost:54322/postgres"),
           version: Option.some("20240101000000"),
@@ -2061,7 +2045,7 @@ describe("legacy db reset", () => {
         confirm: [true],
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({
+        yield* dbReset({
           ...DEFAULT_FLAGS,
           dbUrl: Option.some("postgresql://db.example.com:5432/postgres"),
         }).pipe(Effect.provide(layer));
@@ -2072,12 +2056,12 @@ describe("legacy db reset", () => {
 
     it.live("announces a matching [remotes.*] override", () => {
       const { layer, out } = setup(tmp.current, {
-        toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${LEGACY_VALID_REF}"\n`,
+        toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n`,
         confirm: [true],
-        ref: LEGACY_VALID_REF,
+        ref: VALID_REF,
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Loading config override: [remotes.preview]");
       });
     });
@@ -2092,7 +2076,7 @@ describe("legacy db reset", () => {
         confirm: [true],
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
         // Schemas are still dropped, but nothing is applied or seeded.
         expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
         expect(out.stderrText).not.toContain("Applying migration");
@@ -2108,7 +2092,7 @@ describe("legacy db reset", () => {
         yes: true,
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
         const success = out.messages.find((m) => m.type === "success");
         expect(success?.data?.["target"]).toBe("remote");
       });
@@ -2122,7 +2106,7 @@ describe("legacy db reset", () => {
       });
       return Effect.gen(function* () {
         // json mode is non-interactive → prompt takes the default (false) → cancel.
-        const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+        const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
           Effect.provide(layer),
           Effect.exit,
         );
@@ -2135,7 +2119,7 @@ describe("legacy db reset", () => {
     it.live("rejects --no-seed together with --sql-paths", () => {
       const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset({
+        const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
           noSeed: true,
@@ -2151,7 +2135,7 @@ describe("legacy db reset", () => {
     it.live("rejects an empty --sql-paths value", () => {
       const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset({
+        const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
           sqlPaths: [""],
@@ -2168,7 +2152,7 @@ describe("legacy db reset", () => {
     it.live("rejects a negative --last value", () => {
       const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbReset({
+        const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
           last: Option.some(-1),
@@ -2191,7 +2175,7 @@ describe("legacy db reset", () => {
         confirm: [true],
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({
+        yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
           sqlPaths: [absSeed],
@@ -2212,7 +2196,7 @@ describe("legacy db reset", () => {
         confirm: [true],
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({
+        yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
           sqlPaths: ["custom-seed.sql"],
@@ -2238,7 +2222,7 @@ describe("legacy db reset", () => {
           confirm: [true],
         });
         return Effect.gen(function* () {
-          yield* legacyDbReset({
+          yield* dbReset({
             ...DEFAULT_FLAGS,
             linked: true,
             sqlPaths: ["custom-seed.sql"],

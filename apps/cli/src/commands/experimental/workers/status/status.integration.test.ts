@@ -4,17 +4,17 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option } from "effect";
 import {
   makeWorkersProject,
-  setupLegacyWorkers,
+  setupWorkers,
   workerResource,
   workersRoute,
   WORKERS_PROJECT_REF,
-} from "../../../../../tests/helpers/legacy-workers.ts";
+} from "../../../../../tests/helpers/workers.ts";
 import {
   InvalidWorkerNameError,
   WorkerNotDeployedError,
 } from "../../../../shared/workers/workers.errors.ts";
-import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
-import { legacyWorkersStatus } from "./status.handler.ts";
+import { WorkersEnvNotSupportedError } from "../workers.errors.ts";
+import { workersStatus } from "./status.handler.ts";
 
 const CONFIG = `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "2gb"\n`;
 
@@ -35,7 +35,7 @@ const getRoute = `GET ${workersRoute("/api")}`;
 describe("legacy workers status", () => {
   it.live("reports the deployment facts and the live instance tally", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [getRoute]: {
@@ -54,7 +54,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+      yield* workersStatus({ name: "api", projectRef: Option.none() });
 
       const stdout = out.stdoutText;
       expect(stdout).toContain("State");
@@ -74,7 +74,7 @@ describe("legacy workers status", () => {
     // config.toml says node; the deployment carries no spec.runtime, which the
     // API only omits for a context-only (Dockerfile) build.
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [getRoute]: {
@@ -85,7 +85,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+      yield* workersStatus({ name: "api", projectRef: Option.none() });
 
       const runtimeLine = out.stdoutText
         .split("\n")
@@ -97,7 +97,7 @@ describe("legacy workers status", () => {
 
   it.live("falls back to the declared count when no tally came back", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [getRoute]: {
@@ -108,7 +108,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+      yield* workersStatus({ name: "api", projectRef: Option.none() });
 
       expect(out.stdoutText).toContain("2 declared");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -116,7 +116,7 @@ describe("legacy workers status", () => {
 
   it.live("warns rather than lying when the instance read-through failed", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [getRoute]: {
@@ -133,7 +133,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+      yield* workersStatus({ name: "api", projectRef: Option.none() });
 
       expect(out.stderrText).toContain("backend unreachable");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -144,7 +144,7 @@ describe("legacy workers status", () => {
   // `3/1 ready`.
   it.live("reads the whole tally from one snapshot while scaling", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [getRoute]: {
@@ -162,7 +162,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+      yield* workersStatus({ name: "api", projectRef: Option.none() });
 
       expect(out.stdoutText).toContain("3/3 ready");
       expect(out.stdoutText).not.toContain("3/1 ready");
@@ -173,7 +173,7 @@ describe("legacy workers status", () => {
   // the worker the user is removing.
   it.live("withholds the build retry while the worker is being deleted", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [getRoute]: {
@@ -192,7 +192,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+      yield* workersStatus({ name: "api", projectRef: Option.none() });
 
       expect(out.stdoutText).toContain("deleting");
       expect(out.stdoutText).not.toContain("re-run supabase experimental workers push");
@@ -201,7 +201,7 @@ describe("legacy workers status", () => {
 
   it.live("points a failed build at the retry, with the reason", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [getRoute]: {
@@ -219,7 +219,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+      yield* workersStatus({ name: "api", projectRef: Option.none() });
 
       expect(out.stdoutText).toContain("failed");
       expect(out.stdoutText).toContain("exit status 1");
@@ -230,7 +230,7 @@ describe("legacy workers status", () => {
 
   it.live("shows a worker being torn down as deleting", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [getRoute]: {
@@ -241,7 +241,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+      yield* workersStatus({ name: "api", projectRef: Option.none() });
 
       expect(out.stdoutText).toContain("deleting");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -249,13 +249,13 @@ describe("legacy workers status", () => {
 
   it.live("fails with `not deployed` and points at push", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: { [getRoute]: { status: 404, body: { message: "worker not found" } } },
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersStatus({
+      const error = yield* workersStatus({
         name: "api",
         projectRef: Option.none(),
       }).pipe(Effect.flip);
@@ -268,10 +268,10 @@ describe("legacy workers status", () => {
 
   it.live("refuses a name that could never have been written", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir });
+    const { layer, http } = setupWorkers({ workdir: repo.dir });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersStatus({
+      const error = yield* workersStatus({
         name: "My_Worker",
         projectRef: Option.none(),
       }).pipe(Effect.flip);
@@ -286,7 +286,7 @@ describe("legacy workers status", () => {
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsource = "packages/api"\n`,
       "packages/api/index.js": "export default {};\n",
     });
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [getRoute]: {
@@ -297,7 +297,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+      yield* workersStatus({ name: "api", projectRef: Option.none() });
 
       expect(out.stdoutText).toContain(join("packages", "api"));
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -310,7 +310,7 @@ describe("legacy workers status", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsource = "../../elsewhere"\n`,
     });
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [getRoute]: {
@@ -321,7 +321,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+      yield* workersStatus({ name: "api", projectRef: Option.none() });
 
       expect(out.stdoutText).toContain("active");
       expect(out.stdoutText).not.toContain("Source");
@@ -330,7 +330,7 @@ describe("legacy workers status", () => {
 
   it.live("emits the same facts as structured data in json mode", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       format: "json",
       routes: {
@@ -349,7 +349,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+      yield* workersStatus({ name: "api", projectRef: Option.none() });
 
       const success = out.messages.findLast(
         (message) => message.type === "success" && message.data !== undefined,
@@ -375,7 +375,7 @@ describe("legacy workers status", () => {
   // result events.
   it.live("emits exactly one structured result in json mode", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       format: "json",
       routes: {
@@ -384,7 +384,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+      yield* workersStatus({ name: "api", projectRef: Option.none() });
 
       const results = out.messages.filter(
         (message) => message.type === "success" && message.data !== undefined,
@@ -398,7 +398,7 @@ describe("legacy workers status", () => {
   // worker's source named a path that was not there.
   it.live("omits the source for a worker with nothing local to point at", () => {
     const repo = project({ "supabase/config.toml": 'project_id = "demo"\n' });
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [`GET ${workersRoute("/stray")}`]: {
@@ -409,7 +409,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "stray", projectRef: Option.none() });
+      yield* workersStatus({ name: "stray", projectRef: Option.none() });
 
       expect(out.stdoutText).not.toContain("workers/stray");
       expect(out.stdoutText).not.toContain("Source");
@@ -421,7 +421,7 @@ describe("legacy workers status", () => {
   // Here as a guard against the name picking up a special case it never had.
   it.live("inspects a deployed worker named root", () => {
     const repo = project();
-    const { layer, out, http } = setupLegacyWorkers({
+    const { layer, out, http } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [`GET ${workersRoute("/root")}`]: {
@@ -432,7 +432,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "root", projectRef: Option.none() });
+      yield* workersStatus({ name: "root", projectRef: Option.none() });
 
       expect(out.stdoutText).toContain("active");
       expect(http.routeKeys).toEqual([`GET ${workersRoute("/root")}`]);
@@ -444,7 +444,7 @@ describe("legacy workers status", () => {
   // omitted rather than rendered.
   it.live("encodes TOML for a worker whose optional fields are absent", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       goOutput: "toml",
       routes: {
@@ -456,7 +456,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+      yield* workersStatus({ name: "api", projectRef: Option.none() });
 
       expect(out.stdoutText).toContain("worker_name = ");
       expect(out.stdoutText).not.toContain("undefined");
@@ -469,7 +469,7 @@ describe("legacy workers status", () => {
   it.live("inspects a remote worker despite an unparseable local config", () => {
     const repo = project({ "supabase/config.toml": "project_id = [unclosed\n" });
     const otherRef = "qrstuvwxyzabcdefghij";
-    const { layer, out, http } = setupLegacyWorkers({
+    const { layer, out, http } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [`GET /v2/projects/${otherRef}/workers/api`]: {
@@ -480,7 +480,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "api", projectRef: Option.some(otherRef) });
+      yield* workersStatus({ name: "api", projectRef: Option.some(otherRef) });
 
       expect(http.routeKeys).toEqual([`GET /v2/projects/${otherRef}/workers/api`]);
       expect(out.stdoutText).toContain("active");
@@ -492,7 +492,7 @@ describe("legacy workers status", () => {
   // rather than rendered empty.
   it.live("omits the URL for a worker that is not publicly exposed", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: {
         [getRoute]: {
@@ -505,7 +505,7 @@ describe("legacy workers status", () => {
     });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+      yield* workersStatus({ name: "api", projectRef: Option.none() });
 
       expect(out.stdoutText).toContain("private");
       expect(out.stdoutText).not.toContain("URL");
@@ -515,30 +515,28 @@ describe("legacy workers status", () => {
 
   it.live("refuses -o env before making any request at all", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       goOutput: "env",
       routes: { [getRoute]: { status: 200, body: { data: workerResource({ name: "api" }) } } },
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() }).pipe(
+      const error = yield* workersStatus({ name: "api", projectRef: Option.none() }).pipe(
         Effect.flip,
       );
 
-      expect(error).toBeInstanceOf(LegacyWorkersEnvNotSupportedError);
+      expect(error).toBeInstanceOf(WorkersEnvNotSupportedError);
       expect(http.routeKeys).toEqual([]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
   it.live("flushes telemetry when the worker name is invalid", () => {
     const repo = project();
-    const { layer, telemetry } = setupLegacyWorkers({ workdir: repo.dir });
+    const { layer, telemetry } = setupWorkers({ workdir: repo.dir });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersStatus({ name: "Not_A_Label", projectRef: Option.none() }).pipe(
-        Effect.flip,
-      );
+      yield* workersStatus({ name: "Not_A_Label", projectRef: Option.none() }).pipe(Effect.flip);
 
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));

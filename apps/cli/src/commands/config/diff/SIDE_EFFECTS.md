@@ -64,19 +64,19 @@ does. Because
 code `0`, a `--exit-code` run that exits `2` on drift suppresses that hook,
 same as any other non-zero exit.
 
-| Code | Condition                                                                                                                                                                                                                                                            |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — including when differences are found, unless `--exit-code` is passed                                                                                                                                                                                       |
-| `2`  | `--exit-code` passed and at least one difference found                                                                                                                                                                                                               |
-| `1`  | the `-o`/`--output` global flag passed (any value — not supported by this command)                                                                                                                                                                                   |
-| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`LegacyConfigDiffWorkdirError`) — beats the config read and every network call                                                                                                           |
-| `1`  | missing or malformed `supabase/config.toml`/`config.json` (`LegacyConfigDiffLoadConfigError`) — a missing file suggests `supabase init` only for a DEFAULTED workdir; with an explicit workdir the message names the resolved path instead and never suggests `init` |
-| `1`  | branch-name `--project-ref` with no linked parent project (`LegacyConfigDiffBranchNotLinkedError`)                                                                                                                                                                   |
-| `1`  | branch-name `--project-ref` with a corrupt/invalid linked parent ref (`LegacyConfigDiffParentRefInvalidError`)                                                                                                                                                       |
-| `1`  | unknown branch (branch-name `--project-ref` 404, `LegacyConfigDiffBranchNotFoundError`)                                                                                                                                                                              |
-| `1`  | resolved branch has no project ref yet — still provisioning (`LegacyConfigDiffBranchNotReadyError`)                                                                                                                                                                  |
-| `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref                                                                                                                                                                                             |
-| `1`  | remote config read failure (network, 401/403/404, or other unexpected status)                                                                                                                                                                                        |
+| Code | Condition                                                                                                                                                                                                                                                      |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — including when differences are found, unless `--exit-code` is passed                                                                                                                                                                                 |
+| `2`  | `--exit-code` passed and at least one difference found                                                                                                                                                                                                         |
+| `1`  | the `-o`/`--output` global flag passed (any value — not supported by this command)                                                                                                                                                                             |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`ConfigDiffWorkdirError`) — beats the config read and every network call                                                                                                           |
+| `1`  | missing or malformed `supabase/config.toml`/`config.json` (`ConfigDiffLoadConfigError`) — a missing file suggests `supabase init` only for a DEFAULTED workdir; with an explicit workdir the message names the resolved path instead and never suggests `init` |
+| `1`  | branch-name `--project-ref` with no linked parent project (`ConfigDiffBranchNotLinkedError`)                                                                                                                                                                   |
+| `1`  | branch-name `--project-ref` with a corrupt/invalid linked parent ref (`ConfigDiffParentRefInvalidError`)                                                                                                                                                       |
+| `1`  | unknown branch (branch-name `--project-ref` 404, `ConfigDiffBranchNotFoundError`)                                                                                                                                                                              |
+| `1`  | resolved branch has no project ref yet — still provisioning (`ConfigDiffBranchNotReadyError`)                                                                                                                                                                  |
+| `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref                                                                                                                                                                                       |
+| `1`  | remote config read failure (network, 401/403/404, or other unexpected status)                                                                                                                                                                                  |
 
 ## Output
 
@@ -120,7 +120,7 @@ contain a `.` — plus `class`, `declared`, `local`, `remote`, optional
 **Not supported.** `config diff` is a net-new TS command with no Go parity
 contract (CLI-2156, per Colum). Any `-o`/`--output` value — every
 machine-format value AND `pretty` — is rejected outright
-(`LegacyConfigDiffOutputFlagUnsupportedError`, exit 1) with:
+(`ConfigDiffOutputFlagUnsupportedError`, exit 1) with:
 
 ```
 the -o/--output flag is not supported by config diff; use --output-format json|stream-json instead.
@@ -128,7 +128,7 @@ the -o/--output flag is not supported by config diff; use --output-format json|s
 
 Checked FIRST, before any config load, target resolution, or network call —
 so a rejected invocation never burns a config read or an API round trip. The
-command's own `withLegacyCommandInstrumentation` wiring widens the wrapper's
+command's own `withCommandTelemetry` wiring widens the wrapper's
 per-command `-o` enum to the full global choice set so every value (including
 `table`/`csv`, which are otherwise only meaningful to `db query`) reaches this
 handler-level rejection with its pointed message, rather than the wrapper's

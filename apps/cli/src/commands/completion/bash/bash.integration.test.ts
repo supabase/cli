@@ -5,22 +5,22 @@ import { Command } from "effect/unstable/cli";
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { EventCommandExecuted } from "../../../shared/telemetry/event-catalog.ts";
-import { legacyCompletionBashCommand } from "./bash.command.ts";
-import { legacyCompletionBash } from "./bash.handler.ts";
+import { completionBashCommand } from "./bash.command.ts";
+import { completionBash } from "./bash.handler.ts";
 
-function setupLegacyCompletionBash() {
+function setupCompletionBash() {
   return mockOutput();
 }
 
-function legacyTestRoot() {
-  return Command.make("supabase").pipe(Command.withSubcommands([legacyCompletionBashCommand]));
+function testRoot() {
+  return Command.make("supabase").pipe(Command.withSubcommands([completionBashCommand]));
 }
 
 describe("legacy completion bash", () => {
   it.live("prints the native bash completion script", () => {
-    const out = setupLegacyCompletionBash();
+    const out = setupCompletionBash();
     return Effect.gen(function* () {
-      yield* legacyCompletionBash({ noDescriptions: false });
+      yield* completionBash({ noDescriptions: false });
       expect(out.stdoutText).toContain("# bash completion V2 for supabase");
       expect(out.stdoutText).not.toContain("__completeNoDesc");
       expect(out.stdoutText).toContain("__complete");
@@ -30,9 +30,9 @@ describe("legacy completion bash", () => {
   it.live(
     "prints the native bash completion script without descriptions when --no-descriptions is set",
     () => {
-      const out = setupLegacyCompletionBash();
+      const out = setupCompletionBash();
       return Effect.gen(function* () {
-        yield* legacyCompletionBash({ noDescriptions: true });
+        yield* completionBash({ noDescriptions: true });
         expect(out.stdoutText).toContain("__completeNoDesc");
       }).pipe(Effect.provide(out.layer));
     },
@@ -41,10 +41,10 @@ describe("legacy completion bash", () => {
   it.live(
     "accepts --no-descriptions from real argv via the command parser and still prints the no-desc script",
     () => {
-      const out = setupLegacyCompletionBash();
+      const out = setupCompletionBash();
       // Running through the real command (rather than calling the handler
       // directly, as the two tests above do) also runs
-      // `withLegacyCommandInstrumentation` (fires the `cli_command_executed`
+      // `withCommandTelemetry` (fires the `cli_command_executed`
       // event), which needs `Analytics`/`ProcessControl`/`Stdio` alongside
       // `Output` — the same minimal layer set `telemetry.integration.test.ts`
       // uses for its own local-only (no Management API) native command.
@@ -55,7 +55,7 @@ describe("legacy completion bash", () => {
         processControlLayer,
       );
       return Effect.gen(function* () {
-        yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })([
+        yield* Command.runWith(testRoot(), { version: "0.0.0-test" })([
           "bash",
           "--no-descriptions",
         ]);
@@ -67,7 +67,7 @@ describe("legacy completion bash", () => {
   it.live(
     "fires the cli_command_executed telemetry event, matching Go's PersistentPostRun (CLI-1965 review finding)",
     () => {
-      const out = setupLegacyCompletionBash();
+      const out = setupCompletionBash();
       const analytics = mockAnalytics();
       const layer = Layer.mergeAll(
         out.layer,
@@ -76,7 +76,7 @@ describe("legacy completion bash", () => {
         processControlLayer,
       );
       return Effect.gen(function* () {
-        yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })(["bash"]);
+        yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["bash"]);
         const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
         expect(event).toBeDefined();
       }).pipe(Effect.provide(layer)) as Effect.Effect<void>;

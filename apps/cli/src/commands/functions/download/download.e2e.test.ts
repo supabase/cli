@@ -54,7 +54,7 @@ describe("supabase functions download (legacy) — argument validation", () => {
   // re-parses this argv itself and enforces the same mutual exclusivity, so
   // forwarding both breaks `--legacy-bundle` outright. Covered in
   // `download.integration.test.ts` ("forwards only --legacy-bundle to the Go
-  // proxy...") via a mocked `LegacyGoProxy` instead of here: unlike
+  // proxy...") via a mocked `GoProxy` instead of here: unlike
   // `--use-api`, `--legacy-bundle` routes to the Go binary's `RunLegacy`
   // downloader, which calls `InstallOrUpgradeDeno` before any network call
   // (`apps/cli-go/internal/functions/download/download.go`). Each e2e run

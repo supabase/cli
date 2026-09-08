@@ -19,7 +19,7 @@ export interface ParsedCidr {
  * accepted by `supabase network-restrictions update`.
  *
  * Returns `null` if the input is not a well-formed CIDR; callers translate
- * `null` into `LegacyNetworkRestrictionsInvalidCidrError`.
+ * `null` into `NetworkRestrictionsInvalidCidrError`.
  */
 export function parseCidr(input: string): ParsedCidr | null {
   const slashIdx = input.indexOf("/");

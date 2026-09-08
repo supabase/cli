@@ -31,13 +31,13 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                       |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                         |
-| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                         |
-| `1`  | API non-2xx (`LegacyVanitySubdomainsDeleteUnexpectedStatusError`)                                                                               |
-| `1`  | transport failure (`LegacyVanitySubdomainsDeleteNetworkError`)                                                                                  |
+| Code | Condition                                                                                                                                 |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                   |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
+| `1`  | project ref unresolved (`ProjectRefNotLinkedError` / `InvalidProjectRefError`)                                                            |
+| `1`  | API non-2xx (`VanitySubdomainsDeleteUnexpectedStatusError`)                                                                               |
+| `1`  | transport failure (`VanitySubdomainsDeleteNetworkError`)                                                                                  |
 
 ## Telemetry Events Fired
 

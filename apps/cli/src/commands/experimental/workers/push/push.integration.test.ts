@@ -4,14 +4,14 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, Predicate, Schedule } from "effect";
 import {
   makeWorkersProject,
-  setupLegacyWorkers,
+  setupWorkers,
   workerResource,
   workersRoute,
   WORKERS_PROJECT_REF,
   type WorkersHttpRoutes,
-} from "../../../../../tests/helpers/legacy-workers.ts";
-import { LegacyProjectNotLinkedError } from "../../../../config/legacy-project-ref.errors.ts";
-import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
+} from "../../../../../tests/helpers/workers.ts";
+import { ProjectRefNotLinkedError } from "../../../../config/project-ref.errors.ts";
+import { WorkersEnvNotSupportedError } from "../workers.errors.ts";
 import {
   NoWorkersToDeployError,
   UnknownWorkerExposureError,
@@ -25,8 +25,8 @@ import {
   WorkerSourceMissingError,
   WorkerUploadFailedError,
 } from "../../../../shared/workers/workers.errors.ts";
-import { legacyWorkersPush } from "./push.handler.ts";
-import type { LegacyWorkersPushFlags } from "./push.command.ts";
+import { workersPush } from "./push.handler.ts";
+import type { WorkersPushFlags } from "./push.command.ts";
 
 const UPLOAD_URL = "https://storage.example/deploy-context/api.tar.gz?signed";
 const UPLOAD_ID = "cafe0000000000000000000000000000";
@@ -42,7 +42,7 @@ const uploadSlot = {
   },
 };
 
-function flags(overrides: Partial<LegacyWorkersPushFlags> = {}): LegacyWorkersPushFlags {
+function flags(overrides: Partial<WorkersPushFlags> = {}): WorkersPushFlags {
   return {
     names: ["api"],
     instances: Option.none(),
@@ -114,11 +114,11 @@ function stattableAsCurrentUser(path: string): boolean {
   }
 }
 
-function push(flagOverrides: Partial<LegacyWorkersPushFlags> = {}) {
+function push(flagOverrides: Partial<WorkersPushFlags> = {}) {
   // Both schedules are injected: the outer poll and the per-read retry. The
   // production retry is spaced in seconds, so leaving it in place made the
   // transient-failure test wait on a real clock.
-  return legacyWorkersPush(flags(flagOverrides), {
+  return workersPush(flags(flagOverrides), {
     pollSchedule: IMMEDIATE,
     pollRetrySchedule: IMMEDIATE,
   });
@@ -127,7 +127,7 @@ function push(flagOverrides: Partial<LegacyWorkersPushFlags> = {}) {
 describe("legacy workers push", () => {
   it.live("packages, uploads, deploys and waits for the build to settle", () => {
     const repo = project();
-    const { layer, out, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, out, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       yield* push();
@@ -169,7 +169,7 @@ describe("legacy workers push", () => {
 
   it.live("returns once the deploy is accepted when --no-wait is passed", () => {
     const repo = project();
-    const { layer, out, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, out, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       yield* push({ noWait: true });
@@ -194,7 +194,7 @@ describe("legacy workers push", () => {
   // surface as a timeout instead of the answer the platform already gave.
   describe("honours a terminal deploy response instead of polling", () => {
     const settledOnDeploy = (repoDir: string, state: "active" | "failed") =>
-      setupLegacyWorkers({
+      setupWorkers({
         workdir: repoDir,
         routes: routes({
           [`POST ${workersRoute("/api/deploy")}`]: {
@@ -242,7 +242,7 @@ describe("legacy workers push", () => {
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "dockerfile"\n`,
       "supabase/workers/api/Dockerfile": "FROM node:24-alpine\nEXPOSE 8080\n",
     });
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       routes: routes({
         [`GET ${workersRoute("/api")}`]: {
@@ -271,7 +271,7 @@ describe("legacy workers push", () => {
       "supabase/config.toml": `project_id = "demo"\n`,
       "supabase/workers/api/package.json": "{}\n",
     });
-    const { layer, out, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, out, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       yield* push();
@@ -292,7 +292,7 @@ describe("legacy workers push", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "cobol"\n`,
     });
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
@@ -308,7 +308,7 @@ describe("legacy workers push", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "huge"\n`,
     });
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
@@ -324,7 +324,7 @@ describe("legacy workers push", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "4gb"\n`,
     });
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       yield* push({ instances: Option.some(3) });
@@ -343,7 +343,7 @@ describe("legacy workers push", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "2gb"\ninstances = 4\n`,
     });
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       yield* push();
@@ -357,7 +357,7 @@ describe("legacy workers push", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "2gb"\ninstances = 4\n`,
     });
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       yield* push({ instances: Option.some(1) });
@@ -374,7 +374,7 @@ describe("legacy workers push", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "private"\n`,
     });
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       yield* push();
@@ -390,7 +390,7 @@ describe("legacy workers push", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "PRIVATE"\n`,
     });
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       yield* push();
@@ -404,7 +404,7 @@ describe("legacy workers push", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "private"\n`,
     });
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       yield* push({ exposure: Option.some("public") });
@@ -421,7 +421,7 @@ describe("legacy workers push", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "privat"\n`,
     });
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
@@ -441,7 +441,7 @@ describe("legacy workers push", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = ""\n`,
     });
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
@@ -462,7 +462,7 @@ describe("legacy workers push", () => {
   describe("says when --exposure will not outlive the deploy", () => {
     const pushWith = (config: string, exposure: "public" | "private") => {
       const repo = project({ "supabase/config.toml": config });
-      const { layer, out } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+      const { layer, out } = setupWorkers({ workdir: repo.dir, routes: routes() });
       return { repo, layer, out, run: () => push({ exposure: Option.some(exposure) }) };
     };
 
@@ -547,7 +547,7 @@ describe("legacy workers push", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "privat"\n`,
     });
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       yield* push({ exposure: Option.some("private") });
@@ -559,7 +559,7 @@ describe("legacy workers push", () => {
 
   it.live("polls until the build leaves `building`", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       routes: routes({
         [`GET ${workersRoute("/api")}`]: [
@@ -591,7 +591,7 @@ describe("legacy workers push", () => {
 
   it.live("fails with the build's own reason when the build fails", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: routes({
         [`GET ${workersRoute("/api")}`]: {
@@ -622,7 +622,7 @@ describe("legacy workers push", () => {
   // sentence without one rather than trailing a bare colon.
   it.live("reports a failed build that came with no reason", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: routes({
         [`GET ${workersRoute("/api")}`]: {
@@ -646,7 +646,7 @@ describe("legacy workers push", () => {
   // that does not resolve.
   it.live("omits the URL for a worker the platform did not expose publicly", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       routes: routes({
         [`GET ${workersRoute("/api")}`]: {
@@ -678,10 +678,10 @@ describe("legacy workers push", () => {
   // poll, so the production schedules never get to space anything out.
   it.live("deploys when called the way the command wires it, with no test seams", () => {
     const repo = project();
-    const { layer, out, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, out, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
-      yield* legacyWorkersPush(flags());
+      yield* workersPush(flags());
 
       expect(http.routeKeys).toContain(`POST ${workersRoute("/api/deploy")}`);
       expect(out.stdoutText).toContain("Deployed Worker api");
@@ -690,7 +690,7 @@ describe("legacy workers push", () => {
 
   it.live("stops waiting on a build that never settles, and says where to look", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: routes({
         [`GET ${workersRoute("/api")}`]: {
@@ -701,7 +701,7 @@ describe("legacy workers push", () => {
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersPush(flags(), {
+      const error = yield* workersPush(flags(), {
         pollSchedule: Schedule.recurs(2),
       }).pipe(Effect.flip);
 
@@ -718,7 +718,7 @@ describe("legacy workers push", () => {
   // whatever project this checkout points at.
   describe("carries an explicit --project-ref into its hints", () => {
     const unlinked = (repoDir: string, routeOverrides = {}) =>
-      setupLegacyWorkers({
+      setupWorkers({
         workdir: repoDir,
         linked: false,
         routes: routes(routeOverrides),
@@ -767,7 +767,7 @@ describe("legacy workers push", () => {
       });
 
       return Effect.gen(function* () {
-        const error = yield* legacyWorkersPush(flags(withRef), {
+        const error = yield* workersPush(flags(withRef), {
           pollSchedule: Schedule.recurs(2),
         }).pipe(Effect.flip);
 
@@ -782,7 +782,7 @@ describe("legacy workers push", () => {
     // noise on a command that already resolves to the right project.
     it.live("but leaves it off when the link supplied the ref", () => {
       const repo = project();
-      const { layer, out } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+      const { layer, out } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
       return Effect.gen(function* () {
         yield* push({ noWait: true });
@@ -795,7 +795,7 @@ describe("legacy workers push", () => {
 
   it.live("fails before deploying when the presigned upload is rejected", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       routes: routes({ "PUT /deploy-context/api.tar.gz": { status: 403, body: "expired" } }),
     });
@@ -816,7 +816,7 @@ describe("legacy workers push", () => {
   // failure has to be reported as the deploy's, not the upload's.
   it.live("reports a rejected deploy after the context has been uploaded", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       routes: routes({
         [`POST ${workersRoute("/api/deploy")}`]: { status: 500, body: { message: "boom" } },
@@ -844,7 +844,7 @@ describe("legacy workers push", () => {
       dir: created.dir,
       cleanup: () => rmSync(created.dir, { recursive: true, force: true }),
     };
-    const { layer, http, out } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http, out } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       yield* push();
@@ -867,7 +867,7 @@ describe("legacy workers push", () => {
   // failed. A transport failure is the case that would carry it.
   it.live("keeps the presigned signature out of an upload transport failure", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       routes: routes({
         "PUT /deploy-context/api.tar.gz": { transportError: "connection reset by peer" },
@@ -891,7 +891,7 @@ describe("legacy workers push", () => {
   // sends rather than a shape of our own invention.
   it.live("reports a project outside the alpha as unavailable", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: routes({
         [`POST ${workersRoute("/api/uploads")}`]: {
@@ -916,7 +916,7 @@ describe("legacy workers push", () => {
 
   it.live("points at the project ref when no such project exists", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: routes({
         [`POST ${workersRoute("/api/uploads")}`]: {
@@ -937,7 +937,7 @@ describe("legacy workers push", () => {
 
   it.live("keeps the enrolment answer for a 404 body it does not recognize", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer } = setupWorkers({
       workdir: repo.dir,
       routes: routes({
         [`POST ${workersRoute("/api/uploads")}`]: { status: 404, body: { unexpected: true } },
@@ -954,7 +954,7 @@ describe("legacy workers push", () => {
   it.live("fails when the worker has no source on disk", () => {
     const repo = project({});
     rmSync(join(repo.dir, "supabase", "workers", "api"), { recursive: true, force: true });
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
@@ -973,7 +973,7 @@ describe("legacy workers push", () => {
   it.live("refuses an empty source directory instead of deploying nothing", () => {
     const repo = project({});
     rmSync(join(repo.dir, "supabase", "workers", "api", "index.js"), { force: true });
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
@@ -996,7 +996,7 @@ describe("legacy workers push", () => {
   it.live("offers to scaffold a worker the config has never heard of", () => {
     const repo = project({ "supabase/config.toml": 'project_id = "demo"\n' });
     rmSync(join(repo.dir, "supabase", "workers", "api"), { recursive: true, force: true });
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
@@ -1017,7 +1017,7 @@ describe("legacy workers push", () => {
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsource = "./services/api"\n`,
     });
     rmSync(join(repo.dir, "supabase", "workers", "api"), { recursive: true, force: true });
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
@@ -1040,7 +1040,7 @@ describe("legacy workers push", () => {
     const source = join(repo.dir, "supabase", "workers", "api");
     rmSync(source, { recursive: true, force: true });
     writeFileSync(source, "not a directory");
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
@@ -1065,7 +1065,7 @@ describe("legacy workers push", () => {
     const source = join(repo.dir, "supabase", "workers", "api");
     rmSync(source, { recursive: true, force: true });
     symlinkSync("api", source);
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
@@ -1086,7 +1086,7 @@ describe("legacy workers push", () => {
     // the deploy would succeed, and `Effect.flip` turns a success into a failure
     // — the branch below would never be reached to handle that case.
     const unreadable = !listableAsCurrentUser(source);
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       if (!unreadable) {
@@ -1118,7 +1118,7 @@ describe("legacy workers push", () => {
   it.live("refuses a source that links outside itself, before minting a slot", () => {
     const repo = project();
     symlinkSync("../../config.toml", join(repo.dir, "supabase", "workers", "api", "escape.toml"));
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
@@ -1131,7 +1131,7 @@ describe("legacy workers push", () => {
 
   it.live("rides out a transient failure while polling the build", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       routes: routes({
         [`GET ${workersRoute("/api")}`]: [
@@ -1160,7 +1160,7 @@ describe("legacy workers push", () => {
     // process is somewhere else entirely.
     const repo = project();
     const elsewhere = makeWorkersProject();
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       yield* push({ names: [] });
@@ -1182,7 +1182,7 @@ describe("legacy workers push", () => {
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\n\n[workers.web]\nruntime = "node"\n`,
       "supabase/workers/web/index.js": "export default {};\n",
     });
-    const { layer, out, http } = setupLegacyWorkers({
+    const { layer, out, http } = setupWorkers({
       workdir: repo.dir,
       routes: {
         ...routes(),
@@ -1230,7 +1230,7 @@ describe("legacy workers push", () => {
     // anything inside it fails with a permission error.
     chmodSync(workersRoot, 0o600);
     const stattable = stattableAsCurrentUser(join(workersRoot, "api"));
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       if (stattable) {
@@ -1260,7 +1260,7 @@ describe("legacy workers push", () => {
   it.live("skips a dangling link in the workers root while discovering", () => {
     const repo = project();
     symlinkSync("nowhere", join(repo.dir, "supabase", "workers", "ghost"));
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       yield* push({ names: [] });
@@ -1280,7 +1280,7 @@ describe("legacy workers push", () => {
     const workersRoot = join(repo.dir, "supabase", "workers");
     chmodSync(workersRoot, 0o000);
     const listable = listableAsCurrentUser(workersRoot);
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       const error = yield* push({ names: [] }).pipe(Effect.flip);
@@ -1309,7 +1309,7 @@ describe("legacy workers push", () => {
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\n\n[workers.web]\nruntime = "node"\n`,
       "supabase/workers/web/index.js": "export default {};\n",
     });
-    const { layer, out, http } = setupLegacyWorkers({
+    const { layer, out, http } = setupWorkers({
       workdir: repo.dir,
       routes: routes({
         // `api` sorts first, so the run stops before `web` is ever touched.
@@ -1352,7 +1352,7 @@ describe("legacy workers push", () => {
       "supabase/workers/web/index.js": "export default {};\n",
       "supabase/workers/zap/index.js": "export default {};\n",
     });
-    const { layer, out, http } = setupLegacyWorkers({
+    const { layer, out, http } = setupWorkers({
       workdir: repo.dir,
       routes: routes({
         // The upload slot points at one URL for every worker, so `web` reuses
@@ -1384,7 +1384,7 @@ describe("legacy workers push", () => {
   it.live("fails when there are no workers to deploy at all", () => {
     const repo = project({ "supabase/config.toml": `project_id = "demo"\n` });
     rmSync(join(repo.dir, "supabase", "workers"), { recursive: true, force: true });
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       const error = yield* push({ names: [] }).pipe(Effect.flip);
@@ -1396,12 +1396,12 @@ describe("legacy workers push", () => {
 
   it.live("requires a linked project or an explicit --project-ref", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({ workdir: repo.dir, linked: false, routes: routes() });
+    const { layer } = setupWorkers({ workdir: repo.dir, linked: false, routes: routes() });
 
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
 
-      expect(error).toBeInstanceOf(LegacyProjectNotLinkedError);
+      expect(error).toBeInstanceOf(ProjectRefNotLinkedError);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -1411,7 +1411,7 @@ describe("legacy workers push", () => {
       "packages/api/index.js": "export default {};\n",
     });
     rmSync(join(repo.dir, "supabase", "workers"), { recursive: true, force: true });
-    const { layer, out } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, out } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       yield* push();
@@ -1423,7 +1423,7 @@ describe("legacy workers push", () => {
 
   it.live("emits a structured result in json mode", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       format: "json",
       routes: routes(),
@@ -1458,7 +1458,7 @@ describe("legacy workers push", () => {
   // names an image this deploy did not produce.
   describe("does not report the previous image while a re-push is still building", () => {
     const rePush = (repoDir: string, format?: "json") =>
-      setupLegacyWorkers({
+      setupWorkers({
         workdir: repoDir,
         ...(format === undefined ? {} : { format }),
         routes: routes({
@@ -1519,7 +1519,7 @@ describe("legacy workers push", () => {
 
     it.live("still reports the image once the build has settled", () => {
       const repo = project();
-      const { layer, out } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+      const { layer, out } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
       return Effect.gen(function* () {
         yield* push();
@@ -1535,7 +1535,7 @@ describe("legacy workers push", () => {
   // would tell a script the worker is already serving.
   it.live("reports the build as still running in json mode under --no-wait", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       format: "json",
       routes: routes(),
@@ -1568,7 +1568,7 @@ describe("legacy workers push", () => {
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\n\n[workers.web]\nruntime = "node"\n`,
       "supabase/workers/web/index.js": "export default {};\n",
     });
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       format: "json",
       routes: {
@@ -1598,7 +1598,7 @@ describe("legacy workers push", () => {
   // deployed all over again.
   it.live("refuses -o env before making any request at all", () => {
     const repo = project();
-    const { layer, http } = setupLegacyWorkers({
+    const { layer, http } = setupWorkers({
       workdir: repo.dir,
       routes: routes(),
       goOutput: "env",
@@ -1607,7 +1607,7 @@ describe("legacy workers push", () => {
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
 
-      expect(error).toBeInstanceOf(LegacyWorkersEnvNotSupportedError);
+      expect(error).toBeInstanceOf(WorkersEnvNotSupportedError);
       expect(http.routeKeys).toEqual([]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -1619,7 +1619,7 @@ describe("legacy workers push", () => {
     const repo = project({ "supabase/workers/api/nested/.keep": "" });
     rmSync(join(repo.dir, "supabase", "workers", "api", "index.js"));
     rmSync(join(repo.dir, "supabase", "workers", "api", "nested", ".keep"));
-    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
@@ -1636,7 +1636,7 @@ describe("legacy workers push", () => {
   it.live("does not report a guessed runtime when the source is missing", () => {
     const repo = project({ "supabase/config.toml": 'project_id = "demo"\n' });
     rmSync(join(repo.dir, "supabase", "workers", "api"), { recursive: true, force: true });
-    const { layer, out } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, out } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
@@ -1650,7 +1650,7 @@ describe("legacy workers push", () => {
   // TOML encoder throw, after the upload and deploy had already completed.
   it.live("encodes -o toml when the deployed worker has no image version", () => {
     const repo = project();
-    const { layer, out } = setupLegacyWorkers({
+    const { layer, out } = setupWorkers({
       workdir: repo.dir,
       goOutput: "toml",
       routes: routes({
@@ -1673,7 +1673,7 @@ describe("legacy workers push", () => {
   // telemetry flush every invocation is supposed to perform.
   it.live("flushes telemetry when the project config cannot be loaded", () => {
     const repo = project({ "supabase/config.toml": "project_id = [unclosed\n" });
-    const { layer, telemetry } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+    const { layer, telemetry } = setupWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
       yield* push().pipe(Effect.flip);

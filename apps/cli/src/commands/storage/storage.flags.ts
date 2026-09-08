@@ -1,8 +1,8 @@
 import { Effect } from "effect";
 import { Flag } from "effect/unstable/cli";
 
-import { legacyChangedLinkedLocalFlags } from "../../command-internal/legacy-db-target-flags.ts";
-import { LegacyStorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
+import { changedLinkedLocalFlags } from "../../command-internal/db-target-flags.ts";
+import { StorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
 
 /**
  * `--linked` / `--local`: `--linked` defaults to `true`, `--local` to
@@ -19,12 +19,12 @@ import { LegacyStorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
  * --local`, not `storage --local ls`) — the same shape the `db` family uses
  * for its per-leaf `--linked`/`--local`.
  */
-export const LegacyStorageLinkedFlagDef = Flag.boolean("linked").pipe(
+export const StorageLinkedFlagDef = Flag.boolean("linked").pipe(
   Flag.withDescription("Connects to Storage API of the linked project."),
   Flag.withDefault(true),
 );
 
-export const LegacyStorageLocalFlagDef = Flag.boolean("local").pipe(
+export const StorageLocalFlagDef = Flag.boolean("local").pipe(
   Flag.withDescription("Connects to Storage API of the local database."),
   Flag.withDefault(false),
 );
@@ -33,30 +33,28 @@ export const LegacyStorageLocalFlagDef = Flag.boolean("local").pipe(
 // No Go equivalent: `storage.go` never registers `--project-ref` on this
 // command family. Declared once here (not per-leaf) since all four
 // `storage ls/cp/mv/rm` leaves share the identical declaration.
-export const LegacyStorageProjectRefFlagDef = Flag.string("project-ref").pipe(
+export const StorageProjectRefFlagDef = Flag.string("project-ref").pipe(
   Flag.withDescription("Project ref of the Supabase project."),
   Flag.optional,
 );
 
 /** Changed `--linked`/`--local` set (cobra `pflag.Changed`), for the exclusivity check. */
-export function legacyStorageChangedTargetFlags(
-  args: ReadonlyArray<string>,
-): ReadonlyArray<string> {
-  return legacyChangedLinkedLocalFlags(args);
+export function storageChangedTargetFlags(args: ReadonlyArray<string>): ReadonlyArray<string> {
+  return changedLinkedLocalFlags(args);
 }
 
 /**
  * Mutual-exclusion check for `--linked`/`--local`. Rejected at flag
  * validation — before the handler body/telemetry flush — so it must NOT
  * emit `cli_command_executed`; each leaf calls this BEFORE
- * `withLegacyCommandInstrumentation`.
+ * `withCommandTelemetry`.
  */
-export const legacyAssertStorageTargetsExclusive = Effect.fnUntraced(function* (
+export const assertStorageTargetsExclusive = Effect.fnUntraced(function* (
   args: ReadonlyArray<string>,
 ) {
-  const setFlags = legacyStorageChangedTargetFlags(args);
+  const setFlags = storageChangedTargetFlags(args);
   if (setFlags.length > 1) {
-    return yield* new LegacyStorageMutuallyExclusiveFlagsError({
+    return yield* new StorageMutuallyExclusiveFlagsError({
       message: `if any flags in the group [linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
     });
   }

@@ -25,11 +25,11 @@ Same auth fallback chain as every Management-API legacy command. Project-ref dis
 
 ## Exit Codes
 
-| Code | Condition                                                                                 |
-| ---- | ----------------------------------------------------------------------------------------- |
-| `0`  | success — preview branching disabled for the project                                      |
-| `1`  | `LegacyBranchesDisableUnexpectedStatusError` — non-200 response from the disable endpoint |
-| `1`  | `LegacyBranchesDisableNetworkError` — transport-level network failure                     |
+| Code | Condition                                                                           |
+| ---- | ----------------------------------------------------------------------------------- |
+| `0`  | success — preview branching disabled for the project                                |
+| `1`  | `BranchesDisableUnexpectedStatusError` — non-200 response from the disable endpoint |
+| `1`  | `BranchesDisableNetworkError` — transport-level network failure                     |
 
 ## Telemetry Events Fired
 

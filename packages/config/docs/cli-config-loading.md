@@ -27,9 +27,9 @@ This document explains how the CLI's on-disk config document loading works, acro
 - `CliProjectPaths`: the discovered filesystem paths for the active project.
 - `CliProjectContext`: apps/cli's runtime bundle of discovered paths + merged env for the active
   project.
-- `LegacyCliSettings`: apps/cli's legacy shell's own equivalent of `CliSettings` — same role,
+- `CommandSettings`: apps/cli's legacy shell's own equivalent of `CliSettings` — same role,
   scoped to the legacy shell, and pending deletion once the legacy/next shells consolidate.
-  Defined at `apps/cli/src/config/legacy-cli-settings.service.ts`.
+  Defined at `apps/cli/src/config/command-settings.service.ts`.
 
 The `Cli*` prefix is a rule, not a per-name coincidence: it names the local checkout side — what
 the CLI reads, writes, or resolves about itself on disk. A bare `Project*` name is reserved for the
@@ -46,7 +46,7 @@ The `Cli*` prefix names the local checkout side — what the CLI reads, writes, 
 itself on disk. A bare `Project*` name is reserved for the hosted Supabase project side. (Deliberate
 exceptions live in apps/cli: services that describe the hosted project itself or the CLI's link to
 it — `ProjectLinkRemote`, `ProjectLinkState` (both in `next/config`), and legacy's
-`ProjectRefResolver` (exported as `LegacyProjectRefResolver`, carrying the legacy shell's own
+`ProjectRefResolver` (exported as `ProjectRefResolver`, carrying the legacy shell's own
 separate mandatory prefix) — keep the bare `Project*` root under this same rule.)
 
 ## The `/io` facade

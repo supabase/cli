@@ -12,10 +12,10 @@
 import type { CliConfig, ProjectConfig } from "@supabase/config";
 import { projectConfigMappingRows } from "@supabase/config/internal";
 
-import { legacyContainerEnabled, legacySamePath, legacyValueAtPath } from "./push.paths.ts";
-import { legacySecretDigestHex, legacySecretPlaintext } from "./push.secret.ts";
+import { containerEnabled, samePath, valueAtPath } from "./push.paths.ts";
+import { secretDigestHex, secretPlaintext } from "./push.secret.ts";
 
-export interface LegacyPushSecretDecision {
+export interface PushSecretDecision {
   /** Config path, e.g. `["auth","captcha","secret"]`. */
   readonly path: ReadonlyArray<string>;
   /** The Management API attribute key this secret reports its digest under. */
@@ -33,10 +33,10 @@ export interface LegacyPushSecretDecision {
 
 /**
  * `push.format.ts` must never see a secret's plaintext — this is
- * {@link LegacyPushSecretDecision} with that field removed, for every
+ * {@link PushSecretDecision} with that field removed, for every
  * formatter entry point and payload field that renders/reports secrets.
  */
-export type LegacyPushSecretReport = Omit<LegacyPushSecretDecision, "plaintext">;
+export type PushSecretReport = Omit<PushSecretDecision, "plaintext">;
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
@@ -44,7 +44,7 @@ function asString(value: unknown): string | undefined {
 
 function findSecretApiKey(path: ReadonlyArray<string>): string | undefined {
   const row = projectConfigMappingRows.find(
-    (candidate) => candidate.isSecret === true && legacySamePath(candidate.configPath, path),
+    (candidate) => candidate.isSecret === true && samePath(candidate.configPath, path),
   );
   return row?.apiPath[1];
 }
@@ -57,16 +57,16 @@ function remoteStateFor(
   return typeof value === "string" && value.length > 0 ? "present" : "absent";
 }
 
-export function legacyResolveAuthSecrets(input: {
+export function resolveAuthSecrets(input: {
   readonly maskedPaths: ReadonlyArray<ReadonlyArray<string>>;
   readonly config: CliConfig;
   readonly local: ProjectConfig;
   readonly remoteAuthAttributes: Readonly<Record<string, unknown>>;
   readonly projectRef: string;
   readonly dotenvPrivateKeys: ReadonlyArray<string>;
-}): ReadonlyArray<LegacyPushSecretDecision> {
+}): ReadonlyArray<PushSecretDecision> {
   const { maskedPaths, config, local, remoteAuthAttributes, projectRef, dotenvPrivateKeys } = input;
-  const decisions: Array<LegacyPushSecretDecision> = [];
+  const decisions: Array<PushSecretDecision> = [];
 
   for (const path of maskedPaths) {
     const apiKey = findSecretApiKey(path);
@@ -82,13 +82,13 @@ export function legacyResolveAuthSecrets(input: {
     // undetermined container state (absent, or `enabled` not a boolean)
     // gates the secret too — never coerced into "eligible".
     const parentPath = path.slice(0, -1);
-    if (legacyContainerEnabled(local, parentPath) !== true) {
+    if (containerEnabled(local, parentPath) !== true) {
       decisions.push({ path, apiKey, status: "gated", remoteState });
       continue;
     }
 
-    const rawValue = asString(legacyValueAtPath(config, path)) ?? "";
-    const digest = legacySecretDigestHex(projectRef, rawValue, dotenvPrivateKeys);
+    const rawValue = asString(valueAtPath(config, path)) ?? "";
+    const digest = secretDigestHex(projectRef, rawValue, dotenvPrivateKeys);
     if (digest === undefined) {
       decisions.push({ path, apiKey, status: "not_set", remoteState });
       continue;
@@ -105,7 +105,7 @@ export function legacyResolveAuthSecrets(input: {
       apiKey,
       status: "send",
       remoteState,
-      plaintext: legacySecretPlaintext(rawValue, dotenvPrivateKeys),
+      plaintext: secretPlaintext(rawValue, dotenvPrivateKeys),
     });
   }
 

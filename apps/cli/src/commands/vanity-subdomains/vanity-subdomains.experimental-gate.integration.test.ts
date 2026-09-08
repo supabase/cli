@@ -3,43 +3,43 @@ import { Effect, Exit, Layer } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
-import { LEGACY_GLOBAL_FLAGS } from "../../shared/legacy/global-flags.ts";
+import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../shared/telemetry/identity.ts";
 import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyPlatformApi,
-  useLegacyTempWorkdir,
-} from "../../../tests/helpers/legacy-mocks.ts";
-import { legacyVanitySubdomainsCommand } from "./vanity-subdomains.command.ts";
+  buildTestRuntime,
+  mockCommandSettings,
+  mockCommandPlatformApi,
+  useTempWorkdir,
+} from "../../../tests/helpers/command-mocks.ts";
+import { vanitySubdomainsCommand } from "./vanity-subdomains.command.ts";
 
 // See postgres-config.experimental-gate.integration.test.ts for the full
 // rationale: this proves `--experimental` is wired into the actual
 // `.command.ts` handler pipeline AND runs before
-// `legacyManagementApiRuntimeLayer`'s eager access-token resolution
+// `managementApiRuntimeLayer`'s eager access-token resolution
 // (the `IsExperimental` check precedes `IsManagementAPI` in
 // `apps/cli-go/cmd/root.go:91-109`).
 
-const tempRoot = useLegacyTempWorkdir("supabase-vanity-subdomains-experimental-int-");
+const tempRoot = useTempWorkdir("supabase-vanity-subdomains-experimental-int-");
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyVanitySubdomainsCommand]),
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
+  Command.withSubcommands([vanitySubdomainsCommand]),
+  Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
 function setup() {
   const out = mockOutput({ format: "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: 200, body: { status: "not-used" } },
   });
-  const runtime = buildLegacyTestRuntime({
+  const runtime = buildTestRuntime({
     out,
     api,
-    cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
-    // `RuntimeInfo` is ambient (not provided by `legacyManagementApiRuntimeLayer`
-    // itself), so the real `legacyCredentialsLayer` built inline inside the
+    cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+    // `RuntimeInfo` is ambient (not provided by `managementApiRuntimeLayer`
+    // itself), so the real `commandCredentialsLayer` built inline inside the
     // command for the "gate open" case resolves ITS `RuntimeInfo` from this
     // layer. Point homeDir at this test's isolated tempRoot so the layer's
     // file-based token fallback (`<homeDir>/.supabase/access-token`) can't pick
@@ -49,7 +49,7 @@ function setup() {
   const layer = Layer.mergeAll(
     runtime,
     CliOutput.layer(textCliOutputFormatter()),
-    // The "gate open" case reaches the real `legacyManagementApiRuntimeLayer`
+    // The "gate open" case reaches the real `managementApiRuntimeLayer`
     // (provided inline inside the command, not by this test's mocked runtime),
     // which reads credentials/env directly — an ambient SUPABASE_ACCESS_TOKEN,
     // SUPABASE_EXPERIMENTAL, or OS keyring entry on the machine running the
@@ -99,22 +99,17 @@ describe("legacy vanity-subdomains experimental gate (Go PersistentPreRunE parit
   ];
 
   for (const { name, args } of leaves) {
-    it.live(
-      `${name} fails with LegacyExperimentalRequiredError when --experimental is unset`,
-      () => {
-        const { layer, api } = setup();
-        return Effect.gen(function* () {
-          const exit = yield* Effect.exit(
-            Command.runWith(testRoot, { version: "0.0.0-test" })(args),
-          );
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyExperimentalRequiredError");
-          }
-          expect(api.requests).toHaveLength(0);
-        }).pipe(Effect.provide(layer));
-      },
-    );
+    it.live(`${name} fails with ExperimentalRequiredError when --experimental is unset`, () => {
+      const { layer, api } = setup();
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("ExperimentalRequiredError");
+        }
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    });
 
     it.live(`${name} does not fail with the gate error once --experimental is set`, () => {
       const { layer, api } = setup();
@@ -125,8 +120,8 @@ describe("legacy vanity-subdomains experimental gate (Go PersistentPreRunE parit
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const causeText = JSON.stringify(exit.cause);
-          expect(causeText).not.toContain("LegacyExperimentalRequiredError");
-          expect(causeText).toContain("LegacyPlatformAuthRequiredError");
+          expect(causeText).not.toContain("ExperimentalRequiredError");
+          expect(causeText).toContain("AccessTokenRequiredError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));

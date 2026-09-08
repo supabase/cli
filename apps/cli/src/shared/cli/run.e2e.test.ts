@@ -65,7 +65,7 @@ describe("legacy CLI required-flag/choice parse errors (CLI-1901)", () => {
   });
 });
 
-/** Real-subprocess proof of the `afterSuccess` wiring; everything else lives in `legacy-upgrade-notice.unit.test.ts`. */
+/** Real-subprocess proof of the `afterSuccess` wiring; everything else lives in `upgrade-notice.unit.test.ts`. */
 describe("legacy CLI upgrade notice (#5853)", () => {
   let workdir: string;
 
