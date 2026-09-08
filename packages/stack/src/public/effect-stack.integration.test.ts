@@ -1012,6 +1012,17 @@ describe("Effect stack lifecycle handoff", () => {
             ? Option.getOrUndefined(Cause.findErrorOption(listed.cause))
             : undefined,
         ).toBeInstanceOf(StackStateInvalidError);
+        if (Exit.isFailure(listed)) {
+          const error = Cause.findErrorOption(listed.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value).toBeInstanceOf(StackStateInvalidError);
+            if (error.value instanceof StackStateInvalidError) {
+              expect(error.value.stackId).toBe(orphanId);
+              expect(error.value.message).toContain(orphanId);
+            }
+          }
+        }
       }),
     ),
   );
