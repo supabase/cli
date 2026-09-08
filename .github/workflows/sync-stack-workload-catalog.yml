@@ -1,0 +1,138 @@
+name: Sync Stack Workload Catalog
+
+# Keeps `packages/stack/src/model/WorkloadCatalog.ts` on the slim-services
+# release feed.
+#
+# `@supabase/stack` pins each workload to an exact slim-services artifact
+# release — a version plus its `ghcr.io/supabase/cli/<service>` image digest —
+# because ADR 0017 makes the artifact release the boundary for service startup
+# defaults. Dependabot maintains
+# `apps/cli-go/pkg/config/templates/Dockerfile` (the manifest the shipped CLI
+# reads) and structurally cannot maintain this catalog: it resolves registry
+# tags and never produces a `sha256:` index digest. So this catalog rides the
+# same `mirror-slim-image` repository_dispatch that slim-services already sends
+# for the ECR mirror, which carries exactly the service/version/digest triple
+# the catalog needs.
+#
+# This is deliberately a separate workflow from `mirror-slim-image.yml` rather
+# than another job in it: that mirror runs against the sender's 15-minute
+# verification poll, and a catalog PR failing must never delay it or turn its
+# run red. Both workflows subscribe to the same dispatch type and run
+# independently.
+#
+# Opens a PR rather than pushing: a service version pin is a reviewable change
+# and `develop` is protected. Re-dispatches are no-ops (the script exits
+# without touching the file when the pin already matches), so the sender's
+# retry path does not produce duplicate PRs.
+
+on:
+  repository_dispatch:
+    types:
+      - mirror-slim-image
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service name (e.g. postgrest)"
+        required: true
+        type: string
+      version:
+        description: "Image tag (e.g. v16.2)"
+        required: true
+        type: string
+      digest:
+        description: "Expected index digest (sha256:<64 hex chars>)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serialised per service so two releases of the same service cannot race each
+  # other onto the shared branch below. Not cancel-in-progress: a superseded run
+  # may already have opened the PR.
+  group: sync-stack-workload-catalog-${{ github.event.client_payload.service || inputs.service }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync workload catalog
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      # The payload arrives with whatever authority holds the dispatch token, so
+      # the script revalidates service/version/digest itself and exits 1 on
+      # anything that could break out of the TypeScript string literals it
+      # writes into. Values are passed through env, never interpolated into the
+      # shell.
+      - name: Sync workload catalog
+        env:
+          SLIM_SERVICE: ${{ github.event.client_payload.service || inputs.service }}
+          SLIM_VERSION: ${{ github.event.client_payload.version || inputs.version }}
+          SLIM_DIGEST: ${{ github.event.client_payload.digest || inputs.digest }}
+        run: bun .github/scripts/sync-workload-catalog.ts
+
+      - name: Format catalog
+        run: pnpm run fmt:fix
+
+      - name: Check for catalog changes
+        id: check
+        run: |
+          if git diff --exit-code --quiet packages/stack/src/model/WorkloadCatalog.ts; then
+            echo "Workload catalog is already in sync."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Workload catalog updated."
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Prove the rewritten pin still compiles and satisfies the catalog's own
+      # invariants before asking anyone to look at a PR.
+      - name: Type-check stack
+        if: steps.check.outputs.has_changes == 'true'
+        run: pnpm types:check
+        working-directory: packages/stack
+
+      - name: Test catalog
+        if: steps.check.outputs.has_changes == 'true'
+        run: pnpm run test:unit && pnpm run test:integration
+        working-directory: packages/stack
+
+      - name: Generate token
+        if: steps.check.outputs.has_changes == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-pull-requests: write
+          permission-contents: write
+
+      - name: Create Pull Request
+        if: steps.check.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          commit-message: "chore(stack): pin ${{ github.event.client_payload.service || inputs.service }} to ${{ github.event.client_payload.version || inputs.version }}"
+          title: "chore(stack): pin ${{ github.event.client_payload.service || inputs.service }} to ${{ github.event.client_payload.version || inputs.version }}"
+          body: |
+            `supabase/slim-services` published
+            `${{ github.event.client_payload.service || inputs.service }}` `${{ github.event.client_payload.version || inputs.version }}`, so
+            `packages/stack/src/model/WorkloadCatalog.ts` now pins that release and its
+            image digest.
+
+            Opened automatically from the `mirror-slim-image` dispatch that drives the
+            ECR mirror — the same event, consumed independently. `artifactFor` derives the
+            native release tag, asset names, and download URLs from the service and
+            version, so this pin is the whole change.
+          branch: sync/stack-workload-catalog-${{ github.event.client_payload.service || inputs.service }}
+          base: develop

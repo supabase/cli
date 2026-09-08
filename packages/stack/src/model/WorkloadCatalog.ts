@@ -52,7 +52,21 @@ const native = (
   containerAlias: options.containerAlias ?? `supabase-${service}`,
 });
 
-/** The single authoritative private workload identity table. */
+/**
+ * The single authoritative private workload identity table.
+ *
+ * These pins track the `supabase/slim-services` release feed, NOT
+ * `apps/cli-go/pkg/config/templates/Dockerfile` — ADR 0017 makes the artifact
+ * release the boundary for service startup defaults, so a version here carries
+ * its `ghcr.io/supabase/cli` image digest and moves independently of the
+ * Dockerfile pin for the same service. The two deliberately diverge; do not
+ * "reconcile" them.
+ *
+ * Maintained by `.github/workflows/sync-stack-workload-catalog.yml`, off the
+ * `mirror-slim-image` dispatch slim-services sends on each release. Dependabot
+ * owns the Dockerfile and cannot own this table: it resolves registry tags and
+ * never produces a `sha256:` digest.
+ */
 const workloadCatalog = {
   "database:database": native(
     "postgres",
