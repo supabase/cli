@@ -17,6 +17,7 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { mockLegacyCliSettings } from "../../../../../tests/helpers/legacy-mocks.ts";
 import {
   legacyExperimentalStackApiLayer,
+  LegacyExperimentalStackTargetError,
   LegacyExperimentalStackTargetResolver,
   legacyExperimentalStackTargetResolverLayer,
   LegacyExperimentalStackApi,
@@ -183,6 +184,7 @@ describe("experimental stack start targeting", () => {
       const failure = yield* resolver
         .resolve({ projectRoot: "/does/not/exist", id: "invalid", runtime: "auto" })
         .pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(LegacyExperimentalStackTargetError);
       expect(failure.message).toContain("lowercase SHA-256");
       expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
     }).pipe(Effect.provide(resolverLayer), Effect.provide(BunServices.layer)),

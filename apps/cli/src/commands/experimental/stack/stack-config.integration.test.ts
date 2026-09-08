@@ -4,10 +4,10 @@ import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Redacted } from "effect";
+import { Cause, Effect, Exit, Option, Redacted } from "effect";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 
-import { legacyLoadStackConfig } from "./stack-config.ts";
+import { LegacyStackConfigError, legacyLoadStackConfig } from "./stack-config.ts";
 
 const load = (projectRoot: string) =>
   legacyLoadStackConfig(projectRoot).pipe(Effect.provide(BunServices.layer));
@@ -193,6 +193,9 @@ env = { TOKEN = "env(SUPABASE_STACK_TEST_MISSING_ENV)" }
       const exit = yield* load(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure)).toBe(true);
+        if (Option.isSome(failure)) expect(failure.value).toBeInstanceOf(LegacyStackConfigError);
         const message = String(exit.cause);
         expect(message).toContain("functions/.env");
         expect(message).toContain("lowercase");
