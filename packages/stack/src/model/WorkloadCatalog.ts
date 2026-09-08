@@ -52,7 +52,13 @@ const native = (
   containerAlias: options.containerAlias ?? `supabase-${service}`,
 });
 
-/** The single authoritative private workload identity table. */
+/**
+ * The single authoritative private workload identity table.
+ *
+ * Pins track the slim-services release feed (ADR 0017), not the Dockerfile, and
+ * deliberately diverge from it — do not "reconcile" the two. Maintained by
+ * `.github/workflows/sync-stack-workload-catalog.yml`.
+ */
 const workloadCatalog = {
   "database:database": native(
     "postgres",
