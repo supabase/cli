@@ -1,6 +1,7 @@
 import { Context, Data, Effect, FileSystem, Layer, Path, Crypto } from "effect";
 import {
   createStack,
+  findStack,
   inspectStack,
   isStackId,
   openStack,
@@ -67,6 +68,12 @@ export class LegacyExperimentalStackApi extends Context.Service<
       Effect.Success<ReturnType<typeof createStack>>,
       Effect.Error<ReturnType<typeof createStack>>
     >;
+    readonly findStack: (
+      ...args: Parameters<typeof findStack>
+    ) => Effect.Effect<
+      Effect.Success<ReturnType<typeof findStack>>,
+      Effect.Error<ReturnType<typeof findStack>>
+    >;
     readonly openStack: (
       ...args: Parameters<typeof openStack>
     ) => Effect.Effect<
@@ -99,6 +106,7 @@ export const legacyExperimentalStackApiLayer = Layer.effect(
     return {
       createStack: (...args: Parameters<typeof createStack>) =>
         provideServices(createStack(...args)),
+      findStack: (...args: Parameters<typeof findStack>) => provideServices(findStack(...args)),
       openStack: (...args: Parameters<typeof openStack>) => provideServices(openStack(...args)),
       inspectStack: (...args: Parameters<typeof inspectStack>) =>
         provideServices(inspectStack(...args)),
