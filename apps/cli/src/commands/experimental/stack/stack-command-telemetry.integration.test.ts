@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Stream } from "effect";
+import { Effect, Layer, Option, Sink, Stdio, Stream } from "effect";
 import { Command } from "effect/unstable/cli";
 import { StackIdSchema } from "@supabase/stack/effect";
 import type { EffectStack, StackStatus } from "@supabase/stack/effect";
@@ -23,6 +23,7 @@ import {
   EventCommandExecuted,
   PropCommand,
   PropCommandRunId,
+  PropFlags,
 } from "../../../shared/telemetry/event-catalog.ts";
 
 const stackId = StackIdSchema.make("a".repeat(64));
@@ -37,7 +38,7 @@ const stackStatus: StackStatus = {
   artifacts: [],
 };
 
-function setup() {
+function setup(args: ReadonlyArray<string> = []) {
   const output = mockOutput();
   const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
   const analytics = {
@@ -87,6 +88,15 @@ function setup() {
     analytics,
     layer: Layer.mergeAll(
       BunServices.layer,
+      Layer.succeed(
+        Stdio.Stdio,
+        Stdio.make({
+          args: Effect.succeed(args),
+          stdin: Stream.empty,
+          stdout: () => Sink.drain,
+          stderr: () => Sink.drain,
+        }),
+      ),
       mockLegacyCliSettings({ workdir: "/project" }),
       processControlLayer,
       output.layer,
@@ -135,6 +145,51 @@ describe("stack command telemetry", () => {
       const runIds = events.map((event) => event.properties[PropCommandRunId]);
       expect(runIds.every((runId) => typeof runId === "string")).toBe(true);
       expect(new Set(runIds).size).toBe(3);
+    }).pipe(Effect.provide(fixture.layer));
+  });
+
+  it.live("records shorthand aliases under their canonical flag names", () => {
+    const fixture = setup(["stack", "logs", "--stack-id", "invalid", "-f"]);
+    return Effect.gen(function* () {
+      yield* Effect.exit(
+        Command.runWith(testRoot(legacyExperimentalStackCommand), { version: "0.0.0-test" })([
+          "stack",
+          "logs",
+          "--stack-id",
+          "invalid",
+          "-f",
+        ]),
+      );
+      const event = fixture.analytics.captured.find(
+        (entry) =>
+          entry.event === EventCommandExecuted && entry.properties[PropCommand] === "stack logs",
+      );
+      const flags = event?.properties[PropFlags];
+      expect(flags).toEqual(expect.objectContaining({ follow: true }));
+      expect(flags).not.toEqual(expect.objectContaining({ f: expect.anything() }));
+    }).pipe(Effect.provide(fixture.layer));
+  });
+
+  it.live("records the start shorthand under exclude", () => {
+    const fixture = setup(["stack", "start", "--stack-id", "invalid", "-x", "database"]);
+    return Effect.gen(function* () {
+      yield* Effect.exit(
+        Command.runWith(testRoot(legacyExperimentalStackCommand), { version: "0.0.0-test" })([
+          "stack",
+          "start",
+          "--stack-id",
+          "invalid",
+          "-x",
+          "database",
+        ]),
+      );
+      const event = fixture.analytics.captured.find(
+        (entry) =>
+          entry.event === EventCommandExecuted && entry.properties[PropCommand] === "stack start",
+      );
+      const flags = event?.properties[PropFlags];
+      expect(flags).toEqual(expect.objectContaining({ exclude: "<redacted>" }));
+      expect(flags).not.toEqual(expect.objectContaining({ x: expect.anything() }));
     }).pipe(Effect.provide(fixture.layer));
   });
 });

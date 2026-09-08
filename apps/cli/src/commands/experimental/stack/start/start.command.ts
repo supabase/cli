@@ -48,7 +48,7 @@ export const legacyExperimentalStackStartCommand = Command.make("start", config)
   ]),
   Command.withHandler((flags) =>
     legacyExperimentalStackStart(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, config }),
+      withLegacyCommandInstrumentation({ flags, config, aliases: { x: "exclude" } }),
       withJsonErrorHandling,
     ),
   ),
