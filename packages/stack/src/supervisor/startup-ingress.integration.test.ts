@@ -120,7 +120,6 @@ describe("startup ingress", () => {
         if (typeof apiAddress !== "object" || apiAddress === null)
           return yield* Effect.die("API listener did not expose an address");
         const apiPort = apiAddress.port;
-        yield* Deferred.succeed(listenerBound, { ...apiListener, port: apiPort });
         const startEntered = yield* Deferred.make<void>();
         const releaseStart = yield* Deferred.make<void>();
         const activationCalls = yield* Ref.make(0);
@@ -135,7 +134,9 @@ describe("startup ingress", () => {
           field: import("../public/Status.ts").PortField,
         ) =>
           field === "api"
-            ? Effect.succeed({ ...apiListener, port: apiPort })
+            ? Effect.succeed({ ...apiListener, port: apiPort }).pipe(
+                Effect.tap((listener) => Deferred.succeed(listenerBound, listener)),
+              )
             : bindHostListener(host, port, field);
         const ingress = yield* makeSupervisorIngress({
           stackId,
