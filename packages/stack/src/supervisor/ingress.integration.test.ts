@@ -229,7 +229,7 @@ describe("Supervisor ingress", () => {
           runtime: { kind: "native" },
           desiredLifecycle: "running",
           definition: compiled.definition,
-          ports: [{ field: "api", port: 55432, intent: "automatic" }],
+          ports: [],
           privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
             ...binding,
             port: 30000 + index,
@@ -483,11 +483,7 @@ describe("Supervisor ingress", () => {
           runtime: { kind: "native" },
           desiredLifecycle: "running",
           definition: compiled.definition,
-          ports: [
-            { field: "api", port: 55433, intent: "automatic" },
-            { field: "database", port: 55436, intent: "automatic" },
-            { field: "pooler", port: 55437, intent: "automatic" },
-          ] as const,
+          ports: [],
           privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
             ...binding,
             port: 30100 + index,
@@ -580,7 +576,7 @@ describe("Supervisor ingress", () => {
           runtime: { kind: "native" as const },
           desiredLifecycle: "running" as const,
           definition: compiled.definition,
-          ports: [{ field: "database", port: 55434, intent: "automatic" }] as const,
+          ports: [],
           privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
             ...binding,
             port: 30200 + index,
@@ -686,7 +682,7 @@ describe("Supervisor ingress", () => {
           runtime: { kind: "native" as const },
           desiredLifecycle: "running" as const,
           definition: compiled.definition,
-          ports: [{ field: "api", port: 55435, intent: "automatic" }] as const,
+          ports: [],
           privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
             ...binding,
             port: 30300 + index,
