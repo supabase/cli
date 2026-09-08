@@ -180,7 +180,7 @@ function expectRelease(
   expect(result.nextRelease.gitTag).toBe(gitTag);
 }
 
-async function withCompatibilityTags<T>(
+async function withLocalCompatibilityTags<T>(
   history: History,
   tags: ReadonlyArray<{ readonly name: string; readonly target: string }>,
   effect: () => Promise<T>,
@@ -220,12 +220,13 @@ describe.each(TRAINS)("$train namespaced release history", (train) => {
       : "apps/cli/release-characterization.ts";
   const tagFormat = `${train.namespace}\${version}`;
 
-  test("moves from a legacy stable through two namespaced betas to a namespaced stable", async () => {
+  test("migrates beta and stable baselines independently from legacy tags", async () => {
     const history = await createHistory(`${train.legacyPrefix}1.2.3`);
     await commit(history, "feat: add capability", selectedPath);
     await pushCurrentBranch(history);
 
-    const firstBeta = await withCompatibilityTags(
+    // The beta bridge is eligible because develop has no namespaced release baseline yet.
+    const firstBeta = await withLocalCompatibilityTags(
       history,
       [{ name: `${train.namespace}1.2.3`, target: history.baselineSha }],
       () => runRelease(history, { train: train.train, tagFormat }),
@@ -250,18 +251,30 @@ describe.each(TRAINS)("$train namespaced release history", (train) => {
     await git(history.repo, ["checkout", "main", "-q"]);
     await git(history.repo, ["merge", "--ff-only", "develop"]);
     await pushCurrentBranch(history);
-    const stable = await withCompatibilityTags(
+    // The stable bridge remains eligible until main has a namespaced stable tag. Reachable
+    // namespaced prerelease tags end the beta bridge, but they are not a stable-branch baseline.
+    const stable = await withLocalCompatibilityTags(
       history,
       [{ name: `${train.namespace}1.2.3`, target: history.baselineSha }],
       () => runRelease(history, { train: train.train, tagFormat }),
     );
     expectRelease(stable, "1.3.0", `${train.namespace}1.3.0`);
 
+    await tagRelease(history, `${train.namespace}1.3.0`, "latest");
+    await commit(history, "fix: correct stable behavior", selectedPath);
+    await pushCurrentBranch(history);
+    const subsequentStable = await runRelease(history, { train: train.train, tagFormat });
+    expectRelease(subsequentStable, "1.3.1", `${train.namespace}1.3.1`);
+
     expect(await git(history.repo, ["rev-parse", `refs/tags/${history.legacyTag}`])).toBe(
       history.baselineSha,
     );
     expect((await git(history.repo, ["tag", "--list", `${train.namespace}*`])).split("\n")).toEqual(
-      [`${train.namespace}1.3.0-beta.1`, `${train.namespace}1.3.0-beta.2`],
+      [
+        `${train.namespace}1.3.0`,
+        `${train.namespace}1.3.0-beta.1`,
+        `${train.namespace}1.3.0-beta.2`,
+      ],
     );
   }, 30_000);
 
@@ -272,7 +285,7 @@ describe.each(TRAINS)("$train namespaced release history", (train) => {
     await commit(history, "fix: continue beta testing", selectedPath);
     await pushCurrentBranch(history);
 
-    const result = await withCompatibilityTags(
+    const result = await withLocalCompatibilityTags(
       history,
       [
         { name: `${train.namespace}1.2.3`, target: history.baselineSha },
@@ -290,7 +303,7 @@ describe.each(TRAINS)("$train namespaced release history", (train) => {
     await commit(history, "fix: reviewed production hotfix", selectedPath);
     await pushCurrentBranch(history);
 
-    const result = await withCompatibilityTags(
+    const result = await withLocalCompatibilityTags(
       history,
       [{ name: `${train.namespace}1.2.3`, target: history.baselineSha }],
       () => runRelease(history, { train: train.train, tagFormat }),
@@ -308,7 +321,7 @@ describe.each(TRAINS)("$train namespaced release history", (train) => {
       const history = await createHistory(`${train.legacyPrefix}1.2.3`);
       await commit(history, scenario.message, selectedPath);
       await pushCurrentBranch(history);
-      const result = await withCompatibilityTags(
+      const result = await withLocalCompatibilityTags(
         history,
         [{ name: `${train.namespace}1.2.3`, target: history.baselineSha }],
         () => runRelease(history, { train: train.train, tagFormat }),
@@ -438,7 +451,7 @@ describe.each(HISTORICAL_INTERVALS)("historical interval: $name", (fixture) => {
         .reverse(),
     );
 
-    const hybrid = await withCompatibilityTags(
+    const hybrid = await withLocalCompatibilityTags(
       history,
       [{ name: `${train.namespace}${fixture.version}`, target: history.baselineSha }],
       () =>
@@ -468,7 +481,7 @@ test("the config difference from stock analysis is limited to title-only classif
   });
   expectRelease(current, "2.0.0", "config-v2.0.0");
 
-  const hybrid = await withCompatibilityTags(
+  const hybrid = await withLocalCompatibilityTags(
     history,
     [{ name: "config@1.2.3", target: history.baselineSha }],
     () => runRelease(history, { train: "config", tagFormat: "config@${version}" }),
