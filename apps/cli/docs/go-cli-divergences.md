@@ -1,7 +1,7 @@
 # Go CLI Divergences
 
 **Frozen historical ledger** of deliberate TypeScript divergences from the old Go CLI
-(pre-`7b469f5b3`) on the legacy shell: TS-only commands, flags, and behavior with no Go
+(pre-`7b469f5b3`) on the CLI: TS-only commands, flags, and behavior with no Go
 counterpart. The TypeScript CLI is now the source of truth, so this ledger no longer accumulates
 entries — new flags, commands, and behavioral changes are simply new CLI behavior, documented
 through help text, tests, and each command's `SIDE_EFFECTS.md`. This document exists to answer
@@ -12,27 +12,26 @@ not a compatibility promise.
 
 These commands exist in the TS CLI today but have no direct top-level equivalent in the old Go CLI reference.
 
-| TS command        | TS path                                                                                                            | Notes                                                                                                                                                                                         |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dev`             | `planned`                                                                                                          | Reserved for a TS-native long-running local development workflow command that watches files and orchestrates subcommands. Track this as TS-only unless a direct Go equivalent emerges.        |
-| `logs`            | [`../src/next/commands/logs/logs.command.ts`](../src/next/commands/logs/logs.command.ts)                           | Streams local stack logs. No top-level `logs` command exists in the old Go CLI reference.                                                                                                     |
-| `api`             | [`../src/next/commands/platform/api.command.ts`](../src/next/commands/platform/api.command.ts)                     | Low-level Management API client. It supersedes the old generated tree with explicit discovery via `supabase api routes` and execution via `supabase api request <route> [--method <METHOD>]`. |
-| `stack`           | [`../src/next/cli/root.ts`](../src/next/cli/root.ts)                                                               | TS-only local runtime namespace exposing `stack start`, `stack stop`, `stack status`, `stack list`, and `stack update`. Top-level `start`, `stop`, and `status` remain aliases.               |
-| `branches switch` | [`../src/next/commands/branches/switch/switch.command.ts`](../src/next/commands/branches/switch/switch.command.ts) | No direct Go equivalent. Updates local active-branch state so subsequent commands target the selected branch.                                                                                 |
+| TS command | TS path   | Notes                                                                                                                                                                                  |
+| ---------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dev`      | `planned` | Reserved for a TS-native long-running local development workflow command that watches files and orchestrates subcommands. Track this as TS-only unless a direct Go equivalent emerges. |
 
 ## Flag divergences from the Go reference
 
 - `db diff`, `db pull`, and `db schema declarative generate`/`sync` have a TS-only
-  `--strict-coverage` flag (no Go equivalent). It applies only when the bundled
-  pg-delta next engine is active (the default): coverage gaps that the engine
-  reports — statements it skipped or objects it could not represent — normally
-  surface as warnings, and `--strict-coverage` promotes them to hard failures.
-  Under the `SUPABASE_USE_PG_DELTA_NEXT=false` legacy opt-out the flag is
-  accepted but has no effect, since the legacy edge-runtime engine does not
-  emit coverage diagnostics. Default behavior (omitted flag) matches Go.
+  `--strict-coverage` flag (no Go equivalent). It applies whenever the bundled
+  pg-delta engine runs (always for the declarative commands; for `db diff` and
+  migration-style `db pull` when pg-delta is selected via
+  `[experimental.pgdelta] enabled = true`, `--use-pg-delta`, or
+  `--diff-engine pg-delta`): coverage gaps that the engine reports — statements
+  it skipped or objects it could not represent — normally surface as warnings,
+  and `--strict-coverage` promotes them to hard failures. Selecting migra (the
+  `db diff` / migration-style `db pull` default, or explicitly via `--use-migra`
+  / `--diff-engine migra`) accepts the flag but has no effect, since migra does
+  not emit coverage diagnostics. Default behavior (omitted flag) matches Go.
 - `db push` has a TS-only `--skip-vault` flag. It applies migrations without
   resolving or updating `[db.vault]` secrets; default behavior still matches Go.
-- Every legacy command that resolves a linked project ref for its own database
+- Every command that resolves a linked project ref for its own database
   connection has a TS-only `--project-ref` flag (no Go equivalent on any
   user-facing command — only the `SUPABASE_PROJECT_ID` env var could override
   the linked ref; the sole Go registration is a hidden, non-user-facing seam,
@@ -42,7 +41,7 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   `seed buckets`; `storage ls`/`cp`/`mv`/`rm`; every `inspect db` subcommand and
   `inspect report`; and `test db` (and its hidden `db test` alias, which shares
   `test db`'s flag config verbatim). It feeds
-  `LegacyProjectRefResolver.loadProjectRef`, keeping Go's precedence (flag >
+  `ProjectRefResolver.loadProjectRef`, keeping Go's precedence (flag >
   `SUPABASE_PROJECT_ID` > `supabase/.temp/project-ref`) and taking effect only on
   the linked path. It shares ONLY that ref-resolution precedence with
   `SUPABASE_PROJECT_ID` — unlike the env var, it does not affect the local
@@ -69,7 +68,7 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   no short alias). It writes the generated declarative tree to the given directory for this
   invocation only, without changing the configured `declarative_schema_path` — the staging step
   of the legacy-tree upgrade recipe printed by the sync/generate compatibility gates. The name
-  deliberately avoids `--output`/`-o`, which the legacy root reserves for the global
+  deliberately avoids `--output`/`-o`, which the root command reserves for the global
   machine-format flag; a leaf string flag would shadow it and turn `generate -o json` into a
   write to a directory named `json`. Default behavior (omitted flag) matches Go.
 - `link` has a TS-only `[ref-or-branch]` positional argument (no Go equivalent), and its
@@ -96,13 +95,11 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   files or an export manifest — telling the user to set
   `declarative_schema_path = "./database"` or move the tree. The warning never changes
   behavior or exit codes; a non-interactive sync still fails with Go's
-  "no declarative schema found" message. Inside that directory the bundled (default) pg-delta
+  "no declarative schema found" message. Inside that directory the bundled pg-delta
   engine writes one directory per schema at the root — `supabase/schemas/public/tables/x.sql` —
-  with cluster-level objects under a reserved `supabase/schemas/_cluster/`. The Go reference,
-  and the opt-out legacy engine (`SUPABASE_USE_PG_DELTA_NEXT=false`, which runs the pinned
-  `[experimental.pgdelta] npm_version` in Edge Runtime), instead nest everything one level
-  deeper as `schemas/<schema>/…` plus `cluster/…`, so a legacy-engine export lands at
-  `supabase/schemas/schemas/public/tables/x.sql`.
+  with cluster-level objects under a reserved `supabase/schemas/_cluster/`.
+  Structured export is TypeScript-only; the Go binary no longer ships a
+  pg-delta dump path.
 - Local `pg_net` presence now converges with `[experimental.webhooks]` instead of being
   installed unconditionally: `db-webhook.sql` no longer creates the extension at container
   init, `supabase start`/`db start` install it (with grants reapplied via the
@@ -161,19 +158,20 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   location when the root-resolved file is missing. Go resolves notifications from `supabase/` only
   (`(*baseConfig).resolve`'s own `// FIXME`-flagged asymmetry). Config validation, `config push`
   content loading, and Kong's template mount builder all share one resolver
-  (`legacyResolveNotificationContentPath`), so every consumer reads the SAME file — the drift the
+  (`resolveNotificationContentPath`), so every consumer reads the SAME file — the drift the
   asymmetry caused (validated against `<root>/supabase/...`, mounted from `<root>/...`) is gone.
   The `init` scaffold ejects the root-relative form, which is incompatible with Go if uncommented
   (#6159/#6160).
-- `db remote changes|commit --password <p>`: since CLI-1970, an explicit
+- `db remote changes --password <p>`: since CLI-1970, an explicit
   `--password` beats the `SUPABASE_DB_PASSWORD` env var. Before the trim, Go's
   package-wide "last `viper.BindPFlag("DB_PASSWORD", …)` wins" behavior bound
   the key to `projects create --db-password` (lexically last `cmd/*.go` file),
   so `db remote`'s own `--password` flag was never the bound instance and env
   silently won over it — a latent bug. With `projects.go` deleted, the bind
   lands on `db remote`'s persistent `--password` and flag-beats-env applies as
-  intended. Accepted (not restored) in the CLI-1970 parity audit; `db pull`
-  keeps the old precedence (env wins over its `--password`) unchanged.
+  intended. Accepted (not restored) in the CLI-1970 parity audit. `db remote
+commit` is now native `db pull`, so it uses pull's flag-then-env-then-dotenv
+  password order. `db pull` keeps that precedence unchanged.
 - `branches {list,create,get,update,delete,pause,unpause,disable}` resolve their project ref
   through a PARENT-scoped chain instead of plain `--project-ref` flag/env/file resolution: an
   explicit `--project-ref` still wins outright, but the fallback is env `SUPABASE_PROJECT_ID` →
@@ -184,8 +182,8 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   (non-branch) project — the cache and the file hold the same ref — so this only changes behavior
   in the previously-403ing branch-linked state (CLI-2167 follow-up, no Go equivalent).
 - `branches list`'s pretty table (not `-o json|yaml|toml`, not `--output-format json|stream-json`)
-  marks the row matching the CURRENTLY linked ref with a `<name> (active)` NAME cell, mirroring
-  `next/`'s convention. TS-only QoL, no Go equivalent (CLI-2167 follow-up).
+  marks the row matching the CURRENTLY linked ref with a `<name> (active)` NAME cell. TS-only
+  QoL, no Go equivalent (CLI-2167 follow-up).
 - `status` prints the current linked project/branch as a "Linked Project:" block on stdout in
   human text mode (Neon-style — `Org:`/`Project:`/`Branch:` lines, each omitted when unknown),
   before any daemon/stack work begins, and folds the same linked state into its machine-readable
@@ -197,7 +195,7 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   keeps showing the parent/org fields even when the branch-name lookup itself degrades (no
   token, offline, API error) — only the branch's own name is ever missing, so the user always
   sees they're on a branch. The Management API client for that lookup is acquired lazily
-  (`LegacyPlatformApiFactory`, not the eager `LegacyPlatformApi`) so `status` stays fully
+  (`CommandPlatformApiFactory`, not the eager `CommandPlatformApi`) so `status` stays fully
   functional offline/token-less. Intent: let an agent driving `status` discover which
   project/branch it's on without a separate `link`/`branches` call. Read-only, never affects
   `status`'s exit code, and never alters any of its existing failure behavior — a Docker/daemon
@@ -224,7 +222,7 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   unescaped into the tenant gateway hostname and a malformed value could
   redirect the service-role key to an attacker-controlled host. Intentional
   TS-only hardening, not a parity bug — see
-  [`services/SIDE_EFFECTS.md`](../src/legacy/commands/services/SIDE_EFFECTS.md).
+  [`services/SIDE_EFFECTS.md`](../src/commands/services/SIDE_EFFECTS.md).
 - `db pull` in-sync (`"No schema changes found"`) keeps Go's message and its non-zero
   exit code, but replaces the generic "Try rerunning the command with --debug to
   troubleshoot the error." stderr footer with an explanatory suggestion line
@@ -240,9 +238,9 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   container instead of failing outright (CLI-2220). The CLI process's own limit is used as a
   proxy for the daemon's — exact in the sandboxes this targets, where both share the cap; a
   Linux client more constrained than its daemon (remote `DOCKER_HOST`, mounted socket) just
-  gets a smaller fd budget, never a failed start. When the clamp lowers the request, the legacy
+  gets a smaller fd budget, never a failed start. When the clamp lowers the request, the CLI's
   `functions serve`/`start` bring-up warns with the reduced limit. The `@supabase/stack` service
-  builder (next-shell `stack start`) applies the same clamp silently: its defs are built without
+  builder (`stack start`) applies the same clamp silently: its defs are built without
   an output channel, and in managed mode inside the daemon process, so a user-visible warning
   there needs a diagnostics channel on `BuildResult` first; the applied value stays visible via
   `docker inspect`.

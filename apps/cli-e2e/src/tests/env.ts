@@ -1,5 +1,3 @@
-import type { CLITarget } from "@supabase/cli-test-helpers";
-
 type CliE2eMode = "replay" | "record";
 
 // Runtime mode. `replay` (default) serves recorded fixtures; `record` proxies to
@@ -33,21 +31,6 @@ if (isRecording && !process.env["SUPABASE_STAGING_URL"] && process.env["CLI_E2E_
 // it must be a valid token for the staging API.
 export const ACCESS_TOKEN =
   process.env["SUPABASE_ACCESS_TOKEN"] ?? "sbp_0000000000000000000000000000000000000000";
-
-// Which target to run. Defaults to "ts-legacy" — the only shipped CLI shell and
-// therefore the authoritative target for replay and recording. Validated
-// eagerly so a stale value (e.g. the retired "go" target) fails with a clear error
-// instead of an undefined-command crash inside the harness.
-const VALID_TARGETS: ReadonlyArray<CLITarget> = ["ts-legacy", "ts-next"];
-const rawTarget = process.env["CLI_HARNESS_TARGET"] ?? "ts-legacy";
-const matchedTarget = VALID_TARGETS.find((target) => target === rawTarget);
-if (matchedTarget === undefined) {
-  throw new Error(
-    `Unknown CLI_HARNESS_TARGET "${rawTarget}". Valid targets: ${VALID_TARGETS.join(", ")}. ` +
-      `(The "go" target was retired when the Go CLI was trimmed to the proxied subset.)`,
-  );
-}
-export const TARGET = matchedTarget;
 
 // Region for the fresh recording project.
 export const REGION = process.env["CLI_E2E_REGION"] ?? "us-east-1";

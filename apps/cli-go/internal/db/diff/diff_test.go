@@ -82,35 +82,6 @@ func TestLoadDeclaredSchemas(t *testing.T) {
 	})
 }
 
-func TestShouldApplyDeclarativeWithPgDelta(t *testing.T) {
-	t.Run("uses pg-delta declarative apply when no schema_paths override is configured", func(t *testing.T) {
-		originalConfig := utils.Config
-		t.Cleanup(func() { utils.Config = originalConfig })
-		utils.Config.Db.Migrations.SchemaPaths = nil
-
-		assert.True(t, shouldApplyDeclarativeWithPgDelta(true))
-	})
-
-	t.Run("uses pg-delta declarative apply when schema_paths points at the declarative dir", func(t *testing.T) {
-		originalConfig := utils.Config
-		t.Cleanup(func() { utils.Config = originalConfig })
-		utils.Config.Db.Migrations.SchemaPaths = pkgconfig.Glob{utils.DeclarativeDir + "/"}
-
-		assert.True(t, shouldApplyDeclarativeWithPgDelta(true))
-	})
-
-	t.Run("uses ordered migration apply for explicit schema_paths files", func(t *testing.T) {
-		originalConfig := utils.Config
-		t.Cleanup(func() { utils.Config = originalConfig })
-		utils.Config.Db.Migrations.SchemaPaths = pkgconfig.Glob{
-			"supabase/schemas/z_function.sql",
-			"supabase/schemas/a_table.sql",
-		}
-
-		assert.False(t, shouldApplyDeclarativeWithPgDelta(true))
-	})
-}
-
 func TestRun(t *testing.T) {
 	t.Run("runs migra diff", func(t *testing.T) {
 		// Setup in-memory fs
@@ -149,7 +120,7 @@ func TestRun(t *testing.T) {
 			Reply("CREATE DATABASE")
 		defer conn.Close(t)
 		// Run test
-		err := Run(context.Background(), []string{"public"}, "file", dbConfig, DiffSchemaMigra, false, fsys, func(cc *pgx.ConnConfig) {
+		err := Run(context.Background(), []string{"public"}, "file", dbConfig, DiffSchemaMigra, fsys, func(cc *pgx.ConnConfig) {
 			if cc.Host == dbConfig.Host {
 				// Fake a SSL error when connecting to target database
 				cc.LookupFunc = func(ctx context.Context, host string) (addrs []string, err error) {
@@ -173,102 +144,6 @@ func TestRun(t *testing.T) {
 		assert.Equal(t, []byte(diff), contents)
 	})
 
-	t.Run("applies schema_paths in order before saving generated diff", func(t *testing.T) {
-		originalConfig := utils.Config
-		t.Cleanup(func() { utils.Config = originalConfig })
-		utils.Config.Db.MajorVersion = 14
-		utils.Config.Db.ShadowPort = 54320
-		utils.Config.Db.Migrations.SchemaPaths = pkgconfig.Glob{
-			"supabase/schemas/z_function.sql",
-			"supabase/schemas/a_table.sql",
-		}
-		utils.Config.Experimental.PgDelta = &pkgconfig.PgDeltaConfig{
-			Enabled:               true,
-			DeclarativeSchemaPath: utils.SchemasDir,
-		}
-		utils.GlobalsSql = "create schema public"
-		utils.InitialSchemaPg14Sql = "create schema private"
-		functionSQL := "create function public.z_function() returns integer language sql as $$ select 1 $$"
-		tableSQL := "create table public.a_table (id integer default public.z_function())"
-		generated := functionSQL + ";\n" + tableSQL + ";\n"
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, "supabase/schemas/a_table.sql", []byte(tableSQL), 0644))
-		require.NoError(t, afero.WriteFile(fsys, "supabase/schemas/z_function.sql", []byte(functionSQL), 0644))
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Db.Image), "test-shadow-db")
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/json").
-			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
-				State: &container.State{
-					Running: true,
-					Health:  &container.Health{Status: types.Healthy},
-				},
-			}})
-		gock.New(utils.Docker.DaemonHost()).
-			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
-			Reply(http.StatusOK)
-		shadowConn := pgtest.NewConn()
-		defer shadowConn.Close(t)
-		shadowConn.Query(utils.GlobalsSql).
-			Reply("CREATE SCHEMA").
-			Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA")
-		helper.MockApiPrivilegesRevoke(shadowConn).
-			Query(CREATE_TEMPLATE).
-			Reply("CREATE DATABASE")
-		declaredConn := pgtest.NewConn()
-		defer declaredConn.Close(t)
-		declaredConn.Query(functionSQL).
-			Reply("CREATE FUNCTION").
-			Query(tableSQL).
-			Reply("CREATE TABLE")
-		// pg-delta bypasses the injected DiffFunc and runs the real edge-runtime
-		// pipeline, so stub the seam DiffDatabase uses (mirrors exportCatalogPgDelta).
-		// The migra differ must never be reached on this path.
-		originalDiffPgDelta := diffPgDeltaRefDetailed
-		t.Cleanup(func() { diffPgDeltaRefDetailed = originalDiffPgDelta })
-		diffCalled := false
-		diffPgDeltaRefDetailed = func(_ context.Context, _, targetRef string, schema []string, _ string, _ ...func(*pgx.ConnConfig)) (PgDeltaDiffResult, error) {
-			diffCalled = true
-			assert.Contains(t, targetRef, "contrib_regression")
-			assert.Equal(t, []string{"public"}, schema)
-			return PgDeltaDiffResult{
-				Files: []PgDeltaPlanFile{{Order: 1, Name: "schema_changes", TransactionMode: "transactional", SQL: generated}},
-			}, nil
-		}
-		differ := func(context.Context, pgconn.Config, pgconn.Config, []string, ...func(*pgx.ConnConfig)) (string, error) {
-			t.Fatal("migra differ must not be called on the pg-delta path")
-			return "", nil
-		}
-		localConfig := pgconn.Config{
-			Host:     utils.Config.Hostname,
-			Port:     utils.Config.Db.Port,
-			User:     "postgres",
-			Password: utils.Config.Db.Password,
-			Database: "postgres",
-		}
-
-		err := Run(context.Background(), []string{"public"}, "ordered_schema", localConfig, differ, true, fsys, func(cc *pgx.ConnConfig) {
-			if cc.Database == "contrib_regression" {
-				declaredConn.Intercept(cc)
-			} else {
-				shadowConn.Intercept(cc)
-			}
-		})
-
-		require.NoError(t, err)
-		assert.True(t, diffCalled)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-		files, err := afero.ReadDir(fsys, utils.MigrationsDir)
-		require.NoError(t, err)
-		require.Len(t, files, 1)
-		contents, err := afero.ReadFile(fsys, filepath.Join(utils.MigrationsDir, files[0].Name()))
-		require.NoError(t, err)
-		assert.Equal(t, []byte(generated), contents)
-	})
-
 	t.Run("throws error on failure to diff target", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -279,7 +154,7 @@ func TestRun(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), []string{"public"}, "file", dbConfig, DiffSchemaMigra, false, fsys)
+		err := Run(context.Background(), []string{"public"}, "file", dbConfig, DiffSchemaMigra, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -421,7 +296,7 @@ func TestDiffDatabase(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
 			ReplyError(errNetwork)
 		// Run test
-		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false)
+		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra)
 		// Check error
 		assert.Empty(t, result)
 		assert.ErrorIs(t, err, errNetwork)
@@ -452,7 +327,7 @@ func TestDiffDatabase(t *testing.T) {
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
 		// Run test
-		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false)
+		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra)
 		// Check error
 		assert.Empty(t, result)
 		assert.ErrorContains(t, err, "test-shadow-db container is not running: exited")
@@ -484,7 +359,7 @@ func TestDiffDatabase(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
-		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false, conn.Intercept)
+		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, conn.Intercept)
 		// Check error
 		assert.Empty(t, result)
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)
@@ -550,7 +425,7 @@ create schema public`)
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
 			Reply("INSERT 0 1")
 		// Run test
-		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false, func(cc *pgx.ConnConfig) {
+		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, func(cc *pgx.ConnConfig) {
 			if cc.Host == dbConfig.Host {
 				// Fake a SSL error when connecting to target database
 				cc.LookupFunc = func(ctx context.Context, host string) (addrs []string, err error) {

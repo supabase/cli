@@ -9,6 +9,7 @@ on:
   pull_request:
     paths:
       - ".github/scripts/**"
+      - ".github/workflows/ai-review.yml"
       - ".github/workflows/github-scripts-ci.yml"
 
 permissions: {}

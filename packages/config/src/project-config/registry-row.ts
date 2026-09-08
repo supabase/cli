@@ -222,8 +222,8 @@ export function expectBoolean(value: unknown, apiPath: ReadonlyArray<string>): b
 
 /**
  * Clamps a signed API integer to the unsigned domain the config schema
- * expects. Replicates the legacy shell's `intToUint`
- * (`apps/cli/src/legacy/shared/legacy-size-units.ts`), applied by the sync
+ * expects. Replicates the CLI's `intToUint`
+ * (`apps/cli/src/command-internal/size-units.ts`), applied by the sync
  * mappers to every uint-typed field pulled from the API.
  */
 export function clampToUint(value: number): number {
@@ -232,10 +232,10 @@ export function clampToUint(value: number): number {
 
 /**
  * Splits an API comma-separated list field into the string array the config
- * schema holds. Replicates the legacy shell's `legacyStrToArr` + per-element
+ * schema holds. Replicates the CLI's `strToArr` + per-element
  * trim as applied in `config-sync/api.sync.ts:92-93` (`db_schema`,
  * `db_extra_search_path`). The `auth.sync.ts:1265` `uri_allow_list` site uses
- * `legacyStrToArr` without the trim; trimming there too is a deliberate,
+ * `strToArr` without the trim; trimming there too is a deliberate,
  * benign normalization — push-direction bodies are built with `join(",")`, so
  * round-tripped data never carries the spaces the trim would remove.
  */

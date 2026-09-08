@@ -1,0 +1,97 @@
+# `supabase orgs list`
+
+## Files Read
+
+| Path                                      | Format                    | When                                                                                          |
+| ----------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| keyring `"Supabase CLI"` / `<profile>`    | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile` |
+| keyring `"Supabase CLI"` / `access-token` | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
+| `~/.supabase/access-token`                | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
+
+## Files Written
+
+| Path                         | Format | When                                            |
+| ---------------------------- | ------ | ----------------------------------------------- |
+| `~/.supabase/telemetry.json` | JSON   | always (in `Effect.ensuring`) at end of command |
+
+`orgs list` is a user-level command — it does not resolve a `--project-ref`, so the
+linked-project cache (`~/.supabase/<workdir-hash>/linked-project.json`) is never written.
+
+## API Routes
+
+| Method | Path                | Auth         | Request body | Response (used fields)                       |
+| ------ | ------------------- | ------------ | ------------ | -------------------------------------------- |
+| `GET`  | `/v1/organizations` | Bearer token | none         | `[{id: string, slug: string, name: string}]` |
+
+## Environment Variables
+
+| Variable                | Purpose                                                                                                                                       | Required?                                               |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                          | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROFILE`      | selects API base URL (`supabase`, `supabase-staging`, `supabase-local`), or a filesystem path to a YAML profile (used by the cli-e2e harness) | no (defaults to `supabase`)                             |
+
+## Exit Codes
+
+| Code | Condition                                                             |
+| ---- | --------------------------------------------------------------------- |
+| `0`  | success — organizations printed to stdout                             |
+| `1`  | `AccessTokenRequiredError` — no token in env/keyring/file             |
+| `1`  | `OrgsListUnexpectedStatusError` — non-2xx response from list endpoint |
+| `1`  | `OrgsListNetworkError` — transport-level network failure              |
+| `1`  | `OrgsEnvNotSupportedError` — `--output env` flag is rejected          |
+
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties / groups         |
+| ---------------------- | ------------------------------------------ | ----------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
+
+## Output
+
+The `--output {pretty,json,yaml,toml,env}` flag and the `--output-format {text,json,stream-json}`
+flag are both honored. `--output` wins when both are supplied. `pretty` and `text` map to the
+same Glamour render.
+
+### `--output pretty` (default) / `--output-format text`
+
+Prints a Glamour-styled markdown table with columns `ID`, `NAME`. The rendered table always
+ends with a trailing newline (Glamour appends one).
+
+### `--output json`
+
+Indented JSON of the `OrganizationResponseV1[]` array with alphabetical keys + trailing newline.
+
+### `--output yaml`
+
+YAML document of the organizations array.
+
+### `--output toml`
+
+TOML document wrapping the array as `[[organizations]]`.
+
+### `--output env`
+
+Fails with `OrgsEnvNotSupportedError("--output env flag is not supported")`.
+
+### `--output-format json`
+
+Single JSON object via `Output.success` with `{organizations: [...]}` data.
+
+### `--output-format stream-json`
+
+One `result` NDJSON event with `{organizations: [...]}`.
+
+## Notes
+
+- No `--project-ref` flag. The result set is determined entirely by the access token's scope.
+- Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth.
+
+## Security Notes
+
+- API-supplied `id` and `name` strings are rendered to stdout without ANSI / control-character
+  sanitization (inherited from the old Go CLI's rendering behavior). A malicious or
+  compromised Management API could in principle return org names containing terminal
+  escape sequences. If sanitization is added later it should land at the renderer
+  (`glamour-table.ts`) so every caller inherits the fix.
+- Error response bodies embedded in `OrgsListUnexpectedStatusError` are sanitized by
+  `mapHttpError` (control chars stripped, capped at 1024 bytes).

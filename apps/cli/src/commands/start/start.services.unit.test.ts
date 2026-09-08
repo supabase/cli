@@ -1,0 +1,268 @@
+import { CliConfigSchema, type CliConfig } from "@supabase/config";
+import { Schema } from "effect";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
+import type { LocalServiceVersionOverrides } from "../../shared/services/services.shared.ts";
+import { toSlimImage } from "../../shared/services/slim-images.ts";
+import { serviceContainerIds, localDbContainerId } from "../../command-internal/docker-ids.ts";
+import { SERVICE_CATALOG } from "../../command-internal/service-catalog.ts";
+import { resolveStartGates, resolveStartImagePlan, type StartGates } from "./start.gates.ts";
+import { START_SERVICES, startServiceMeta } from "./start.services.ts";
+
+const currentGotrue = dockerfileServiceImageRaw("gotrue");
+const currentLogflare = dockerfileServiceImageRaw("logflare");
+const currentVector = dockerfileServiceImageRaw("vector");
+const currentPooler = dockerfileServiceImageRaw("supavisor");
+const currentPoolerTag = currentPooler.split(":")[1] ?? "";
+
+describe("START_SERVICES", () => {
+  it("has one row per SERVICE_CATALOG entry, in the catalog's startOrder", () => {
+    expect(START_SERVICES).toHaveLength(SERVICE_CATALOG.length);
+    expect(START_SERVICES.map((entry) => entry.service)).toEqual(
+      SERVICE_CATALOG.map((entry) => entry.service),
+    );
+    expect(START_SERVICES.map((entry) => entry.startOrder)).toEqual(
+      SERVICE_CATALOG.map((entry) => entry.startOrder),
+    );
+  });
+
+  it("has exactly 13 excludable rows and 1 non-excludable row (Postgres)", () => {
+    const excludable = START_SERVICES.filter((entry) => entry.excludeKey !== undefined);
+    const nonExcludable = START_SERVICES.filter((entry) => entry.excludeKey === undefined);
+    expect(excludable).toHaveLength(13);
+    expect(nonExcludable).toHaveLength(1);
+    expect(nonExcludable[0]?.service).toBe("postgres");
+    expect(nonExcludable[0]?.enabledGate).toBe("always");
+  });
+
+  it("carries a non-empty imageConfigField and enabledGate for every entry", () => {
+    for (const entry of START_SERVICES) {
+      expect(entry.imageConfigField.length).toBeGreaterThan(0);
+      expect(entry.enabledGate.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("has no duplicate service, containerSuffix, or imageConfigField values", () => {
+    const services = START_SERVICES.map((entry) => entry.service);
+    const suffixes = START_SERVICES.map((entry) => entry.containerSuffix);
+    const imageConfigFields = START_SERVICES.map((entry) => entry.imageConfigField);
+
+    expect(new Set(services).size).toBe(services.length);
+    expect(new Set(suffixes).size).toBe(suffixes.length);
+    expect(new Set(imageConfigFields).size).toBe(imageConfigFields.length);
+  });
+
+  it("every non-Postgres containerSuffix matches a serviceContainerIds suffix", () => {
+    const projectId = "start-services-cross-check";
+    const containerIds = serviceContainerIds(projectId);
+    const suffixesFromContainerIds = containerIds.map((id) =>
+      id.replace(/^supabase_/, "").replace(new RegExp(`_${projectId}$`), ""),
+    );
+
+    for (const entry of START_SERVICES) {
+      if (entry.service === "postgres") continue;
+      expect(suffixesFromContainerIds).toContain(entry.containerSuffix);
+    }
+  });
+
+  it("Postgres's containerSuffix matches localDbContainerId's suffix", () => {
+    const projectId = "start-services-cross-check";
+    const postgres = START_SERVICES.find((entry) => entry.service === "postgres");
+    expect(postgres?.containerSuffix).toBe("db");
+    expect(localDbContainerId(projectId)).toBe(
+      `supabase_${postgres?.containerSuffix}_${projectId}`,
+    );
+  });
+
+  it("notes Vector's dependency on Logflare", () => {
+    const vector = START_SERVICES.find((entry) => entry.service === "vector");
+    expect(vector?.enabledGate).toBe("analytics.enabled");
+    expect(vector?.dependsOn).toEqual(["logflare"]);
+  });
+
+  it("notes ImgProxy's dependency on Storage", () => {
+    const imgproxy = START_SERVICES.find((entry) => entry.service === "imgproxy");
+    expect(imgproxy?.enabledGate).toBe("storage.enabled && storage.image_transformation.enabled");
+    expect(imgproxy?.dependsOn).toEqual(["storage"]);
+  });
+
+  it("notes Studio's dependency on pg-meta", () => {
+    const studio = START_SERVICES.find((entry) => entry.service === "studio");
+    expect(studio?.enabledGate).toBe("studio.enabled");
+    expect(studio?.dependsOn).toEqual(["pgMeta"]);
+  });
+
+  it("gates Kong on !excluded only, with no config field", () => {
+    const kong = START_SERVICES.find((entry) => entry.service === "kong");
+    expect(kong?.enabledGate).toBe("none");
+  });
+});
+
+describe("startServiceMeta", () => {
+  it("returns the same metadata as the joined START_SERVICES row", () => {
+    const meta = startServiceMeta("gotrue");
+    const entry = START_SERVICES.find((candidate) => candidate.service === "gotrue");
+    expect(meta).toEqual({
+      imageConfigField: entry?.imageConfigField,
+      enabledGate: entry?.enabledGate,
+      dependsOn: entry?.dependsOn,
+    });
+  });
+
+  it("returns undefined for an unknown service key", () => {
+    expect(startServiceMeta("not-a-real-service")).toBeUndefined();
+  });
+});
+
+/**
+ * Cross-check: `start.services.ts`'s `enabledGate` metadata (descriptive
+ * only, never read by runtime code — see that module's header) against
+ * `start.gates.ts`'s `resolveStartGates` (the REAL, executable gate).
+ * The two are hand-maintained separately and can silently drift (e.g. a gate
+ * condition changes in `start.gates.ts` without the matching `enabledGate`
+ * string being updated) — this mechanically evaluates every `enabledGate`
+ * boolean-string expression against a synthetic config and compares it
+ * against what `resolveStartGates` actually computes for the SAME
+ * config, so a future drift fails loudly here instead of silently.
+ */
+describe("START_SERVICES enabledGate cross-check against start.gates.ts", () => {
+  const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
+
+  /** Every `config.toml` boolean atom referenced by a `START_SERVICES` `enabledGate` expression (the `"always"`/`"none"` sentinels aside). */
+  const GATE_ATOMS = [
+    "analytics.enabled",
+    "api.enabled",
+    "auth.enabled",
+    "local_smtp.enabled",
+    "realtime.enabled",
+    "storage.enabled",
+    "storage.image_transformation.enabled",
+    "studio.enabled",
+    "db.pooler.enabled",
+    "edge_runtime.enabled",
+  ] as const;
+
+  /** Builds a `CliConfig` with every {@link GATE_ATOMS} atom explicitly set true/false per `enabled` membership. */
+  function configWithEnabled(enabled: ReadonlySet<string>): CliConfig {
+    const overrides: Record<string, unknown> = {};
+    for (const atom of GATE_ATOMS) {
+      const segments = atom.split(".");
+      let node = overrides;
+      for (let index = 0; index < segments.length - 1; index++) {
+        const segment = segments[index]!;
+        node[segment] ??= {};
+        node = node[segment] as Record<string, unknown>;
+      }
+      node[segments.at(-1)!] = enabled.has(atom);
+    }
+    return decodeConfig({ project_id: "start-services-gate-cross-check", ...overrides });
+  }
+
+  function getPath(config: CliConfig, path: string): unknown {
+    return path
+      .split(".")
+      .reduce<unknown>(
+        (value, key) =>
+          value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined,
+        config,
+      );
+  }
+
+  /**
+   * Evaluates an `enabledGate` string ("x.enabled", "x.enabled && y.enabled",
+   * or the `"none"` sentinel) against a synthetic config. Deliberately
+   * ignores the `!excluded(...)` factor every real gate also ANDs in — the
+   * caller isolates that by resolving with `excludedKeys` empty.
+   */
+  function evaluateEnabledGate(expr: string, config: CliConfig): boolean {
+    if (expr === "none") return true;
+    return expr.split("&&").every((atom) => getPath(config, atom.trim()) === true);
+  }
+
+  /** Real gates for `config`, with the exclusion factor neutralized (nothing excluded). */
+  function realGatesFor(config: CliConfig): StartGates {
+    return resolveStartGates({
+      config,
+      projectEnvValues: undefined,
+      excludedKeys: new Set(),
+      document: undefined,
+    });
+  }
+
+  function expectGatesMatchMetadata(config: CliConfig, label: string) {
+    const realGates = realGatesFor(config);
+    for (const service of Object.keys(realGates) as ReadonlyArray<keyof StartGates>) {
+      const meta = startServiceMeta(service);
+      expect(meta, `start.services.ts is missing metadata for "${service}"`).toBeDefined();
+      const expected = evaluateEnabledGate(meta!.enabledGate, config);
+      expect(realGates[service], `${service} (${label})`).toBe(expected);
+    }
+  }
+
+  it("matches for every gate atom toggled on its own (isolates each atom's effect)", () => {
+    for (const atom of GATE_ATOMS) {
+      expectGatesMatchMetadata(configWithEnabled(new Set([atom])), `only "${atom}" enabled`);
+    }
+  });
+
+  it("matches with every gate atom enabled", () => {
+    expectGatesMatchMetadata(configWithEnabled(new Set(GATE_ATOMS)), "every atom enabled");
+  });
+
+  it("matches with every gate atom disabled", () => {
+    expectGatesMatchMetadata(configWithEnabled(new Set()), "every atom disabled");
+  });
+
+  it("only omits Postgres (unconditional, handled directly by the caller) from the real gate set", () => {
+    const realGates = realGatesFor(configWithEnabled(new Set()));
+    const gatedServices = new Set(Object.keys(realGates));
+    const ungated = START_SERVICES.filter((entry) => !gatedServices.has(entry.service));
+    expect(ungated.map((entry) => entry.service).toSorted()).toEqual(["postgres"]);
+  });
+});
+
+describe("resolveStartImagePlan under SUPABASE_USE_SLIM_IMAGES", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const allGatesOpen: StartGates = {
+    kong: true,
+    gotrue: true,
+    mailpit: true,
+    realtime: true,
+    postgrest: true,
+    storage: true,
+    imgproxy: true,
+    logflare: true,
+    vector: true,
+    pgMeta: true,
+    studio: true,
+    supavisor: true,
+    edgeRuntime: true,
+  };
+
+  const imageFor = (service: string, serviceVersions: LocalServiceVersionOverrides = {}) =>
+    resolveStartImagePlan(allGatesOpen, serviceVersions).find((entry) => entry.service === service)
+      ?.image;
+
+  it("plans docker.io images while the flag is off", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+    expect(imageFor("gotrue")).toBe(currentGotrue);
+    expect(imageFor("vector")).toBe(currentVector);
+    expect(imageFor("supavisor", { pooler: "2.0.0" })).toBe("supabase/supavisor:2.0.0");
+  });
+
+  it("plans slim images when the flag is on, keeping unmapped services on docker.io", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    expect(imageFor("gotrue")).toBe(toSlimImage("gotrue", currentGotrue));
+    expect(imageFor("logflare")).toBe(toSlimImage("logflare", currentLogflare));
+    expect(imageFor("vector")).toBe(toSlimImage("vector", currentVector));
+    expect(imageFor("supavisor", { pooler: currentPoolerTag })).toBe(
+      toSlimImage("supavisor", currentPooler),
+    );
+    expect(imageFor("supavisor", { pooler: "2.0.0" })).toBe("supabase/supavisor:2.0.0");
+    expect(imageFor("kong")).toBe("library/kong:2.8.1");
+  });
+});

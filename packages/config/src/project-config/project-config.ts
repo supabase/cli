@@ -256,7 +256,7 @@ function copyHostedValueForDocument(value: unknown, path: ReadonlyArray<string>)
  * confirmed against the actual `v2GetProjectConfig` OpenAPI-generated schema
  * (`packages/api/src/generated/contracts.ts`), not just this package's own
  * `./api-attributes.ts` mirror of it, and cross-checked against every
- * `apps/cli/src/legacy/commands/config/push/config-sync/*.sync.ts` mapper
+ * `apps/cli/src/commands/config/push/config-sync/*.sync.ts` mapper
  * plus `seed buckets`, `db inspect`, `db schema declarative generate`, and
  * `start`'s local bootstrap.
  *
@@ -280,7 +280,7 @@ function copyHostedValueForDocument(value: unknown, path: ReadonlyArray<string>)
  * on ITS first pull. `unmanaged` paths never reach `config diff`'s
  * `changes` array at all (`hasAncestorPathKey`, `./config-diff.ts`), and
  * `config pull`'s planner only ever writes from `changes`
- * (`legacyPlanConfigPull`, `pull.plan.ts`) — so excluding these four
+ * (`planConfigPull`, `pull.plan.ts`) — so excluding these four
  * permanently blocked `config pull` from ever syncing the platform's real
  * Postgres version or pooler settings into the file, for every project,
  * forever. `pooler.enabled`/`pooler.port` stay excluded: `v2GetProjectConfig`
@@ -500,7 +500,7 @@ function removePathAndEmptiedAncestors(
  * | **field absent** | safe either policy (the generic `declared`-based diff classification and default-baseline suppression already prevent noise here — see `config-diff.ts`) | **only hazardous cell**, and only under `absent-is-default`: a consumer gets back `remote_only` with `local = <schema default>`; treating `remote_only` as "push this" would silently revert a real hosted customization to default. `absent-is-hands-off` closes this for its fixed field list; the generic `declared` mechanism in `diffProjectConfig` closes it for every other comparable path (an undeclared field differing from remote classifies `remote_only`, never `update`, so `config push`'s `update`/`local_only`-only routing never touches it). |
  *
  * Mitigations that hold TODAY, not just aspirationally: `config push`'s
- * routing (`apps/cli/src/legacy/commands/config/push/push.plan.ts`) never
+ * routing (`apps/cli/src/commands/config/push/push.plan.ts`) never
  * writes a `remote_only` change; `config pull`'s whole purpose is to close
  * this gap by declaring every drifted path into the file; `config diff` is
  * the seatbelt that shows the user `remote_only` entries before anything
@@ -824,7 +824,7 @@ function applySmsProviderPrecedence(result: Record<string, unknown>): void {
  * extremely common, since most setups don't run every local service — even
  * though the hosted project's real config is unrelated to that toggle and
  * may still fully exist and differ from it.
- * `legacyPushResourceEnabled` (`apps/cli/src/legacy/commands/config/push/
+ * `pushResourceEnabled` (`apps/cli/src/commands/config/push/
  * push.plan.ts`) no longer gates the whole `auth`/`storage` resource on this
  * flag either, for the same reason.
  */
@@ -1039,7 +1039,7 @@ function applyRawPresenceMask(
   result: Record<string, unknown>,
   document: Record<string, unknown>,
 ): void {
-  // Matches `legacyPresenceIn`/`authPresenceIn`'s own predicate EXACTLY
+  // Matches `presenceIn`/`authPresenceIn`'s own predicate EXACTLY
   // (`x?.["key"] !== undefined`) — a VALUE comparison, not `Object.hasOwn`
   // (engineer review round on PR #6339, item 3): a raw document with an own
   // key set to an explicit `undefined` (`{ auth: { captcha: undefined } }`)

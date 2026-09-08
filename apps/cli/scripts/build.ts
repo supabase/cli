@@ -25,25 +25,15 @@ const LINUX_PKG_FORMATS = ["deb", "rpm", "apk"] as const;
 const { values } = parseArgs({
   options: {
     version: { type: "string" },
-    shell: { type: "string", default: "legacy" },
   },
 });
 
-const shell = values.shell;
-if (shell !== "legacy") {
-  console.error(
-    `Invalid --shell value: ${String(shell)}. The "next" shell was removed; only "legacy" is supported.`,
-  );
-  process.exit(1);
-}
 const root = path.resolve(import.meta.dir, "../../..");
 const packageJsonPath = path.join(root, "apps/cli/package.json");
 const packageVersion = JSON.parse(await readFile(packageJsonPath, "utf8")) as { version?: string };
 const version = values.version ?? packageVersion.version;
 if (!version) {
-  console.error(
-    "Usage: pnpm exec bun apps/cli/scripts/build.ts [--version <npm-version>] [--shell legacy]",
-  );
+  console.error("Usage: pnpm exec bun apps/cli/scripts/build.ts [--version <npm-version>]");
   process.exit(1);
 }
 if (values.version === undefined) {
@@ -93,7 +83,7 @@ const TARGETS = [
   },
 ] as const;
 
-const entrypoint = path.join(root, "apps/cli/src", shell, "main.ts");
+const entrypoint = path.join(root, "apps/cli/src/main.ts");
 const distDir = path.join(root, "dist");
 const goSource = path.resolve(root, "apps/cli-go");
 const serveMainTemplateDefine = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(
@@ -308,7 +298,7 @@ async function buildMuslBinaries() {
 
       // Go binary is CGO_ENABLED=0 (fully static), so the glibc Linux build works on
       // musl too. Copy it from the matching glibc package so the published musl npm
-      // package contains the supabase-go binary that LegacyGoProxy resolves to.
+      // package contains the supabase-go binary that GoProxy resolves to.
       const glibcTarget = TARGETS.find(
         (candidate) => "nfpmArch" in candidate && candidate.nfpmArch === target.nfpmArch,
       );
@@ -411,7 +401,7 @@ async function generateChecksums() {
   console.log("Checksums written to dist/checksums.txt");
 }
 
-console.log(`Building ${shell} CLI for ${TARGETS.length} targets...\n`);
+console.log(`Building the CLI for ${TARGETS.length} targets...\n`);
 
 await Promise.all(TARGETS.map(buildTarget));
 
@@ -432,4 +422,4 @@ await buildMuslBinaries();
 await buildLinuxPackages(version);
 await generateChecksums();
 
-console.log(`\nAll ${shell} targets built successfully.`);
+console.log("\nAll targets built successfully.");

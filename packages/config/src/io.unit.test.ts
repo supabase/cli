@@ -513,7 +513,7 @@ major_version = 16
     }
   });
 
-  test("loads the legacy CLI fixture", async () => {
+  test("loads the CLI fixture", async () => {
     const loaded = await runConfigEffect(loadCliConfigFile(legacyFixturePath));
     const production = loaded.config.remotes.production;
     const staging = loaded.config.remotes.staging;
@@ -1280,9 +1280,9 @@ port = "env(SUPABASE_DB_PORT_TEST)"
   });
 
   // Regression coverage for the default-off (`goViperCompat` omitted) path —
-  // these pin pre-PR-#5765 behavior so `next/`, `packages/stack`, and the
+  // these pin pre-PR-#5765 behavior so `packages/stack` and the
   // functions manifest (none of which pass `goViperCompat`) don't inherit the
-  // Go-parity legacy shell's stricter/wider semantics.
+  // Go-parity CLI's stricter/wider semantics.
   test("loads successfully with a duplicate [remotes.*] project_id when goViperCompat is omitted", async () => {
     const cwd = makeTempProject();
 
@@ -1961,7 +1961,7 @@ enabled = true
 `);
     try {
       const loaded = await runConfigEffect(loadCliConfig(cwd, { projectRef: PREVIEW_REF }));
-      // `legacyPresenceIn` reads `document` to detect optional pointer sections;
+      // `presenceIn` reads `document` to detect optional pointer sections;
       // a remote-introduced `db.ssl_enforcement` must be present there.
       const db = loaded!.document?.db;
       expect(typeof db === "object" && db !== null && "ssl_enforcement" in db).toBe(true);

@@ -28,14 +28,6 @@ If `db pull --diff-engine pg-delta` reports `No schema changes found` but you ex
 PGDELTA_DEBUG=1 supabase db pull --db-url "$DATABASE_URL" --diff-engine pg-delta
 ```
 
-When pg-delta returns zero statements, the CLI writes a debug bundle under `supabase/.temp/pgdelta/debug/<timestamp>/`:
-
-- `source-catalog.json` — shadow database baseline pg-delta extracted
-- `target-catalog.json` — remote database pg-delta extracted
-- `pgdelta-stderr.txt` — pg-delta script diagnostics (statement count, schemas)
-- `connection.txt` — redacted connection metadata
-- `error.txt` — error summary
-
-Catalog files are not written during normal `db pull` runs. The `.temp/pgdelta` directory is also used by migration catalog caching (`db push`, local `db start`) when `[experimental.pgdelta] enabled = true`.
+When pg-delta returns zero statements, the CLI writes a debug bundle under `supabase/.temp/pgdelta/v2/debug/<timestamp>-diff/` containing the source/desired catalog snapshots, the plan, and coverage diagnostics. Catalog files are not written during normal `db pull` runs.
 
 For TLS tracing without disabling SSL, use `SUPABASE_SSL_DEBUG=true` alongside `PGDELTA_DEBUG=1`.

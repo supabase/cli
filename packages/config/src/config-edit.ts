@@ -95,6 +95,21 @@ export type ConfigEditOutcome =
     }
   | { readonly kind: "refused"; readonly refusal: ConfigEditRefusal };
 
+/**
+ * The `[remotes.<label>]` placement exception's two literals (this file's header comment,
+ * rule 4): a newly created remote block always lands at EOF, preceded by one blank line,
+ * with `project_id` written first. Named here rather than spelled inline at the sites that
+ * test them (`renderMissingTableCluster`, `planTomlSplices`) so the exception reads as one
+ * rule instead of four bare strings.
+ */
+const REMOTES_TABLE_NAME = "remotes";
+const REMOTE_PROJECT_ID_KEY = "project_id";
+
+/** A `[remotes.<label>]` block root — the one table this module places by a hardcoded rule. */
+function isRemotesLabelRoot(path: ReadonlyArray<string>): boolean {
+  return path.length === 2 && path[0] === REMOTES_TABLE_NAME;
+}
+
 // ---------------------------------------------------------------------------
 // Small generic helpers shared by both format arms.
 // ---------------------------------------------------------------------------
@@ -967,11 +982,10 @@ function renderMissingTableCluster(
 ): string {
   return entries
     .map((entry, index) => {
-      const isRemotesLabelRoot = entry.path.length === 2 && entry.path[0] === "remotes";
-      const orderedLeaves = isRemotesLabelRoot
+      const orderedLeaves = isRemotesLabelRoot(entry.path)
         ? [...entry.leaves].sort((a, b) => {
-            const aRank = lastSegmentOf(a.path) === "project_id" ? 0 : 1;
-            const bRank = lastSegmentOf(b.path) === "project_id" ? 0 : 1;
+            const aRank = lastSegmentOf(a.path) === REMOTE_PROJECT_ID_KEY ? 0 : 1;
+            const bRank = lastSegmentOf(b.path) === REMOTE_PROJECT_ID_KEY ? 0 : 1;
             return aRank - bRank;
           })
         : entry.leaves;
@@ -1115,8 +1129,7 @@ function planTomlSplices(scan: TomlScanResult, leaves: ReadonlyArray<LeafEdit>):
       continue;
     }
     const rootPath = rootEntry.path;
-    const isRemotesLabelRoot = rootPath.length === 2 && rootPath[0] === "remotes";
-    const offset = isRemotesLabelRoot
+    const offset = isRemotesLabelRoot(rootPath)
       ? scan.source.length
       : placementOffsetForNewTable(scan, rootPath);
     const text = renderMissingTableCluster(ordered, scan.newline);

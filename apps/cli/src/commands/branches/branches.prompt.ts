@@ -1,0 +1,100 @@
+import { styleText } from "node:util";
+
+import { Effect, Option } from "effect";
+
+import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
+import { mapHttpError } from "../../command-internal/http-errors.ts";
+import { Output } from "../../shared/output/output.service.ts";
+import { detectGitBranch } from "../../shared/git/git-branch.ts";
+import { Tty } from "../../shared/runtime/tty.service.ts";
+import {
+  BranchesBranchNameEmptyError,
+  BranchesBranchingDisabledError,
+  BranchesListNetworkError,
+  BranchesListUnexpectedStatusError,
+} from "./branches.errors.ts";
+
+const mapListError = mapHttpError({
+  networkError: BranchesListNetworkError,
+  statusError: BranchesListUnexpectedStatusError,
+  networkMessage: (cause) => `failed to list branch: ${cause}`,
+  statusMessage: (status, body) => `unexpected list branch status ${status}: ${body}`,
+});
+
+/**
+ * Prompts for a branch identifier when the positional `[name]` argument is
+ * omitted:
+ *
+ *   - Non-TTY: read from stdin via `Output.promptText`. The prompt label
+ *     includes the current git branch as a default when one is detected.
+ *     If the user enters an empty string and no git branch is available,
+ *     fail with "branch name cannot be empty".
+ *   - TTY: call the list endpoint; if empty, fail with "branching is disabled".
+ *     Otherwise present a `promptSelect` and write `"Selected branch ID: <ref>"`
+ *     to stderr (text mode only).
+ *
+ * Used by `get`, `update`, `pause`, `unpause`, `delete` whenever the positional
+ * `[name]` argument is omitted.
+ */
+export const promptBranchId = Effect.fnUntraced(function* (
+  input: Option.Option<string>,
+  projectRef: string,
+) {
+  if (Option.isSome(input) && input.value.length > 0) {
+    return input.value;
+  }
+
+  const tty = yield* Tty;
+  const output = yield* Output;
+
+  if (!tty.stdinIsTty) {
+    // Non-TTY path: read once from stdin, optionally with a git-branch default.
+    const gitBranch = yield* detectGitBranch();
+    const defaultBranch = Option.getOrElse(gitBranch, () => "");
+    // Established styling: the default is colorized (lipgloss color "14" maps
+    // to ANSI bright cyan; `styleText("cyan", ...)` is the closest faithful match).
+    const label =
+      defaultBranch.length > 0
+        ? `Enter the name of your branch (or leave blank to use ${styleText("cyan", defaultBranch)}): `
+        : "Enter the name of your branch: ";
+    const entered = yield* output
+      .promptText(label, { defaultValue: defaultBranch })
+      .pipe(Effect.orElseSucceed(() => ""));
+    const resolved = entered.length > 0 ? entered : defaultBranch;
+    if (resolved.length === 0) {
+      return yield* new BranchesBranchNameEmptyError({
+        message: "branch name cannot be empty",
+      });
+    }
+    return resolved;
+  }
+
+  // TTY path: list branches via the same endpoint as `branches list`, then
+  // present a select prompt keyed by branch ref.
+  const api = yield* CommandPlatformApi;
+  const branches = yield* api.v1
+    .listAllBranches({ ref: projectRef })
+    .pipe(Effect.catch(mapListError));
+  if (branches.length === 0) {
+    return yield* new BranchesBranchingDisabledError({
+      message: "branching is disabled",
+      // The command name is wrapped in lipgloss color "14" (ANSI cyan).
+      suggestion: `Create your first branch with: ${styleText("cyan", "supabase branches create")}`,
+    });
+  }
+
+  const options = branches.map((branch) => ({
+    value: branch.project_ref,
+    label: branch.name,
+    hint: branch.project_ref,
+  }));
+
+  const choice = yield* output
+    .promptSelect("Select a branch:", options)
+    .pipe(Effect.orElseSucceed(() => options[0]!.value));
+
+  if (output.format === "text") {
+    yield* output.raw(`Selected branch ID: ${choice}\n`, "stderr");
+  }
+  return choice;
+});

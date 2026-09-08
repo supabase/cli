@@ -270,7 +270,7 @@ describe("Output", () => {
         // (logout, migration fetch/repair/down, db push/reset, functions deploy
         // --prune, ...): Go's `recoverAndExit` prints only the red `context canceled`
         // line for `context.Canceled` (apps/cli-go/cmd/root.go:287-303) — CLI-1973.
-        yield* out.fail({ code: "LegacyLogoutCancelledError", message: CONTEXT_CANCELED_MESSAGE });
+        yield* out.fail({ code: "LogoutCancelledError", message: CONTEXT_CANCELED_MESSAGE });
         expect(writes).toEqual(["\x1B[31mcontext canceled\x1B[39m\n"]);
       }).pipe(
         Effect.provide(layer),

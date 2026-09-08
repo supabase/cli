@@ -4,11 +4,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const srcDir = fileURLToPath(new URL("../..", import.meta.url));
-const legacyDir = path.join(srcDir, "legacy");
 const sharedDir = path.join(srcDir, "shared");
-const legacyCommandsDir = path.join(legacyDir, "commands");
-const legacyDbBootstrapDir = path.join(legacyDir, "shared", "db-bootstrap");
-const legacyCliDir = path.join(legacyDir, "cli");
+const commandsDir = path.join(srcDir, "commands");
+const dbBootstrapDir = path.join(srcDir, "command-internal", "db-bootstrap");
+const cliDir = path.join(srcDir, "cli");
 const concernSlices = [
   path.join(sharedDir, "auth"),
   path.join(sharedDir, "config"),
@@ -62,7 +61,7 @@ describe("code structure", () => {
       for (const filePath of walk(sliceDir).filter(isSourceFile)) {
         for (const specifier of extractRelativeImports(filePath)) {
           const resolved = resolveImport(filePath, specifier);
-          if (resolved.startsWith(legacyCommandsDir) || resolved.startsWith(legacyCliDir)) {
+          if (resolved.startsWith(commandsDir) || resolved.startsWith(cliDir)) {
             violations.push(`${path.relative(srcDir, filePath)} -> ${specifier}`);
           }
         }
@@ -72,19 +71,19 @@ describe("code structure", () => {
     expect(violations).toEqual([]);
   });
 
-  it("prevents legacy commands from importing other legacy command internals", () => {
+  it("prevents commands from importing other command internals", () => {
     const violations: Array<string> = [];
 
-    for (const filePath of walk(legacyCommandsDir).filter(isSourceFile)) {
-      const relativeFile = path.relative(legacyCommandsDir, filePath);
+    for (const filePath of walk(commandsDir).filter(isSourceFile)) {
+      const relativeFile = path.relative(commandsDir, filePath);
       const currentCommand = relativeFile.split(path.sep)[0];
       for (const specifier of extractRelativeImports(filePath)) {
         const resolved = resolveImport(filePath, specifier);
-        if (!resolved.startsWith(legacyCommandsDir)) {
+        if (!resolved.startsWith(commandsDir)) {
           continue;
         }
 
-        const relativeTarget = path.relative(legacyCommandsDir, resolved);
+        const relativeTarget = path.relative(commandsDir, resolved);
         const targetCommand = relativeTarget.split(path.sep)[0];
         if (targetCommand !== currentCommand) {
           violations.push(`${path.relative(srcDir, filePath)} -> ${specifier}`);
@@ -95,13 +94,13 @@ describe("code structure", () => {
     expect(violations).toEqual([]);
   });
 
-  it("keeps legacy/shared/db-bootstrap independent from legacy commands", () => {
+  it("keeps command-internal/db-bootstrap independent from commands", () => {
     const violations: Array<string> = [];
 
-    for (const filePath of walk(legacyDbBootstrapDir).filter(isSourceFile)) {
+    for (const filePath of walk(dbBootstrapDir).filter(isSourceFile)) {
       for (const specifier of extractRelativeImports(filePath)) {
         const resolved = resolveImport(filePath, specifier);
-        if (resolved.startsWith(legacyCommandsDir)) {
+        if (resolved.startsWith(commandsDir)) {
           violations.push(`${path.relative(srcDir, filePath)} -> ${specifier}`);
         }
       }

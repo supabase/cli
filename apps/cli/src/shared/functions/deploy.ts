@@ -15,11 +15,11 @@ import {
 import { Duration, Effect, Option, Schema } from "effect";
 import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import { legacyPromptYesNo } from "../legacy/legacy-prompt-yes-no.ts";
+import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
-import { legacyBold } from "../../legacy/shared/legacy-colors.ts";
-import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-env.ts";
+import { bold } from "../../command-internal/colors.ts";
+import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
 import { findGitRootPath } from "../git/git-root.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
@@ -88,8 +88,8 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   readonly supabaseDir: string;
   readonly dashboardUrl: string;
   /**
-   * `undefined` in `next`; the legacy shell injects
-   * `legacyFunctionsGoConfigCompat` so this file never imports `legacy/`
+   * `undefined` for library callers; the CLI injects
+   * `functionsGoConfigCompat` so this file never imports the command tree
    * directly — see {@link FunctionsGoConfigCompat}.
    */
   readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
@@ -101,8 +101,8 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
   /**
    * Optional shell-specific styling hooks. Both default to identity (plain
-   * text); the legacy shell injects Go's aqua/bold here so the next shell
-   * stays isolated from `legacy/`-specific rendering.
+   * text); the CLI injects Go's aqua/bold here so this shared module stays
+   * free of CLI-specific rendering.
    * - `styleIdentifier`: the project ref in the stdout success line.
    * - `styleEmphasis`: the slug in the stderr `Bundling Function:` line and
    *   the functions dir in the no-functions error.
@@ -288,12 +288,12 @@ function explicitBooleanFlag(
 }
 
 /**
- * Must stay in sync with `LEGACY_CLI_WORKDIR_LABEL`
- * (`legacy/shared/legacy-docker-ids.ts:95`) — same string literal, kept as a
- * separate copy here rather than imported to respect the `next`/`legacy`
- * isolation boundary (this file has no Go equivalent for the other two
- * labels either). Read back by `legacyCleanupStartSecrets` so a later
- * `stop`/`legacyRollbackStart` can reclaim this container's staged-secret
+ * Must stay in sync with `CLI_WORKDIR_LABEL`
+ * (`command-internal/docker-ids.ts:95`) — same string literal, kept as a
+ * separate copy here rather than imported so `shared/` does not depend on the
+ * command tree (this file has no Go equivalent for the other two
+ * labels either). Read back by `cleanupStartSecrets` so a later
+ * `stop`/`rollbackStart` can reclaim this container's staged-secret
  * directory using its OWN workdir rather than the caller's cwd.
  */
 export const dockerWorkdirLabel = "com.supabase.cli.workdir";
@@ -1405,7 +1405,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
   } = options;
   const output = yield* Output;
   // Go: `fmt.Fprintln(os.Stderr, "Bundling Function:", utils.Bold(slug))`
-  // (`internal/functions/deploy/bundle.go:30`) — the legacy handler injects
+  // (`internal/functions/deploy/bundle.go:30`) — the handler injects
   // the bold styling via `styleEmphasis`; next stays plain.
   yield* output.raw(`Bundling Function: ${styleEmphasis(config.slug)}\n`, "stderr");
 
@@ -2261,14 +2261,14 @@ const pruneFunctions = Effect.fnUntraced(function* (
 
   // Go's `confirmPruneAll` + `fmt.Sprintln` (`deploy.go:189,206-212`): header, one
   // ` • <bold slug>` line per function, and a trailing blank line before the
-  // `[y/N]` choices. Routed through `legacyPromptYesNo` (Go `PromptYesNo(msg,
+  // `[y/N]` choices. Routed through `promptYesNo` (Go `PromptYesNo(msg,
   // false)`, `console.go:64-82`) so `--yes`/`SUPABASE_YES` auto-confirms with the
   // stderr echo and a non-TTY stdin honors a piped `y`/`n` answer (CLI-1974).
   const prompt = `${[
     "Do you want to delete the following Functions from your project?",
-    ...toDelete.map((slug) => ` • ${legacyBold(slug)}`),
+    ...toDelete.map((slug) => ` • ${bold(slug)}`),
   ].join("\n")}\n\n`;
-  const confirmed = yield* legacyPromptYesNo(output, yes, prompt, false);
+  const confirmed = yield* promptYesNo(output, yes, prompt, false);
   if (!confirmed) {
     return yield* Effect.fail(
       new FunctionDeployCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
@@ -2334,7 +2334,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     // `@supabase/config` merges the matching `[remotes.*]` block over the base
     // config (Go's `loadFromFile` with `Config.ProjectId` set), so the resolved
     // config already reflects any remote function/edge_runtime overrides.
-    // In the legacy shell this also runs the same `Config.Validate`/dotenv/
+    // In the CLI this also runs the same `Config.Validate`/dotenv/
     // env-override pipeline `start`/`stop`/`status` already go through — see
     // `functions-config.ts`. Go: `flags.LoadConfig` runs before validating any
     // slug (`deploy.go:22-28`), so this must precede the loop below too — an
@@ -2372,6 +2372,12 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     const configFunctions = yield* inferFunctionsManifest({
       cwd: dependencies.projectRoot,
       config: deployConfig,
+      // Matches `loadFunctionsCliConfig`'s own options above (`search: false,
+      // tomlOnly: true` for the CLI): no ancestor directory is
+      // searched past `dependencies.projectRoot` for EITHER load, so they can
+      // never resolve two different projects (same rationale as
+      // `start.handler.ts`'s equivalent call).
+      search: dependencies.goConfigCompat === undefined,
     });
     const configDeclaredFunctions = deployConfig?.functions ?? {};
     const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);
@@ -2386,7 +2392,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
         new NoFunctionsToDeployError({
           // Go: `errors.Errorf("No Functions specified or found in %s",
           // utils.Bold(utils.FunctionsDir))` (`internal/functions/deploy/deploy.go:35`) —
-          // the legacy handler injects the bold styling via `styleEmphasis`. Styling is
+          // the handler injects the bold styling via `styleEmphasis`. Styling is
           // text-mode only: in `--output-format json`/`stream-json` this message lands in
           // the structured error payload, which must stay free of ANSI escapes.
           message: `No Functions specified or found in ${
@@ -2446,14 +2452,14 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
           // "never touched" distinction `resolveDockerNetworkMode` needs to
           // decide whether `SUPABASE_NETWORK_ID` applies — see that
           // function's own doc comment. `SUPABASE_NETWORK_ID` (env or
-          // project dotenv) is legacy-shell-only — same Go-viper-parity gate
-          // as `context.projectEnvValues` itself (`undefined` in `next`).
+          // project dotenv) is CLI-only — same Go-viper-parity gate
+          // as `context.projectEnvValues` itself (`undefined` for library callers).
           const networkMode = resolveDockerNetworkMode({
             explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
             envOverride:
               context.projectEnvValues === undefined
                 ? undefined
-                : legacyViperEnvStringWithProjectFallback(
+                : viperEnvStringWithProjectFallback(
                     "SUPABASE_NETWORK_ID",
                     context.projectEnvValues,
                   ),
@@ -2482,7 +2488,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     if (output.format === "text") {
       // Go: `fmt.Printf("Deployed Functions on project %s: %s\n",
       // utils.Aqua(flags.ProjectRef), strings.Join(slugs, ", "))`
-      // (`internal/functions/deploy/deploy.go:70`) — the legacy handler injects
+      // (`internal/functions/deploy/deploy.go:70`) — the handler injects
       // the aqua styling via `styleIdentifier` (stdout-bound, so its TTY gate
       // must check stdout); next stays plain. Go joins the raw `slugs` list, not
       // the deduped set, so `functions deploy foo foo` prints "foo, foo".

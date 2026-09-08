@@ -32,8 +32,8 @@ const REQUEST_TIMEOUT_MS = 10_000;
 interface FeedbackClientOptions {
   readonly environment: FeedbackEnvironment;
   /**
-   * Injectable transport. Production wires the legacy debug/DoH fetch
-   * (`legacyFeedbackFetch` in `feedback.layers.ts`) so `--debug` and
+   * Injectable transport. Production wires the debug/DoH fetch
+   * (`feedbackFetch` in `feedback.layers.ts`) so `--debug` and
    * `--dns-resolver https` apply; hermetic tests inject a recording fake.
    */
   readonly fetch?: typeof globalThis.fetch;
@@ -41,8 +41,8 @@ interface FeedbackClientOptions {
 
 // Profile → feedback environment, mirroring how the Management API url follows
 // the resolved profile: staging profiles post to the staging project, with a
-// production fallback for unknown and YAML-file profiles (`legacy-profile.ts`).
-export function legacyFeedbackEnvironment(profile: string): FeedbackEnvironment {
+// production fallback for unknown and YAML-file profiles (`profile-file.ts`).
+export function feedbackEnvironment(profile: string): FeedbackEnvironment {
   switch (profile) {
     case "supabase-staging":
     case "supabase-local":

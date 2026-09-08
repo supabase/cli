@@ -1,0 +1,130 @@
+# Side-effect Documentation Template
+
+> **What is this file?**
+> Every command must include a `SIDE_EFFECTS.md` in its command directory.
+> It documents all observable behavior of the command: files touched, API calls made,
+> environment variables consumed, and exit codes. This is the source of truth for
+> the command's side effects, and the primary input to the E2E compatibility test
+> suite.
+>
+> **How to use this template:**
+> Copy this file to `src/commands/<command>/SIDE_EFFECTS.md` (or
+> `src/commands/<command>/<subcommand>/SIDE_EFFECTS.md` for subcommands).
+> Fill in every section. Use `—` for "none" rather than leaving a section empty.
+> See `src/commands/orgs/list/SIDE_EFFECTS.md` for a complete example.
+
+---
+
+# `supabase <command> [subcommand]`
+
+<!-- Replace the heading above with the exact CLI invocation, e.g. `supabase orgs list` -->
+
+## Files Read
+
+<!-- List every file the command reads, in the order it reads them.
+     Path notation: use ~ for $HOME, ./ for CWD-relative paths.
+     Format: the file encoding / structure (plain text, JSON, TOML, …).
+     When: the condition under which this file is read (e.g. "always", "when --flag is set",
+     "when SUPABASE_ACCESS_TOKEN is not set"). -->
+
+| Path                              | Format                    | When                                                       |
+| --------------------------------- | ------------------------- | ---------------------------------------------------------- |
+| `~/.supabase/access-token`        | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
+| `<workdir>/.supabase/config.json` | JSON                      | always, to resolve linked project ref                      |
+
+## Files Written
+
+<!-- List every file the command creates or modifies.
+     Use the same notation as Files Read.
+     Include the file mode (permissions) if non-default. -->
+
+| Path | Format | When |
+| ---- | ------ | ---- |
+| —    | —      | —    |
+
+## API Routes
+
+<!-- List every Management API or other HTTP route called.
+     Auth: describe the auth mechanism (e.g. "Bearer token from credentials").
+     Request body: JSON shape or "none".
+     Response: the fields your handler actually uses (not the full schema). -->
+
+| Method | Path                | Auth         | Request body | Response (used fields) |
+| ------ | ------------------- | ------------ | ------------ | ---------------------- |
+| `GET`  | `/v1/some-resource` | Bearer token | none         | `[{id, name}]`         |
+
+## Environment Variables
+
+<!-- List every env var the command reads, directly or via a service.
+     Required?: "yes" / "no (falls back to …)" -->
+
+| Variable                | Purpose                                              | Required?                                               |
+| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)  |
+
+## Exit Codes
+
+<!-- Cover every distinct exit path: success, expected errors, unexpected errors. -->
+
+| Code | Condition                             |
+| ---- | ------------------------------------- |
+| `0`  | success                               |
+| `1`  | API error (non-2xx response)          |
+| `1`  | authentication error (no token found) |
+| `1`  | network / connection failure          |
+
+## Telemetry Events Fired
+
+<!-- List every PostHog event the command emits, including the universal cli_command_executed.
+     If the command is still a Phase 0 proxy, write "proxy — see Go binary" and leave
+     the table empty; the Go subprocess fires telemetry. For a still-wrapped command, grep
+     its Go source under apps/cli-go/internal/<command>/*.go for `service.Capture`,
+     `service.Alias`, `service.Identify`, `service.GroupIdentify`, `TrackUpgradeSuggested`
+     (apps/cli-go now contains only the residual wrapped-command subset; for an
+     already-ported command, check out commit 7b469f5b3 to grep its former Go source instead).
+     Constants live in apps/cli/src/shared/telemetry/event-catalog.ts. -->
+
+| Event                  | When                                       | Notable properties / groups         |
+| ---------------------- | ------------------------------------------ | ----------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
+
+## Output
+
+<!-- Describe the user-visible output for each --output-format mode.
+     The E2E compatibility suite verifies text-mode output exactly.
+     json / stream-json output is additive but must be documented. -->
+
+### `--output-format text`
+
+<!-- Describe stdout exactly: table headers, row format, trailing newline, etc. -->
+
+```
+ ID                                    NAME
+ xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  My Org
+```
+
+### `--output-format json`
+
+<!-- The argument to output.success() — a single JSON object or array emitted on stdout. -->
+
+```json
+[{ "id": "…", "name": "…" }]
+```
+
+### `--output-format stream-json`
+
+<!-- NDJSON events. Typically: one or more `log` events during the operation,
+     followed by a `result` event on success or an `error` event on failure. -->
+
+```ndjson
+{"type":"result","data":[{"id":"…","name":"…"}]}
+```
+
+## Notes
+
+<!-- Anything else an implementer or reviewer needs to know:
+     - Behaviour differences between --local / --linked / --project-ref modes
+     - Idempotency characteristics
+     - Known divergences from Go CLI output that are intentional
+     - Side effects of retries or partial failures -->

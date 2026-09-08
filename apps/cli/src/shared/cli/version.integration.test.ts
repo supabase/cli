@@ -4,7 +4,7 @@ import { Effect, Layer } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import { fileURLToPath } from "node:url";
 import { vi } from "vitest";
-import { legacyRoot } from "../../legacy/cli/root.ts";
+import { rootCommand } from "../../cli/root.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { CliArgs } from "./cli-args.service.ts";
 
@@ -19,7 +19,7 @@ describe("CLI --version (text)", () => {
       BunServices.layer,
     );
 
-  test("legacy shell prints bare semver on stdout", async () => {
+  test("CLI prints bare semver on stdout", async () => {
     const logs: string[] = [];
     const spy = vi
       .spyOn(console, "log")
@@ -36,7 +36,7 @@ describe("CLI --version (text)", () => {
       // `Command.runWith` keeps handler/global-flag services in the effect type even when
       // `--version` exits early; only BunServices + CliOutput are needed at runtime here.
       await Effect.runPromise(
-        Command.runWith(legacyRoot, { version: "2.99.0-beta.1" })(["--version"]).pipe(
+        Command.runWith(rootCommand, { version: "2.99.0-beta.1" })(["--version"]).pipe(
           Effect.provide(versionLayer(["--version"])),
         ) as Effect.Effect<void>,
       );
