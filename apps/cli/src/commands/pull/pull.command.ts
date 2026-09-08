@@ -19,12 +19,20 @@ const config = {
     ),
     Flag.optional,
   ),
+  remoteLabel: Flag.string("remote-label").pipe(
+    Flag.withDescription(
+      "Name of the [remotes.*] block the config step writes into, overriding the block it would otherwise reuse or create.",
+    ),
+    Flag.optional,
+  ),
   dryRun: Flag.boolean("dry-run").pipe(
     Flag.withDescription("Show what would be pulled without writing or changing anything."),
     Flag.withDefault(false),
   ),
   force: Flag.boolean("force").pipe(
-    Flag.withDescription("Write even when supabase/config.toml has uncommitted changes in git."),
+    Flag.withDescription(
+      "Write even when supabase/config.toml (or config.json) has uncommitted changes in git.",
+    ),
     Flag.withDefault(false),
   ),
   withMigrationHistory: Flag.boolean("with-migration-history").pipe(
@@ -42,7 +50,9 @@ const legacyPullHandler = (flags: LegacyPullFlags) =>
     // `--project-ref` accepts branch names here (CLI-2167 vocabulary), so its
     // value is only safe to log verbatim when it is actually ref-shaped — a
     // user-created branch name must never reach PostHog. Same guard as
-    // `link`/`config diff`/`config pull`.
+    // `link`/`config diff`/`config pull`. `--remote-label` is a free-form,
+    // user-chosen string and is NEVER safe to log verbatim (mirrors
+    // `config pull`).
     withLegacyCommandInstrumentation({
       flags,
       safeFlags:

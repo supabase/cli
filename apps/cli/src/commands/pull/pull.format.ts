@@ -75,11 +75,21 @@ export function legacyPullSummaryMessage(aggregate: LegacyPullAggregate): string
 /** Longest `LegacyPullStepStatus` word (`"unchanged"`) — the status column's fixed width. */
 const LEGACY_PULL_STATUS_COLUMN_WIDTH = "unchanged".length;
 
+/**
+ * Strips control characters (CR/LF/tab) from a failure message before it is inlined into an
+ * aligned summary row (CWE-117) — a failure message can carry remote-controlled content (a
+ * function slug, an API response body) that would otherwise forge fake additional summary rows
+ * in text-mode output.
+ */
+function legacyPullSanitizeRowText(message: string): string {
+  return message.replace(/[\r\n\t]+/g, " ");
+}
+
 /** The representative detail shown on a step's summary row — its failure message, its skip
  *  reason, or the first written path (with a "+N more" suffix when there is more than one). */
 function legacyPullStepDetailText(result: LegacyPullStepResult): string {
   if (result.status === "failed") {
-    return result.failure?.message ?? "";
+    return legacyPullSanitizeRowText(result.failure?.message ?? "");
   }
   if (result.status === "skipped" && result.reason !== undefined) {
     return `(${result.reason})`;
@@ -118,6 +128,15 @@ export function legacyRenderPullSummary(aggregate: LegacyPullAggregate): string 
 }
 
 export interface LegacyPullConfirmMessageInput {
+  /** The resolved target project ref — named in the header line so the confirmation body says
+   *  which project/branch is about to be written to. */
+  readonly ref: string;
+  /** The branch name `--project-ref` resolved, when it named one; `undefined` for a ref-shaped
+   *  or linked-fallback target. */
+  readonly branch: string | undefined;
+  /** Workdir-relative config file path (e.g. `supabase/config.toml`), used both by the dirty
+   *  warning and anywhere else this body needs to name the actual file being written. */
+  readonly configPath: string;
   /** `config pull`'s own rendered diff body (`legacyRenderConfigPullText`), when there was
    *  anything to show; `undefined`/empty reads as "no config differences found". */
   readonly configDiffText: string | undefined;
@@ -137,29 +156,45 @@ export interface LegacyPullConfirmMessageInput {
  * machinery of their own, so they get one qualitative line each instead of a
  * real diff; migration history only gets a line when it will actually run
  * this invocation (see the confirmed bootstrap-auto-run decision, ADR 0024).
+ * The body's lines are ordered to match `LEGACY_PULL_STEP_ORDER` (config →
+ * migration_history → db → functions).
  */
 export function legacyPullConfirmMessage(input: LegacyPullConfirmMessageInput): string {
-  const lines: Array<string> = [];
+  const lines: Array<string> = [
+    input.branch === undefined
+      ? `Pulling from project ${input.ref}`
+      : `Pulling from project ${input.ref} (branch "${input.branch}")`,
+    "",
+  ];
+  // config
   if (input.configDiffText !== undefined && input.configDiffText.length > 0) {
     lines.push(input.configDiffText.trimEnd(), "");
   } else {
     lines.push("No config differences found.", "");
   }
-  lines.push(
-    "Pull the remote database schema into supabase/migrations (this also updates the remote migration history table).",
-  );
-  lines.push("Download every Edge Function's source into supabase/functions.");
+  // migration_history
   if (input.willFetchMigrationHistory) {
     const reason =
       input.migrationHistoryReason === "flag"
         ? "--with-migration-history was passed"
-        : "supabase/migrations is empty";
+        : "supabase/migrations has no migration files";
     lines.push(`Fetch the remote migration history table into supabase/migrations (${reason}).`);
+    if (input.migrationHistoryReason === "flag") {
+      lines.push(
+        "This overwrites existing files in supabase/migrations that share a name with a remote history entry.",
+      );
+    }
   }
+  // db
+  lines.push(
+    "Pull the remote database schema into supabase/migrations (also updates the remote migration history table; requires Docker).",
+  );
+  // functions
+  lines.push("Download every Edge Function's source into supabase/functions.");
   if (input.dirty) {
     lines.push(
       "",
-      "supabase/config.toml has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
+      `${input.configPath} has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.`,
     );
   }
   return `${lines.join("\n")}\n`;

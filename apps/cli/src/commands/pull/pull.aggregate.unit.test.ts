@@ -297,7 +297,7 @@ describe("legacyPullFunctionsStepResult", () => {
 });
 
 describe("legacyPullFailedStepResult", () => {
-  it("extracts message and suggestion from a real Cause.squash-produced tagged error", () => {
+  it("extracts message, suggestion, and code (the squashed cause's own _tag) from a real Cause.squash-produced tagged error", () => {
     const error = new LegacyDbPullMigrationConflictError({
       message: "remote migration history does not match local files",
       suggestion: "Run supabase migration repair to reconcile the history table.",
@@ -311,6 +311,7 @@ describe("legacyPullFailedStepResult", () => {
       failure: {
         message: "remote migration history does not match local files",
         suggestion: "Run supabase migration repair to reconcile the history table.",
+        code: "LegacyDbPullMigrationConflictError",
       },
     });
   });

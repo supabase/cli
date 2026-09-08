@@ -453,20 +453,35 @@ describe("legacyRenderPullSummary", () => {
 
 describe("legacyPullConfirmMessage", () => {
   const BASE: LegacyPullConfirmMessageInput = {
+    ref: PROJECT_REF,
+    branch: undefined,
+    configPath: "supabase/config.toml",
     configDiffText: undefined,
     willFetchMigrationHistory: false,
     migrationHistoryReason: undefined,
     dirty: false,
   };
 
+  it("names the target project in the header line", () => {
+    const message = legacyPullConfirmMessage(BASE);
+    expect(message.startsWith(`Pulling from project ${PROJECT_REF}\n\n`)).toBe(true);
+  });
+
+  it("names the branch in the header line when one is set", () => {
+    const message = legacyPullConfirmMessage({ ...BASE, branch: "staging" });
+    expect(message.startsWith(`Pulling from project ${PROJECT_REF} (branch "staging")\n\n`)).toBe(
+      true,
+    );
+  });
+
   it("reports 'no config differences' when configDiffText is undefined", () => {
     const message = legacyPullConfirmMessage(BASE);
-    expect(message.startsWith("No config differences found.\n\n")).toBe(true);
+    expect(message).toContain("No config differences found.\n\n");
   });
 
   it("reports 'no config differences' when configDiffText is an empty string", () => {
     const message = legacyPullConfirmMessage({ ...BASE, configDiffText: "" });
-    expect(message.startsWith("No config differences found.\n\n")).toBe(true);
+    expect(message).toContain("No config differences found.\n\n");
   });
 
   it("inlines a real config diff, trimming trailing whitespace, instead of the 'no differences' line", () => {
@@ -475,15 +490,13 @@ describe("legacyPullConfirmMessage", () => {
       configDiffText: "api.max_rows [update, write]\n  local:  500\n  remote: 1000\n\n\n",
     });
     expect(message).not.toContain("No config differences found.");
-    expect(
-      message.startsWith("api.max_rows [update, write]\n  local:  500\n  remote: 1000\n\n"),
-    ).toBe(true);
+    expect(message).toContain("api.max_rows [update, write]\n  local:  500\n  remote: 1000\n\n");
   });
 
   it("always describes the db and functions steps qualitatively, regardless of other inputs", () => {
     const message = legacyPullConfirmMessage(BASE);
     expect(message).toContain(
-      "Pull the remote database schema into supabase/migrations (this also updates the remote migration history table).",
+      "Pull the remote database schema into supabase/migrations (also updates the remote migration history table; requires Docker).",
     );
     expect(message).toContain("Download every Edge Function's source into supabase/functions.");
   });
@@ -510,14 +523,34 @@ describe("legacyPullConfirmMessage", () => {
     );
   });
 
-  it("names the empty-migrations bootstrap case when willFetchMigrationHistory is true for reason 'bootstrap'", () => {
+  it("adds the overwrite-disclosure line only when the migration-history fetch is due to '--with-migration-history' (reason 'flag')", () => {
+    const message = legacyPullConfirmMessage({
+      ...BASE,
+      willFetchMigrationHistory: true,
+      migrationHistoryReason: "flag",
+    });
+    expect(message).toContain(
+      "This overwrites existing files in supabase/migrations that share a name with a remote history entry.",
+    );
+  });
+
+  it("omits the overwrite-disclosure line for the bootstrap case (nothing to overwrite)", () => {
+    const message = legacyPullConfirmMessage({
+      ...BASE,
+      willFetchMigrationHistory: true,
+      migrationHistoryReason: "bootstrap",
+    });
+    expect(message).not.toContain("This overwrites existing files");
+  });
+
+  it("names the no-migration-files bootstrap case when willFetchMigrationHistory is true for reason 'bootstrap'", () => {
     const message = legacyPullConfirmMessage({
       ...BASE,
       willFetchMigrationHistory: true,
       migrationHistoryReason: "bootstrap",
     });
     expect(message).toContain(
-      "Fetch the remote migration history table into supabase/migrations (supabase/migrations is empty).",
+      "Fetch the remote migration history table into supabase/migrations (supabase/migrations has no migration files).",
     );
   });
 
@@ -528,7 +561,7 @@ describe("legacyPullConfirmMessage", () => {
       migrationHistoryReason: undefined,
     });
     expect(message).toContain(
-      "Fetch the remote migration history table into supabase/migrations (supabase/migrations is empty).",
+      "Fetch the remote migration history table into supabase/migrations (supabase/migrations has no migration files).",
     );
   });
 
@@ -544,21 +577,36 @@ describe("legacyPullConfirmMessage", () => {
     );
   });
 
-  it("composes a config diff, a bootstrap migration-history fetch, and the dirty warning together in one message", () => {
+  it("uses the actual configPath in the dirty-config warning, not a hardcoded supabase/config.toml", () => {
     const message = legacyPullConfirmMessage({
+      ...BASE,
+      configPath: "supabase/config.json",
+      dirty: true,
+    });
+    expect(message).toContain(
+      "supabase/config.json has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
+    );
+    expect(message).not.toContain("supabase/config.toml has uncommitted");
+  });
+
+  it("orders the body config → migration_history → db → functions, and composes a config diff, a bootstrap migration-history fetch, and the dirty warning together in one message", () => {
+    const message = legacyPullConfirmMessage({
+      ...BASE,
       configDiffText: "api.max_rows [update, write]\n  local:  500\n  remote: 1000",
       willFetchMigrationHistory: true,
       migrationHistoryReason: "bootstrap",
       dirty: true,
     });
     expect(message).toBe(
-      "api.max_rows [update, write]\n" +
+      `Pulling from project ${PROJECT_REF}\n` +
+        "\n" +
+        "api.max_rows [update, write]\n" +
         "  local:  500\n" +
         "  remote: 1000\n" +
         "\n" +
-        "Pull the remote database schema into supabase/migrations (this also updates the remote migration history table).\n" +
+        "Fetch the remote migration history table into supabase/migrations (supabase/migrations has no migration files).\n" +
+        "Pull the remote database schema into supabase/migrations (also updates the remote migration history table; requires Docker).\n" +
         "Download every Edge Function's source into supabase/functions.\n" +
-        "Fetch the remote migration history table into supabase/migrations (supabase/migrations is empty).\n" +
         "\n" +
         "supabase/config.toml has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.\n",
     );

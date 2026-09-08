@@ -7,6 +7,9 @@ export type LegacyPullStepStatus = "changed" | "unchanged" | "skipped" | "planne
 export interface LegacyPullStepFailure {
   readonly message: string;
   readonly suggestion?: string;
+  /** The squashed cause's own `_tag`, when it has one — lets a machine consumer of the JSON
+   *  payload classify a non-first (never re-failed) step failure without parsing `message`. */
+  readonly code?: string;
 }
 
 export interface LegacyPullStepResult {
@@ -24,8 +27,6 @@ export interface LegacyPullStepResult {
 
 export interface LegacyPullStepContext {
   readonly ref: string;
-  readonly branch: string | undefined;
-  readonly dryRun: boolean;
   readonly assumeYes: boolean;
 }
 

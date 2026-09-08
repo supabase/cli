@@ -65,14 +65,15 @@ each step's own documented "when" in its own `SIDE_EFFECTS.md`.
   (`legacyConfigFileHasUncommittedChanges`), but owned and called directly by `pull` itself, once,
   rather than delegated to `config pull`'s own guard (the config step's run-core,
   `legacyApplyConfigPullRun`, never runs a git check of its own). Skipped entirely when `--force`
-  is passed.
-- **Divergence from `config pull`'s own guard (ADR 0023 §c):** standalone `config pull` only spawns
-  `git status` when its plan actually has work AND never on `--dry-run`. `pull`'s own check runs
-  unconditionally whenever `--force` is not set — including on `--dry-run`, and even when the
-  config step itself has zero drift — because the aggregated confirmation covers three other steps
-  (migration history, db, functions) that may still have work regardless of whether the config file
-  is dirty or has any drift to pull. A dirty config file with nothing else to do still triggers this
-  spawn.
+  is passed, or when the config step's own plan has no work to write (`runPlan.hasWork` is
+  `false`) — see the next bullet.
+- **Aligned with `config pull`'s own guard (CLI-2064 bug A):** the spawn (and any resulting abort)
+  only happens when the config step actually has work to write. A converged config (nothing to
+  pull into the file) never spawns `git status` at all, so an uncommitted-but-otherwise-clean
+  config file never aborts a pull that was never going to touch it — even though the aggregated
+  confirmation also covers three other steps (migration history, db, functions) that may still
+  have work of their own: the dirty guard is scoped to the config file specifically, not to whether
+  `pull` as a whole has anything to do.
 - A dirty (or untracked) result changes behavior by output mode, identically to `config pull`: an
   interactive TTY text run without `--yes` downgrades the aggregated confirmation prompt's default
   answer from yes to no and adds a warning to the confirmation body; every other case — a
@@ -183,12 +184,21 @@ Pull summary — project <ref>
   functions           unchanged
 ```
 
-A `failed` step's row inlines its own failure message, even though only the FIRST original failure
-re-fails the process — so a later-listed step can still show `failed` with its own message even
-when an earlier step is the one whose cause actually exits the command non-zero. Before this
-summary, the confirmation body (config's own real diff, or "No config differences found.", plus one
-qualitative line per step that will run this invocation) is printed and the aggregated "Proceed
-with pull?" prompt is shown, unless `--yes` is set or the run is `--dry-run`/declined.
+A `failed` step's row inlines its own failure message (control characters stripped, so a
+remote-controlled message — a function slug, an API response body — cannot forge fake additional
+summary rows), even though only the FIRST original failure re-fails the process — so a
+later-listed step can still show `failed` with its own message even when an earlier step is the
+one whose cause actually exits the command non-zero.
+
+Before this summary, the confirmation body is always printed — on `--dry-run` too, not just a real
+run — starting with a header line naming the target (`Pulling from project <ref>`, or `Pulling
+from project <ref> (branch "<branch>")` when a branch is set), then one section per step in
+`LEGACY_PULL_STEP_ORDER` order (config's own real diff, or "No config differences found."; a
+migration-history line, only when that step will actually run this invocation, calling out that it
+overwrites same-named local files when the reason is `--with-migration-history` rather than the
+bootstrap case; a db line noting it also updates the remote migration history table and requires
+Docker; a functions line). The aggregated "Proceed with pull?" prompt follows, unless `--yes` is
+set or the run is `--dry-run`/declined.
 
 ### `--output-format json` / `stream-json`
 
@@ -234,7 +244,9 @@ Shape (`pull.format.ts`):
 }
 ```
 
-A `failed` step's own entry additionally carries `failure: { message, suggestion? }`. `steps.config
+A `failed` step's own entry additionally carries `failure: { message, suggestion?, code? }` — `code`
+is the squashed cause's own `_tag`, when it has one, so a machine consumer can classify a non-first
+(never re-failed) step's failure without parsing `message`. `steps.config
 .detail` is the config step's own machine payload verbatim (`config/pull/SIDE_EFFECTS.md` describes
 every field of it); the other three steps' `detail` shapes are `pull`-owned and narrower, as shown
 above.
@@ -258,10 +270,27 @@ the -o/--output flag is not supported by pull; use --output-format json|stream-j
   `supabase/migrations` directory db pull reconciles against) and the shared-terminal-progress
   constraint that also rules out concurrency.
 - **Migration history auto-runs on a fresh checkout**, even without `--with-migration-history`:
-  whenever `supabase/migrations` is missing or empty, the step runs anyway, since there is nothing
-  local to overwrite and a bootstrap checkout would otherwise hit `db pull`'s own hard failure when
-  the remote has history the local directory doesn't (`LegacyDbPullMigrationConflictError`).
-  `--with-migration-history` remains for forcing a re-fetch over an already-populated directory.
+  whenever `supabase/migrations` is missing, or a raw (unfiltered) directory listing of it is
+  empty, the step runs anyway, since there is nothing local to overwrite and a bootstrap checkout
+  would otherwise hit `db pull`'s own hard failure when the remote has history the local directory
+  doesn't (`LegacyDbPullMigrationConflictError`). This eligibility check is DELIBERATELY the same
+  raw-listing predicate `migration fetch`'s own overwrite-confirmation guard uses for "existing
+  files" (not the filtered, `MIGRATE_FILE_PATTERN`-matching count `legacyLoadLocalVersions`
+  produces for db/migration reconciliation elsewhere) — so a directory holding only a
+  `README.md`/`.gitkeep`/deprecated `_init.sql` reads as non-empty to both checks, never
+  auto-running the bootstrap case over files `migration fetch`'s own standalone guard would have
+  asked to confirm overwriting. `--with-migration-history` remains for forcing a re-fetch over an
+  already-populated directory — that case IS a real overwrite of same-named local files, and the
+  confirmation body says so.
+- **`--remote-label`** redirects the config step's write from the config root into a
+  `[remotes.<label>]` block, identically to `config pull`'s own flag of the same name (see
+  `config/pull/SIDE_EFFECTS.md`) — `pull` threads the flag's value straight through to
+  `legacyPlanConfigPullRun`'s `remoteLabel` parameter.
+- **A `db`-step failure classified as `LegacyDbPullMigrationConflictError`** (the remote migration
+  history doesn't match local files) gets one extra line appended to its `suggestion`, pointing at
+  `supabase pull --with-migration-history` as the more direct fix `pull` itself provides — on top
+  of that error's own built-in `supabase migration repair` commands. This is `pull`-only framing;
+  the underlying error class (shared with standalone `db pull`) is unchanged.
 - **Storage buckets are deliberately absent from this command in v1.** The Management API's bucket
   list endpoint (`v1ListAllBuckets`) does not return `file_size_limit`/`allowed_mime_types`/
   `objects_path`, so there is no faithful way to populate `storage.buckets` config from it

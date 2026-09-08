@@ -144,6 +144,7 @@ function stepLine(text: string, step: string): string {
 function pullFlags(overrides: Partial<LegacyPullFlags> = {}): LegacyPullFlags {
   return {
     projectRef: overrides.projectRef ?? Option.none(),
+    remoteLabel: overrides.remoteLabel ?? Option.none(),
     dryRun: overrides.dryRun ?? false,
     force: overrides.force ?? false,
     withMigrationHistory: overrides.withMigrationHistory ?? false,
@@ -1174,7 +1175,7 @@ describe("legacy pull integration", () => {
         });
         return Effect.gen(function* () {
           yield* runPull(pullFlags());
-          expect(out!.stdoutText).toContain("supabase/migrations is empty");
+          expect(out!.stdoutText).toContain("supabase/migrations has no migration files");
           expect(existsSync(join(migrationsDir(), "20260101000000_init.sql"))).toBe(true);
         }).pipe(Effect.provide(layer));
       },

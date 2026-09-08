@@ -207,6 +207,12 @@ function hasStringSuggestion(value: unknown): value is { readonly suggestion: st
   );
 }
 
+function hasStringTag(value: unknown): value is { readonly _tag: string } {
+  return (
+    typeof value === "object" && value !== null && "_tag" in value && typeof value._tag === "string"
+  );
+}
+
 /**
  * Duck-types a caught failure value (a plain `Error`, a tagged domain error,
  * or anything else `pull.handler.ts` extracts from a step's `Exit`) into a
@@ -228,6 +234,12 @@ function legacyPullFailureSuggestion(cause: unknown): string | undefined {
   return hasStringSuggestion(cause) && cause.suggestion.length > 0 ? cause.suggestion : undefined;
 }
 
+/** The squashed cause's own `_tag`, when it has one — a machine consumer's only way to classify
+ *  a non-first (never re-failed) step failure without parsing `message`. */
+function legacyPullFailureCode(cause: unknown): string | undefined {
+  return hasStringTag(cause) && cause._tag.length > 0 ? cause._tag : undefined;
+}
+
 /** Builds a `status: "failed"` result for `step` from an arbitrary caught value. */
 export function legacyPullFailedStepResult(
   step: LegacyPullStepId,
@@ -235,8 +247,12 @@ export function legacyPullFailedStepResult(
 ): LegacyPullStepResult {
   const message = legacyPullFailureMessage(cause);
   const suggestion = legacyPullFailureSuggestion(cause);
-  const failure: LegacyPullStepFailure =
-    suggestion === undefined ? { message } : { message, suggestion };
+  const code = legacyPullFailureCode(cause);
+  const failure: LegacyPullStepFailure = {
+    message,
+    ...(suggestion === undefined ? {} : { suggestion }),
+    ...(code === undefined ? {} : { code }),
+  };
   return { step, status: "failed", written: [], detail: {}, failure };
 }
 
