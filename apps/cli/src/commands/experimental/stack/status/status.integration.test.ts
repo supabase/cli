@@ -105,12 +105,11 @@ const runStatus = (options: {
   const inspectInputs: unknown[] = [];
   const api = Layer.succeed(LegacyExperimentalStackApi, {
     createStack: () => Effect.die("create must not run"),
-      findStack: (input) => {
-        findInputs.push(input);
-        return Effect.succeed(options.missingTarget ? Option.none() : Option.some(descriptor));
-      },
-      listStacks: () => Effect.succeed([]),
-      openStack: () => Effect.die("open must not run"),
+    findStack: (input) => {
+      findInputs.push(input);
+      return Effect.succeed(options.missingTarget ? Option.none() : Option.some(descriptor));
+    },
+    openStack: () => Effect.die("open must not run"),
     inspectStack: (_stackId, inspectOptions) => {
       inspectInputs.push(inspectOptions);
       if (options.missingTarget === true)
@@ -372,7 +371,6 @@ describe("experimental stack status", () => {
       createStack: () => Effect.die("create must not run"),
       findStack: () =>
         Effect.fail(new StackStateFormatUnsupportedError({ message: "discovery failed" })),
-      listStacks: () => Effect.succeed([]),
       openStack: () => Effect.die("open must not run"),
       inspectStack: () => Effect.die("inspect must not run"),
     });
