@@ -1,6 +1,7 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { experimentalStackStart } from "./start.handler.ts";
 
@@ -48,4 +49,5 @@ export const experimentalStackStartCommand = Command.make("start", config).pipe(
       withJsonErrorHandling,
     ),
   ),
+  Command.provide(commandRuntimeLayer(["experimental", "stack", "start"])),
 );

@@ -20,6 +20,7 @@ import {
   mockCommandSettings,
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
+import { mockContextualAnalytics, mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
 import {
   experimentalStackApiLayer,
   ExperimentalStackTargetError,
@@ -31,6 +32,7 @@ import { experimentalStackStart } from "./start.handler.ts";
 import { ExperimentalStackStartError } from "./start.errors.ts";
 import { experimentalStackStartCommand } from "./start.command.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
+import { CommandRuntime } from "../../../../shared/runtime/command-runtime.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import {
   actionability,
@@ -526,6 +528,41 @@ describe("experimental stack start targeting", () => {
 });
 
 describe("experimental stack start parser", () => {
+  it.live("records the wired command identity with a fresh run id per invocation", () => {
+    const root = project();
+    const analytics = mockContextualAnalytics();
+    const processControl = mockProcessControl();
+    const output = mockOutput();
+    const stack = fakeStack("e".repeat(64), () => Effect.succeed(status("e".repeat(64))));
+    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+    const command = experimentalStackStartCommand.pipe(
+      Command.provide(
+        Layer.mergeAll(setup.layer, output.layer, analytics.layer, processControl.layer),
+      ),
+    );
+    const run = Command.runWith(command, { version: "0.0.0-test" })([]);
+    const runtime = Layer.mergeAll(
+      BunServices.layer,
+      CliOutput.layer(textCliOutputFormatter()),
+      Layer.succeed(
+        CommandRuntime,
+        CommandRuntime.of({ commandPath: ["root"], commandRunId: "root-command-run-id" }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      yield* run.pipe(Effect.provide(runtime));
+      yield* run.pipe(Effect.provide(runtime));
+      const events = analytics.captured.filter((event) => event.event === "cli_command_executed");
+      expect(events).toHaveLength(2);
+      expect(events[0]?.properties.command).toBe("experimental stack start");
+      expect(events[1]?.properties.command).toBe("experimental stack start");
+      expect(events[0]?.properties.command_run_id).toBeDefined();
+      expect(events[1]?.properties.command_run_id).toBeDefined();
+      expect(events[0]?.properties.command_run_id).not.toBe(events[1]?.properties.command_run_id);
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+  });
+
   it.live("parses --stack and --runtime through the command", () => {
     let parsed: { stack: Option.Option<string>; runtime: string } | undefined;
     const command = experimentalStackStartCommand.pipe(
