@@ -23,6 +23,7 @@ import { legacyNetworkRestrictionsCommand } from "../commands/network-restrictio
 import { legacyOrgsCommand } from "../commands/orgs/orgs.command.ts";
 import { legacyPostgresConfigCommand } from "../commands/postgres-config/postgres-config.command.ts";
 import { legacyProjectsCommand } from "../commands/projects/projects.command.ts";
+import { legacyPullCommand } from "../commands/pull/pull.command.ts";
 import { legacySecretsCommand } from "../commands/secrets/secrets.command.ts";
 import { legacySeedCommand } from "../commands/seed/seed.command.ts";
 import { legacyServicesCommand } from "../commands/services/services.command.ts";
@@ -85,6 +86,7 @@ export const legacyRoot = Command.make("supabase").pipe(
     legacyOrgsCommand,
     legacyPostgresConfigCommand,
     legacyProjectsCommand,
+    legacyPullCommand,
     legacySecretsCommand,
     legacySeedCommand,
     legacyServicesCommand,

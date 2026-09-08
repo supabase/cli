@@ -5,7 +5,19 @@ import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
+  statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
+
+interface LegacyPullNetworkErrorArgs {
+  readonly message: string;
+  readonly decode?: boolean;
+}
+
+interface LegacyPullStatusErrorArgs {
+  readonly status: number;
+  readonly body: string;
+  readonly message: string;
+}
 
 /**
  * `--project-ref` target-resolution errors, minted the same way
@@ -39,6 +51,33 @@ export type LegacyPullParentRefInvalidError = InstanceType<typeof LegacyPullPare
 /** The resolved branch has no project ref yet (still provisioning). */
 export const LegacyPullBranchNotReadyError = pullTargetErrors.BranchNotReadyError;
 export type LegacyPullBranchNotReadyError = InstanceType<typeof LegacyPullBranchNotReadyError>;
+
+/**
+ * A transport/decode failure resolving a branch-shaped `--project-ref`
+ * (`GET`-by-UUID or `FIND`-by-name), mirroring `config diff`/`config pull`'s
+ * own `*BranchResolveNetworkError`.
+ */
+export class LegacyPullBranchResolveNetworkError extends Data.TaggedError(
+  "LegacyPullBranchResolveNetworkError",
+)<LegacyPullNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
+
+/**
+ * An unexpected HTTP status resolving a branch-shaped `--project-ref`,
+ * mirroring `config diff`/`config pull`'s own `*BranchResolveStatusError`.
+ */
+export class LegacyPullBranchResolveStatusError extends Data.TaggedError(
+  "LegacyPullBranchResolveStatusError",
+)<LegacyPullStatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 /**
  * The Go-compat global `-o/--output` flag was passed. `pull` is a net-new TS
