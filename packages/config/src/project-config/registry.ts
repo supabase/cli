@@ -378,8 +378,8 @@ const BINARY_ABBRS = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB
 /**
  * Port of Go's `fmt`-style `%.4g`: at most 4 significant digits, trailing
  * zeros removed, no exponent for the magnitudes `bytesSize` below produces
- * (scaled to `[0, 1024)`). Mirrors the legacy shell's `formatG4`
- * (`apps/cli/src/command-internal/legacy-size-units.ts:109-119`).
+ * (scaled to `[0, 1024)`). Mirrors the CLI's `formatG4`
+ * (`apps/cli/src/command-internal/size-units.ts:109-119`).
  */
 function formatSignificantDigits(value: number): string {
   if (value === 0) {
@@ -398,7 +398,7 @@ function formatSignificantDigits(value: number): string {
 /**
  * Formats a byte count as a `"<n><unit>"` string — `docker/go-units`'
  * `BytesSize`, ported at `apps/cli/src/command-internal/
- * legacy-size-units.ts:127-136` and used by the legacy shell's remote-apply
+ * size-units.ts:127-136` and used by the CLI's remote-apply
  * (`storage.sync.ts:214,223` via `bytesSize()`, kept numeric internally and
  * formatted only at TOML-render time — the legacy precedent for reproducing
  * this formatting here rather than just stringifying the byte count) to
@@ -438,7 +438,7 @@ const DIGIT_OR_DOT_OR_SPACE = "0123456789. ";
 
 /**
  * Port of `units.RAMInBytes`, replicated verbatim from
- * `apps/cli/src/command-internal/legacy-size-units.ts:32-102` — parses a
+ * `apps/cli/src/command-internal/size-units.ts:32-102` — parses a
  * human-readable RAM size (1024-based, case-insensitive, optional trailing
  * `b`) OR a bare decimal byte count (both spellings `../storage.ts:35-46`'s
  * `fileSizeLimit` schema accepts) into bytes. Throws on an unparseable

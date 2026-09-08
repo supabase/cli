@@ -2,9 +2,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Ref, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { LegacyImagePrepullError, legacyEnsureImagesCached } from "./image-prepull.ts";
+import { ImagePrepullError, ensureImagesCached } from "./image-prepull.ts";
 
-/** Matches the standing `mockSpawner` shape in `legacy-docker-lifecycle.unit.test.ts`, generalized to a per-call handler so each argv can respond differently (needed for "some images cached, others not"). */
+/** Matches the standing `mockSpawner` shape in `docker-lifecycle.unit.test.ts`, generalized to a per-call handler so each argv can respond differently (needed for "some images cached, others not"). */
 function mockSpawner(
   handler: (args: ReadonlyArray<string>) => { exitCode: number; stdout?: string; stderr?: string },
 ) {
@@ -48,7 +48,7 @@ function mockSpawner(
   };
 }
 
-describe("legacyEnsureImagesCached", () => {
+describe("ensureImagesCached", () => {
   it.live("dedupes images before resolving, returning original ref -> resolved URL", () => {
     const mock = mockSpawner((args) => {
       if (args[0] === "image" && args[1] === "inspect") {
@@ -66,7 +66,7 @@ describe("legacyEnsureImagesCached", () => {
       return { exitCode: 1 };
     });
 
-    return legacyEnsureImagesCached(mock.spawner, [
+    return ensureImagesCached(mock.spawner, [
       "supabase/postgres:15",
       "supabase/kong:3",
       "supabase/postgres:15",
@@ -125,7 +125,7 @@ describe("legacyEnsureImagesCached", () => {
         }),
       );
 
-      const resolved = yield* legacyEnsureImagesCached(spawner, ["supabase/a:1", "supabase/b:1"]);
+      const resolved = yield* ensureImagesCached(spawner, ["supabase/a:1", "supabase/b:1"]);
       expect(resolved.size).toBe(2);
     }),
   );
@@ -147,10 +147,10 @@ describe("legacyEnsureImagesCached", () => {
         return { exitCode: 1 };
       });
 
-      return legacyEnsureImagesCached(mock.spawner, ["supabase/a:1", "supabase/b:1"]).pipe(
+      return ensureImagesCached(mock.spawner, ["supabase/a:1", "supabase/b:1"]).pipe(
         Effect.flip,
         Effect.map((error) => {
-          expect(error).toBeInstanceOf(LegacyImagePrepullError);
+          expect(error).toBeInstanceOf(ImagePrepullError);
           expect(error.message).toContain("supabase/a:1");
           expect(error.message).toContain("supabase/b:1");
         }),
@@ -178,7 +178,7 @@ describe("legacyEnsureImagesCached", () => {
         return { exitCode: 1 };
       });
 
-      return legacyEnsureImagesCached(mock.spawner, ["supabase/a:1"]).pipe(
+      return ensureImagesCached(mock.spawner, ["supabase/a:1"]).pipe(
         Effect.flip,
         Effect.map((error) => {
           expect(error.message).toContain("Docker Desktop is a prerequisite for local development");
@@ -190,7 +190,7 @@ describe("legacyEnsureImagesCached", () => {
 
   it.live("resolves an empty map for an empty image list without spawning anything", () => {
     const mock = mockSpawner(() => ({ exitCode: 0 }));
-    return legacyEnsureImagesCached(mock.spawner, []).pipe(
+    return ensureImagesCached(mock.spawner, []).pipe(
       Effect.map((resolved) => {
         expect(resolved.size).toBe(0);
         expect(mock.spawned).toHaveLength(0);

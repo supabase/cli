@@ -11,7 +11,7 @@ import {
 // call site.
 // ---------------------------------------------------------------------------
 
-export class LegacyOrgsListNetworkError extends Data.TaggedError("LegacyOrgsListNetworkError")<{
+export class OrgsListNetworkError extends Data.TaggedError("OrgsListNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -22,8 +22,8 @@ export class LegacyOrgsListNetworkError extends Data.TaggedError("LegacyOrgsList
   }
 }
 
-export class LegacyOrgsListUnexpectedStatusError extends Data.TaggedError(
-  "LegacyOrgsListUnexpectedStatusError",
+export class OrgsListUnexpectedStatusError extends Data.TaggedError(
+  "OrgsListUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -34,7 +34,7 @@ export class LegacyOrgsListUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacyOrgsCreateNetworkError extends Data.TaggedError("LegacyOrgsCreateNetworkError")<{
+export class OrgsCreateNetworkError extends Data.TaggedError("OrgsCreateNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -45,8 +45,8 @@ export class LegacyOrgsCreateNetworkError extends Data.TaggedError("LegacyOrgsCr
   }
 }
 
-export class LegacyOrgsCreateUnexpectedStatusError extends Data.TaggedError(
-  "LegacyOrgsCreateUnexpectedStatusError",
+export class OrgsCreateUnexpectedStatusError extends Data.TaggedError(
+  "OrgsCreateUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -63,9 +63,7 @@ export class LegacyOrgsCreateUnexpectedStatusError extends Data.TaggedError(
 // encoder happily flattens the single object into `ID=… NAME=… SLUG=…`.
 // ---------------------------------------------------------------------------
 
-export class LegacyOrgsEnvNotSupportedError extends Data.TaggedError(
-  "LegacyOrgsEnvNotSupportedError",
-)<{
+export class OrgsEnvNotSupportedError extends Data.TaggedError("OrgsEnvNotSupportedError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

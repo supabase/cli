@@ -1,5 +1,5 @@
 /**
- * The pure tar-header walk behind {@link legacyValidatePgDataArchive}'s pre-restore check.
+ * The pure tar-header walk behind {@link validatePgDataArchive}'s pre-restore check.
  * Unit tests rather than integration ones because the interesting cases are all in the format
  * handling: chunk boundaries landing mid-header (or mid-MARKER-CONTENT), content that must be
  * stepped over rather than parsed, and bytes that are not a tar at all.
@@ -9,18 +9,18 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 
 import {
-  LEGACY_PGDATA_BASELINE_MARKER_ENTRY,
-  LEGACY_PGDATA_BASELINE_MARKER_NAME,
-  LEGACY_PGDATA_CLUSTER_ENTRY,
-  LEGACY_PGDATA_REQUIRED_ENTRIES,
-  legacyInitialTarScanState,
-  legacyPgDataBaselineMarkerContent,
-  legacyPgDataBaselineMarkerTar,
-  legacyScanTarChunkForEntries,
-  legacyTarScanCapturedText,
-  legacyTarScanFound,
-  legacyTarScanSettled,
-  type LegacyTarScanState,
+  PGDATA_BASELINE_MARKER_ENTRY,
+  PGDATA_BASELINE_MARKER_NAME,
+  PGDATA_CLUSTER_ENTRY,
+  PGDATA_REQUIRED_ENTRIES,
+  initialTarScanState,
+  pgDataBaselineMarkerContent,
+  pgDataBaselineMarkerTar,
+  scanTarChunkForEntries,
+  tarScanCapturedText,
+  tarScanFound,
+  tarScanSettled,
+  type TarScanState,
 } from "./pgdata-snapshot.ts";
 
 const BLOCK = 512;
@@ -77,36 +77,33 @@ const concat = (...parts: ReadonlyArray<Uint8Array>): Uint8Array => {
 const scan = (
   tar: Uint8Array,
   chunkSize: number,
-  required: ReadonlyArray<string> = LEGACY_PGDATA_REQUIRED_ENTRIES,
-  captureEntry: string | undefined = LEGACY_PGDATA_BASELINE_MARKER_ENTRY,
+  required: ReadonlyArray<string> = PGDATA_REQUIRED_ENTRIES,
+  captureEntry: string | undefined = PGDATA_BASELINE_MARKER_ENTRY,
 ) => {
-  let state: LegacyTarScanState = legacyInitialTarScanState(
+  let state: TarScanState = initialTarScanState(
     required,
     required.includes(captureEntry ?? "") ? captureEntry : undefined,
   );
   for (let offset = 0; offset < tar.length; offset += chunkSize) {
-    state = legacyScanTarChunkForEntries(state, tar.subarray(offset, offset + chunkSize));
-    if (legacyTarScanSettled(state)) break;
+    state = scanTarChunkForEntries(state, tar.subarray(offset, offset + chunkSize));
+    if (tarScanSettled(state)) break;
   }
   return {
     ...state,
-    found: legacyTarScanFound(state),
-    capturedText: legacyTarScanCapturedText(state),
+    found: tarScanFound(state),
+    capturedText: tarScanCapturedText(state),
   };
 };
 
 const KEY = "0011223344556677";
 
-const MARKER_ENTRY = tarEntry(
-  LEGACY_PGDATA_BASELINE_MARKER_ENTRY,
-  legacyPgDataBaselineMarkerContent(KEY),
-);
+const MARKER_ENTRY = tarEntry(PGDATA_BASELINE_MARKER_ENTRY, pgDataBaselineMarkerContent(KEY));
 
-describe("legacyScanTarChunkForEntries", () => {
+describe("scanTarChunkForEntries", () => {
   const pgdataTar = concat(
     tarEntry("data/", "", "5"),
     tarEntry("data/postgresql.conf", "listen_addresses = '*'\n"),
-    tarEntry(LEGACY_PGDATA_CLUSTER_ENTRY, "17\n"),
+    tarEntry(PGDATA_CLUSTER_ENTRY, "17\n"),
     MARKER_ENTRY,
     TAR_END,
   );
@@ -120,9 +117,7 @@ describe("legacyScanTarChunkForEntries", () => {
       const state = scan(pgdataTar, chunkSize);
       expect(state.found, `chunk size ${chunkSize}`).toBe(true);
       expect(state.malformed).toBe(false);
-      expect(state.capturedText, `chunk size ${chunkSize}`).toBe(
-        legacyPgDataBaselineMarkerContent(KEY),
-      );
+      expect(state.capturedText, `chunk size ${chunkSize}`).toBe(pgDataBaselineMarkerContent(KEY));
     }
   });
 
@@ -131,11 +126,8 @@ describe("legacyScanTarChunkForEntries", () => {
     // key each one actually vouches for.
     const other = concat(
       tarEntry("data/", "", "5"),
-      tarEntry(LEGACY_PGDATA_CLUSTER_ENTRY, "17\n"),
-      tarEntry(
-        LEGACY_PGDATA_BASELINE_MARKER_ENTRY,
-        legacyPgDataBaselineMarkerContent("ffffffff00000000"),
-      ),
+      tarEntry(PGDATA_CLUSTER_ENTRY, "17\n"),
+      tarEntry(PGDATA_BASELINE_MARKER_ENTRY, pgDataBaselineMarkerContent("ffffffff00000000")),
       TAR_END,
     );
     expect(scan(other, 512).found).toBe(true);
@@ -144,8 +136,8 @@ describe("legacyScanTarChunkForEntries", () => {
     // A marker member larger than the cap is left UNCAPTURED rather than buffered on the say-so of
     // an untrusted archive's own size field — "no content" is the safe verdict, never a match.
     const oversized = concat(
-      tarEntry(LEGACY_PGDATA_CLUSTER_ENTRY, "17\n"),
-      tarEntry(LEGACY_PGDATA_BASELINE_MARKER_ENTRY, "x".repeat(2048)),
+      tarEntry(PGDATA_CLUSTER_ENTRY, "17\n"),
+      tarEntry(PGDATA_BASELINE_MARKER_ENTRY, "x".repeat(2048)),
       TAR_END,
     );
     const state = scan(oversized, 512);
@@ -156,7 +148,7 @@ describe("legacyScanTarChunkForEntries", () => {
   it("stops at the last required entry without walking the rest of the archive", () => {
     // Everything after them is garbage: reaching it would settle `malformed` instead.
     const trailing = concat(
-      tarEntry(LEGACY_PGDATA_CLUSTER_ENTRY, "17\n"),
+      tarEntry(PGDATA_CLUSTER_ENTRY, "17\n"),
       MARKER_ENTRY,
       encoder.encode("x".repeat(2048)),
     );
@@ -168,13 +160,13 @@ describe("legacyScanTarChunkForEntries", () => {
     // exported before the platform baseline ran, would have. It must not pass.
     const bare = concat(
       tarEntry("data/", "", "5"),
-      tarEntry(LEGACY_PGDATA_CLUSTER_ENTRY, "17\n"),
+      tarEntry(PGDATA_CLUSTER_ENTRY, "17\n"),
       TAR_END,
     );
     const state = scan(bare, 512);
     expect(state.found).toBe(false);
     expect(state.ended).toBe(true);
-    expect([...state.missing]).toEqual([LEGACY_PGDATA_BASELINE_MARKER_ENTRY]);
+    expect([...state.missing]).toEqual([PGDATA_BASELINE_MARKER_ENTRY]);
     // ...and the same bytes DO pass once the marker is there, so nothing else about them is wrong.
     const stamped = concat(bare.subarray(0, bare.length - TAR_END.length), MARKER_ENTRY, TAR_END);
     expect(scan(stamped, 512).found).toBe(true);
@@ -182,7 +174,7 @@ describe("legacyScanTarChunkForEntries", () => {
 
   it("reports a valid but cluster-less archive as not found", () => {
     expect(scan(TAR_END, 512)).toMatchObject({ found: false, ended: true, malformed: false });
-    expect([...scan(TAR_END, 512).missing]).toEqual([...LEGACY_PGDATA_REQUIRED_ENTRIES]);
+    expect([...scan(TAR_END, 512).missing]).toEqual([...PGDATA_REQUIRED_ENTRIES]);
     const otherEntries = concat(tarEntry("data/base/1/2345", "rows"), TAR_END);
     expect(scan(otherEntries, 512)).toMatchObject({ found: false, ended: true });
   });
@@ -190,7 +182,7 @@ describe("legacyScanTarChunkForEntries", () => {
   it("never mistakes file content for a header", () => {
     // A member whose CONTENT is itself a valid `data/PG_VERSION` header — only the real member
     // list counts, so this archive must come back cluster-less.
-    const decoy = new TextDecoder().decode(tarEntry(LEGACY_PGDATA_CLUSTER_ENTRY, "17\n"));
+    const decoy = new TextDecoder().decode(tarEntry(PGDATA_CLUSTER_ENTRY, "17\n"));
     expect(scan(concat(tarEntry("data/decoy", decoy), TAR_END), 512).found).toBe(false);
   });
 
@@ -209,7 +201,7 @@ describe("legacyScanTarChunkForEntries", () => {
   });
 });
 
-describe("legacyPgDataBaselineMarkerTar", () => {
+describe("pgDataBaselineMarkerTar", () => {
   it("stamps the very entry the pre-restore scan requires, carrying its key", () =>
     Effect.runPromise(
       Effect.gen(function* () {
@@ -217,29 +209,25 @@ describe("legacyPgDataBaselineMarkerTar", () => {
         // they agree — on the entry name AND on the content encoding: `docker cp - <id>:<PGDATA>`
         // unpacks this archive's members RELATIVE to PGDATA, so its bare `SUPABASE_BASELINE`
         // member is what a later export tars up as `data/SUPABASE_BASELINE`.
-        const bytes = yield* legacyPgDataBaselineMarkerTar(KEY);
+        const bytes = yield* pgDataBaselineMarkerTar(KEY);
         const stamped = scan(
           bytes,
           512,
-          [LEGACY_PGDATA_BASELINE_MARKER_NAME],
-          LEGACY_PGDATA_BASELINE_MARKER_NAME,
+          [PGDATA_BASELINE_MARKER_NAME],
+          PGDATA_BASELINE_MARKER_NAME,
         );
         expect(stamped.found).toBe(true);
         // What the warm path compares against: the key this snapshot is published under, in the
         // one canonical form both halves go through.
-        expect(stamped.capturedText).toBe(legacyPgDataBaselineMarkerContent(KEY));
+        expect(stamped.capturedText).toBe(pgDataBaselineMarkerContent(KEY));
         // ...so a snapshot stamped with ANOTHER key does not read as this one's.
-        const otherKey = yield* legacyPgDataBaselineMarkerTar("ffffffff00000000");
+        const otherKey = yield* pgDataBaselineMarkerTar("ffffffff00000000");
         expect(
-          scan(
-            otherKey,
-            512,
-            [LEGACY_PGDATA_BASELINE_MARKER_NAME],
-            LEGACY_PGDATA_BASELINE_MARKER_NAME,
-          ).capturedText,
-        ).not.toBe(legacyPgDataBaselineMarkerContent(KEY));
+          scan(otherKey, 512, [PGDATA_BASELINE_MARKER_NAME], PGDATA_BASELINE_MARKER_NAME)
+            .capturedText,
+        ).not.toBe(pgDataBaselineMarkerContent(KEY));
         // Nothing else rides along — one member, so the stamp costs a couple of blocks.
-        expect(scan(bytes, 512, [LEGACY_PGDATA_BASELINE_MARKER_ENTRY]).found).toBe(false);
+        expect(scan(bytes, 512, [PGDATA_BASELINE_MARKER_ENTRY]).found).toBe(false);
       }),
     ));
 });

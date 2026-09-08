@@ -2,11 +2,11 @@ import { Option } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
-import { PROJECT_REF_PATTERN } from "../../config/legacy-project-ref.service.ts";
+import { PROJECT_REF_PATTERN } from "../../config/project-ref.service.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
-import { legacyLink } from "./link.handler.ts";
+import { managementApiRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
+import { link } from "./link.handler.ts";
 
 const config = {
   refOrBranch: Argument.string("ref-or-branch").pipe(
@@ -32,18 +32,18 @@ const config = {
   ),
 } as const;
 
-export type LegacyLinkFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type LinkFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 // Exported so integration tests can drive the exact wiring `Command.withHandler`
 // uses below, instead of re-asserting the generic instrumentation mechanism.
-export const legacyLinkHandler = (flags: LegacyLinkFlags) =>
-  legacyLink(flags).pipe(
+export const linkHandler = (flags: LinkFlags) =>
+  link(flags).pipe(
     // Only `--project-ref` is `markFlagTelemetrySafe` in Go (cmd/link.go:52).
     // The boolean `--skip-pooler` is logged verbatim regardless; `--password`
     // stays redacted. CLI-2167: `--project-ref` now also accepts a branch
     // name, so it's only safe to log verbatim when it's actually ref-shaped
     // — otherwise a user-created branch name would leak to PostHog verbatim.
-    withLegacyCommandInstrumentation({
+    withCommandTelemetry({
       flags,
       safeFlags:
         Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
@@ -53,7 +53,7 @@ export const legacyLinkHandler = (flags: LegacyLinkFlags) =>
     withJsonErrorHandling,
   );
 
-export const legacyLinkCommand = Command.make("link", config).pipe(
+export const linkCommand = Command.make("link", config).pipe(
   Command.withDescription("Link to a Supabase project."),
   Command.withShortDescription("Link to a Supabase project"),
   Command.withExamples([
@@ -66,6 +66,6 @@ export const legacyLinkCommand = Command.make("link", config).pipe(
       description: "Link to a branch of the currently linked project by name",
     },
   ]),
-  Command.withHandler(legacyLinkHandler),
-  Command.provide(legacyManagementApiRuntimeLayer(["link"])),
+  Command.withHandler(linkHandler),
+  Command.provide(managementApiRuntimeLayer(["link"])),
 );

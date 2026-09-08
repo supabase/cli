@@ -7,19 +7,19 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  LEGACY_DEFAULT_API_URL,
-  LEGACY_VALID_REF,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { LegacyProfileFlag } from "../../../shared/legacy/global-flags.ts";
+  buildTestRuntime,
+  DEFAULT_API_URL,
+  VALID_REF,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { ProfileFlag } from "../../../command-internal/global-flags.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
-import { legacySsoAdd } from "./add.handler.ts";
+import { ssoAdd } from "./add.handler.ts";
 
 const RESPONSE_PROVIDER = {
   id: "b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8",
@@ -30,7 +30,7 @@ const RESPONSE_PROVIDER = {
   domains: [{ domain: "example.com" }],
 };
 
-const tempRoot = useLegacyTempWorkdir("supabase-sso-add-int-");
+const tempRoot = useTempWorkdir("supabase-sso-add-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -50,7 +50,7 @@ interface SetupOpts {
    */
   cliArgs?: ReadonlyArray<string>;
   /**
-   * The Effect-parsed `--profile` value (`LegacyProfileFlag`), which the real
+   * The Effect-parsed `--profile` value (`ProfileFlag`), which the real
    * parser sets for any `--profile` it accepted. Tests whose `cliArgs` carry a
    * `--profile` the parser would have consumed must provide it, exactly as the
    * real CLI tree would.
@@ -89,15 +89,15 @@ function textResponse(
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const analytics = mockAnalytics();
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
 
   const status = opts.status ?? 201;
   const body = opts.body ?? RESPONSE_PROVIDER;
   const gate = opts.upgradeGate;
   const metadataUrlResponse = opts.metadataUrlResponse;
 
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     network: opts.network,
     handler: (request) => {
       const url = request.url;
@@ -109,12 +109,12 @@ function setup(opts: SetupOpts = {}) {
           textResponse(request, metadataUrlResponse.status, metadataUrlResponse.body),
         );
       }
-      if (url.endsWith(`/v1/projects/${LEGACY_VALID_REF}`)) {
+      if (url.endsWith(`/v1/projects/${VALID_REF}`)) {
         if (gate === undefined) return Effect.succeed(jsonResponse(request, 404, {}));
         return Effect.succeed(
           jsonResponse(request, 200, {
-            id: LEGACY_VALID_REF,
-            ref: LEGACY_VALID_REF,
+            id: VALID_REF,
+            ref: VALID_REF,
             organization_id: "org-id",
             organization_slug: "acme",
             name: "Test",
@@ -148,9 +148,9 @@ function setup(opts: SetupOpts = {}) {
     },
   });
 
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const layer = Layer.mergeAll(
-    buildLegacyTestRuntime({
+    buildTestRuntime({
       out,
       api: { layer: api.layer, httpClientLayer: api.httpClientLayer },
       cliSettings,
@@ -162,9 +162,7 @@ function setup(opts: SetupOpts = {}) {
     Stdio.layerTest({
       args: Effect.succeed(opts.cliArgs ?? ["sso", "add", "--type", "saml"]),
     }),
-    opts.profileFlag === undefined
-      ? Layer.empty
-      : Layer.succeed(LegacyProfileFlag, opts.profileFlag),
+    opts.profileFlag === undefined ? Layer.empty : Layer.succeed(ProfileFlag, opts.profileFlag),
   );
 
   return { layer, out, api, analytics, telemetry, cache };
@@ -219,14 +217,14 @@ function cliArgsFor(flags: typeof defaultFlags): ReadonlyArray<string> {
   return argv;
 }
 
-describe("legacy sso add integration", () => {
+describe("sso add integration", () => {
   it.live("POSTs to /v1/projects/{ref}/config/auth/sso/providers with type=saml", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoAdd(defaultFlags);
+      yield* ssoAdd(defaultFlags);
       const req = api.requests.find((r) => r.method === "POST");
       expect(req).toBeDefined();
-      expect(req?.url).toContain(`/v1/projects/${LEGACY_VALID_REF}/config/auth/sso/providers`);
+      expect(req?.url).toContain(`/v1/projects/${VALID_REF}/config/auth/sso/providers`);
       expect((req?.body as { type?: string })?.type).toBe("saml");
     }).pipe(Effect.provide(layer));
   });
@@ -248,7 +246,7 @@ describe("legacy sso add integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoAdd({
+          ssoAdd({
             ...defaultFlags,
             metadataFile: Option.some("/tmp/missing.xml"),
             metadataUrl: Option.some("https://idp.example.com/m"),
@@ -257,7 +255,7 @@ describe("legacy sso add integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoMutexFlagError");
+          expect(dump).toContain("SsoMutexFlagError");
           // Established mutual-exclusion error template: group in
           // declaration order, changed flags sorted alphabetically.
           expect(dump).toContain(
@@ -288,7 +286,7 @@ describe("legacy sso add integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoAdd({
+          ssoAdd({
             ...defaultFlags,
             metadataFile: Option.some(""),
             metadataUrl: Option.some("https://idp.example.com/m"),
@@ -297,7 +295,7 @@ describe("legacy sso add integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoMutexFlagError");
+          expect(dump).toContain("SsoMutexFlagError");
           expect(dump).toContain(
             "if any flags in the group [metadata-file metadata-url] are set none of the others can be; [metadata-file metadata-url] were all set",
           );
@@ -322,11 +320,11 @@ describe("legacy sso add integration", () => {
         cliArgs: ["sso", "add", "--type", "saml", "--metadata-file", "--metadata-url"],
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
+        const exit = yield* Effect.exit(ssoAdd(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoAddMetadataFileError");
+          expect(dump).toContain("SsoAddMetadataFileError");
           expect(dump).toContain("failed to open metadata file");
         }
         expect(api.requests.some((r) => r.method === "POST")).toBe(false);
@@ -362,7 +360,7 @@ describe("legacy sso add integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoAdd({
+          ssoAdd({
             ...defaultFlags,
             metadataFile: Option.some("file.xml"),
             metadataUrl: Option.some("https://idp.example.com/m"),
@@ -371,7 +369,7 @@ describe("legacy sso add integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacyInvalidProjectRefError");
+          expect(dump).toContain("InvalidProjectRefError");
           expect(dump).toContain("Invalid project ref format. Must be like");
         }
         expect(api.requests.some((r) => r.method === "POST")).toBe(false);
@@ -393,11 +391,11 @@ describe("legacy sso add integration", () => {
         cliArgs: ["sso", "add", "--domains", "--type", "saml"],
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
+        const exit = yield* Effect.exit(ssoAdd(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoAddRequiredFlagError");
+          expect(dump).toContain("SsoAddRequiredFlagError");
           expect(dump).toContain('required flag(s) \\"type\\" not set');
         }
         expect(api.requests.length).toBe(0);
@@ -425,7 +423,7 @@ describe("legacy sso add integration", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoAdd({
+        ssoAdd({
           ...defaultFlags,
           metadataFile: Option.some("a.xml"),
           metadataUrl: Option.some("https://idp.example.com/m"),
@@ -434,8 +432,8 @@ describe("legacy sso add integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoAddRequiredFlagError");
-        expect(dump).not.toContain("LegacySsoMutexFlagError");
+        expect(dump).toContain("SsoAddRequiredFlagError");
+        expect(dump).not.toContain("SsoMutexFlagError");
       }
       expect(api.requests.length).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -458,7 +456,7 @@ describe("legacy sso add integration", () => {
           "--type",
           "saml",
           "--project-ref",
-          LEGACY_VALID_REF,
+          VALID_REF,
           "--workdir",
           "--metadata-file",
           "missing.xml",
@@ -466,16 +464,16 @@ describe("legacy sso add integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoAdd({
+          ssoAdd({
             ...defaultFlags,
-            projectRef: Option.some(LEGACY_VALID_REF),
+            projectRef: Option.some(VALID_REF),
             metadataFile: Option.some("missing.xml"),
           }),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacyPflagWorkdirError");
+          expect(dump).toContain("PflagWorkdirError");
           expect(dump).toContain(
             "failed to change workdir: chdir --metadata-file: no such file or directory",
           );
@@ -505,7 +503,7 @@ describe("legacy sso add integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoAdd({
+          ssoAdd({
             ...defaultFlags,
             metadataFile: Option.some("a.xml"),
             metadataUrl: Option.some("https://idp.example.com/m"),
@@ -514,12 +512,12 @@ describe("legacy sso add integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacyPflagWorkdirError");
+          expect(dump).toContain("PflagWorkdirError");
           expect(dump).toContain(
             "failed to change workdir: chdir /nonexistent-sso-add-workdir: no such file or directory",
           );
-          expect(dump).not.toContain("LegacySsoAddRequiredFlagError");
-          expect(dump).not.toContain("LegacySsoMutexFlagError");
+          expect(dump).not.toContain("SsoAddRequiredFlagError");
+          expect(dump).not.toContain("SsoMutexFlagError");
         }
         expect(api.requests.length).toBe(0);
       }).pipe(Effect.provide(layer));
@@ -533,7 +531,7 @@ describe("legacy sso add integration", () => {
       cliArgs: ["sso", "add", "--type", "saml", "--workdir", tempRoot.current],
     });
     return Effect.gen(function* () {
-      yield* legacySsoAdd(defaultFlags);
+      yield* ssoAdd(defaultFlags);
       const req = api.requests.find((r) => r.method === "POST");
       expect((req?.body as { type?: string })?.type).toBe("saml");
     }).pipe(Effect.provide(layer));
@@ -547,7 +545,7 @@ describe("legacy sso add integration", () => {
       cliArgs: ["sso", "add", "-t", "saml"],
     });
     return Effect.gen(function* () {
-      yield* legacySsoAdd(defaultFlags);
+      yield* ssoAdd(defaultFlags);
       const req = api.requests.find((r) => r.method === "POST");
       expect((req?.body as { type?: string })?.type).toBe("saml");
     }).pipe(Effect.provide(layer));
@@ -563,7 +561,7 @@ describe("legacy sso add integration", () => {
         cliArgs: ["sso", "add", "-t", "saml", "--domains", "--type", "saml"],
       });
       return Effect.gen(function* () {
-        yield* legacySsoAdd(defaultFlags);
+        yield* ssoAdd(defaultFlags);
         const req = api.requests.find((r) => r.method === "POST");
         expect(req).toBeDefined();
         const body = req?.body as { type?: string; domains?: string[] };
@@ -587,11 +585,11 @@ describe("legacy sso add integration", () => {
         cliArgs: ["sso", "add", "--domains", "-t", "saml"],
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
+        const exit = yield* Effect.exit(ssoAdd(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoAddRequiredFlagError");
+          expect(dump).toContain("SsoAddRequiredFlagError");
           expect(dump).toContain('required flag(s) \\"type\\" not set');
         }
         expect(api.requests.length).toBe(0);
@@ -612,11 +610,11 @@ describe("legacy sso add integration", () => {
         cliArgs: ["sso", "add", "--type", "saml", "--type", "bogus"],
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
+        const exit = yield* Effect.exit(ssoAdd(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoInvalidFlagValueError");
+          expect(dump).toContain("SsoInvalidFlagValueError");
           expect(dump).toContain(
             'invalid argument \\"bogus\\" for \\"-t, --type\\" flag: must be one of [ saml ]',
           );
@@ -649,7 +647,7 @@ describe("legacy sso add integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoAdd({
+          ssoAdd({
             ...defaultFlags,
             skipUrlValidation: false, // Effect's first-wins parse
             metadataUrl: Option.some("https://idp.example.com/m"),
@@ -658,7 +656,7 @@ describe("legacy sso add integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacySsoInvalidFlagValueError");
+          expect(dump).toContain("SsoInvalidFlagValueError");
           expect(dump).toContain(
             'invalid argument \\"\\" for \\"--skip-url-validation\\" flag: strconv.ParseBool: parsing \\"\\": invalid syntax',
           );
@@ -688,7 +686,7 @@ describe("legacy sso add integration", () => {
         ],
       });
       return Effect.gen(function* () {
-        yield* legacySsoAdd({
+        yield* ssoAdd({
           ...defaultFlags,
           skipUrlValidation: false, // Effect's first-wins parse
           metadataUrl: Option.some("http://insecure.example.com/md"),
@@ -720,7 +718,7 @@ describe("legacy sso add integration", () => {
         ],
       });
       return Effect.gen(function* () {
-        yield* legacySsoAdd({
+        yield* ssoAdd({
           ...defaultFlags,
           nameIdFormat: Option.some(transient), // Effect's first-wins parse
         });
@@ -741,11 +739,11 @@ describe("legacy sso add integration", () => {
       cliArgs: ["sso", "add", "--type", "saml", "--domains"],
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
+      const exit = yield* Effect.exit(ssoAdd(defaultFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoFlagNeedsArgumentError");
+        expect(dump).toContain("SsoFlagNeedsArgumentError");
         expect(dump).toContain("flag needs an argument: --domains");
       }
       expect(api.requests.length).toBe(0);
@@ -765,7 +763,7 @@ describe("legacy sso add integration", () => {
         cliArgs: ["sso", "add", "--type", "saml", "--domains", "--metadata-file", "x.xml"],
       });
       return Effect.gen(function* () {
-        yield* legacySsoAdd({ ...defaultFlags, metadataFile: Option.some("x.xml") });
+        yield* ssoAdd({ ...defaultFlags, metadataFile: Option.some("x.xml") });
         const req = api.requests.find((r) => r.method === "POST");
         expect(req).toBeDefined();
         const body = req?.body as { domains?: string[]; metadata_xml?: string };
@@ -796,7 +794,7 @@ describe("legacy sso add integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoAdd({
+          ssoAdd({
             ...defaultFlags,
             nameIdFormat: Option.some("urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"),
           }),
@@ -808,7 +806,7 @@ describe("legacy sso add integration", () => {
           // Option — it is not a valid HTTPS URL, so the command fails before
           // any request, like Go. URL implementations do not consistently
           // include the rejected input in their exception text.
-          expect(dump).toContain("LegacySsoAddMetadataFileError");
+          expect(dump).toContain("SsoAddMetadataFileError");
           expect(dump).toContain("Use --skip-url-validation to suppress this error");
         }
         expect(api.requests.some((r) => r.method === "POST")).toBe(false);
@@ -824,7 +822,7 @@ describe("legacy sso add integration", () => {
       cliArgs: ["sso", "add", "--type", "saml", "--domains", '--x"y'],
     });
     return Effect.gen(function* () {
-      yield* legacySsoAdd({ ...defaultFlags, domains: ["fallback.example.com"] });
+      yield* ssoAdd({ ...defaultFlags, domains: ["fallback.example.com"] });
       const req = api.requests.find((r) => r.method === "POST");
       expect((req?.body as { domains?: string[] })?.domains).toEqual(["fallback.example.com"]);
     }).pipe(Effect.provide(layer));
@@ -838,7 +836,7 @@ describe("legacy sso add integration", () => {
       cliArgs: ["sso", "add", "--type", "saml", "--metadata-file", path],
     });
     return Effect.gen(function* () {
-      yield* legacySsoAdd({ ...defaultFlags, metadataFile: Option.some(path) });
+      yield* ssoAdd({ ...defaultFlags, metadataFile: Option.some(path) });
       const req = api.requests.find((r) => r.method === "POST");
       expect((req?.body as { metadata_xml?: string })?.metadata_xml).toContain("<md/>");
     }).pipe(Effect.provide(layer));
@@ -850,10 +848,10 @@ describe("legacy sso add integration", () => {
     const flags = { ...defaultFlags, metadataFile: Option.some(path) };
     const { layer } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoAdd(flags));
+      const exit = yield* Effect.exit(ssoAdd(flags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoAddMetadataFileError");
+        expect(JSON.stringify(exit.cause)).toContain("SsoAddMetadataFileError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -872,7 +870,7 @@ describe("legacy sso add integration", () => {
       ],
     });
     return Effect.gen(function* () {
-      yield* legacySsoAdd({
+      yield* ssoAdd({
         ...defaultFlags,
         metadataUrl: Option.some("https://idp.example.com/m"),
         skipUrlValidation: true,
@@ -895,7 +893,7 @@ describe("legacy sso add integration", () => {
       cliArgs: cliArgsFor(flags),
     });
     return Effect.gen(function* () {
-      yield* legacySsoAdd(flags);
+      yield* ssoAdd(flags);
       const req = api.requests.find((r) => r.method === "POST");
       expect((req?.body as { metadata_url?: string })?.metadata_url).toBe(
         "https://idp.example.com/m",
@@ -911,7 +909,7 @@ describe("legacy sso add integration", () => {
     };
     const { layer } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoAdd(flags));
+      const exit = yield* Effect.exit(ssoAdd(flags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
@@ -920,7 +918,7 @@ describe("legacy sso add integration", () => {
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
           error_category: "invalid_input",
           suggestion_type: "provide_flags",
-          error_fingerprint: "tag:LegacySsoAddMetadataFileError:invalid_url",
+          error_fingerprint: "tag:SsoAddMetadataFileError:invalid_url",
         });
       }
     }).pipe(Effect.provide(layer));
@@ -932,7 +930,7 @@ describe("legacy sso add integration", () => {
     const flags = { ...defaultFlags, attributeMappingFile: Option.some(path) };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoAdd(flags);
+      yield* ssoAdd(flags);
       const req = api.requests.find((r) => r.method === "POST");
       const mapping = (req?.body as { attribute_mapping?: { keys: { a: { default: number } } } })
         ?.attribute_mapping;
@@ -944,7 +942,7 @@ describe("legacy sso add integration", () => {
     const flags = { ...defaultFlags, domains: ["a.com", "b.com"] };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoAdd(flags);
+      yield* ssoAdd(flags);
       const req = api.requests.find((r) => r.method === "POST");
       expect((req?.body as { domains?: string[] })?.domains).toEqual(["a.com", "b.com"]);
     }).pipe(Effect.provide(layer));
@@ -953,7 +951,7 @@ describe("legacy sso add integration", () => {
   it.live("renders single-provider markdown in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoAdd(defaultFlags);
+      yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toContain("IDENTITY PROVIDER ID");
       expect(out.stdoutText).toContain(RESPONSE_PROVIDER.id);
     }).pipe(Effect.provide(layer));
@@ -962,7 +960,7 @@ describe("legacy sso add integration", () => {
   it.live("Go --output=env returns no output", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
-      yield* legacySsoAdd(defaultFlags);
+      yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -970,7 +968,7 @@ describe("legacy sso add integration", () => {
   it.live("Go --output=json encodes response verbatim", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
-      yield* legacySsoAdd(defaultFlags);
+      yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toContain(RESPONSE_PROVIDER.id);
     }).pipe(Effect.provide(layer));
   });
@@ -978,7 +976,7 @@ describe("legacy sso add integration", () => {
   it.live("TS --output-format=json emits success", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacySsoAdd(defaultFlags);
+      yield* ssoAdd(defaultFlags);
       expect(out.messages.some((m) => m.type === "success")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -986,10 +984,10 @@ describe("legacy sso add integration", () => {
   it.live("reports SAML-disabled error on 404", () => {
     const { layer } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
+      const exit = yield* Effect.exit(ssoAdd(defaultFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoAddSamlDisabledError");
+        expect(JSON.stringify(exit.cause)).toContain("SsoAddSamlDisabledError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -997,7 +995,7 @@ describe("legacy sso add integration", () => {
   it.live("fires cli_upgrade_suggested on 404 when entitlement is gated", () => {
     const { layer, analytics } = setup({ status: 404, body: {}, upgradeGate: "gated" });
     return Effect.gen(function* () {
-      yield* Effect.exit(legacySsoAdd(defaultFlags));
+      yield* Effect.exit(ssoAdd(defaultFlags));
       expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -1005,11 +1003,11 @@ describe("legacy sso add integration", () => {
   it.live("reports unexpected-status error on 500", () => {
     const { layer } = setup({ status: 500, body: { error: "boom" } });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
+      const exit = yield* Effect.exit(ssoAdd(defaultFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoAddUnexpectedStatusError");
+        expect(dump).toContain("SsoAddUnexpectedStatusError");
         expect(dump).toContain("Unexpected error adding identity provider");
       }
     }).pipe(Effect.provide(layer));
@@ -1018,7 +1016,7 @@ describe("legacy sso add integration", () => {
   it.live("flushes telemetry + linked-project cache on success and failure", () => {
     const { layer, telemetry, cache } = setup({ status: 500, body: {} });
     return Effect.gen(function* () {
-      yield* Effect.exit(legacySsoAdd(defaultFlags));
+      yield* Effect.exit(ssoAdd(defaultFlags));
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -1027,7 +1025,7 @@ describe("legacy sso add integration", () => {
   it.live("Go --output=yaml encodes response verbatim", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
-      yield* legacySsoAdd(defaultFlags);
+      yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toContain(RESPONSE_PROVIDER.id);
     }).pipe(Effect.provide(layer));
   });
@@ -1035,7 +1033,7 @@ describe("legacy sso add integration", () => {
   it.live("Go --output=toml encodes response verbatim", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
-      yield* legacySsoAdd(defaultFlags);
+      yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toContain(RESPONSE_PROVIDER.id);
     }).pipe(Effect.provide(layer));
   });
@@ -1046,7 +1044,7 @@ describe("legacy sso add integration", () => {
     const flags = { ...defaultFlags, attributeMappingFile: Option.some(path) };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoAdd(flags);
+      yield* ssoAdd(flags);
       const req = api.requests.find((r) => r.method === "POST");
       const mapping = (req?.body as { attribute_mapping?: { keys: { a: { default: number } } } })
         ?.attribute_mapping;
@@ -1065,11 +1063,11 @@ describe("legacy sso add integration", () => {
       cliArgs: cliArgsFor(flags),
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoAdd(flags));
+      const exit = yield* Effect.exit(ssoAdd(flags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoAddMetadataFileError");
+        expect(dump).toContain("SsoAddMetadataFileError");
         // Error tail is `… Use --skip-url-validation to suppress this error`
         // (no trailing period).
         expect(dump).toContain("Use --skip-url-validation to suppress this error");
@@ -1090,10 +1088,10 @@ describe("legacy sso add integration", () => {
     };
     const { layer } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoAdd(flags));
+      const exit = yield* Effect.exit(ssoAdd(flags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoAddMetadataFileError");
+        expect(JSON.stringify(exit.cause)).toContain("SsoAddMetadataFileError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1105,7 +1103,7 @@ describe("legacy sso add integration", () => {
     };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      yield* legacySsoAdd(flags);
+      yield* ssoAdd(flags);
       const req = api.requests.find((r) => r.method === "POST");
       expect((req?.body as { name_id_format?: string })?.name_id_format).toBe(
         "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
@@ -1119,10 +1117,10 @@ describe("legacy sso add integration", () => {
     const flags = { ...defaultFlags, attributeMappingFile: Option.some(path) };
     const { layer } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoAdd(flags));
+      const exit = yield* Effect.exit(ssoAdd(flags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoAddAttributeMappingFileError");
+        expect(JSON.stringify(exit.cause)).toContain("SsoAddAttributeMappingFileError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1170,7 +1168,7 @@ describe("legacy sso add integration", () => {
       // `sso add --type saml --domains --profile alternate.yml`: pflag hands
       // `--profile` to `--domains` and never marks profile changed, so viper
       // falls to SUPABASE_PROFILE — while the Effect parser read
-      // `alternate.yml` as the profile and built `LegacyCliSettings` from it.
+      // `alternate.yml` as the profile and built `CommandSettings` from it.
       // Binary-verified (the demonstrated divergent input, PR #5974 round 7):
       // Go POSTs `{"domains":["--profile"],"type":"saml"}` to the env
       // profile's api_url; the parsed file's host receives nothing.
@@ -1182,11 +1180,11 @@ describe("legacy sso add integration", () => {
         profileFlag: alternate,
       });
       return Effect.gen(function* () {
-        yield* legacySsoAdd(defaultFlags);
+        yield* ssoAdd(defaultFlags);
         const posts = api.requests.filter((r) => r.method === "POST");
         expect(posts.length).toBe(1);
         expect(posts[0]?.url).toBe(
-          `http://reconciled.example/v1/projects/${LEGACY_VALID_REF}/config/auth/sso/providers`,
+          `http://reconciled.example/v1/projects/${VALID_REF}/config/auth/sso/providers`,
         );
         expect((posts[0]?.body as { domains?: ReadonlyArray<string> })?.domains).toEqual([
           "--profile",
@@ -1219,7 +1217,7 @@ describe("legacy sso add integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoAdd({
+          ssoAdd({
             ...defaultFlags,
             metadataUrl: Option.some("https://idp.example.com/m"),
           }),
@@ -1227,7 +1225,7 @@ describe("legacy sso add integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacyProfileLoadError");
+          expect(dump).toContain("ProfileLoadError");
           expect(dump).toContain(`failed to read profile: Unsupported Config Type \\"\\"`);
         }
         expect(api.requests.length).toBe(0);
@@ -1247,11 +1245,11 @@ describe("legacy sso add integration", () => {
       profileFlag: first,
     });
     return Effect.gen(function* () {
-      yield* legacySsoAdd(defaultFlags);
+      yield* ssoAdd(defaultFlags);
       const posts = api.requests.filter((r) => r.method === "POST");
       expect(posts.length).toBe(1);
       expect(posts[0]?.url).toBe(
-        `http://second.example/v1/projects/${LEGACY_VALID_REF}/config/auth/sso/providers`,
+        `http://second.example/v1/projects/${VALID_REF}/config/auth/sso/providers`,
       );
     }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
   });
@@ -1278,7 +1276,7 @@ describe("legacy sso add integration", () => {
       });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySsoAdd({
+          ssoAdd({
             ...defaultFlags,
             metadataUrl: Option.some("https://idp.example.com/m"),
             metadataFile: Option.some("a.xml"),
@@ -1287,10 +1285,10 @@ describe("legacy sso add integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("LegacyProfileLoadError");
-          expect(dump).not.toContain("LegacyPflagWorkdirError");
-          expect(dump).not.toContain("LegacySsoAddRequiredFlagError");
-          expect(dump).not.toContain("LegacySsoMutexFlagError");
+          expect(dump).toContain("ProfileLoadError");
+          expect(dump).not.toContain("PflagWorkdirError");
+          expect(dump).not.toContain("SsoAddRequiredFlagError");
+          expect(dump).not.toContain("SsoMutexFlagError");
         }
         expect(api.requests.length).toBe(0);
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
@@ -1302,7 +1300,7 @@ describe("legacy sso add integration", () => {
     () => {
       // When the scan and the parser saw the same token (every normal
       // invocation), the reconciliation resolves to `none` and the POST
-      // targets `LegacyCliSettings.apiUrl` — the layer already loaded exactly
+      // targets `CommandSettings.apiUrl` — the layer already loaded exactly
       // the profile Go would.
       const agreed = writeProfileYaml("agreed.yml", "http://agreed.example");
       const restoreEnv = withProfileEnv(undefined);
@@ -1311,13 +1309,13 @@ describe("legacy sso add integration", () => {
         profileFlag: agreed,
       });
       return Effect.gen(function* () {
-        yield* legacySsoAdd(defaultFlags);
+        yield* ssoAdd(defaultFlags);
         const posts = api.requests.filter((r) => r.method === "POST");
         expect(posts.length).toBe(1);
         // The mock layer's apiUrl, NOT agreed.yml's — the layer is authoritative
         // when there is no scan/parser disagreement.
         expect(posts[0]?.url).toBe(
-          `${LEGACY_DEFAULT_API_URL}/v1/projects/${LEGACY_VALID_REF}/config/auth/sso/providers`,
+          `${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
         );
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
     },

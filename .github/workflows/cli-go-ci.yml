@@ -119,6 +119,12 @@ jobs:
           go-version-file: apps/cli-go/go.mod
           cache: true
 
+      # Regenerates from the committed api/v1-openapi.yaml snapshot, so this
+      # check is hermetic: it fails only when a pull request leaves pkg/api out
+      # of sync with the snapshot it was generated from. It deliberately does
+      # not compare against the live upstream spec -- doing so made unrelated
+      # pull requests fail together whenever staging drifted ahead of the
+      # committed snapshot. That drift is the API Sync workflow's job.
       - run: go generate
       - run: |
           if ! git diff --ignore-space-at-eol --exit-code --quiet pkg; then

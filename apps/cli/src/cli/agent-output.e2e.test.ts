@@ -9,10 +9,9 @@ function parseJsonLines(output: string): Array<unknown> {
     .map((line) => JSON.parse(line));
 }
 
-describe("legacy CLI agent output", () => {
+describe("CLI agent output", () => {
   test("formats parse errors as JSON for detected coding agents", async () => {
     const { exitCode, stdout, stderr } = await runSupabase(["definitely-not-a-command"], {
-      entrypoint: "legacy",
       env: { CODEX_SANDBOX: "1" },
     });
 
@@ -35,7 +34,6 @@ describe("legacy CLI agent output", () => {
     const { exitCode, stdout, stderr } = await runSupabase(
       ["--output-format", "text", "definitely-not-a-command"],
       {
-        entrypoint: "legacy",
         env: { CODEX_SANDBOX: "1" },
       },
     );
@@ -51,7 +49,6 @@ describe("legacy CLI agent output", () => {
     const { exitCode, stdout, stderr } = await runSupabase(
       ["--agent", "no", "definitely-not-a-command"],
       {
-        entrypoint: "legacy",
         env: { CODEX_SANDBOX: "1" },
       },
     );
@@ -66,7 +63,6 @@ describe("legacy CLI agent output", () => {
     const { exitCode, stdout, stderr } = await runSupabase(
       ["--agent", "yes", "definitely-not-a-command"],
       {
-        entrypoint: "legacy",
         env: {},
       },
     );
@@ -83,11 +79,9 @@ describe("legacy CLI agent output", () => {
 
   test("keeps built-in version and help in text mode for detected coding agents", async () => {
     const version = await runSupabase(["--version"], {
-      entrypoint: "legacy",
       env: { CODEX_SANDBOX: "1" },
     });
     const help = await runSupabase(["--help"], {
-      entrypoint: "legacy",
       env: { CODEX_SANDBOX: "1" },
     });
 

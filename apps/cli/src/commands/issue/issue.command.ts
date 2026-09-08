@@ -3,69 +3,67 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { browserLayer } from "../../shared/runtime/browser.layer.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
-import { legacyIssueBug, legacyIssueDocs, legacyIssueFeature } from "./issue.handler.ts";
+import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
+import { issueBug, issueDocs, issueFeature } from "./issue.handler.ts";
 
-const legacyIssueNoBrowserFlag = Flag.boolean("no-browser").pipe(
+const issueNoBrowserFlag = Flag.boolean("no-browser").pipe(
   Flag.withDescription("Print the issue form URL without opening a browser."),
   Flag.withDefault(false),
 );
 
-const legacyIssueOptionalTextFlag = (name: string, description: string) =>
+const issueOptionalTextFlag = (name: string, description: string) =>
   Flag.string(name).pipe(Flag.withDescription(description), Flag.optional);
 
-const legacyIssueCommonContextFlag = legacyIssueOptionalTextFlag(
+const issueCommonContextFlag = issueOptionalTextFlag(
   "additional-context",
   "Extra context to prefill on the issue form.",
 );
 
-const legacyIssueBugConfig = {
-  area: legacyIssueOptionalTextFlag("area", "Affected CLI area."),
-  command: legacyIssueOptionalTextFlag("command", "Command that failed."),
-  actualOutput: legacyIssueOptionalTextFlag("actual-output", "Actual output or error text."),
-  expectedBehavior: legacyIssueOptionalTextFlag("expected-behavior", "Expected behavior."),
-  reproduce: legacyIssueOptionalTextFlag("reproduce", "Steps to reproduce."),
-  crashReportId: legacyIssueOptionalTextFlag(
+const issueBugConfig = {
+  area: issueOptionalTextFlag("area", "Affected CLI area."),
+  command: issueOptionalTextFlag("command", "Command that failed."),
+  actualOutput: issueOptionalTextFlag("actual-output", "Actual output or error text."),
+  expectedBehavior: issueOptionalTextFlag("expected-behavior", "Expected behavior."),
+  reproduce: issueOptionalTextFlag("reproduce", "Steps to reproduce."),
+  crashReportId: issueOptionalTextFlag(
     "crash-report-id",
     "Crash report ID printed by --create-ticket.",
   ),
-  dockerServices: legacyIssueOptionalTextFlag(
+  dockerServices: issueOptionalTextFlag(
     "docker-services",
     "Relevant Docker service status or logs.",
   ),
-  additionalContext: legacyIssueCommonContextFlag,
-  noBrowser: legacyIssueNoBrowserFlag,
+  additionalContext: issueCommonContextFlag,
+  noBrowser: issueNoBrowserFlag,
 } as const;
 
-const legacyIssueFeatureConfig = {
+const issueFeatureConfig = {
   existingIssues: Flag.boolean("existing-issues").pipe(
     Flag.withDescription("Prefill the existing issues checklist."),
     Flag.withDefault(false),
   ),
-  area: legacyIssueOptionalTextFlag("area", "Affected CLI area."),
-  problem: legacyIssueOptionalTextFlag("problem", "Problem the feature should solve."),
-  proposedSolution: legacyIssueOptionalTextFlag("proposed-solution", "Proposed solution."),
-  alternatives: legacyIssueOptionalTextFlag("alternatives", "Alternatives considered."),
-  additionalContext: legacyIssueCommonContextFlag,
-  noBrowser: legacyIssueNoBrowserFlag,
+  area: issueOptionalTextFlag("area", "Affected CLI area."),
+  problem: issueOptionalTextFlag("problem", "Problem the feature should solve."),
+  proposedSolution: issueOptionalTextFlag("proposed-solution", "Proposed solution."),
+  alternatives: issueOptionalTextFlag("alternatives", "Alternatives considered."),
+  additionalContext: issueCommonContextFlag,
+  noBrowser: issueNoBrowserFlag,
 } as const;
 
-const legacyIssueDocsConfig = {
-  link: legacyIssueOptionalTextFlag("link", "Relevant documentation link."),
-  issueType: legacyIssueOptionalTextFlag("issue-type", "Documentation issue type."),
-  problem: legacyIssueOptionalTextFlag("problem", "What is confusing, missing, or incorrect."),
-  improvement: legacyIssueOptionalTextFlag("improvement", "Suggested documentation improvement."),
-  additionalContext: legacyIssueCommonContextFlag,
-  noBrowser: legacyIssueNoBrowserFlag,
+const issueDocsConfig = {
+  link: issueOptionalTextFlag("link", "Relevant documentation link."),
+  issueType: issueOptionalTextFlag("issue-type", "Documentation issue type."),
+  problem: issueOptionalTextFlag("problem", "What is confusing, missing, or incorrect."),
+  improvement: issueOptionalTextFlag("improvement", "Suggested documentation improvement."),
+  additionalContext: issueCommonContextFlag,
+  noBrowser: issueNoBrowserFlag,
 } as const;
 
-export type LegacyIssueBugFlags = CliCommand.Command.Config.Infer<typeof legacyIssueBugConfig>;
-export type LegacyIssueFeatureFlags = CliCommand.Command.Config.Infer<
-  typeof legacyIssueFeatureConfig
->;
-export type LegacyIssueDocsFlags = CliCommand.Command.Config.Infer<typeof legacyIssueDocsConfig>;
+export type IssueBugFlags = CliCommand.Command.Config.Infer<typeof issueBugConfig>;
+export type IssueFeatureFlags = CliCommand.Command.Config.Infer<typeof issueFeatureConfig>;
+export type IssueDocsFlags = CliCommand.Command.Config.Infer<typeof issueDocsConfig>;
 
-const legacyIssueBugCommand = Command.make("bug", legacyIssueBugConfig).pipe(
+const issueBugCommand = Command.make("bug", issueBugConfig).pipe(
   Command.withDescription("Open a GitHub bug report with local CLI details prefilled."),
   Command.withShortDescription("Open a bug report"),
   Command.withExamples([
@@ -80,13 +78,13 @@ const legacyIssueBugCommand = Command.make("bug", legacyIssueBugConfig).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyIssueBug(flags).pipe(withLegacyCommandInstrumentation({ flags }), withJsonErrorHandling),
+    issueBug(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["issue", "bug"])),
   Command.provide(browserLayer),
 );
 
-const legacyIssueFeatureCommand = Command.make("feature", legacyIssueFeatureConfig).pipe(
+const issueFeatureCommand = Command.make("feature", issueFeatureConfig).pipe(
   Command.withDescription("Open a GitHub feature request with useful context prefilled."),
   Command.withShortDescription("Open a feature request"),
   Command.withExamples([
@@ -97,16 +95,13 @@ const legacyIssueFeatureCommand = Command.make("feature", legacyIssueFeatureConf
     },
   ]),
   Command.withHandler((flags) =>
-    legacyIssueFeature(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
-      withJsonErrorHandling,
-    ),
+    issueFeature(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["issue", "feature"])),
   Command.provide(browserLayer),
 );
 
-const legacyIssueDocsCommand = Command.make("docs", legacyIssueDocsConfig).pipe(
+const issueDocsCommand = Command.make("docs", issueDocsConfig).pipe(
   Command.withDescription("Open a GitHub documentation issue with useful context prefilled."),
   Command.withShortDescription("Open a documentation issue"),
   Command.withExamples([
@@ -117,18 +112,14 @@ const legacyIssueDocsCommand = Command.make("docs", legacyIssueDocsConfig).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyIssueDocs(flags).pipe(withLegacyCommandInstrumentation({ flags }), withJsonErrorHandling),
+    issueDocs(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["issue", "docs"])),
   Command.provide(browserLayer),
 );
 
-export const legacyIssueCommand = Command.make("issue").pipe(
+export const issueCommand = Command.make("issue").pipe(
   Command.withDescription("Open Supabase CLI GitHub issue forms."),
   Command.withShortDescription("Open GitHub issue forms"),
-  Command.withSubcommands([
-    legacyIssueBugCommand,
-    legacyIssueFeatureCommand,
-    legacyIssueDocsCommand,
-  ]),
+  Command.withSubcommands([issueBugCommand, issueFeatureCommand, issueDocsCommand]),
 );

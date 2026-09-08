@@ -8,7 +8,7 @@
  */
 
 /** Remote region has not enabled vector buckets yet (`buckets.go:71-73`). */
-export function legacyIsVectorBucketsFeatureNotEnabled(message: string): boolean {
+export function isVectorBucketsFeatureNotEnabled(message: string): boolean {
   return message.includes("FeatureNotEnabled");
 }
 
@@ -17,7 +17,7 @@ export function legacyIsVectorBucketsFeatureNotEnabled(message: string): boolean
  * either it reports the vector service is not configured, or the `ListVectorBuckets`
  * route returns 404 (older local image without vector support).
  */
-export function legacyIsLocalVectorBucketsUnavailable(message: string): boolean {
+export function isLocalVectorBucketsUnavailable(message: string): boolean {
   return (
     message.includes("Vector service not configured") ||
     (message.includes("Error status 404:") &&

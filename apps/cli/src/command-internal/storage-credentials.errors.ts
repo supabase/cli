@@ -1,0 +1,77 @@
+import { Data } from "effect";
+
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../shared/telemetry/error-actionability.ts";
+
+/**
+ * Errors raised while deriving Storage connection credentials, shared by
+ * `seed buckets` and `storage ls/cp/mv/rm`.
+ *
+ * `StorageConfigError` covers the config-load-time validations run
+ * before the Storage API client is built (`auth.jwt_secret` length, an
+ * undecryptable `encrypted:` `auth.jwt_secret`/`auth.service_role_key` (or
+ * `SUPABASE_AUTH_*` override), Kong TLS cert/key pairing and readability, a
+ * malformed `SUPABASE_API_*` port/bool override, an enabled API whose resolved
+ * `api.port` is `0`, and an unreadable/malformed project dotenv file — see
+ * `resolveStorageCredentials`'s local branch, `resolveLocalApiConfig`, and
+ * `resolveLocalServiceRoleKey`).
+ * The remaining three mirror `tenant.GetApiKeys` failure
+ * modes on the `--linked` path.
+ */
+export class StorageConfigError extends Data.TaggedError("StorageConfigError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
+
+/**
+ * Raised on `--linked` when the project's api-keys response yields no keys,
+ * mirroring `tenant.GetApiKeys` → `errMissingKey` ("Anon key not found."),
+ * which aborts before the remote
+ * Storage client is built.
+ */
+export class StorageMissingApiKeyError extends Data.TaggedError("StorageMissingApiKeyError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // A 200 api-keys response with no usable key — an API response problem, not
+    // a raw status failure.
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+  }
+}
+
+/** Transport failure fetching the project's api-keys (`failed to get api keys: <cause>`). */
+export class StorageApiKeysNetworkError extends Data.TaggedError("StorageApiKeysNetworkError")<{
+  readonly message: string;
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
+
+/**
+ * `GET /v1/projects/{ref}/api-keys?reveal=true` returned a non-200 on a
+ * `--linked` run. Byte-matches `tenant.GetApiKeys` → `ErrAuthToken`,
+ * `"Authorization failed for the access token and project ref pair: " + body`.
+ */
+export class StorageAuthTokenError extends Data.TaggedError("StorageAuthTokenError")<{
+  readonly status: number;
+  readonly body: string;
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // The shared mapper wraps any non-200 in this tag; the status policy maps
+    // 401 → re-login, 404 → user-supplied ref not found, everything else →
+    // API status.
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}

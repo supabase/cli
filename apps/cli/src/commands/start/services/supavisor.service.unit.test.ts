@@ -1,16 +1,16 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
-  legacyBuildSupavisorContainerSpec,
-  legacyBuildSupavisorStartCmd,
-  type LegacySupavisorContainerSpecInput,
+  buildSupavisorContainerSpec,
+  buildSupavisorStartCmd,
+  type SupavisorContainerSpecInput,
 } from "./supavisor.service.ts";
 
 afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-const base: LegacySupavisorContainerSpecInput = {
+const base: SupavisorContainerSpecInput = {
   image: "supabase/supavisor:2.0.0",
   projectId: "proj",
   networkId: "supabase_network_proj",
@@ -26,9 +26,9 @@ const base: LegacySupavisorContainerSpecInput = {
   dbDatabase: "postgres",
 };
 
-describe("legacyBuildSupavisorStartCmd", () => {
+describe("buildSupavisorStartCmd", () => {
   test("reads the tenant script from the fixed secretFiles path and evals its content, never embedding it inline (CWE-214/522)", () => {
-    expect(legacyBuildSupavisorStartCmd()).toEqual([
+    expect(buildSupavisorStartCmd()).toEqual([
       "/bin/sh",
       "-c",
       '/app/bin/migrate && /app/bin/supavisor eval "$(cat /app/pooler_tenant.exs)" && /app/bin/server',
@@ -36,9 +36,9 @@ describe("legacyBuildSupavisorStartCmd", () => {
   });
 });
 
-describe("legacyBuildSupavisorContainerSpec", () => {
+describe("buildSupavisorContainerSpec", () => {
   test("Cmd only ever references the fixed /app/pooler_tenant.exs path, with no Entrypoint override (start.go:1201-1237)", () => {
-    const spec = legacyBuildSupavisorContainerSpec(base);
+    const spec = buildSupavisorContainerSpec(base);
     expect(spec.entrypoint).toBeUndefined();
     expect(spec.cmd).toEqual([
       "/bin/sh",
@@ -48,7 +48,7 @@ describe("legacyBuildSupavisorContainerSpec", () => {
   });
 
   test("carries the rendered pooler.exs tenant script as a secretFile bind-mounted at /app/pooler_tenant.exs, not a post-start docker exec (start.go:1201-1237)", () => {
-    const spec = legacyBuildSupavisorContainerSpec(base);
+    const spec = buildSupavisorContainerSpec(base);
     expect(spec.secretFiles).toHaveLength(1);
     const tenantFile = spec.secretFiles?.[0];
     expect(tenantFile?.containerPath).toBe("/app/pooler_tenant.exs");
@@ -63,19 +63,19 @@ describe("legacyBuildSupavisorContainerSpec", () => {
   });
 
   test("never leaks the tenant script (db_password included) into Cmd itself", () => {
-    const spec = legacyBuildSupavisorContainerSpec(base);
+    const spec = buildSupavisorContainerSpec(base);
     const cmdText = (spec.cmd ?? []).join(" ");
     expect(cmdText).not.toContain("secret");
     expect(cmdText).not.toContain("db_password");
   });
 
   test("uses the hardcoded pooler-dev tenant id, not a config-supplied value (config.go:465)", () => {
-    const spec = legacyBuildSupavisorContainerSpec(base);
+    const spec = buildSupavisorContainerSpec(base);
     expect(spec.secretFiles?.[0]?.content).toContain('"external_id" => "pooler-dev"');
   });
 
   test("binds the transaction port (6543) to the host when pool_mode is transaction (start.go:1194-1200)", () => {
-    const spec = legacyBuildSupavisorContainerSpec({ ...base, poolMode: "transaction" });
+    const spec = buildSupavisorContainerSpec({ ...base, poolMode: "transaction" });
     expect(spec.ports).toEqual([{ hostPort: "54329", containerPort: "6543" }]);
     expect(spec.exposedPorts).toEqual([
       { containerPort: "4000" },
@@ -85,12 +85,12 @@ describe("legacyBuildSupavisorContainerSpec", () => {
   });
 
   test("binds the session port (5432) to the host when pool_mode is session (start.go:1198-1199)", () => {
-    const spec = legacyBuildSupavisorContainerSpec({ ...base, poolMode: "session" });
+    const spec = buildSupavisorContainerSpec({ ...base, poolMode: "session" });
     expect(spec.ports).toEqual([{ hostPort: "54329", containerPort: "5432" }]);
   });
 
   test("sets the hardcoded local-dev secrets and both JWT env vars (start.go:1219-1232)", () => {
-    const spec = legacyBuildSupavisorContainerSpec(base);
+    const spec = buildSupavisorContainerSpec(base);
     expect(spec.env).toMatchObject({
       PORT: "4000",
       PROXY_PORT_SESSION: "5432",
@@ -109,7 +109,7 @@ describe("legacyBuildSupavisorContainerSpec", () => {
   });
 
   test("builds the remaining identity/network fields (start.go:1215-1263)", () => {
-    const spec = legacyBuildSupavisorContainerSpec(base);
+    const spec = buildSupavisorContainerSpec(base);
     expect(spec.image).toBe("supabase/supavisor:2.0.0");
     expect(spec.containerName).toBe("supabase_pooler_proj");
     expect(spec.binds).toEqual([]);
@@ -134,7 +134,7 @@ describe("legacyBuildSupavisorContainerSpec", () => {
 
   test("uses wget for the healthcheck on a slim pooler image", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const spec = legacyBuildSupavisorContainerSpec({
+    const spec = buildSupavisorContainerSpec({
       ...base,
       image: "ghcr.io/supabase/cli/pooler:v2.9.12",
     });

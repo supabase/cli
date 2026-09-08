@@ -2,14 +2,11 @@ import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { Duration, Effect, FileSystem, Option, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
-import { LegacyPlatformApi } from "../../auth/legacy-platform-api.service.ts";
-import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
-import {
-  LegacyProjectRefResolver,
-  PROJECT_REF_PATTERN,
-} from "../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
+import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
+import { CommandSettings } from "../../config/command-settings.service.ts";
+import { ProjectRefResolver, PROJECT_REF_PATTERN } from "../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { withAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
@@ -20,47 +17,44 @@ import {
   PropLinkedVia,
   PropParentProjectRef,
 } from "../../shared/telemetry/event-catalog.ts";
-import { legacyClassifyProjectLookupError } from "../../command-internal/legacy-branch-target.ts";
+import { classifyProjectLookupError } from "../../command-internal/branch-target.ts";
 import {
-  type LegacyCachedLinkedProject,
-  legacyParentNotLinkedMessage,
-  legacyParentRefInvalidMessage,
-  legacyParentRefTypoHint,
-  legacyParseCachedLinkedProject,
-  legacyResolveLinkedParentRef,
-} from "../../command-internal/legacy-parent-project-ref.ts";
-import { legacyDashboardUrl } from "../../command-internal/legacy-profile.ts";
-import { legacyMapTenantApiKeysError } from "../../command-internal/legacy-get-tenant-api-keys.ts";
+  type CachedLinkedProject,
+  parentNotLinkedMessage,
+  parentRefInvalidMessage,
+  parentRefTypoHint,
+  parseCachedLinkedProject,
+  resolveLinkedParentRef,
+} from "../../command-internal/parent-project-ref.ts";
+import { dashboardUrl } from "../../command-internal/profile.ts";
+import { mapTenantApiKeysError } from "../../command-internal/get-tenant-api-keys.ts";
+import { sanitizeInlineName, mapHttpError } from "../../command-internal/http-errors.ts";
+import { linkServicesCore } from "../../command-internal/link-services-core.ts";
+import { extractServiceKeys } from "../../command-internal/tenant-keys.ts";
+import { tempPaths } from "../../command-internal/temp-paths.ts";
 import {
-  legacySanitizeInlineName,
-  mapLegacyHttpError,
-} from "../../command-internal/legacy-http-errors.ts";
-import { legacyLinkServicesCore } from "../../command-internal/legacy-link-services-core.ts";
-import { legacyExtractServiceKeys } from "../../command-internal/legacy-tenant-keys.ts";
-import { legacyTempPaths } from "../../command-internal/legacy-temp-paths.ts";
-import {
-  LegacyLinkApiKeysNetworkError,
-  LegacyLinkAuthTokenError,
-  LegacyLinkBranchListNetworkError,
-  LegacyLinkBranchListStatusError,
-  LegacyLinkBranchNotFoundError,
-  LegacyLinkBranchNotLinkedError,
-  LegacyLinkBranchNotReadyError,
-  LegacyLinkMissingKeyError,
-  LegacyLinkParentRefInvalidError,
-  LegacyLinkProjectStatusError,
-  LegacyLinkProjectStatusNetworkError,
-  LegacyLinkRefArgConflictError,
-  LegacyProjectPausedError,
+  LinkApiKeysNetworkError,
+  LinkAuthTokenError,
+  LinkBranchListNetworkError,
+  LinkBranchListStatusError,
+  LinkBranchNotFoundError,
+  LinkBranchNotLinkedError,
+  LinkBranchNotReadyError,
+  LinkMissingKeyError,
+  LinkParentRefInvalidError,
+  LinkProjectStatusError,
+  LinkProjectStatusNetworkError,
+  LinkRefArgConflictError,
+  ProjectPausedError,
 } from "./link.errors.ts";
-import type { LegacyLinkFlags } from "./link.command.ts";
+import type { LinkFlags } from "./link.command.ts";
 
-type LegacyLinkBranches = typeof V1ListAllBranchesOutput.Type;
-type LegacyLinkBranch = LegacyLinkBranches[number];
+type LinkBranches = typeof V1ListAllBranchesOutput.Type;
+type LinkBranch = LinkBranches[number];
 
 /** Result of resolving a branch name/UUID to its project ref, threaded into the
  * machine payload (`branch`, `parent_project_ref`) alongside the plain ref. */
-interface LegacyLinkBranchResolution {
+interface LinkBranchResolution {
   readonly projectRef: string;
   readonly branchName: string;
   readonly parentRef: string;
@@ -69,45 +63,45 @@ interface LegacyLinkBranchResolution {
 // Classify a `getProject` failure: a 404 means the project is a branch (resolve
 // to `None`, link continues); any other status surfaces the body; transport
 // failures surface a network error.
-const classifyProjectError = legacyClassifyProjectLookupError({
-  statusError: LegacyLinkProjectStatusError,
-  networkError: LegacyLinkProjectStatusNetworkError,
+const classifyProjectError = classifyProjectLookupError({
+  statusError: LinkProjectStatusError,
+  networkError: LinkProjectStatusNetworkError,
   statusMessage: (_status, body) => `Unexpected error retrieving remote project status: ${body}`,
   networkMessage: (cause) => `failed to retrieve remote project status: ${String(cause)}`,
 });
 
 type WriteTempFile = (filePath: string, content: string) => Effect.Effect<void, PlatformError>;
 
-const mapApiKeysError = legacyMapTenantApiKeysError({
-  networkError: LegacyLinkApiKeysNetworkError,
-  statusError: LegacyLinkAuthTokenError,
+const mapApiKeysError = mapTenantApiKeysError({
+  networkError: LinkApiKeysNetworkError,
+  statusError: LinkAuthTokenError,
 });
 
-// Same reasoning + duration as `legacy-branch-target.ts`'s branch-lookup bound
-// (`LEGACY_BRANCH_LOOKUP_TIMEOUT`) — duplicated locally rather than
+// Same reasoning + duration as `branch-target.ts`'s branch-lookup bound
+// (`BRANCH_LOOKUP_TIMEOUT`) — duplicated locally rather than
 // shared across two otherwise-unrelated modules: the best-effort 404-path
 // stale-cache correlation lookup below must not let an otherwise-successful
 // `link` silently stall ~6 minutes at the very end on the generated client's
 // own 60s×5-retry defaults (PR #6168 review).
-const LEGACY_LINK_CACHE_CORRELATION_TIMEOUT = Duration.seconds(5);
+const LINK_CACHE_CORRELATION_TIMEOUT = Duration.seconds(5);
 
-const LEGACY_LINK_MAX_LISTED_BRANCHES = 20;
+const LINK_MAX_LISTED_BRANCHES = 20;
 
-function legacyLinkBranchNotFoundMessage(
+function linkBranchNotFoundMessage(
   value: string,
   parentRef: string,
-  branches: LegacyLinkBranches,
+  branches: LinkBranches,
 ): string {
   if (branches.length === 0) {
-    return `Branch "${value}" not found: project ${parentRef} has no branches.${legacyParentRefTypoHint(value)}`;
+    return `Branch "${value}" not found: project ${parentRef} has no branches.${parentRefTypoHint(value)}`;
   }
 
   const sortedNames = branches.map((branch) => branch.name).toSorted();
-  const shown = sortedNames.slice(0, LEGACY_LINK_MAX_LISTED_BRANCHES);
+  const shown = sortedNames.slice(0, LINK_MAX_LISTED_BRANCHES);
   const remaining = sortedNames.length - shown.length;
   // Branch names are API-provided; sanitize the same way response bodies are
   // before embedding them in an error message (module policy).
-  const shownSanitized = legacySanitizeInlineName(shown.join(", "));
+  const shownSanitized = sanitizeInlineName(shown.join(", "));
   const namesList =
     remaining > 0
       ? `${shownSanitized}, … (${remaining} more — run supabase branches list)`
@@ -118,11 +112,11 @@ function legacyLinkBranchNotFoundMessage(
   // Sanitized like the list above — an API-provided name must not be able to
   // inject ANSI/OSC/newline controls into the terminal (PR #6168 review).
   const didYouMean =
-    nearMiss !== undefined ? ` Did you mean "${legacySanitizeInlineName(nearMiss.name)}"?` : "";
+    nearMiss !== undefined ? ` Did you mean "${sanitizeInlineName(nearMiss.name)}"?` : "";
 
   return (
     `Branch "${value}" not found for project ${parentRef}. Available branches: ${namesList}` +
-    `${didYouMean}${legacyParentRefTypoHint(value)}`
+    `${didYouMean}${parentRefTypoHint(value)}`
   );
 }
 
@@ -138,32 +132,32 @@ function legacyLinkBranchNotFoundMessage(
  *
  * Deliberately uses the LIST endpoint (`GET /v1/projects/{ref}/branches`)
  * rather than `branches.resolver.ts`'s single-branch lookup
- * (`legacyResolveBranchProjectRef`, which calls `GET /v1/branches/{id}` for a
+ * (`resolveBranchProjectRef`, which calls `GET /v1/branches/{id}` for a
  * UUID or `GET /v1/projects/{ref}/branches/{name}` for a name): the full list
  * powers the available-branches error enrichment below, and — unlike that
  * resolver, which is handed an already-resolved `projectRef` by its caller —
  * `link` has to resolve the parent project itself first anyway.
  */
-const resolveLegacyLinkBranchRef = Effect.fnUntraced(function* (value: string) {
+const resolveLinkBranchRef = Effect.fnUntraced(function* (value: string) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
+  const api = yield* CommandPlatformApi;
 
-  const parent = yield* legacyResolveLinkedParentRef();
+  const parent = yield* resolveLinkedParentRef();
   if (parent.kind === "absent") {
     return yield* Effect.fail(
-      new LegacyLinkBranchNotLinkedError({ message: legacyParentNotLinkedMessage(value) }),
+      new LinkBranchNotLinkedError({ message: parentNotLinkedMessage(value) }),
     );
   }
   if (parent.kind === "invalid") {
     return yield* Effect.fail(
-      new LegacyLinkParentRefInvalidError({ message: legacyParentRefInvalidMessage(value) }),
+      new LinkParentRefInvalidError({ message: parentRefInvalidMessage(value) }),
     );
   }
   const parentRef = parent.ref;
 
-  const mapBranchListError = mapLegacyHttpError({
-    networkError: LegacyLinkBranchListNetworkError,
-    statusError: LegacyLinkBranchListStatusError,
+  const mapBranchListError = mapHttpError({
+    networkError: LinkBranchListNetworkError,
+    statusError: LinkBranchListStatusError,
     networkMessage: (cause) => `failed to list branches: ${cause}`,
     statusMessage: (status, body) =>
       status === 404
@@ -172,13 +166,13 @@ const resolveLegacyLinkBranchRef = Effect.fnUntraced(function* (value: string) {
   });
 
   const task = output.format === "text" ? yield* output.task("Resolving branch...") : undefined;
-  const branches: LegacyLinkBranches = yield* api.v1.listAllBranches({ ref: parentRef }).pipe(
+  const branches: LinkBranches = yield* api.v1.listAllBranches({ ref: parentRef }).pipe(
     Effect.tapError(() => task?.fail() ?? Effect.void),
     Effect.catch(mapBranchListError),
   );
   yield* task?.clear() ?? Effect.void;
 
-  const found: LegacyLinkBranch | undefined = branches.find(
+  const found: LinkBranch | undefined = branches.find(
     // UUID matching is case-insensitive (canonical branch ids are lowercase
     // hex, but uppercase input is a valid UUID spelling — PR #6168 review);
     // name matching stays exact, with the did-you-mean hint covering near misses.
@@ -186,35 +180,35 @@ const resolveLegacyLinkBranchRef = Effect.fnUntraced(function* (value: string) {
   );
   if (found === undefined) {
     return yield* Effect.fail(
-      new LegacyLinkBranchNotFoundError({
-        message: legacyLinkBranchNotFoundMessage(value, parentRef, branches),
+      new LinkBranchNotFoundError({
+        message: linkBranchNotFoundMessage(value, parentRef, branches),
       }),
     );
   }
 
   if (!PROJECT_REF_PATTERN.test(found.project_ref)) {
     return yield* Effect.fail(
-      new LegacyLinkBranchNotReadyError({
+      new LinkBranchNotReadyError({
         branch: found.name,
         status: found.status,
-        message: `Branch "${legacySanitizeInlineName(found.name)}" has no project ref yet (status: ${found.status}). Wait for it to finish provisioning, then retry.`,
+        message: `Branch "${sanitizeInlineName(found.name)}" has no project ref yet (status: ${found.status}). Wait for it to finish provisioning, then retry.`,
       }),
     );
   }
 
-  const line = `Resolved branch "${legacySanitizeInlineName(found.name)}" of project ${parentRef} to project ref ${found.project_ref}.`;
+  const line = `Resolved branch "${sanitizeInlineName(found.name)}" of project ${parentRef} to project ref ${found.project_ref}.`;
   yield* output.format === "text" ? output.raw(`${line}\n`, "stderr") : output.info(line);
 
   return { projectRef: found.project_ref, branchName: found.name, parentRef };
 });
 
-export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkFlags) {
+export const link = Effect.fn("link")(function* (flags: LinkFlags) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
-  const cliSettings = yield* LegacyCliSettings;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const api = yield* CommandPlatformApi;
+  const cliSettings = yield* CommandSettings;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
   const analytics = yield* Analytics;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -242,7 +236,7 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
 
     if (Option.isSome(refArg) && Option.isSome(projectRefFlag)) {
       return yield* Effect.fail(
-        new LegacyLinkRefArgConflictError({
+        new LinkRefArgConflictError({
           message:
             "Cannot use both the [ref-or-branch] argument and the --project-ref flag. Specify the project ref or branch name once.",
         }),
@@ -252,11 +246,11 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
     const requested = Option.isSome(refArg) ? refArg : projectRefFlag;
 
     // A ref-shaped value (20 lowercase letters) is always treated as a ref and
-    // never looked up as a branch name (see `resolveLegacyLinkBranchRef`).
+    // never looked up as a branch name (see `resolveLinkBranchRef`).
     const branchResolution =
       Option.isSome(requested) && !PROJECT_REF_PATTERN.test(requested.value)
-        ? Option.some(yield* resolveLegacyLinkBranchRef(requested.value))
-        : Option.none<LegacyLinkBranchResolution>();
+        ? Option.some(yield* resolveLinkBranchRef(requested.value))
+        : Option.none<LinkBranchResolution>();
 
     const resolvedRefOrBranch = Option.isSome(branchResolution)
       ? Option.some(branchResolution.value.projectRef)
@@ -264,7 +258,7 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
 
     const ref = yield* resolver.resolveForLink(resolvedRefOrBranch);
     resolvedRef = ref;
-    const paths = legacyTempPaths(path, cliSettings.workdir);
+    const paths = tempPaths(path, cliSettings.workdir);
 
     const writeTempFile: WriteTempFile = (filePath, content) =>
       fs
@@ -280,9 +274,9 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
       const status = project.value.status;
       if (status === "INACTIVE") {
         return yield* Effect.fail(
-          new LegacyProjectPausedError({
+          new ProjectPausedError({
             message: "project is paused",
-            suggestion: `An admin must unpause it from the Supabase dashboard at ${legacyDashboardUrl(
+            suggestion: `An admin must unpause it from the Supabase dashboard at ${dashboardUrl(
               cliSettings.profile,
             )}/project/${ref}`,
           }),
@@ -305,13 +299,13 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
     const keys = yield* api.v1
       .getProjectApiKeys({ ref, reveal: true })
       .pipe(Effect.catch(mapApiKeysError));
-    const { anon, serviceRole } = legacyExtractServiceKeys(keys);
+    const { anon, serviceRole } = extractServiceKeys(keys);
     if (anon.length === 0 && serviceRole.length === 0) {
-      return yield* Effect.fail(new LegacyLinkMissingKeyError({ message: "Anon key not found." }));
+      return yield* Effect.fail(new LinkMissingKeyError({ message: "Anon key not found." }));
     }
 
     // 3. Link services — best-effort, using the service-role key for tenant probes.
-    yield* legacyLinkServicesCore({
+    yield* linkServicesCore({
       ref,
       serviceKey: serviceRole,
       skipPooler: flags.skipPooler,
@@ -374,15 +368,15 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
       // 404 path: `ref` is a branch (assumed, or confirmed when
       // `branchResolution` resolved it by name/UUID). The plain-project arm
       // above never writes `linked-project.json` for THIS ref, and the
-      // post-run `LegacyLinkedProjectCache.cache(ref)` fill (`Effect.ensuring`
+      // post-run `LinkedProjectCache.cache(ref)` fill (`Effect.ensuring`
       // below) GETs `ref` itself — a branch ref 404s there too — so without
-      // this, the PARENT evidence `legacyResolveLinkedParentRef`'s chain
+      // this, the PARENT evidence `resolveLinkedParentRef`'s chain
       // depends on can be lost forever or silently go stale (PR #6168 review,
       // two confirmed gaps). Both arms are best-effort — `Effect.ignore` —
       // and never affect `link`'s own outcome.
       const cachedParent = yield* fs.readFileString(paths.linkedProjectCache).pipe(
-        Effect.map(legacyParseCachedLinkedProject),
-        Effect.orElseSucceed(() => Option.none<LegacyCachedLinkedProject>()),
+        Effect.map(parseCachedLinkedProject),
+        Effect.orElseSucceed(() => Option.none<CachedLinkedProject>()),
       );
 
       if (Option.isSome(branchResolution)) {
@@ -441,7 +435,7 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
         // only when a cache exists and diverges from `ref`; the plain
         // 404-ref path with no cache, or a cache that already agrees with
         // `ref`, needs no correlation. Hard-bounded
-        // (`LEGACY_LINK_CACHE_CORRELATION_TIMEOUT`).
+        // (`LINK_CACHE_CORRELATION_TIMEOUT`).
         // By this point the user has already seen the linking work happen
         // (service-link warnings, a resolved-branch line, ...), so a
         // successful link otherwise feels DONE right before this silently
@@ -450,7 +444,7 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
         const correlating =
           output.format === "text" ? yield* output.task("Checking branch parent...") : undefined;
         const verified = yield* api.v1.listAllBranches({ ref: cachedParent.value.ref }).pipe(
-          Effect.timeout(LEGACY_LINK_CACHE_CORRELATION_TIMEOUT),
+          Effect.timeout(LINK_CACHE_CORRELATION_TIMEOUT),
           Effect.map((branches) => branches.some((branch) => branch.project_ref === ref)),
           Effect.catch(() => Effect.succeed(false)),
           Effect.ensuring(correlating?.clear() ?? Effect.void),

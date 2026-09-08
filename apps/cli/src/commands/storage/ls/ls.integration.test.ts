@@ -3,14 +3,10 @@ import { Effect, Exit, Option } from "effect";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import {
-  LEGACY_VALID_REF,
-  legacyWithEnv,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { setupLegacyStorage } from "../../../../tests/helpers/legacy-storage.ts";
-import { legacyStorageLs } from "./ls.handler.ts";
-import type { LegacyStorageLsFlags } from "./ls.command.ts";
+import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
+import { setupStorage } from "../../../../tests/helpers/storage.ts";
+import { storageLs } from "./ls.handler.ts";
+import type { StorageLsFlags } from "./ls.command.ts";
 
 const BUCKET = "/storage/v1/bucket";
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
@@ -23,7 +19,7 @@ function writeAncestorConfig(root: string, toml: string): void {
 
 function lsFlags(
   opts: { path?: string; recursive?: boolean; local?: boolean } = {},
-): LegacyStorageLsFlags {
+): StorageLsFlags {
   // `local` drives routing (default true here — most tests use the local stack).
   return {
     path: opts.path === undefined ? Option.none() : Option.some(opts.path),
@@ -34,11 +30,11 @@ function lsFlags(
   };
 }
 
-describe("legacy storage ls", () => {
-  const tmp = useLegacyTempWorkdir("supabase-storage-ls-");
+describe("storage ls", () => {
+  const tmp = useTempWorkdir("supabase-storage-ls-");
 
   it.live("lists buckets at the root, filtered by the bucket prefix", () => {
-    const { layer, out } = setupLegacyStorage(tmp.current, {
+    const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       routes: [
@@ -53,7 +49,7 @@ describe("legacy storage ls", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageLs(lsFlags({ path: "ss:///te" })).pipe(
+      const exit = yield* storageLs(lsFlags({ path: "ss:///te" })).pipe(
         Effect.provide(layer),
         Effect.exit,
       );
@@ -64,7 +60,7 @@ describe("legacy storage ls", () => {
   });
 
   it.live("lists objects under a prefix, dirs get a trailing slash", () => {
-    const { layer, out } = setupLegacyStorage(tmp.current, {
+    const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       routes: [
@@ -79,7 +75,7 @@ describe("legacy storage ls", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageLs(lsFlags({ path: "ss:///bucket/" })).pipe(
+      const exit = yield* storageLs(lsFlags({ path: "ss:///bucket/" })).pipe(
         Effect.provide(layer),
         Effect.exit,
       );
@@ -90,7 +86,7 @@ describe("legacy storage ls", () => {
 
   it.live("paginates past PAGE_LIMIT and reports Loading page on stderr", () => {
     const page0 = Array.from({ length: 100 }, (_, i) => ({ name: `f${i}`, id: `${i}` }));
-    const { layer, out, requests } = setupLegacyStorage(tmp.current, {
+    const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       routes: [
@@ -99,7 +95,7 @@ describe("legacy storage ls", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageLs(lsFlags({ path: "ss:///bucket/dir/" })).pipe(
+      const exit = yield* storageLs(lsFlags({ path: "ss:///bucket/dir/" })).pipe(
         Effect.provide(layer),
         Effect.exit,
       );
@@ -115,7 +111,7 @@ describe("legacy storage ls", () => {
   });
 
   it.live("recursively walks nested dirs and reports an empty bucket", () => {
-    const { layer, out } = setupLegacyStorage(tmp.current, {
+    const { layer, out } = setupStorage(tmp.current, {
       local: true,
       toml: 'project_id = "test"\n',
       routes: [
@@ -147,7 +143,7 @@ describe("legacy storage ls", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageLs(lsFlags({ recursive: true })).pipe(
+      const exit = yield* storageLs(lsFlags({ recursive: true })).pipe(
         Effect.provide(layer),
         Effect.exit,
       );
@@ -161,12 +157,12 @@ describe("legacy storage ls", () => {
   });
 
   it.live("fails on an invalid url without any network call", () => {
-    const { layer, requests } = setupLegacyStorage(tmp.current, {
+    const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageLs(lsFlags({ path: "ss://bucket" })).pipe(
+      const exit = yield* storageLs(lsFlags({ path: "ss://bucket" })).pipe(
         Effect.provide(layer),
         Effect.exit,
       );
@@ -177,12 +173,12 @@ describe("legacy storage ls", () => {
   });
 
   it.live("surfaces a url-parse error (missing protocol scheme)", () => {
-    const { layer } = setupLegacyStorage(tmp.current, {
+    const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageLs(lsFlags({ path: ":" })).pipe(
+      const exit = yield* storageLs(lsFlags({ path: ":" })).pipe(
         Effect.provide(layer),
         Effect.exit,
       );
@@ -194,20 +190,20 @@ describe("legacy storage ls", () => {
   });
 
   it.live("propagates a 503 from the bucket service", () => {
-    const { layer } = setupLegacyStorage(tmp.current, {
+    const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       routes: [{ method: "GET", match: BUCKET, status: 503, body: { message: "unavailable" } }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("Error status 503");
     });
   });
 
   it.live("targets the linked project's Storage host and flushes telemetry", () => {
-    const { layer, requests, telemetry, linkedCache } = setupLegacyStorage(tmp.current, {
+    const { layer, requests, telemetry, linkedCache } = setupStorage(tmp.current, {
       // No `--local`, so the linked path resolves the ref + service-role key.
       routes: [
         {
@@ -218,35 +214,33 @@ describe("legacy storage ls", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageLs(lsFlags({ local: false })).pipe(
+      const exit = yield* storageLs(lsFlags({ local: false })).pipe(
         Effect.provide(layer),
         Effect.exit,
       );
       expect(Exit.isSuccess(exit)).toBe(true);
-      expect(
-        requests.some((r) => r.url.startsWith(`https://${LEGACY_VALID_REF}.supabase.co`)),
-      ).toBe(true);
+      expect(requests.some((r) => r.url.startsWith(`https://${VALID_REF}.supabase.co`))).toBe(true);
       expect(telemetry.flushed).toBe(true);
       expect(linkedCache.cached).toBe(true);
-      expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+      expect(linkedCache.cachedRef).toBe(VALID_REF);
     });
   });
 
-  it.live("lists the project given via --project-ref, overriding LEGACY_VALID_REF", () => {
+  it.live("lists the project given via --project-ref, overriding VALID_REF", () => {
     // `opts.projectRef` (the fake's own fallback) is left at its default
-    // (LEGACY_VALID_REF) — the flag must win over it and drive the gateway host.
+    // (VALID_REF) — the flag must win over it and drive the gateway host.
     const FLAG_REF = "flagflagflagflagflag";
-    const { layer, requests, linkedCache } = setupLegacyStorage(tmp.current, {
+    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
       routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageLs({
+      const exit = yield* storageLs({
         ...lsFlags({ local: false }),
         projectRef: Option.some(FLAG_REF),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.url.startsWith(`https://${FLAG_REF}.supabase.co`))).toBe(true);
-      expect(requests.some((r) => r.url.includes(LEGACY_VALID_REF))).toBe(false);
+      expect(requests.some((r) => r.url.includes(VALID_REF))).toBe(false);
       expect(linkedCache.cached).toBe(true);
       expect(linkedCache.cachedRef).toBe(FLAG_REF);
     });
@@ -254,12 +248,12 @@ describe("legacy storage ls", () => {
 
   it.live("rejects --project-ref combined with --local", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    const { layer, requests, linkedCache } = setupLegacyStorage(tmp.current, {
+    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageLs({
+      const exit = yield* storageLs({
         ...lsFlags({ local: true }),
         projectRef: Option.some(FLAG_REF),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -276,17 +270,17 @@ describe("legacy storage ls", () => {
     // The storage frame loads the project dotenv itself (no db reset / seed
     // caller hands one in), so the auth override must reach the resolver from
     // that walk too. Pin the ambient var away so only the dotenv value counts.
-    const { layer, requests } = setupLegacyStorage(tmp.current, {
+    const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       files: { "supabase/.env": "SUPABASE_AUTH_SERVICE_ROLE_KEY=sb_secret_dotenv_only_key\n" },
       routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
     });
-    return legacyWithEnv(
+    return withEnvVar(
       "SUPABASE_AUTH_SERVICE_ROLE_KEY",
       undefined,
       Effect.gen(function* () {
-        const exit = yield* legacyStorageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isSuccess(exit)).toBe(true);
         expect(requests.length).toBeGreaterThan(0);
         expect(requests.every((r) => r.headers["apikey"] === "sb_secret_dotenv_only_key")).toBe(
@@ -297,14 +291,14 @@ describe("legacy storage ls", () => {
   });
 
   it.live("emits a { paths } result in json mode", () => {
-    const { layer, out } = setupLegacyStorage(tmp.current, {
+    const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       format: "json",
       routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       // No streamed stdout lines in json mode; a single result carries the paths.
       expect(out.stdoutText).toBe("");
@@ -315,7 +309,7 @@ describe("legacy storage ls", () => {
 
   it.live("paginates without the Loading page line in json mode", () => {
     const page0 = Array.from({ length: 100 }, (_, i) => ({ name: `f${i}`, id: `${i}` }));
-    const { layer, out } = setupLegacyStorage(tmp.current, {
+    const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       format: "stream-json",
@@ -325,7 +319,7 @@ describe("legacy storage ls", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageLs(lsFlags({ path: "ss:///bucket/dir/" })).pipe(
+      const exit = yield* storageLs(lsFlags({ path: "ss:///bucket/dir/" })).pipe(
         Effect.provide(layer),
         Effect.exit,
       );
@@ -338,22 +332,22 @@ describe("legacy storage ls", () => {
   it.live(
     "fails with a missing-project error when --workdir names a config-less subdirectory of a real ancestor project",
     () => {
-      // CLI-2285 regression, `legacyLoadStorageConfig`'s shared path: the
+      // CLI-2285 regression, `loadStorageConfig`'s shared path: the
       // ancestor project genuinely has a valid config.toml, and the
       // subdirectory genuinely has none of its own — an EXPLICIT --workdir
       // must never silently climb to the ancestor's config.
       writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
       const sub = join(tmp.current, "nested", "dir");
       mkdirSync(sub, { recursive: true });
-      const { layer, requests } = setupLegacyStorage(sub, {
+      const { layer, requests } = setupStorage(sub, {
         local: true,
         explicitWorkdir: true,
         routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyStorageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("LegacyStorageMissingProjectConfigError");
+        expect(JSON.stringify(exit)).toContain("StorageMissingProjectConfigError");
         expect(requests).toHaveLength(0);
       });
     },
@@ -362,26 +356,26 @@ describe("legacy storage ls", () => {
   it.live(
     "a remote (--linked) target with the same config-less explicit workdir still succeeds",
     () => {
-      // The missing-project hard-fail is LOCAL-only: `legacyResolveStorageCredentials`
+      // The missing-project hard-fail is LOCAL-only: `resolveStorageCredentials`
       // never reads local config on the remote path (Management API credentials
       // only), so a config-less explicit workdir poses none of the "retargets a
       // different local stack" risk the local-target hard-fail guards against.
       writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
       const sub = join(tmp.current, "nested", "dir");
       mkdirSync(sub, { recursive: true });
-      const { layer, requests } = setupLegacyStorage(sub, {
+      const { layer, requests } = setupStorage(sub, {
         explicitWorkdir: true,
         routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyStorageLs(lsFlags({ local: false })).pipe(
+        const exit = yield* storageLs(lsFlags({ local: false })).pipe(
           Effect.provide(layer),
           Effect.exit,
         );
         expect(Exit.isSuccess(exit)).toBe(true);
-        expect(
-          requests.some((r) => r.url.startsWith(`https://${LEGACY_VALID_REF}.supabase.co`)),
-        ).toBe(true);
+        expect(requests.some((r) => r.url.startsWith(`https://${VALID_REF}.supabase.co`))).toBe(
+          true,
+        );
       });
     },
   );
@@ -389,7 +383,7 @@ describe("legacy storage ls", () => {
   it.live(
     "hints at the ancestor's --workdir when it genuinely has a project (shared helper propagation)",
     () => {
-      // Confirms `legacyMissingProjectConfigMessageEffect`'s "Did you mean"
+      // Confirms `missingProjectConfigMessageEffect`'s "Did you mean"
       // hint is not `config diff`-specific wiring — the full regression and
       // its negative counterpart are pinned in
       // config/diff/diff.integration.test.ts; this only proves the shared
@@ -397,12 +391,12 @@ describe("legacy storage ls", () => {
       writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
       const sub = join(tmp.current, "nested", "dir");
       mkdirSync(sub, { recursive: true });
-      const { layer, requests } = setupLegacyStorage(sub, {
+      const { layer, requests } = setupStorage(sub, {
         local: true,
         explicitWorkdir: true,
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyStorageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(JSON.stringify(exit)).toContain(`Did you mean --workdir ${tmp.current}?`);
         expect(requests).toHaveLength(0);
@@ -414,14 +408,14 @@ describe("legacy storage ls", () => {
     "an explicit --workdir naming a directory that does not exist at all fails before any config load",
     () => {
       const missing = join(tmp.current, "does-not-exist");
-      const { layer, requests } = setupLegacyStorage(missing, {
+      const { layer, requests } = setupStorage(missing, {
         local: true,
         explicitWorkdir: true,
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyStorageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("LegacyStorageWorkdirError");
+        expect(JSON.stringify(exit)).toContain("StorageWorkdirError");
         expect(JSON.stringify(exit)).toContain("failed to change workdir: chdir");
         expect(requests).toHaveLength(0);
       });

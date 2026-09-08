@@ -1,4 +1,4 @@
-// PostHog connection config shared by both shells' analytics layers.
+// PostHog connection config shared by the analytics layers.
 // Release builds inject the shipped host/key via apps/cli/scripts/build.ts.
 import { Option } from "effect";
 

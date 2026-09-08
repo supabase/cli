@@ -7,7 +7,7 @@
  *
  * IMPORTANT — how the Supavisor tenant is actually provisioned: it is NOT a
  * post-start `docker exec`. The rendered `pooler.exs` (via
- * `legacyRenderStartPoolerExs`, already ported in `../lib/template-render.ts`)
+ * `renderStartPoolerExs`, already ported in `../lib/template-render.ts`)
  * is built BEFORE the container is created, then baked directly into the
  * container's own startup `Cmd`
  * (`/bin/sh -c "/app/bin/migrate && /app/bin/supavisor eval '<script>' &&
@@ -23,54 +23,49 @@
  * directly, so that `Cmd` string never becomes a subprocess's own argv.
  * THIS PORT SHELLS OUT to a real `docker create`, where that would leak, so
  * it deliberately diverges: the rendered script travels via
- * {@link LegacyStartContainerSpec.secretFiles} instead (an in-memory tar
+ * {@link StartContainerSpec.secretFiles} instead (an in-memory tar
  * entry, mode `0644`, streamed via `docker cp - <id>:/` into the container at
- * {@link LEGACY_SUPAVISOR_POOLER_TENANT_CONTAINER_PATH}) — Supavisor itself
+ * {@link SUPAVISOR_POOLER_TENANT_CONTAINER_PATH}) — Supavisor itself
  * runs fully as root in its image, so it is unaffected by the non-root read
  * issue that motivates `0644` for Kong/Postgres (see
- * `legacyCopyStartSecretFilesIntoContainer`'s doc comment); the file mode is
+ * `copyStartSecretFilesIntoContainer`'s doc comment); the file mode is
  * simply widened here for consistency with the other secrets, and
- * {@link legacyBuildSupavisorStartCmd} only ever references that FIXED path
+ * {@link buildSupavisorStartCmd} only ever references that FIXED path
  * — never the secret content itself (CWE-214/522). See that function's doc
- * comment for the resulting quoting nuance. {@link legacyBuildSupavisorStartCmd}
+ * comment for the resulting quoting nuance. {@link buildSupavisorStartCmd}
  * is exported separately (rather than inlined) so a later orchestrator can
  * unit-test or reuse the exact shell-embedding shape independently of the
  * rest of the spec.
  */
 
-import { legacyServiceContainerName } from "../../../command-internal/legacy-docker-ids.ts";
-import type { LegacyStartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
-import {
-  legacySlimWgetHealthcheck,
-  legacyUsesSlimRuntime,
-} from "../../../command-internal/db-bootstrap/slim-runtime.ts";
-import {
-  legacyRenderStartPoolerExs,
-  type LegacyStartPoolerExsFields,
-} from "../lib/template-render.ts";
+import { serviceContainerName } from "../../../command-internal/docker-ids.ts";
+import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
+import { slimWgetHealthcheck } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
+import { renderStartPoolerExs, type StartPoolerExsFields } from "../lib/template-render.ts";
 
-/** The Supavisor network alias — also this service's `containerSuffix` in `LEGACY_SERVICE_CATALOG`. */
-const LEGACY_SUPAVISOR_CONTAINER_SUFFIX = "pooler";
+/** The Supavisor network alias — also this service's `containerSuffix` in `SERVICE_CATALOG`. */
+const SUPAVISOR_CONTAINER_SUFFIX = "pooler";
 
 /** The Supavisor tenant id default — never configurable, so hardcoded here. */
-const LEGACY_SUPAVISOR_TENANT_ID = "pooler-dev";
+const SUPAVISOR_TENANT_ID = "pooler-dev";
 /** The Supavisor encryption key default — never configurable. */
-const LEGACY_SUPAVISOR_ENCRYPTION_KEY = "12345678901234567890123456789032";
+const SUPAVISOR_ENCRYPTION_KEY = "12345678901234567890123456789032";
 /** The Supavisor secret key base default — never configurable. */
-const LEGACY_SUPAVISOR_SECRET_KEY_BASE =
+const SUPAVISOR_SECRET_KEY_BASE =
   "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG";
 
 /** The Supavisor session-mode port. */
-const LEGACY_SUPAVISOR_SESSION_PORT = "5432";
+const SUPAVISOR_SESSION_PORT = "5432";
 /** The Supavisor transaction-mode port. */
-const LEGACY_SUPAVISOR_TRANSACTION_PORT = "6543";
+const SUPAVISOR_TRANSACTION_PORT = "6543";
 
 /**
  * The fixed in-container path the rendered `pooler.exs` tenant script is
- * `docker cp`'d to (see {@link legacyBuildSupavisorContainerSpec}'s
+ * `docker cp`'d to (see {@link buildSupavisorContainerSpec}'s
  * `secretFiles`).
  */
-const LEGACY_SUPAVISOR_POOLER_TENANT_CONTAINER_PATH = "/app/pooler_tenant.exs";
+const SUPAVISOR_POOLER_TENANT_CONTAINER_PATH = "/app/pooler_tenant.exs";
 
 /**
  * An unescaped single-quote wrap around the rendered `pooler.exs` script
@@ -80,7 +75,7 @@ const LEGACY_SUPAVISOR_POOLER_TENANT_CONTAINER_PATH = "/app/pooler_tenant.exs";
  * comment for why that isn't this port's architecture.
  *
  * This `Cmd` instead reads the script from
- * {@link LEGACY_SUPAVISOR_POOLER_TENANT_CONTAINER_PATH} at container
+ * {@link SUPAVISOR_POOLER_TENANT_CONTAINER_PATH} at container
  * startup: `eval "$(cat <path>)"`'s double-quoted command substitution
  * passes the file's content to `eval` as a single argument, the same way an
  * inline single-quote wrap would pass a literal as a single argument. Two
@@ -91,25 +86,25 @@ const LEGACY_SUPAVISOR_POOLER_TENANT_CONTAINER_PATH = "/app/pooler_tenant.exs";
  * never would (every interpolated `pooler.exs` field is a fixed/internal
  * value today — `db.password` in particular has no config.toml field at
  * all, always literally `"postgres"`, see `postgres.service.ts`'s
- * `LEGACY_POSTGRES_PASSWORD` — none of which contain `$`, a backtick, or a
+ * `POSTGRES_PASSWORD` — none of which contain `$`, a backtick, or a
  * single quote). A future caller that ever makes one of these fields
  * genuinely attacker-controlled must revisit this quoting.
  */
-export function legacyBuildSupavisorStartCmd(): ReadonlyArray<string> {
+export function buildSupavisorStartCmd(): ReadonlyArray<string> {
   return [
     "/bin/sh",
     "-c",
-    `/app/bin/migrate && /app/bin/supavisor eval "$(cat ${LEGACY_SUPAVISOR_POOLER_TENANT_CONTAINER_PATH})" && /app/bin/server`,
+    `/app/bin/migrate && /app/bin/supavisor eval "$(cat ${SUPAVISOR_POOLER_TENANT_CONTAINER_PATH})" && /app/bin/server`,
   ];
 }
 
-export interface LegacySupavisorContainerSpecInput {
+export interface SupavisorContainerSpecInput {
   /**
    * The already-resolved `config.db.pooler.image`. Not part of the decoded
    * `@supabase/config` schema; resolution is the caller's responsibility.
    */
   readonly image: string;
-  /** The project id, used to derive this container's own name via {@link legacyServiceContainerName}. */
+  /** The project id, used to derive this container's own name via {@link serviceContainerName}. */
   readonly projectId: string;
   /** `container.HostConfig.NetworkMode`'s target — resolved once per `start` run, not per-container. */
   readonly networkId: string;
@@ -136,36 +131,34 @@ export interface LegacySupavisorContainerSpecInput {
 }
 
 /** Builds the `docker create` spec for the Supavisor/pooler container. */
-export function legacyBuildSupavisorContainerSpec(
-  input: LegacySupavisorContainerSpecInput,
-): LegacyStartContainerSpec {
-  const tenantFields: LegacyStartPoolerExsFields = {
+export function buildSupavisorContainerSpec(
+  input: SupavisorContainerSpecInput,
+): StartContainerSpec {
+  const tenantFields: StartPoolerExsFields = {
     dbHost: input.dbHost,
     dbPort: input.dbPort,
     dbDatabase: input.dbDatabase,
     dbPassword: input.dbPassword,
-    externalId: LEGACY_SUPAVISOR_TENANT_ID,
+    externalId: SUPAVISOR_TENANT_ID,
     modeType: input.poolMode,
     defaultMaxClients: input.maxClientConn,
     defaultPoolSize: input.defaultPoolSize,
   };
-  const tenantScript = legacyRenderStartPoolerExs(tenantFields);
+  const tenantScript = renderStartPoolerExs(tenantFields);
   const dockerPort =
-    input.poolMode === "session"
-      ? LEGACY_SUPAVISOR_SESSION_PORT
-      : LEGACY_SUPAVISOR_TRANSACTION_PORT;
+    input.poolMode === "session" ? SUPAVISOR_SESSION_PORT : SUPAVISOR_TRANSACTION_PORT;
 
   return {
     image: input.image,
-    containerName: legacyServiceContainerName(LEGACY_SUPAVISOR_CONTAINER_SUFFIX, input.projectId),
+    containerName: serviceContainerName(SUPAVISOR_CONTAINER_SUFFIX, input.projectId),
     env: {
       PORT: "4000",
-      PROXY_PORT_SESSION: LEGACY_SUPAVISOR_SESSION_PORT,
-      PROXY_PORT_TRANSACTION: LEGACY_SUPAVISOR_TRANSACTION_PORT,
+      PROXY_PORT_SESSION: SUPAVISOR_SESSION_PORT,
+      PROXY_PORT_TRANSACTION: SUPAVISOR_TRANSACTION_PORT,
       DATABASE_URL: `ecto://${input.dbUser}:${input.dbPassword}@${input.dbHost}:${input.dbPort}/_supabase`,
       CLUSTER_POSTGRES: "true",
-      SECRET_KEY_BASE: LEGACY_SUPAVISOR_SECRET_KEY_BASE,
-      VAULT_ENC_KEY: LEGACY_SUPAVISOR_ENCRYPTION_KEY,
+      SECRET_KEY_BASE: SUPAVISOR_SECRET_KEY_BASE,
+      VAULT_ENC_KEY: SUPAVISOR_ENCRYPTION_KEY,
       API_JWT_SECRET: input.jwtSecret,
       METRICS_JWT_SECRET: input.jwtSecret,
       REGION: "local",
@@ -173,20 +166,18 @@ export function legacyBuildSupavisorContainerSpec(
       ERL_AFLAGS: "-proto_dist inet_tcp",
       RLIMIT_NOFILE: "",
     },
-    cmd: legacyBuildSupavisorStartCmd(),
-    secretFiles: [
-      { containerPath: LEGACY_SUPAVISOR_POOLER_TENANT_CONTAINER_PATH, content: tenantScript },
-    ],
+    cmd: buildSupavisorStartCmd(),
+    secretFiles: [{ containerPath: SUPAVISOR_POOLER_TENANT_CONTAINER_PATH, content: tenantScript }],
     binds: [],
     exposedPorts: [
       { containerPort: "4000" },
-      { containerPort: LEGACY_SUPAVISOR_SESSION_PORT },
-      { containerPort: LEGACY_SUPAVISOR_TRANSACTION_PORT },
+      { containerPort: SUPAVISOR_SESSION_PORT },
+      { containerPort: SUPAVISOR_TRANSACTION_PORT },
     ],
     ports: [{ hostPort: String(input.port), containerPort: dockerPort }],
     // Slim pooler ships wget, not curl.
-    healthcheck: legacyUsesSlimRuntime(input.image)
-      ? legacySlimWgetHealthcheck("http://127.0.0.1:4000/api/health")
+    healthcheck: usesSlimImageRuntime(input.image)
+      ? slimWgetHealthcheck("http://127.0.0.1:4000/api/health")
       : {
           test: [
             "CMD",
@@ -203,7 +194,7 @@ export function legacyBuildSupavisorContainerSpec(
         },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
-    networkAliases: [LEGACY_SUPAVISOR_CONTAINER_SUFFIX],
+    networkAliases: [SUPAVISOR_CONTAINER_SUFFIX],
     labels: {},
   };
 }

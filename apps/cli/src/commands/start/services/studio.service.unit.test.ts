@@ -1,12 +1,12 @@
 import { describe, expect, test } from "vitest";
 
 import {
-  legacyBuildStudioContainerSpec,
-  legacyBuildStudioEnv,
-  type LegacyBuildStudioEnvInput,
+  buildStudioContainerSpec,
+  buildStudioEnv,
+  type BuildStudioEnvInput,
 } from "./studio.service.ts";
 
-const baseEnvInput: LegacyBuildStudioEnvInput = {
+const baseEnvInput: BuildStudioEnvInput = {
   dbPassword: "postgres",
   workdir: "/project",
   containerSnippetsPath: "/project/supabase/.temp/snippets",
@@ -30,9 +30,9 @@ const baseEnvInput: LegacyBuildStudioEnvInput = {
   analyticsBackend: "postgres",
 };
 
-describe("legacyBuildStudioEnv", () => {
+describe("buildStudioEnv", () => {
   test("mirrors Go's TestBuildStudioEnv fixture", () => {
-    const env = legacyBuildStudioEnv(baseEnvInput);
+    const env = buildStudioEnv(baseEnvInput);
 
     // The exact 8 assertions this fixture makes.
     expect(env["SUPABASE_ANON_KEY"]).toBe("anon-key");
@@ -44,7 +44,7 @@ describe("legacyBuildStudioEnv", () => {
     expect(env["SUPABASE_URL"]).toBe("http://test-kong:8000");
     expect(env["STUDIO_PG_META_URL"]).toBe("http://test-pgmeta:8080");
 
-    // Every other key `legacyBuildStudioEnv` emits, covered here for full
+    // Every other key `buildStudioEnv` emits, covered here for full
     // parity.
     expect(env).toEqual({
       CURRENT_CLI_VERSION: "test-version",
@@ -77,22 +77,22 @@ describe("legacyBuildStudioEnv", () => {
   test("LOGFLARE_PRIVATE_ACCESS_TOKEN is always Go's hardcoded 'api-key', regardless of input", () => {
     // `analytics.api_key` isn't a `config.toml`-configurable field —
     // there is no input field for it at all.
-    const env = legacyBuildStudioEnv(baseEnvInput);
+    const env = buildStudioEnv(baseEnvInput);
     expect(env["LOGFLARE_PRIVATE_ACCESS_TOKEN"]).toBe("api-key");
   });
 
   test("falls back OPENAI_API_KEY to an empty string when unset", () => {
-    const env = legacyBuildStudioEnv({ ...baseEnvInput, openaiApiKey: undefined });
+    const env = buildStudioEnv({ ...baseEnvInput, openaiApiKey: undefined });
     expect(env["OPENAI_API_KEY"]).toBe("");
   });
 
   test("passes through a configured OPENAI_API_KEY", () => {
-    const env = legacyBuildStudioEnv({ ...baseEnvInput, openaiApiKey: "sk-test" });
+    const env = buildStudioEnv({ ...baseEnvInput, openaiApiKey: "sk-test" });
     expect(env["OPENAI_API_KEY"]).toBe("sk-test");
   });
 
   test('reflects analyticsEnabled/analyticsBackend verbatim (Go\'s fmt.Sprintf("%v", ...))', () => {
-    const env = legacyBuildStudioEnv({
+    const env = buildStudioEnv({
       ...baseEnvInput,
       analyticsEnabled: false,
       analyticsBackend: "bigquery",
@@ -102,7 +102,7 @@ describe("legacyBuildStudioEnv", () => {
   });
 
   test("EDGE_FUNCTIONS_MANAGEMENT_FOLDER is workdir/supabase/functions in Docker-path form", () => {
-    const env = legacyBuildStudioEnv({
+    const env = buildStudioEnv({
       ...baseEnvInput,
       workdir: "/Users/me/my-project",
     });
@@ -110,7 +110,7 @@ describe("legacyBuildStudioEnv", () => {
   });
 });
 
-describe("legacyBuildStudioContainerSpec", () => {
+describe("buildStudioContainerSpec", () => {
   const baseSpecInput = {
     image: "supabase/studio:2026.07.07-sha-a6a04f2",
     containerName: "supabase_studio_proj",
@@ -121,7 +121,7 @@ describe("legacyBuildStudioContainerSpec", () => {
   };
 
   test("assembles the full container spec, wiring pg-meta's own container name into STUDIO_PG_META_URL", () => {
-    const spec = legacyBuildStudioContainerSpec(baseSpecInput);
+    const spec = buildStudioContainerSpec(baseSpecInput);
 
     expect(spec.image).toBe("supabase/studio:2026.07.07-sha-a6a04f2");
     expect(spec.containerName).toBe("supabase_studio_proj");
@@ -141,14 +141,14 @@ describe("legacyBuildStudioContainerSpec", () => {
     });
 
     // pg-meta URL wiring: a distinct `pgMetaContainerName` (resolved by the
-    // caller via `legacyServiceContainerName("pg_meta", projectId)`) flows
+    // caller via `serviceContainerName("pg_meta", projectId)`) flows
     // through to STUDIO_PG_META_URL exactly like it does in
-    // `legacyBuildStudioEnv`.
+    // `buildStudioEnv`.
     expect(spec.env["STUDIO_PG_META_URL"]).toBe("http://test-pgmeta:8080");
   });
 
   test("derives the snippets bind from env.workdir and includes it alongside functionBinds", () => {
-    const spec = legacyBuildStudioContainerSpec({
+    const spec = buildStudioContainerSpec({
       ...baseSpecInput,
       functionBinds: ["/project/supabase/functions/hello:/home/deno/functions/hello:ro"],
     });
@@ -162,7 +162,7 @@ describe("legacyBuildStudioContainerSpec", () => {
   });
 
   test("dedupes the snippets bind against an identical functionBinds entry (Go's utils.RemoveDuplicates)", () => {
-    const spec = legacyBuildStudioContainerSpec({
+    const spec = buildStudioContainerSpec({
       ...baseSpecInput,
       functionBinds: ["/project/supabase/snippets:/project/supabase/snippets:rw"],
     });

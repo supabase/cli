@@ -1,29 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { classifyCliErrorActionability } from "../../shared/telemetry/error-actionability.ts";
 import {
-  LegacyLinkAuthTokenError,
-  LegacyLinkBranchListNetworkError,
-  LegacyLinkBranchListStatusError,
-  LegacyLinkBranchNotReadyError,
-  LegacyLinkMissingKeyError,
-  LegacyLinkParentRefInvalidError,
-  LegacyLinkProjectStatusError,
-  LegacyLinkProjectStatusNetworkError,
+  LinkAuthTokenError,
+  LinkBranchListNetworkError,
+  LinkBranchListStatusError,
+  LinkBranchNotReadyError,
+  LinkMissingKeyError,
+  LinkParentRefInvalidError,
+  LinkProjectStatusError,
+  LinkProjectStatusNetworkError,
 } from "./link.errors.ts";
 
-describe("LegacyLinkProjectStatusNetworkError actionability", () => {
+describe("LinkProjectStatusNetworkError actionability", () => {
   it("classifies a body-decode failure as an API response problem", () => {
     const result = classifyCliErrorActionability(
-      new LegacyLinkProjectStatusNetworkError({ message: "boom", decode: true }),
+      new LinkProjectStatusNetworkError({ message: "boom", decode: true }),
     );
     expect(result.error_kind).toBe("external_service");
     expect(result.error_category).toBe("api_status");
-    expect(result.error_fingerprint).toBe("tag:LegacyLinkProjectStatusNetworkError:api_response");
+    expect(result.error_fingerprint).toBe("tag:LinkProjectStatusNetworkError:api_response");
   });
 
   it("classifies a transport failure as network", () => {
     const result = classifyCliErrorActionability(
-      new LegacyLinkProjectStatusNetworkError({ message: "boom" }),
+      new LinkProjectStatusNetworkError({ message: "boom" }),
     );
     expect(result.error_category).toBe("network");
   });
@@ -32,63 +32,63 @@ describe("LegacyLinkProjectStatusNetworkError actionability", () => {
 describe("link response actionability", () => {
   it("classifies a missing selected project from the api-keys request as invalid input", () => {
     const result = classifyCliErrorActionability(
-      new LegacyLinkAuthTokenError({ status: 404, body: "ignored", message: "ignored" }),
+      new LinkAuthTokenError({ status: 404, body: "ignored", message: "ignored" }),
     );
     expect(result.error_kind).toBe("user_actionable");
     expect(result.error_category).toBe("invalid_input");
-    expect(result.error_fingerprint).toBe("tag:LegacyLinkAuthTokenError:not_found");
+    expect(result.error_fingerprint).toBe("tag:LinkAuthTokenError:not_found");
   });
 
   it("keeps the project-status fallback 404 on the API-status policy", () => {
     const result = classifyCliErrorActionability(
-      new LegacyLinkProjectStatusError({ status: 404, body: "ignored", message: "ignored" }),
+      new LinkProjectStatusError({ status: 404, body: "ignored", message: "ignored" }),
     );
     expect(result.error_kind).toBe("external_service");
     expect(result.error_category).toBe("api_status");
-    expect(result.error_fingerprint).toBe("tag:LegacyLinkProjectStatusError:api_status");
+    expect(result.error_fingerprint).toBe("tag:LinkProjectStatusError:api_status");
   });
 
   it("classifies a successful api-keys response missing both keys as an API response failure", () => {
     const result = classifyCliErrorActionability(
-      new LegacyLinkMissingKeyError({ message: "Anon key not found." }),
+      new LinkMissingKeyError({ message: "Anon key not found." }),
     );
     expect(result.error_kind).toBe("external_service");
     expect(result.error_category).toBe("api_status");
-    expect(result.error_fingerprint).toBe("tag:LegacyLinkMissingKeyError:api_response");
+    expect(result.error_fingerprint).toBe("tag:LinkMissingKeyError:api_response");
   });
 });
 
 describe("branch-name resolution actionability (CLI-2167)", () => {
   it("classifies a branch-list 404 as invalid input, same policy as the api-keys 404", () => {
     const result = classifyCliErrorActionability(
-      new LegacyLinkBranchListStatusError({ status: 404, body: "ignored", message: "ignored" }),
+      new LinkBranchListStatusError({ status: 404, body: "ignored", message: "ignored" }),
     );
     expect(result.error_kind).toBe("user_actionable");
     expect(result.error_category).toBe("invalid_input");
-    expect(result.error_fingerprint).toBe("tag:LegacyLinkBranchListStatusError:not_found");
+    expect(result.error_fingerprint).toBe("tag:LinkBranchListStatusError:not_found");
   });
 
   it("keeps a non-404 branch-list status on the API-status policy", () => {
     const result = classifyCliErrorActionability(
-      new LegacyLinkBranchListStatusError({ status: 500, body: "ignored", message: "ignored" }),
+      new LinkBranchListStatusError({ status: 500, body: "ignored", message: "ignored" }),
     );
     expect(result.error_kind).toBe("external_service");
     expect(result.error_category).toBe("api_status");
-    expect(result.error_fingerprint).toBe("tag:LegacyLinkBranchListStatusError:api_status");
+    expect(result.error_fingerprint).toBe("tag:LinkBranchListStatusError:api_status");
   });
 
   it("classifies a branch-list body-decode failure as an API response problem", () => {
     const result = classifyCliErrorActionability(
-      new LegacyLinkBranchListNetworkError({ message: "boom", decode: true }),
+      new LinkBranchListNetworkError({ message: "boom", decode: true }),
     );
     expect(result.error_kind).toBe("external_service");
     expect(result.error_category).toBe("api_status");
-    expect(result.error_fingerprint).toBe("tag:LegacyLinkBranchListNetworkError:api_response");
+    expect(result.error_fingerprint).toBe("tag:LinkBranchListNetworkError:api_response");
   });
 
   it("classifies a branch-list transport failure as network", () => {
     const result = classifyCliErrorActionability(
-      new LegacyLinkBranchListNetworkError({ message: "boom" }),
+      new LinkBranchListNetworkError({ message: "boom" }),
     );
     expect(result.error_kind).toBe("external_service");
     expect(result.error_category).toBe("network");
@@ -96,7 +96,7 @@ describe("branch-name resolution actionability (CLI-2167)", () => {
 
   it("classifies an invalid linked parent ref as a relink-project remediation", () => {
     const result = classifyCliErrorActionability(
-      new LegacyLinkParentRefInvalidError({ message: "ignored" }),
+      new LinkParentRefInvalidError({ message: "ignored" }),
     );
     expect(result.error_kind).toBe("user_actionable");
     expect(result.error_category).toBe("invalid_config");
@@ -106,7 +106,7 @@ describe("branch-name resolution actionability (CLI-2167)", () => {
 
   it("classifies a not-yet-provisioned branch as an API-status problem with its own fingerprint", () => {
     const result = classifyCliErrorActionability(
-      new LegacyLinkBranchNotReadyError({
+      new LinkBranchNotReadyError({
         branch: "feature-branch",
         status: "CREATING_PROJECT",
         message: "ignored",
@@ -114,6 +114,6 @@ describe("branch-name resolution actionability (CLI-2167)", () => {
     );
     expect(result.error_kind).toBe("external_service");
     expect(result.error_category).toBe("api_status");
-    expect(result.error_fingerprint).toBe("tag:LegacyLinkBranchNotReadyError:branch_not_ready");
+    expect(result.error_fingerprint).toBe("tag:LinkBranchNotReadyError:branch_not_ready");
   });
 });

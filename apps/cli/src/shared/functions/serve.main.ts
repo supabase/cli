@@ -48,7 +48,7 @@ const DENO_SB_ERROR_MAP = new Map([
 const GENERIC_FUNCTION_SERVE_MESSAGE = `Serving functions on http://127.0.0.1:${HOST_PORT}/functions/v1/<function-name>`;
 export enum RequestErrors {
   MissingAuthHeader = "UNAUTHORIZED_NO_AUTH_HEADER",
-  InvalidLegacyJWT = "UNAUTHORIZED_LEGACY_JWT",
+  InvalidLegacyJWT = "UNAUTHORIZED_JWT",
   InvalidAsymmetricJWT = "UNAUTHORIZED_ASYMMETRIC_JWT",
   InvalidTokenFormat = "UNAUTHORIZED_INVALID_JWT_FORMAT",
   UnsupportedTokenAlgorithm = "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM",
@@ -161,7 +161,7 @@ function getAuthToken(req: Request): string | AuthFailure {
   const authHeader = req.headers.get("authorization");
   const sbApiKeyCompatibilityToken = req.headers.get("sb-api-key");
 
-  // NOTE:(kallebysantos) Kong on legacy CLI stack pass it down as 'Bearer Token' format
+  // NOTE:(kallebysantos) Kong on CLI stack pass it down as 'Bearer Token' format
   const cleanSbApiKeyCompatibilityToken = sbApiKeyCompatibilityToken?.replace("Bearer", "")?.trim();
 
   if (!authHeader && !cleanSbApiKeyCompatibilityToken) {

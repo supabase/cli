@@ -5,7 +5,7 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
-import { legacyMintConfigTargetErrors } from "../config.target.ts";
+import { mintConfigTargetErrors } from "../config.target.ts";
 
 /**
  * Tagged errors for `supabase config push`.
@@ -28,7 +28,7 @@ interface MessageOnlyArgs {
 
 /**
  * A network-error shape that may instead represent a 200-response body decode
- * failure (`SchemaError` folded in by `mapLegacyHttpError`).
+ * failure (`SchemaError` folded in by `mapHttpError`).
  * `decode: true` reclassifies the failure as an API-response problem rather
  * than a transport/network problem.
  */
@@ -44,8 +44,8 @@ interface StatusErrorArgs {
 }
 
 /** Local config file missing or unparseable. Aborts before any network call. */
-export class LegacyConfigPushLoadConfigError extends Data.TaggedError(
-  "LegacyConfigPushLoadConfigError",
+export class ConfigPushLoadConfigError extends Data.TaggedError(
+  "ConfigPushLoadConfigError",
 )<MessageOnlyArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
@@ -54,12 +54,12 @@ export class LegacyConfigPushLoadConfigError extends Data.TaggedError(
 
 /**
  * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
- * directory (`legacyValidateWorkdirIsDirectory`). Only reachable when the
+ * directory (`validateWorkdirIsDirectory`). Only reachable when the
  * user explicitly set it — beats target resolution, the config load, and
  * every network call.
  */
-export class LegacyConfigPushWorkdirError extends Data.TaggedError(
-  "LegacyConfigPushWorkdirError",
+export class ConfigPushWorkdirError extends Data.TaggedError(
+  "ConfigPushWorkdirError",
 )<MessageOnlyArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
@@ -72,13 +72,11 @@ export class LegacyConfigPushWorkdirError extends Data.TaggedError(
 // branches — mirrors `config diff`'s own error set 1:1, under push's own
 // names (`diff.errors.ts`).
 
-const targetErrors = legacyMintConfigTargetErrors("LegacyConfigPush");
+const targetErrors = mintConfigTargetErrors("ConfigPush");
 
 /** `--project-ref` named a branch the parent project does not have. */
-export const LegacyConfigPushBranchNotFoundError = targetErrors.BranchNotFoundError;
-export type LegacyConfigPushBranchNotFoundError = InstanceType<
-  typeof LegacyConfigPushBranchNotFoundError
->;
+export const ConfigPushBranchNotFoundError = targetErrors.BranchNotFoundError;
+export type ConfigPushBranchNotFoundError = InstanceType<typeof ConfigPushBranchNotFoundError>;
 
 /**
  * `--project-ref` named a branch (by name), but no project is linked to
@@ -86,31 +84,25 @@ export type LegacyConfigPushBranchNotFoundError = InstanceType<
  * `supabase/.temp/linked-project.json`, or `supabase/.temp/project-ref`
  * yielded a candidate.
  */
-export const LegacyConfigPushBranchNotLinkedError = targetErrors.BranchNotLinkedError;
-export type LegacyConfigPushBranchNotLinkedError = InstanceType<
-  typeof LegacyConfigPushBranchNotLinkedError
->;
+export const ConfigPushBranchNotLinkedError = targetErrors.BranchNotLinkedError;
+export type ConfigPushBranchNotLinkedError = InstanceType<typeof ConfigPushBranchNotLinkedError>;
 
 /**
  * `--project-ref` named a branch (by name), and a parent-project candidate
  * exists but is not ref-shaped — corrupt or stale linked state.
  */
-export const LegacyConfigPushParentRefInvalidError = targetErrors.ParentRefInvalidError;
-export type LegacyConfigPushParentRefInvalidError = InstanceType<
-  typeof LegacyConfigPushParentRefInvalidError
->;
+export const ConfigPushParentRefInvalidError = targetErrors.ParentRefInvalidError;
+export type ConfigPushParentRefInvalidError = InstanceType<typeof ConfigPushParentRefInvalidError>;
 
 /**
  * The resolved branch has no project ref yet (still provisioning) — guards
  * against an empty/placeholder ref reaching a push target.
  */
-export const LegacyConfigPushBranchNotReadyError = targetErrors.BranchNotReadyError;
-export type LegacyConfigPushBranchNotReadyError = InstanceType<
-  typeof LegacyConfigPushBranchNotReadyError
->;
+export const ConfigPushBranchNotReadyError = targetErrors.BranchNotReadyError;
+export type ConfigPushBranchNotReadyError = InstanceType<typeof ConfigPushBranchNotReadyError>;
 
-export class LegacyConfigPushBranchResolveNetworkError extends Data.TaggedError(
-  "LegacyConfigPushBranchResolveNetworkError",
+export class ConfigPushBranchResolveNetworkError extends Data.TaggedError(
+  "ConfigPushBranchResolveNetworkError",
 )<DecodableNetworkErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return this.decode === true
@@ -119,8 +111,8 @@ export class LegacyConfigPushBranchResolveNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyConfigPushBranchResolveStatusError extends Data.TaggedError(
-  "LegacyConfigPushBranchResolveStatusError",
+export class ConfigPushBranchResolveStatusError extends Data.TaggedError(
+  "ConfigPushBranchResolveStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
@@ -131,7 +123,7 @@ export class LegacyConfigPushBranchResolveStatusError extends Data.TaggedError(
 //
 // The `getProject` probe that tells the user whether `ref` is the linked
 // project or one of its branches is entirely best-effort: a 404 is the
-// branch signal (handled by `legacyClassifyProjectLookupError`), and any
+// branch signal (handled by `classifyProjectLookupError`), and any
 // OTHER outcome — a timeout, a transport failure, or a non-200/404 status
 // (e.g. a scoped token that can write service config but can't read the
 // project record) — degrades to an uncertain target rather than aborting the
@@ -147,11 +139,9 @@ export class LegacyConfigPushBranchResolveStatusError extends Data.TaggedError(
  * are unrelated and still exit 0 on decline. `suggestion` always names the
  * `--yes`/`SUPABASE_YES` escape hatch — the interactive prompt label already
  * carries an inline hint, but a machine-mode or non-TTY decline never renders
- * that label at all (`legacyPromptYesNo` returns the default silently), so
+ * that label at all (`promptYesNo` returns the default silently), so
  * this is the only place those callers see it. */
-export class LegacyConfigPushCancelledError extends Data.TaggedError(
-  "LegacyConfigPushCancelledError",
-)<{
+export class ConfigPushCancelledError extends Data.TaggedError("ConfigPushCancelledError")<{
   readonly message: string;
   readonly suggestion?: string;
 }> {
@@ -162,8 +152,8 @@ export class LegacyConfigPushCancelledError extends Data.TaggedError(
 
 // --- cost matrix (list addons) ---------------------------------------------
 
-export class LegacyConfigPushListAddonsNetworkError extends Data.TaggedError(
-  "LegacyConfigPushListAddonsNetworkError",
+export class ConfigPushListAddonsNetworkError extends Data.TaggedError(
+  "ConfigPushListAddonsNetworkError",
 )<DecodableNetworkErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     if (this.decode === true) {
@@ -173,8 +163,8 @@ export class LegacyConfigPushListAddonsNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyConfigPushListAddonsStatusError extends Data.TaggedError(
-  "LegacyConfigPushListAddonsStatusError",
+export class ConfigPushListAddonsStatusError extends Data.TaggedError(
+  "ConfigPushListAddonsStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
@@ -187,10 +177,10 @@ export class LegacyConfigPushListAddonsStatusError extends Data.TaggedError(
  * Transport failure or undecodable response reading the project's effective
  * configuration. `decode === true` reclassifies a 200 response the client
  * could not decode as an API-response problem rather than a transport one —
- * same rule as `diff/diff.errors.ts`'s `LegacyConfigDiffReadNetworkError`.
+ * same rule as `diff/diff.errors.ts`'s `ConfigDiffReadNetworkError`.
  */
-export class LegacyConfigPushConfigReadNetworkError extends Data.TaggedError(
-  "LegacyConfigPushConfigReadNetworkError",
+export class ConfigPushConfigReadNetworkError extends Data.TaggedError(
+  "ConfigPushConfigReadNetworkError",
 )<DecodableNetworkErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return this.decode === true
@@ -203,10 +193,10 @@ export class LegacyConfigPushConfigReadNetworkError extends Data.TaggedError(
  * The effective project config read returned a non-200 status.
  * `/v2/projects/{ref}/config` names a user-selected resource, so a 404 means
  * "wrong project ref" — user-actionable, not an external-service problem
- * (same rule as `diff/diff.errors.ts`'s `LegacyConfigDiffReadStatusError`).
+ * (same rule as `diff/diff.errors.ts`'s `ConfigDiffReadStatusError`).
  */
-export class LegacyConfigPushConfigReadStatusError extends Data.TaggedError(
-  "LegacyConfigPushConfigReadStatusError",
+export class ConfigPushConfigReadStatusError extends Data.TaggedError(
+  "ConfigPushConfigReadStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
@@ -221,8 +211,8 @@ export class LegacyConfigPushConfigReadStatusError extends Data.TaggedError(
  * value to compare against, so this aborts before touching any resource
  * rather than risk that.
  */
-export class LegacyConfigPushConfigEmptyError extends Data.TaggedError(
-  "LegacyConfigPushConfigEmptyError",
+export class ConfigPushConfigEmptyError extends Data.TaggedError(
+  "ConfigPushConfigEmptyError",
 )<MessageOnlyArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.accountAccess;
@@ -231,8 +221,8 @@ export class LegacyConfigPushConfigEmptyError extends Data.TaggedError(
 
 // --- api --------------------------------------------------------------------
 
-export class LegacyConfigPushApiUpdateNetworkError extends Data.TaggedError(
-  "LegacyConfigPushApiUpdateNetworkError",
+export class ConfigPushApiUpdateNetworkError extends Data.TaggedError(
+  "ConfigPushApiUpdateNetworkError",
 )<DecodableNetworkErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return this.decode === true
@@ -240,8 +230,8 @@ export class LegacyConfigPushApiUpdateNetworkError extends Data.TaggedError(
       : actionability.externalNetwork;
   }
 }
-export class LegacyConfigPushApiUpdateStatusError extends Data.TaggedError(
-  "LegacyConfigPushApiUpdateStatusError",
+export class ConfigPushApiUpdateStatusError extends Data.TaggedError(
+  "ConfigPushApiUpdateStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
@@ -250,8 +240,8 @@ export class LegacyConfigPushApiUpdateStatusError extends Data.TaggedError(
 
 // --- db.settings ------------------------------------------------------------
 
-export class LegacyConfigPushDbUpdateNetworkError extends Data.TaggedError(
-  "LegacyConfigPushDbUpdateNetworkError",
+export class ConfigPushDbUpdateNetworkError extends Data.TaggedError(
+  "ConfigPushDbUpdateNetworkError",
 )<DecodableNetworkErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return this.decode === true
@@ -259,8 +249,8 @@ export class LegacyConfigPushDbUpdateNetworkError extends Data.TaggedError(
       : actionability.externalNetwork;
   }
 }
-export class LegacyConfigPushDbUpdateStatusError extends Data.TaggedError(
-  "LegacyConfigPushDbUpdateStatusError",
+export class ConfigPushDbUpdateStatusError extends Data.TaggedError(
+  "ConfigPushDbUpdateStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
@@ -269,8 +259,8 @@ export class LegacyConfigPushDbUpdateStatusError extends Data.TaggedError(
 
 // --- db.network_restrictions ------------------------------------------------
 
-export class LegacyConfigPushNetworkRestrictionsUpdateNetworkError extends Data.TaggedError(
-  "LegacyConfigPushNetworkRestrictionsUpdateNetworkError",
+export class ConfigPushNetworkRestrictionsUpdateNetworkError extends Data.TaggedError(
+  "ConfigPushNetworkRestrictionsUpdateNetworkError",
 )<DecodableNetworkErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return this.decode === true
@@ -278,8 +268,8 @@ export class LegacyConfigPushNetworkRestrictionsUpdateNetworkError extends Data.
       : actionability.externalNetwork;
   }
 }
-export class LegacyConfigPushNetworkRestrictionsUpdateStatusError extends Data.TaggedError(
-  "LegacyConfigPushNetworkRestrictionsUpdateStatusError",
+export class ConfigPushNetworkRestrictionsUpdateStatusError extends Data.TaggedError(
+  "ConfigPushNetworkRestrictionsUpdateStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
@@ -288,8 +278,8 @@ export class LegacyConfigPushNetworkRestrictionsUpdateStatusError extends Data.T
 
 // --- db.ssl_enforcement -----------------------------------------------------
 
-export class LegacyConfigPushSslEnforcementUpdateNetworkError extends Data.TaggedError(
-  "LegacyConfigPushSslEnforcementUpdateNetworkError",
+export class ConfigPushSslEnforcementUpdateNetworkError extends Data.TaggedError(
+  "ConfigPushSslEnforcementUpdateNetworkError",
 )<DecodableNetworkErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return this.decode === true
@@ -297,8 +287,8 @@ export class LegacyConfigPushSslEnforcementUpdateNetworkError extends Data.Tagge
       : actionability.externalNetwork;
   }
 }
-export class LegacyConfigPushSslEnforcementUpdateStatusError extends Data.TaggedError(
-  "LegacyConfigPushSslEnforcementUpdateStatusError",
+export class ConfigPushSslEnforcementUpdateStatusError extends Data.TaggedError(
+  "ConfigPushSslEnforcementUpdateStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
@@ -307,8 +297,8 @@ export class LegacyConfigPushSslEnforcementUpdateStatusError extends Data.Tagged
 
 // --- auth -------------------------------------------------------------------
 
-export class LegacyConfigPushAuthUpdateNetworkError extends Data.TaggedError(
-  "LegacyConfigPushAuthUpdateNetworkError",
+export class ConfigPushAuthUpdateNetworkError extends Data.TaggedError(
+  "ConfigPushAuthUpdateNetworkError",
 )<DecodableNetworkErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return this.decode === true
@@ -316,8 +306,8 @@ export class LegacyConfigPushAuthUpdateNetworkError extends Data.TaggedError(
       : actionability.externalNetwork;
   }
 }
-export class LegacyConfigPushAuthUpdateStatusError extends Data.TaggedError(
-  "LegacyConfigPushAuthUpdateStatusError",
+export class ConfigPushAuthUpdateStatusError extends Data.TaggedError(
+  "ConfigPushAuthUpdateStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
@@ -326,8 +316,8 @@ export class LegacyConfigPushAuthUpdateStatusError extends Data.TaggedError(
 
 // --- storage ----------------------------------------------------------------
 
-export class LegacyConfigPushStorageUpdateNetworkError extends Data.TaggedError(
-  "LegacyConfigPushStorageUpdateNetworkError",
+export class ConfigPushStorageUpdateNetworkError extends Data.TaggedError(
+  "ConfigPushStorageUpdateNetworkError",
 )<DecodableNetworkErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return this.decode === true
@@ -335,8 +325,8 @@ export class LegacyConfigPushStorageUpdateNetworkError extends Data.TaggedError(
       : actionability.externalNetwork;
   }
 }
-export class LegacyConfigPushStorageUpdateStatusError extends Data.TaggedError(
-  "LegacyConfigPushStorageUpdateStatusError",
+export class ConfigPushStorageUpdateStatusError extends Data.TaggedError(
+  "ConfigPushStorageUpdateStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
@@ -345,8 +335,8 @@ export class LegacyConfigPushStorageUpdateStatusError extends Data.TaggedError(
 
 // --- experimental.webhooks --------------------------------------------------
 
-export class LegacyConfigPushEnableWebhookNetworkError extends Data.TaggedError(
-  "LegacyConfigPushEnableWebhookNetworkError",
+export class ConfigPushEnableWebhookNetworkError extends Data.TaggedError(
+  "ConfigPushEnableWebhookNetworkError",
 )<DecodableNetworkErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return this.decode === true
@@ -354,8 +344,8 @@ export class LegacyConfigPushEnableWebhookNetworkError extends Data.TaggedError(
       : actionability.externalNetwork;
   }
 }
-export class LegacyConfigPushEnableWebhookStatusError extends Data.TaggedError(
-  "LegacyConfigPushEnableWebhookStatusError",
+export class ConfigPushEnableWebhookStatusError extends Data.TaggedError(
+  "ConfigPushEnableWebhookStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });

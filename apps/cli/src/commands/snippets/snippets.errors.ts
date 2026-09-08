@@ -6,9 +6,7 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-export class LegacySnippetsListNetworkError extends Data.TaggedError(
-  "LegacySnippetsListNetworkError",
-)<{
+export class SnippetsListNetworkError extends Data.TaggedError("SnippetsListNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -19,8 +17,8 @@ export class LegacySnippetsListNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacySnippetsListUnexpectedStatusError extends Data.TaggedError(
-  "LegacySnippetsListUnexpectedStatusError",
+export class SnippetsListUnexpectedStatusError extends Data.TaggedError(
+  "SnippetsListUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -32,9 +30,7 @@ export class LegacySnippetsListUnexpectedStatusError extends Data.TaggedError(
 }
 
 // Fails with "--output env is not supported" when `-o env` is requested.
-export class LegacySnippetsEnvNotSupportedError extends Data.TaggedError(
-  "LegacySnippetsEnvNotSupportedError",
-)<{
+export class SnippetsEnvNotSupportedError extends Data.TaggedError("SnippetsEnvNotSupportedError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -46,9 +42,7 @@ export class LegacySnippetsEnvNotSupportedError extends Data.TaggedError(
 // because BurntSushi refuses the `nullable.Nullable[string]`
 // (`map[bool]string`) field
 // ("failed to output toml: toml: cannot encode a map with non-string key type").
-export class LegacySnippetsTomlEncodeError extends Data.TaggedError(
-  "LegacySnippetsTomlEncodeError",
-)<{
+export class SnippetsTomlEncodeError extends Data.TaggedError("SnippetsTomlEncodeError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -58,7 +52,7 @@ export class LegacySnippetsTomlEncodeError extends Data.TaggedError(
 
 // Wraps `uuid.Parse` failure in `download.Run`; message preserves Go's
 // `invalid snippet ID: <cause>` prefix so callers see the same string.
-export class LegacySnippetsInvalidIdError extends Data.TaggedError("LegacySnippetsInvalidIdError")<{
+export class SnippetsInvalidIdError extends Data.TaggedError("SnippetsInvalidIdError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -66,9 +60,7 @@ export class LegacySnippetsInvalidIdError extends Data.TaggedError("LegacySnippe
   }
 }
 
-export class LegacySnippetsDownloadNetworkError extends Data.TaggedError(
-  "LegacySnippetsDownloadNetworkError",
-)<{
+export class SnippetsDownloadNetworkError extends Data.TaggedError("SnippetsDownloadNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -79,8 +71,8 @@ export class LegacySnippetsDownloadNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacySnippetsDownloadUnexpectedStatusError extends Data.TaggedError(
-  "LegacySnippetsDownloadUnexpectedStatusError",
+export class SnippetsDownloadUnexpectedStatusError extends Data.TaggedError(
+  "SnippetsDownloadUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;

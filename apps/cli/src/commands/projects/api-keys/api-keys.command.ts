@@ -1,9 +1,9 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyProjectsApiKeys } from "./api-keys.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { projectsApiKeys } from "./api-keys.handler.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -15,9 +15,9 @@ const config = {
     Flag.withDefault(false),
   ),
 };
-export type LegacyProjectsApiKeysFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type ProjectsApiKeysFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyProjectsApiKeysCommand = Command.make("api-keys", config).pipe(
+export const projectsApiKeysCommand = Command.make("api-keys", config).pipe(
   Command.withDescription("List all API keys for a Supabase project."),
   Command.withShortDescription("List API keys"),
   Command.withExamples([
@@ -31,13 +31,13 @@ export const legacyProjectsApiKeysCommand = Command.make("api-keys", config).pip
     },
   ]),
   Command.withHandler((flags) =>
-    legacyProjectsApiKeys(flags).pipe(
+    projectsApiKeys(flags).pipe(
       // `reveal` is intentionally not in `safeFlags`: it is a boolean flag, and
       // boolean values are always logged verbatim by the instrumentation. Only
       // string flags Go marks with `markFlagTelemetrySafe` belong in `safeFlags`.
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withCommandTelemetry({ flags, safeFlags: ["project-ref"] }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["projects", "api-keys"])),
+  Command.provide(managementApiRuntimeLayer(["projects", "api-keys"])),
 );

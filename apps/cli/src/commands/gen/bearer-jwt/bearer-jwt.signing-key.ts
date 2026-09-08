@@ -1,31 +1,31 @@
 import { Effect, Option } from "effect";
 import {
   assertNoMalformedDuplicateJwkField,
-  legacyReadSigningKeysFile,
-  legacyResolveSigningKeysConfigPaths,
+  readSigningKeysFile,
+  resolveSigningKeysConfigPaths,
   readOptionalBoolean,
   readOptionalString,
   readOptionalStringArray,
   resolveJwkFieldValue,
 } from "../gen.signing-keys-config.ts";
 import {
-  legacyAssertDecodableJwkAlgorithm,
-  LEGACY_DEFAULT_SIGNING_KEY,
-  type LegacyJwk,
-} from "../../../command-internal/legacy-go-jwt.ts";
-import { legacyGoJsonKindName } from "../../../command-internal/legacy-go-json.ts";
+  assertDecodableJwkAlgorithm,
+  DEFAULT_SIGNING_KEY,
+  type Jwk,
+} from "../../../command-internal/go-jwt.ts";
+import { goJsonKindName } from "../../../command-internal/go-json.ts";
 import { textOutputLayer } from "../../../shared/output/output.layer.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import {
-  legacyBearerJwtErrorMessage,
-  LegacyGenBearerJwtConfigParseError,
-  LegacyGenBearerJwtDecodeError,
-  LegacyGenBearerJwtKeyNotFoundError,
-  LegacyGenBearerJwtKeyParseError,
-  LegacyGenBearerJwtKeyPickerAbortedError,
-  LegacyGenBearerJwtReadError,
+  bearerJwtErrorMessage,
+  GenBearerJwtConfigParseError,
+  GenBearerJwtDecodeError,
+  GenBearerJwtKeyNotFoundError,
+  GenBearerJwtKeyParseError,
+  GenBearerJwtKeyPickerAbortedError,
+  GenBearerJwtReadError,
 } from "./bearer-jwt.errors.ts";
 
 /** Established console read-line timeouts. */
@@ -41,7 +41,7 @@ const GO_CONSOLE_NON_TTY_TIMEOUT_MILLIS = 100;
  * between them is purely which label/fallback the caller applies to the
  * returned string, not how the read itself behaves.
  */
-const legacyConsolePromptText = Effect.fnUntraced(function* (label: string) {
+const consolePromptText = Effect.fnUntraced(function* (label: string) {
   const output = yield* Output;
   const tty = yield* Tty;
   const stdin = yield* Stdin;
@@ -58,10 +58,10 @@ const legacyConsolePromptText = Effect.fnUntraced(function* (label: string) {
 
 /**
  * Narrows an untrusted JSON record (a `signing_keys_path` file entry, or a pasted
- * stdin JWK) into `LegacyJwk`'s shape — every field `config.JWK` would
+ * stdin JWK) into `Jwk`'s shape — every field `config.JWK` would
  * leave at its zero value (`""`/absent) when missing from the JSON decodes
  * the same way here. Every downstream consumer in this file works with the
- * resulting typed `LegacyJwk`, not the raw untrusted record, so
+ * resulting typed `Jwk`, not the raw untrusted record, so
  * key/kid/alg lookups stay type-checked instead of re-guarding
  * `Record<string, unknown>` at every call site.
  *
@@ -88,7 +88,7 @@ const legacyConsolePromptText = Effect.fnUntraced(function* (label: string) {
  * see both call sites below, and that function's own doc comment for the
  * mechanics.
  */
-function normalizeStoredJwk(record: Record<string, unknown>): LegacyJwk {
+function normalizeStoredJwk(record: Record<string, unknown>): Jwk {
   const keyOps = readOptionalStringArray(record, "key_ops");
   return {
     kty: readOptionalString(record, "kty") ?? "",
@@ -117,19 +117,19 @@ function normalizeStoredJwk(record: Record<string, unknown>): LegacyJwk {
  * on a blank answer.
  */
 const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
-  const input = yield* legacyConsolePromptText(
+  const input = yield* consolePromptText(
     "Enter your signing key in JWK format (or leave blank to use local default): ",
   );
   if (input.length === 0) {
-    return LEGACY_DEFAULT_SIGNING_KEY;
+    return DEFAULT_SIGNING_KEY;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(input);
   } catch (cause) {
     return yield* Effect.fail(
-      new LegacyGenBearerJwtKeyParseError({
-        message: `failed to parse JWK: ${legacyBearerJwtErrorMessage(cause)}`,
+      new GenBearerJwtKeyParseError({
+        message: `failed to parse JWK: ${bearerJwtErrorMessage(cause)}`,
       }),
     );
   }
@@ -147,8 +147,8 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
   }
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
     return yield* Effect.fail(
-      new LegacyGenBearerJwtKeyParseError({
-        message: `failed to parse JWK: json: cannot unmarshal ${legacyGoJsonKindName(parsed)} into Go value of type config.JWK`,
+      new GenBearerJwtKeyParseError({
+        message: `failed to parse JWK: json: cannot unmarshal ${goJsonKindName(parsed)} into Go value of type config.JWK`,
       }),
     );
   }
@@ -159,11 +159,11 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
   // `gen.signing-keys-config.ts`.
   const alg = resolveJwkFieldValue(record, "alg");
   try {
-    legacyAssertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
+    assertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
   } catch (cause) {
     return yield* Effect.fail(
-      new LegacyGenBearerJwtKeyParseError({
-        message: `failed to parse JWK: ${legacyBearerJwtErrorMessage(cause)}`,
+      new GenBearerJwtKeyParseError({
+        message: `failed to parse JWK: ${bearerJwtErrorMessage(cause)}`,
       }),
     );
   }
@@ -190,8 +190,8 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
       return normalizeStoredJwk(record);
     },
     catch: (cause) =>
-      new LegacyGenBearerJwtKeyParseError({
-        message: `failed to parse JWK: ${legacyBearerJwtErrorMessage(cause)}`,
+      new GenBearerJwtKeyParseError({
+        message: `failed to parse JWK: ${bearerJwtErrorMessage(cause)}`,
       }),
   });
 });
@@ -201,7 +201,7 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
  * non-TTY prompts for a kid by exact string match (falling back to the
  * first key on a blank answer); a real TTY presents an interactive picker
  * instead (`output.promptSelect`, the same `@clack/prompts`-backed pattern
- * `legacy-project-ref.layer.ts` already uses for the established
+ * `project-ref.layer.ts` already uses for the established
  * bubbletea-style `PromptChoice` — the rendered ANSI never byte-matches a
  * TUI either way, so this codebase's established precedent is to match
  * only the observable stderr line printed after a choice, "Selected key
@@ -221,12 +221,12 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
  * `output.promptSelect`/`raw` failing with `NonInteractiveError` (the json/stream-json
  * `Output` layers' unconditional behavior, `output.layer.ts`) does it retry through a
  * FRESH, locally-provided {@link textOutputLayer} instance. This is the same rationale
- * as `commands/migration/migration.prompt.ts`'s `legacyMigrationConfirm`:
+ * as `commands/migration/migration.prompt.ts`'s `migrationConfirm`:
  * the established `PromptChoice` has no concept of an output format at all and
  * always prompts on a real TTY, and this command's stdout is the raw token
  * unconditionally in EVERY format (see `bearer-jwt.handler.ts`'s doc comment) — there
  * is no structured json/stream-json result here for an interactive widget to corrupt,
- * unlike `legacy-project-ref.layer.ts`'s own `promptSelect` (which DOES stay gated
+ * unlike `project-ref.layer.ts`'s own `promptSelect` (which DOES stay gated
  * behind `output.format`, because ITS caller's json/stream-json mode has a real
  * machine payload an interactive prompt would otherwise interleave with). The ambient
  * json/stream-json `Output` layers' `promptSelect` unconditionally raises
@@ -239,12 +239,12 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
  * that requires it.
  */
 const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
-  availableKeys: ReadonlyArray<LegacyJwk>,
+  availableKeys: ReadonlyArray<Jwk>,
 ) {
   const tty = yield* Tty;
 
   if (!tty.stdinIsTty) {
-    const kid = yield* legacyConsolePromptText(
+    const kid = yield* consolePromptText(
       "Enter the kid of your signing key (or leave blank to use the first one): ",
     );
     // The exact `KeyID` match check runs BEFORE the blank-input fallback —
@@ -258,7 +258,7 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
       return availableKeys[0]!;
     }
     return yield* Effect.fail(
-      new LegacyGenBearerJwtKeyNotFoundError({ message: `signing key not found: ${kid}` }),
+      new GenBearerJwtKeyNotFoundError({ message: `signing key not found: ${kid}` }),
     );
   }
 
@@ -270,9 +270,7 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
     // on an empty option list" behavior to lean on, and calling it with
     // zero options would otherwise resolve to an out-of-range index and
     // crash with a raw `TypeError` when `.kid` is accessed below.
-    return yield* Effect.fail(
-      new LegacyGenBearerJwtKeyPickerAbortedError({ message: "user aborted" }),
-    );
+    return yield* Effect.fail(new GenBearerJwtKeyPickerAbortedError({ message: "user aborted" }));
   }
 
   const output = yield* Output;
@@ -328,49 +326,49 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
  * keys stay the built-in default (the file is never read) — a real user
  * hitting this combination sees a misleading kid prompt they can never
  * satisfy with their own file's kids. `gen signing-key`'s OWN sibling
- * resolver ({@link legacyGenSigningKey}'s `loadSigningKeysConfig`) needs and
+ * resolver ({@link genSigningKey}'s `loadSigningKeysConfig`) needs and
  * replicates this exact same gate — it goes through the identical config
  * load and validation pipeline as this command, so it is subject to the
  * same auth-disabled quirk (see `gen.signing-keys-config.ts`'s
  * `authEnabled` doc comment).
  */
-export const legacyResolveBearerJwtSigningKey = Effect.fnUntraced(function* (workdir: string) {
-  const paths = yield* legacyResolveSigningKeysConfigPaths(
+export const resolveBearerJwtSigningKey = Effect.fnUntraced(function* (workdir: string) {
+  const paths = yield* resolveSigningKeysConfigPaths(
     workdir,
-    (message) => new LegacyGenBearerJwtConfigParseError({ message }),
+    (message) => new GenBearerJwtConfigParseError({ message }),
   );
 
   if (Option.isNone(paths.signingKeysPath)) {
     return yield* resolveSigningKeyFromStdinJwk();
   }
 
-  let availableKeys: ReadonlyArray<LegacyJwk>;
+  let availableKeys: ReadonlyArray<Jwk>;
   if (paths.authEnabled) {
-    const storedKeys = yield* legacyReadSigningKeysFile(
+    const storedKeys = yield* readSigningKeysFile(
       paths.signingKeysPath.value.actualPath,
-      (message) => new LegacyGenBearerJwtReadError({ message }),
-      (message) => new LegacyGenBearerJwtDecodeError({ message }),
+      (message) => new GenBearerJwtReadError({ message }),
+      (message) => new GenBearerJwtDecodeError({ message }),
     );
     // `normalizeStoredJwk` throws the established bare `encoding/json`
     // struct-field type-mismatch text (see its own doc comment) the moment
     // any stored key entry has a malformed field — e.g.
     // `[{"kty":"oct","alg":"ES256","ext":"true"}]` — wrapped here with the
     // SAME `"failed to decode signing keys: failed to parse response body: %w"` this
-    // file's sibling `alg`-allowlist check (inside `legacyReadSigningKeysFile`) already
+    // file's sibling `alg`-allowlist check (inside `readSigningKeysFile`) already
     // uses for this exact call site. A DUPLICATE
     // malformed field (e.g. `[{"kid":1,"kid":"k1",...}]`) is already rejected earlier,
-    // by `legacyReadSigningKeysFile` itself calling `assertNoMalformedDuplicateJwkField`
+    // by `readSigningKeysFile` itself calling `assertNoMalformedDuplicateJwkField`
     // against each element's own raw source text — `storedKeys` here is guaranteed
     // free of that gap by the time this runs.
     availableKeys = yield* Effect.try({
       try: () => storedKeys.map(normalizeStoredJwk),
       catch: (cause) =>
-        new LegacyGenBearerJwtDecodeError({
-          message: `failed to decode signing keys: failed to parse response body: ${legacyBearerJwtErrorMessage(cause)}`,
+        new GenBearerJwtDecodeError({
+          message: `failed to decode signing keys: failed to parse response body: ${bearerJwtErrorMessage(cause)}`,
         }),
     });
   } else {
-    availableKeys = [LEGACY_DEFAULT_SIGNING_KEY];
+    availableKeys = [DEFAULT_SIGNING_KEY];
   }
 
   return yield* resolveSigningKeyFromConfigured(availableKeys);

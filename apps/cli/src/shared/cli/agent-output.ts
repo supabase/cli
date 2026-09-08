@@ -2,17 +2,16 @@ import { Option } from "effect";
 import type { OutputFormat } from "../output/types.ts";
 import { GLOBAL_VALUE_FLAG_TOKENS } from "./cobra-flag-groups.ts";
 
-// The union of every legacy command's `--output` values (see
-// `shared/legacy/global-flags.ts`): resource commands use `env|pretty|json|toml|yaml`,
-// `db query` adds `table|csv`. An explicit legacy `-o` of any of these suppresses the
-// coding-agent JSON auto-default below. (`next/` never sets `-o`, so this stays inert
-// there.)
-type LegacyOutputFormat = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+// The union of every command's `--output` values (see
+// `command-internal/global-flags.ts`): resource commands use `env|pretty|json|toml|yaml`,
+// `db query` adds `table|csv`. An explicit `-o` of any of these suppresses the
+// coding-agent JSON auto-default below.
+type GoOutputFormat = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
 type AgentOverride = "auto" | "yes" | "no";
 
 interface AgentOutputOptions {
   readonly explicitOutputFormat: Option.Option<OutputFormat>;
-  readonly legacyOutputFormat?: Option.Option<LegacyOutputFormat>;
+  readonly goOutputFormat?: Option.Option<GoOutputFormat>;
   readonly agentOverride?: AgentOverride;
   readonly detectedAgentName?: Option.Option<string>;
   readonly isBuiltInTextRequest?: boolean;
@@ -66,7 +65,7 @@ function outputFormatFromArg(value: string | undefined): Option.Option<OutputFor
   }
 }
 
-function legacyOutputFormatFromArg(value: string | undefined): Option.Option<LegacyOutputFormat> {
+function goOutputFormatFromArg(value: string | undefined): Option.Option<GoOutputFormat> {
   switch (value) {
     case "env":
     case "pretty":
@@ -207,14 +206,14 @@ export function isBuiltInTextRequest(args: ReadonlyArray<string>): boolean {
 }
 
 export function resolveAgentOutputFormat(options: AgentOutputOptions): OutputFormat {
-  const legacyOutputFormat = options.legacyOutputFormat ?? Option.none<LegacyOutputFormat>();
+  const goOutputFormat = options.goOutputFormat ?? Option.none<GoOutputFormat>();
   const detectedAgentName = options.detectedAgentName ?? Option.none<string>();
   const agentOverride = options.agentOverride ?? "auto";
   const isCodingAgent =
     agentOverride === "yes" || (agentOverride === "auto" && Option.isSome(detectedAgentName));
 
   return Option.getOrElse(options.explicitOutputFormat, () =>
-    isCodingAgent && Option.isNone(legacyOutputFormat) && !options.isBuiltInTextRequest
+    isCodingAgent && Option.isNone(goOutputFormat) && !options.isBuiltInTextRequest
       ? "json"
       : "text",
   );
@@ -225,12 +224,12 @@ export function resolveAgentOutputFormatFromArgs(
   detectedAgentName: Option.Option<string>,
 ): OutputFormat {
   const explicitOutputFormat = outputFormatFromArg(readLongFlag(args, "--output-format"));
-  const legacyOutputFormat = legacyOutputFormatFromArg(readOutputFlag(args));
+  const goOutputFormat = goOutputFormatFromArg(readOutputFlag(args));
   const agentOverride = agentOverrideFromArg(readLongFlag(args, "--agent"));
 
   return resolveAgentOutputFormat({
     explicitOutputFormat,
-    legacyOutputFormat,
+    goOutputFormat,
     agentOverride,
     detectedAgentName,
     isBuiltInTextRequest: isBuiltInTextRequest(args),

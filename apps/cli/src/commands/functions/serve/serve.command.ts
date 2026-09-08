@@ -6,18 +6,18 @@ import {
   FUNCTIONS_SERVE_INSPECT_MODES,
   serveFileWatcherLayer,
 } from "../../../shared/functions/serve.ts";
-import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
-import { legacyDebugLoggerLayer } from "../../../command-internal/legacy-debug-logger.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
-import { legacyFunctionsServe } from "./serve.handler.ts";
+import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
+import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
+import { functionsServe } from "./serve.handler.ts";
 
-const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
-const legacyFunctionsServeRuntimeLayer = Layer.mergeAll(
+const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
+const functionsServeRuntimeLayer = Layer.mergeAll(
   serveFileWatcherLayer,
   cliSettings,
-  legacyDebugLoggerLayer,
-  legacyTelemetryStateLayer,
+  debugLoggerLayer,
+  telemetryStateLayer,
   commandRuntimeLayer(["functions", "serve"]),
 );
 
@@ -57,20 +57,17 @@ const config = {
 
 const commandConfig = {
   ...config,
-  legacyFunctionNames: Argument.string("Function name").pipe(
+  functionNames: Argument.string("Function name").pipe(
     Argument.withDescription("Legacy Function names. All Functions are served."),
     Argument.variadic(),
   ),
 } as const;
 
-export const legacyFunctionsServeCommand = Command.make("serve", commandConfig).pipe(
+export const functionsServeCommand = Command.make("serve", commandConfig).pipe(
   Command.withDescription("Serve all Functions locally."),
   Command.withShortDescription("Serve all Functions locally"),
   Command.withHandler((flags) =>
-    legacyFunctionsServe(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, config }),
-      withJsonErrorHandling,
-    ),
+    functionsServe(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
-  Command.provide(legacyFunctionsServeRuntimeLayer),
+  Command.provide(functionsServeRuntimeLayer),
 );

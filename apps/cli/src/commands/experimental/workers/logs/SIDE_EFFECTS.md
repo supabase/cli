@@ -126,7 +126,7 @@ redacted. No custom events.
 | `-o env`                      | refused before any request; the payload nests a `logs` array a flat `KEY=value` list cannot express | the error                                                 |
 
 A structured emission is the end of a bounded read: the handler returns at
-`legacyEmitWorkersMachineOutput` or at `output.success`, so the no-logs line and
+`emitWorkersMachineOutput` or at `output.success`, so the no-logs line and
 its `status` trailer below them are never reached, and `output.task` is a no-op
 in those modes. `-o pretty`, `table` and `csv` are the exception, since they
 encode nothing and fall through to the same text branch.

@@ -1,8 +1,8 @@
 import type { ApiKeyResponse } from "@supabase/api/effect";
 
-import { renderGlamourTable } from "../../output/legacy-glamour-table.ts";
-import { apiKeyValue } from "../../command-internal/legacy-api-keys.format.ts";
-import { formatLegacyTimestamp } from "../../command-internal/legacy-timestamp.format.ts";
+import { renderGlamourTable } from "../../output/glamour-table.ts";
+import { apiKeyValue } from "../../command-internal/api-keys.format.ts";
+import { formatTimestamp } from "../../command-internal/timestamp.format.ts";
 
 // ---------------------------------------------------------------------------
 // Pure formatters — no Effect / no service dependencies, kept unit-testable.
@@ -16,11 +16,11 @@ type ApiKey = typeof ApiKeyResponse.Type;
  * Lenient project record. `projects list` / `create` parse the `/v1/projects`
  * response via the raw HTTP client because the typed client's `ref:
  * isMinLength(20)` + `^[a-z]+$` schema rejects the cli-e2e `__PROJECT_REF__`
- * placeholder fixtures (the same reason `legacySuggestUpgrade` and the
+ * placeholder fixtures (the same reason `suggestUpgrade` and the
  * linked-project cache bypass the typed client). Projects therefore flow
  * through as plain JSON objects.
  */
-export type LegacyLinkedProject = Readonly<Record<string, unknown>> & { readonly linked: boolean };
+export type LinkedProject = Readonly<Record<string, unknown>> & { readonly linked: boolean };
 
 /** Read a string field from a parsed JSON value (empty string when absent/non-string). */
 export function readProjectField(project: unknown, key: string): string {
@@ -99,14 +99,14 @@ function formatBullet(linked: boolean): string {
  * `projects list` pretty table. The REFERENCE ID and LINKED-marker
  * comparison both use the project `id` field.
  */
-export function renderProjectsListTable(projects: ReadonlyArray<LegacyLinkedProject>): string {
+export function renderProjectsListTable(projects: ReadonlyArray<LinkedProject>): string {
   const rows = projects.map((project) => [
     formatBullet(project.linked),
     readProjectField(project, "organization_slug"),
     readProjectField(project, "id"),
     readProjectField(project, "name"),
     formatRegion(readProjectField(project, "region")),
-    formatLegacyTimestamp(readProjectField(project, "created_at")),
+    formatTimestamp(readProjectField(project, "created_at")),
   ]);
   return renderGlamourTable(LIST_HEADERS, rows);
 }
@@ -119,7 +119,7 @@ export function renderProjectCreateTable(project: unknown): string {
       readProjectField(project, "id"),
       readProjectField(project, "name"),
       formatRegion(readProjectField(project, "region")),
-      formatLegacyTimestamp(readProjectField(project, "created_at")),
+      formatTimestamp(readProjectField(project, "created_at")),
     ],
   ];
   return renderGlamourTable(CREATE_HEADERS, rows);

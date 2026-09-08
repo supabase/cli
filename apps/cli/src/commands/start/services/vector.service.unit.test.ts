@@ -4,16 +4,16 @@ import { Deferred, Effect, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
-  legacyBuildVectorContainerSpec,
-  legacyBuildVectorEntrypointScript,
-  legacyParseDockerHostUrl,
-  legacyPlatformDefaultDockerHost,
-  legacyResolveDockerDaemonHost,
-  legacyResolveVectorDockerSocketPlan,
-  legacyShouldMountRootDockerSocket,
-  legacySplitHostPortPort,
-  type LegacyVectorContainerSpecInput,
-  type LegacyVectorDockerSocketPlan,
+  buildVectorContainerSpec,
+  buildVectorEntrypointScript,
+  parseDockerHostUrl,
+  platformDefaultDockerHost,
+  resolveDockerDaemonHost,
+  resolveVectorDockerSocketPlan,
+  shouldMountRootDockerSocket,
+  splitHostPortPort,
+  type VectorContainerSpecInput,
+  type VectorDockerSocketPlan,
 } from "./vector.service.ts";
 
 afterEach(() => {
@@ -64,103 +64,103 @@ function mockSpawner(
   };
 }
 
-describe("legacyParseDockerHostUrl", () => {
+describe("parseDockerHostUrl", () => {
   test("splits a tcp host into scheme/host", () => {
-    expect(legacyParseDockerHostUrl("tcp://127.0.0.1:2375")).toEqual({
+    expect(parseDockerHostUrl("tcp://127.0.0.1:2375")).toEqual({
       scheme: "tcp",
       host: "127.0.0.1:2375",
     });
   });
 
   test("splits a unix socket host", () => {
-    expect(legacyParseDockerHostUrl("unix:///var/run/docker.sock")).toEqual({
+    expect(parseDockerHostUrl("unix:///var/run/docker.sock")).toEqual({
       scheme: "unix",
       host: "/var/run/docker.sock",
     });
   });
 
   test("splits an npipe host", () => {
-    expect(legacyParseDockerHostUrl("npipe:////./pipe/docker_engine")).toEqual({
+    expect(parseDockerHostUrl("npipe:////./pipe/docker_engine")).toEqual({
       scheme: "npipe",
       host: "//./pipe/docker_engine",
     });
   });
 
   test("strips a trailing path from a tcp host, matching Go's url.Parse round-trip", () => {
-    expect(legacyParseDockerHostUrl("tcp://127.0.0.1:2375/some/path")).toEqual({
+    expect(parseDockerHostUrl("tcp://127.0.0.1:2375/some/path")).toEqual({
       scheme: "tcp",
       host: "127.0.0.1:2375",
     });
   });
 
   test("throws on a host with no scheme separator", () => {
-    expect(() => legacyParseDockerHostUrl("not-a-host")).toThrow();
+    expect(() => parseDockerHostUrl("not-a-host")).toThrow();
   });
 
   test("throws on an empty address", () => {
-    expect(() => legacyParseDockerHostUrl("tcp://")).toThrow();
+    expect(() => parseDockerHostUrl("tcp://")).toThrow();
   });
 });
 
-describe("legacySplitHostPortPort", () => {
+describe("splitHostPortPort", () => {
   test("extracts the port from host:port", () => {
-    expect(legacySplitHostPortPort("127.0.0.1:2375")).toBe("2375");
+    expect(splitHostPortPort("127.0.0.1:2375")).toBe("2375");
   });
 
   test("returns undefined when there is no port", () => {
-    expect(legacySplitHostPortPort("127.0.0.1")).toBeUndefined();
+    expect(splitHostPortPort("127.0.0.1")).toBeUndefined();
   });
 
   test("returns undefined when the trailing segment isn't numeric", () => {
-    expect(legacySplitHostPortPort("host:not-a-port")).toBeUndefined();
+    expect(splitHostPortPort("host:not-a-port")).toBeUndefined();
   });
 });
 
-describe("legacyShouldMountRootDockerSocket", () => {
+describe("shouldMountRootDockerSocket", () => {
   test("recognizes Docker Desktop's current rootful socket path", () => {
-    expect(legacyShouldMountRootDockerSocket("/Users/me/.docker/run/docker.sock")).toBe(true);
+    expect(shouldMountRootDockerSocket("/Users/me/.docker/run/docker.sock")).toBe(true);
   });
 
   test("recognizes Docker Desktop's older rootful socket path", () => {
-    expect(legacyShouldMountRootDockerSocket("/Users/me/.docker/desktop/docker.sock")).toBe(true);
+    expect(shouldMountRootDockerSocket("/Users/me/.docker/desktop/docker.sock")).toBe(true);
   });
 
   test("recognizes any Colima profile's socket path", () => {
-    expect(legacyShouldMountRootDockerSocket("/Users/me/.colima/default/docker.sock")).toBe(true);
+    expect(shouldMountRootDockerSocket("/Users/me/.colima/default/docker.sock")).toBe(true);
   });
 
   test("recognizes Colima's default (unprofiled) socket path", () => {
-    expect(legacyShouldMountRootDockerSocket("/Users/me/.colima/docker.sock")).toBe(true);
+    expect(shouldMountRootDockerSocket("/Users/me/.colima/docker.sock")).toBe(true);
   });
 
   test("does not match a Podman rootless socket path", () => {
-    expect(legacyShouldMountRootDockerSocket("/run/user/1000/podman/podman.sock")).toBe(false);
+    expect(shouldMountRootDockerSocket("/run/user/1000/podman/podman.sock")).toBe(false);
   });
 
   test("does not match an OrbStack socket path", () => {
-    expect(legacyShouldMountRootDockerSocket("/Users/me/.orbstack/run/docker.sock")).toBe(false);
+    expect(shouldMountRootDockerSocket("/Users/me/.orbstack/run/docker.sock")).toBe(false);
   });
 
   test("does not match a bare Linux root socket path (never reached in practice, since that branch never checks it)", () => {
-    expect(legacyShouldMountRootDockerSocket("/var/run/docker.sock")).toBe(false);
+    expect(shouldMountRootDockerSocket("/var/run/docker.sock")).toBe(false);
   });
 });
 
-describe("legacyPlatformDefaultDockerHost", () => {
+describe("platformDefaultDockerHost", () => {
   test("resolves the unix default off Windows", () => {
-    expect(legacyPlatformDefaultDockerHost("darwin")).toBe("unix:///var/run/docker.sock");
-    expect(legacyPlatformDefaultDockerHost("linux")).toBe("unix:///var/run/docker.sock");
+    expect(platformDefaultDockerHost("darwin")).toBe("unix:///var/run/docker.sock");
+    expect(platformDefaultDockerHost("linux")).toBe("unix:///var/run/docker.sock");
   });
 
   test("resolves the npipe default on Windows", () => {
-    expect(legacyPlatformDefaultDockerHost("win32")).toBe("npipe:////./pipe/docker_engine");
+    expect(platformDefaultDockerHost("win32")).toBe("npipe:////./pipe/docker_engine");
   });
 });
 
-describe("legacyResolveVectorDockerSocketPlan", () => {
+describe("resolveVectorDockerSocketPlan", () => {
   test("tcp: proxies through host.docker.internal on the daemon's own port, no binds/securityOpt (start.go:422-426)", () => {
-    const plan = legacyResolveVectorDockerSocketPlan("tcp://127.0.0.1:2376");
-    expect(plan).toEqual<LegacyVectorDockerSocketPlan>({
+    const plan = resolveVectorDockerSocketPlan("tcp://127.0.0.1:2376");
+    expect(plan).toEqual<VectorDockerSocketPlan>({
       env: { DOCKER_HOST: "http://host.docker.internal:2376" },
       binds: [],
       securityOpt: [],
@@ -169,13 +169,13 @@ describe("legacyResolveVectorDockerSocketPlan", () => {
   });
 
   test("tcp: falls back to the default DinD port 2375 when the host string has no parseable port", () => {
-    const plan = legacyResolveVectorDockerSocketPlan("tcp://myhost");
+    const plan = resolveVectorDockerSocketPlan("tcp://myhost");
     expect(plan.env).toEqual({ DOCKER_HOST: "http://host.docker.internal:2375" });
   });
 
   test("npipe: proxies through host.docker.internal:2375 and flags isNpipe (start.go:427-430,481)", () => {
-    const plan = legacyResolveVectorDockerSocketPlan("npipe:////./pipe/docker_engine");
-    expect(plan).toEqual<LegacyVectorDockerSocketPlan>({
+    const plan = resolveVectorDockerSocketPlan("npipe:////./pipe/docker_engine");
+    expect(plan).toEqual<VectorDockerSocketPlan>({
       env: { DOCKER_HOST: "http://host.docker.internal:2375" },
       binds: [],
       securityOpt: [],
@@ -184,11 +184,11 @@ describe("legacyResolveVectorDockerSocketPlan", () => {
   });
 
   test("unix + known rootful socket (Docker Desktop): binds the STANDARD socket path to itself, no env/securityOpt (start.go:431-437)", () => {
-    const plan = legacyResolveVectorDockerSocketPlan(
+    const plan = resolveVectorDockerSocketPlan(
       "unix:///Users/me/.docker/run/docker.sock",
       "darwin",
     );
-    expect(plan).toEqual<LegacyVectorDockerSocketPlan>({
+    expect(plan).toEqual<VectorDockerSocketPlan>({
       env: {},
       binds: ["/var/run/docker.sock:/var/run/docker.sock:ro"],
       securityOpt: [],
@@ -197,7 +197,7 @@ describe("legacyResolveVectorDockerSocketPlan", () => {
   });
 
   test("unix + known rootful socket (Colima): same standard-socket-to-itself bind", () => {
-    const plan = legacyResolveVectorDockerSocketPlan(
+    const plan = resolveVectorDockerSocketPlan(
       "unix:///Users/me/.colima/default/docker.sock",
       "darwin",
     );
@@ -206,11 +206,8 @@ describe("legacyResolveVectorDockerSocketPlan", () => {
   });
 
   test("unix + rootless socket (Podman/OrbStack): binds the ACTUAL detected path onto the standard path, plus label:disable (start.go:438-442)", () => {
-    const plan = legacyResolveVectorDockerSocketPlan(
-      "unix:///run/user/1000/podman/podman.sock",
-      "linux",
-    );
-    expect(plan).toEqual<LegacyVectorDockerSocketPlan>({
+    const plan = resolveVectorDockerSocketPlan("unix:///run/user/1000/podman/podman.sock", "linux");
+    expect(plan).toEqual<VectorDockerSocketPlan>({
       env: {},
       binds: ["/run/user/1000/podman/podman.sock:/var/run/docker.sock:ro"],
       securityOpt: ["label:disable"],
@@ -219,15 +216,15 @@ describe("legacyResolveVectorDockerSocketPlan", () => {
   });
 
   test("unix on a Windows-platform default (edge case): recomputes the platform default as npipe", () => {
-    const plan = legacyResolveVectorDockerSocketPlan("unix:///run/user/1000/podman.sock", "win32");
+    const plan = resolveVectorDockerSocketPlan("unix:///run/user/1000/podman.sock", "win32");
     expect(plan.binds).toEqual(["/run/user/1000/podman.sock://./pipe/docker_engine:ro"]);
     expect(plan.securityOpt).toEqual(["label:disable"]);
   });
 });
 
-describe("legacyBuildVectorEntrypointScript", () => {
+describe("buildVectorEntrypointScript", () => {
   test("writes vector.yaml then waits on Logflare's health endpoint before exec'ing vector (start.go:449-454)", () => {
-    expect(legacyBuildVectorEntrypointScript("VECTOR_YAML", "supabase_analytics_proj")).toBe(
+    expect(buildVectorEntrypointScript("VECTOR_YAML", "supabase_analytics_proj")).toBe(
       "cat <<'EOF' > /etc/vector/vector.yaml\n" +
         "VECTOR_YAML" +
         "\nEOF\ntrap 'exit 143' TERM\nuntil wget --no-verbose --tries=1 -T 2 --spider http://" +
@@ -237,7 +234,7 @@ describe("legacyBuildVectorEntrypointScript", () => {
   });
 });
 
-const base: LegacyVectorContainerSpecInput = {
+const base: VectorContainerSpecInput = {
   image: "supabase/vector:0.28.1",
   containerName: "supabase_vector_proj",
   networkId: "supabase_network_proj",
@@ -253,9 +250,9 @@ const base: LegacyVectorContainerSpecInput = {
   dockerSocketPlan: { env: {}, binds: [], securityOpt: [], isNpipe: false },
 };
 
-describe("legacyBuildVectorContainerSpec", () => {
+describe("buildVectorContainerSpec", () => {
   test("builds identity, entrypoint, healthcheck, restart policy, network aliases (start.go:444-477)", () => {
-    const spec = legacyBuildVectorContainerSpec(base);
+    const spec = buildVectorContainerSpec(base);
     expect(spec.image).toBe("supabase/vector:0.28.1");
     expect(spec.containerName).toBe("supabase_vector_proj");
     expect(spec.entrypoint).toBe("sh");
@@ -280,7 +277,7 @@ describe("legacyBuildVectorContainerSpec", () => {
   });
 
   test("passes the docker-socket plan's env/binds/securityOpt straight through", () => {
-    const spec = legacyBuildVectorContainerSpec({
+    const spec = buildVectorContainerSpec({
       ...base,
       dockerSocketPlan: {
         env: { DOCKER_HOST: "http://host.docker.internal:2375" },
@@ -295,7 +292,7 @@ describe("legacyBuildVectorContainerSpec", () => {
   });
 
   test("renders vector.yaml using the container's own name as VectorId and excludes it from docker_logs", () => {
-    const spec = legacyBuildVectorContainerSpec(base);
+    const spec = buildVectorContainerSpec(base);
     const script = String(spec.cmd?.[1]);
     expect(script).toContain('"supabase_vector_proj"');
     expect(script).toContain('.appname == "supabase_kong_proj"');
@@ -303,7 +300,7 @@ describe("legacyBuildVectorContainerSpec", () => {
 
   test("slim image waits on Logflare with BusyBox wget flags", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const spec = legacyBuildVectorContainerSpec({
+    const spec = buildVectorContainerSpec({
       ...base,
       image: "ghcr.io/supabase/cli/vector:0.53.0",
     });
@@ -322,10 +319,10 @@ describe("legacyBuildVectorContainerSpec", () => {
   });
 });
 
-describe("legacyResolveDockerDaemonHost", () => {
+describe("resolveDockerDaemonHost", () => {
   it.live("prefers an explicit DOCKER_HOST env var over any context inspection", () => {
     const mock = mockSpawner(() => ({ exitCode: 1 }));
-    return legacyResolveDockerDaemonHost(
+    return resolveDockerDaemonHost(
       mock.spawner,
       { DOCKER_HOST: "tcp://127.0.0.1:2376" },
       "darwin",
@@ -344,7 +341,7 @@ describe("legacyResolveDockerDaemonHost", () => {
       }
       return { exitCode: 1 };
     });
-    return legacyResolveDockerDaemonHost(mock.spawner, {}, "darwin").pipe(
+    return resolveDockerDaemonHost(mock.spawner, {}, "darwin").pipe(
       Effect.map((host) => {
         expect(host).toBe("unix:///Users/me/.colima/default/docker.sock");
       }),
@@ -353,7 +350,7 @@ describe("legacyResolveDockerDaemonHost", () => {
 
   it.live("falls back to the platform default when docker context inspect fails", () => {
     const mock = mockSpawner(() => ({ exitCode: 1 }));
-    return legacyResolveDockerDaemonHost(mock.spawner, {}, "darwin").pipe(
+    return resolveDockerDaemonHost(mock.spawner, {}, "darwin").pipe(
       Effect.map((host) => {
         expect(host).toBe("unix:///var/run/docker.sock");
       }),
@@ -364,7 +361,7 @@ describe("legacyResolveDockerDaemonHost", () => {
     "falls back to the platform default when docker context inspect returns an empty host",
     () => {
       const mock = mockSpawner(() => ({ exitCode: 0, stdout: "\n" }));
-      return legacyResolveDockerDaemonHost(mock.spawner, {}, "win32").pipe(
+      return resolveDockerDaemonHost(mock.spawner, {}, "win32").pipe(
         Effect.map((host) => {
           expect(host).toBe("npipe:////./pipe/docker_engine");
         }),
@@ -381,7 +378,7 @@ describe("legacyResolveDockerDaemonHost", () => {
         }
         return { exitCode: 1 };
       });
-      return legacyResolveDockerDaemonHost(mock.spawner, { DOCKER_HOST: "" }, "darwin").pipe(
+      return resolveDockerDaemonHost(mock.spawner, { DOCKER_HOST: "" }, "darwin").pipe(
         Effect.map((host) => {
           expect(host).toBe("tcp://127.0.0.1:2376");
         }),

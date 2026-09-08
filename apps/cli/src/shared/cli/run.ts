@@ -20,15 +20,18 @@ import { Credentials } from "../auth/credentials.service.ts";
 import type { CliProjectHome } from "../config/cli-project-home.service.ts";
 import type { CliSettings } from "../config/cli-settings.service.ts";
 import type { ProjectLinkState } from "../config/project-link-state.service.ts";
-import type { LegacyPlatformApiFactory } from "../../auth/legacy-platform-api-factory.service.ts";
+import type { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
 import { normalizeCause } from "../output/normalize-error.ts";
 import type { OutputFormat } from "../output/types.ts";
 import { Output } from "../output/output.service.ts";
-import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
-import { GoProxyInvocation, goProxyInvocationLayer } from "../legacy/go-proxy-invocation.ts";
+import { GoChildExitError } from "../../command-internal/go-child-exit.error.ts";
+import {
+  GoProxyInvocation,
+  goProxyInvocationLayer,
+} from "../../command-internal/go-proxy-invocation.ts";
 import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
 import { cliProjectHomeLayer } from "../config/cli-project-home.layer.ts";
 import { CliProjectLocalServiceVersions } from "../config/cli-project-local-service-versions.service.ts";
@@ -81,7 +84,7 @@ type AllowedRunCliServices =
   | Stdio.Stdio
   | TelemetryRuntime
   | Tty
-  | LegacyPlatformApiFactory
+  | CommandPlatformApiFactory
   | Stdin
   | "effect/unstable/cli/GlobalFlag/linked"
   | "effect/unstable/cli/GlobalFlag/local";
@@ -111,10 +114,10 @@ const globalFlagsWithValues: ReadonlySet<string> = GLOBAL_VALUE_FLAG_TOKENS;
 // their graceful shutdown. Matched by leading command-path segments.
 //
 // Top-level `start` (["start"]) is deliberately NOT listed here: it used to proxy to the
-// Go binary, which managed SIGINT/SIGTERM itself, but the native TypeScript `legacyStart`
+// Go binary, which managed SIGINT/SIGTERM itself, but the native TypeScript `start`
 // installs no signal handling of its own — excluding it left Ctrl-C mid-bring-up as a raw,
 // unhandled OS signal that hard-kills the process, skipping every Effect finalizer
-// including `legacyRollbackStart`. Go's own `start` DID roll back on SIGINT
+// including `rollbackStart`. Go's own `start` DID roll back on SIGINT
 // (`cmd/root.go:99,155` wraps every command's context with `signal.NotifyContext`;
 // formerly `internal/start/start.go:73-82`, which rolled back on any non-nil `run()`
 // error, including the `context.Canceled` a SIGINT produces — internal/start was
@@ -125,21 +128,21 @@ const globalFlagsWithValues: ReadonlySet<string> = GLOBAL_VALUE_FLAG_TOKENS;
 // `["db", "start"]` (top-level `db start`) is ALSO deliberately not listed here, for the exact
 // same reason as `start` above: it used to proxy container bootstrap to the hidden Go
 // `db __db-bootstrap --mode start` seam, which held SIGINT/SIGTERM itself, but CLI-1954's
-// native port (`commands/db/start/start.handler.ts` -> `legacyStartDatabase`) installs
+// native port (`commands/db/start/start.handler.ts` -> `startDatabase`) installs
 // no signal handling of its own — it relies on the SAME `Effect.onError(() =>
-// legacyRollbackStart(...))` wrapper `supabase start` uses, which only ever fires when this
+// rollbackStart(...))` wrapper `supabase start` uses, which only ever fires when this
 // process's own fiber is interrupted (by `Fiber.interrupt` below, or by an ordinary typed
 // failure) — a raw, unhandled OS signal skips it entirely, exactly like the `start` case above.
 //
 // `["db", "reset"]` was ALSO listed here once, for the same reason `db start` used to be:
 // its local path drove the hidden `db __db-bootstrap --mode recreate`/`--mode await-storage`
-// seam via a bespoke DIRECT `ChildProcess.make` spawn (not through `LegacyGoProxy`), which
+// seam via a bespoke DIRECT `ChildProcess.make` spawn (not through `GoProxy`), which
 // held SIGINT/SIGTERM/SIGHUP itself while the Go child recreated the container — the global
 // handler's own `Fiber.interrupt` would otherwise race that child's Docker cleanup and lose
 // its real exit status. CLI-1955 removed that seam entirely: `db reset --local` is now fully
 // native TS (`command-internal/db-bootstrap/recreate-local-database.ts`), installing no signal
 // handling of its own. Its only remaining Go child is the niche `--experimental` remote
-// delegate, via the SAME `LegacyGoProxy.exec`/`execCapture` every other unlisted legacy
+// delegate, via the SAME `GoProxy.exec`/`execCapture` every other unlisted
 // command already uses safely alongside this global handler — so `db reset` was removed from
 // this list too, matching `db start`'s own precedent exactly.
 const selfManagedSignalCommands: ReadonlyArray<ReadonlyArray<string>> = [["functions", "serve"]];
@@ -398,7 +401,7 @@ export function exitCodeForFailure(cause: Cause.Cause<unknown>): number {
  * Whether `handledProgram` should render its generic `output.fail` stderr line
  * for a failed run, given the run's cause and the exit code `exitCodeForFailure`
  * already computed for it. False for a clean exit (`0`), an interrupt (`130`),
- * and a `LegacyGoChildExitError` (CLI-1879) — a delegated Go child already wrote
+ * and a `GoChildExitError` (CLI-1879) — a delegated Go child already wrote
  * its own detailed failure to the inherited stderr, so a second generic line
  * here would be a line Go itself never prints.
  *
@@ -412,7 +415,7 @@ export function exitCodeForFailure(cause: Cause.Cause<unknown>): number {
  */
 export function shouldReportFailure(cause: Cause.Cause<unknown>, exitCode: number): boolean {
   if (exitCode === 0 || exitCode === 130) return false;
-  return !(Cause.squash(cause) instanceof LegacyGoChildExitError);
+  return !(Cause.squash(cause) instanceof GoChildExitError);
 }
 
 /**
@@ -725,7 +728,7 @@ export interface RunCliOptions {
   readonly analyticsLayer: AnyAnalyticsLayer;
   /**
    * Runs just before the process exits on any invocation that exits 0 — the
-   * seam for the legacy shell's upgrade notice. `cleanShowHelp` marks the
+   * seam for the CLI's upgrade notice. `cleanShowHelp` marks the
    * exit-0 ShowHelp failure branch (a bare group command), which cobra serves
    * without `PersistentPreRunE`. Must never fail, and cannot change the exit
    * code.
