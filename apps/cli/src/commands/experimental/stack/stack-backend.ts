@@ -12,6 +12,7 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 export type LegacyExperimentalStackBackend = "legacy" | "stack";
+const LEGACY_EXPERIMENTAL_STACK_ENV = "SUPABASE_EXPERIMENTAL_STACK";
 
 export class LegacyExperimentalStackRoutingError extends Data.TaggedError(
   "LegacyExperimentalStackRoutingError",
@@ -115,6 +116,14 @@ export const legacyResolveExperimentalStackBackend = (input: {
     if (command === "stack") return "stack";
     if (command !== "start" && command !== "stop" && command !== "status") {
       return "legacy";
+    }
+    const envOverride = input.env[LEGACY_EXPERIMENTAL_STACK_ENV];
+    if (envOverride !== undefined && envOverride !== "") {
+      if (envOverride === "1") return "stack";
+      if (envOverride === "0") return "legacy";
+      return yield* new LegacyExperimentalStackRoutingError({
+        message: `${LEGACY_EXPERIMENTAL_STACK_ENV} must be 0 or 1 when set`,
+      });
     }
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;

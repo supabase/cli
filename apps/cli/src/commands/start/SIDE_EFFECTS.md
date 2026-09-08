@@ -1,6 +1,6 @@
 # `supabase start`
 
-This document describes the legacy backend. With `[experimental] stack = true`, `supabase start` uses the new [`supabase stack start` implementation](../experimental/stack/start/SIDE_EFFECTS.md). See [backend selection](../../../docs/stack-commands.md).
+This document describes the legacy backend. With `SUPABASE_EXPERIMENTAL_STACK=1`, or `[experimental] stack = true` when the environment override is unset or empty, `supabase start` uses the new [`supabase stack start` implementation](../experimental/stack/start/SIDE_EFFECTS.md). `SUPABASE_EXPERIMENTAL_STACK=0` forces the legacy backend. See [backend selection](../../../docs/stack-commands.md).
 
 This command talks directly to Docker via subprocess (`docker`/`podman`) to bring up
 the local dev stack sequentially, one container at a time — it does not use Docker

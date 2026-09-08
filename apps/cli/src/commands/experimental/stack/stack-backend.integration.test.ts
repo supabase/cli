@@ -41,6 +41,93 @@ describe("legacyResolveExperimentalStackBackend", () => {
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
   });
 
+  it.effect("uses the environment override before reading config", () => {
+    const root = project("[experimental]\nstack = true\n");
+    return Effect.gen(function* () {
+      expect(
+        yield* resolve({
+          args: ["start"],
+          cwd: root,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "0" },
+        }),
+      ).toBe("legacy");
+      expect(
+        yield* resolve({ args: ["start"], cwd: root, env: { SUPABASE_EXPERIMENTAL_STACK: "" } }),
+      ).toBe("stack");
+      for (const mode of ["__complete", "__completeNoDesc"]) {
+        const backend = yield* resolve({
+          args: [mode, "start", "--"],
+          cwd: root,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "0" },
+        });
+        expect(backend).toBe("legacy");
+        expect(
+          legacyRespondToComplete(legacyRootForBackend(backend), [
+            mode,
+            "start",
+            "--",
+          ])?.candidates.map(({ name }) => name),
+        ).toContain("--ignore-health-check");
+      }
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+  });
+
+  it.effect("rejects invalid overrides and bypasses malformed config", () => {
+    const root = project("[experimental\nstack = true\n");
+    return Effect.gen(function* () {
+      const invalid = yield* resolve({
+        args: ["start"],
+        cwd: "/missing",
+        env: { SUPABASE_EXPERIMENTAL_STACK: "yes" },
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(invalid)).toBe(true);
+      if (Exit.isFailure(invalid)) {
+        const error = Cause.findErrorOption(invalid.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(LegacyExperimentalStackRoutingError);
+          expect(String(error.value)).toContain("SUPABASE_EXPERIMENTAL_STACK");
+          expect(String(error.value)).toContain("0 or 1");
+        }
+      }
+      expect(
+        yield* resolve({
+          args: ["start"],
+          cwd: root,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+        }),
+      ).toBe("stack");
+      expect(
+        yield* resolve({
+          args: ["stop"],
+          cwd: root,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "0" },
+        }),
+      ).toBe("legacy");
+      expect(
+        yield* resolve({
+          args: ["stack", "status"],
+          cwd: "/missing",
+          env: { SUPABASE_EXPERIMENTAL_STACK: "yes" },
+        }),
+      ).toBe("stack");
+      expect(
+        yield* resolve({
+          args: ["login"],
+          cwd: "/missing",
+          env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+        }),
+      ).toBe("legacy");
+      expect(
+        yield* resolve({
+          args: ["--version"],
+          cwd: "/missing",
+          env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+        }),
+      ).toBe("legacy");
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+  });
+
   it.effect("treats a separated global boolean value as a flag value", () => {
     const root = project("[experimental]\nstack = true\n");
     return Effect.gen(function* () {
@@ -155,7 +242,13 @@ describe("legacyResolveExperimentalStackBackend", () => {
     return Effect.gen(function* () {
       expect(yield* resolve({ args: ["login"], cwd: root, env: {} })).toBe("legacy");
       expect(yield* resolve({ args: ["--version", "start"], cwd: root, env: {} })).toBe("legacy");
-      expect(yield* resolve({ args: ["stack", "start"], cwd: root, env: {} })).toBe("stack");
+      expect(
+        yield* resolve({
+          args: ["stack", "start"],
+          cwd: root,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "invalid" },
+        }),
+      ).toBe("stack");
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
   });
 

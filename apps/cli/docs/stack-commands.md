@@ -25,10 +25,12 @@ stack = true
 
 The selected backend determines accepted flags, help, and completion before the command is parsed. Set the flag to `false`, or remove it, to restore the legacy top-level commands. Explicit `supabase stack` commands continue to use the new backend.
 
+For temporary selection, set `SUPABASE_EXPERIMENTAL_STACK=1` to select the new backend or `SUPABASE_EXPERIMENTAL_STACK=0` to select the legacy backend. This environment variable takes precedence over `experimental.stack` in `config.toml`; an unset or empty value falls back to the file setting. Other values are rejected. The override affects only the top-level lifecycle aliases and is applied before reading the project configuration.
+
 This flag currently selects only the `start`, `stop`, and `status` aliases. It does not switch the database, migration, functions, or storage command families to the new backend.
 
 ## Data and configuration
 
 The backends own separate state and databases. Enabling the flag does not import, copy, seed from, or reuse the legacy database, and does not stop a running legacy stack. Normal project migrations and seed configuration are separate from importing legacy database data.
 
-The flag is local CLI configuration in `supabase/config.toml` and is excluded from hosted project configuration. Lifecycle routing reads that exact file after applying the CLI’s working-directory rules, including `--workdir` and `SUPABASE_WORKDIR`; a JSON-only project does not enable the flag.
+The flag is local CLI configuration in `supabase/config.toml` and is excluded from hosted project configuration. When the environment override is absent or empty, lifecycle routing reads that exact file after applying the CLI’s working-directory rules, including `--workdir` and `SUPABASE_WORKDIR`; a JSON-only project does not enable the flag. Selecting a backend does not bypass validation when the selected command later loads its full configuration.

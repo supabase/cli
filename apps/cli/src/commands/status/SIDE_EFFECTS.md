@@ -1,6 +1,6 @@
 # `supabase status`
 
-This document describes the legacy backend. With `[experimental] stack = true`, `supabase status` uses the new [`supabase stack status` implementation](../experimental/stack/status/SIDE_EFFECTS.md). See [backend selection](../../../docs/stack-commands.md).
+This document describes the legacy backend. With `SUPABASE_EXPERIMENTAL_STACK=1`, or `[experimental] stack = true` when the environment override is unset or empty, `supabase status` uses the new [`supabase stack status` implementation](../experimental/stack/status/SIDE_EFFECTS.md). `SUPABASE_EXPERIMENTAL_STACK=0` forces the legacy backend. See [backend selection](../../../docs/stack-commands.md).
 
 TS-only divergence (CLI-2167 follow-up, no Go counterpart): `status` additionally resolves and
 surfaces the current linked project/branch — a "Linked Project:" block on stdout in human text
