@@ -1137,7 +1137,7 @@ export const listStacks = (
           );
         }),
         Effect.catchTag("StackStateInvalidError", (error) =>
-          isMissingStateRemnantError(error) ? Effect.succeed(undefined) : Effect.fail(error),
+          isMissingStateRemnantError(error) ? Effect.void : Effect.fail(error),
         ),
       );
       if (
