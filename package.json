@@ -48,7 +48,7 @@
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
-      "version": "12.3.0",
+      "version": "12.4.0",
       "onFail": "warn"
     }
   }
