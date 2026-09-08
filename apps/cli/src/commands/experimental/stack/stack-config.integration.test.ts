@@ -266,6 +266,28 @@ enabled = true
     });
   });
 
+  it.effect("keeps the gateway listener when analytics is enabled", () => {
+    const root = project(`project_id = "stack-config-analytics-gateway"
+[api]
+enabled = false
+port = 55431
+[auth]
+enabled = false
+[realtime]
+enabled = false
+[storage]
+enabled = false
+[edge_runtime]
+enabled = false
+[analytics]
+enabled = true
+`);
+    return Effect.gen(function* () {
+      const config = yield* load(root);
+      expect(config.listeners?.api).toEqual({ port: 55431 });
+    });
+  });
+
   it.effect("keeps disabled functions capability free of settings", () => {
     const root = project(`project_id = "stack-config-disabled-functions"
 [edge_runtime]
@@ -356,6 +378,8 @@ pop3_port = 55437
 [edge_runtime]
 enabled = false
 inspector_port = 55438
+[analytics]
+enabled = false
 `);
     return Effect.gen(function* () {
       const config = yield* load(root);

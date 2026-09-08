@@ -227,7 +227,8 @@ const apiListener = (
     config.auth.enabled ||
     config.realtime.enabled ||
     config.storage.enabled ||
-    config.edge_runtime.enabled;
+    config.edge_runtime.enabled ||
+    config.analytics.enabled;
   if (listener === undefined) return listener;
   if (gatewayEnabled) {
     const port = explicitPort(document, "api", "port");
