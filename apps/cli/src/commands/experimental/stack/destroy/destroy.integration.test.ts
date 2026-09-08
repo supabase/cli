@@ -8,6 +8,10 @@ import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import { mockLegacyCliSettings } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import {
+  actionability,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 import { LegacyExperimentalStackApi } from "../stack.shared.ts";
 import {
   legacyExperimentalStackDestroy,
@@ -117,6 +121,8 @@ describe("experimental stack destroy", () => {
     return Effect.gen(function* () {
       const failure = yield* legacyExperimentalStackDestroy(flags()).pipe(Effect.flip);
       expect(failure.message).toContain("destroy failed");
+      expect(failure.reason).toBe("lifecycle");
+      expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
       expect(setupResult.state.openedIds).toEqual([id]);
       expect(setupResult.output.messages.some((message) => message.type === "success")).toBe(false);
     }).pipe(Effect.provide(setupResult.layer));

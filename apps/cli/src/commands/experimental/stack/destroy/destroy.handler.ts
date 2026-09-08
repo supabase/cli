@@ -39,6 +39,7 @@ const destroyError = (error: unknown): LegacyExperimentalStackDestroyError => {
             "StackLifecycleConflictError",
             "StackRuntimeError",
             "StackCleanupError",
+            "StackDestructionError",
             "StackUpgradeRequiredError",
             () => "lifecycle" as const,
           ),
