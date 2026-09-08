@@ -15,14 +15,14 @@ import { Flag, GlobalFlag } from "effect/unstable/cli";
  * parsed values, so the defaults only affect the help text and the
  * telemetry flags map.
  */
-export const LegacySeedLinkedFlag = GlobalFlag.setting("linked")({
+export const SeedLinkedFlag = GlobalFlag.setting("linked")({
   flag: Flag.boolean("linked").pipe(
     Flag.withDescription("Seeds the linked project."),
     Flag.withDefault(false),
   ),
 });
 
-export const LegacySeedLocalFlag = GlobalFlag.setting("local")({
+export const SeedLocalFlag = GlobalFlag.setting("local")({
   flag: Flag.boolean("local").pipe(
     Flag.withDescription("Seeds the local database."),
     Flag.withDefault(true),

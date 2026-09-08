@@ -8,11 +8,11 @@ import {
 
 /**
  * `ErrMissingToken`. The reference implementation Aqua-styles the
- * `--token` / `SUPABASE_ACCESS_TOKEN` substrings, but the legacy port renders
+ * `--token` / `SUPABASE_ACCESS_TOKEN` substrings, but the port renders
  * styling as plain text (color is stripped on a non-TTY anyway), so this is
  * byte-exact.
  */
-export const LEGACY_LOGIN_MISSING_TOKEN_MESSAGE =
+export const LOGIN_MISSING_TOKEN_MESSAGE =
   `Cannot use automatic login flow inside non-TTY environments. ` +
   `Please provide --token flag or set the SUPABASE_ACCESS_TOKEN environment variable.`;
 
@@ -23,7 +23,7 @@ export const LEGACY_LOGIN_MISSING_TOKEN_MESSAGE =
  * `credentials.saveAccessToken`. A malformed provided token is not fixable by
  * `supabase login`, so the remediation is to correct that input.
  */
-export class LegacyLoginSaveTokenError extends Data.TaggedError("LegacyLoginSaveTokenError")<{
+export class LoginSaveTokenError extends Data.TaggedError("LoginSaveTokenError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -32,7 +32,7 @@ export class LegacyLoginSaveTokenError extends Data.TaggedError("LegacyLoginSave
 }
 
 /** Non-TTY environment with no token supplied (`login.go:34-35`). */
-export class LegacyLoginMissingTokenError extends Data.TaggedError("LegacyLoginMissingTokenError")<{
+export class LoginMissingTokenError extends Data.TaggedError("LoginMissingTokenError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -46,7 +46,7 @@ export class LegacyLoginMissingTokenError extends Data.TaggedError("LegacyLoginM
  * `newErrorCallback` (`login.go:159-166`); also the value `verifyWithRetries`
  * surfaces after the final attempt.
  */
-export class LegacyLoginVerificationError extends Data.TaggedError("LegacyLoginVerificationError")<{
+export class LoginVerificationError extends Data.TaggedError("LoginVerificationError")<{
   readonly message: string;
   /** HTTP status of a non-200 poll response, when one was received. */
   readonly statusCode?: number;
@@ -71,7 +71,7 @@ export class LegacyLoginVerificationError extends Data.TaggedError("LegacyLoginV
  * poll protocol: `pollForAccessToken` treats every non-200 as a retryable
  * error (`login.go:132-157`, `pkg/fetcher/http.go:102-113`).
  */
-export class LegacyLoginFailedError extends Data.TaggedError("LegacyLoginFailedError")<{
+export class LoginFailedError extends Data.TaggedError("LoginFailedError")<{
   readonly message: string;
   readonly statusCode?: number;
   readonly network?: boolean;
@@ -97,7 +97,7 @@ export class LegacyLoginFailedError extends Data.TaggedError("LegacyLoginFailedE
 }
 
 /** ECDH / AES-GCM decryption failure — message `cannot decrypt access token` (`login.go:47`). */
-export class LegacyLoginDecryptError extends Data.TaggedError("LegacyLoginDecryptError")<{
+export class LoginDecryptError extends Data.TaggedError("LoginDecryptError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -106,7 +106,7 @@ export class LegacyLoginDecryptError extends Data.TaggedError("LegacyLoginDecryp
 }
 
 /** ECDH keypair generation failure — message `cannot generate crypto keys` (`login.go:66`). */
-export class LegacyLoginCryptoError extends Data.TaggedError("LegacyLoginCryptoError")<{
+export class LoginCryptoError extends Data.TaggedError("LoginCryptoError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

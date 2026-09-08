@@ -131,7 +131,9 @@ func (s *storage) ToUpdateStorageConfigBody() v1API.UpdateStorageConfigBody {
 
 func (s *storage) FromRemoteStorageConfig(remoteConfig v1API.StorageConfigResponseOutput) {
 	s.FileSizeLimit = sizeInBytes(remoteConfig.FileSizeLimit)
-	s.TargetMigration = remoteConfig.MigrationVersion
+	if value, err := remoteConfig.MigrationVersion.Get(); err == nil {
+		s.TargetMigration = value
+	}
 	// When local config is not set, we assume platform defaults should not change
 	if s.ImageTransformation != nil {
 		s.ImageTransformation.Enabled = remoteConfig.Features.ImageTransformation.Enabled

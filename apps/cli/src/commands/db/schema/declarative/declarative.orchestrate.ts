@@ -1,33 +1,27 @@
 import { Effect, FileSystem, Path } from "effect";
 
-import type { LegacyPgDeltaContext } from "../../../../command-internal/legacy-pgdelta.ts";
-import type { LegacyDbTomlValues } from "../../../../command-internal/legacy-db-config.toml-read.ts";
-import { legacyFindDropStatements } from "../../../../command-internal/legacy-sql-split.ts";
+import type { PgDeltaContext } from "../../../../command-internal/pgdelta.ts";
+import type { DbTomlValues } from "../../../../command-internal/db-config.toml-read.ts";
+import { findDropStatements } from "../../../../command-internal/sql-split.ts";
 import {
-  LegacyPgDeltaEngine,
-  type LegacyPgDeltaDatabaseEndpoint,
-  type LegacyPgDeltaRemovalSummary,
-  type LegacyPgDeltaRenderedFile,
-} from "../../shared/legacy-pgdelta-engine.service.ts";
+  PgDeltaEngine,
+  type PgDeltaDatabaseEndpoint,
+  type PgDeltaRemovalSummary,
+  type PgDeltaRenderedFile,
+} from "../../shared/pgdelta-engine.service.ts";
+import { LoadPgDeltaSqlFiles, ReadPgDeltaExportManifest } from "../../shared/pgdelta-files.ts";
+import { DeclarativeCompatibilityError, DeclarativeDiffError } from "./declarative.errors.ts";
 import {
-  LegacyLoadPgDeltaSqlFiles,
-  LegacyReadPgDeltaExportManifest,
-} from "../../shared/legacy-pgdelta-files.ts";
-import {
-  LegacyDeclarativeCompatibilityError,
-  LegacyDeclarativeDiffError,
-} from "./declarative.errors.ts";
-import {
-  legacyClassifyDeclarativeLoadCompatibility,
-  legacyCurrentShellPlatform,
-  legacyFormatDeclarativeUpgradeGate,
-  type LegacyDeclarativeLoadCompatibilityFinding,
-  type LegacyDeclarativeUpgradeGateText,
+  classifyDeclarativeLoadCompatibility,
+  currentShellPlatform,
+  formatDeclarativeUpgradeGate,
+  type DeclarativeLoadCompatibilityFinding,
+  type DeclarativeUpgradeGateText,
 } from "./declarative.flow.ts";
 
 /** Ambient inputs shared by the orchestration steps. */
-export interface LegacyDeclarativeRunContext {
-  readonly pgDelta: LegacyPgDeltaContext;
+export interface DeclarativeRunContext {
+  readonly pgDelta: PgDeltaContext;
   readonly formatOptions: string;
   readonly declarativeDir: string;
   /** User-facing configured/output path, kept separate from the absolute I/O path. */
@@ -41,23 +35,23 @@ export interface LegacyDeclarativeRunContext {
 }
 
 /** The output of a declarative-to-migrations diff. Mirrors Go's `SyncResult`. */
-export interface LegacyDeclarativeSyncResult {
+export interface DeclarativeSyncResult {
   readonly diffSQL: string;
-  readonly files: ReadonlyArray<LegacyPgDeltaRenderedFile>;
+  readonly files: ReadonlyArray<PgDeltaRenderedFile>;
   readonly sourceRef: string;
   readonly targetRef: string;
   readonly dropWarnings: ReadonlyArray<string>;
   readonly manifestPresent: boolean;
-  readonly removals: LegacyPgDeltaRemovalSummary;
+  readonly removals: PgDeltaRemovalSummary;
 }
 
-const declarativeError = (message: string) => new LegacyDeclarativeDiffError({ message });
+const declarativeError = (message: string) => new DeclarativeDiffError({ message });
 
 const formatImplicitExtensionLoadFailure = (
-  findings: ReadonlyArray<LegacyDeclarativeLoadCompatibilityFinding>,
-  run: Pick<LegacyDeclarativeRunContext, "declarativeDirDisplay" | "schema">,
-): LegacyDeclarativeUpgradeGateText =>
-  legacyFormatDeclarativeUpgradeGate({
+  findings: ReadonlyArray<DeclarativeLoadCompatibilityFinding>,
+  run: Pick<DeclarativeRunContext, "declarativeDirDisplay" | "schema">,
+): DeclarativeUpgradeGateText =>
+  formatDeclarativeUpgradeGate({
     evidence: findings.map((finding) => {
       const location =
         finding.file === undefined
@@ -68,18 +62,23 @@ const formatImplicitExtensionLoadFailure = (
     context: {
       declarativeDir: run.declarativeDirDisplay,
       schema: run.schema,
-      platform: legacyCurrentShellPlatform(),
+      platform: currentShellPlatform(),
     },
   });
 
-const legacyPlanDeclarative = Effect.fnUntraced(function* (
-  run: LegacyDeclarativeRunContext,
-  toml: LegacyDbTomlValues,
-  source?: LegacyPgDeltaDatabaseEndpoint,
+/**
+ * Computes the diff between local migrations state and the declarative schema.
+ * The pg-delta engine owns both sides of the plan, planning against its scoped
+ * migrations/declarative shadows.
+ */
+const planDeclarative = Effect.fnUntraced(function* (
+  run: DeclarativeRunContext,
+  toml: DbTomlValues,
+  source?: PgDeltaDatabaseEndpoint,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const engine = yield* LegacyPgDeltaEngine;
+  const engine = yield* PgDeltaEngine;
   const exists = yield* fs.exists(run.declarativeDir).pipe(Effect.orElseSucceed(() => false));
   if (!exists) {
     return yield* Effect.fail(
@@ -88,11 +87,11 @@ const legacyPlanDeclarative = Effect.fnUntraced(function* (
       ),
     );
   }
-  const files = yield* LegacyLoadPgDeltaSqlFiles(fs, path, run.declarativeDir).pipe(
+  const files = yield* LoadPgDeltaSqlFiles(fs, path, run.declarativeDir).pipe(
     Effect.mapError((error) => declarativeError(error.message)),
   );
   // The planner reads ownership metadata from the export manifest when present.
-  const manifest = yield* LegacyReadPgDeltaExportManifest(fs, path, run.declarativeDir).pipe(
+  const manifest = yield* ReadPgDeltaExportManifest(fs, path, run.declarativeDir).pipe(
     Effect.mapError((error) => declarativeError(error.message)),
   );
   const result = yield* engine
@@ -111,14 +110,14 @@ const legacyPlanDeclarative = Effect.fnUntraced(function* (
     })
     .pipe(
       Effect.mapError((error) => {
-        const findings = legacyClassifyDeclarativeLoadCompatibility({
+        const findings = classifyDeclarativeLoadCompatibility({
           manifestPresent: manifest !== undefined,
           diagnostics: error.diagnostics ?? [],
           files,
         });
         if (findings.length === 0) return error;
         const gate = formatImplicitExtensionLoadFailure(findings, run);
-        return new LegacyDeclarativeCompatibilityError({
+        return new DeclarativeCompatibilityError({
           message: gate.message,
           suggestion: gate.suggestion,
           loadFindings: findings,
@@ -133,30 +132,28 @@ const legacyPlanDeclarative = Effect.fnUntraced(function* (
     dropWarnings:
       result.hazards !== undefined
         ? result.hazards.dataLoss.map((action) => action.sql)
-        : legacyFindDropStatements(result.sql),
+        : findDropStatements(result.sql),
     manifestPresent: manifest !== undefined,
     removals: result.removals ?? { extensions: [], extensionIntents: [] },
-  } satisfies LegacyDeclarativeSyncResult;
+  } satisfies DeclarativeSyncResult;
 });
 
 /** Plans from the local migrations state to the declarative schema. */
-export const legacyDiffDeclarativeToMigrations = (
-  run: LegacyDeclarativeRunContext,
-  toml: LegacyDbTomlValues,
-) => legacyPlanDeclarative(run, toml);
+export const diffDeclarativeToMigrations = (run: DeclarativeRunContext, toml: DbTomlValues) =>
+  planDeclarative(run, toml);
 
 /** Plans from a live database to the declarative schema without migration history. */
-export const legacyPlanDeclarativeToDatabase = (
-  run: LegacyDeclarativeRunContext,
-  toml: LegacyDbTomlValues,
-  source: LegacyPgDeltaDatabaseEndpoint,
-) => legacyPlanDeclarative(run, toml, source);
+export const planDeclarativeToDatabase = (
+  run: DeclarativeRunContext,
+  toml: DbTomlValues,
+  source: PgDeltaDatabaseEndpoint,
+) => planDeclarative(run, toml, source);
 
-export const legacyGenerateDeclarativeOutput = Effect.fnUntraced(function* (
-  run: LegacyDeclarativeRunContext,
-  target: LegacyPgDeltaDatabaseEndpoint,
+export const generateDeclarativeOutput = Effect.fnUntraced(function* (
+  run: DeclarativeRunContext,
+  target: PgDeltaDatabaseEndpoint,
 ) {
-  const engine = yield* LegacyPgDeltaEngine;
+  const engine = yield* PgDeltaEngine;
   return yield* engine.exportDeclarativeSchema({
     context: run.pgDelta,
     target,

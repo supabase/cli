@@ -2,16 +2,16 @@ import { Effect, FileSystem, Option, Predicate, type Schedule } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
-import { legacyRenderWorkerDetails } from "../workers.format.ts";
+import { renderWorkerDetails } from "../workers.format.ts";
 import {
-  legacyEmitWorkersMachineOutput,
-  legacyRejectWorkersEnvOutput,
-  legacyWorkersMachineOutputRequested,
-  legacyWorkersProjectRefSuffix,
+  emitWorkersMachineOutput,
+  rejectWorkersEnvOutput,
+  workersMachineOutputRequested,
+  workersProjectRefSuffix,
 } from "../workers.output.ts";
-import { legacyAqua } from "../../../../command-internal/legacy-colors.ts";
-import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
+import { aqua } from "../../../../command-internal/colors.ts";
+import { CommandPlatformApi } from "../../../../auth/command-platform-api.service.ts";
+import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { classifyWorkerDir } from "../../../../shared/workers/worker-classify.ts";
 import { formatBytes, packageWorkerDirectory } from "../../../../shared/workers/worker-package.ts";
 import { displayPath } from "../../../../shared/workers/worker-paths.ts";
@@ -46,17 +46,17 @@ import {
   WorkerBuildFailedError,
   WorkerSourceMissingError,
 } from "../../../../shared/workers/workers.errors.ts";
-import { LegacyProjectRefResolver } from "../../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
+import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
-  legacyDescribeWorker,
-  legacyDiscoverWorkerNames,
-  legacyLoadWorkersProject,
-  legacyValidateWorkerName,
-  type LegacyWorkersProject,
+  describeWorker,
+  discoverWorkerNames,
+  loadWorkersProject,
+  validateWorkerName,
+  type WorkersProject,
 } from "../workers.shared.ts";
-import type { LegacyWorkersPushFlags } from "./push.command.ts";
+import type { WorkersPushFlags } from "./push.command.ts";
 
 /**
  * `supabase experimental workers push [name...]` — build (when there is code to build) and
@@ -255,7 +255,7 @@ function addYourCode(sourceDisplay: string): string {
 }
 
 const deployOneWorker = Effect.fnUntraced(function* (input: {
-  readonly project: LegacyWorkersProject;
+  readonly project: WorkersProject;
   readonly name: string;
   readonly projectRef: string;
   /**
@@ -275,11 +275,11 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
 }) {
   const fs = yield* FileSystem.FileSystem;
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
-  const settings = yield* LegacyCliSettings;
+  const api = yield* CommandPlatformApi;
+  const settings = yield* CommandSettings;
 
   const { project, name, projectRef } = input;
-  const worker = yield* legacyDescribeWorker(project, name);
+  const worker = yield* describeWorker(project, name);
 
   const sourceDisplay = displayPath(project.projectRoot, worker.sourceDir);
 
@@ -479,13 +479,11 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   // would land in the middle of it.
   if (output.format === "text" && !input.machineOutput) {
     // Declarative line first, then the details — the shape every other command
-    // that reports a completed remote change uses. `legacyRenderWorkerDetails` drops
+    // that reports a completed remote change uses. `renderWorkerDetails` drops
     // empty-valued rows, so optional fields need no conditional spreads.
+    yield* output.raw(`Deployed Worker ${aqua(name, process.stdout)} to project ${projectRef}\n`);
     yield* output.raw(
-      `Deployed Worker ${legacyAqua(name, process.stdout)} to project ${projectRef}\n`,
-    );
-    yield* output.raw(
-      legacyRenderWorkerDetails([
+      renderWorkerDetails([
         // Labelled `State`, and placed first, the way `workers status` renders
         // the same field: under `--no-wait` it is the one row that says the
         // worker is not serving yet, so it should not be hunted for at the
@@ -494,7 +492,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
         ["Runtime", runtime],
         ["Size", formatApiSize(settled.spec.size)],
         // Empty under `--no-wait`: this deploy's image does not exist until the
-        // build produces one, and `legacyRenderWorkerDetails` drops an
+        // build produces one, and `renderWorkerDetails` drops an
         // empty-valued row.
         ["Image", imageVersion ?? ""],
         ["Access", settled.spec.exposure],
@@ -519,7 +517,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
       // where the build's verdict will show up.
       yield* emitSuccessTrailer(
         `\nYour build was submitted successfully.\n` +
-          `Run ${legacyAqua(`supabase experimental workers status ${name}${input.refSuffix}`)} to check on it.\n`,
+          `Run ${aqua(`supabase experimental workers status ${name}${input.refSuffix}`)} to check on it.\n`,
       );
     }
   }
@@ -600,17 +598,17 @@ const reportStillBuilding = Effect.fnUntraced(function* (building: ReadonlyArray
  * legs; the builds themselves then run concurrently on the platform, which is
  * what the caller asked for by opting out of the wait.
  */
-export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(function* (
-  flags: LegacyWorkersPushFlags,
+export const workersPush = Effect.fn("experimental.workers.push")(function* (
+  flags: WorkersPushFlags,
   options: {
     readonly pollSchedule?: Schedule.Schedule<unknown>;
     readonly pollRetrySchedule?: Schedule.Schedule<unknown>;
   } = {},
 ) {
   const output = yield* Output;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   // The ref is resolved outside the finalizers because caching it is one of
   // them; everything that can fail on its own — loading `config.toml`,
@@ -619,12 +617,12 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
   const projectRef = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
-    const project = yield* legacyLoadWorkersProject();
+    const project = yield* loadWorkersProject();
 
     const requested =
       flags.names.length > 0
-        ? yield* Effect.forEach(flags.names, legacyValidateWorkerName)
-        : yield* legacyDiscoverWorkerNames(project);
+        ? yield* Effect.forEach(flags.names, validateWorkerName)
+        : yield* discoverWorkerNames(project);
 
     if (requested.length === 0) {
       return yield* Effect.fail(
@@ -643,12 +641,12 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
     // Before the first deploy, not after the last one: this payload always
     // carries a `workers` array, so `-o env` can never encode it, and finding
     // that out at the end means failing with the remote project already changed.
-    yield* legacyRejectWorkersEnvOutput();
+    yield* rejectWorkersEnvOutput();
 
-    const machineOutput = yield* legacyWorkersMachineOutputRequested();
+    const machineOutput = yield* workersMachineOutputRequested();
     // Computed once for the whole run, the way `status` and `delete` do: an
     // explicit `--project-ref` has to survive into every hint this push emits.
-    const refSuffix = legacyWorkersProjectRefSuffix(flags.projectRef);
+    const refSuffix = workersProjectRefSuffix(flags.projectRef);
     const deployed: Array<Record<string, unknown>> = [];
     // Accepted, but not finished: their builds outlive a failure further down
     // the loop, so the failure path has to name them. See `reportStillBuilding`.
@@ -668,7 +666,7 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
         // a stream of events — unlike the unattempted-workers report below,
         // which every format gets because it says what still needs deploying.
         yield* output.raw(
-          `Deploying Worker ${index + 1}/${names.length}: ${legacyAqua(name)}\n`,
+          `Deploying Worker ${index + 1}/${names.length}: ${aqua(name)}\n`,
           "stderr",
         );
       }
@@ -705,7 +703,7 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
     if (names.length > 1 && !machineOutput && output.format === "text") {
       yield* output.raw(
         `Deployed ${names.length} Workers to project ${projectRef}: ${names
-          .map((name) => legacyAqua(name, process.stdout))
+          .map((name) => aqua(name, process.stdout))
           .join(", ")}\n`,
       );
     }
@@ -714,7 +712,7 @@ export const legacyWorkersPush = Effect.fn("legacy.experimental.workers.push")(f
 
     // `-o` asks for a machine-readable stdout, so nothing human may be written
     // to it — `output.success` logs to stdout in text mode.
-    if (yield* legacyEmitWorkersMachineOutput(payload)) {
+    if (yield* emitWorkersMachineOutput(payload)) {
       return;
     }
 

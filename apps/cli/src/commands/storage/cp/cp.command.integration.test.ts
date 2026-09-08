@@ -6,7 +6,7 @@ import { CliOutput, Command } from "effect/unstable/cli";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import { normalizeCause } from "../../../shared/output/normalize-error.ts";
-import { LEGACY_GLOBAL_FLAGS } from "../../../shared/legacy/global-flags.ts";
+import { GLOBAL_FLAGS } from "../../../command-internal/global-flags.ts";
 import {
   mockAnalytics,
   mockOutput,
@@ -17,7 +17,7 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
-import { legacyStorageCommand } from "../storage.command.ts";
+import { storageCommand } from "../storage.command.ts";
 
 // `--jobs` is a pflag-style uint: a negative value fails
 // `strconv.ParseUint` at flag-parse time — before the `--experimental` gate,
@@ -27,12 +27,12 @@ import { legacyStorageCommand } from "../storage.command.ts";
 // strictly ahead of the handler (where the experimental gate and the
 // `--linked`/`--local` mutex check live). This suite proves the rejection is
 // wired into the real command tree — not just reachable by calling
-// `legacyStorageCp` directly with a handcrafted `Option.some(-1)` flags
+// `storageCp` directly with a handcrafted `Option.some(-1)` flags
 // object, which `cp.integration.test.ts` cannot exercise since it calls the
 // handler directly.
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyStorageCommand]),
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
+  Command.withSubcommands([storageCommand]),
+  Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
 function setup(args: ReadonlyArray<string>) {
@@ -42,7 +42,7 @@ function setup(args: ReadonlyArray<string>) {
     CliOutput.layer(textCliOutputFormatter()),
     out.layer,
     Layer.succeed(CliArgs, { args }),
-    // `legacyStorageGatewayRuntimeLayer`'s cliSettings/credentials layers read
+    // `storageGatewayRuntimeLayer`'s cliSettings/credentials layers read
     // real env/files when built. The jobs check under test never reaches that
     // lazy factory, but isolate ambient env defensively anyway.
     processEnvLayer({ SUPABASE_NO_KEYRING: "1" }),
@@ -72,7 +72,7 @@ function setup(args: ReadonlyArray<string>) {
   return { layer };
 }
 
-describe("legacy storage cp --jobs negative rejection (command-tree wiring)", () => {
+describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
   it.live(
     "rejects --jobs=-1 with pflag's exact ParseUint message, ahead of the experimental gate and the --linked/--local mutex conflict",
     () => {
@@ -80,8 +80,8 @@ describe("legacy storage cp --jobs negative rejection (command-tree wiring)", ()
       // BOTH set: in Go, pflag's ParseUint failure preempts the experimental
       // gate (`PersistentPreRunE`) and the mutex validation, so this must
       // fail with the flag-parse error — not
-      // `LegacyExperimentalRequiredError`, and not
-      // `LegacyStorageMutuallyExclusiveFlagsError`.
+      // `ExperimentalRequiredError`, and not
+      // `StorageMutuallyExclusiveFlagsError`.
       const args = [
         "storage",
         "cp",
@@ -103,7 +103,7 @@ describe("legacy storage cp --jobs negative rejection (command-tree wiring)", ()
           expect(JSON.stringify(exit.cause)).not.toContain(
             "must set the --experimental flag to run this command",
           );
-          expect(JSON.stringify(exit.cause)).not.toContain("LegacyStorageMutuallyExclusiveFlags");
+          expect(JSON.stringify(exit.cause)).not.toContain("StorageMutuallyExclusiveFlags");
           // `normalizeCause` is the exact rendering path `runCli` uses for
           // parse failures — the user-visible line must be pflag's message,
           // byte-identical, with no `Invalid value for flag --jobs:` wrapper.

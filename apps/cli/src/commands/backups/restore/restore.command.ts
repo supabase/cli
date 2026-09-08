@@ -2,9 +2,9 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { Command, Flag } from "effect/unstable/cli";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyBackupsRestore } from "./restore.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { backupsRestore } from "./restore.handler.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -18,9 +18,9 @@ const config = {
   ),
 } as const;
 
-export type LegacyBackupsRestoreFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type BackupsRestoreFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyBackupsRestoreCommand = Command.make("restore", config).pipe(
+export const backupsRestoreCommand = Command.make("restore", config).pipe(
   Command.withDescription("Restore to a specific timestamp using PITR"),
   Command.withShortDescription("Restore to a specific timestamp using PITR"),
   Command.withExamples([
@@ -30,10 +30,7 @@ export const legacyBackupsRestoreCommand = Command.make("restore", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyBackupsRestore(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
-      withJsonErrorHandling,
-    ),
+    backupsRestore(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["backups", "restore"])),
+  Command.provide(managementApiRuntimeLayer(["backups", "restore"])),
 );

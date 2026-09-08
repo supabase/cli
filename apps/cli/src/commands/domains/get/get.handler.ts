@@ -1,25 +1,23 @@
 import { Effect } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { emitLegacyHostnameResult } from "../domains.emit.ts";
-import { mapLegacyDomainsHttpError } from "../domains.errors.ts";
-import { legacyGateMapError } from "../../../command-internal/legacy-upgrade-suggest.ts";
-import type { LegacyDomainsGetFlags } from "./get.command.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { emitHostnameResult } from "../domains.emit.ts";
+import { mapDomainsHttpError } from "../domains.errors.ts";
+import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
+import type { DomainsGetFlags } from "./get.command.ts";
 
-const mapGetError = mapLegacyDomainsHttpError("get");
+const mapGetError = mapDomainsHttpError("get");
 
-export const legacyDomainsGet = Effect.fn("legacy.domains.get")(function* (
-  flags: LegacyDomainsGetFlags,
-) {
+export const domainsGet = Effect.fn("domains.get")(function* (flags: DomainsGetFlags) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
@@ -32,10 +30,10 @@ export const legacyDomainsGet = Effect.fn("legacy.domains.get")(function* (
         : undefined;
     const response = yield* api.v1.getHostnameConfig({ ref }).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
-      Effect.catch(legacyGateMapError({ projectRef: ref }, mapGetError)),
+      Effect.catch(gateMapError({ projectRef: ref }, mapGetError)),
     );
     yield* fetching?.clear() ?? Effect.void;
 
-    yield* emitLegacyHostnameResult(response, flags.includeRawOutput);
+    yield* emitHostnameResult(response, flags.includeRawOutput);
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

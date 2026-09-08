@@ -2,7 +2,7 @@ import { Cause, Data } from "effect";
 import { CliError } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 import { SupabaseApiInputError, markSupabaseApiInputErrorAsUserInput } from "@supabase/api/effect";
-import { LegacyBootstrapHealthError } from "../../commands/bootstrap/bootstrap.errors.ts";
+import { BootstrapHealthError } from "../../commands/bootstrap/bootstrap.errors.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -188,18 +188,16 @@ describe("classifyCliErrorActionability", () => {
 
   it("classifies bootstrap health failures with their typed cause", () => {
     expect(
-      classifyCliErrorActionability(
-        new LegacyBootstrapHealthError({ message: "failed", status: 500 }),
-      ).error_category,
+      classifyCliErrorActionability(new BootstrapHealthError({ message: "failed", status: 500 }))
+        .error_category,
     ).toBe("api_status");
     expect(
-      classifyCliErrorActionability(
-        new LegacyBootstrapHealthError({ message: "failed", decode: true }),
-      ).error_fingerprint,
-    ).toBe("tag:LegacyBootstrapHealthError:api_response");
+      classifyCliErrorActionability(new BootstrapHealthError({ message: "failed", decode: true }))
+        .error_fingerprint,
+    ).toBe("tag:BootstrapHealthError:api_response");
     expect(
       classifyCliErrorActionability(
-        new LegacyBootstrapHealthError({ message: "failed", transport: true }),
+        new BootstrapHealthError({ message: "failed", transport: true }),
       ).error_category,
     ).toBe("network");
   });

@@ -6,9 +6,7 @@ import {
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
 
-export class LegacyFunctionsListNetworkError extends Data.TaggedError(
-  "LegacyFunctionsListNetworkError",
-)<{
+export class FunctionsListNetworkError extends Data.TaggedError("FunctionsListNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -19,8 +17,8 @@ export class LegacyFunctionsListNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyFunctionsListUnexpectedStatusError extends Data.TaggedError(
-  "LegacyFunctionsListUnexpectedStatusError",
+export class FunctionsListUnexpectedStatusError extends Data.TaggedError(
+  "FunctionsListUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -31,8 +29,8 @@ export class LegacyFunctionsListUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacyFunctionsEnvNotSupportedError extends Data.TaggedError(
-  "LegacyFunctionsEnvNotSupportedError",
+export class FunctionsEnvNotSupportedError extends Data.TaggedError(
+  "FunctionsEnvNotSupportedError",
 )<{
   readonly message: string;
 }> {

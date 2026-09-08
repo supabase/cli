@@ -1,40 +1,40 @@
 import { Effect, FileSystem, Option, Path, Redacted } from "effect";
 
-import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
-import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
-import { saveLegacyProfileName } from "../../config/legacy-profile-file.ts";
-import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
+import { CommandCredentials } from "../../auth/command-credentials.service.ts";
+import { CommandSettings } from "../../config/command-settings.service.ts";
+import { saveProfileName } from "../../config/profile-file.ts";
+import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import {
-  LEGACY_LOGGED_IN_MSG,
-  legacyBrowserLogin,
-  legacyPostLoginTelemetry,
-} from "../../command-internal/legacy-ensure-login.ts";
+  LOGGED_IN_MSG,
+  browserLogin,
+  postLoginTelemetry,
+} from "../../command-internal/ensure-login.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { lastExplicitLongFlagValue } from "../../shared/cli/cobra-flag-groups.ts";
-import { LegacyProfileFlag } from "../../shared/legacy/global-flags.ts";
+import { ProfileFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { Stdin } from "../../shared/runtime/stdin.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
-import { legacySuggestClaudePlugin } from "./login-claude-hint.ts";
+import { suggestClaudePlugin } from "./login-claude-hint.ts";
 import {
-  LEGACY_LOGIN_MISSING_TOKEN_MESSAGE,
-  LegacyLoginMissingTokenError,
-  LegacyLoginSaveTokenError,
+  LOGIN_MISSING_TOKEN_MESSAGE,
+  LoginMissingTokenError,
+  LoginSaveTokenError,
 } from "./login.errors.ts";
-import type { LegacyLoginFlags } from "./login.command.ts";
+import type { LoginFlags } from "./login.command.ts";
 
-export const legacyLogin = Effect.fn("legacy.login")(function* (flags: LegacyLoginFlags) {
+export const login = Effect.fn("login")(function* (flags: LoginFlags) {
   const output = yield* Output;
-  const credentials = yield* LegacyCredentials;
-  const telemetryState = yield* LegacyTelemetryState;
+  const credentials = yield* CommandCredentials;
+  const telemetryState = yield* TelemetryState;
   const tty = yield* Tty;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
-  const profileFlag = yield* LegacyProfileFlag;
+  const profileFlag = yield* ProfileFlag;
 
-  const claudeHint = legacySuggestClaudePlugin({ stdoutIsTty: tty.stdoutIsTty });
+  const claudeHint = suggestClaudePlugin({ stdoutIsTty: tty.stdoutIsTty });
 
   // Mirrors login's `PostRunE` (`cmd/login.go:42-48`): persist the chosen
   // profile to `<SUPABASE_HOME or ~/.supabase>/profile` on success. The raw
@@ -58,29 +58,29 @@ export const legacyLogin = Effect.fn("legacy.login")(function* (flags: LegacyLog
         : envProfile !== undefined && envProfile.length > 0
           ? envProfile
           : undefined;
-  const saveProfileName =
+  const persistProfileName =
     profileToken === undefined
       ? Effect.void
-      : saveLegacyProfileName(fs, path, runtimeInfo.homeDir, profileToken);
+      : saveProfileName(fs, path, runtimeInfo.homeDir, profileToken);
 
   const tokenPath = (token: string) =>
     Effect.gen(function* () {
       yield* credentials.saveAccessToken(token).pipe(
-        Effect.catchTag("LegacyInvalidAccessTokenError", (cause) =>
+        Effect.catchTag("InvalidAccessTokenError", (cause) =>
           Effect.fail(
-            new LegacyLoginSaveTokenError({
+            new LoginSaveTokenError({
               message: `cannot save provided token: ${cause.message}`,
             }),
           ),
         ),
       );
-      yield* legacyPostLoginTelemetry(token);
+      yield* postLoginTelemetry(token);
 
       if (output.format !== "text") {
         yield* output.success("You are now logged in.");
         return;
       }
-      yield* output.raw(LEGACY_LOGGED_IN_MSG, "stdout");
+      yield* output.raw(LOGGED_IN_MSG, "stdout");
       if (claudeHint.length > 0) yield* output.raw(`${claudeHint}\n`, "stderr");
     });
 
@@ -91,21 +91,21 @@ export const legacyLogin = Effect.fn("legacy.login")(function* (flags: LegacyLog
     if (Option.isSome(resolved)) {
       return yield* tokenPath(resolved.value);
     }
-    return yield* legacyBrowserLogin({ openBrowser: !flags.noBrowser, tokenName: flags.name });
+    return yield* browserLogin({ openBrowser: !flags.noBrowser, tokenName: flags.name });
   });
 
   // `Effect.tap` runs the profile save only on success (`PostRunE`);
   // `Effect.ensuring` persists telemetry state on success and failure alike
   // (`PersistentPostRun`, `cmd/root.go:176`).
   return yield* body.pipe(
-    Effect.tap(() => saveProfileName),
+    Effect.tap(() => persistProfileName),
     Effect.ensuring(telemetryState.flush),
   );
 });
 
-const resolveToken = Effect.fnUntraced(function* (flags: LegacyLoginFlags) {
+const resolveToken = Effect.fnUntraced(function* (flags: LoginFlags) {
   if (Option.isSome(flags.token)) return Option.some(flags.token.value);
-  const cliSettings = yield* LegacyCliSettings;
+  const cliSettings = yield* CommandSettings;
   if (Option.isSome(cliSettings.accessToken)) {
     return Option.some(Redacted.value(cliSettings.accessToken.value));
   }
@@ -113,9 +113,7 @@ const resolveToken = Effect.fnUntraced(function* (flags: LegacyLoginFlags) {
   if (!stdin.isTTY) {
     const piped = yield* stdin.readPipedText;
     if (Option.isSome(piped)) return Option.some(piped.value);
-    return yield* Effect.fail(
-      new LegacyLoginMissingTokenError({ message: LEGACY_LOGIN_MISSING_TOKEN_MESSAGE }),
-    );
+    return yield* Effect.fail(new LoginMissingTokenError({ message: LOGIN_MISSING_TOKEN_MESSAGE }));
   }
   return Option.none<string>();
 });

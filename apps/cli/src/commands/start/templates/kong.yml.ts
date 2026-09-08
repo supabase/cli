@@ -7,7 +7,7 @@
  * StudioId, PgmetaId, EdgeRuntimeId, LogflareId, PoolerId, ApiHost, ApiPort,
  * BearerToken, QueryToken. Rendered by `lib/template-render.ts`.
  */
-export const LEGACY_START_KONG_YML_TEMPLATE = `_format_version: "1.1"
+export const START_KONG_YML_TEMPLATE = `_format_version: "1.1"
 services:
   # Tenant project endpoints
   - name: auth-v1-open

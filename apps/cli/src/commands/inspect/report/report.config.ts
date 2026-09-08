@@ -1,11 +1,8 @@
 import { Effect, type FileSystem, type Path } from "effect";
 import * as SmolToml from "smol-toml";
-import { LegacyDbConfigLoadError } from "../../../command-internal/legacy-db-config.errors.ts";
-import {
-  legacyExpandEnv,
-  legacyLoadProjectEnv,
-} from "../../../command-internal/legacy-db-config.toml-read.ts";
-import type { LegacyInspectRule } from "./report.rules.ts";
+import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
+import { expandEnv, loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
+import type { InspectRule } from "./report.rules.ts";
 
 type RawDoc = { readonly [key: string]: unknown };
 
@@ -20,7 +17,7 @@ function asRecord(value: unknown): RawDoc | undefined {
  * string passes through; a number/bigint becomes its decimal string; a boolean
  * becomes `"1"`/`"0"`; a missing field is the zero value `""`. Any other type (a
  * nested table/array/datetime as a scalar field) is NOT coercible — this
- * returns `undefined` to signal the caller to fail with `LegacyDbConfigLoadError`.
+ * returns `undefined` to signal the caller to fail with `DbConfigLoadError`.
  */
 function coerceRuleField(value: unknown): string | undefined {
   if (value === undefined) return "";
@@ -35,17 +32,17 @@ function coerceRuleField(value: unknown): string | undefined {
  * Read `[experimental.inspect.rules]` from `<workdir>/supabase/config.toml`:
  * when present and non-empty, these custom rules replace the embedded defaults.
  *
- * Follows the `legacyReadDbToml` policy exactly — a **missing** config file yields
+ * Follows the `readDbToml` policy exactly — a **missing** config file yields
  * `[]` (defaults apply), but a **malformed** file is a hard error
- * (`LegacyDbConfigLoadError`). Each rule's string fields are run through
- * `env(VAR)` expansion (`legacyExpandEnv`), resolving against the
+ * (`DbConfigLoadError`). Each rule's string fields are run through
+ * `env(VAR)` expansion (`expandEnv`), resolving against the
  * shell environment first and then the project `.env` files.
  *
  * `fs`/`path` are passed in so the caller controls the platform layer; the read is
  * colocated here for now and hoisted to `command-internal/` if a second command reads
  * `[experimental.inspect.*]`.
  */
-export const legacyReadInspectRules = Effect.fnUntraced(function* (
+export const readInspectRules = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
@@ -58,21 +55,21 @@ export const legacyReadInspectRules = Effect.fnUntraced(function* (
       error.reason._tag === "NotFound"
         ? Effect.succeed(undefined)
         : Effect.fail(
-            new LegacyDbConfigLoadError({
+            new DbConfigLoadError({
               message: `failed to read file config: ${error.message}`,
             }),
           ),
     ),
   );
 
-  if (content === undefined) return [] as ReadonlyArray<LegacyInspectRule>;
+  if (content === undefined) return [] as ReadonlyArray<InspectRule>;
 
   let doc: RawDoc | undefined;
   try {
     doc = asRecord(SmolToml.parse(content));
   } catch (cause) {
     return yield* Effect.fail(
-      new LegacyDbConfigLoadError({
+      new DbConfigLoadError({
         message: `failed to load config: ${cause instanceof Error ? cause.message : String(cause)}`,
       }),
     );
@@ -91,25 +88,25 @@ export const legacyReadInspectRules = Effect.fnUntraced(function* (
   //     into a rule struct aborts ("expected a map or struct") — surfaced below.
   let entries: ReadonlyArray<unknown>;
   if (rawRules === undefined) {
-    return [] as ReadonlyArray<LegacyInspectRule>;
+    return [] as ReadonlyArray<InspectRule>;
   } else if (Array.isArray(rawRules)) {
     entries = rawRules;
   } else {
     const asMap = asRecord(rawRules);
     if (asMap !== undefined && Object.keys(asMap).length === 0) {
-      return [] as ReadonlyArray<LegacyInspectRule>;
+      return [] as ReadonlyArray<InspectRule>;
     }
     entries = [rawRules];
   }
-  if (entries.length === 0) return [] as ReadonlyArray<LegacyInspectRule>;
+  if (entries.length === 0) return [] as ReadonlyArray<InspectRule>;
 
   const RULE_FIELDS = ["query", "name", "pass", "fail"] as const;
 
   // Resolve `env(VAR)` against the shell env first, then the project `.env` files.
-  const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
+  const projectEnv = yield* loadProjectEnv(fs, path, workdir);
   const lookup = (name: string): string | undefined => process.env[name] ?? projectEnv[name];
 
-  const rules: Array<LegacyInspectRule> = [];
+  const rules: Array<InspectRule> = [];
   for (let index = 0; index < entries.length; index++) {
     const record = asRecord(entries[index]);
     // A non-table entry (e.g. `rules = ["foo"]` or `rules = "foo"`) is rejected:
@@ -117,7 +114,7 @@ export const legacyReadInspectRules = Effect.fnUntraced(function* (
     // silently skipped.
     if (record === undefined) {
       return yield* Effect.fail(
-        new LegacyDbConfigLoadError({
+        new DbConfigLoadError({
           message: `failed to load config: experimental.inspect.rules[${index}] expected a map or struct`,
         }),
       );
@@ -129,7 +126,7 @@ export const legacyReadInspectRules = Effect.fnUntraced(function* (
     );
     if (unknownKeys.length > 0) {
       return yield* Effect.fail(
-        new LegacyDbConfigLoadError({
+        new DbConfigLoadError({
           message: `failed to load config: experimental.inspect.rules[${index}] has invalid keys: ${unknownKeys.join(", ")}`,
         }),
       );
@@ -140,12 +137,12 @@ export const legacyReadInspectRules = Effect.fnUntraced(function* (
       // A non-coercible field type (nested table/array/datetime) aborts too.
       if (coerced === undefined) {
         return yield* Effect.fail(
-          new LegacyDbConfigLoadError({
+          new DbConfigLoadError({
             message: `failed to load config: experimental.inspect.rules[${index}].${field} expected a string`,
           }),
         );
       }
-      fields[field] = legacyExpandEnv(coerced, lookup);
+      fields[field] = expandEnv(coerced, lookup);
     }
     rules.push({
       query: fields["query"]!,
@@ -154,5 +151,5 @@ export const legacyReadInspectRules = Effect.fnUntraced(function* (
       fail: fields["fail"]!,
     });
   }
-  return rules as ReadonlyArray<LegacyInspectRule>;
+  return rules as ReadonlyArray<InspectRule>;
 });

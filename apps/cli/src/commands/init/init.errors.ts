@@ -18,7 +18,7 @@ import {
  * plus the `utils.CmdSuggestion` set (platform-independent, since
  * `errors.Is(err, os.ErrExist)` matches `ERROR_FILE_EXISTS` too).
  */
-export class LegacyInitConfigExistsError extends Data.TaggedError("LegacyInitConfigExistsError")<{
+export class InitConfigExistsError extends Data.TaggedError("InitConfigExistsError")<{
   readonly message: string;
   readonly suggestion: string;
 }> {
@@ -34,8 +34,8 @@ export class LegacyInitConfigExistsError extends Data.TaggedError("LegacyInitCon
  * appends the generic `--debug` troubleshooting hint, which the text output
  * layer's `fail` already adds when `suggestion` is unset.
  */
-export class LegacyInitExperimentalRequiredError extends Data.TaggedError(
-  "LegacyInitExperimentalRequiredError",
+export class InitExperimentalRequiredError extends Data.TaggedError(
+  "InitExperimentalRequiredError",
 )<{
   readonly message: string;
 }> {

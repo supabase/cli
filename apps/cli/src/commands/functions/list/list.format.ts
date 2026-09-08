@@ -1,4 +1,4 @@
-import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
+import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import type { Functions } from "./list.encoders.ts";
 
 export function formatUnixMilliTimestamp(value: number): string {

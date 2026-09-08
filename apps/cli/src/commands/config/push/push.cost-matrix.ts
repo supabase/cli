@@ -3,20 +3,20 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { sanitizeLegacyErrorBody } from "../../../command-internal/legacy-http-errors.ts";
-import { requestWithAuth } from "../../../command-internal/legacy-raw-http.ts";
-import { resolveLegacyAccessToken } from "../../../command-internal/legacy-resolve-token.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
+import { requestWithAuth } from "../../../command-internal/raw-http.ts";
+import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
 import {
-  LegacyConfigPushListAddonsNetworkError,
-  LegacyConfigPushListAddonsStatusError,
+  ConfigPushListAddonsNetworkError,
+  ConfigPushListAddonsStatusError,
 } from "./push.errors.ts";
 
 /**
  * Cost matrix entry: the addon variant's display name and price description,
  * used to render the cost-aware confirmation prompt (Go `push.CostItem`).
  */
-export interface LegacyCostItem {
+export interface CostItem {
   readonly name: string;
   readonly price: string;
 }
@@ -31,10 +31,10 @@ export interface LegacyCostItem {
  * (e.g. the `"api"` GraphQL addon). Mirrors the `sso add` /
  * `postgres-config` raw-HTTP precedent.
  */
-export const getCostMatrix = Effect.fn("legacy.config.push.cost-matrix")(function* (ref: string) {
+export const getCostMatrix = Effect.fn("config.push.cost-matrix")(function* (ref: string) {
   const httpClient = yield* HttpClient.HttpClient;
-  const cliSettings = yield* LegacyCliSettings;
-  const tokenOpt = yield* resolveLegacyAccessToken;
+  const cliSettings = yield* CommandSettings;
+  const tokenOpt = yield* resolveAccessToken;
 
   const request = requestWithAuth(
     HttpClientRequest.get(`${cliSettings.apiUrl}/v1/projects/${ref}/billing/addons`),
@@ -47,7 +47,7 @@ export const getCostMatrix = Effect.fn("legacy.config.push.cost-matrix")(functio
       const description = HttpClientError.isHttpClientError(cause)
         ? (cause.reason.description ?? cause.reason._tag)
         : String(cause);
-      return new LegacyConfigPushListAddonsNetworkError({
+      return new ConfigPushListAddonsNetworkError({
         message: `failed to list addons: ${description}`,
       });
     }),
@@ -55,9 +55,9 @@ export const getCostMatrix = Effect.fn("legacy.config.push.cost-matrix")(functio
 
   if (response.status !== 200) {
     const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    const body = sanitizeLegacyErrorBody(rawBody);
+    const body = sanitizeErrorBody(rawBody);
     return yield* Effect.fail(
-      new LegacyConfigPushListAddonsStatusError({
+      new ConfigPushListAddonsStatusError({
         status: response.status,
         body,
         message: `unexpected list addons status ${response.status}: ${body}`,
@@ -69,13 +69,13 @@ export const getCostMatrix = Effect.fn("legacy.config.push.cost-matrix")(functio
   const parsed = yield* Effect.try({
     try: () => JSON.parse(rawBody) as unknown,
     catch: (cause) =>
-      new LegacyConfigPushListAddonsNetworkError({
+      new ConfigPushListAddonsNetworkError({
         message: `failed to list addons: ${String(cause)}`,
         decode: true,
       }),
   });
 
-  const costMatrix = new Map<string, LegacyCostItem>();
+  const costMatrix = new Map<string, CostItem>();
   for (const addon of readAddons(parsed)) {
     const variant = addon.variants.length === 1 ? addon.variants[0] : undefined;
     if (variant !== undefined) {

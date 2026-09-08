@@ -12,7 +12,7 @@
  *
  * Unlike the Engine API, `docker create`'s argv has no inherent "field order"
  * — Docker parses flags independently of position. The order emitted by
- * {@link legacyBuildStartContainerCreateArgs} below is therefore this module's
+ * {@link buildStartContainerCreateArgs} below is therefore this module's
  * own fixed, deterministic convention (grouped: identity → env → volumes →
  * ports → healthcheck → restart/security → network → labels →
  * entrypoint/image/cmd), chosen for readability and stable unit-test
@@ -46,34 +46,31 @@
  * this builder never has to reproduce.
  *
  * Two fields have no Go struct equivalent at all:
- * {@link LegacyStartContainerSpec.secretFiles} and
- * {@link LegacyStartContainerSpec.preStartArchives}. The first exists purely
+ * {@link StartContainerSpec.secretFiles} and
+ * {@link StartContainerSpec.preStartArchives}. The first exists purely
  * because this module's own "shell out to `docker create`" architecture (unlike
  * Go's direct Engine API calls) has an argv-exposure problem
  * `container.Config`/`container.HostConfig` never had; the second because Go
  * destroys its shadow container on every run and so never needs to seed a
  * container's filesystem before it starts. See each field's doc comment, and
- * `container-lifecycle.ts`'s `legacyCreateContainer`, for how both are
+ * `container-lifecycle.ts`'s `createContainer`, for how both are
  * delivered.
  */
 
 import type { PlatformError, Stream } from "effect";
 
-import {
-  legacyBindMountSpecSource,
-  legacyIsBindMountSource,
-} from "../legacy-docker-bind-classify.ts";
+import { bindMountSpecSource, isBindMountSource } from "../docker-bind-classify.ts";
 
 /**
  * `container.HealthConfig` (`docker/docker/api/types/container`). Not
  * exported on its own — callers reference it structurally through
- * {@link LegacyStartContainerSpec.healthcheck}; nothing outside this module
+ * {@link StartContainerSpec.healthcheck}; nothing outside this module
  * needs to name the shape directly.
  */
-interface LegacyStartHealthcheckSpec {
+interface StartHealthcheckSpec {
   /**
    * Go's `HealthConfig.Test` exec form (`["CMD", ...args]`) or shell form
-   * (`["CMD-SHELL", script]`). See {@link legacyBuildHealthCmdArg} for exactly
+   * (`["CMD-SHELL", script]`). See {@link buildHealthCmdArg} for exactly
    * how each form becomes the single `--health-cmd` string docker CLI expects.
    */
   readonly test: ReadonlyArray<string>;
@@ -95,9 +92,9 @@ interface LegacyStartHealthcheckSpec {
 /**
  * `-p <hostPort>:<containerPort>[/<protocol>]` — one
  * `container.HostConfig.PortBindings` entry. Not exported; referenced
- * structurally through {@link LegacyStartContainerSpec.ports}.
+ * structurally through {@link StartContainerSpec.ports}.
  */
-interface LegacyStartPortBindingSpec {
+interface StartPortBindingSpec {
   readonly hostPort: string;
   readonly containerPort: string;
   /** Defaults to `"tcp"` (omitted from the flag) — no call site uses `"udp"` today. */
@@ -107,22 +104,22 @@ interface LegacyStartPortBindingSpec {
 /**
  * `--expose <containerPort>[/<protocol>]` — one `container.Config.ExposedPorts`
  * entry with no matching `PortBindings` entry (kept separate from
- * {@link LegacyStartPortBindingSpec} on purpose, see the doc comment on
- * {@link LegacyStartContainerSpec.exposedPorts}). Not exported; referenced
- * structurally through {@link LegacyStartContainerSpec.exposedPorts}.
+ * {@link StartPortBindingSpec} on purpose, see the doc comment on
+ * {@link StartContainerSpec.exposedPorts}). Not exported; referenced
+ * structurally through {@link StartContainerSpec.exposedPorts}.
  */
-interface LegacyStartExposedPortSpec {
+interface StartExposedPortSpec {
   readonly containerPort: string;
   readonly protocol?: "tcp" | "udp";
 }
 
 /**
  * One entry packed into a container's in-memory secret tar archive — see
- * {@link LegacyStartContainerSpec.secretFiles}'s doc comment for the full contract. Not exported
+ * {@link StartContainerSpec.secretFiles}'s doc comment for the full contract. Not exported
  * on its own — callers reference it structurally through that field; nothing outside this module
  * needs to name the shape directly.
  */
-interface LegacyStartSecretFileSpec {
+interface StartSecretFileSpec {
   /** The exact fixed path to materialize INSIDE the container. */
   readonly containerPath: string;
   /** Secret content encoded only into the in-memory archive — never host disk or argv. */
@@ -131,10 +128,10 @@ interface LegacyStartSecretFileSpec {
 
 /**
  * One tar archive to extract into the created-but-not-yet-started container — see
- * {@link LegacyStartContainerSpec.preStartArchives}'s doc comment for the full contract. Not
+ * {@link StartContainerSpec.preStartArchives}'s doc comment for the full contract. Not
  * exported on its own: callers reference it structurally through that field.
  */
-interface LegacyStartPreStartArchiveSpec {
+interface StartPreStartArchiveSpec {
   /**
    * The directory INSIDE the container the archive's members are unpacked relative to, i.e.
    * `docker cp - <id>:<containerPath>`. Always a POSIX container path, never a host path.
@@ -143,19 +140,19 @@ interface LegacyStartPreStartArchiveSpec {
   /**
    * The tar bytes, as a lazily-consumed stream (typically `FileSystem.stream(hostTarPath)`).
    * A stream rather than a host path on purpose: it keeps the archive's own storage decisions
-   * with the producer, and `legacyCreateContainer` needs no `FileSystem` in its own context to
+   * with the producer, and `createContainer` needs no `FileSystem` in its own context to
    * deliver it.
    */
   readonly tar: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
 }
 
-export interface LegacyStartContainerSpec {
+export interface StartContainerSpec {
   /** `container.Config.Image` (already resolved/pulled — resolution is out of scope here). */
   readonly image: string;
   /**
    * The 4th `DockerStart` positional argument — `--name`. An empty string mirrors Go
    * passing `""` (e.g. `CreateShadowDatabase`, `apps/cli-go/internal/db/diff/diff.go:150`)
-   * and lets Docker auto-generate one — {@link legacyBuildStartContainerCreateArgs} omits
+   * and lets Docker auto-generate one — {@link buildStartContainerCreateArgs} omits
    * `--name` entirely in that case (docker rejects an explicit empty `--name` value, unlike
    * the Engine API's empty `containerName` positional, which it happily treats as "generate
    * one"). Every real service container still passes a non-empty name, unchanged.
@@ -170,7 +167,7 @@ export interface LegacyStartContainerSpec {
   /**
    * `container.Config.Env`, reshaped from Go's `KEY=value` string slice into a
    * map. Emitted as the key-only `-e KEY` form — see the doc comment on
-   * {@link legacyBuildStartContainerCreateArgs} — so secret values (JWT
+   * {@link buildStartContainerCreateArgs} — so secret values (JWT
    * secrets, SMTP passwords, API keys — every one of these containers carries
    * at least one) never appear in this process's own argv.
    */
@@ -186,13 +183,13 @@ export interface LegacyStartContainerSpec {
    * or `Cmd` — safe in Go's Engine-API architecture (never a subprocess's own
    * argv) but not in this port's, which shells out to a real `docker create`.
    *
-   * NOT consumed here: {@link legacyBuildStartContainerCreateArgs} stays
+   * NOT consumed here: {@link buildStartContainerCreateArgs} stays
    * pure/no-I/O and never reads this field. `container-lifecycle.ts`'s
-   * `legacyCreateContainer` is the sole consumer — once `docker create` returns
+   * `createContainer` is the sole consumer — once `docker create` returns
    * a container id, it builds one in-memory Bun tar archive containing every
    * entry at its exact `containerPath` with mode `0644` (so non-root Kong/
    * Postgres readers do not hit `EACCES`; see `container-lifecycle.ts`'s
-   * `legacyCopyStartSecretFilesIntoContainer` doc comment), then streams that
+   * `copyStartSecretFilesIntoContainer` doc comment), then streams that
    * archive on stdin to `docker cp - <id>:/` before `docker start`. Plaintext
    * never touches host disk, a host bind mount, or the subprocess argv.
    * Generic by design — any future
@@ -210,14 +207,14 @@ export interface LegacyStartContainerSpec {
    * itself
    * (https://docs.docker.com/engine/storage/bind-mounts/#considerations-and-constraints),
    * so it silently broke against a remote daemon (a scenario this codebase
-   * otherwise explicitly supports — see `legacy-hostname.ts`'s
-   * `legacyGetHostname`) even though the daemon itself was reachable. With no
+   * otherwise explicitly supports — see `hostname.ts`'s
+   * `getHostname`) even though the daemon itself was reachable. With no
    * client-side source path, the stream also works when the Docker CLI is
    * confined behind a private filesystem namespace. This matches Go's own heredoc/`Cmd`-embed
    * delivery (the content travels inside the container-create request itself,
    * over the Engine API) for that same reason.
    */
-  readonly secretFiles?: ReadonlyArray<LegacyStartSecretFileSpec>;
+  readonly secretFiles?: ReadonlyArray<StartSecretFileSpec>;
   /**
    * Tar archives to unpack into the container's own filesystem AFTER `docker create` and
    * strictly BEFORE `docker start` — the shape `docker cp - <id>:<containerPath>` (tar on
@@ -232,17 +229,17 @@ export interface LegacyStartContainerSpec {
    * start on a data directory it does not own, whereas the tar-STREAM form preserves each
    * member's uid/gid verbatim.
    *
-   * NOT consumed here — {@link legacyBuildStartContainerCreateArgs} stays pure/no-I/O and never
+   * NOT consumed here — {@link buildStartContainerCreateArgs} stays pure/no-I/O and never
    * reads this field, exactly like {@link secretFiles}. `container-lifecycle.ts`'s
-   * `legacyCreateContainer` is the sole consumer.
+   * `createContainer` is the sole consumer.
    */
-  readonly preStartArchives?: ReadonlyArray<LegacyStartPreStartArchiveSpec>;
+  readonly preStartArchives?: ReadonlyArray<StartPreStartArchiveSpec>;
   /**
    * `container.Config.Entrypoint`'s first element. Docker CLI's `--entrypoint`
    * only accepts a single executable/script name (unlike the Engine API field,
    * which is a full argv array) — the remaining Go `Entrypoint` elements are
    * reproduced via {@link cmd} instead, exactly like the existing `docker run`
-   * precedent (`legacy-docker-run.service.ts`'s `entrypoint`/`cmd` split).
+   * precedent (`docker-run.service.ts`'s `entrypoint`/`cmd` split).
    * E.g. Go's `Entrypoint: ["sh", "-c", script]` (Logflare/Vector/Kong/db)
    * becomes `entrypoint: "sh", cmd: ["-c", script]`.
    */
@@ -261,7 +258,7 @@ export interface LegacyStartContainerSpec {
   /**
    * `container.HostConfig.Binds` — `"source:target[:mode]"` bind-mount strings
    * or `"volumeName:target"` named-volume strings (Go's `loader.ParseVolume`
-   * classification, see {@link legacyIsBindMountSource}). Named-volume
+   * classification, see {@link isBindMountSource}). Named-volume
    * creation itself (`Docker.VolumeCreate`, `docker.go:407-415`) is a
    * higher-level orchestration concern, not this pure argv builder's job.
    */
@@ -284,7 +281,7 @@ export interface LegacyStartContainerSpec {
    * the same way Go's own `container.Config.ExposedPorts` happens to overlap
    * with `PortBindings` in the Logflare example, `start.go:373` vs `:377`).
    */
-  readonly ports?: ReadonlyArray<LegacyStartPortBindingSpec>;
+  readonly ports?: ReadonlyArray<StartPortBindingSpec>;
   /**
    * `container.Config.ExposedPorts` entries that have NO matching
    * `PortBindings` entry — i.e. ports declared reachable on the Docker network
@@ -297,9 +294,9 @@ export interface LegacyStartContainerSpec {
    * cannot express "exposed but not published", so it is kept as its own field
    * rather than folded into {@link ports} with an optional host side.
    */
-  readonly exposedPorts?: ReadonlyArray<LegacyStartExposedPortSpec>;
+  readonly exposedPorts?: ReadonlyArray<StartExposedPortSpec>;
   /** `container.Config.Healthcheck`. Omitted entirely for Kong and PostgREST — see `start.go:975` ("PostgREST does not expose a shell for health check") — so no `--health-*` flags are emitted for those services. */
-  readonly healthcheck?: LegacyStartHealthcheckSpec;
+  readonly healthcheck?: StartHealthcheckSpec;
   /**
    * `container.HostConfig.RestartPolicy.Name`. Every one of the 13 surveyed
    * call sites uses `container.RestartPolicyUnlessStopped` (verified — grep
@@ -314,14 +311,14 @@ export interface LegacyStartContainerSpec {
    * `AutoRemove` only fires once the container's own main process exits on its own; it
    * does NOT make an explicit remove redundant for a still-running container (verified
    * empirically), so callers still remove the shadow explicitly once they are done with
-   * it — see `shadow-database.ts`'s `legacyRemoveShadowDatabase`.
+   * it — see `shadow-database.ts`'s `removeShadowDatabase`.
    */
   readonly autoRemove?: boolean;
   /**
    * `container.HostConfig.SecurityOpt`. Only Vector sets this
    * (`start.go:441`, `"label:disable"`, when mounting a non-root Docker
    * socket) — cleared globally under Bitbucket Pipelines, see
-   * {@link legacyApplyBitbucketStartContainerFilter}.
+   * {@link applyBitbucketStartContainerFilter}.
    */
   readonly securityOpt?: ReadonlyArray<string>;
   /**
@@ -369,7 +366,7 @@ function formatDockerDurationSeconds(seconds: number): string {
  * containing only characters that never need quoting are returned unchanged
  * for readability.
  */
-function legacyShellQuoteArg(arg: string): string {
+function shellQuoteArg(arg: string): string {
   if (arg.length > 0 && /^[A-Za-z0-9_\-./:@%,+=]+$/.test(arg)) return arg;
   return `'${arg.replaceAll("'", "'\\''")}'`;
 }
@@ -395,31 +392,31 @@ function legacyShellQuoteArg(arg: string): string {
  *   "--head", "-o", "/dev/null", "http://127.0.0.1:4000/health"]`,
  *   `start.go:365-366`) — since `--health-cmd` always produces a `CMD-SHELL`
  *   test, each `args` element is POSIX-shell-quoted individually (via
- *   {@link legacyShellQuoteArg}) and joined with spaces, so that when Docker
+ *   {@link shellQuoteArg}) and joined with spaces, so that when Docker
  *   later runs `/bin/sh -c "<joined>"` inside the container, the shell
  *   re-splits it back into the exact same argv the exec form specified —
  *   including an argument containing spaces or embedded quotes, which none of
  *   the current 14 services happen to need but which this conversion must
  *   still get right.
  */
-export function legacyBuildHealthCmdArg(test: ReadonlyArray<string>): string {
+export function buildHealthCmdArg(test: ReadonlyArray<string>): string {
   const [mode, ...rest] = test;
   if (mode === "CMD-SHELL") return rest[0] ?? "";
-  return rest.map(legacyShellQuoteArg).join(" ");
+  return rest.map(shellQuoteArg).join(" ");
 }
 
-function formatPortBindingFlag(port: LegacyStartPortBindingSpec): string {
+function formatPortBindingFlag(port: StartPortBindingSpec): string {
   const suffix = port.protocol === "udp" ? "/udp" : "";
   return `${port.hostPort}:${port.containerPort}${suffix}`;
 }
 
-function formatExposedPortFlag(port: LegacyStartExposedPortSpec): string {
+function formatExposedPortFlag(port: StartExposedPortSpec): string {
   const suffix = port.protocol === "udp" ? "/udp" : "";
   return `${port.containerPort}${suffix}`;
 }
 
-function buildHealthcheckArgs(healthcheck: LegacyStartHealthcheckSpec): ReadonlyArray<string> {
-  const args: Array<string> = ["--health-cmd", legacyBuildHealthCmdArg(healthcheck.test)];
+function buildHealthcheckArgs(healthcheck: StartHealthcheckSpec): ReadonlyArray<string> {
+  const args: Array<string> = ["--health-cmd", buildHealthCmdArg(healthcheck.test)];
   if (healthcheck.intervalSeconds !== undefined) {
     args.push("--health-interval", formatDockerDurationSeconds(healthcheck.intervalSeconds));
   }
@@ -440,12 +437,12 @@ function buildHealthcheckArgs(healthcheck: LegacyStartHealthcheckSpec): Readonly
  * it connects to — rather than a value for the container being created. A
  * container spec's own `env` can legitimately need to set one of these (e.g.
  * Vector's `DOCKER_HOST=http://host.docker.internal:<port>`, set by
- * `legacyResolveVectorDockerSocketPlan` for a `tcp`/`npipe` daemon host so
+ * `resolveVectorDockerSocketPlan` for a `tcp`/`npipe` daemon host so
  * Vector can reach the real daemon from inside its own container), but that
  * value must never be inherited by the spawned `docker`/`podman create`
  * PROCESS's own environment: doing so would hijack which daemon that process
  * itself talks to before the container even exists (see
- * `legacyDockerCreateContainer`, `container-lifecycle.ts`, which filters these
+ * `dockerCreateContainer`, `container-lifecycle.ts`, which filters these
  * keys out of the env it hands to the spawned process for exactly this
  * reason). These are not secrets, so unlike the rest of `spec.env` they are
  * safe to emit inline as `-e KEY=value` instead of the key-only form.
@@ -457,9 +454,9 @@ const DOCKER_CLIENT_ENV_KEYS: ReadonlySet<string> = new Set([
   "DOCKER_CONTEXT",
   "DOCKER_API_VERSION",
   // `docker/cli`'s own `EnvOverrideConfigDir` (`cli/config/config.go:25`) — the same env var
-  // `legacyGetHostname`'s `dockerConfigDir()` reads to locate `config.json`/the context store.
+  // `getHostname`'s `dockerConfigDir()` reads to locate `config.json`/the context store.
   // Without this, a project dotenv that sets ONLY `DOCKER_CONFIG` (no `DOCKER_HOST`/
-  // `DOCKER_CONTEXT`) would never reach `process.env` via `legacy-local-project-context.ts`'s
+  // `DOCKER_CONTEXT`) would never reach `process.env` via `local-project-context.ts`'s
   // Docker-client-env loop, so both hostname resolution and every `docker`/`podman` subprocess
   // this process spawns would silently fall back to the ambient `~/.docker` config instead of the
   // project-selected one — the same class of bug already fixed for `DOCKER_HOST`/`DOCKER_CONTEXT`.
@@ -467,39 +464,37 @@ const DOCKER_CLIENT_ENV_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /** Whether `key` configures the Docker/Podman CLI client itself — see {@link DOCKER_CLIENT_ENV_KEYS}. */
-export function legacyIsDockerClientEnvKey(key: string): boolean {
+export function isDockerClientEnvKey(key: string): boolean {
   return DOCKER_CLIENT_ENV_KEYS.has(key);
 }
 
 /**
  * Assemble the `docker create` argv for one `supabase start` service
  * container. Pure (no Effect) so every flag mapping is unit-testable in
- * isolation, matching the `buildLegacyDockerArgs` (`docker run`) precedent.
+ * isolation, matching the `buildDockerArgs` (`docker run`) precedent.
  *
- * `"create"` is argv[0] — the caller (`legacy-container-cli.ts`'s
+ * `"create"` is argv[0] — the caller (`container-cli.ts`'s
  * `spawnContainerCli`/`containerCliExitCode`) prepends only the `docker`/
- * `podman` binary itself, exactly like `buildLegacyDockerArgs` returning
+ * `podman` binary itself, exactly like `buildDockerArgs` returning
  * `"run"` as its own argv[0].
  *
  * Env is emitted in the key-only `-e KEY` form (never `-e KEY=value`) for the
- * same CWE-214/209 reason as `buildLegacyDockerArgs`: these containers'
+ * same CWE-214/209 reason as `buildDockerArgs`: these containers'
  * env carries JWT secrets, SMTP credentials, API keys, and DB passwords, none
  * of which may appear in this process's own argv (`ps aux` /
  * `/proc/<pid>/cmdline`). The spawned `docker create`'s own child environment
  * supplies each value — a later caller's responsibility, not this builder's.
- * The exception is {@link legacyIsDockerClientEnvKey} keys, which are emitted
+ * The exception is {@link isDockerClientEnvKey} keys, which are emitted
  * inline as `-e KEY=value` instead — see that function's doc comment.
  */
-export function legacyBuildStartContainerCreateArgs(
-  spec: LegacyStartContainerSpec,
-): ReadonlyArray<string> {
+export function buildStartContainerCreateArgs(spec: StartContainerSpec): ReadonlyArray<string> {
   return [
     "create",
     ...(spec.containerName.length === 0 ? [] : ["--name", spec.containerName]),
     ...(spec.autoRemove === true ? ["--rm"] : []),
     ...(spec.hostname === undefined ? [] : ["--hostname", spec.hostname]),
     ...Object.entries(spec.env).flatMap(([key, value]) =>
-      legacyIsDockerClientEnvKey(key) ? ["-e", `${key}=${value}`] : ["-e", key],
+      isDockerClientEnvKey(key) ? ["-e", `${key}=${value}`] : ["-e", key],
     ),
     ...spec.binds.flatMap((bind) => ["-v", bind]),
     ...(spec.volumesFrom ?? []).flatMap((source) => ["--volumes-from", source]),
@@ -529,8 +524,8 @@ export function legacyBuildStartContainerCreateArgs(
  * (`apps/cli-go/internal/utils/docker.go:400-405`): when `BITBUCKET_CLONE_DIR`
  * is set, that runner disallows named volumes and `--security-opt`, so Go
  * drops named-volume binds and clears `SecurityOpt` before starting any
- * container. Mirrors `legacyApplyBitbucketDockerFilter`
- * (`legacy-docker-run.args.ts`) for the `docker create` shape — e.g. the
+ * container. Mirrors `applyBitbucketDockerFilter`
+ * (`docker-run.args.ts`) for the `docker create` shape — e.g. the
  * Postgres container's `<projectId>_db:/var/lib/postgresql/data` named-volume
  * bind is dropped while a bind-mount stays; Vector's non-root Docker-socket
  * bind mount (already a bind mount, not a named volume) is unaffected either
@@ -540,14 +535,14 @@ export function legacyBuildStartContainerCreateArgs(
  * reassigns `hostConfig.Binds` and clears `hostConfig.SecurityOpt`
  * (`docker.go:401-405`) — it does not touch `VolumesFrom` or `Tmpfs`.
  */
-export function legacyApplyBitbucketStartContainerFilter(
-  spec: LegacyStartContainerSpec,
+export function applyBitbucketStartContainerFilter(
+  spec: StartContainerSpec,
   isBitbucket: boolean,
-): LegacyStartContainerSpec {
+): StartContainerSpec {
   if (!isBitbucket) return spec;
   return {
     ...spec,
-    binds: spec.binds.filter((bind) => legacyIsBindMountSource(legacyBindMountSpecSource(bind))),
+    binds: spec.binds.filter((bind) => isBindMountSource(bindMountSpecSource(bind))),
     securityOpt: [],
   };
 }

@@ -10,24 +10,24 @@ import { Deferred, Effect, FileSystem, Layer, Path, Schema, Sink, Stream } from 
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
-import { LegacyDbExecError } from "../legacy-db-connection.errors.ts";
-import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connection.service.ts";
-import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.service.ts";
-import { LegacyDockerRunError } from "../legacy-docker-run.errors.ts";
+import { DbExecError } from "../db-connection.errors.ts";
+import { DbConnection, type DbSession } from "../db-connection.service.ts";
+import { DockerRun, type DockerRunOpts } from "../docker-run.service.ts";
+import { DockerRunError } from "../docker-run.errors.ts";
 import {
-  LegacyDbSetupError,
-  legacyResolveDbSetupPrelude,
-  legacyRunDatabaseWebhooksSetup,
-  legacyStartInitCurrentBranch,
-  legacyStartSetupLocalDatabase,
-  type LegacyStartSetupLocalDatabaseInput,
+  DbSetupError,
+  resolveDbSetupPrelude,
+  runDatabaseWebhooksSetup,
+  startInitCurrentBranch,
+  startSetupLocalDatabase,
+  type StartSetupLocalDatabaseInput,
 } from "./db-setup.ts";
 
 const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
 /**
  * Fingerprints unique to each transcribed SQL constant — see `db-setup.ts`'s
- * templates. No trailing `;`: `legacySplitAndTrim` strips it from every
+ * templates. No trailing `;`: `splitAndTrim` strips it from every
  * executed statement before `session.exec` sees it.
  *
  * `GLOBALS`/`SCHEMA_13`/`REVOKE_PRIVILEGES` are checked as SUBSTRINGS: each is
@@ -49,7 +49,7 @@ const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema 
 
 function fakeSession() {
   const calls: Array<{ kind: "exec" | "query"; sql: string; params?: ReadonlyArray<unknown> }> = [];
-  const session: LegacyDbSession = {
+  const session: DbSession = {
     exec: (sql) =>
       Effect.sync(() => {
         calls.push({ kind: "exec", sql });
@@ -75,9 +75,9 @@ function fakeSession() {
 }
 
 function mockDockerRun(opts: { exitCode?: number } = {}) {
-  const runs: Array<LegacyDockerRunOpts> = [];
+  const runs: Array<DockerRunOpts> = [];
   const captureOptsCalls: Array<{ readonly teeStderr?: boolean } | undefined> = [];
-  const layer = Layer.succeed(LegacyDockerRun, {
+  const layer = Layer.succeed(DockerRun, {
     run: () => Effect.succeed(opts.exitCode ?? 0),
     runCapture: (runOpts, captureOpts) => {
       runs.push(runOpts);
@@ -88,7 +88,7 @@ function mockDockerRun(opts: { exitCode?: number } = {}) {
         stderr: "",
       });
     },
-    // `legacyRunStartMigrateJob` (`db-setup.ts`) discards stdout via `runStream` (not
+    // `runStartMigrateJob` (`db-setup.ts`) discards stdout via `runStream` (not
     // `runCapture`), matching Go's `io.Discard` writer for these one-shot jobs — this
     // suite's `docker.runs`/`captureOptsCalls` assertions track THIS method's calls, not
     // `runCapture`'s (which nothing under test still calls).
@@ -103,7 +103,7 @@ function mockDockerRun(opts: { exitCode?: number } = {}) {
 
 /**
  * A `ChildProcessSpawner` where `docker image inspect <image>` always exits 0 (image
- * already cached) — feeds `legacyRunStartMigrateJob`'s own per-image `legacyEnsureImagesCached`
+ * already cached) — feeds `runStartMigrateJob`'s own per-image `ensureImagesCached`
  * resolve (see `db-setup.ts`), so every job's `image` resolves to the SAME raw string this
  * suite's `baseInput` already asserts on, without needing a real Docker daemon.
  */
@@ -130,10 +130,10 @@ function mockAlwaysCachedSpawner(): ChildProcessSpawner.ChildProcessSpawner["Ser
 }
 
 function mockDockerRunFails() {
-  const layer = Layer.succeed(LegacyDockerRun, {
+  const layer = Layer.succeed(DockerRun, {
     run: () =>
       Effect.fail(
-        new LegacyDockerRunError({
+        new DockerRunError({
           message: "failed to run docker",
           reason: "spawn",
           daemonDown: false,
@@ -141,7 +141,7 @@ function mockDockerRunFails() {
       ),
     runCapture: () =>
       Effect.fail(
-        new LegacyDockerRunError({
+        new DockerRunError({
           message: "failed to run docker",
           reason: "spawn",
           daemonDown: false,
@@ -149,7 +149,7 @@ function mockDockerRunFails() {
       ),
     runStream: () =>
       Effect.fail(
-        new LegacyDockerRunError({
+        new DockerRunError({
           message: "failed to run docker",
           reason: "spawn",
           daemonDown: false,
@@ -160,7 +160,7 @@ function mockDockerRunFails() {
 }
 
 function makeWorkdir(): string {
-  return mkdtempSync(join(tmpdir(), "legacy-db-setup-"));
+  return mkdtempSync(join(tmpdir(), "db-setup-"));
 }
 
 function writeConfigToml(workdir: string, content: string): void {
@@ -173,9 +173,9 @@ const defaultConfig: CliConfig = decodeConfig({});
 
 function baseInput(
   workdir: string,
-  session: LegacyDbSession,
-  overrides: Partial<LegacyStartSetupLocalDatabaseInput> = {},
-): Omit<LegacyStartSetupLocalDatabaseInput, "fs" | "path"> {
+  session: DbSession,
+  overrides: Partial<StartSetupLocalDatabaseInput> = {},
+): Omit<StartSetupLocalDatabaseInput, "fs" | "path"> {
   return {
     session,
     workdir,
@@ -207,14 +207,14 @@ function baseInput(
 }
 
 const run = (
-  input: Omit<LegacyStartSetupLocalDatabaseInput, "fs" | "path">,
+  input: Omit<StartSetupLocalDatabaseInput, "fs" | "path">,
   out: ReturnType<typeof mockOutput>,
   docker: ReturnType<typeof mockDockerRun> | ReturnType<typeof mockDockerRunFails>,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    return yield* legacyStartSetupLocalDatabase(mockAlwaysCachedSpawner(), {
+    return yield* startSetupLocalDatabase(mockAlwaysCachedSpawner(), {
       ...input,
       fs,
       path,
@@ -230,7 +230,7 @@ const run = (
     ),
   );
 
-describe("legacyStartSetupLocalDatabase", () => {
+describe("startSetupLocalDatabase", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -393,7 +393,7 @@ describe("legacyStartSetupLocalDatabase", () => {
     );
 
     it.effect(
-      "the realtime job's env matches `legacyBuildRealtimeEnv` on the internal db address + jwks",
+      "the realtime job's env matches `buildRealtimeEnv` on the internal db address + jwks",
       () => {
         const workdir = makeWorkdir();
         const { session } = fakeSession();
@@ -546,8 +546,8 @@ describe("legacyStartSetupLocalDatabase", () => {
       return run(baseInput(workdir, session, { majorVersion: 15, config }), out, docker).pipe(
         Effect.flip,
         Effect.map((error) => {
-          expect(error).toBeInstanceOf(LegacyDbSetupError);
-          expect((error as LegacyDbSetupError).message).toBe("error running container: exit 1");
+          expect(error).toBeInstanceOf(DbSetupError);
+          expect((error as DbSetupError).message).toBe("error running container: exit 1");
           rmSync(workdir, { recursive: true, force: true });
         }),
       );
@@ -657,7 +657,7 @@ describe("legacyStartSetupLocalDatabase", () => {
   });
 });
 
-describe("legacyResolveDbSetupPrelude", () => {
+describe("resolveDbSetupPrelude", () => {
   const run = (
     setup: {
       readonly majorVersion: number;
@@ -666,7 +666,7 @@ describe("legacyResolveDbSetupPrelude", () => {
     },
     out: ReturnType<typeof mockOutput>,
   ) =>
-    legacyResolveDbSetupPrelude({ ...setup, serviceVersionOverrides: {} }).pipe(
+    resolveDbSetupPrelude({ ...setup, serviceVersionOverrides: {} }).pipe(
       Effect.provide(out.layer),
     );
 
@@ -732,7 +732,7 @@ describe("legacyResolveDbSetupPrelude", () => {
  * current `[experimental.webhooks]` setting — in both directions, and without ever
  * dropping an extension a user's own migration created.
  */
-describe("legacyRunDatabaseWebhooksSetup", () => {
+describe("runDatabaseWebhooksSetup", () => {
   const PG_NET_DROP_FINGERPRINT = "drop extension if exists pg_net";
 
   function fakeWebhooksSession(opts: {
@@ -740,7 +740,7 @@ describe("legacyRunDatabaseWebhooksSetup", () => {
     readonly historyUnavailable?: boolean;
   }) {
     const execSql: Array<string> = [];
-    const session: LegacyDbSession = {
+    const session: DbSession = {
       exec: (sql) =>
         Effect.sync(() => {
           execSql.push(sql);
@@ -753,7 +753,7 @@ describe("legacyRunDatabaseWebhooksSetup", () => {
         sql.includes("supabase_migrations.schema_migrations")
           ? opts.historyUnavailable === true
             ? Effect.fail(
-                new LegacyDbExecError({ message: 'relation "schema_migrations" does not exist' }),
+                new DbExecError({ message: 'relation "schema_migrations" does not exist' }),
               )
             : Effect.succeed(
                 (opts.appliedStatements ?? []).map((statements, index) => ({
@@ -775,7 +775,7 @@ describe("legacyRunDatabaseWebhooksSetup", () => {
     sessionOpts: Parameters<typeof fakeWebhooksSession>[0] = {},
   ) => {
     const { session, execSql } = fakeWebhooksSession(sessionOpts);
-    const dbConnection = Layer.succeed(LegacyDbConnection, {
+    const dbConnection = Layer.succeed(DbConnection, {
       connect: () => Effect.succeed(session),
     });
     return {
@@ -783,7 +783,7 @@ describe("legacyRunDatabaseWebhooksSetup", () => {
       effect: Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        yield* legacyRunDatabaseWebhooksSetup({
+        yield* runDatabaseWebhooksSetup({
           fs,
           path,
           hostname: "127.0.0.1",
@@ -859,13 +859,13 @@ describe("legacyRunDatabaseWebhooksSetup", () => {
   });
 });
 
-describe("legacyStartInitCurrentBranch", () => {
+describe("startInitCurrentBranch", () => {
   it.effect('writes supabase/.branches/_current_branch = "main" when absent', () => {
     const workdir = makeWorkdir();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* legacyStartInitCurrentBranch(fs, path, workdir);
+      yield* startInitCurrentBranch(fs, path, workdir);
       const content = yield* fs.readFileString(
         join(workdir, "supabase", ".branches", "_current_branch"),
       );
@@ -886,7 +886,7 @@ describe("legacyStartInitCurrentBranch", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* legacyStartInitCurrentBranch(fs, path, workdir);
+      yield* startInitCurrentBranch(fs, path, workdir);
       const content = yield* fs.readFileString(join(branchesDir, "_current_branch"));
       expect(content).toBe("feature-x");
     }).pipe(

@@ -16,7 +16,7 @@ export const withJsonErrorHandling = <A, E, R>(
         // `Runtime.getErrorExitCode` defaults to 1 for any error without a
         // `[Runtime.errorExitCode]` marker, so this is a no-op for every existing
         // error type. It only changes behavior for an error that opts in — e.g.
-        // `LegacyGoChildExitError` (CLI-1879), so a delegated Go child's exact exit
+        // `GoChildExitError` (CLI-1879), so a delegated Go child's exact exit
         // code (not just a generic 1) still reaches the user under json/stream-json,
         // matching the exit code `runCli`'s text-mode path already propagates.
         yield* processControl.setExitCode(Runtime.getErrorExitCode(error));

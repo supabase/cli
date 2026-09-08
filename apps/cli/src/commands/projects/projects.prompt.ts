@@ -2,19 +2,19 @@ import { randomInt } from "node:crypto";
 
 import { Effect } from "effect";
 
-import { LegacyPlatformApi } from "../../auth/legacy-platform-api.service.ts";
-import { mapLegacyHttpError } from "../../command-internal/legacy-http-errors.ts";
+import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
+import { mapHttpError } from "../../command-internal/http-errors.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import {
-  LegacyProjectsCreateNameEmptyError,
-  LegacyProjectsOrgsListNetworkError,
-  LegacyProjectsOrgsListUnexpectedStatusError,
+  ProjectsCreateNameEmptyError,
+  ProjectsOrgsListNetworkError,
+  ProjectsOrgsListUnexpectedStatusError,
 } from "./projects.errors.ts";
 import { formatRegion } from "./projects.format.ts";
 
-const mapOrgsListError = mapLegacyHttpError({
-  networkError: LegacyProjectsOrgsListNetworkError,
-  statusError: LegacyProjectsOrgsListUnexpectedStatusError,
+const mapOrgsListError = mapHttpError({
+  networkError: ProjectsOrgsListNetworkError,
+  statusError: ProjectsOrgsListUnexpectedStatusError,
   networkMessage: (cause) => `failed to retrieve organizations: ${cause}`,
   statusMessage: (status, body) => `Unexpected error retrieving organizations: ${body} (${status})`,
 });
@@ -46,13 +46,13 @@ const REGION_CODES = [
  * Reads a line; a non-empty value is the project name, otherwise fail with
  * "project name cannot be empty".
  */
-export const legacyPromptProjectName = Effect.fnUntraced(function* () {
+export const promptProjectName = Effect.fnUntraced(function* () {
   const output = yield* Output;
   const name = yield* output.promptText("Enter your project name: ");
   if (name.length > 0) {
     return name;
   }
-  return yield* new LegacyProjectsCreateNameEmptyError({
+  return yield* new ProjectsCreateNameEmptyError({
     message: "project name cannot be empty",
   });
 });
@@ -61,9 +61,9 @@ export const legacyPromptProjectName = Effect.fnUntraced(function* () {
  * Lists the user's organizations and prompts for one. The prompt shows the
  * org name and returns the org id, which is then sent as `organization_slug`.
  */
-export const legacyPromptOrgId = Effect.fnUntraced(function* () {
+export const promptOrgId = Effect.fnUntraced(function* () {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
+  const api = yield* CommandPlatformApi;
   const orgs = yield* api.v1.listAllOrganizations().pipe(Effect.catch(mapOrgsListError));
   const options = orgs.map((org) => ({
     value: org.id,
@@ -80,7 +80,7 @@ export const legacyPromptOrgId = Effect.fnUntraced(function* () {
  * Prompts for a region; the selection value is the region code, the display
  * detail is the human-readable name.
  */
-export const legacyPromptProjectRegion = Effect.fnUntraced(function* () {
+export const promptProjectRegion = Effect.fnUntraced(function* () {
   const output = yield* Output;
   // Established prompt layout: the region code renders as the primary label
   // and the friendly name as the description.
@@ -119,7 +119,7 @@ export function generateDbPassword(): string {
 /**
  * Prompts for a masked database password; a blank entry generates one.
  */
-export const legacyPromptDbPassword = Effect.fnUntraced(function* () {
+export const promptDbPassword = Effect.fnUntraced(function* () {
   const output = yield* Output;
   const entered = yield* output.promptPassword(
     "Enter your database password (or leave blank to generate one): ",

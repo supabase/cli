@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, inject, test } from "vitest";
 import { createHarness, exec, type CLIResult } from "@supabase/cli-test-helpers";
 import { testBehaviour } from "./test-context.ts";
-import { ACCESS_TOKEN, TARGET } from "./env.ts";
+import { ACCESS_TOKEN } from "./env.ts";
 
 // A guaranteed-unreachable TCP address — connection is refused immediately.
 // Used to simulate Docker being unavailable without relying on any external state.
@@ -29,7 +29,7 @@ const testStack = testBehaviour.extend<StackFixtures>({
   stackRun: async ({ workspace }, use) => {
     const serverUrl = inject("replayServerUrl") as string;
     const dockerHostUrl = inject("dockerHostUrl") as string;
-    const harness = createHarness(TARGET, {
+    const harness = createHarness({
       apiUrl: serverUrl,
       accessToken: ACCESS_TOKEN,
       cwd: workspace.path,
@@ -61,7 +61,7 @@ describe("services", () => {
 // status
 // ---------------------------------------------------------------------------
 
-// CLI-2167: `status` (ts-legacy only) resolves and prints the current linked
+// CLI-2167: `status` resolves and prints the current linked
 // project/branch on stdout, before any Docker/daemon work runs, in every
 // output mode — an adjudicated, deliberate TS-only extension with no Go
 // counterpart (Go's `status` never had a link-state concept). Go's stdout for

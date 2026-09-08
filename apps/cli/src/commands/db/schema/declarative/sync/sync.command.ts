@@ -3,11 +3,11 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
-import { legacyParseSchemaFlags } from "../../../../../command-internal/legacy-schema-flags.ts";
-import { withLegacyCommandInstrumentation } from "../../../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyDbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
-import { legacyDbSchemaDeclarativeSync } from "./sync.handler.ts";
-import { legacyDbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
+import { parseSchemaFlags } from "../../../../../command-internal/schema-flags.ts";
+import { withCommandTelemetry } from "../../../../../telemetry/command-telemetry.ts";
+import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
+import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
+import { dbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
 
 const config = {
   schema: Flag.string("schema").pipe(
@@ -20,7 +20,7 @@ const config = {
     // occurrence so `-s public,auth` includes the two schemas separately. Mirror
     // the `gen types` / `db lint` parsing so quoted commas are handled the same way.
     Flag.mapTryCatch(
-      (rawValues) => legacyParseSchemaFlags(rawValues),
+      (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
@@ -57,12 +57,12 @@ const config = {
 
 // `--no-cache` is a shared flag on the `declarative` group (read from the parent),
 // so the handler input merges it in alongside the leaf's own flags.
-export type LegacyDbSchemaDeclarativeSyncFlags = CliCommand.Command.Config.Infer<typeof config> & {
+export type DbSchemaDeclarativeSyncFlags = CliCommand.Command.Config.Infer<typeof config> & {
   readonly noCache: boolean;
   readonly strictCoverage: boolean;
 };
 
-export const legacyDbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
+export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
   Command.withDescription(
     "Compares the local database or supabase/migrations baseline with the complete declarative schema tree. By default it writes migration files; --transient applies directly to the running local database without writing migrations or history and requires confirmation or --yes. When a legacy export omits known implicit extensions, interactive sync can add declarations and re-plan before applying or writing.",
   ),
@@ -70,14 +70,14 @@ export const legacyDbSchemaDeclarativeSyncCommand = Command.make("sync", config)
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // `--no-cache` is shared on the parent group; read the resolved value there.
-      const shared = yield* legacyDbSchemaDeclarativeSharedBase;
-      const merged: LegacyDbSchemaDeclarativeSyncFlags = {
+      const shared = yield* dbSchemaDeclarativeSharedBase;
+      const merged: DbSchemaDeclarativeSyncFlags = {
         ...flags,
         noCache: shared.noCache,
         strictCoverage: shared.strictCoverage,
       };
-      return yield* legacyDbSchemaDeclarativeSync(merged).pipe(
-        withLegacyCommandInstrumentation({
+      return yield* dbSchemaDeclarativeSync(merged).pipe(
+        withCommandTelemetry({
           flags: {
             "no-cache": merged.noCache,
             "strict-coverage": merged.strictCoverage,
@@ -98,5 +98,5 @@ export const legacyDbSchemaDeclarativeSyncCommand = Command.make("sync", config)
       );
     }),
   ),
-  Command.provide(legacyDbSchemaDeclarativeSyncRuntimeLayer),
+  Command.provide(dbSchemaDeclarativeSyncRuntimeLayer),
 );

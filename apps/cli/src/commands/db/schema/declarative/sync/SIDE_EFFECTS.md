@@ -40,11 +40,11 @@ disabling safe compaction.
 
 ## Subprocesses / Containers
 
-| What                                                                                                                                                                                                                 | When                                                              |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Natively-provisioned shadows via `legacyAcquireShadowDatabase` — migrated source + declarative target for durable sync, declarative target only for `--transient`; ephemeral host ports, settings-keyed cache        | always                                                            |
-| Direct SQL execution on the running local database, preserving each rendered unit's transaction mode and omitting migration-history/reset SQL                                                                        | `--transient`, after confirmation or `--yes`                      |
-| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `legacyResetLocalDatabase` — only on the failed-apply recovery path | TTY only, apply failed, and the user confirms "reset and reapply" |
+| What                                                                                                                                                                                                           | When                                                              |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Natively-provisioned shadows via `acquireShadowDatabase` — migrated source + declarative target for durable sync, declarative target only for `--transient`; ephemeral host ports, settings-keyed cache        | always                                                            |
+| Direct SQL execution on the running local database, preserving each rendered unit's transaction mode and omitting migration-history/reset SQL                                                                  | `--transient`, after confirmation or `--yes`                      |
+| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase` — only on the failed-apply recovery path | TTY only, apply failed, and the user confirms "reset and reapply" |
 
 ## Environment Variables
 
@@ -94,7 +94,7 @@ are mutually exclusive.
 bootstraps a missing declarative tree. Redundant `--apply=true` is accepted but
 does not provide consent.
 
-A manifest-less legacy tree is refused by two compatibility gates — one when the
+A manifest-less CLI tree is refused by two compatibility gates — one when the
 tree fails to load on the bundled engine's shadow, one when the plan drops an
 extension the tree no longer declares (removing or renaming a `pg_cron` job or
 `pgmq` queue declaration is an ordinary change and is never refused). Both
@@ -145,7 +145,7 @@ existing SQL or creates an export manifest.
   following the same bundle and cleanup rules. In a TTY, a reset-and-reapply is offered
   after image preflight succeeds and local apply is attempted, including connection
   failures before SQL execution (the reset itself is native too —
-  `legacyResetLocalDatabase` — run in-process,
+  `resetLocalDatabase` — run in-process,
   sharing this command's own telemetry/linked-project-cache finalizer cycle
   rather than firing a second one from a child process).
 - A transient execution failure saves the planned SQL, warns that earlier or
@@ -164,15 +164,15 @@ existing SQL or creates an export manifest.
 ### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 
 The bundled (pg-delta next) engine provisions both plan shadows through
-`legacyAcquireShadowDatabase` (`legacy-pgdelta-next-shadow.layer.ts`): on by default, off when
+`acquireShadowDatabase` (`pgdelta-next-shadow.layer.ts`): on by default, off when
 `SUPABASE_SHADOW_CACHE` is set to anything not viper-true (ambient env or project dotenv); `--no-cache`
 bypasses restore and publish for that invocation. Next allocates an ephemeral host port per
 shadow; the cache key hashes the cluster recipe (including the effective Webhooks/`pg_net`
 policy), not the published port, so worktrees and repeated syncs with the same settings share
 a warm hit. The migrations shadow follows project config; the declarative shadow forces
 `pg_net` off — those are distinct keys when Webhooks are enabled. A warm hit skips the
-platform baseline on both shadows (`legacyMigrateNextShadowDatabase` /
-`legacySetupShadowDatabase` are baseline-state-aware). When both snapshots are
+platform baseline on both shadows (`migrateNextShadowDatabase` /
+`setupShadowDatabase` are baseline-state-aware). When both snapshots are
 already published they restore concurrently; a first-run pair that shares a
 cache key builds the baseline once and hands it off; otherwise the two shadows
 stay sequential so progress lines never interleave. Artifact:

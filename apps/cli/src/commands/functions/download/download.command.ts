@@ -2,9 +2,9 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { FUNCTIONS_PROJECT_REF_SAFE_FLAGS } from "../../../shared/functions/functions.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyFunctionsDownload } from "./download.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { functionsDownload } from "./download.handler.ts";
 
 const config = {
   functionName: Argument.string("Function name").pipe(
@@ -31,17 +31,17 @@ const config = {
   ),
 } as const;
 
-export type LegacyFunctionsDownloadFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type FunctionsDownloadFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 // Exported so integration tests can drive the exact wiring `Command.withHandler`
 // uses below, instead of re-asserting the generic instrumentation mechanism.
-export const legacyFunctionsDownloadHandler = (flags: LegacyFunctionsDownloadFlags) =>
-  legacyFunctionsDownload(flags).pipe(
-    withLegacyCommandInstrumentation({ flags, safeFlags: FUNCTIONS_PROJECT_REF_SAFE_FLAGS }),
+export const functionsDownloadHandler = (flags: FunctionsDownloadFlags) =>
+  functionsDownload(flags).pipe(
+    withCommandTelemetry({ flags, safeFlags: FUNCTIONS_PROJECT_REF_SAFE_FLAGS }),
     withJsonErrorHandling,
   );
 
-export const legacyFunctionsDownloadCommand = Command.make("download", config).pipe(
+export const functionsDownloadCommand = Command.make("download", config).pipe(
   Command.withDescription(
     "Download the source code for a Function from the linked Supabase project. If no function name is provided, downloads all functions.",
   ),
@@ -56,6 +56,6 @@ export const legacyFunctionsDownloadCommand = Command.make("download", config).p
       description: "Download all functions from a specific project",
     },
   ]),
-  Command.withHandler(legacyFunctionsDownloadHandler),
-  Command.provide(legacyManagementApiRuntimeLayer(["functions", "download"])),
+  Command.withHandler(functionsDownloadHandler),
+  Command.provide(managementApiRuntimeLayer(["functions", "download"])),
 );

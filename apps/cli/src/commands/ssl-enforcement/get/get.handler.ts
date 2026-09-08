@@ -1,41 +1,38 @@
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/legacy-go-output.encoders.ts";
+import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
+import { GO_SSL_ENFORCEMENT_RESPONSE } from "../ssl-enforcement.go-payload.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
-import { LEGACY_GO_SSL_ENFORCEMENT_RESPONSE } from "../ssl-enforcement.go-payload.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
-import {
-  LegacySslEnforcementGetNetworkError,
-  LegacySslEnforcementGetUnexpectedStatusError,
+  SslEnforcementGetNetworkError,
+  SslEnforcementGetUnexpectedStatusError,
 } from "../ssl-enforcement.errors.ts";
 import { printSslStatus } from "../ssl-enforcement.format.ts";
-import type { LegacySslEnforcementGetFlags } from "./get.command.ts";
+import type { SslEnforcementGetFlags } from "./get.command.ts";
 
-const mapGetError = mapLegacyHttpError({
-  networkError: LegacySslEnforcementGetNetworkError,
-  statusError: LegacySslEnforcementGetUnexpectedStatusError,
+const mapGetError = mapHttpError({
+  networkError: SslEnforcementGetNetworkError,
+  statusError: SslEnforcementGetUnexpectedStatusError,
   networkMessage: (cause) => `failed to retrieve SSL enforcement config: ${cause}`,
   statusMessage: (status, body) => `unexpected SSL enforcement status ${status}: ${body}`,
 });
 
-export const legacySslEnforcementGet = Effect.fn("legacy.ssl-enforcement.get")(function* (
-  flags: LegacySslEnforcementGetFlags,
+export const sslEnforcementGet = Effect.fn("ssl-enforcement.get")(function* (
+  flags: SslEnforcementGetFlags,
 ) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   // Telemetry must flush whether ref resolution, the API call, or output
   // emission fails. `linkedProjectCache.cache` requires a resolved ref, so
@@ -61,11 +58,11 @@ export const legacySslEnforcementGet = Effect.fn("legacy.ssl-enforcement.get")(f
         return;
       }
       if (goFmt === "yaml") {
-        yield* output.raw(encodeLegacyGoYaml(response, LEGACY_GO_SSL_ENFORCEMENT_RESPONSE));
+        yield* output.raw(encodeGoYaml(response, GO_SSL_ENFORCEMENT_RESPONSE));
         return;
       }
       if (goFmt === "toml") {
-        yield* output.raw(encodeLegacyGoToml(response, LEGACY_GO_SSL_ENFORCEMENT_RESPONSE));
+        yield* output.raw(encodeGoToml(response, GO_SSL_ENFORCEMENT_RESPONSE));
         return;
       }
       if (goFmt === "env") {

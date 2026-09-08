@@ -2,7 +2,7 @@
 
 ## Files Read
 
-Same auth fallback chain as every Management-API legacy command. Project-ref discovery (for the PARENT) is PARENT-scoped (CLI-2167 follow-up, TS-only): env `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/linked-project.json`'s `ref` → `<workdir>/supabase/.temp/project-ref`, first ref-shaped candidate wins — see `branches list/SIDE_EFFECTS.md` for the full chain and rationale.
+Same auth fallback chain as every Management-API command. Project-ref discovery (for the PARENT) is PARENT-scoped (CLI-2167 follow-up, TS-only): env `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/linked-project.json`'s `ref` → `<workdir>/supabase/.temp/project-ref`, first ref-shaped candidate wins — see `branches list/SIDE_EFFECTS.md` for the full chain and rationale.
 
 ## Files Written
 
@@ -25,12 +25,12 @@ Same auth fallback chain as every Management-API legacy command. Project-ref dis
 
 ## Exit Codes
 
-| Code | Condition                                                                             |
-| ---- | ------------------------------------------------------------------------------------- |
-| `0`  | success — branch unpaused                                                             |
-| `1`  | `LegacyBranchesUnpauseUnexpectedStatusError` — non-200 response from restore endpoint |
-| `1`  | `LegacyBranchesUnpauseNetworkError` — transport-level network failure                 |
-| `1`  | Branch-id resolution errors                                                           |
+| Code | Condition                                                                       |
+| ---- | ------------------------------------------------------------------------------- |
+| `0`  | success — branch unpaused                                                       |
+| `1`  | `BranchesUnpauseUnexpectedStatusError` — non-200 response from restore endpoint |
+| `1`  | `BranchesUnpauseNetworkError` — transport-level network failure                 |
+| `1`  | Branch-id resolution errors                                                     |
 
 ## Telemetry Events Fired
 

@@ -12,10 +12,10 @@ const E2E_TIMEOUT_MS = 30_000;
  * `signing-key.command.ts`'s actual production runtime layer, not the mocked
  * `Stdin` the integration suite provides via `Layer.succeed`. A missing
  * `stdinLayer` in that composition only surfaces as a "Service not found" defect
- * at this boundary (see the legacy CLAUDE.md Go Parity Checklist item 5). Per-branch
+ * at this boundary (see the CLAUDE.md invariant 5). Per-branch
  * prompt/format coverage lives in the integration suite.
  */
-describe("supabase gen signing-key (legacy)", () => {
+describe("supabase gen signing-key", () => {
   let projectDir: string;
 
   beforeEach(() => {
@@ -37,7 +37,6 @@ describe("supabase gen signing-key (legacy)", () => {
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stderr } = await runSupabase(["gen", "signing-key"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         stdin: "n\n",
       });
@@ -52,7 +51,6 @@ describe("supabase gen signing-key (legacy)", () => {
 
   test("overwrites on a piped 'y'", { timeout: E2E_TIMEOUT_MS }, async () => {
     const { exitCode, stderr } = await runSupabase(["gen", "signing-key"], {
-      entrypoint: "legacy",
       cwd: projectDir,
       stdin: "y\n",
     });

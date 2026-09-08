@@ -1,16 +1,16 @@
 import { describe, expect, test } from "@effect/vitest";
 import { Console, Effect, Exit, Layer } from "effect";
 import { Argument, CliOutput, Command, Flag } from "effect/unstable/cli";
-import { legacyBranchesCommand } from "../../commands/branches/branches.command.ts";
-import { LEGACY_GLOBAL_FLAGS } from "../legacy/global-flags.ts";
+import { branchesCommand } from "../../commands/branches/branches.command.ts";
+import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { emptyEnv, mockOutput } from "../../../tests/helpers/mocks.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { OutputFormatFlag } from "./global-flags.ts";
 import { exitCodeForFailure, withoutParseErrorHelpDump } from "./run.ts";
 
-const testBranchesCommand = legacyBranchesCommand.pipe(
-  Command.withGlobalFlags([OutputFormatFlag, ...LEGACY_GLOBAL_FLAGS]),
+const testBranchesCommand = branchesCommand.pipe(
+  Command.withGlobalFlags([OutputFormatFlag, ...GLOBAL_FLAGS]),
 );
 
 /**
@@ -57,14 +57,14 @@ function fakeConsole(): { readonly console: Console.Console; readonly calls: Arr
 }
 
 /**
- * CLI-1906: `supabase branches` (a legacy "group" command — subcommands, no
+ * CLI-1906: `supabase branches` (a "group" command — subcommands, no
  * runnable handler of its own) used to exit 1 when invoked bare, even though
  * the printed help was identical to `supabase branches --help`, which already
- * exited 0. These tests run the real `legacyBranchesCommand` definition
+ * exited 0. These tests run the real `branchesCommand` definition
  * through `Command.runWith` (same technique as `version.integration.test.ts`)
  * so the `ShowHelp` cause shape is the one the real CLI actually produces, not
- * a hand-rolled stand-in. `legacyBranchesCommand` is exercised directly
- * (rather than nested under `legacyRoot`) because `legacyRoot`'s
+ * a hand-rolled stand-in. `branchesCommand` is exercised directly
+ * (rather than nested under `rootCommand`) because `rootCommand`'s
  * `Command.provide` (see `Command.ts`'s `provide`/`withSubcommands`) wraps its
  * *entire* handle — including the bare/`--help`/parse-error paths exercised
  * here — in the production output/proxy layer graph (`Layer.unwrap` reading
@@ -72,10 +72,10 @@ function fakeConsole(): { readonly console: Console.Console; readonly calls: Arr
  * still *builds* that layer graph before running the wrapped handle even on
  * these runs; it just never gets *consumed*, because the `ShowHelp` failure
  * fires before any leaf subcommand handler body executes. Exercising
- * `legacyBranchesCommand` directly avoids needing to provide or mock that
+ * `branchesCommand` directly avoids needing to provide or mock that
  * unused graph for a test that only cares about the `ShowHelp` cause shape.
  */
-describe("legacy group command exit codes (CLI-1906)", () => {
+describe("group command exit codes (CLI-1906)", () => {
   const layerFor = (args: ReadonlyArray<string>) =>
     Layer.mergeAll(
       CliOutput.layer(textCliOutputFormatter()),
@@ -136,7 +136,7 @@ describe("legacy group command exit codes (CLI-1906)", () => {
  * those, always on stderr, never stdout. `classifyParseErrorConsoleOutput`
  * (see `run.ts`) mirrors that split; these tests cover both branches.
  *
- * `legacyBranchesCommand` (no `Command.provide` of its own — see the
+ * `branchesCommand` (no `Command.provide` of its own — see the
  * sibling CLI-1906 suite above for why that matters) covers the
  * `UnrecognizedOption` shape and proves the buffering/conditional-flush
  * wiring end to end. `MissingOption`/`InvalidValue` specifically need a

@@ -3,29 +3,29 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
-import { LegacyOutputFlag } from "../../shared/legacy/global-flags.ts";
+import { CommandSettings } from "../../config/command-settings.service.ts";
+import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import { renderGlamourTable } from "../../output/legacy-glamour-table.ts";
+import { renderGlamourTable } from "../../output/glamour-table.ts";
 import {
   encodeEnv,
   encodeGoJson,
   encodeGoStructJsonBody,
   encodeYaml,
-} from "../../command-internal/legacy-go-output.encoders.ts";
-import { legacyGoFormatFloat } from "../../command-internal/legacy-go-float.ts";
-import { sanitizeLegacyErrorBody } from "../../command-internal/legacy-http-errors.ts";
-import { requestWithAuth } from "../../command-internal/legacy-raw-http.ts";
-import { resolveLegacyAccessToken } from "../../command-internal/legacy-resolve-token.ts";
+} from "../../command-internal/go-output.encoders.ts";
+import { goFormatFloat } from "../../command-internal/go-float.ts";
+import { sanitizeErrorBody } from "../../command-internal/http-errors.ts";
+import { requestWithAuth } from "../../command-internal/raw-http.ts";
+import { resolveAccessToken } from "../../command-internal/resolve-token.ts";
 import {
-  LegacyPostgresConfigGetNetworkError,
-  LegacyPostgresConfigGetUnexpectedStatusError,
-  LegacyPostgresConfigGetUnmarshalError,
+  PostgresConfigGetNetworkError,
+  PostgresConfigGetUnexpectedStatusError,
+  PostgresConfigGetUnmarshalError,
 } from "./postgres-config.errors.ts";
 
-export type LegacyPostgresConfigMap = Record<string, unknown>;
+export type PostgresConfigMap = Record<string, unknown>;
 
-function sortConfigEntries(config: LegacyPostgresConfigMap): Array<[string, unknown]> {
+function sortConfigEntries(config: PostgresConfigMap): Array<[string, unknown]> {
   return Object.entries(config).sort(([a], [b]) => a.localeCompare(b));
 }
 
@@ -34,13 +34,13 @@ function formatPrettyValue(value: unknown): string {
   // Go renders each cell with `%+v` (`get.go:32-35`) on values from
   // `json.Unmarshal` into `map[string]any` — every JSON number is a `float64`,
   // so e.g. `1000000` prints as `1e+06`, not `1000000`.
-  if (typeof value === "number") return legacyGoFormatFloat(value);
+  if (typeof value === "number") return goFormatFloat(value);
   if (typeof value === "boolean") return String(value);
   if (value === null) return "<nil>";
   return JSON.stringify(value);
 }
 
-function renderPostgresConfigTable(config: LegacyPostgresConfigMap): string {
+function renderPostgresConfigTable(config: PostgresConfigMap): string {
   return renderGlamourTable(
     ["Parameter", "Value"],
     sortConfigEntries(config).map(([key, value]) => [key, formatPrettyValue(value)]),
@@ -64,7 +64,7 @@ function encodeTomlScalar(value: unknown): string {
 
 // Hand-rolled to reproduce `float64` TOML rendering (see `encodeTomlScalar`).
 // Intentionally does not delegate to the shared `encodeToml`/smol-toml encoder.
-function encodePostgresConfigToml(config: LegacyPostgresConfigMap): string {
+function encodePostgresConfigToml(config: PostgresConfigMap): string {
   const lines = sortConfigEntries(config).map(
     ([key, value]) => `${key} = ${encodeTomlScalar(value)}`,
   );
@@ -107,7 +107,7 @@ export function parseConfigValue(value: string): string | number | boolean {
   return value;
 }
 
-export function normalizeTimeoutConfig(config: LegacyPostgresConfigMap): void {
+export function normalizeTimeoutConfig(config: PostgresConfigMap): void {
   for (const [key, value] of Object.entries(config)) {
     if (key.endsWith("_timeout") && typeof value !== "string") {
       config[key] = String(value);
@@ -131,67 +131,67 @@ function parseJsonObject<E>(
   rawBody: string,
   errorMessage: (description: string) => string,
   wrap: (args: { readonly message: string }) => E,
-): Effect.Effect<LegacyPostgresConfigMap, E> {
+): Effect.Effect<PostgresConfigMap, E> {
   return Effect.try({
     try: () => {
       const parsed = JSON.parse(rawBody) as unknown;
       if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
         throw new Error("unexpected non-object JSON response");
       }
-      return parsed as LegacyPostgresConfigMap;
+      return parsed as PostgresConfigMap;
     },
     catch: (cause) => wrap({ message: errorMessage(String(cause)) }),
   });
 }
 
-export const fetchCurrentPostgresConfig = Effect.fn("legacy.postgres-config.fetch-current")(
-  function* (ref: string) {
-    const httpClient = yield* HttpClient.HttpClient;
-    const cliSettings = yield* LegacyCliSettings;
-    const tokenOpt = yield* resolveLegacyAccessToken;
+export const fetchCurrentPostgresConfig = Effect.fn("postgres-config.fetch-current")(function* (
+  ref: string,
+) {
+  const httpClient = yield* HttpClient.HttpClient;
+  const cliSettings = yield* CommandSettings;
+  const tokenOpt = yield* resolveAccessToken;
 
-    const request = requestWithAuth(
-      HttpClientRequest.get(`${cliSettings.apiUrl}/v1/projects/${ref}/config/database/postgres`),
-      tokenOpt,
-      cliSettings.userAgent,
-    );
+  const request = requestWithAuth(
+    HttpClientRequest.get(`${cliSettings.apiUrl}/v1/projects/${ref}/config/database/postgres`),
+    tokenOpt,
+    cliSettings.userAgent,
+  );
 
-    const response = yield* httpClient.execute(request).pipe(
-      Effect.mapError((cause) =>
-        mapTransportMessage(
-          cause,
-          (description) => `failed to retrieve Postgres config overrides: ${description}`,
-          (args) => new LegacyPostgresConfigGetNetworkError(args),
-        ),
+  const response = yield* httpClient.execute(request).pipe(
+    Effect.mapError((cause) =>
+      mapTransportMessage(
+        cause,
+        (description) => `failed to retrieve Postgres config overrides: ${description}`,
+        (args) => new PostgresConfigGetNetworkError(args),
       ),
-    );
+    ),
+  );
 
-    if (response.status !== 200) {
-      const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-      const body = sanitizeLegacyErrorBody(rawBody);
-      return yield* Effect.fail(
-        new LegacyPostgresConfigGetUnexpectedStatusError({
-          status: response.status,
-          body,
-          message: `unexpected config overrides status ${response.status}: ${body}`,
-        }),
-      );
-    }
-
-    const rawBody = yield* response.text;
-    return yield* parseJsonObject(
-      rawBody,
-      (description) => `failed to unmarshal response body: ${description}`,
-      (args) => new LegacyPostgresConfigGetUnmarshalError(args),
+  if (response.status !== 200) {
+    const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+    const body = sanitizeErrorBody(rawBody);
+    return yield* Effect.fail(
+      new PostgresConfigGetUnexpectedStatusError({
+        status: response.status,
+        body,
+        message: `unexpected config overrides status ${response.status}: ${body}`,
+      }),
     );
-  },
-);
+  }
+
+  const rawBody = yield* response.text;
+  return yield* parseJsonObject(
+    rawBody,
+    (description) => `failed to unmarshal response body: ${description}`,
+    (args) => new PostgresConfigGetUnmarshalError(args),
+  );
+});
 
 /**
  * Per-operation error wiring for {@link putPostgresConfig}. Both `update` and
  * `delete` issue the same PUT, but tag failures with their own error types and
  * Go-parity message verbs. Passing the constructors and message templates as
- * arguments (mirroring `mapLegacyHttpError`) keeps each call site's error
+ * arguments (mirroring `mapHttpError`) keeps each call site's error
  * channel precise instead of widening it to the union of both operations.
  */
 export interface PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr> {
@@ -210,13 +210,13 @@ export interface PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr> {
 
 export const putPostgresConfig = <SerErr, NetErr, StatErr, UnmErr>(
   ref: string,
-  config: LegacyPostgresConfigMap,
+  config: PostgresConfigMap,
   errors: PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr>,
 ) =>
   Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
-    const cliSettings = yield* LegacyCliSettings;
-    const tokenOpt = yield* resolveLegacyAccessToken;
+    const cliSettings = yield* CommandSettings;
+    const tokenOpt = yield* resolveAccessToken;
 
     // Use raw HTTP instead of the generated input schema: Go accepts arbitrary
     // config keys from repeated `--config key=value`, while the typed client
@@ -247,7 +247,7 @@ export const putPostgresConfig = <SerErr, NetErr, StatErr, UnmErr>(
 
     if (response.status !== 200) {
       const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-      const body = sanitizeLegacyErrorBody(rawBody);
+      const body = sanitizeErrorBody(rawBody);
       return yield* Effect.fail(
         errors.statusError({
           status: response.status,
@@ -259,41 +259,41 @@ export const putPostgresConfig = <SerErr, NetErr, StatErr, UnmErr>(
 
     const rawBody = yield* response.text;
     return yield* parseJsonObject(rawBody, errors.unmarshalMessage, errors.unmarshalError);
-  }).pipe(Effect.withSpan("legacy.postgres-config.put"));
+  }).pipe(Effect.withSpan("postgres-config.put"));
 
-export const writePostgresConfigOutput = Effect.fn("legacy.postgres-config.write-output")(
-  function* (config: LegacyPostgresConfigMap) {
-    const output = yield* Output;
-    const legacyOutputFlag = yield* LegacyOutputFlag;
-    const legacyOutput = Option.getOrUndefined(legacyOutputFlag);
+export const writePostgresConfigOutput = Effect.fn("postgres-config.write-output")(function* (
+  config: PostgresConfigMap,
+) {
+  const output = yield* Output;
+  const outputFlag = yield* OutputFlag;
+  const goOutput = Option.getOrUndefined(outputFlag);
 
-    // The `--output` flag takes priority over the TS `--output-format` flag.
-    // `pretty` (and an unset flag) fall through to the human-readable table /
-    // structured-success path below.
-    if (legacyOutput === "json") {
-      yield* output.raw(encodeGoJson(config));
-      return;
-    }
-    if (legacyOutput === "yaml") {
-      yield* output.raw(encodeYaml(config));
-      return;
-    }
-    if (legacyOutput === "toml") {
-      yield* output.raw(encodePostgresConfigToml(config));
-      return;
-    }
-    if (legacyOutput === "env") {
-      yield* output.raw(encodeEnv(config) + "\n");
-      return;
-    }
+  // The `--output` flag takes priority over the TS `--output-format` flag.
+  // `pretty` (and an unset flag) fall through to the human-readable table /
+  // structured-success path below.
+  if (goOutput === "json") {
+    yield* output.raw(encodeGoJson(config));
+    return;
+  }
+  if (goOutput === "yaml") {
+    yield* output.raw(encodeYaml(config));
+    return;
+  }
+  if (goOutput === "toml") {
+    yield* output.raw(encodePostgresConfigToml(config));
+    return;
+  }
+  if (goOutput === "env") {
+    yield* output.raw(encodeEnv(config) + "\n");
+    return;
+  }
 
-    if (output.format === "json" || output.format === "stream-json") {
-      yield* output.success("", config);
-      return;
-    }
+  if (output.format === "json" || output.format === "stream-json") {
+    yield* output.success("", config);
+    return;
+  }
 
-    yield* output.raw("- Custom Postgres Config -\n", "stderr");
-    yield* output.raw(renderPostgresConfigTable(config));
-    yield* output.raw("- End of Custom Postgres Config -\n", "stderr");
-  },
-);
+  yield* output.raw("- Custom Postgres Config -\n", "stderr");
+  yield* output.raw(renderPostgresConfigTable(config));
+  yield* output.raw("- End of Custom Postgres Config -\n", "stderr");
+});

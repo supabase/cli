@@ -1,17 +1,14 @@
 import { Command } from "effect/unstable/cli";
-import { legacyInspectDbLongRunningQueries } from "./long-running-queries.handler.ts";
-import {
-  LEGACY_INSPECT_DB_FLAGS,
-  legacyInspectDbCommandHandler,
-} from "../legacy-inspect-db-command.ts";
-import { legacyInspectDbRuntimeLayer } from "../db.layers.ts";
+import { inspectDbLongRunningQueries } from "./long-running-queries.handler.ts";
+import { INSPECT_DB_FLAGS, inspectDbCommandHandler } from "../inspect-db-command.ts";
+import { inspectDbRuntimeLayer } from "../db.layers.ts";
 
-export const legacyInspectDbLongRunningQueriesCommand = Command.make(
+export const inspectDbLongRunningQueriesCommand = Command.make(
   "long-running-queries",
-  LEGACY_INSPECT_DB_FLAGS,
+  INSPECT_DB_FLAGS,
 ).pipe(
   Command.withDescription("Show currently running queries running for longer than 5 minutes."),
   Command.withShortDescription("Show long-running queries"),
-  Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbLongRunningQueries)),
-  Command.provide(legacyInspectDbRuntimeLayer("long-running-queries")),
+  Command.withHandler(inspectDbCommandHandler(inspectDbLongRunningQueries)),
+  Command.provide(inspectDbRuntimeLayer("long-running-queries")),
 );

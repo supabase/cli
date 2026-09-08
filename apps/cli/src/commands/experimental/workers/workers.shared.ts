@@ -1,8 +1,8 @@
 import { join } from "node:path";
 import { findCliProjectPaths, loadCliConfig } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Predicate } from "effect";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { legacyShouldSearchAncestors } from "../../../command-internal/legacy-workdir-search.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
 import {
   readWorkersSection,
   type WorkerEntry,
@@ -16,15 +16,15 @@ import { InvalidWorkerNameError } from "../../../shared/workers/workers.errors.t
  * What every `supabase experimental workers` command needs before it does anything: where
  * the project is, what `[workers]` says, and which worker is being acted on.
  *
- * The project directory is `LegacyCliSettings.workdir` rather than an ancestor
+ * The project directory is `CommandSettings.workdir` rather than an ancestor
  * walk from the current directory. That is the resolved workdir every other
- * legacy command acts on — `--workdir`/`SUPABASE_WORKDIR` when given, else the
+ * command acts on — `--workdir`/`SUPABASE_WORKDIR` when given, else the
  * ancestor walk Go's own `getProjectRoot` performs — so `supabase experimental workers`
  * answers to the same flag as its siblings instead of inventing a second notion
  * of "which project".
  */
 
-export interface LegacyWorkersProject {
+export interface WorkersProject {
   readonly projectRoot: string;
   readonly supabaseDir: string;
   readonly configPath: string;
@@ -33,8 +33,10 @@ export interface LegacyWorkersProject {
   readonly workersDir: string;
 }
 
-const loadWorkersProject = Effect.fnUntraced(function* (options: { readonly tomlOnly: boolean }) {
-  const settings = yield* LegacyCliSettings;
+const loadWorkersProjectWith = Effect.fnUntraced(function* (options: {
+  readonly tomlOnly: boolean;
+}) {
+  const settings = yield* CommandSettings;
 
   // tomlOnly (the [workers.*] entry writer) keeps `search: false` unconditionally:
   // it and the workdir's own default resolution probe the same config.toml, so the
@@ -45,13 +47,13 @@ const loadWorkersProject = Effect.fnUntraced(function* (options: { readonly toml
   // `workers new api --workdir ./bare-dir` inside another project is why
   // `projectRoot` must be DERIVED from this same search rather than always
   // `settings.workdir`: with an explicit workdir the predicate yields `false`
-  // (see `legacyShouldSearchAncestors`), so `paths` is null and `projectRoot`
+  // (see `shouldSearchAncestors`), so `paths` is null and `projectRoot`
   // falls back to `settings.workdir` exactly as before — that scaffold-into-a-
   // bare-directory behavior is preserved verbatim. Only a DEFAULTED workdir can
   // ever climb here, and when it does, `projectRoot` must climb WITH `configPath`
   // — otherwise a discovered ancestor's `[workers.*]` entries would resolve their
   // `source` against a non-project directory.
-  const search = options.tomlOnly ? false : legacyShouldSearchAncestors(settings);
+  const search = options.tomlOnly ? false : shouldSearchAncestors(settings);
   const paths = yield* findCliProjectPaths(settings.workdir, { search });
   const projectRoot = paths?.projectRoot ?? settings.workdir;
   const supabaseDir = join(projectRoot, "supabase");
@@ -67,7 +69,7 @@ const loadWorkersProject = Effect.fnUntraced(function* (options: { readonly toml
     configPath: loaded?.path ?? join(supabaseDir, "config.toml"),
     section,
     workersDir: workersDir(projectRoot),
-  } satisfies LegacyWorkersProject;
+  } satisfies WorkersProject;
 });
 
 /**
@@ -78,7 +80,7 @@ const loadWorkersProject = Effect.fnUntraced(function* (options: { readonly toml
  * instead of the ones it configured, and a worker whose `source` sits outside
  * `supabase/workers/` is not discovered at all.
  */
-export const legacyLoadWorkersProject = () => loadWorkersProject({ tomlOnly: false });
+export const loadWorkersProject = () => loadWorkersProjectWith({ tomlOnly: false });
 
 /**
  * The project as the `[workers.<name>]` entry writer needs to see it: TOML
@@ -93,13 +95,13 @@ export const legacyLoadWorkersProject = () => loadWorkersProject({ tomlOnly: fal
  *
  * A JSON project therefore gets a `config.toml` written beside its
  * `config.json`, which the loader lists in `ignoredPaths`. That gap is the
- * writer's alone — reads go through {@link legacyLoadWorkersProject} — and it
+ * writer's alone — reads go through {@link loadWorkersProject} — and it
  * closes when config writing is overhauled.
  */
-export const legacyLoadWorkersProjectForEntryWrite = () => loadWorkersProject({ tomlOnly: true });
+export const loadWorkersProjectForEntryWrite = () => loadWorkersProjectWith({ tomlOnly: true });
 
 /**
- * As {@link legacyLoadWorkersProject}, but never failing on the project config.
+ * As {@link loadWorkersProject}, but never failing on the project config.
  *
  * For commands that only *report* on local state — `status` and `delete` —
  * which act on the remote worker and consult the project purely to add the
@@ -110,15 +112,15 @@ export const legacyLoadWorkersProjectForEntryWrite = () => loadWorkersProject({ 
  * A config that will not load reads the same as a project with no
  * `[workers.*]` entries: no entry, no configured source, so no source row.
  * Same degrade-rather-than-fail shape as
- * {@link legacyDescribeWorkerForReporting}, which does it for the source path.
+ * {@link describeWorkerForReporting}, which does it for the source path.
  */
-export const legacyLoadWorkersProjectForReporting = Effect.fnUntraced(function* () {
-  const loaded = yield* legacyLoadWorkersProject().pipe(Effect.option);
+export const loadWorkersProjectForReporting = Effect.fnUntraced(function* () {
+  const loaded = yield* loadWorkersProject().pipe(Effect.option);
   if (Option.isSome(loaded)) {
     return loaded.value;
   }
 
-  const settings = yield* LegacyCliSettings;
+  const settings = yield* CommandSettings;
   const projectRoot = settings.workdir;
   const supabaseDir = join(projectRoot, "supabase");
   return {
@@ -127,10 +129,10 @@ export const legacyLoadWorkersProjectForReporting = Effect.fnUntraced(function* 
     configPath: join(supabaseDir, "config.toml"),
     section: readWorkersSection(undefined),
     workersDir: workersDir(projectRoot),
-  } satisfies LegacyWorkersProject;
+  } satisfies WorkersProject;
 });
 
-interface LegacyResolvedWorker {
+interface ResolvedWorker {
   readonly name: string;
   readonly entry: WorkerEntry | undefined;
   /** The worker's default directory, `supabase/workers/<name>/`. */
@@ -162,7 +164,7 @@ interface LegacyResolvedWorker {
  * and a directory inside the project can symlink anywhere outside it.
  */
 /**
- * As {@link legacyDescribeWorker}, but never failing on the source path.
+ * As {@link describeWorker}, but never failing on the source path.
  *
  * For commands that only *report* on local state — `status` and `delete` — where
  * the source is a detail of the output, not a prerequisite. Making confinement
@@ -174,11 +176,11 @@ interface LegacyResolvedWorker {
  * `push` keeps the strict version, because there the source *is* what gets
  * packaged and uploaded.
  */
-export const legacyDescribeWorkerForReporting = Effect.fnUntraced(function* (
-  project: LegacyWorkersProject,
+export const describeWorkerForReporting = Effect.fnUntraced(function* (
+  project: WorkersProject,
   name: string,
 ) {
-  const described = yield* legacyDescribeWorker(project, name).pipe(Effect.option);
+  const described = yield* describeWorker(project, name).pipe(Effect.option);
   if (Option.isSome(described)) {
     return described.value;
   }
@@ -193,13 +195,10 @@ export const legacyDescribeWorkerForReporting = Effect.fnUntraced(function* (
     sourceDir: workerDir(project.projectRoot, name),
     sourceExists: false,
     sourceResolved: false,
-  } satisfies LegacyResolvedWorker;
+  } satisfies ResolvedWorker;
 });
 
-export const legacyDescribeWorker = Effect.fnUntraced(function* (
-  project: LegacyWorkersProject,
-  name: string,
-) {
+export const describeWorker = Effect.fnUntraced(function* (project: WorkersProject, name: string) {
   const fs = yield* FileSystem.FileSystem;
   const entry = project.section.workers[name];
   const defaultDir = workerDir(project.projectRoot, name);
@@ -218,11 +217,11 @@ export const legacyDescribeWorker = Effect.fnUntraced(function* (
     sourceDir,
     sourceExists: Option.isSome(info) && info.value.type === "Directory",
     sourceResolved: true,
-  } satisfies LegacyResolvedWorker;
+  } satisfies ResolvedWorker;
 });
 
 /** Reject a name that could never be a worker, before acting on it. */
-export const legacyValidateWorkerName = Effect.fnUntraced(function* (name: string) {
+export const validateWorkerName = Effect.fnUntraced(function* (name: string) {
   const invalid = validateWorkerNameMessage(name);
   if (invalid !== undefined) {
     return yield* Effect.fail(
@@ -243,9 +242,7 @@ export const legacyValidateWorkerName = Effect.fnUntraced(function* (name: strin
  * Sorted, so a bare `push` deploys in a stable order rather than whatever the
  * filesystem happened to return.
  */
-export const legacyDiscoverWorkerNames = Effect.fnUntraced(function* (
-  project: LegacyWorkersProject,
-) {
+export const discoverWorkerNames = Effect.fnUntraced(function* (project: WorkersProject) {
   const fs = yield* FileSystem.FileSystem;
 
   // No workers root at all is a project that has never scaffolded one, and the

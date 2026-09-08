@@ -1,7 +1,4 @@
-import { legacyMakeInspectDbHandler } from "../legacy-inspect-query.ts";
-import { legacyTableStatsSpec } from "./table-stats.query.ts";
+import { makeInspectDbHandler } from "../inspect-query.ts";
+import { tableStatsSpec } from "./table-stats.query.ts";
 
-export const legacyInspectDbTableStats = legacyMakeInspectDbHandler(
-  legacyTableStatsSpec,
-  "legacy.inspect.db.table-stats",
-);
+export const inspectDbTableStats = makeInspectDbHandler(tableStatsSpec, "inspect.db.table-stats");

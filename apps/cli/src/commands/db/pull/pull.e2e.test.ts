@@ -4,7 +4,7 @@ import { runSupabase } from "../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
-describe("supabase db pull (legacy)", () => {
+describe("supabase db pull", () => {
   // Docker-free golden-path: the `--declarative` / `--diff-engine` mutual-exclusion
   // is validated before any connection or shadow work, so this exits non-zero
   // through a real subprocess without Docker.
@@ -12,10 +12,13 @@ describe("supabase db pull (legacy)", () => {
     "--declarative with --diff-engine exits non-zero (mutually exclusive)",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
-      const { exitCode } = await runSupabase(
-        ["db", "pull", "--declarative", "--diff-engine", "migra"],
-        { entrypoint: "legacy" },
-      );
+      const { exitCode } = await runSupabase([
+        "db",
+        "pull",
+        "--declarative",
+        "--diff-engine",
+        "migra",
+      ]);
       expect(exitCode).not.toBe(0);
     },
   );

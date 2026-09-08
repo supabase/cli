@@ -87,7 +87,7 @@ wrapper emits for every command.
 | `-o env`                      | refused **before** the DELETE; discovering it at emit time deleted the worker and then failed | the error                                                           |
 
 A structured emission is the end of the run: the handler returns at
-`legacyEmitWorkersMachineOutput` or at `output.success`, so nothing in the text
+`emitWorkersMachineOutput` or at `output.success`, so nothing in the text
 branch below it — the kept-nothing notice and the redeploy trailer — is reached.
 `-o pretty`, `table` and `csv` are the exception, since they encode nothing and
 fall through to that same text branch.

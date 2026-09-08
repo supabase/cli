@@ -9,22 +9,22 @@ import { Effect, Exit, Option } from "effect";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  LEGACY_VALID_REF,
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  type MockLegacyPlatformApiOpts,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { legacyNetworkRestrictionsUpdateDbAllowCidrFlag } from "./update.command.ts";
-import { legacyNetworkRestrictionsUpdate } from "./update.handler.ts";
+  VALID_REF,
+  buildTestRuntime,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  type MockCommandPlatformApiOpts,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { networkRestrictionsUpdateDbAllowCidrFlag } from "./update.command.ts";
+import { networkRestrictionsUpdate } from "./update.handler.ts";
 
 // Runs the real `--db-allow-cidr` flag pipeline (pflag StringSlice CSV parity —
 // `cmd/restrictions.go:40`) so these scenarios cover raw CLI values → request body.
 const parseDbAllowCidr = (rawValues: ReadonlyArray<string>) =>
-  legacyNetworkRestrictionsUpdateDbAllowCidrFlag
+  networkRestrictionsUpdateDbAllowCidrFlag
     .parse({ flags: { "db-allow-cidr": rawValues }, arguments: [] })
     .pipe(
       Effect.map(([, values]) => values),
@@ -74,9 +74,9 @@ interface SetupOpts {
   network?: "fail";
 }
 
-const tempRoot = useLegacyTempWorkdir("supabase-network-restrictions-update-int-");
+const tempRoot = useTempWorkdir("supabase-network-restrictions-update-int-");
 
-function apiOpts(opts: SetupOpts): MockLegacyPlatformApiOpts {
+function apiOpts(opts: SetupOpts): MockCommandPlatformApiOpts {
   return {
     byMethod: {
       POST: { status: opts.postStatus ?? 201, body: opts.postResponse ?? POST_APPLIED },
@@ -88,9 +88,9 @@ function apiOpts(opts: SetupOpts): MockLegacyPlatformApiOpts {
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi(apiOpts(opts));
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const layer = buildLegacyTestRuntime({
+  const api = mockCommandPlatformApi(apiOpts(opts));
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -101,11 +101,11 @@ function setup(opts: SetupOpts = {}) {
 
 function setupTracked(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi(apiOpts(opts));
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
-  const layer = buildLegacyTestRuntime({
+  const api = mockCommandPlatformApi(apiOpts(opts));
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -122,20 +122,20 @@ const baseFlags = {
   append: false,
 };
 
-describe("legacy network-restrictions update integration", () => {
+describe("network-restrictions update integration", () => {
   // Replace mode (POST /apply)
 
   it.live("POSTs /apply with partitioned v4/v6 lists and prints the Go-format block", () => {
     const { layer, out, api } = setup({ postResponse: POST_APPLIED });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate({
+      yield* networkRestrictionsUpdate({
         ...baseFlags,
         dbAllowCidr: ["12.3.4.5/32", "2001:db8:abcd:0012::0/64", "1.2.3.1/24"],
       });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.method).toBe("POST");
       expect(api.requests[0]?.url).toContain(
-        `/v1/projects/${LEGACY_VALID_REF}/network-restrictions/apply`,
+        `/v1/projects/${VALID_REF}/network-restrictions/apply`,
       );
       expect(api.requests[0]?.body).toEqual({
         dbAllowedCidrs: ["12.3.4.5/32", "1.2.3.1/24"],
@@ -152,7 +152,7 @@ describe("legacy network-restrictions update integration", () => {
   it.live("sends empty arrays when no --db-allow-cidr is provided", () => {
     const { layer, api } = setup({ postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate(baseFlags);
+      yield* networkRestrictionsUpdate(baseFlags);
       expect(api.requests[0]?.body).toEqual({ dbAllowedCidrs: [], dbAllowedCidrsV6: [] });
     }).pipe(Effect.provide(layer));
   });
@@ -162,7 +162,7 @@ describe("legacy network-restrictions update integration", () => {
     () => {
       const { layer, out } = setup({ postResponse: POST_STORED });
       return Effect.gen(function* () {
-        yield* legacyNetworkRestrictionsUpdate({ ...baseFlags, dbAllowCidr: ["1.2.3.0/24"] });
+        yield* networkRestrictionsUpdate({ ...baseFlags, dbAllowCidr: ["1.2.3.0/24"] });
         expect(out.stdoutText).toBe(
           "DB Allowed IPv4 CIDRs: &[1.2.3.0/24]\n" +
             "DB Allowed IPv6 CIDRs: &[]\n" +
@@ -180,7 +180,7 @@ describe("legacy network-restrictions update integration", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate({
+      yield* networkRestrictionsUpdate({
         ...baseFlags,
         dbAllowCidr: ["::ffff:1.2.3.4/128"],
       });
@@ -195,7 +195,7 @@ describe("legacy network-restrictions update integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24,5.6.7.0/24"]);
-      yield* legacyNetworkRestrictionsUpdate({ ...baseFlags, dbAllowCidr });
+      yield* networkRestrictionsUpdate({ ...baseFlags, dbAllowCidr });
       expect(api.requests[0]?.body).toEqual({
         dbAllowedCidrs: ["1.2.3.0/24", "5.6.7.0/24"],
         dbAllowedCidrsV6: [],
@@ -207,7 +207,7 @@ describe("legacy network-restrictions update integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24", "5.6.7.0/24"]);
-      yield* legacyNetworkRestrictionsUpdate({ ...baseFlags, dbAllowCidr });
+      yield* networkRestrictionsUpdate({ ...baseFlags, dbAllowCidr });
       expect(api.requests[0]?.body).toEqual({
         dbAllowedCidrs: ["1.2.3.0/24", "5.6.7.0/24"],
         dbAllowedCidrsV6: [],
@@ -219,7 +219,7 @@ describe("legacy network-restrictions update integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24,5.6.7.0/24", "9.9.9.0/24"]);
-      yield* legacyNetworkRestrictionsUpdate({ ...baseFlags, dbAllowCidr });
+      yield* networkRestrictionsUpdate({ ...baseFlags, dbAllowCidr });
       expect(api.requests[0]?.body).toEqual({
         dbAllowedCidrs: ["1.2.3.0/24", "5.6.7.0/24", "9.9.9.0/24"],
         dbAllowedCidrsV6: [],
@@ -231,7 +231,7 @@ describe("legacy network-restrictions update integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24"]);
-      yield* legacyNetworkRestrictionsUpdate({ ...baseFlags, dbAllowCidr });
+      yield* networkRestrictionsUpdate({ ...baseFlags, dbAllowCidr });
       expect(api.requests[0]?.body).toEqual({
         dbAllowedCidrs: ["1.2.3.0/24"],
         dbAllowedCidrsV6: [],
@@ -243,9 +243,7 @@ describe("legacy network-restrictions update integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbAllowCidr = yield* parseDbAllowCidr(["1.2.3.0/24,notacidr"]);
-      const exit = yield* Effect.exit(
-        legacyNetworkRestrictionsUpdate({ ...baseFlags, dbAllowCidr }),
-      );
+      const exit = yield* Effect.exit(networkRestrictionsUpdate({ ...baseFlags, dbAllowCidr }));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(0);
       if (Exit.isFailure(exit)) {
@@ -259,16 +257,14 @@ describe("legacy network-restrictions update integration", () => {
   it.live("PATCHes when --append=true with `add` payload and partitions the V2 response", () => {
     const { layer, out, api } = setup({ patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate({
+      yield* networkRestrictionsUpdate({
         ...baseFlags,
         append: true,
         dbAllowCidr: ["12.3.4.5/32", "1.2.3.1/24", "2001:db8:abcd:0012::0/64"],
       });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.method).toBe("PATCH");
-      expect(api.requests[0]?.url).toContain(
-        `/v1/projects/${LEGACY_VALID_REF}/network-restrictions`,
-      );
+      expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/network-restrictions`);
       expect(api.requests[0]?.url).not.toContain("/apply");
       expect(api.requests[0]?.body).toEqual({
         add: {
@@ -292,7 +288,7 @@ describe("legacy network-restrictions update integration", () => {
     };
     const { layer, out } = setup({ patchResponse: empty });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate({ ...baseFlags, append: true });
+      yield* networkRestrictionsUpdate({ ...baseFlags, append: true });
       expect(out.stdoutText).toBe(
         "DB Allowed IPv4 CIDRs: &[]\n" +
           "DB Allowed IPv6 CIDRs: &[]\n" +
@@ -307,7 +303,7 @@ describe("legacy network-restrictions update integration", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyNetworkRestrictionsUpdate({
+        networkRestrictionsUpdate({
           ...baseFlags,
           dbAllowCidr: ["12.3.4.5", "10.0.0.0/8", "1.2.3.1/24"],
         }),
@@ -315,7 +311,7 @@ describe("legacy network-restrictions update integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("LegacyNetworkRestrictionsInvalidCidrError");
+        expect(errorJson).toContain("NetworkRestrictionsInvalidCidrError");
         expect(errorJson).toContain("failed to parse IP: 12.3.4.5");
       }
     }).pipe(Effect.provide(layer));
@@ -325,7 +321,7 @@ describe("legacy network-restrictions update integration", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyNetworkRestrictionsUpdate({
+        networkRestrictionsUpdate({
           ...baseFlags,
           dbAllowCidr: ["12.3.4.5/32", "10.0.0.0/8", "1.2.3.1/24"],
         }),
@@ -333,7 +329,7 @@ describe("legacy network-restrictions update integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("LegacyNetworkRestrictionsPrivateIpError");
+        expect(errorJson).toContain("NetworkRestrictionsPrivateIpError");
         expect(errorJson).toContain("private IP provided: 10.0.0.0/8");
       }
     }).pipe(Effect.provide(layer));
@@ -347,7 +343,7 @@ describe("legacy network-restrictions update integration", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyNetworkRestrictionsUpdate({
+        networkRestrictionsUpdate({
           ...baseFlags,
           dbAllowCidr: ["::ffff:10.0.0.0/104"],
         }),
@@ -355,7 +351,7 @@ describe("legacy network-restrictions update integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("LegacyNetworkRestrictionsPrivateIpError");
+        expect(errorJson).toContain("NetworkRestrictionsPrivateIpError");
         expect(errorJson).toContain("private IP provided: ::ffff:10.0.0.0/104");
       }
     }).pipe(Effect.provide(layer));
@@ -365,7 +361,7 @@ describe("legacy network-restrictions update integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* Effect.exit(
-        legacyNetworkRestrictionsUpdate({
+        networkRestrictionsUpdate({
           ...baseFlags,
           dbAllowCidr: ["12.3.4.5"],
         }),
@@ -382,7 +378,7 @@ describe("legacy network-restrictions update integration", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate({
+      yield* networkRestrictionsUpdate({
         ...baseFlags,
         bypassCidrChecks: true,
         dbAllowCidr: ["10.0.0.0/8"],
@@ -400,11 +396,11 @@ describe("legacy network-restrictions update integration", () => {
   it.live("reports a Go-compatible error message when the POST network is unreachable", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyNetworkRestrictionsUpdate(baseFlags));
+      const exit = yield* Effect.exit(networkRestrictionsUpdate(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("LegacyNetworkRestrictionsUpdateNetworkError");
+        expect(errorJson).toContain("NetworkRestrictionsUpdateNetworkError");
         expect(errorJson).toContain("failed to apply network restrictions:");
       }
     }).pipe(Effect.provide(layer));
@@ -413,11 +409,11 @@ describe("legacy network-restrictions update integration", () => {
   it.live("reports a Go-compatible error message when the POST returns 503", () => {
     const { layer } = setup({ postStatus: 503, postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyNetworkRestrictionsUpdate(baseFlags));
+      const exit = yield* Effect.exit(networkRestrictionsUpdate(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("LegacyNetworkRestrictionsUpdateUnexpectedStatusError");
+        expect(errorJson).toContain("NetworkRestrictionsUpdateUnexpectedStatusError");
         expect(errorJson).toContain("failed to apply network restrictions:");
       }
     }).pipe(Effect.provide(layer));
@@ -426,13 +422,11 @@ describe("legacy network-restrictions update integration", () => {
   it.live("reports a Go-compatible error message when the PATCH network is unreachable", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacyNetworkRestrictionsUpdate({ ...baseFlags, append: true }),
-      );
+      const exit = yield* Effect.exit(networkRestrictionsUpdate({ ...baseFlags, append: true }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("LegacyNetworkRestrictionsUpdateNetworkError");
+        expect(errorJson).toContain("NetworkRestrictionsUpdateNetworkError");
         expect(errorJson).toContain("failed to apply network restrictions:");
       }
     }).pipe(Effect.provide(layer));
@@ -441,13 +435,11 @@ describe("legacy network-restrictions update integration", () => {
   it.live("reports a Go-compatible error message when the PATCH returns a non-200 status", () => {
     const { layer } = setup({ patchStatus: 500, patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacyNetworkRestrictionsUpdate({ ...baseFlags, append: true }),
-      );
+      const exit = yield* Effect.exit(networkRestrictionsUpdate({ ...baseFlags, append: true }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("LegacyNetworkRestrictionsUpdateUnexpectedStatusError");
+        expect(errorJson).toContain("NetworkRestrictionsUpdateUnexpectedStatusError");
         expect(errorJson).toContain("failed to apply network restrictions:");
       }
     }).pipe(Effect.provide(layer));
@@ -458,7 +450,7 @@ describe("legacy network-restrictions update integration", () => {
   it.live("emits a structured JSON success payload via --output-format=json after POST", () => {
     const { layer, out } = setup({ format: "json", postResponse: POST_APPLIED });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate({
+      yield* networkRestrictionsUpdate({
         ...baseFlags,
         dbAllowCidr: ["12.3.4.5/32"],
       });
@@ -471,7 +463,7 @@ describe("legacy network-restrictions update integration", () => {
   it.live("emits a result event via --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", postResponse: POST_APPLIED });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate(baseFlags);
+      yield* networkRestrictionsUpdate(baseFlags);
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({ status: "applied" });
@@ -481,7 +473,7 @@ describe("legacy network-restrictions update integration", () => {
   it.live("emits Go-compatible JSON when --output=json after POST", () => {
     const { layer, out } = setup({ goOutput: "json", postResponse: POST_APPLIED });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate(baseFlags);
+      yield* networkRestrictionsUpdate(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stdoutText).toContain('"status": "applied"');
     }).pipe(Effect.provide(layer));
@@ -490,7 +482,7 @@ describe("legacy network-restrictions update integration", () => {
   it.live("emits Go-compatible YAML when --output=yaml after POST", () => {
     const { layer, out } = setup({ goOutput: "yaml", postResponse: POST_APPLIED });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate(baseFlags);
+      yield* networkRestrictionsUpdate(baseFlags);
       expect(out.stdoutText).toContain("status: applied");
     }).pipe(Effect.provide(layer));
   });
@@ -498,7 +490,7 @@ describe("legacy network-restrictions update integration", () => {
   it.live("emits Go-compatible TOML when --output=toml after POST", () => {
     const { layer, out } = setup({ goOutput: "toml", postResponse: POST_APPLIED });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate(baseFlags);
+      yield* networkRestrictionsUpdate(baseFlags);
       expect(out.stdoutText).toContain("status = ");
     }).pipe(Effect.provide(layer));
   });
@@ -506,7 +498,7 @@ describe("legacy network-restrictions update integration", () => {
   it.live("emits Go-compatible env output when --output=env after POST", () => {
     const { layer, out } = setup({ goOutput: "env", postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate(baseFlags);
+      yield* networkRestrictionsUpdate(baseFlags);
       expect(out.stdoutText).toContain('STATUS="applied"');
     }).pipe(Effect.provide(layer));
   });
@@ -514,7 +506,7 @@ describe("legacy network-restrictions update integration", () => {
   it.live("treats --output pretty identically to text mode", () => {
     const { layer, out } = setup({ goOutput: "pretty", postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate(baseFlags);
+      yield* networkRestrictionsUpdate(baseFlags);
       expect(out.stdoutText).toBe(
         "DB Allowed IPv4 CIDRs: &[]\n" +
           "DB Allowed IPv6 CIDRs: &[]\n" +
@@ -530,7 +522,7 @@ describe("legacy network-restrictions update integration", () => {
       postResponse: POST_APPLIED,
     });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate(baseFlags);
+      yield* networkRestrictionsUpdate(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(false);
       expect(out.stdoutText).toContain("status: applied");
     }).pipe(Effect.provide(layer));
@@ -541,7 +533,7 @@ describe("legacy network-restrictions update integration", () => {
   it.live("emits a structured JSON success payload via --output-format=json after PATCH", () => {
     const { layer, out } = setup({ format: "json", patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate({
+      yield* networkRestrictionsUpdate({
         ...baseFlags,
         append: true,
         dbAllowCidr: ["12.3.4.5/32"],
@@ -555,7 +547,7 @@ describe("legacy network-restrictions update integration", () => {
   it.live("emits Go-compatible JSON when --output=json after PATCH", () => {
     const { layer, out } = setup({ goOutput: "json", patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate({ ...baseFlags, append: true });
+      yield* networkRestrictionsUpdate({ ...baseFlags, append: true });
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stdoutText).toContain('"status": "applied"');
     }).pipe(Effect.provide(layer));
@@ -564,7 +556,7 @@ describe("legacy network-restrictions update integration", () => {
   it.live("emits Go-compatible YAML when --output=yaml after PATCH", () => {
     const { layer, out } = setup({ goOutput: "yaml", patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate({ ...baseFlags, append: true });
+      yield* networkRestrictionsUpdate({ ...baseFlags, append: true });
       expect(out.stdoutText).toContain("status: applied");
     }).pipe(Effect.provide(layer));
   });
@@ -572,7 +564,7 @@ describe("legacy network-restrictions update integration", () => {
   it.live("emits Go-compatible TOML when --output=toml after PATCH", () => {
     const { layer, out } = setup({ goOutput: "toml", patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate({ ...baseFlags, append: true });
+      yield* networkRestrictionsUpdate({ ...baseFlags, append: true });
       expect(out.stdoutText).toContain("status = ");
     }).pipe(Effect.provide(layer));
   });
@@ -587,7 +579,7 @@ describe("legacy network-restrictions update integration", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate({ ...baseFlags, append: true });
+      yield* networkRestrictionsUpdate({ ...baseFlags, append: true });
       expect(out.stdoutText).toContain('STATUS="applied"');
     }).pipe(Effect.provide(layer));
   });
@@ -599,7 +591,7 @@ describe("legacy network-restrictions update integration", () => {
       patchResponse: PATCH_APPLIED,
     });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate({ ...baseFlags, append: true });
+      yield* networkRestrictionsUpdate({ ...baseFlags, append: true });
       expect(out.stdoutText.startsWith("{")).toBe(false);
       expect(out.stdoutText).toContain("status: applied");
     }).pipe(Effect.provide(layer));
@@ -607,11 +599,11 @@ describe("legacy network-restrictions update integration", () => {
 
   // Project ref resolution
 
-  it.live("uses --project-ref flag value over LegacyCliSettings.projectId", () => {
+  it.live("uses --project-ref flag value over CommandSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate({
+      yield* networkRestrictionsUpdate({
         ...baseFlags,
         projectRef: Option.some(flagRef),
       });
@@ -623,14 +615,14 @@ describe("legacy network-restrictions update integration", () => {
     const { layer } = setup({ postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyNetworkRestrictionsUpdate({
+        networkRestrictionsUpdate({
           ...baseFlags,
           projectRef: Option.some("BADREF"),
         }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
+        expect(JSON.stringify(exit.cause)).toContain("InvalidProjectRefError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -644,7 +636,7 @@ describe("legacy network-restrictions update integration", () => {
       postResponse: POST_EMPTY_APPLIED,
     });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate(baseFlags).pipe(withJsonErrorHandling);
+      yield* networkRestrictionsUpdate(baseFlags).pipe(withJsonErrorHandling);
       expect(out.messages.some((m) => m.type === "fail")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -654,7 +646,7 @@ describe("legacy network-restrictions update integration", () => {
   it.live("flushes telemetry and writes linked-project cache on success", () => {
     const { layer, telemetry, cache } = setupTracked({ postResponse: POST_APPLIED });
     return Effect.gen(function* () {
-      yield* legacyNetworkRestrictionsUpdate(baseFlags);
+      yield* networkRestrictionsUpdate(baseFlags);
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -663,7 +655,7 @@ describe("legacy network-restrictions update integration", () => {
   it.live("flushes telemetry on CIDR validation failure (before any HTTP call)", () => {
     const { layer, telemetry, cache, api } = setupTracked();
     return Effect.gen(function* () {
-      yield* Effect.exit(legacyNetworkRestrictionsUpdate({ ...baseFlags, dbAllowCidr: ["bad"] }));
+      yield* Effect.exit(networkRestrictionsUpdate({ ...baseFlags, dbAllowCidr: ["bad"] }));
       // Telemetry is the outermost ensuring, so it always fires.
       expect(telemetry.flushed).toBe(true);
       // Linked-project cache is inside the ref-resolved scope; CIDR validation
@@ -679,7 +671,7 @@ describe("legacy network-restrictions update integration", () => {
       postResponse: POST_EMPTY_APPLIED,
     });
     return Effect.gen(function* () {
-      yield* Effect.exit(legacyNetworkRestrictionsUpdate(baseFlags));
+      yield* Effect.exit(networkRestrictionsUpdate(baseFlags));
       expect(telemetry.flushed).toBe(true);
       // Ref resolved successfully, so cache fires even though the API failed.
       expect(cache.cached).toBe(true);

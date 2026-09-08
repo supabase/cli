@@ -1,13 +1,13 @@
 import { Effect } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
-import { legacyGenerateCompletionScript } from "../legacy-completion-scripts.ts";
-import type { LegacyCompletionPowershellFlags } from "./powershell.command.ts";
+import { generateCompletionScript } from "../completion-scripts.ts";
+import type { CompletionPowershellFlags } from "./powershell.command.ts";
 
-export const legacyCompletionPowershell = Effect.fn("legacy.completion.powershell")(function* (
-  flags: LegacyCompletionPowershellFlags,
+export const completionPowershell = Effect.fn("completion.powershell")(function* (
+  flags: CompletionPowershellFlags,
 ) {
   const output = yield* Output;
   yield* output.raw(
-    legacyGenerateCompletionScript("powershell", { noDescriptions: flags.noDescriptions }),
+    generateCompletionScript("powershell", { noDescriptions: flags.noDescriptions }),
   );
 });

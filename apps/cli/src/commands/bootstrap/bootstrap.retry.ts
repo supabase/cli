@@ -1,6 +1,6 @@
 import { Duration, Effect, Random, Schedule } from "effect";
 
-import { LegacyDebugFlag } from "../../shared/legacy/global-flags.ts";
+import { DebugFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
 
 /**
@@ -8,7 +8,7 @@ import { Output } from "../../shared/output/output.service.ts";
  * `backoff.WithMaxRetries(b, 8)` performs 8 retries -> 9 total attempts, matching
  * `Effect.retry({ schedule, times: 8 })`.
  */
-export const LEGACY_BOOTSTRAP_MAX_RETRIES = 8;
+export const BOOTSTRAP_MAX_RETRIES = 8;
 
 const MAX_INTERVAL = Duration.seconds(60);
 
@@ -23,7 +23,7 @@ const MAX_INTERVAL = Duration.seconds(60);
  *  - `MaxElapsedTime` 15m (intersected via `during`; in practice the 8-retry cap
  *    always trips first, but reproduced for completeness)
  */
-export const legacyBootstrapBackoff = Schedule.exponential("3 seconds", 1.5).pipe(
+export const bootstrapBackoff = Schedule.exponential("3 seconds", 1.5).pipe(
   Schedule.modifyDelay(({ duration }) => Effect.succeed(Duration.min(duration, MAX_INTERVAL))),
   Schedule.modifyDelay(({ duration }) =>
     Random.next.pipe(
@@ -43,7 +43,7 @@ export const legacyBootstrapBackoff = Schedule.exponential("3 seconds", 1.5).pip
  * Returns a fresh wrapper with its own failure counter per call, mirroring Go's
  * per-`RetryNotify` `NewErrorCallback()` + `policy.Reset()`.
  */
-export const legacyBootstrapRetryNotify = () => {
+export const bootstrapRetryNotify = () => {
   let failureCount = 0;
   return <A, E, R>(operation: Effect.Effect<A, E, R>) =>
     operation.pipe(
@@ -51,15 +51,15 @@ export const legacyBootstrapRetryNotify = () => {
         Effect.gen(function* () {
           failureCount += 1;
           // No notify on the final attempt (cenkalti returns `Stop` before notifying).
-          if (failureCount > LEGACY_BOOTSTRAP_MAX_RETRIES) return;
-          const toStderr = failureCount * 3 > LEGACY_BOOTSTRAP_MAX_RETRIES;
-          const debug = yield* LegacyDebugFlag;
+          if (failureCount > BOOTSTRAP_MAX_RETRIES) return;
+          const toStderr = failureCount * 3 > BOOTSTRAP_MAX_RETRIES;
+          const debug = yield* DebugFlag;
           // Failures 1-2 go to the debug logger (discarded unless `--debug`); 3+ to stderr.
           if (!toStderr && !debug) return;
           const output = yield* Output;
           const message = stringifyError(error);
           yield* output.raw(
-            `${message}\nRetry (${failureCount}/${LEGACY_BOOTSTRAP_MAX_RETRIES}): `,
+            `${message}\nRetry (${failureCount}/${BOOTSTRAP_MAX_RETRIES}): `,
             "stderr",
           );
         }),

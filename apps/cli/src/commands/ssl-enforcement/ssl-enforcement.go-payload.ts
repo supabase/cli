@@ -1,15 +1,11 @@
-import {
-  type LegacyGoType,
-  legacyGoBool,
-  legacyGoStruct,
-} from "../../command-internal/legacy-go-struct-output.encoders.ts";
+import { type GoType, goBool, goStruct } from "../../command-internal/go-struct-output.encoders.ts";
 
 /**
  * Type shape for `api.SslEnforcementResponse` (`apps/cli-go/pkg/api/types.gen.go`).
  * Shared by `ssl-enforcement get` and `ssl-enforcement update` for
  * `-o yaml` / `-o toml` (CLI-1975).
  */
-export const LEGACY_GO_SSL_ENFORCEMENT_RESPONSE: LegacyGoType = legacyGoStruct([
-  ["appliedSuccessfully", legacyGoBool],
-  ["currentConfig", legacyGoStruct([["database", legacyGoBool]])],
+export const GO_SSL_ENFORCEMENT_RESPONSE: GoType = goStruct([
+  ["appliedSuccessfully", goBool],
+  ["currentConfig", goStruct([["database", goBool]])],
 ]);

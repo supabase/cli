@@ -1,4 +1,4 @@
-export const LEGACY_FUNCTIONS_NEW_DENO_JSON = `{
+export const FUNCTIONS_NEW_DENO_JSON = `{
   "imports": {
     "@supabase/functions-js": "jsr:@supabase/functions-js@^2",
     "@supabase/server": "npm:@supabase/server@^1"
@@ -6,7 +6,7 @@ export const LEGACY_FUNCTIONS_NEW_DENO_JSON = `{
 }
 `;
 
-export const LEGACY_FUNCTIONS_NEW_NPMRC = `# Configuration for private npm package dependencies
+export const FUNCTIONS_NEW_NPMRC = `# Configuration for private npm package dependencies
 # For more information on using private registries with Edge Functions, see:
 # https://supabase.com/docs/guides/functions/import-maps#importing-from-private-registries
 `;
@@ -138,10 +138,10 @@ entrypoint = "./functions/__SLUG__/index.ts"
 # static_files = [ "./functions/__SLUG__/*.html" ]
 `;
 
-export type LegacyFunctionsNewAuthMode = "none" | "apikey" | "user";
+export type FunctionsNewAuthMode = "none" | "apikey" | "user";
 
-export function renderLegacyFunctionsNewEntrypoint(
-  authMode: LegacyFunctionsNewAuthMode,
+export function renderFunctionsNewEntrypoint(
+  authMode: FunctionsNewAuthMode,
   options: {
     readonly url: string;
     readonly publishableKey: string;
@@ -158,7 +158,7 @@ export function renderLegacyFunctionsNewEntrypoint(
     .replaceAll("__PUBLISHABLE_KEY__", options.publishableKey);
 }
 
-export function renderLegacyFunctionsNewConfig(slug: string, verifyJwt: boolean): string {
+export function renderFunctionsNewConfig(slug: string, verifyJwt: boolean): string {
   return FUNCTION_CONFIG_TEMPLATE.replaceAll("__SLUG__", slug).replaceAll(
     "__VERIFY_JWT__",
     verifyJwt ? "true" : "false",

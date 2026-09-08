@@ -1,9 +1,5 @@
-import {
-  legacyInspectPlainText,
-  legacyInspectText,
-  type LegacyInspectQuerySpec,
-} from "../legacy-inspect-query.ts";
-import { LEGACY_INTERNAL_SCHEMAS, legacyLikeEscapeSchema } from "../legacy-inspect-schemas.ts";
+import { inspectPlainText, inspectText, type InspectQuerySpec } from "../inspect-query.ts";
+import { INTERNAL_SCHEMAS, likeEscapeSchema } from "../inspect-schemas.ts";
 
 const SQL = `WITH table_opts AS (
   SELECT
@@ -75,10 +71,10 @@ ORDER BY
  * and `autoanalyze_threshold` are dropped). The `rowcount` cell has a one-shot `-1` → `No
  * stats` replacement.
  */
-export const legacyVacuumStatsSpec: LegacyInspectQuerySpec = {
+export const vacuumStatsSpec: InspectQuerySpec = {
   name: "vacuum-stats",
   sql: SQL,
-  params: () => [legacyLikeEscapeSchema(LEGACY_INTERNAL_SCHEMAS)],
+  params: () => [likeEscapeSchema(INTERNAL_SCHEMAS)],
   headers: [
     "Table",
     "Last Vacuum",
@@ -91,18 +87,18 @@ export const legacyVacuumStatsSpec: LegacyInspectQuerySpec = {
     "Expect autoanalyze?",
   ],
   project: (row) => [
-    legacyInspectText(row["name"]),
+    inspectText(row["name"]),
     // These four timestamp columns render as bare text (no backtick code span),
     // so an empty value stays empty rather than `` `` ``.
-    legacyInspectPlainText(row["last_vacuum"]),
-    legacyInspectPlainText(row["last_autovacuum"]),
-    legacyInspectPlainText(row["last_analyze"]),
-    legacyInspectPlainText(row["last_autoanalyze"]),
+    inspectPlainText(row["last_vacuum"]),
+    inspectPlainText(row["last_autovacuum"]),
+    inspectPlainText(row["last_analyze"]),
+    inspectPlainText(row["last_autoanalyze"]),
     // One-shot `-1` → `No stats` (JS String.replace with a string replaces only
     // the first occurrence).
-    legacyInspectText(row["rowcount"]).replace("-1", "No stats"),
-    legacyInspectText(row["dead_rowcount"]),
-    legacyInspectText(row["expect_autovacuum"]),
-    legacyInspectText(row["expect_autoanalyze"]),
+    inspectText(row["rowcount"]).replace("-1", "No stats"),
+    inspectText(row["dead_rowcount"]),
+    inspectText(row["expect_autovacuum"]),
+    inspectText(row["expect_autoanalyze"]),
   ],
 };

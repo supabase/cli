@@ -7,16 +7,16 @@ import { Deferred, Effect, Exit, Sink, Stream } from "effect";
 import { type ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { afterEach, beforeEach, vi } from "vitest";
 
-import { useLegacyTempWorkdir } from "../../../../tests/helpers/legacy-mocks.ts";
+import { useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  legacyStartEdgeRuntimeContainer,
-  type LegacyEdgeRuntimeBringUpInput,
+  startStackEdgeRuntimeContainer,
+  type EdgeRuntimeBringUpInput,
 } from "./edge-runtime.service.ts";
 
 /**
  * A spawner that answers every `docker` invocation
- * `legacyStartEdgeRuntimeContainer`'s call chain makes
+ * `startStackEdgeRuntimeContainer`'s call chain makes
  * (`ensureDockerNamedVolume`/`ensureDockerNetwork`/the create → cp → start
  * bring-up itself) with success, recording every invocation's argv (plus its
  * `stdin` option, for the `docker cp` archive) for assertions — same shape as
@@ -24,7 +24,7 @@ import {
  * values are delivered to the `create` call via `--env-file`/a bind-mounted
  * script, not this spawned process's own environment (see
  * `edge-runtime.service.ts`'s header for why), so there is nothing to capture
- * beyond argv and stdin. Note `legacyStartEdgeRuntimeContainer` never issues a
+ * beyond argv and stdin. Note `startStackEdgeRuntimeContainer` never issues a
  * `docker exec ... kong reload` — that only happens in `functions serve`'s own
  * `restartEdgeRuntime`-equivalent wrapper (`shared/functions/serve.ts`'s
  * `startEdgeRuntime`), not in the shared bring-up core this module calls
@@ -79,14 +79,14 @@ function mockDockerSpawner(
   };
 }
 
-function baseInput(workdir: string): LegacyEdgeRuntimeBringUpInput {
+function baseInput(workdir: string): EdgeRuntimeBringUpInput {
   return {
     projectId: "proj",
     networkId: "supabase_network_proj",
     image: "registry.example.com/supabase/edge-runtime:v1.74.2",
     workdir,
     // `authenticator:postgres@127.0.0.1:54322/postgres` — password "postgres", matching every
-    // other service's `dbUrl` input shape (`LegacyLocalConfigValues.dbUrl`).
+    // other service's `dbUrl` input shape (`LocalConfigValues.dbUrl`).
     dbUrl: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
     apiPort: 54321,
     edgeRuntimePolicy: "oneshot",
@@ -120,8 +120,8 @@ function envEntries(runCall: {
     .filter((line) => line.length > 0);
 }
 
-describe("legacyStartEdgeRuntimeContainer", () => {
-  const tempWorkdir = useLegacyTempWorkdir("supabase-edge-runtime-service-int-");
+describe("startStackEdgeRuntimeContainer", () => {
+  const tempWorkdir = useTempWorkdir("supabase-edge-runtime-service-int-");
 
   // An empty functions directory — every scenario here has zero declared
   // functions (`configDeclaredFunctions`/`configFunctions` in `baseInput`),
@@ -141,7 +141,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
-        yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -158,7 +158,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
       const mock = mockDockerSpawner();
       const out = mockOutput();
 
-      yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+      yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
         Effect.provide(out.layer),
       );
@@ -183,7 +183,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
-        yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -201,7 +201,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
-        yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -233,7 +233,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
       const out = mockOutput();
       const input = baseInput(tempWorkdir.current);
 
-      yield* legacyStartEdgeRuntimeContainer({
+      yield* startStackEdgeRuntimeContainer({
         ...input,
         configDeclaredFunctions: { [slug]: fnConfig },
         configFunctions: { [slug]: fnConfig },
@@ -253,7 +253,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
       const mock = mockDockerSpawner();
       const out = mockOutput();
 
-      yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+      yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
         Effect.provide(out.layer),
       );
@@ -269,7 +269,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
-        yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -291,7 +291,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
           image: "registry.example.com/supabase/edge-runtime:v1.99.9",
         };
 
-        yield* legacyStartEdgeRuntimeContainer(input).pipe(
+        yield* startStackEdgeRuntimeContainer(input).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -310,7 +310,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
-        yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -362,7 +362,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
           image: "ghcr.io/supabase/cli/edge-runtime:v1.74.2",
         };
 
-        yield* legacyStartEdgeRuntimeContainer(input).pipe(
+        yield* startStackEdgeRuntimeContainer(input).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -405,7 +405,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         );
         const out = mockOutput();
 
-        const error = yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        const error = yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
           Effect.flip,
@@ -433,7 +433,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         );
         const out = mockOutput();
 
-        const error = yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        const error = yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
           Effect.flip,
@@ -456,7 +456,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
-        const started = yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        const started = yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -495,7 +495,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         };
 
         const exit = yield* Effect.exit(
-          legacyStartEdgeRuntimeContainer(input).pipe(
+          startStackEdgeRuntimeContainer(input).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
             Effect.provide(out.layer),
           ),
@@ -513,7 +513,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
-        yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );
@@ -531,7 +531,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const mock = mockDockerSpawner();
         const out = mockOutput();
 
-        yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        yield* startStackEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
           Effect.provide(out.layer),
         );

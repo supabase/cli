@@ -178,9 +178,9 @@ jobs:
         run: go build -o supabase-go .
         working-directory: apps/cli-go
 
-      # The ts-legacy harness invokes `node apps/cli/dist/supabase.js` with
-      # `SUPABASE_CLI_BINARY_OVERRIDE` pointing at the compiled legacy binary
-      # in `apps/cli/dist/`. Build the CLI explicitly before invoking every
+      # The e2e harness invokes `node apps/cli/dist/supabase.js` with
+      # `SUPABASE_CLI_BINARY_OVERRIDE` pointing at the compiled binary in
+      # `apps/cli/dist/`. Build the CLI explicitly before invoking every
       # package-local e2e suite.
       - name: Build CLI
         run: pnpm exec turbo run supabase#build
@@ -188,7 +188,6 @@ jobs:
       - name: Run end-to-end tests
         run: pnpm exec turbo run test:e2e:run --only --concurrency=1 --filter=supabase --filter=@supabase/cli-e2e -- --shard=${{ matrix.shard }}/3
         env:
-          CLI_HARNESS_TARGET: ts-legacy
           SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
 
   test-stack-e2e:

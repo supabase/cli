@@ -1,5 +1,5 @@
-import { legacyInspectText, type LegacyInspectQuerySpec } from "../legacy-inspect-query.ts";
-import { LEGACY_INTERNAL_SCHEMAS, legacyLikeEscapeSchema } from "../legacy-inspect-schemas.ts";
+import { inspectText, type InspectQuerySpec } from "../inspect-query.ts";
+import { INTERNAL_SCHEMAS, likeEscapeSchema } from "../inspect-schemas.ts";
 
 const SQL = `WITH total_objects AS (
   SELECT c.relkind, pg_size_pretty(SUM(pg_relation_size(c.oid))) AS size
@@ -65,10 +65,10 @@ SELECT
  * `Name` column is the resolved database name, injected per row (not a query
  * column); the query takes `$1` = escaped internal schemas, `$2` = database name.
  */
-export const legacyDbStatsSpec: LegacyInspectQuerySpec = {
+export const dbStatsSpec: InspectQuerySpec = {
   name: "db-stats",
   sql: SQL,
-  params: (cfg) => [legacyLikeEscapeSchema(LEGACY_INTERNAL_SCHEMAS), cfg.conn.database],
+  params: (cfg) => [likeEscapeSchema(INTERNAL_SCHEMAS), cfg.conn.database],
   headers: [
     "Name",
     "Database Size",
@@ -82,13 +82,13 @@ export const legacyDbStatsSpec: LegacyInspectQuerySpec = {
   ],
   project: (row, cfg) => [
     cfg.conn.database,
-    legacyInspectText(row["database_size"]),
-    legacyInspectText(row["total_index_size"]),
-    legacyInspectText(row["total_table_size"]),
-    legacyInspectText(row["total_toast_size"]),
-    legacyInspectText(row["time_since_stats_reset"]),
-    legacyInspectText(row["index_hit_rate"]),
-    legacyInspectText(row["table_hit_rate"]),
-    legacyInspectText(row["wal_size"]),
+    inspectText(row["database_size"]),
+    inspectText(row["total_index_size"]),
+    inspectText(row["total_table_size"]),
+    inspectText(row["total_toast_size"]),
+    inspectText(row["time_since_stats_reset"]),
+    inspectText(row["index_hit_rate"]),
+    inspectText(row["table_hit_rate"]),
+    inspectText(row["wal_size"]),
   ],
 };

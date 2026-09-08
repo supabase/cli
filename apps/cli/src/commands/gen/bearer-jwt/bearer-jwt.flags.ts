@@ -1,5 +1,5 @@
-import { legacyParseGoDuration } from "../../../command-internal/legacy-go-duration.ts";
-import { legacyBearerJwtErrorMessage } from "./bearer-jwt.errors.ts";
+import { parseGoDuration } from "../../../command-internal/go-duration.ts";
+import { bearerJwtErrorMessage } from "./bearer-jwt.errors.ts";
 
 // The fractional-seconds separator accepts EITHER `.` or `,` — `time.Parse`
 // treats both as introducing a fractional second for any layout element:
@@ -21,10 +21,10 @@ const RFC3339_PATTERN =
  * (nanosecond-preserving) `time.Time` DOWN to `1_893_456_000`. Both fields
  * here are plain safe integers (`wholeSeconds` is many orders of magnitude
  * below `Number.MAX_SAFE_INTEGER`; `nanos` is always `< 1e9`), so every
- * operation on this type — see {@link legacyAddSecondsAndFloor} — is exact
+ * operation on this type — see {@link addSecondsAndFloor} — is exact
  * integer arithmetic, never float rounding.
  */
-export interface LegacyBearerJwtInstant {
+export interface BearerJwtInstant {
   readonly wholeSeconds: number;
   readonly nanos: number;
 }
@@ -33,21 +33,18 @@ const NANOS_PER_SECOND = 1_000_000_000;
 
 /**
  * Adds a (possibly fractional, possibly negative) duration in seconds to an
- * exact {@link LegacyBearerJwtInstant} and returns the correctly-floored
+ * exact {@link BearerJwtInstant} and returns the correctly-floored
  * whole-second result — mirrors exact nanosecond-precision `time.Time`
  * arithmetic followed by a truncate-to-seconds step, without ever adding an
  * epoch-scale whole-second count directly to a sub-second float (see
- * {@link LegacyBearerJwtInstant}'s own doc comment for why that rounds
+ * {@link BearerJwtInstant}'s own doc comment for why that rounds
  * incorrectly). `deltaSeconds` itself (`--valid-for`, parsed by
- * {@link legacyParseBearerJwtValidFor}) stays a plain float — its own
+ * {@link parseBearerJwtValidFor}) stays a plain float — its own
  * magnitude is never epoch-scale, so splitting it into whole/fractional parts
  * here is exact enough — only the addition against an epoch-scale instant
  * needs the exact-integer treatment.
  */
-export function legacyAddSecondsAndFloor(
-  instant: LegacyBearerJwtInstant,
-  deltaSeconds: number,
-): number {
+export function addSecondsAndFloor(instant: BearerJwtInstant, deltaSeconds: number): number {
   const deltaWhole = Math.floor(deltaSeconds);
   const deltaNanos = Math.round((deltaSeconds - deltaWhole) * NANOS_PER_SECOND);
   let wholeSeconds = instant.wholeSeconds + deltaWhole;
@@ -147,18 +144,18 @@ function rfc3339FlagError(trimmedValue: string): Error {
  *     `999999999`, not a rounded-up `1000000000` that would carry into the
  *     next second. The parsed instant carries that fraction at full
  *     (nanosecond) precision into the `iat = exp - validFor` arithmetic in
- *     `legacyBuildBearerJwtClaims`, which floors only the FINAL `exp`/`iat`
+ *     `buildBearerJwtClaims`, which floors only the FINAL `exp`/`iat`
  *     — so the fraction must survive this function's return value rather
- *     than being discarded here, matching `legacyParseBearerJwtValidFor`'s
+ *     than being discarded here, matching `parseBearerJwtValidFor`'s
  *     own no-early-flooring rule below: `--exp 2030-01-01T00:00:00.9Z
  *     --valid-for 1.2s` must yield `iat=1893455999`, not the `1893455998`
  *     that dropping the `.9` fraction during parsing would produce.
- * Returns the parsed instant as an exact {@link LegacyBearerJwtInstant} — NOT a single
+ * Returns the parsed instant as an exact {@link BearerJwtInstant} — NOT a single
  * float — on success. See that type's own doc comment for why a single `number` cannot
  * hold both an epoch-scale whole-second count and nanosecond precision without silent
  * rounding.
  */
-export function legacyParseBearerJwtExp(value: string): LegacyBearerJwtInstant {
+export function parseBearerJwtExp(value: string): BearerJwtInstant {
   const trimmedValue = value.trim();
   const match = RFC3339_PATTERN.exec(trimmedValue);
   if (match === null) {
@@ -225,25 +222,25 @@ export function legacyParseBearerJwtExp(value: string): LegacyBearerJwtInstant {
 
 /**
  * `--valid-for`: same parse-time-failure shape as `--exp` above, wrapping
- * `legacyParseGoDuration`'s own Go-format `time: invalid duration "..."` text.
+ * `parseGoDuration`'s own Go-format `time: invalid duration "..."` text.
  * `time.Duration`'s own pflag `Value.Set` does NOT trim its input (unlike `--exp`'s
  * `timeValue.Set` above), so no `.trim()` here.
  *
  * Returns SECONDS WITHOUT FLOORING — `exp`/`iat` are computed via
  * exact-nanosecond `time.Time` arithmetic on the parsed `time.Duration` and
- * only the FINAL timestamps are floored (see `legacyBuildBearerJwtClaims`).
+ * only the FINAL timestamps are floored (see `buildBearerJwtClaims`).
  * Flooring the duration itself here, before that arithmetic runs, would produce an
  * off-by-one-second result whenever the truncated fraction pushes the final sum/
  * difference across a second boundary: `--exp 2030-01-01T00:00:00Z
  * --valid-for 1.5s` must yield `iat=1893455998`, not the `1893455999` a
  * floor-first implementation would produce.
  */
-export function legacyParseBearerJwtValidFor(value: string): number {
+export function parseBearerJwtValidFor(value: string): number {
   try {
-    return legacyParseGoDuration(value) / 1_000_000_000;
+    return parseGoDuration(value) / 1_000_000_000;
   } catch (cause) {
     throw new Error(
-      `invalid argument "${value}" for "--valid-for" flag: ${legacyBearerJwtErrorMessage(cause)}`,
+      `invalid argument "${value}" for "--valid-for" flag: ${bearerJwtErrorMessage(cause)}`,
     );
   }
 }

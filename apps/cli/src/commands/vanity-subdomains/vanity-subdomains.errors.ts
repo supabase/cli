@@ -14,10 +14,10 @@ import {
  * the `--experimental` gate, login check, and project-ref resolution
  * (`cmd/root.go:93-117`) — so the flag is optional at parse time and enforced
  * in the handler instead. Byte-matches cobra's required-flag wording
- * (`command.go:1198`), same pattern as `LegacyProjectRefRequiredError`.
+ * (`command.go:1198`), same pattern as `ProjectRefRequiredError`.
  */
-export class LegacyDesiredSubdomainRequiredError extends Data.TaggedError(
-  "LegacyDesiredSubdomainRequiredError",
+export class DesiredSubdomainRequiredError extends Data.TaggedError(
+  "DesiredSubdomainRequiredError",
 )<{
   readonly message: string;
 }> {
@@ -26,8 +26,8 @@ export class LegacyDesiredSubdomainRequiredError extends Data.TaggedError(
   }
 }
 
-export class LegacyVanitySubdomainsGetNetworkError extends Data.TaggedError(
-  "LegacyVanitySubdomainsGetNetworkError",
+export class VanitySubdomainsGetNetworkError extends Data.TaggedError(
+  "VanitySubdomainsGetNetworkError",
 )<{
   readonly message: string;
   readonly decode?: boolean;
@@ -39,8 +39,8 @@ export class LegacyVanitySubdomainsGetNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyVanitySubdomainsGetUnexpectedStatusError extends Data.TaggedError(
-  "LegacyVanitySubdomainsGetUnexpectedStatusError",
+export class VanitySubdomainsGetUnexpectedStatusError extends Data.TaggedError(
+  "VanitySubdomainsGetUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -53,8 +53,8 @@ export class LegacyVanitySubdomainsGetUnexpectedStatusError extends Data.TaggedE
   }
 }
 
-export class LegacyVanitySubdomainsCheckNetworkError extends Data.TaggedError(
-  "LegacyVanitySubdomainsCheckNetworkError",
+export class VanitySubdomainsCheckNetworkError extends Data.TaggedError(
+  "VanitySubdomainsCheckNetworkError",
 )<{
   readonly message: string;
   readonly decode?: boolean;
@@ -66,8 +66,8 @@ export class LegacyVanitySubdomainsCheckNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyVanitySubdomainsCheckUnexpectedStatusError extends Data.TaggedError(
-  "LegacyVanitySubdomainsCheckUnexpectedStatusError",
+export class VanitySubdomainsCheckUnexpectedStatusError extends Data.TaggedError(
+  "VanitySubdomainsCheckUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -82,8 +82,8 @@ export class LegacyVanitySubdomainsCheckUnexpectedStatusError extends Data.Tagge
   }
 }
 
-export class LegacyVanitySubdomainsActivateNetworkError extends Data.TaggedError(
-  "LegacyVanitySubdomainsActivateNetworkError",
+export class VanitySubdomainsActivateNetworkError extends Data.TaggedError(
+  "VanitySubdomainsActivateNetworkError",
 )<{
   readonly message: string;
   readonly decode?: boolean;
@@ -95,8 +95,8 @@ export class LegacyVanitySubdomainsActivateNetworkError extends Data.TaggedError
   }
 }
 
-export class LegacyVanitySubdomainsActivateUnexpectedStatusError extends Data.TaggedError(
-  "LegacyVanitySubdomainsActivateUnexpectedStatusError",
+export class VanitySubdomainsActivateUnexpectedStatusError extends Data.TaggedError(
+  "VanitySubdomainsActivateUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -111,8 +111,8 @@ export class LegacyVanitySubdomainsActivateUnexpectedStatusError extends Data.Ta
   }
 }
 
-export class LegacyVanitySubdomainsDeleteNetworkError extends Data.TaggedError(
-  "LegacyVanitySubdomainsDeleteNetworkError",
+export class VanitySubdomainsDeleteNetworkError extends Data.TaggedError(
+  "VanitySubdomainsDeleteNetworkError",
 )<{
   readonly message: string;
   readonly decode?: boolean;
@@ -124,8 +124,8 @@ export class LegacyVanitySubdomainsDeleteNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyVanitySubdomainsDeleteUnexpectedStatusError extends Data.TaggedError(
-  "LegacyVanitySubdomainsDeleteUnexpectedStatusError",
+export class VanitySubdomainsDeleteUnexpectedStatusError extends Data.TaggedError(
+  "VanitySubdomainsDeleteUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;

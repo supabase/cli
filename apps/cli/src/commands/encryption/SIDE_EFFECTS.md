@@ -59,7 +59,7 @@ No custom `phtelemetry.*` events in `internal/encryption/`.
 
 - `get-root-key`: the bare root key followed by a newline, to **stdout**.
 - `update-root-key`: `Finished supabase root-key update.` followed by a newline, to **stderr**
-  (color rendered as plain text per the legacy-port convention).
+  (color rendered as plain text per the port convention).
 
 ### `--output-format json`
 

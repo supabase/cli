@@ -1,8 +1,4 @@
-import {
-  legacyRed,
-  legacyYellow,
-  type LegacyColorStream,
-} from "../../../command-internal/legacy-colors.ts";
+import { red, yellow, type ColorStream } from "../../../command-internal/colors.ts";
 import { WORKER_LOG_STREAMS } from "../../../shared/workers/worker-logs.sql.ts";
 import type { WorkerLogEntry } from "../../../shared/workers/worker-logs-api.ts";
 
@@ -17,7 +13,7 @@ import type { WorkerLogEntry } from "../../../shared/workers/worker-logs-api.ts"
  * one line each, with a different layout per stream.
  */
 
-export type LegacyWorkerLogLevel = "info" | "warn" | "error";
+export type WorkerLogLevel = "info" | "warn" | "error";
 
 /**
  * The level for one line, derived rather than read.
@@ -30,7 +26,7 @@ export type LegacyWorkerLogLevel = "info" | "warn" | "error";
  * Guest output has no level available without parsing tenant text, so it is
  * reported absent rather than guessed at.
  */
-export function legacyWorkerLogLevel(entry: WorkerLogEntry): LegacyWorkerLogLevel | undefined {
+export function workerLogLevel(entry: WorkerLogEntry): WorkerLogLevel | undefined {
   if (entry.stream === WORKER_LOG_STREAMS.requests) {
     // `log_attributes` is a Map(String, String), so this is "200", not 200.
     const status = Number(entry.attributes.status);
@@ -101,7 +97,7 @@ function stripControlSequences(message: string): string {
  * Colour for a level, or plain text.
  *
  * The stream is threaded through rather than a boolean because
- * `legacyAqua`/`legacyRed`/... already own the colour decision: they consult
+ * `aqua`/`red`/... already own the colour decision: they consult
  * `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE`, `CI` and the stream's own
  * `hasColors()`. Deciding here - from `isTTY`, say - would both duplicate that
  * gate and get it wrong, since `CLICOLOR_FORCE=1` deliberately styles a piped
@@ -111,15 +107,11 @@ function stripControlSequences(message: string): string {
  * lines, and tinting all of them would make the exceptions harder to spot, not
  * easier.
  */
-function colourise(
-  text: string,
-  level: LegacyWorkerLogLevel | undefined,
-  stream: LegacyColorStream,
-): string {
+function colourise(text: string, level: WorkerLogLevel | undefined, stream: ColorStream): string {
   if (level === "error") {
-    return legacyRed(text, stream);
+    return red(text, stream);
   }
-  return level === "warn" ? legacyYellow(text, stream) : text;
+  return level === "warn" ? yellow(text, stream) : text;
 }
 
 const pad2 = (value: number): string => String(value).padStart(2, "0");
@@ -129,7 +121,7 @@ const pad2 = (value: number): string => String(value).padStart(2, "0");
  *
  * Local rather than UTC, matching the only other log-line format this shell
  * prints - the `--debug` HTTP logger, which uses Go's `log.LstdFlags`
- * (`legacy-debug-logger.layer.ts`). Someone reading a tail is asking "what just
+ * (`debug-logger.layer.ts`). Someone reading a tail is asking "what just
  * happened", and the answer is compared against their own clock.
  *
  * Machine output keeps the unambiguous forms, so nothing that gets parsed,
@@ -187,7 +179,7 @@ function streamTag(stream: string): string {
  * — the status and duration live in `log_attributes` — so the useful line has to
  * be *composed*.
  */
-export function legacyWorkerLogText(entry: WorkerLogEntry): string {
+export function workerLogText(entry: WorkerLogEntry): string {
   if (entry.stream === WORKER_LOG_STREAMS.requests) {
     const { status, method, path, duration_ms: duration } = entry.attributes;
     const request = [status, method, path]
@@ -229,7 +221,7 @@ export function legacyWorkerLogText(entry: WorkerLogEntry): string {
  * An unrecognised stream falls back to the bare message: the log contract is
  * additive-only, so a stream this CLI has not heard of must still print.
  */
-export function legacyRenderWorkerLogLine(
+export function renderWorkerLogLine(
   entry: WorkerLogEntry,
   options: {
     /**
@@ -238,13 +230,13 @@ export function legacyRenderWorkerLogLine(
      * width spent saying nothing.
      */
     readonly showStream: boolean;
-    readonly colorStream?: LegacyColorStream;
+    readonly colorStream?: ColorStream;
   },
 ): string {
   const time = formatLogTime(entry.timestampMs);
-  const level = legacyWorkerLogLevel(entry);
+  const level = workerLogLevel(entry);
   const colorStream = options.colorStream ?? process.stdout;
   const prefix = options.showStream ? `${time}  ${streamTag(entry.stream)}` : time;
 
-  return `${prefix}  ${colourise(legacyWorkerLogText(entry), level, colorStream)}`;
+  return `${prefix}  ${colourise(workerLogText(entry), level, colorStream)}`;
 }
