@@ -26,7 +26,6 @@ const common = {
 
 const toml: DbTomlValues = {
   projectEnv: {},
-  envLookup: () => undefined,
   apiSchemas: ["public", "graphql_public"],
   port: 54322,
   shadowPort: 54320,

@@ -40,7 +40,6 @@ import {
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
-  parseBoolEnv,
   resolveDiffEngine,
   schemaPathsTransitionWarning,
   shouldUsePgDelta,
@@ -85,7 +84,7 @@ Run ${aqua("supabase db reset")} to verify that the new migration does not gener
 // SIDE_EFFECTS.md). The flag is deprecated in favor of the pg-delta engine.
 // This warning is additive to (and prints before) the delegated child's own
 // "experimental" warning, which it still prints unchanged.
-const warnPgSchemaDeprecated = `${yellow("WARNING:")} "--use-pg-schema" is deprecated. Use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.`;
+const warnPgSchemaDeprecated = `${yellow("WARNING:")} "--use-pg-schema" is deprecated. Use the default pg-delta engine or the migra engine (--use-migra) instead.`;
 
 const declarativeBaselineAdvisory = (declarativePath: string | null) => ({
   code: "DeclarativeSchemaNotUsedAsDiffBaseline",
@@ -550,12 +549,11 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     };
     const formatOptions = Option.getOrElse(cfg.pgDelta.formatOptions, () => "");
 
-    // Engine resolution: the pg-delta env/config/flag gate, read from the
+    // Engine resolution: the pg-delta config/flag gate, read from the
     // (possibly remote-merged) config.
     const pgDeltaDefault = shouldUsePgDelta({
       configEnabled: cfg.pgDelta.enabled,
       usePgDeltaFlag: Option.getOrElse(flags.usePgDelta, () => false),
-      envEnabled: parseBoolEnv(cfg.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
     });
     const useDelta = resolveDiffEngine({
       useMigraChanged: Option.isSome(flags.useMigra),
