@@ -11,10 +11,7 @@ import {
 const DIGEST_A = `sha256:${"a".repeat(64)}`;
 const DIGEST_B = `sha256:${"b".repeat(64)}`;
 
-/**
- * The real catalog, so these tests fail if its shape drifts away from what the
- * patterns expect rather than passing against a stale hand-written fixture.
- */
+/** The real catalog, so a shape drift fails here instead of passing on a stale fixture. */
 const realCatalog = await Bun.file(CATALOG_PATH).text();
 
 /** A trimmed catalog carrying both entry shapes the script has to rewrite. */
@@ -262,8 +259,7 @@ describe("planCatalogUpdate", () => {
 
 describe("against the real catalog", () => {
   test("every modelled service is addressable and idempotent", () => {
-    // Derived from the catalog itself so a newly modelled workload is covered
-    // without editing this list.
+    // Derived from the catalog, so a new workload is covered without editing this.
     const services = [
       ...new Set(
         [...realCatalog.matchAll(/native\(\s*"([a-z][a-z0-9-]*)",/g)].map(

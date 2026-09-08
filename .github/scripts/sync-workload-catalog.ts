@@ -1,45 +1,16 @@
 /**
- * Syncs `packages/stack/src/model/WorkloadCatalog.ts` to a slim-services
- * release.
+ * Pins one workload in `packages/stack/src/model/WorkloadCatalog.ts` to a
+ * slim-services release, driven by the same `mirror-slim-image` dispatch as the
+ * ECR mirror (`mirror-slim-image.yml`).
  *
- * `@supabase/stack` pins each workload to an exact slim-services artifact
- * release — a version plus the digest of its `ghcr.io/supabase/cli/<service>`
- * image — because ADR 0017 makes the artifact release the boundary for service
- * startup defaults. Those pins therefore track the slim-services release feed,
- * NOT `apps/cli-go/pkg/config/templates/Dockerfile`. Dependabot maintains the
- * Dockerfile (which the shipped CLI reads via
- * `apps/cli/src/shared/services/dockerfile-images.ts`) and cannot maintain this
- * catalog: it resolves registry tags and has no way to emit a `sha256:` index
- * digest.
+ * Dependabot owns the Dockerfile and cannot own this table: these pins carry
+ * image digests, which tag resolution never produces (ADR 0017). The dispatch
+ * payload is untrusted and revalidated here — those patterns are what keep
+ * `version`/`digest` inside the string literals they are written into.
  *
- * The feed is the `mirror-slim-image` repository_dispatch that slim-services
- * already sends this repo for the ECR mirror (see `mirror-slim-image.yml` and
- * `docs/design/ecr-mirror-dispatch.md` in supabase/slim-services). This script
- * consumes the same payload and rewrites the matching catalog entry;
- * `sync-stack-workload-catalog.yml` runs it and opens the PR.
- *
- * Only two source values need rewriting per release. `artifactFor` in
- * `WorkloadCatalog.ts` derives `releaseTag`, `assetName`, and every download
- * URL from `service` + `version`, and `releases` is derived from
- * `defaultVersion` + the container image, so updating the `native(...)`
- * positional `defaultVersion` and container image is the whole change.
- *
- * The payload arrives with whatever authority holds the dispatch token, so it
- * is revalidated here rather than trusted from the workflow — the patterns
- * below are what keep `version` and `digest` from breaking out of the TypeScript
- * string literals they are written into.
- *
- * Run in CI as:
- *   bun .github/scripts/sync-workload-catalog.ts
- * with SLIM_SERVICE / SLIM_VERSION / SLIM_DIGEST set from the payload.
- *
- * Exit codes: 0 the sync ran (whether or not it changed anything), 1 invalid
- * payload or tool failure. A service the catalog does not model, and a release
- * line it does not carry, are both successful no-ops — slim-services publishes
- * for consumers beyond this catalog.
- *
- * `planCatalogUpdate` is pure and unit-tested in `sync-workload-catalog.test.ts`;
- * `main()` wires up the real filesystem.
+ * Run: `bun .github/scripts/sync-workload-catalog.ts` with SLIM_SERVICE,
+ * SLIM_VERSION, SLIM_DIGEST. Exit 1 on an invalid payload; an unmodelled
+ * service or release line is a successful no-op.
  */
 
 export const CATALOG_PATH = "packages/stack/src/model/WorkloadCatalog.ts";
@@ -55,11 +26,7 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/**
- * The release line a version belongs to: its leading numeric component, with
- * any `v` prefix stripped. Used only to disambiguate services that carry
- * several supported lines at once (today just postgres, 17.x alongside 15.x).
- */
+/** Leading numeric component, `v` stripped. Only postgres carries >1 line. */
 export function releaseLine(version: string): string {
   const withoutPrefix = version.replace(/^[vV]/, "");
   const separator = withoutPrefix.indexOf(".");
@@ -103,11 +70,7 @@ export function validatePayload(input: {
   }
 }
 
-/**
- * The `native("<service>", "<version>", "<image>"` positional arguments. The
- * image is anchored to this service's own slim repository, so `postgres` cannot
- * match `postgrest` and vice versa.
- */
+/** `native("<service>", "<version>", "<image>"` — image anchored so postgres != postgrest. */
 function defaultEntryPattern(service: string): RegExp {
   const s = escapeRegExp(service);
   return new RegExp(
@@ -115,17 +78,11 @@ function defaultEntryPattern(service: string): RegExp {
   );
 }
 
-/**
- * Entries of an `additionalReleases` map for this service: `"<version>":
- * "<image>"`. The `:` between key and value is what separates these from the
- * positional arguments above; `\s` spans the line break oxfmt introduces when
- * a digest-pinned value wraps.
- */
+/** `additionalReleases` entries: `"<version>": "<image>"`. The `:` is what distinguishes them. */
 function additionalEntryPattern(service: string, version?: string): RegExp {
   const s = escapeRegExp(service);
   const key = version === undefined ? `[^"]+` : escapeRegExp(version);
-  // Groups: 1 the version key, 2 the key/value separator (preserved so the
-  // rewrite keeps oxfmt's existing wrapping), 3 the container image.
+  // Groups: 1 key, 2 separator (kept, to preserve wrapping), 3 image.
   return new RegExp(
     `"(${key})"(\\s*:\\s*)"(${escapeRegExp(SLIM_IMAGE_PREFIX)}${s}:[^"]+)"`,
     version === undefined ? "g" : "",
@@ -136,10 +93,7 @@ function slimImageRef(service: string, version: string, digest: string): string 
   return `${SLIM_IMAGE_PREFIX}${service}:${version}@${digest}`;
 }
 
-/**
- * Rewrites the catalog entry for `service` onto `version`/`digest`, or explains
- * why there was nothing to do.
- */
+/** Rewrites `service`'s entry onto `version`/`digest`, or says why there was nothing to do. */
 export function planCatalogUpdate(input: CatalogUpdateInput): CatalogUpdatePlan {
   validatePayload(input);
   const { source, service, version, digest } = input;
@@ -158,8 +112,7 @@ export function planCatalogUpdate(input: CatalogUpdateInput): CatalogUpdatePlan 
     image: match[3] ?? "",
   }));
 
-  // With one modelled line there is no ambiguity — every release bumps the
-  // default. With several (postgres), the release line decides which one moves,
+  // One line: always the default. Several (postgres): the release line picks,
   // so a 15.x release can never overwrite the 17.x default.
   const bumpsDefault =
     additional.length === 0 || releaseLine(version) === releaseLine(currentDefaultVersion);

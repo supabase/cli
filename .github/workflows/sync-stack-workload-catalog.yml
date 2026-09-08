@@ -1,29 +1,15 @@
 name: Sync Stack Workload Catalog
 
-# Keeps `packages/stack/src/model/WorkloadCatalog.ts` on the slim-services
-# release feed.
+# Pins `packages/stack/src/model/WorkloadCatalog.ts` to slim-services releases,
+# off the same `mirror-slim-image` dispatch that drives the ECR mirror.
+# Dependabot owns the Dockerfile and cannot own this table: these pins carry
+# image digests, which tag resolution never produces (ADR 0017).
 #
-# `@supabase/stack` pins each workload to an exact slim-services artifact
-# release — a version plus its `ghcr.io/supabase/cli/<service>` image digest —
-# because ADR 0017 makes the artifact release the boundary for service startup
-# defaults. Dependabot maintains
-# `apps/cli-go/pkg/config/templates/Dockerfile` (the manifest the shipped CLI
-# reads) and structurally cannot maintain this catalog: it resolves registry
-# tags and never produces a `sha256:` index digest. So this catalog rides the
-# same `mirror-slim-image` repository_dispatch that slim-services already sends
-# for the ECR mirror, which carries exactly the service/version/digest triple
-# the catalog needs.
-#
-# This is deliberately a separate workflow from `mirror-slim-image.yml` rather
-# than another job in it: that mirror runs against the sender's 15-minute
-# verification poll, and a catalog PR failing must never delay it or turn its
-# run red. Both workflows subscribe to the same dispatch type and run
-# independently.
-#
-# Opens a PR rather than pushing: a service version pin is a reviewable change
-# and `develop` is protected. Re-dispatches are no-ops (the script exits
-# without touching the file when the pin already matches), so the sender's
-# retry path does not produce duplicate PRs.
+# Separate from `mirror-slim-image.yml` on purpose — that mirror runs against
+# the sender's 15-minute verification poll and must not be delayed or reddened
+# by a catalog PR. Opens a PR rather than pushing: `develop` is protected and a
+# version pin is reviewable. Re-dispatches are no-ops, so retries do not open
+# duplicate PRs.
 
 on:
   repository_dispatch:
@@ -48,9 +34,8 @@ permissions:
   contents: read
 
 concurrency:
-  # Serialised per service so two releases of the same service cannot race each
-  # other onto the shared branch below. Not cancel-in-progress: a superseded run
-  # may already have opened the PR.
+  # Per service, so two releases of one service cannot race onto the shared
+  # branch. Not cancel-in-progress: a superseded run may already have opened it.
   group: sync-stack-workload-catalog-${{ github.event.client_payload.service || inputs.service }}
   cancel-in-progress: false
 
@@ -69,11 +54,8 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-      # The payload arrives with whatever authority holds the dispatch token, so
-      # the script revalidates service/version/digest itself and exits 1 on
-      # anything that could break out of the TypeScript string literals it
-      # writes into. Values are passed through env, never interpolated into the
-      # shell.
+      # Payload is untrusted; the script revalidates it. Passed via env, never
+      # interpolated into the shell.
       - name: Sync workload catalog
         env:
           SLIM_SERVICE: ${{ github.event.client_payload.service || inputs.service }}
@@ -95,8 +77,7 @@ jobs:
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # Prove the rewritten pin still compiles and satisfies the catalog's own
-      # invariants before asking anyone to look at a PR.
+      # Prove the rewritten pin compiles and passes the catalog's own tests.
       - name: Type-check stack
         if: steps.check.outputs.has_changes == 'true'
         run: pnpm types:check
@@ -125,14 +106,12 @@ jobs:
           commit-message: "chore(stack): pin ${{ github.event.client_payload.service || inputs.service }} to ${{ github.event.client_payload.version || inputs.version }}"
           title: "chore(stack): pin ${{ github.event.client_payload.service || inputs.service }} to ${{ github.event.client_payload.version || inputs.version }}"
           body: |
-            `supabase/slim-services` published
-            `${{ github.event.client_payload.service || inputs.service }}` `${{ github.event.client_payload.version || inputs.version }}`, so
-            `packages/stack/src/model/WorkloadCatalog.ts` now pins that release and its
-            image digest.
+            Pins `packages/stack/src/model/WorkloadCatalog.ts` to the
+            `${{ github.event.client_payload.service || inputs.service }}` `${{ github.event.client_payload.version || inputs.version }}`
+            slim-services release and its image digest.
 
-            Opened automatically from the `mirror-slim-image` dispatch that drives the
-            ECR mirror — the same event, consumed independently. `artifactFor` derives the
-            native release tag, asset names, and download URLs from the service and
-            version, so this pin is the whole change.
+            Opened from the `mirror-slim-image` dispatch. `artifactFor` derives the
+            native release tag, asset names, and URLs from service + version, so this
+            pin is the whole change.
           branch: sync/stack-workload-catalog-${{ github.event.client_payload.service || inputs.service }}
           base: develop

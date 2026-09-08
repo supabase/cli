@@ -43,11 +43,9 @@ describe("toSlimImage", () => {
     );
   });
 
-  // Tag-scheme assertions use fixed pins rather than the Dockerfile manifest:
-  // dependabot bumps that manifest, and an expectation spelling out the current
-  // pin would turn every bump into a failing test. The `it.each` above keeps the
-  // live manifest covered for the part that must track it — the repository each
-  // alias maps to.
+  // Fixed pins, not manifest pins: dependabot bumps the manifest, so spelling
+  // out a current pin here would fail on every bump. The `it.each` above covers
+  // the part that must track it (the repository each alias maps to).
   it("keeps a single v on pins already prefixed on docker.io", () => {
     expect(toSlimImage("realtime", "supabase/realtime:v2.130.0")).toBe(
       "ghcr.io/supabase/cli/realtime:v2.130.0",
