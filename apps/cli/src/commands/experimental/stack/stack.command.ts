@@ -4,6 +4,7 @@ import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.laye
 import { legacyDebugLoggerLayer } from "../../../command-internal/legacy-debug-logger.layer.ts";
 import { legacyExperimentalStackStartCommand } from "./start/start.command.ts";
 import { legacyExperimentalStackStopCommand } from "./stop/stop.command.ts";
+import { legacyExperimentalStackStatusCommand } from "./status/status.command.ts";
 import {
   legacyExperimentalStackApiLayer,
   legacyExperimentalStackTargetResolverLayer,
@@ -15,6 +16,7 @@ export const legacyExperimentalStackCommand = Command.make("stack").pipe(
   Command.withSubcommands([
     legacyExperimentalStackStartCommand,
     legacyExperimentalStackStopCommand,
+    legacyExperimentalStackStatusCommand,
   ]),
   Command.provide(legacyExperimentalStackTargetResolverLayer),
   Command.provide(legacyExperimentalStackApiLayer),

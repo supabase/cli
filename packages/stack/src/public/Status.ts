@@ -162,6 +162,12 @@ export const StackInspectionSchema = Schema.Struct({
   descriptor: StackDescriptorSchema,
   owner: Schema.Literals(["running", "absent", "unreachable", "incompatible"] as const),
   status: Schema.optionalKey(StackStatusSchema),
+  configDrift: Schema.optionalKey(
+    Schema.Struct({
+      status: Schema.Literals(["unchanged", "changed", "unconfigured"] as const),
+      paths: Schema.Array(Schema.String),
+    }),
+  ),
 });
 export type StackInspection = Schema.Schema.Type<typeof StackInspectionSchema>;
 

@@ -8,6 +8,7 @@ export {
 export type {
   PromiseStack,
   PromiseStackConfig,
+  PromiseInspectStackOptions,
   PromiseStartStackOptions,
   PromisePrepareStackOptions,
   CreateStackOptions,

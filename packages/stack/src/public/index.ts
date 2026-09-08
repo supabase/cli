@@ -10,6 +10,7 @@ export * from "./Config.ts";
 export { createStack, openStack, findStack, listStacks, inspectStack } from "./EffectStack.ts";
 export type {
   EffectStack,
+  InspectStackOptions,
   StartStackOptions,
   PrepareStackOptions,
   CreateStackOptions,
