@@ -1,5 +1,4 @@
 import { execFileSync } from "node:child_process";
-import { createHmac } from "node:crypto";
 import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -29,6 +28,7 @@ import { LegacyYesFlag } from "../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
+import { legacyGenerateGoJwt } from "../../../command-internal/legacy-go-jwt.ts";
 import { legacySeedBucketsRun } from "../../../command-internal/legacy-seed-buckets.ts";
 import { legacySeedBuckets } from "./buckets.handler.ts";
 import type { LegacyBucketsFlags } from "./buckets.command.ts";
@@ -222,10 +222,11 @@ const VAULT_ENCRYPTED =
 describe("legacy seed buckets", () => {
   const tmp = useLegacyTempWorkdir("supabase-seed-buckets-");
 
-  // Ambient `SUPABASE_API_*`/`SUPABASE_AUTH_*`/`DOTENV_PRIVATE_KEY*` values
+  // Ambient `SUPABASE_API_*`/`SUPABASE_AUTH_*` values and the two canonical
+  // dotenvx private-key names (`DOTENV_PRIVATE_KEY`, `DOTENV_PRIVATE_KEY_LOCAL`)
   // would shadow the dotenv fixtures below — the project-env walk skips keys
-  // already present in the shell env — so pin them all to unset for every test
-  // in this file (the ambient-override test sets its own value back through
+  // already present in the shell env — so pin them to unset for every test in
+  // this file (the ambient-override test sets its own value back through
   // `legacyWithEnv`).
   const OVERRIDE_ENV_KEYS = [
     "SUPABASE_API_ENABLED",
@@ -1454,17 +1455,9 @@ describe("legacy seed buckets", () => {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.length).toBeGreaterThan(0);
-      // The minted token stamps the current second into its payload, so
-      // re-minting the expected value here would race the wall clock. Check
-      // provenance instead: signed with the dotenv secret, service_role claim.
-      const apiKey = requests[0]?.headers["apikey"] ?? "";
-      const [header = "", payload = "", signature = ""] = apiKey.split(".");
-      expect(signature).toBe(
-        createHmac("sha256", secret).update(`${header}.${payload}`).digest("base64url"),
-      );
-      expect(JSON.parse(Buffer.from(payload, "base64url").toString())).toMatchObject({
-        role: "service_role",
-      });
+      // The exact token `status` prints for the same secret: signed with the
+      // dotenv secret through the same deterministic signer.
+      const apiKey = legacyGenerateGoJwt(secret, "service_role");
       expect(requests.every((r) => r.headers["apikey"] === apiKey)).toBe(true);
     });
   });

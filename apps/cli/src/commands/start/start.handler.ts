@@ -2008,7 +2008,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         // GoTrue/Storage containers were started with) instead of the raw
         // `config.auth.*`. `legacyResolveStorageCredentials`'s local branch now
         // applies the same env/dotenv override + decrypt composition itself,
-        // but its own derivation is symmetric-only (`generateJwt`), so this
+        // but its own derivation is symmetric-only (`legacyGenerateGoJwt`), so this
         // fold remains load-bearing for the `signing_keys_path` case where
         // `values.serviceRoleKey` is asymmetric-signed.
         // Also folds in `storageFileSizeLimit`/

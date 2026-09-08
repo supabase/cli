@@ -1,4 +1,3 @@
-import { generateJwt } from "../shared/stack-constants.ts";
 import { Effect, FileSystem, Path } from "effect";
 
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
@@ -7,6 +6,7 @@ import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
 import { legacyValidateApiPort, legacyValidateApiTlsPresence } from "./legacy-config-validate.ts";
 import { legacyLoadProjectEnv } from "./legacy-db-config.toml-read.ts";
 import { legacyMapTenantApiKeysError } from "./legacy-get-tenant-api-keys.ts";
+import { legacyGenerateGoJwt } from "./legacy-go-jwt.ts";
 import { legacyGetHostname } from "./legacy-hostname.ts";
 import {
   legacyDecryptAuthSecret,
@@ -247,17 +247,16 @@ const resolveLocalApiConfig = (
  * value is an invalid-config hard failure, same as those siblings. As with the
  * `[api]` fold above, `[remotes.*]` never merges on the local path, so the
  * remote-over-env precedence those siblings gate on does not arise. The
- * derivation itself stays symmetric (`generateJwt` from the secret); `start`
- * pre-folds its signing-keys-aware key for the `auth.signing_keys_path` case.
+ * derivation itself stays symmetric (`legacyGenerateGoJwt` from the secret —
+ * the same signer those siblings use, so without `auth.signing_keys_path` the
+ * minted token is the one `status` prints); `start` pre-folds its
+ * signing-keys-aware key for the `auth.signing_keys_path` case.
  *
  * Empty checks use length, so an explicit `service_role_key = ""` is
  * regenerated (not sent as the empty string).
  */
 const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (
-  auth: {
-    readonly jwt_secret?: string;
-    readonly service_role_key?: string;
-  },
+  auth: LegacyStorageConfigView["auth"],
   projectEnvValues: Readonly<Record<string, string>>,
 ) {
   const jwtSecret = yield* Effect.try({
@@ -284,7 +283,7 @@ const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (
   });
   return configuredKey !== undefined && configuredKey.length > 0
     ? configuredKey
-    : generateJwt(jwtSecret, "service_role");
+    : legacyGenerateGoJwt(jwtSecret, "service_role");
 });
 
 /**
