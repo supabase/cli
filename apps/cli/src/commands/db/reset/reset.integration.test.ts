@@ -19,6 +19,7 @@ import {
   VALID_REF,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
+  mockLocalDockerEngineUnavailableLayer,
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
   useTempWorkdir,
@@ -44,6 +45,7 @@ import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
+import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
   DbConnection,
@@ -465,6 +467,7 @@ function setup(
     mockCommandSettings({ workdir }),
     BunServices.layer,
     child.layer,
+    mockLocalDockerEngineUnavailableLayer,
     mockRuntimeInfo({ platform: "linux" }),
     mockProcessControl().layer,
     alwaysReadyHttpClientLayer,
@@ -657,6 +660,34 @@ describe("db reset", () => {
           expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
             false,
           );
+        });
+      },
+    );
+
+    it.live(
+      "refuses a local reset from the direct Engine answer without touching the container CLI",
+      () => {
+        const { layer, child } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          routeOpts: { running: true },
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(
+            Effect.provide(
+              Layer.succeed(LocalDockerEngine, {
+                containerExists: () => Effect.succeed(Option.some(false)),
+              }),
+            ),
+            Effect.provide(layer),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("is not running.");
+          expect(
+            child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "inspect"),
+          ).toBe(false);
         });
       },
     );

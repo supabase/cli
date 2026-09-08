@@ -7,7 +7,6 @@ import {
   buildVectorContainerSpec,
   buildVectorEntrypointScript,
   parseDockerHostUrl,
-  platformDefaultDockerHost,
   resolveDockerDaemonHost,
   resolveVectorDockerSocketPlan,
   shouldMountRootDockerSocket,
@@ -15,6 +14,7 @@ import {
   type VectorContainerSpecInput,
   type VectorDockerSocketPlan,
 } from "./vector.service.ts";
+import { platformDefaultDockerHost } from "../../../command-internal/hostname.ts";
 
 afterEach(() => {
   vi.unstubAllEnvs();

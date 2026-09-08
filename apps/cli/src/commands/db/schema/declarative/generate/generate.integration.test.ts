@@ -23,6 +23,7 @@ import {
 import {
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
+  mockLocalDockerEngineUnavailableLayer,
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
   useTempWorkdir,
@@ -207,6 +208,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     cache.layer,
     seam,
     engine,
+    mockLocalDockerEngineUnavailableLayer,
     resolver,
     proxy,
     dbConn,

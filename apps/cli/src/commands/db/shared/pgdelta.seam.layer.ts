@@ -88,6 +88,8 @@ export const declarativeSeamLayer = Layer.effect(
             cliSettings.workdir,
             Option.getOrUndefined(cliSettings.projectId),
           ).pipe(
+            // Satisfies the probe's `LocalDockerEngine` requirement from the captured deps.
+            Effect.provideContext(context),
             Effect.mapError(
               (cause) =>
                 new DeclarativeShadowDbError({

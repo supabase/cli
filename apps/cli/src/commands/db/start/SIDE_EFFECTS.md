@@ -7,9 +7,15 @@ Fully native. CLI-1954 removed the last Go delegation — the hidden `db __db-bo
 `Finished` line, no `--exclude`, no `--ignore-health-check`.
 
 The handler validates config, checks whether the local Postgres container is already
-running (`isLocalDbRunning` — a native `docker container inspect`, hoisted to
-`command-internal/db-bootstrap/local-db-running.ts` and shared with `db reset --local`'s
-own running-check), and otherwise natively brings up the container itself, reusing
+running (`isLocalDbRunning` in `command-internal/db-bootstrap/local-db-running.ts`,
+shared with `db reset --local`'s own running-check — a direct Docker Engine API
+`GET /containers/<id>/json` over the active context's unix socket / named pipe, falling
+back to a spawned `docker container inspect` whenever the Engine gives no definitive,
+Engine-identified answer, so a stalled `docker` CLI binary can no longer block the
+already-running check itself — issue #6110's silent pre-output hang. The bring-up that
+follows a definitive "absent" answer still shells out, starting with the volume-freshness
+probe, so a stalled `docker` CLI still blocks an actual bring-up), and otherwise natively
+brings up the container itself, reusing
 `command-internal/db-bootstrap/`'s container-bootstrap primitives (the same ones `supabase
 start` uses for its own Postgres bring-up, and `db reset --local`'s own recreate
 composition reuses too — see that command's `SIDE_EFFECTS.md`):
@@ -74,7 +80,7 @@ volume was confirmed fresh this run).
 | `<workdir>/supabase/migrations/*.sql`, `supabase/seed.sql`                                      | SQL    | on a fresh volume with no `--from-backup`, via the standard migration-apply + seed pipeline                                                                                  |
 | `<workdir>/supabase/<db.migrations.schema_paths entries>` (files/directories/globs)             | SQL    | on a fresh volume with no `--from-backup`, INSTEAD of `migrations/*.sql`, when `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta] enabled` is false |
 | `<workdir>/supabase/.branches/_current_branch`                                                  | text   | always, existence check before writing (see "Files Written")                                                                                                                 |
-| `~/.docker/config.json`                                                                         | JSON   | via the `docker`/`podman` CLI itself, for registry auth — never read directly by this process                                                                                |
+| `~/.docker/config.json` + Docker context store (`contexts/meta/<sha256(context)>/meta.json`)    | JSON   | resolving the daemon endpoint for the already-running probe (in-process); also read by the `docker`/`podman` CLI itself for registry auth                                    |
 
 ## Files Written
 
@@ -88,11 +94,13 @@ volume was confirmed fresh this run).
 ## Subprocesses
 
 Every step below shells out to `docker` (falling back to `podman`), matching every other
-native container command in this codebase — never `supabase-go`.
+native container command in this codebase — never `supabase-go` — except the
+already-running probe, which prefers a direct Engine-API request (see "API Routes") and
+only spawns on fallback.
 
 | Command                                                                                                                          | When                                                                                                                                                       |
 | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docker container inspect supabase_db_<project>`                                                                                 | always — the already-running probe                                                                                                                         |
+| `docker container inspect supabase_db_<project>`                                                                                 | the already-running probe — only when the direct Engine-API request (active local socket/named pipe) gives no definitive answer                            |
 | `docker network create --label ... <networkId>`                                                                                  | when not already running, unless `--network-id` names a built-in network                                                                                   |
 | `docker volume inspect supabase_db_<project>`                                                                                    | when not already running — the pre-create fresh-volume probe                                                                                               |
 | `docker image inspect` / `docker pull` (registry-fallback resolve)                                                               | when not already running — resolves the Postgres image                                                                                                     |
@@ -105,9 +113,12 @@ native container command in this codebase — never `supabase-go`.
 
 ## API Routes
 
-| Method | Path | Auth | Request body | Response (used fields) |
-| ------ | ---- | ---- | ------------ | ---------------------- |
-| —      | —    | —    | —            | —                      |
+No platform (Management API) routes. The already-running probe issues one Docker Engine
+API request over the active context's local unix socket / named pipe:
+
+| Method | Path                                     | Auth | Request body | Response (used fields)                                                                                |
+| ------ | ---------------------------------------- | ---- | ------------ | ----------------------------------------------------------------------------------------------------- |
+| GET    | `/containers/supabase_db_<project>/json` | —    | —            | status only (Engine-identified 200 → running, 404 → absent; anything else → the spawned-CLI fallback) |
 
 ## Environment Variables
 

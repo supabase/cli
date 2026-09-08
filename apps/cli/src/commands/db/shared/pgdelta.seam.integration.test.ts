@@ -10,6 +10,7 @@ import { afterEach, beforeEach, vi } from "vitest";
 
 import {
   mockCommandSettings,
+  mockLocalDockerEngineUnavailableLayer,
   mockShadowContainerCliSpawner,
   useShadowCacheDisabled,
 } from "../../../../tests/helpers/command-mocks.ts";
@@ -117,6 +118,7 @@ function setup(
     // `seam` itself resolves — `Layer.provide` fully resolves each requirement it can
     // satisfy as it's applied, so `BunServices.layer` only ever fills in `FileSystem`/`Path`.
     Layer.provide(shadowSpawner.layer),
+    Layer.provide(mockLocalDockerEngineUnavailableLayer),
     Layer.provide(BunServices.layer),
   );
 

@@ -1,4 +1,5 @@
 import { Layer } from "effect";
+import { localDockerEngineLayer } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { commandCredentialsLayer } from "../../../auth/command-credentials.layer.ts";
@@ -84,5 +85,7 @@ export const dbResetRuntimeLayer = Layer.mergeAll(
   stdinLayer,
   // Backs the native local recreate's PG15+ one-shot migrate jobs.
   dockerRunLayer,
+  // Backs `isLocalDbRunning`'s direct Engine-API probe (+ its `--debug` trace).
+  localDockerEngineLayer.pipe(Layer.provide(debugLoggerLayer)),
   commandRuntimeLayer(["db", "reset"]),
 );
