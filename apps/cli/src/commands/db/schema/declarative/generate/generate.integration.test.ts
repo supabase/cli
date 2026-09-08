@@ -45,10 +45,7 @@ import {
   type DbSession,
   DbConnection,
 } from "../../../../../command-internal/db-connection.service.ts";
-import {
-  PgDeltaEngine,
-  PgDeltaEngineError,
-} from "../../../shared/pgdelta-engine.service.ts";
+import { PgDeltaEngine, PgDeltaEngineError } from "../../../shared/pgdelta-engine.service.ts";
 import { DeclarativeShadowDbError } from "../../../shared/pgdelta.errors.ts";
 import { DeclarativeSeam } from "../../../shared/pgdelta.seam.service.ts";
 import type { DbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
@@ -320,9 +317,7 @@ describe("db schema declarative generate integration", () => {
     const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        dbSchemaDeclarativeGenerate(
-          flags({ local: Option.some(true), linked: Option.some(true) }),
-        ),
+        dbSchemaDeclarativeGenerate(flags({ local: Option.some(true), linked: Option.some(true) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
@@ -658,9 +653,7 @@ describe("db schema declarative generate integration", () => {
   it.effect("explicit --db-url: resolves the remote URL via the resolver", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
-      yield* dbSchemaDeclarativeGenerate(
-        flags({ dbUrl: Option.some("postgres://remote/db") }),
-      );
+      yield* dbSchemaDeclarativeGenerate(flags({ dbUrl: Option.some("postgres://remote/db") }));
       expect(s.resolverCalls.length).toBe(1);
       expect(s.engineExportCalls[0]!.targetRef).toContain("@db.remote:5432");
       // Remote target → the local stack is never started.
@@ -900,9 +893,9 @@ describe("db schema declarative generate integration", () => {
   it.effect("fails generate when the engine export fails", () => {
     const s = setup(tmp.current, { experimental: true, exportFails: true });
     return Effect.gen(function* () {
-      const exit = yield* dbSchemaDeclarativeGenerate(
-        flags({ local: Option.some(true) }),
-      ).pipe(Effect.exit);
+      const exit = yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
         _tag: "PgDeltaEngineError",

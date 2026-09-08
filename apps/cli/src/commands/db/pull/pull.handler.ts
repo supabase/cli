@@ -21,10 +21,7 @@ import {
 } from "../../../command-internal/connect-errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
-import {
-  DbConnection,
-  type PgConnInput,
-} from "../../../command-internal/db-connection.service.ts";
+import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import {
   applyProjectEnv,
   loadProjectEnv,
@@ -55,10 +52,7 @@ import {
 } from "../../../command-internal/diff-engine.ts";
 import { diffMigra } from "../shared/migra.ts";
 import { writePgDeltaMigrations } from "../shared/pgdelta-migrations.write.ts";
-import {
-  type DumpOptions,
-  buildSchemaDumpEnv,
-} from "../../../command-internal/pg-dump.env.ts";
+import { type DumpOptions, buildSchemaDumpEnv } from "../../../command-internal/pg-dump.env.ts";
 import { streamPgDump } from "../../../command-internal/pg-dump.run.ts";
 import {
   emitPoolerFallbackWarning,
@@ -71,10 +65,7 @@ import {
   getMigrationPath,
 } from "../../../command-internal/migration-file.ts";
 import { debugBundleMessage } from "../shared/debug-bundle.ts";
-import {
-  PgDeltaEngine,
-  type PgDeltaDatabaseEndpoint,
-} from "../shared/pgdelta-engine.service.ts";
+import { PgDeltaEngine, type PgDeltaDatabaseEndpoint } from "../shared/pgdelta-engine.service.ts";
 import {
   type PgDeltaContext,
   isPgDeltaDebugEnabled,
@@ -124,10 +115,7 @@ export type DbPullInvoke = {
   readonly skipFinishedLine?: boolean;
 };
 
-export const dbPull = Effect.fn("db.pull")(function* (
-  flags: DbPullFlags,
-  invoke?: DbPullInvoke,
-) {
+export const dbPull = Effect.fn("db.pull")(function* (flags: DbPullFlags, invoke?: DbPullInvoke) {
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
   const connection = yield* DbConnection;
@@ -394,12 +382,7 @@ export const dbPull = Effect.fn("db.pull")(function* (
           const exported = yield* withPoolerFallback(targetEndpoint, (target) =>
             exportSchema(target),
           );
-          const written = yield* writeDeclarativeSchemas(
-            fs,
-            path,
-            declarativeDir,
-            exported,
-          ).pipe(
+          const written = yield* writeDeclarativeSchemas(fs, path, declarativeDir, exported).pipe(
             Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })),
           );
           yield* warnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
@@ -410,18 +393,13 @@ export const dbPull = Effect.fn("db.pull")(function* (
               path,
               cliSettings.workdir,
               declarativeDirRel,
-            ).pipe(
-              Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })),
-            );
+            ).pipe(Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })));
           }
           // Prints the config's declarative_schema_path or the relative
           // `supabase/schemas` default — never the resolved absolute directory
           // (established output contract). The json payload below keeps the
           // absolute path for machine consumers.
-          yield* output.raw(
-            `Declarative schema written to ${bold(declarativeDirRel)}\n`,
-            "stderr",
-          );
+          yield* output.raw(`Declarative schema written to ${bold(declarativeDirRel)}\n`, "stderr");
           if (output.format !== "text") {
             yield* output.success("Declarative schema pulled.", {
               declarative: true,
@@ -718,9 +696,7 @@ export const dbPull = Effect.fn("db.pull")(function* (
               sql: file.sql,
               transactionMode: file.transactionMode,
             })),
-          }).pipe(
-            Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })),
-          );
+          }).pipe(Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })));
           for (const unit of writtenUnits) {
             writtenMigrations.push({ path: unit.path, version: unit.version });
           }

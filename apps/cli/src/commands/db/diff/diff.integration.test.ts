@@ -47,10 +47,7 @@ import {
 } from "../../../command-internal/db-connection.service.ts";
 import { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
-import {
-  DockerRun,
-  type DockerRunOpts,
-} from "../../../command-internal/docker-run.service.ts";
+import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
 import { EdgeRuntimeScriptError } from "../../../command-internal/edge-runtime-script.errors.ts";
 import {
   type EdgeRuntimeRunOpts,
@@ -65,10 +62,7 @@ import {
 } from "../shared/pgdelta-engine.service.ts";
 import type { DbDiffFlags } from "./diff.command.ts";
 import { dbDiff } from "./diff.handler.ts";
-import {
-  PGADMIN_DESKTOP_NOTE_PREFIX,
-  PGADMIN_DIFF_HEADER,
-} from "./pgadmin-diff.ts";
+import { PGADMIN_DESKTOP_NOTE_PREFIX, PGADMIN_DIFF_HEADER } from "./pgadmin-diff.ts";
 
 interface SetupOpts {
   readonly format?: OutputFormat;
@@ -209,8 +203,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // The shadow baseline cache's cold export and warm restore only mean anything against a
   // daemon that actually holds container state and carries `docker cp` bytes, so the cache
   // tests below opt into the stateful model instead.
-  const dockerDaemon =
-    opts.statefulDocker === true ? mockDockerDaemonCliSpawner() : undefined;
+  const dockerDaemon = opts.statefulDocker === true ? mockDockerDaemonCliSpawner() : undefined;
   const shadowDbConnection = fakeShadowDbConnection({
     neverConnectableShadow: opts.neverConnectableShadow ?? false,
   });
@@ -1239,9 +1232,7 @@ describe("db diff", () => {
       writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\nmajor_version = 16\n");
       const s = setup(tmp.current);
       return Effect.gen(function* () {
-        const exit = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
-          Effect.exit,
-        );
+        const exit = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(s.resolverCalls).toHaveLength(0);
         expect(s.differCalls).toEqual([]);
@@ -1410,9 +1401,7 @@ describe("db diff", () => {
         pgadminStdout: [JSON.stringify([pgadminEntry()])],
       });
       return Effect.gen(function* () {
-        yield* dbDiff(
-          flags({ usePgAdmin: Option.some(true), file: Option.some("pgadmin_diff") }),
-        );
+        yield* dbDiff(flags({ usePgAdmin: Option.some(true), file: Option.some("pgadmin_diff") }));
         const success = s.out.messages.find((m) => m.type === "success");
         const data = success?.data as { file: string; files: ReadonlyArray<string> };
         expect(data.file).toMatch(/\d{14}_pgadmin_diff\.sql$/);
@@ -1497,9 +1486,7 @@ describe("db diff", () => {
       diffSql: "create table dogfood_note ();\n",
     });
     return Effect.gen(function* () {
-      yield* dbDiff(
-        flags({ usePgDelta: Option.some(true), file: Option.some("dogfood_note") }),
-      );
+      yield* dbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("dogfood_note") }));
       const success = s.out.messages.find((message) => message.type === "success");
       expect(success?.data).toMatchObject({
         diff: "create table dogfood_note ();\n",
@@ -1537,9 +1524,7 @@ describe("db diff", () => {
       diffSql: "create table dogfood_note ();\n",
     });
     return Effect.gen(function* () {
-      yield* dbDiff(
-        flags({ usePgDelta: Option.some(true), file: Option.some("dogfood_note") }),
-      );
+      yield* dbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("dogfood_note") }));
       const success = s.out.messages.find((message) => message.type === "success");
       expect(success?.data).not.toHaveProperty("advisories");
       expect(success?.data).toMatchObject({ diff: "create table dogfood_note ();\n" });
@@ -1874,9 +1859,9 @@ describe("db diff", () => {
   it.effect("an explicit --from with an empty --to still errors 'must set both'", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {
-      const exit = yield* dbDiff(
-        flags({ from: Option.some("local"), to: Option.some("") }),
-      ).pipe(Effect.exit);
+      const exit = yield* dbDiff(flags({ from: Option.some("local"), to: Option.some("") })).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
@@ -2098,9 +2083,7 @@ describe("db diff", () => {
     it.effect("writes a timestamped migration for --use-pgadmin --file instead of printing", () => {
       const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
       return Effect.gen(function* () {
-        yield* dbDiff(
-          flags({ usePgAdmin: Option.some(true), file: Option.some("pgadmin_diff") }),
-        );
+        yield* dbDiff(flags({ usePgAdmin: Option.some(true), file: Option.some("pgadmin_diff") }));
         expect(stdout(s.out)).not.toContain("ALTER TABLE");
         expect(stderr(s.out)).toContain("WARNING: The diff tool is not foolproof");
         const dir = join(tmp.current, "supabase", "migrations");
@@ -2367,9 +2350,7 @@ describe("db diff", () => {
     it.effect("fails with invalid_output when a run's own --json-diff stdout doesn't parse", () => {
       const s = setup(tmp.current, { pgadminStdout: ["not valid json"] });
       return Effect.gen(function* () {
-        const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
-          Effect.flip,
-        );
+        const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(Effect.flip);
         expect(error).toMatchObject({
           _tag: "DbDiffPgAdminError",
           reason: "invalid_output",
@@ -2391,9 +2372,7 @@ describe("db diff", () => {
           pgadminStderr: ["Comparing Tables 45%\nDiffing 100%\n"],
         });
         return Effect.gen(function* () {
-          const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
-            Effect.flip,
-          );
+          const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(Effect.flip);
           expect(error).toMatchObject({
             _tag: "DbDiffPgAdminError",
             reason: "differ",
@@ -2415,9 +2394,7 @@ describe("db diff", () => {
           pgadminStderr: ["Comparing Tables 45%\n"],
         });
         return Effect.gen(function* () {
-          const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
-            Effect.flip,
-          );
+          const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(Effect.flip);
           expect(error).toMatchObject({ _tag: "DbDiffPgAdminError", reason: "differ" });
           expect(stderr(s.out)).toContain("Comparing Tables \n");
           expect(stdout(s.out)).toBe("");
@@ -2433,9 +2410,7 @@ describe("db diff", () => {
           pgadminStderr: ["some differ crash text\n"],
         });
         return Effect.gen(function* () {
-          const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
-            Effect.flip,
-          );
+          const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(Effect.flip);
           expect(error).toMatchObject({
             _tag: "DbDiffPgAdminError",
             reason: "differ",
@@ -2452,9 +2427,7 @@ describe("db diff", () => {
     it.effect("fails with 'error running container: exit 137' on an OOM-killed differ", () => {
       const s = setup(tmp.current, { pgadminExitCode: 137 });
       return Effect.gen(function* () {
-        const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
-          Effect.flip,
-        );
+        const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(Effect.flip);
         expect(error).toMatchObject({
           _tag: "DbDiffPgAdminError",
           reason: "differ",
@@ -2466,9 +2439,7 @@ describe("db diff", () => {
     it.effect("classifies a differ spawn failure as docker_daemon", () => {
       const s = setup(tmp.current, { pgadminDockerFail: "spawn" });
       return Effect.gen(function* () {
-        const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
-          Effect.flip,
-        );
+        const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(Effect.flip);
         expect(error).toMatchObject({ _tag: "DbDiffPgAdminError", reason: "docker_daemon" });
       }).pipe(Effect.provide(s.layer));
     });
@@ -2476,9 +2447,7 @@ describe("db diff", () => {
     it.effect("classifies a differ image-pull failure as registry_pull", () => {
       const s = setup(tmp.current, { pgadminDockerFail: "pull" });
       return Effect.gen(function* () {
-        const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
-          Effect.flip,
-        );
+        const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(Effect.flip);
         expect(error).toMatchObject({ _tag: "DbDiffPgAdminError", reason: "registry_pull" });
       }).pipe(Effect.provide(s.layer));
     });
@@ -2488,9 +2457,7 @@ describe("db diff", () => {
       () => {
         const s = setup(tmp.current, { dbNotRunning: true });
         return Effect.gen(function* () {
-          const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
-            Effect.flip,
-          );
+          const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(Effect.flip);
           expect(error).toMatchObject({ _tag: "DbDiffDbNotRunningError" });
           expect(stripAnsi((error as { message: string }).message)).toBe(
             "supabase start is not running.",
@@ -2513,9 +2480,7 @@ describe("db diff", () => {
             "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
         });
         return Effect.gen(function* () {
-          const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
-            Effect.flip,
-          );
+          const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(Effect.flip);
           expect(error).toMatchObject({ _tag: "DbDiffDbNotRunningError", daemonDown: true });
           expect((error as { suggestion?: string }).suggestion).toContain("Docker Desktop");
         }).pipe(Effect.provide(s.layer));
@@ -2527,9 +2492,7 @@ describe("db diff", () => {
       () => {
         const s = setup(tmp.current, { failShadowSetupJob: true });
         return Effect.gen(function* () {
-          const exit = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
-            Effect.exit,
-          );
+          const exit = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
@@ -2537,21 +2500,18 @@ describe("db diff", () => {
       },
     );
 
-    it.effect(
-      "fails with DbDiffWriteError when writing the pgAdmin --file migration fails",
-      () => {
-        const s = setup(tmp.current, {
-          pgadminStdout: [JSON.stringify([pgadminEntry()])],
-          failWriteMatching: (path) => path.includes("pgadmin_diff"),
-        });
-        return Effect.gen(function* () {
-          const error = yield* dbDiff(
-            flags({ usePgAdmin: Option.some(true), file: Option.some("pgadmin_diff") }),
-          ).pipe(Effect.flip);
-          expect(error).toMatchObject({ _tag: "DbDiffWriteError" });
-        }).pipe(Effect.provide(s.layer));
-      },
-    );
+    it.effect("fails with DbDiffWriteError when writing the pgAdmin --file migration fails", () => {
+      const s = setup(tmp.current, {
+        pgadminStdout: [JSON.stringify([pgadminEntry()])],
+        failWriteMatching: (path) => path.includes("pgadmin_diff"),
+      });
+      return Effect.gen(function* () {
+        const error = yield* dbDiff(
+          flags({ usePgAdmin: Option.some(true), file: Option.some("pgadmin_diff") }),
+        ).pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "DbDiffWriteError" });
+      }).pipe(Effect.provide(s.layer));
+    });
 
     it.effect(
       "fails on engine-flag conflict (--use-pgadmin with --use-pg-delta), byte-exact cobra message",

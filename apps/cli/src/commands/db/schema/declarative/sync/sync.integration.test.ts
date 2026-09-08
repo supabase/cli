@@ -301,9 +301,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   };
 }
 
-const flags = (
-  over: Partial<DbSchemaDeclarativeSyncFlags> = {},
-): DbSchemaDeclarativeSyncFlags => ({
+const flags = (over: Partial<DbSchemaDeclarativeSyncFlags> = {}): DbSchemaDeclarativeSyncFlags => ({
   noCache: over.noCache ?? false,
   strictCoverage: over.strictCoverage ?? false,
   schema: over.schema ?? [],
@@ -409,9 +407,7 @@ describe("db schema declarative sync integration", () => {
     const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        dbSchemaDeclarativeSync(
-          flags({ apply: Option.some(true), noApply: Option.some(true) }),
-        ),
+        dbSchemaDeclarativeSync(flags({ apply: Option.some(true), noApply: Option.some(true) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
@@ -433,9 +429,7 @@ describe("db schema declarative sync integration", () => {
       const { layer } = setup(tmp.current, { experimental: false });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          dbSchemaDeclarativeSync(
-            flags({ apply: Option.some(true), noApply: Option.some(true) }),
-          ),
+          dbSchemaDeclarativeSync(flags({ apply: Option.some(true), noApply: Option.some(true) })),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
@@ -457,9 +451,7 @@ describe("db schema declarative sync integration", () => {
         const saved = process.env[ENV];
         process.env[ENV] = "1";
         const exit = yield* Effect.exit(
-          dbSchemaDeclarativeSync(
-            flags({ apply: Option.some(true), noApply: Option.some(true) }),
-          ),
+          dbSchemaDeclarativeSync(flags({ apply: Option.some(true), noApply: Option.some(true) })),
         );
         if (saved === undefined) delete process.env[ENV];
         else process.env[ENV] = saved;
@@ -515,9 +507,7 @@ describe("db schema declarative sync integration", () => {
       const { layer } = setup(tmp.current, { experimental: false });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          dbSchemaDeclarativeSync(
-            flags({ apply: Option.some(true), noApply: Option.some(true) }),
-          ),
+          dbSchemaDeclarativeSync(flags({ apply: Option.some(true), noApply: Option.some(true) })),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         expect(failError(exit)).toMatchObject({
@@ -545,9 +535,7 @@ describe("db schema declarative sync integration", () => {
     const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        dbSchemaDeclarativeSync(
-          flags({ apply: Option.some(false), noApply: Option.some(true) }),
-        ),
+        dbSchemaDeclarativeSync(flags({ apply: Option.some(false), noApply: Option.some(true) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
@@ -612,9 +600,7 @@ describe("db schema declarative sync integration", () => {
       diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })),
-      );
+      const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
         _tag: "DeclarativeShadowDbError",
@@ -1346,9 +1332,7 @@ describe("db schema declarative sync integration", () => {
       resetShouldFail: true, // …and the reset itself fails (local db not running)
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })),
-      );
+      const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
         message: "supabase start is not running.",

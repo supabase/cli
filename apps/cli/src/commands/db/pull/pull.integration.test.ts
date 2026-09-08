@@ -40,24 +40,15 @@ import {
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/project-ref.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import {
-  type DbSession,
-  DbConnection,
-} from "../../../command-internal/db-connection.service.ts";
-import {
-  DockerRun,
-  type DockerRunOpts,
-} from "../../../command-internal/docker-run.service.ts";
+import { type DbSession, DbConnection } from "../../../command-internal/db-connection.service.ts";
+import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
 import { EdgeRuntimeScriptError } from "../../../command-internal/edge-runtime-script.errors.ts";
 import {
   type EdgeRuntimeRunOpts,
   EdgeRuntimeScript,
 } from "../../../command-internal/edge-runtime-script.service.ts";
 import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.service.ts";
-import {
-  PgDeltaEngine,
-  PgDeltaEngineError,
-} from "../shared/pgdelta-engine.service.ts";
+import { PgDeltaEngine, PgDeltaEngineError } from "../shared/pgdelta-engine.service.ts";
 import { dbRemoteCommit } from "../remote/commit/commit.handler.ts";
 import type { DbRemoteCommitFlags } from "../remote/commit/commit.command.ts";
 import type { DbPullFlags } from "./pull.command.ts";
@@ -153,8 +144,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // The shadow baseline cache's cold export and warm restore only mean anything against a
   // daemon that actually holds container state and carries `docker cp` bytes, so the cache
   // tests below opt into the stateful model instead.
-  const dockerDaemon =
-    opts.statefulDocker === true ? mockDockerDaemonCliSpawner() : undefined;
+  const dockerDaemon = opts.statefulDocker === true ? mockDockerDaemonCliSpawner() : undefined;
 
   const engineCalls: Array<{
     operation: "diff" | "export";
@@ -748,9 +738,7 @@ describe("db pull", () => {
       yes: true,
     });
     return Effect.gen(function* () {
-      const error = yield* dbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(
-        Effect.flip,
-      );
+      const error = yield* dbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(Effect.flip);
       expect(error.message).toContain("failed to parse pg-delta diff output");
       expect(error.message).not.toContain("No schema changes found");
     }).pipe(Effect.provide(s.layer));
@@ -1047,9 +1035,7 @@ describe("db pull", () => {
         args: ["db", "pull", "--declarative", "--use-pg-delta=false"],
       });
       return Effect.gen(function* () {
-        yield* dbPull(
-          flags({ declarative: Option.some(true), usePgDelta: Option.some(false) }),
-        );
+        yield* dbPull(flags({ declarative: Option.some(true), usePgDelta: Option.some(false) }));
         expect(s.historyUpserts.length).toBe(1);
       }).pipe(Effect.provide(s.layer));
     },
@@ -1072,9 +1058,7 @@ describe("db pull", () => {
         args: ["db", "pull", "--use-pg-delta", "--declarative=false"],
       });
       return Effect.gen(function* () {
-        yield* dbPull(
-          flags({ declarative: Option.some(false), usePgDelta: Option.some(true) }),
-        );
+        yield* dbPull(flags({ declarative: Option.some(false), usePgDelta: Option.some(true) }));
         expect(s.historyUpserts.length).toBe(1);
       }).pipe(Effect.provide(s.layer));
     },
@@ -1187,9 +1171,7 @@ describe("db pull", () => {
       yes: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* dbPull(flags({ diffEngine: Option.some("migra") })).pipe(
-        Effect.exit,
-      );
+      const exit = yield* dbPull(flags({ diffEngine: Option.some("migra") })).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const dir = join(tmp.current, "supabase", "migrations");
       const file = readdirSync(dir).find((f) => f.endsWith("_remote_schema.sql"));
@@ -1251,9 +1233,7 @@ describe("db pull", () => {
         yes: true,
       });
       return Effect.gen(function* () {
-        const error = yield* dbPull(flags({ diffEngine: Option.some("migra") })).pipe(
-          Effect.flip,
-        );
+        const error = yield* dbPull(flags({ diffEngine: Option.some("migra") })).pipe(Effect.flip);
         expect(error.message).toBe("No schema changes found");
         expect(s.dumpCalls).toHaveLength(2); // direct attempt + pooler retry
         expect(s.historyUpserts).toHaveLength(0); // no migration-history row written
@@ -1268,9 +1248,7 @@ describe("db pull", () => {
       dumpStderr: "connection refused",
     });
     return Effect.gen(function* () {
-      const error = yield* dbPull(flags({ diffEngine: Option.some("migra") })).pipe(
-        Effect.flip,
-      );
+      const error = yield* dbPull(flags({ diffEngine: Option.some("migra") })).pipe(Effect.flip);
       expect(error.message).toContain("error running container: exit 1");
       // The diff pass never ran — the dump failure aborts before provisioning a shadow.
       expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toEqual([]);
@@ -1309,9 +1287,7 @@ describe("db pull", () => {
       poolerAvailable: false,
     });
     return Effect.gen(function* () {
-      const error = yield* dbPull(flags({ diffEngine: Option.some("migra") })).pipe(
-        Effect.flip,
-      );
+      const error = yield* dbPull(flags({ diffEngine: Option.some("migra") })).pipe(Effect.flip);
       expect(error.message).toContain("error running container: exit 1");
       expect(s.poolerFallbackCalls).toHaveLength(1); // gate checked, no pooler resolved
       expect(streamText(s.out, "stderr")).not.toContain("Retrying via the IPv4 connection pooler");
@@ -1339,9 +1315,7 @@ describe("db pull", () => {
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, { remoteVersions: ["20240101000000"], edgeStdout: "", yes: true });
     return Effect.gen(function* () {
-      const error = yield* dbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(
-        Effect.flip,
-      );
+      const error = yield* dbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(Effect.flip);
       expect(error.message).toBe("No schema changes found");
       const debugRoot = join(tmp.current, "supabase", ".temp", "pgdelta", "debug");
       expect(existsSync(debugRoot) ? readdirSync(debugRoot) : []).toEqual([]);
@@ -1707,9 +1681,7 @@ describe("db pull", () => {
       args: ["db", "pull", "--experimental", "--declarative", "--use-pg-delta=false"],
     });
     return Effect.gen(function* () {
-      yield* dbPull(
-        flags({ declarative: Option.some(true), usePgDelta: Option.some(false) }),
-      );
+      yield* dbPull(flags({ declarative: Option.some(true), usePgDelta: Option.some(false) }));
       expect(s.engineCalls[0]?.operation).toBe("export");
       expect(s.proxyCalls).toHaveLength(0);
       expect(streamText(s.out, "stderr")).toContain(
@@ -2224,9 +2196,7 @@ describe("db pull", () => {
       poolerAvailable: true,
     });
     return Effect.gen(function* () {
-      yield* dbPull(
-        flags({ linked: Option.some(true), diffEngine: Option.some("pg-delta") }),
-      );
+      yield* dbPull(flags({ linked: Option.some(true), diffEngine: Option.some("pg-delta") }));
       const err = streamText(s.out, "stderr");
       expect(err).toContain("does not support IPv6");
       expect(err).toContain("Retrying via the IPv4 connection pooler");
