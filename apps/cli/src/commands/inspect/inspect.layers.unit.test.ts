@@ -1,9 +1,9 @@
 /**
- * Layer-exposure test for `legacyInspectBaseLayer`.
+ * Layer-exposure test for `inspectBaseLayer`.
  *
- * Verifies that `LegacyIdentityStitch` is exposed at the top level of the
- * runtime layer so that `withLegacyCommandInstrumentation` can read
- * `stitchedDistinctId()` via `Effect.serviceOption(LegacyIdentityStitch)` and
+ * Verifies that `IdentityStitch` is exposed at the top level of the
+ * runtime layer so that `withCommandTelemetry` can read
+ * `stitchedDistinctId()` via `Effect.serviceOption(IdentityStitch)` and
  * attribute the `cli_command_executed` event to the gotrue id.
  *
  * See `db/lint/lint.layers.unit.test.ts` for the canonical pattern and a
@@ -22,34 +22,34 @@ import {
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
 import {
-  legacyIsolatedHomeLayer,
-  mockLegacyCliSettings,
-  mockLegacyCredentialsLayer,
-  mockLegacyLinkedProjectCacheLayer,
-  mockLegacyTelemetryStateLayer,
-  useLegacyTempWorkdir,
-} from "../../../tests/helpers/legacy-mocks.ts";
+  isolatedHomeLayer,
+  mockCommandSettings,
+  mockCommandCredentialsLayer,
+  mockLinkedProjectCacheLayer,
+  mockTelemetryStateLayer,
+  useTempWorkdir,
+} from "../../../tests/helpers/command-mocks.ts";
 
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import {
-  LegacyDebugFlag,
-  LegacyDnsResolverFlag,
-  LegacyOutputFlag,
-  LegacyWorkdirFlag,
-  LegacyProfileFlag,
-} from "../../shared/legacy/global-flags.ts";
+  DebugFlag,
+  DnsResolverFlag,
+  OutputFlag,
+  WorkdirFlag,
+  ProfileFlag,
+} from "../../command-internal/global-flags.ts";
 
-import { LegacyDbConfigResolver } from "../../command-internal/legacy-db-config.service.ts";
-import { LegacyDbConnection } from "../../command-internal/legacy-db-connection.service.ts";
-import { LegacyIdentityStitch } from "../../command-internal/legacy-identity-stitch.ts";
+import { DbConfigResolver } from "../../command-internal/db-config.service.ts";
+import { DbConnection } from "../../command-internal/db-connection.service.ts";
+import { IdentityStitch } from "../../command-internal/identity-stitch.ts";
 
-import { legacyInspectBaseLayer } from "./inspect.layers.ts";
+import { inspectBaseLayer } from "./inspect.layers.ts";
 
-const tempRoot = useLegacyTempWorkdir("supabase-inspect-layers-");
+const tempRoot = useTempWorkdir("supabase-inspect-layers-");
 
 /**
  * Stub layer satisfying every external service required by
- * `legacyInspectBaseLayer` from the root runtime. Services under test are
+ * `inspectBaseLayer` from the root runtime. Services under test are
  * left as `Effect.die` no-ops — layer construction must not invoke them.
  */
 function ambientStubs() {
@@ -57,19 +57,19 @@ function ambientStubs() {
   const out = mockOutput();
 
   const flagLayers = Layer.mergeAll(
-    Layer.succeed(LegacyDebugFlag, false),
-    Layer.succeed(LegacyProfileFlag, "supabase"),
-    Layer.succeed(LegacyWorkdirFlag, Option.none()),
-    Layer.succeed(LegacyOutputFlag, Option.none()),
-    Layer.succeed(LegacyDnsResolverFlag, "native"),
+    Layer.succeed(DebugFlag, false),
+    Layer.succeed(ProfileFlag, "supabase"),
+    Layer.succeed(WorkdirFlag, Option.none()),
+    Layer.succeed(OutputFlag, Option.none()),
+    Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: [] }),
   );
 
   const heavyServiceStubs = Layer.mergeAll(
-    Layer.succeed(LegacyDbConnection, {
+    Layer.succeed(DbConnection, {
       connect: () => Effect.die("db-connection not needed for layer-exposure test"),
     }),
-    Layer.succeed(LegacyDbConfigResolver, {
+    Layer.succeed(DbConfigResolver, {
       resolve: () => Effect.die("db-config-resolver not needed for layer-exposure test"),
       resolvePoolerFallback: () =>
         Effect.die("db-config-resolver not needed for layer-exposure test"),
@@ -78,31 +78,31 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the REAL legacyCliSettingsLayer against
-    // the real filesystem — see legacyIsolatedHomeLayer's docs.
-    legacyIsolatedHomeLayer(tempRoot.current),
+    // The runtime layer under test builds the REAL commandSettingsLayer against
+    // the real filesystem — see isolatedHomeLayer's docs.
+    isolatedHomeLayer(tempRoot.current),
     mockTty(),
     mockProcessControl().layer,
     analytics.layer,
     mockTelemetryRuntime(),
     out.layer,
     flagLayers,
-    mockLegacyCliSettings({ workdir: "/tmp/inspect-layers-test" }),
-    mockLegacyCredentialsLayer,
-    mockLegacyLinkedProjectCacheLayer,
-    mockLegacyTelemetryStateLayer,
+    mockCommandSettings({ workdir: "/tmp/inspect-layers-test" }),
+    mockCommandCredentialsLayer,
+    mockLinkedProjectCacheLayer,
+    mockTelemetryStateLayer,
     heavyServiceStubs,
   );
 }
 
-describe("legacyInspectBaseLayer — LegacyIdentityStitch exposure", () => {
+describe("inspectBaseLayer — IdentityStitch exposure", () => {
   it.live(
-    "exposes LegacyIdentityStitch at top level so withLegacyCommandInstrumentation can read stitchedDistinctId()",
+    "exposes IdentityStitch at top level so withCommandTelemetry can read stitchedDistinctId()",
     () => {
       return Effect.gen(function* () {
-        const stitch = yield* Effect.serviceOption(LegacyIdentityStitch);
+        const stitch = yield* Effect.serviceOption(IdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(legacyInspectBaseLayer), Effect.provide(ambientStubs()));
+      }).pipe(Effect.provide(inspectBaseLayer), Effect.provide(ambientStubs()));
     },
   );
 });

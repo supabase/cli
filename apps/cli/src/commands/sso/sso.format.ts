@@ -1,7 +1,7 @@
 import { Result } from "effect";
 
-import { renderGlamourTable } from "../../output/legacy-glamour-table.ts";
-import { LegacySsoInvalidUuidError } from "./sso.errors.ts";
+import { renderGlamourTable } from "../../output/glamour-table.ts";
+import { SsoInvalidUuidError } from "./sso.errors.ts";
 
 // UUIDs are matched case-insensitively so callers passing
 // `B5AE62F9-…` (mixed- or upper-case) succeed.
@@ -13,7 +13,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * raw POST/PUT path. `attribute_mapping` is left as `unknown` so we can render
  * provider responses that carry user-defined keys.
  */
-export interface LegacySsoProviderView {
+export interface SsoProviderView {
   readonly id: string;
   readonly saml?: {
     readonly entity_id?: string;
@@ -37,7 +37,7 @@ export interface LegacySsoProviderView {
  * so the formatter coerces an arbitrary object into the provider view shape
  * without throwing on missing fields.
  */
-export function toLegacySsoProviderView(value: unknown): LegacySsoProviderView {
+export function toSsoProviderView(value: unknown): SsoProviderView {
   if (typeof value !== "object" || value === null) {
     return { id: "" };
   }
@@ -84,12 +84,12 @@ export function toLegacySsoProviderView(value: unknown): LegacySsoProviderView {
  * Validates a positional provider-id argument as a canonical UUID.
  * Failure message uses `%q`-style quoting (JSON.stringify wraps the raw input).
  */
-export function validateUuid(input: string): Result.Result<string, LegacySsoInvalidUuidError> {
+export function validateUuid(input: string): Result.Result<string, SsoInvalidUuidError> {
   if (UUID_PATTERN.test(input)) {
     return Result.succeed(input);
   }
   return Result.fail(
-    new LegacySsoInvalidUuidError({
+    new SsoInvalidUuidError({
       providerId: input,
       message: `identity provider ID ${JSON.stringify(input)} is not a UUID`,
     }),
@@ -111,11 +111,11 @@ export function formatSsoTimestamp(input?: string): string {
   );
 }
 
-export function formatProtocol(saml: LegacySsoProviderView["saml"]): string {
+export function formatProtocol(saml: SsoProviderView["saml"]): string {
   return saml === undefined ? "unknown" : "SAML 2.0";
 }
 
-export function formatDomains(domains: LegacySsoProviderView["domains"]): string {
+export function formatDomains(domains: SsoProviderView["domains"]): string {
   if (domains === undefined) return "-";
   const list = domains
     .map((d) => d.domain)
@@ -123,19 +123,19 @@ export function formatDomains(domains: LegacySsoProviderView["domains"]): string
   return list.length === 0 ? "-" : list.join(", ");
 }
 
-export function formatEntityId(saml: LegacySsoProviderView["saml"]): string {
+export function formatEntityId(saml: SsoProviderView["saml"]): string {
   if (saml === undefined) return "-";
   return saml.entity_id !== undefined && saml.entity_id !== "" ? saml.entity_id : "-";
 }
 
-export function formatNameIdFormat(saml: LegacySsoProviderView["saml"]): string {
+export function formatNameIdFormat(saml: SsoProviderView["saml"]): string {
   if (saml === undefined) return "-";
   return saml.name_id_format !== undefined && saml.name_id_format !== ""
     ? saml.name_id_format
     : "-";
 }
 
-export function formatMetadataSource(saml: LegacySsoProviderView["saml"]): string {
+export function formatMetadataSource(saml: SsoProviderView["saml"]): string {
   if (saml === undefined) return "FILE";
   return saml.metadata_url !== undefined && saml.metadata_url !== "" ? saml.metadata_url : "FILE";
 }
@@ -212,7 +212,7 @@ const LIST_HEADERS = [
 /**
  * Renders the list table.
  */
-export function renderListProviders(items: ReadonlyArray<LegacySsoProviderView>): string {
+export function renderListProviders(items: ReadonlyArray<SsoProviderView>): string {
   const rows = items.map(
     (item) =>
       [
@@ -237,7 +237,7 @@ export function renderListProviders(items: ReadonlyArray<LegacySsoProviderView>)
  * the table above. Tests assert on substring presence (`toContain`) rather
  * than full byte equality. Documented in each subcommand's `SIDE_EFFECTS.md`.
  */
-export function renderSingleProvider(provider: LegacySsoProviderView): string {
+export function renderSingleProvider(provider: SsoProviderView): string {
   const rows: Array<readonly [string, string]> = [
     ["IDENTITY PROVIDER ID", provider.id],
     ["TYPE", formatProtocol(provider.saml)],
@@ -285,13 +285,13 @@ function hasAtLeastOneKey(value: unknown): boolean {
   return Object.keys(keys).length > 0;
 }
 
-export interface LegacySsoInfoPayload {
+export interface SsoInfoPayload {
   readonly acs_url: string;
   readonly entity_id: string;
   readonly relay_state: string;
 }
 
-export function buildInfoPayload(ref: string): LegacySsoInfoPayload {
+export function buildInfoPayload(ref: string): SsoInfoPayload {
   return {
     acs_url: `https://${ref}.supabase.co/auth/v1/sso/saml/acs`,
     entity_id: `https://${ref}.supabase.co/auth/v1/sso/saml/metadata`,

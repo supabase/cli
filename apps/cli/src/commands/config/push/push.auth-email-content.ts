@@ -6,15 +6,15 @@
  * missing, so configs written for older scaffolds keep working. Containment
  * — confining the resolved path to the project root before it is read, since
  * the loaded bytes are uploaded to whichever project the config names — is
- * enforced centrally by `legacyResolveEmailTemplateContentPath` in
- * `legacy-config-validate.ts`, not locally in this module.
+ * enforced centrally by `resolveEmailTemplateContentPath` in
+ * `config-validate.ts`, not locally in this module.
  */
 
 import type { CliConfig } from "@supabase/config";
 import {
-  legacyEmailContentPathReadErrorMessage,
-  legacyResolveEmailTemplateContentPath,
-} from "../../../command-internal/legacy-config-validate.ts";
+  emailContentPathReadErrorMessage,
+  resolveEmailTemplateContentPath,
+} from "../../../command-internal/config-validate.ts";
 import { readFileSync } from "node:fs";
 
 type AuthEmail = CliConfig["auth"]["email"];
@@ -24,12 +24,12 @@ type AuthEmail = CliConfig["auth"]["email"];
  * notifications. Keys are template/notification names (e.g. `invite`,
  * `password_changed`); values are the raw file contents.
  */
-export interface LegacyAuthEmailContent {
+export interface AuthEmailContent {
   readonly template: Readonly<Record<string, string>>;
   readonly notification: Readonly<Record<string, string>>;
 }
 
-const EMPTY_AUTH_EMAIL_CONTENT: LegacyAuthEmailContent = {
+const EMPTY_AUTH_EMAIL_CONTENT: AuthEmailContent = {
   template: {},
   notification: {},
 };
@@ -52,7 +52,7 @@ function readTemplateContent(
   try {
     return readFileSync(resolvedPath, "utf8");
   } catch (cause) {
-    throw new Error(legacyEmailContentPathReadErrorMessage(kind, name, cause));
+    throw new Error(emailContentPathReadErrorMessage(kind, name, cause));
   }
 }
 
@@ -68,7 +68,7 @@ function readTemplateContent(
  *   nothing was configured or all `content_path` values were empty.
  * @throws When a configured `content_path` points to a missing or unreadable file.
  */
-export function legacyLoadAuthEmailContent(cwd: string, email: AuthEmail): LegacyAuthEmailContent {
+export function loadAuthEmailContent(cwd: string, email: AuthEmail): AuthEmailContent {
   const template: Record<string, string> = {};
   const notification: Record<string, string> = {};
 
@@ -77,7 +77,7 @@ export function legacyLoadAuthEmailContent(cwd: string, email: AuthEmail): Legac
     if (contentPath.length === 0) {
       continue;
     }
-    const resolved = legacyResolveEmailTemplateContentPath({
+    const resolved = resolveEmailTemplateContentPath({
       section: "template",
       name,
       contentPath,
@@ -99,7 +99,7 @@ export function legacyLoadAuthEmailContent(cwd: string, email: AuthEmail): Legac
     if (contentPath.length === 0) {
       continue;
     }
-    const resolved = legacyResolveEmailTemplateContentPath({
+    const resolved = resolveEmailTemplateContentPath({
       section: "notification",
       name,
       contentPath,

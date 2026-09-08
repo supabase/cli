@@ -5,14 +5,14 @@ const E2E_TIMEOUT_MS = 30_000;
 const TEST_PROJECT_REF = "abcdefghijklmnopqrst";
 const TEST_TOKEN = "sbp_" + "a".repeat(40);
 
-describe("supabase sso (legacy)", () => {
+describe("supabase sso", () => {
   test(
     "info --output-format=json emits derived URLs (no auth needed)",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stdout } = await runSupabase(
         ["sso", "info", "--project-ref", TEST_PROJECT_REF, "--output-format", "json"],
-        { entrypoint: "legacy", env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
+        { env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
       );
       expect(exitCode).toBe(0);
       expect(stdout).toContain(`https://${TEST_PROJECT_REF}.supabase.co/auth/v1/sso/saml/acs`);
@@ -24,7 +24,7 @@ describe("supabase sso (legacy)", () => {
   test("info text mode prints all three URLs", { timeout: E2E_TIMEOUT_MS }, async () => {
     const { exitCode, stdout } = await runSupabase(
       ["sso", "info", "--project-ref", TEST_PROJECT_REF],
-      { entrypoint: "legacy", env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
+      { env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
     );
     expect(exitCode).toBe(0);
     expect(stdout).toContain(`https://${TEST_PROJECT_REF}.supabase.co/auth/v1/sso/saml/acs`);
@@ -37,7 +37,7 @@ describe("supabase sso (legacy)", () => {
     async () => {
       const { exitCode, stdout, stderr } = await runSupabase(
         ["sso", "show", "not-a-uuid", "--project-ref", TEST_PROJECT_REF],
-        { entrypoint: "legacy", env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
+        { env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
       );
       expect(exitCode).toBe(1);
       expect(`${stdout}${stderr}`).toContain(`identity provider ID "not-a-uuid" is not a UUID`);
@@ -50,7 +50,7 @@ describe("supabase sso (legacy)", () => {
     async () => {
       const { exitCode, stdout, stderr } = await runSupabase(
         ["sso", "remove", "not-a-uuid", "--project-ref", TEST_PROJECT_REF],
-        { entrypoint: "legacy", env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
+        { env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
       );
       expect(exitCode).toBe(1);
       expect(`${stdout}${stderr}`).toContain(`identity provider ID "not-a-uuid" is not a UUID`);
@@ -63,7 +63,7 @@ describe("supabase sso (legacy)", () => {
     async () => {
       const { exitCode, stdout, stderr } = await runSupabase(
         ["sso", "update", "not-a-uuid", "--project-ref", TEST_PROJECT_REF],
-        { entrypoint: "legacy", env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
+        { env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
       );
       expect(exitCode).toBe(1);
       expect(`${stdout}${stderr}`).toContain(`identity provider ID "not-a-uuid" is not a UUID`);
@@ -85,10 +85,12 @@ describe("supabase sso (legacy)", () => {
     "add without --type: stdout stays clean, stderr is a single Go-parity line (no usage block)",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
-      const { exitCode, stdout, stderr } = await runSupabase(
-        ["sso", "add", "--project-ref", TEST_PROJECT_REF],
-        { entrypoint: "legacy" },
-      );
+      const { exitCode, stdout, stderr } = await runSupabase([
+        "sso",
+        "add",
+        "--project-ref",
+        TEST_PROJECT_REF,
+      ]);
       expect(exitCode).toBe(1);
       expect(stdout).toBe("");
       expect(stderr).toContain(`required flag(s) "type" not set`);
@@ -101,10 +103,14 @@ describe("supabase sso (legacy)", () => {
     "add with an invalid --type value: stdout stays clean, the usage content and the single error line land on stderr with no duplicate",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
-      const { exitCode, stdout, stderr } = await runSupabase(
-        ["sso", "add", "--type", "bogus", "--project-ref", TEST_PROJECT_REF],
-        { entrypoint: "legacy" },
-      );
+      const { exitCode, stdout, stderr } = await runSupabase([
+        "sso",
+        "add",
+        "--type",
+        "bogus",
+        "--project-ref",
+        TEST_PROJECT_REF,
+      ]);
       expect(exitCode).toBe(1);
       expect(stdout).toBe("");
       expect(stderr).toContain("USAGE");

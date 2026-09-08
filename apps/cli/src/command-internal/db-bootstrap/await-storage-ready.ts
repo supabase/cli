@@ -14,12 +14,12 @@
  *    healthcheck at all) triggers a real 30-SECOND wait, hardcoded independent of
  *    `db.health_timeout`; if that wait times out, the failure propagates and FAILS THE
  *    WHOLE RESET (not just "skip buckets") — dumping the storage container's logs to
- *    stderr on the way out, via `legacyWaitForHealthyServices`'s own existing behavior.
+ *    stderr on the way out, via `waitForHealthyServices`'s own existing behavior.
  *
  * Hoisted to `command-internal/db-bootstrap/` (CLI-2062): originally lived in
  * `commands/db/reset/` since `db reset`'s own handler was its only caller — the
  * bucket-seeding health gate has no equivalent in `db start`/`supabase start` at
- * all (CLI-1955 review follow-up). `legacyResetLocalDatabase`
+ * all (CLI-1955 review follow-up). `resetLocalDatabase`
  * (`reset-local-database.ts`) is now a second caller (`db schema declarative`'s
  * smart-target/sync recovery reset), so this moved alongside it.
  */
@@ -28,38 +28,35 @@ import { Effect, Result } from "effect";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
-import { legacyInspectContainerState } from "../legacy-docker-lifecycle.ts";
-import { legacyServiceContainerName } from "../legacy-docker-ids.ts";
-import {
-  legacyWaitForHealthyServices,
-  type LegacyHealthCheckTimeoutError,
-} from "./health-check.ts";
+import { inspectContainerState } from "../docker-lifecycle.ts";
+import { serviceContainerName } from "../docker-ids.ts";
+import { waitForHealthyServices, type HealthCheckTimeoutError } from "./health-check.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
 /** Go's hardcoded `30*time.Second` (`reset.go:68`) — independent of `db.health_timeout`. */
-const LEGACY_AWAIT_STORAGE_READY_TIMEOUT_SECONDS = 30;
+const AWAIT_STORAGE_READY_TIMEOUT_SECONDS = 30;
 
 /**
  * Resolves `true` when the storage container exists (so the caller should run the
  * ported bucket-seeding core) and `false` when it does not (any inspect error) —
  * matching Go, which silently skips buckets when storage is absent. Fails with
- * {@link LegacyHealthCheckTimeoutError} when storage exists but never becomes healthy
+ * {@link HealthCheckTimeoutError} when storage exists but never becomes healthy
  * within 30 seconds — this is NOT swallowed into `false`, matching Go's own
  * `return false, err` propagating the wait's error to the caller, which fails the
  * entire reset.
  */
-export function legacyAwaitStorageReady(
+export function awaitStorageReady(
   spawner: Spawner,
   projectId: string,
-): Effect.Effect<boolean, LegacyHealthCheckTimeoutError, HttpClient.HttpClient> {
-  const storageId = legacyServiceContainerName("storage", projectId);
+): Effect.Effect<boolean, HealthCheckTimeoutError, HttpClient.HttpClient> {
+  const storageId = serviceContainerName("storage", projectId);
   return Effect.gen(function* () {
-    const inspected = yield* legacyInspectContainerState(spawner, storageId).pipe(Effect.result);
+    const inspected = yield* inspectContainerState(spawner, storageId).pipe(Effect.result);
     if (Result.isFailure(inspected)) return false;
     if (inspected.success.health === "healthy") return true;
-    yield* legacyWaitForHealthyServices(spawner, [storageId], {
-      timeoutSeconds: LEGACY_AWAIT_STORAGE_READY_TIMEOUT_SECONDS,
+    yield* waitForHealthyServices(spawner, [storageId], {
+      timeoutSeconds: AWAIT_STORAGE_READY_TIMEOUT_SECONDS,
     });
     return true;
   });

@@ -5,16 +5,16 @@ import {
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
 
-export class LegacyExperimentalStackTargetFlagsError extends Data.TaggedError(
-  "LegacyExperimentalStackTargetFlagsError",
+export class ExperimentalStackTargetFlagsError extends Data.TaggedError(
+  "ExperimentalStackTargetFlagsError",
 )<{ readonly message: string }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
   }
 }
 
-export class LegacyExperimentalStackStartError extends Data.TaggedError(
-  "LegacyExperimentalStackStartError",
+export class ExperimentalStackStartError extends Data.TaggedError(
+  "ExperimentalStackStartError",
 )<{
   readonly reason:
     | "invalid-config"

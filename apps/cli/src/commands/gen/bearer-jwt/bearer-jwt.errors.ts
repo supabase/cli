@@ -15,7 +15,7 @@ import {
  * branch itself for coverage purposes — it's exercised directly by this file's own
  * unit tests instead.
  */
-export function legacyBearerJwtErrorMessage(cause: unknown): string {
+export function bearerJwtErrorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
@@ -27,8 +27,8 @@ export function legacyBearerJwtErrorMessage(cause: unknown): string {
  * message text `required flag(s) "role" not set`, with no usage block and
  * no `"Error: "` prefix.
  */
-export class LegacyGenBearerJwtRoleRequiredError extends Data.TaggedError(
-  "LegacyGenBearerJwtRoleRequiredError",
+export class GenBearerJwtRoleRequiredError extends Data.TaggedError(
+  "GenBearerJwtRoleRequiredError",
 )<{
   readonly message: string;
 }> {
@@ -38,9 +38,7 @@ export class LegacyGenBearerJwtRoleRequiredError extends Data.TaggedError(
 }
 
 /** `supabase/config.toml` itself is malformed. Mirrors `gen signing-key`'s own error shape. */
-export class LegacyGenBearerJwtConfigParseError extends Data.TaggedError(
-  "LegacyGenBearerJwtConfigParseError",
-)<{
+export class GenBearerJwtConfigParseError extends Data.TaggedError("GenBearerJwtConfigParseError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -49,7 +47,7 @@ export class LegacyGenBearerJwtConfigParseError extends Data.TaggedError(
 }
 
 /** `[auth].signing_keys_path` is configured but the file could not be read. */
-export class LegacyGenBearerJwtReadError extends Data.TaggedError("LegacyGenBearerJwtReadError")<{
+export class GenBearerJwtReadError extends Data.TaggedError("GenBearerJwtReadError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -58,9 +56,7 @@ export class LegacyGenBearerJwtReadError extends Data.TaggedError("LegacyGenBear
 }
 
 /** `[auth].signing_keys_path`'s file is not valid JSON / not a JWK array. */
-export class LegacyGenBearerJwtDecodeError extends Data.TaggedError(
-  "LegacyGenBearerJwtDecodeError",
-)<{
+export class GenBearerJwtDecodeError extends Data.TaggedError("GenBearerJwtDecodeError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -72,9 +68,7 @@ export class LegacyGenBearerJwtDecodeError extends Data.TaggedError(
  * Branch A: the pasted stdin JWK is not valid JSON. Established message
  * `"failed to parse JWK: %w"`.
  */
-export class LegacyGenBearerJwtKeyParseError extends Data.TaggedError(
-  "LegacyGenBearerJwtKeyParseError",
-)<{
+export class GenBearerJwtKeyParseError extends Data.TaggedError("GenBearerJwtKeyParseError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -86,9 +80,7 @@ export class LegacyGenBearerJwtKeyParseError extends Data.TaggedError(
  * Branch B: the entered kid matched no configured signing key. Established
  * message `"signing key not found: %s"`.
  */
-export class LegacyGenBearerJwtKeyNotFoundError extends Data.TaggedError(
-  "LegacyGenBearerJwtKeyNotFoundError",
-)<{
+export class GenBearerJwtKeyNotFoundError extends Data.TaggedError("GenBearerJwtKeyNotFoundError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -101,8 +93,8 @@ export class LegacyGenBearerJwtKeyNotFoundError extends Data.TaggedError(
  * without ever letting the user select anything. Established bare,
  * unwrapped message `"user aborted"`.
  */
-export class LegacyGenBearerJwtKeyPickerAbortedError extends Data.TaggedError(
-  "LegacyGenBearerJwtKeyPickerAbortedError",
+export class GenBearerJwtKeyPickerAbortedError extends Data.TaggedError(
+  "GenBearerJwtKeyPickerAbortedError",
 )<{
   readonly message: string;
 }> {
@@ -114,9 +106,7 @@ export class LegacyGenBearerJwtKeyPickerAbortedError extends Data.TaggedError(
 /**
  * `--payload` merge failure. Established message `"failed to parse payload: %w"`.
  */
-export class LegacyGenBearerJwtPayloadError extends Data.TaggedError(
-  "LegacyGenBearerJwtPayloadError",
-)<{
+export class GenBearerJwtPayloadError extends Data.TaggedError("GenBearerJwtPayloadError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -126,10 +116,10 @@ export class LegacyGenBearerJwtPayloadError extends Data.TaggedError(
 
 /**
  * Unsupported key type/curve/algorithm, or a kty-vs-alg mismatch caught at
- * sign time. The message is `legacySignJwtWithJwk`'s own text, surfaced
+ * sign time. The message is `signJwtWithJwk`'s own text, surfaced
  * verbatim, with no additional wrapping.
  */
-export class LegacyGenBearerJwtSignError extends Data.TaggedError("LegacyGenBearerJwtSignError")<{
+export class GenBearerJwtSignError extends Data.TaggedError("GenBearerJwtSignError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

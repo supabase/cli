@@ -20,7 +20,7 @@ function hasRegistryRowAt(path: ReadonlyArray<string>): boolean {
 }
 
 /** The external-provider ids, derived from every `["auth","external",id,"enabled"]` registry row. */
-export const LEGACY_EXTERNAL_PROVIDER_IDS: ReadonlyArray<string> = (() => {
+export const EXTERNAL_PROVIDER_IDS: ReadonlyArray<string> = (() => {
   const ids: Array<string> = [];
   for (const row of projectConfigMappingRows) {
     if (
@@ -37,27 +37,25 @@ export const LEGACY_EXTERNAL_PROVIDER_IDS: ReadonlyArray<string> = (() => {
 })();
 
 /** Providers with an `external_<id>_url` field — derived from the registry's own `url` rows. */
-export const LEGACY_PROVIDERS_WITH_URL: ReadonlyArray<string> = LEGACY_EXTERNAL_PROVIDER_IDS.filter(
-  (id) => hasRegistryRowAt(["auth", "external", id, "url"]),
+export const PROVIDERS_WITH_URL: ReadonlyArray<string> = EXTERNAL_PROVIDER_IDS.filter((id) =>
+  hasRegistryRowAt(["auth", "external", id, "url"]),
 );
 
 /**
  * Providers with an `external_<id>_skip_nonce_check` field — derived from the
  * registry's own `skip_nonce_check` rows (google only, today).
  */
-export const LEGACY_PROVIDERS_WITH_SKIP_NONCE_CHECK: ReadonlyArray<string> =
-  LEGACY_EXTERNAL_PROVIDER_IDS.filter((id) =>
-    hasRegistryRowAt(["auth", "external", id, "skip_nonce_check"]),
-  );
+export const PROVIDERS_WITH_SKIP_NONCE_CHECK: ReadonlyArray<string> = EXTERNAL_PROVIDER_IDS.filter(
+  (id) => hasRegistryRowAt(["auth", "external", id, "skip_nonce_check"]),
+);
 
 /**
  * Providers with an `external_<id>_email_optional` field — derived from the
  * registry's own `email_optional` rows (every provider except workos, today).
  */
-export const LEGACY_PROVIDERS_WITH_EMAIL_OPTIONAL: ReadonlyArray<string> =
-  LEGACY_EXTERNAL_PROVIDER_IDS.filter((id) =>
-    hasRegistryRowAt(["auth", "external", id, "email_optional"]),
-  );
+export const PROVIDERS_WITH_EMAIL_OPTIONAL: ReadonlyArray<string> = EXTERNAL_PROVIDER_IDS.filter(
+  (id) => hasRegistryRowAt(["auth", "external", id, "email_optional"]),
+);
 
 /**
  * The SMS provider names. Derived from every `["auth","sms",name,"enabled"]`
@@ -68,7 +66,7 @@ export const LEGACY_PROVIDERS_WITH_EMAIL_OPTIONAL: ReadonlyArray<string> =
  * by the registry itself, so do not depend on it meaning "precedence" beyond
  * what the test asserts.
  */
-export const LEGACY_SMS_PROVIDER_NAMES: ReadonlyArray<string> = (() => {
+export const SMS_PROVIDER_NAMES: ReadonlyArray<string> = (() => {
   const names: Array<string> = [];
   for (const row of projectConfigMappingRows) {
     if (
@@ -88,7 +86,7 @@ export const LEGACY_SMS_PROVIDER_NAMES: ReadonlyArray<string> = (() => {
 })();
 
 /** The email template names, derived from the registry's `subject` rows. */
-export const LEGACY_EMAIL_TEMPLATE_NAMES: ReadonlyArray<string> = (() => {
+export const EMAIL_TEMPLATE_NAMES: ReadonlyArray<string> = (() => {
   const names: Array<string> = [];
   for (const row of projectConfigMappingRows) {
     if (
@@ -106,7 +104,7 @@ export const LEGACY_EMAIL_TEMPLATE_NAMES: ReadonlyArray<string> = (() => {
 })();
 
 /** The email notification names, derived from the registry's `enabled` rows. */
-export const LEGACY_EMAIL_NOTIFICATION_NAMES: ReadonlyArray<string> = (() => {
+export const EMAIL_NOTIFICATION_NAMES: ReadonlyArray<string> = (() => {
   const names: Array<string> = [];
   for (const row of projectConfigMappingRows) {
     if (

@@ -1,12 +1,12 @@
 import { Effect, Option } from "effect";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   encodeGoJson,
   encodeToml,
   encodeYaml,
-} from "../../../command-internal/legacy-go-output.encoders.ts";
-import { LegacyWorkersEnvNotSupportedError } from "./workers.errors.ts";
+} from "../../../command-internal/go-output.encoders.ts";
+import { WorkersEnvNotSupportedError } from "./workers.errors.ts";
 
 /**
  * Emits a command's payload in the format `-o`/`--output` asked for.
@@ -44,21 +44,21 @@ function emitsPayloadFor(goFormat: string | undefined): boolean {
   return goFormat !== undefined && PAYLOAD_FORMATS.has(goFormat);
 }
 
-export const legacyEmitWorkersMachineOutput = Effect.fnUntraced(function* (
+export const emitWorkersMachineOutput = Effect.fnUntraced(function* (
   payload: Record<string, unknown>,
 ) {
   const output = yield* Output;
-  const goFormat = Option.getOrUndefined(yield* LegacyOutputFlag);
+  const goFormat = Option.getOrUndefined(yield* OutputFlag);
 
   if (!emitsPayloadFor(goFormat)) {
     return false;
   }
 
   if (goFormat === "env") {
-    // Unreachable when the command called `legacyRejectWorkersEnvOutput` first,
+    // Unreachable when the command called `rejectWorkersEnvOutput` first,
     // which is where the refusal belongs; here as the backstop that stops a new
     // command silently emitting TOML for `-o env`.
-    return yield* new LegacyWorkersEnvNotSupportedError({
+    return yield* new WorkersEnvNotSupportedError({
       message: "--output env flag is not supported",
     });
   }
@@ -80,8 +80,8 @@ export const legacyEmitWorkersMachineOutput = Effect.fnUntraced(function* (
  * human lines *before* their payload need this: the `-o` branch runs at the end,
  * by which point those lines would already be on stdout.
  */
-export const legacyWorkersMachineOutputRequested = Effect.fnUntraced(function* () {
-  return emitsPayloadFor(Option.getOrUndefined(yield* LegacyOutputFlag));
+export const workersMachineOutputRequested = Effect.fnUntraced(function* () {
+  return emitsPayloadFor(Option.getOrUndefined(yield* OutputFlag));
 });
 
 /**
@@ -94,12 +94,12 @@ export const legacyWorkersMachineOutputRequested = Effect.fnUntraced(function* (
  * --output-format json`, which asked for exactly the opposite.
  *
  * `-o json|yaml|toml|env` are absent from the result on purpose: those are
- * handled by `legacyEmitWorkersMachineOutput`, which runs before any of this and
+ * handled by `emitWorkersMachineOutput`, which runs before any of this and
  * owns its own stdout.
  */
-export const legacyWorkersRenderFormat = Effect.fnUntraced(function* () {
+export const workersRenderFormat = Effect.fnUntraced(function* () {
   const output = yield* Output;
-  const goFormat = Option.getOrUndefined(yield* LegacyOutputFlag);
+  const goFormat = Option.getOrUndefined(yield* OutputFlag);
   const forcesText = goFormat !== undefined && !emitsPayloadFor(goFormat);
   return forcesText ? ("text" as const) : output.format;
 });
@@ -113,9 +113,9 @@ export const legacyWorkersRenderFormat = Effect.fnUntraced(function* () {
  * front: discovering it at emit time means failing after the work is done, which
  * for `push` is after the remote project has already changed.
  */
-export const legacyRejectWorkersEnvOutput = Effect.fnUntraced(function* () {
-  if (Option.getOrUndefined(yield* LegacyOutputFlag) === "env") {
-    return yield* new LegacyWorkersEnvNotSupportedError({
+export const rejectWorkersEnvOutput = Effect.fnUntraced(function* () {
+  if (Option.getOrUndefined(yield* OutputFlag) === "env") {
+    return yield* new WorkersEnvNotSupportedError({
       message: "--output env flag is not supported",
     });
   }
@@ -134,11 +134,11 @@ export const legacyRejectWorkersEnvOutput = Effect.fnUntraced(function* () {
  * appending it again is noise on a command that already resolves correctly.
  *
  * An empty `--project-ref ""` counts as "not supplied", the same reading
- * `LegacyProjectRefResolver` gives it before falling back to the environment or
+ * `ProjectRefResolver` gives it before falling back to the environment or
  * the linked-project file. Carrying it through would suggest a command ending
  * in a valueless `--project-ref`, which cannot be pasted back.
  */
-export const legacyWorkersProjectRefSuffix = (projectRef: Option.Option<string>): string =>
+export const workersProjectRefSuffix = (projectRef: Option.Option<string>): string =>
   Option.isSome(projectRef) && projectRef.value.length > 0
     ? ` --project-ref ${projectRef.value}`
     : "";

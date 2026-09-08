@@ -2,12 +2,12 @@
 
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                            |
-| ---------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------- |
-| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliSettings.profile` |
-| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                        |
-| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                   |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                  |
+| Path                                           | Format                    | When                                                                                          |
+| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile` |
+| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
+| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                |
 
 ## Files Written
 
@@ -33,13 +33,13 @@
 
 ## Exit Codes
 
-| Code | Condition                                                         |
-| ---- | ----------------------------------------------------------------- |
-| `0`  | success                                                           |
-| `1`  | `LegacySsoInvalidUuidError` — provider ID is not a canonical UUID |
-| `1`  | `LegacySsoRemoveNotFoundError` — 404 from delete endpoint         |
-| `1`  | `LegacySsoRemoveUnexpectedStatusError` — other non-2xx            |
-| `1`  | `LegacySsoRemoveNetworkError` — transport-level failure           |
+| Code | Condition                                                   |
+| ---- | ----------------------------------------------------------- |
+| `0`  | success                                                     |
+| `1`  | `SsoInvalidUuidError` — provider ID is not a canonical UUID |
+| `1`  | `SsoRemoveNotFoundError` — 404 from delete endpoint         |
+| `1`  | `SsoRemoveUnexpectedStatusError` — other non-2xx            |
+| `1`  | `SsoRemoveNetworkError` — transport-level failure           |
 
 ## Telemetry Events Fired
 

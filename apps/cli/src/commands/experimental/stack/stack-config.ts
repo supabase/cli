@@ -3,7 +3,7 @@ import { Effect, Data, FileSystem, Option, Path, Redacted, Schema } from "effect
 import { parse as parseDotenv } from "dotenv";
 import { StackConfigSchema, type StackConfig } from "@supabase/stack/effect";
 
-import { legacyLoadLocalProjectContext } from "../../../command-internal/legacy-local-project-context.ts";
+import { loadLocalProjectContext } from "../../../command-internal/local-project-context.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -11,7 +11,7 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 /** A config error suitable for an experimental stack command's user-facing boundary. */
-export class LegacyStackConfigError extends Data.TaggedError("LegacyStackConfigError")<{
+export class StackConfigError extends Data.TaggedError("StackConfigError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -19,9 +19,9 @@ export class LegacyStackConfigError extends Data.TaggedError("LegacyStackConfigE
   }
 }
 
-type LegacyStackConfigEffect = Effect.Effect<
+type StackConfigEffect = Effect.Effect<
   StackConfig,
-  LegacyStackConfigError,
+  StackConfigError,
   FileSystem.FileSystem | Path.Path
 >;
 
@@ -62,13 +62,13 @@ const validateEnvKeys = (
   return invalid === undefined
     ? Effect.succeed(values)
     : Effect.fail(
-        new LegacyStackConfigError({
+        new StackConfigError({
           message: `Invalid environment variable key ${invalid} in ${file}; use uppercase letters, digits, and underscores.`,
         }),
       );
 };
 
-const legacyReadFunctionEnvironments = (
+const readFunctionEnvironments = (
   projectRoot: string,
   disabledFunctions: ReadonlySet<string> = new Set(),
   skip = false,
@@ -173,14 +173,14 @@ const authProviderNames = [
   "zoom",
 ] as const;
 
-const legacyStackProjectPath = (value: string): string =>
+const stackProjectPath = (value: string): string =>
   value.length === 0 || value.startsWith("/")
     ? value
     : `supabase/${value.startsWith("./") ? value.slice(2) : value}`;
 
 /** Converts a CLI function path (relative to supabase/) to the stack resolver's
  * function-directory-relative form. */
-const legacyFunctionRelativePath = (
+const functionRelativePath = (
   path: Path.Path,
   projectRoot: string,
   value: string,
@@ -197,7 +197,7 @@ const legacyFunctionRelativePath = (
   return path.relative(functionRoot, target).replaceAll(path.sep, "/");
 };
 
-const legacyFunctionPathError = (
+const functionPathError = (
   path: Path.Path,
   projectRoot: string,
   name: string,
@@ -275,7 +275,7 @@ const nestedListener = (
   return port === undefined ? undefined : { port };
 };
 
-const legacyAuthSettings = (auth: CliConfig["auth"]) => ({
+const authSettings = (auth: CliConfig["auth"]) => ({
   ...(auth.site_url === undefined ? {} : { site_url: auth.site_url }),
   ...(auth.additional_redirect_urls === undefined
     ? {}
@@ -499,7 +499,7 @@ const legacyAuthSettings = (auth: CliConfig["auth"]) => ({
       }),
 });
 
-const legacyFunctionsSettings = (
+const functionsSettings = (
   projectRoot: string,
   path: Path.Path,
   config: CliConfig,
@@ -516,15 +516,15 @@ const legacyFunctionsSettings = (
         ...(value.verify_jwt === undefined ? {} : { verify_jwt: value.verify_jwt }),
         ...(value.import_map === undefined
           ? {}
-          : { import_map: legacyFunctionRelativePath(path, projectRoot, value.import_map, name) }),
+          : { import_map: functionRelativePath(path, projectRoot, value.import_map, name) }),
         ...(value.entrypoint === undefined
           ? {}
-          : { entrypoint: legacyFunctionRelativePath(path, projectRoot, value.entrypoint, name) }),
+          : { entrypoint: functionRelativePath(path, projectRoot, value.entrypoint, name) }),
         ...(value.static_files === undefined
           ? {}
           : {
               static_files: value.static_files.map((filePath) =>
-                legacyFunctionRelativePath(path, projectRoot, filePath, name),
+                functionRelativePath(path, projectRoot, filePath, name),
               ),
             }),
         env: Object.fromEntries(
@@ -564,7 +564,7 @@ const legacyFunctionsSettings = (
   };
 };
 
-const legacyConfigInput = (
+const configInput = (
   projectRoot: string,
   path: Path.Path,
   config: CliConfig,
@@ -596,7 +596,7 @@ const legacyConfigInput = (
         tls: api.tls,
         external_url: api.external_url,
       }),
-      auth: capability(auth.enabled, legacyAuthSettings(auth)),
+      auth: capability(auth.enabled, authSettings(auth)),
       realtime: capability(realtime.enabled, {
         ip_version: realtime.ip_version,
         max_header_length: realtime.max_header_length,
@@ -611,7 +611,7 @@ const legacyConfigInput = (
       }),
       functions: capability(
         config.edge_runtime.enabled,
-        legacyFunctionsSettings(projectRoot, path, config, document, projectEnvValues),
+        functionsSettings(projectRoot, path, config, document, projectEnvValues),
       ),
       studio: capability(studio.enabled, {
         api_url: studio.api_url,
@@ -648,7 +648,7 @@ const legacyConfigInput = (
       jwt: {
         ...(auth.jwt_issuer === undefined ? {} : { issuer: auth.jwt_issuer }),
         ...(auth.signing_keys_path !== undefined
-          ? { signing: { kind: "jwks-file", path: legacyStackProjectPath(auth.signing_keys_path) } }
+          ? { signing: { kind: "jwks-file", path: stackProjectPath(auth.signing_keys_path) } }
           : secret(auth.jwt_secret) === undefined
             ? {}
             : { signing: { kind: "symmetric", secret: secret(auth.jwt_secret) } }),
@@ -657,7 +657,7 @@ const legacyConfigInput = (
   };
 };
 
-const legacyConfigValidationError = (
+const configValidationError = (
   path: Path.Path,
   projectRoot: string,
   config: CliConfig,
@@ -675,7 +675,7 @@ const legacyConfigValidationError = (
       ...functionConfig.static_files.map((path) => ["static_files", path] as const),
     ] as const) {
       if (typeof value !== "string") continue;
-      const pathError = legacyFunctionPathError(path, projectRoot, name, field, value);
+      const pathError = functionPathError(path, projectRoot, name, field, value);
       if (pathError !== undefined) return pathError;
     }
     for (const value of Object.values(functionConfig.env)) {
@@ -690,21 +690,21 @@ const legacyConfigValidationError = (
 };
 
 /** Loads and translates the effective project config for all experimental stack commands. */
-export const legacyLoadStackConfig = (projectRoot: string): LegacyStackConfigEffect =>
+export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    return yield* legacyLoadLocalProjectContext(
+    return yield* loadLocalProjectContext(
       projectRoot,
-      (message) => new LegacyStackConfigError({ message }),
+      (message) => new StackConfigError({ message }),
     ).pipe(
       Effect.flatMap((context) =>
         context.loaded === null
           ? Effect.fail(
-              new LegacyStackConfigError({
+              new StackConfigError({
                 message: `No Supabase project configuration found in ${projectRoot}. Run supabase init first.`,
               }),
             )
-          : legacyReadFunctionEnvironments(
+          : readFunctionEnvironments(
               projectRoot,
               new Set(
                 Object.entries(context.config.functions)
@@ -713,7 +713,7 @@ export const legacyLoadStackConfig = (projectRoot: string): LegacyStackConfigEff
               ),
               context.config.edge_runtime.enabled === false,
             ).pipe(
-              Effect.mapError((cause) => new LegacyStackConfigError({ message: String(cause) })),
+              Effect.mapError((cause) => new StackConfigError({ message: String(cause) })),
               Effect.flatMap(
                 (
                   environments: Readonly<{
@@ -723,15 +723,15 @@ export const legacyLoadStackConfig = (projectRoot: string): LegacyStackConfigEff
                     >;
                   }>,
                 ) => {
-                  const validationError = legacyConfigValidationError(
+                  const validationError = configValidationError(
                     path,
                     projectRoot,
                     context.config,
                     context.projectEnvValues,
                   );
                   if (validationError !== undefined)
-                    return Effect.fail(new LegacyStackConfigError({ message: validationError }));
-                  const input = legacyConfigInput(
+                    return Effect.fail(new StackConfigError({ message: validationError }));
+                  const input = configInput(
                     projectRoot,
                     path,
                     context.config,
@@ -798,7 +798,7 @@ export const legacyLoadStackConfig = (projectRoot: string): LegacyStackConfigEff
                 }).pipe(
                   Effect.mapError(
                     (cause) =>
-                      new LegacyStackConfigError({
+                      new StackConfigError({
                         message: `invalid stack config: ${String(cause)}`,
                       }),
                   ),

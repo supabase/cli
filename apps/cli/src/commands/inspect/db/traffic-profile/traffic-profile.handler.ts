@@ -1,7 +1,7 @@
-import { legacyMakeInspectDbHandler } from "../legacy-inspect-query.ts";
-import { legacyTrafficProfileSpec } from "./traffic-profile.query.ts";
+import { makeInspectDbHandler } from "../inspect-query.ts";
+import { trafficProfileSpec } from "./traffic-profile.query.ts";
 
-export const legacyInspectDbTrafficProfile = legacyMakeInspectDbHandler(
-  legacyTrafficProfileSpec,
-  "legacy.inspect.db.traffic-profile",
+export const inspectDbTrafficProfile = makeInspectDbHandler(
+  trafficProfileSpec,
+  "inspect.db.traffic-profile",
 );

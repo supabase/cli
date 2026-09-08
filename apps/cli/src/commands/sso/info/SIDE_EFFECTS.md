@@ -28,11 +28,11 @@ calls are made.
 
 ## Exit Codes
 
-| Code | Condition                                                        |
-| ---- | ---------------------------------------------------------------- |
-| `0`  | success                                                          |
-| `1`  | `LegacyInvalidProjectRefError` — ref doesn't match `^[a-z]{20}$` |
-| `1`  | `LegacyProjectNotLinkedError` — no ref source available          |
+| Code | Condition                                                  |
+| ---- | ---------------------------------------------------------- |
+| `0`  | success                                                    |
+| `1`  | `InvalidProjectRefError` — ref doesn't match `^[a-z]{20}$` |
+| `1`  | `ProjectRefNotLinkedError` — no ref source available       |
 
 ## Telemetry Events Fired
 

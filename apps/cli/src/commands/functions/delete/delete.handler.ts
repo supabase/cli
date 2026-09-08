@@ -1,19 +1,19 @@
 import { Effect, Option } from "effect";
 import { deleteFunction } from "../../../shared/functions/delete.ts";
-import { legacyAqua } from "../../../command-internal/legacy-colors.ts";
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import type { LegacyFunctionsDeleteFlags } from "./delete.command.ts";
+import { aqua } from "../../../command-internal/colors.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import type { FunctionsDeleteFlags } from "./delete.command.ts";
 
-export const legacyFunctionsDelete = Effect.fn("legacy.functions.delete")(function* (
-  flags: LegacyFunctionsDeleteFlags,
+export const functionsDelete = Effect.fn("functions.delete")(function* (
+  flags: FunctionsDeleteFlags,
 ) {
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
   let resolvedProjectRef = Option.none<string>();
 
   yield* deleteFunction(
@@ -31,7 +31,7 @@ export const legacyFunctionsDelete = Effect.fn("legacy.functions.delete")(functi
       // Go: `fmt.Printf("Deleted Function %s from project %s.\n", utils.Aqua(slug),
       // utils.Aqua(projectRef))` (`internal/functions/delete/delete.go:20`) —
       // stdout-bound, so the TTY gate must check stdout.
-      styleIdentifier: (text) => legacyAqua(text, process.stdout),
+      styleIdentifier: (text) => aqua(text, process.stdout),
     },
   ).pipe(
     Effect.ensuring(

@@ -1,15 +1,9 @@
 import { Effect } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
-import type { LegacyStorageGatewayError } from "../../command-internal/legacy-storage-gateway.errors.ts";
-import {
-  LEGACY_PAGE_LIMIT,
-  type LegacyStorageGateway,
-} from "../../command-internal/legacy-storage-gateway.ts";
-import {
-  legacyGoPathSplit,
-  legacySplitBucketPrefix,
-} from "../../command-internal/legacy-storage-url.ts";
+import type { StorageGatewayError } from "../../command-internal/storage-gateway.errors.ts";
+import { PAGE_LIMIT, type StorageGateway } from "../../command-internal/storage-gateway.ts";
+import { goPathSplit, splitBucketPrefix } from "../../command-internal/storage-url.ts";
 
 /**
  * Pagination + BFS traversal shared by `storage ls/cp/mv/rm`. The `callback`
@@ -26,14 +20,14 @@ import {
  * bucket root, list buckets filtered by the (possibly empty) bucket prefix;
  * otherwise page through objects under the prefix.
  */
-export const legacyIterateStoragePaths = <E>(
-  gateway: LegacyStorageGateway,
+export const iterateStoragePaths = <E>(
+  gateway: StorageGateway,
   output: typeof Output.Service,
   remotePath: string,
   callback: (objectName: string) => Effect.Effect<void, E>,
-): Effect.Effect<void, LegacyStorageGatewayError | E> =>
+): Effect.Effect<void, StorageGatewayError | E> =>
   Effect.gen(function* () {
-    const [bucket, prefix] = legacySplitBucketPrefix(remotePath);
+    const [bucket, prefix] = splitBucketPrefix(remotePath);
     if (bucket.length === 0 || (prefix.length === 0 && !remotePath.endsWith("/"))) {
       const buckets = yield* gateway.listBuckets();
       for (const b of buckets) {
@@ -49,7 +43,7 @@ export const legacyIterateStoragePaths = <E>(
       for (const object of objects) {
         yield* callback(object.isDir ? `${object.name}/` : object.name);
       }
-      if (objects.length === LEGACY_PAGE_LIMIT) {
+      if (objects.length === PAGE_LIMIT) {
         if (output.format === "text") {
           yield* output.raw(`Loading page: ${pages}\n`, "stderr");
         }
@@ -62,14 +56,14 @@ export const legacyIterateStoragePaths = <E>(
  * Go `ls.ListStoragePaths` (`ls.go:35-42`): collect every entry name under the
  * path into an array.
  */
-export const legacyListStoragePaths = (
-  gateway: LegacyStorageGateway,
+export const listStoragePaths = (
+  gateway: StorageGateway,
   output: typeof Output.Service,
   remotePath: string,
-): Effect.Effect<ReadonlyArray<string>, LegacyStorageGatewayError> =>
+): Effect.Effect<ReadonlyArray<string>, StorageGatewayError> =>
   Effect.gen(function* () {
     const result: Array<string> = [];
-    yield* legacyIterateStoragePaths(gateway, output, remotePath, (objectName) =>
+    yield* iterateStoragePaths(gateway, output, remotePath, (objectName) =>
       Effect.sync(() => {
         result.push(objectName);
       }),
@@ -82,17 +76,17 @@ export const legacyListStoragePaths = (
  * (LIFO queue), invoking `callback` with each object's full path. An empty
  * bucket is reported as `<bucket>/`.
  */
-export const legacyIterateStoragePathsAll = <E>(
-  gateway: LegacyStorageGateway,
+export const iterateStoragePathsAll = <E>(
+  gateway: StorageGateway,
   output: typeof Output.Service,
   remotePath: string,
   callback: (objectPath: string) => Effect.Effect<void, E>,
-): Effect.Effect<void, LegacyStorageGatewayError | E> =>
+): Effect.Effect<void, StorageGatewayError | E> =>
   Effect.gen(function* () {
-    const basePath = remotePath.endsWith("/") ? remotePath : legacyGoPathSplit(remotePath)[0];
+    const basePath = remotePath.endsWith("/") ? remotePath : goPathSplit(remotePath)[0];
     const dirQueue: Array<string> = [];
 
-    yield* legacyIterateStoragePaths(gateway, output, remotePath, (objectName) =>
+    yield* iterateStoragePaths(gateway, output, remotePath, (objectName) =>
       Effect.gen(function* () {
         const objectPath = basePath + objectName;
         if (objectName.endsWith("/")) {
@@ -107,7 +101,7 @@ export const legacyIterateStoragePathsAll = <E>(
       const dirPath = dirQueue.pop();
       if (dirPath === undefined) break;
       let empty = true;
-      yield* legacyIterateStoragePaths(gateway, output, dirPath, (objectName) =>
+      yield* iterateStoragePaths(gateway, output, dirPath, (objectName) =>
         Effect.gen(function* () {
           empty = false;
           const objectPath = dirPath + objectName;
@@ -119,7 +113,7 @@ export const legacyIterateStoragePathsAll = <E>(
         }),
       );
       // Also report empty buckets (Go: a top-level empty bucket → `<bucket>/`).
-      const [bucket, prefix] = legacySplitBucketPrefix(dirPath);
+      const [bucket, prefix] = splitBucketPrefix(dirPath);
       if (empty && prefix.length === 0) {
         yield* callback(`${bucket}/`);
       }

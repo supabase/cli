@@ -90,7 +90,7 @@ interface OutputShape {
   /**
    * Writes a raw chunk to stdout or stderr without framing.
    *
-   * Reserved for byte-exact parity output (legacy Go-format encoders, Glamour-styled tables)
+   * Reserved for byte-exact parity output (Go-format encoders, Glamour-styled tables)
    * where structured framing would change the bytes on the wire. Routes through the active
    * output layer so tests can capture it without monkey-patching `process.stdout` / `process.stderr`.
    */

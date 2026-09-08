@@ -10,13 +10,9 @@ import { Output } from "../../shared/output/output.service.ts";
 import { Browser } from "../../shared/runtime/browser.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
-import type {
-  LegacyIssueBugFlags,
-  LegacyIssueDocsFlags,
-  LegacyIssueFeatureFlags,
-} from "./issue.command.ts";
+import type { IssueBugFlags, IssueDocsFlags, IssueFeatureFlags } from "./issue.command.ts";
 
-const legacyOpenIssueUrl = Effect.fnUntraced(function* (url: string, noBrowser: boolean) {
+const openIssueUrl = Effect.fnUntraced(function* (url: string, noBrowser: boolean) {
   const output = yield* Output;
   yield* output.raw(`${url}\n`);
   if (!noBrowser) {
@@ -28,7 +24,7 @@ const legacyOpenIssueUrl = Effect.fnUntraced(function* (url: string, noBrowser: 
   }
 });
 
-export const legacyIssueBug = Effect.fn("legacy.issue.bug")(function* (flags: LegacyIssueBugFlags) {
+export const issueBug = Effect.fn("issue.bug")(function* (flags: IssueBugFlags) {
   const runtimeInfo = yield* RuntimeInfo;
   const telemetryRuntime = yield* TelemetryRuntime;
 
@@ -49,12 +45,10 @@ export const legacyIssueBug = Effect.fn("legacy.issue.bug")(function* (flags: Le
     },
   });
 
-  yield* legacyOpenIssueUrl(url, flags.noBrowser);
+  yield* openIssueUrl(url, flags.noBrowser);
 });
 
-export const legacyIssueFeature = Effect.fn("legacy.issue.feature")(function* (
-  flags: LegacyIssueFeatureFlags,
-) {
+export const issueFeature = Effect.fn("issue.feature")(function* (flags: IssueFeatureFlags) {
   const url = buildIssueUrl({
     template: issueTemplateContract.feature.template,
     fields: {
@@ -67,12 +61,10 @@ export const legacyIssueFeature = Effect.fn("legacy.issue.feature")(function* (
     },
   });
 
-  yield* legacyOpenIssueUrl(url, flags.noBrowser);
+  yield* openIssueUrl(url, flags.noBrowser);
 });
 
-export const legacyIssueDocs = Effect.fn("legacy.issue.docs")(function* (
-  flags: LegacyIssueDocsFlags,
-) {
+export const issueDocs = Effect.fn("issue.docs")(function* (flags: IssueDocsFlags) {
   const url = buildIssueUrl({
     template: issueTemplateContract.docs.template,
     fields: {
@@ -84,5 +76,5 @@ export const legacyIssueDocs = Effect.fn("legacy.issue.docs")(function* (
     },
   });
 
-  yield* legacyOpenIssueUrl(url, flags.noBrowser);
+  yield* openIssueUrl(url, flags.noBrowser);
 });

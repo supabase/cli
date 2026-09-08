@@ -2,9 +2,9 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyMigrationDbRuntimeLayer } from "../migration.layers.ts";
-import { legacyMigrationDown } from "./down.handler.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { migrationDbRuntimeLayer } from "../migration.layers.ts";
+import { migrationDown } from "./down.handler.ts";
 
 const config = {
   // `--last` is conceptually a uint, default 1. Effect has no uint, so reject
@@ -44,14 +44,14 @@ const config = {
   ),
 } as const;
 
-export type LegacyMigrationDownFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type MigrationDownFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyMigrationDownCommand = Command.make("down", config).pipe(
+export const migrationDownCommand = Command.make("down", config).pipe(
   Command.withDescription("Resets applied migrations up to the last n versions."),
   Command.withShortDescription("Resets applied migrations up to the last n versions"),
   Command.withHandler((flags) =>
-    legacyMigrationDown(flags).pipe(
-      withLegacyCommandInstrumentation({
+    migrationDown(flags).pipe(
+      withCommandTelemetry({
         flags: {
           last: flags.last,
           "db-url": flags.dbUrl,
@@ -66,5 +66,5 @@ export const legacyMigrationDownCommand = Command.make("down", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyMigrationDbRuntimeLayer(["migration", "down"])),
+  Command.provide(migrationDbRuntimeLayer(["migration", "down"])),
 );

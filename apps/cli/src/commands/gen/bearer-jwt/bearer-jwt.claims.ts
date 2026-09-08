@@ -1,7 +1,7 @@
 import { Option } from "effect";
-import { encodeGoStructJsonBody } from "../../../command-internal/legacy-go-output.encoders.ts";
-import { legacyGoJsonKindName } from "../../../command-internal/legacy-go-json.ts";
-import { legacyAddSecondsAndFloor, type LegacyBearerJwtInstant } from "./bearer-jwt.flags.ts";
+import { encodeGoStructJsonBody } from "../../../command-internal/go-output.encoders.ts";
+import { goJsonKindName } from "../../../command-internal/go-json.ts";
+import { addSecondsAndFloor, type BearerJwtInstant } from "./bearer-jwt.flags.ts";
 
 /**
  * Pure claims-building logic for `gen bearer-jwt`. Kept out of the
@@ -12,32 +12,32 @@ import { legacyAddSecondsAndFloor, type LegacyBearerJwtInstant } from "./bearer-
  * The claims object is always a `jwt.MapClaims`-shaped map, never a
  * `CustomClaims` struct. `encoding/json`-style map encoding serializes keys
  * in SORTED (alphabetical) order, unlike a struct's declaration order — see
- * {@link legacyEncodeBearerJwtClaims}, which every caller MUST use to
+ * {@link encodeBearerJwtClaims}, which every caller MUST use to
  * serialize the object this module builds (a plain `JSON.stringify` would
  * preserve insertion order instead, which is correct for
- * `legacyGenerateAsymmetricGoJwt`'s struct-shaped claims but wrong here).
+ * `generateAsymmetricGoJwt`'s struct-shaped claims but wrong here).
  */
 
-export interface LegacyBearerJwtClaimsInput {
+export interface BearerJwtClaimsInput {
   readonly role: string;
   readonly sub: Option.Option<string>;
   /**
    * The parsed `--exp` instant (RFC3339), WITHOUT flooring — `Option.none()` when the
-   * flag was not given. An exact {@link LegacyBearerJwtInstant}, not a single float —
+   * flag was not given. An exact {@link BearerJwtInstant}, not a single float —
    * see that type's own doc comment for why a single `number` cannot carry an
    * epoch-scale whole-second count and nanosecond precision together without silent
    * rounding.
    */
-  readonly expiresAt: Option.Option<LegacyBearerJwtInstant>;
+  readonly expiresAt: Option.Option<BearerJwtInstant>;
   /**
    * `--valid-for`, parsed from Go-duration syntax into seconds WITHOUT flooring —
-   * see {@link legacyParseBearerJwtValidFor}'s own doc comment for why sub-second
+   * see {@link parseBearerJwtValidFor}'s own doc comment for why sub-second
    * precision must survive until the final `exp`/`iat` computation below.
    */
   readonly validForSeconds: number;
   /**
    * `Date.now()`-derived instant, injected so callers (and tests) control "now" — an
-   * exact {@link LegacyBearerJwtInstant} built directly from `Date.now()`'s integer
+   * exact {@link BearerJwtInstant} built directly from `Date.now()`'s integer
    * milliseconds (see `bearer-jwt.handler.ts`), NOT pre-floored to whole seconds.
    * Flooring it before this module ever sees it would compute `exp = now + validFor`
    * from an already-truncated `now`, shortening the token's lifetime by up to a second
@@ -46,7 +46,7 @@ export interface LegacyBearerJwtClaimsInput {
    * adding the raw fractional time and truncating `iat`/`exp` separately
    * afterward.
    */
-  readonly nowInstant: LegacyBearerJwtInstant;
+  readonly nowInstant: BearerJwtInstant;
 }
 
 /**
@@ -56,13 +56,13 @@ export interface LegacyBearerJwtClaimsInput {
  *     from the explicit expiry to derive `iat`, not added to `now`).
  *   - Both arithmetic branches use exact-nanosecond `time.Time`-style math and only floor
  *     the FINAL `exp`/`iat` to whole seconds — so `validForSeconds` (which may carry
- *     sub-second precision, see {@link LegacyBearerJwtClaimsInput.validForSeconds}) must
+ *     sub-second precision, see {@link BearerJwtClaimsInput.validForSeconds}) must
  *     be applied BEFORE flooring, not floored first and then applied:
  *     `--exp 2030-01-01T00:00:00Z --valid-for 1.5s` must yield
  *     `iat=1893455998` — flooring the 1.5s duration to 1s first (as this port previously
  *     did) would wrongly yield `1893455999`.
- *   - `expiresAt`/`nowInstant` are exact {@link LegacyBearerJwtInstant}s, not floats (see
- *     that type's own doc comment) — `legacyAddSecondsAndFloor` combines an instant with
+ *   - `expiresAt`/`nowInstant` are exact {@link BearerJwtInstant}s, not floats (see
+ *     that type's own doc comment) — `addSecondsAndFloor` combines an instant with
  *     `validForSeconds` using exact integer nanosecond arithmetic and returns the
  *     correctly-floored whole-second result in one step, so neither branch below ever
  *     adds an epoch-scale whole-second count directly to a sub-second float (which plain
@@ -80,23 +80,21 @@ export interface LegacyBearerJwtClaimsInput {
  *     claim keeps its original casing regardless.
  *   - `sub`/`exp`/`iat` all carry the embedded `jwt.RegisteredClaims` `omitempty` tags —
  *     `sub` only when non-empty, `exp`/`iat` always (both are always-set `*NumericDate`s
- *     here, matching mapstructure's non-nil-pointer handling — see `legacy-go-jwt.ts`'s
+ *     here, matching mapstructure's non-nil-pointer handling — see `go-jwt.ts`'s
  *     sibling doc comments for the general `omitempty`-in-mapstructure background).
  *   - `iss`/`ref`/`aud`/`nbf`/`jti` never appear — bearer-jwt has no flag that sets any of
  *     them, so they stay at their zero value and get `omitempty`-dropped.
  */
-export function legacyBuildBearerJwtClaims(
-  input: LegacyBearerJwtClaimsInput,
-): Record<string, unknown> {
+export function buildBearerJwtClaims(input: BearerJwtClaimsInput): Record<string, unknown> {
   let exp: number;
   let iat: number;
   if (Option.isNone(input.expiresAt)) {
     iat = input.nowInstant.wholeSeconds;
-    exp = legacyAddSecondsAndFloor(input.nowInstant, input.validForSeconds);
+    exp = addSecondsAndFloor(input.nowInstant, input.validForSeconds);
   } else {
     const rawExp = input.expiresAt.value;
     exp = rawExp.wholeSeconds;
-    iat = legacyAddSecondsAndFloor(rawExp, -input.validForSeconds);
+    iat = addSecondsAndFloor(rawExp, -input.validForSeconds);
   }
 
   const claims: Record<string, unknown> = {
@@ -186,7 +184,7 @@ const GO_JSON_LITERALS: Record<string, string> = { n: "null", t: "true", f: "fal
  *
  * `JSON.parse` silently converts an overflowing literal to `Infinity`/`-Infinity`
  * (`JSON.parse('{"extra":1e309}')` yields `{ extra: Infinity }`, which
- * {@link legacyEncodeBearerJwtClaims}'s Go-compatible encoder then serializes as
+ * {@link encodeBearerJwtClaims}'s Go-compatible encoder then serializes as
  * `null`, per `encoding/json`'s own float64-to-JSON-number behavior for non-finite
  * values) — but decoding into `jwt.MapClaims` (which decodes every JSON
  * number as a Go `float64`) must fail outright: `strconv.ParseFloat` returns a range
@@ -266,7 +264,7 @@ function reportGoJsonTrailingGarbage(trimmed: string, validPrefixLength: number)
  * the established scanner (accepted gap — no fixture exists for `--payload`
  * parsing at all; see this command's own audit notes).
  */
-function legacyGoJsonSyntaxErrorMessage(raw: string): string {
+function goJsonSyntaxErrorMessage(raw: string): string {
   const trimmed = raw.replace(/^\s+/, "");
   if (trimmed.length === 0) {
     return "unexpected end of JSON input";
@@ -339,7 +337,7 @@ function legacyGoJsonSyntaxErrorMessage(raw: string): string {
  * (`bearer-jwt.handler.ts`) wraps it with the established `"failed to parse
  * payload: %w"` prefix.
  */
-export function legacyMergeBearerJwtPayload(
+export function mergeBearerJwtPayload(
   claims: Record<string, unknown>,
   payload: string,
 ): Record<string, unknown> {
@@ -347,14 +345,14 @@ export function legacyMergeBearerJwtPayload(
   try {
     parsed = JSON.parse(payload);
   } catch {
-    throw new Error(legacyGoJsonSyntaxErrorMessage(payload));
+    throw new Error(goJsonSyntaxErrorMessage(payload));
   }
   if (parsed === null) {
     return claims;
   }
   if (Array.isArray(parsed) || typeof parsed !== "object") {
     throw new Error(
-      `json: cannot unmarshal ${legacyGoJsonKindName(parsed)} into Go value of type jwt.MapClaims`,
+      `json: cannot unmarshal ${goJsonKindName(parsed)} into Go value of type jwt.MapClaims`,
     );
   }
   // Only reachable once the top-level shape is already a map: a top-level
@@ -386,6 +384,6 @@ export function legacyMergeBearerJwtPayload(
  * introducing a second identical encoder under a different name would just
  * be a rename, not a behavior difference.
  */
-export function legacyEncodeBearerJwtClaims(claims: Record<string, unknown>): string {
+export function encodeBearerJwtClaims(claims: Record<string, unknown>): string {
   return encodeGoStructJsonBody(claims);
 }

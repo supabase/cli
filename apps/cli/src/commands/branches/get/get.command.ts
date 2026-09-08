@@ -2,9 +2,9 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyBranchesGet } from "./get.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { branchesGet } from "./get.handler.ts";
 
 const config = {
   name: Argument.string("name").pipe(
@@ -17,18 +17,18 @@ const config = {
   ),
 } as const;
 
-export type LegacyBranchesGetFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type BranchesGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyBranchesGetCommand = Command.make("get", config).pipe(
+export const branchesGetCommand = Command.make("get", config).pipe(
   Command.withDescription(
     "Retrieve details of the specified preview branch.\n\nNote: For the main branch, password-dependent fields (POSTGRES_URL, POSTGRES_URL_NON_POOLING) are not populated because production database credentials are not retrievable via API.",
   ),
   Command.withShortDescription("Retrieve details of a preview branch"),
   Command.withHandler((flags) =>
-    legacyBranchesGet(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+    branchesGet(flags).pipe(
+      withCommandTelemetry({ flags, safeFlags: ["project-ref"] }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["branches", "get"])),
+  Command.provide(managementApiRuntimeLayer(["branches", "get"])),
 );

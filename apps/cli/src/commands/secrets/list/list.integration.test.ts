@@ -5,13 +5,13 @@ import { Effect, Exit, Option } from "effect";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  LEGACY_VALID_REF,
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyPlatformApi,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { legacySecretsList } from "./list.handler.ts";
+  VALID_REF,
+  buildTestRuntime,
+  mockCommandSettings,
+  mockCommandPlatformApi,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { secretsList } from "./list.handler.ts";
 
 type SecretsResponse = typeof V1ListAllSecretsOutput.Type;
 
@@ -29,19 +29,19 @@ interface SetupOpts {
   projectId?: Option.Option<string>;
 }
 
-const tempRoot = useLegacyTempWorkdir("supabase-secrets-list-int-");
+const tempRoot = useTempWorkdir("supabase-secrets-list-int-");
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 200, body: opts.response ?? [] },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({
+  const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
     projectId: opts.projectId,
   });
-  const layer = buildLegacyTestRuntime({
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -50,11 +50,11 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api };
 }
 
-describe("legacy secrets list integration", () => {
+describe("secrets list integration", () => {
   it.live("renders a Glamour ASCII table with NAME and DIGEST columns in text mode", () => {
     const { layer, out } = setup({ response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
-      yield* legacySecretsList({ projectRef: Option.none() });
+      yield* secretsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("NAME");
       expect(out.stdoutText).toContain("DIGEST");
       expect(out.stdoutText).toContain("BAR");
@@ -72,7 +72,7 @@ describe("legacy secrets list integration", () => {
       ],
     });
     return Effect.gen(function* () {
-      yield* legacySecretsList({ projectRef: Option.none() });
+      yield* secretsList({ projectRef: Option.none() });
       const alphaPos = out.stdoutText.indexOf("ALPHA");
       const midPos = out.stdoutText.indexOf("MID");
       const zedPos = out.stdoutText.indexOf("ZED");
@@ -87,7 +87,7 @@ describe("legacy secrets list integration", () => {
       response: [{ name: "with|pipe", value: "digest" }],
     });
     return Effect.gen(function* () {
-      yield* legacySecretsList({ projectRef: Option.none() });
+      yield* secretsList({ projectRef: Option.none() });
       // Reference pipeline: markdown `\|` → glamour decodes to literal `|`.
       // Our renderer skips the markdown step and emits the literal pipe directly.
       expect(out.stdoutText).toContain("with|pipe");
@@ -97,7 +97,7 @@ describe("legacy secrets list integration", () => {
   it.live("emits a success event with { secrets } for --output-format=json", () => {
     const { layer, out } = setup({ format: "json", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
-      yield* legacySecretsList({ projectRef: Option.none() });
+      yield* secretsList({ projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({
@@ -112,7 +112,7 @@ describe("legacy secrets list integration", () => {
   it.live("emits a success event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
-      yield* legacySecretsList({ projectRef: Option.none() });
+      yield* secretsList({ projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
     }).pipe(Effect.provide(layer));
@@ -121,7 +121,7 @@ describe("legacy secrets list integration", () => {
   it.live("emits Go-byte-exact indented JSON to stdout for --output json", () => {
     const { layer, out } = setup({ goOutput: "json", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
-      yield* legacySecretsList({ projectRef: Option.none() });
+      yield* secretsList({ projectRef: Option.none() });
       // Sorted (BAR before FOO) and alphabetical-key JSON, matching the
       // SecretResponse {Name, UpdatedAt, Value} field order.
       expect(out.stdoutText).toBe(
@@ -143,7 +143,7 @@ describe("legacy secrets list integration", () => {
   it.live("emits a YAML array to stdout for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
-      yield* legacySecretsList({ projectRef: Option.none() });
+      yield* secretsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("- name: BAR");
       expect(out.stdoutText).toContain("value: digest-bar");
       expect(out.stdoutText).toContain("- name: FOO");
@@ -153,7 +153,7 @@ describe("legacy secrets list integration", () => {
   it.live("wraps the array as { secrets = [...] } for --output toml", () => {
     const { layer, out } = setup({ goOutput: "toml", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
-      yield* legacySecretsList({ projectRef: Option.none() });
+      yield* secretsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("[[secrets]]");
       // PascalCase field names with BurntSushi's 2-space indent (CLI-1975).
       expect(out.stdoutText).toContain('  Name = "BAR"');
@@ -161,14 +161,14 @@ describe("legacy secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacySecretsEnvNotSupportedError for --output env", () => {
+  it.live("fails with SecretsEnvNotSupportedError for --output env", () => {
     const { layer } = setup({ goOutput: "env", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySecretsList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(secretsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("LegacySecretsEnvNotSupportedError");
+        expect(errJson).toContain("SecretsEnvNotSupportedError");
         expect(errJson).toContain("--output env flag is not supported");
       }
     }).pipe(Effect.provide(layer));
@@ -177,7 +177,7 @@ describe("legacy secrets list integration", () => {
   it.live("treats --output pretty as identical to text mode (Glamour table)", () => {
     const { layer, out } = setup({ goOutput: "pretty", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
-      yield* legacySecretsList({ projectRef: Option.none() });
+      yield* secretsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("DIGEST");
     }).pipe(Effect.provide(layer));
   });
@@ -189,7 +189,7 @@ describe("legacy secrets list integration", () => {
       response: SAMPLE_SECRETS,
     });
     return Effect.gen(function* () {
-      yield* legacySecretsList({ projectRef: Option.none() });
+      yield* secretsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("- name: BAR");
       expect(out.stdoutText.startsWith("[")).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -198,42 +198,42 @@ describe("legacy secrets list integration", () => {
   it.live("passes the resolved project ref into the listAllSecrets URL", () => {
     const { layer, api } = setup({ response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
-      yield* legacySecretsList({ projectRef: Option.none() });
+      yield* secretsList({ projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
-      expect(api.requests[0]?.url).toContain(`/v1/projects/${LEGACY_VALID_REF}/secrets`);
+      expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/secrets`);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses --project-ref flag value over LegacyCliSettings.projectId env", () => {
+  it.live("uses --project-ref flag value over CommandSettings.projectId env", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
-      yield* legacySecretsList({ projectRef: Option.some(flagRef) });
+      yield* secretsList({ projectRef: Option.some(flagRef) });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${flagRef}/`);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacySecretsListUnexpectedStatusError on HTTP 503", () => {
+  it.live("fails with SecretsListUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503, response: [] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySecretsList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(secretsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("LegacySecretsListUnexpectedStatusError");
+        expect(errJson).toContain("SecretsListUnexpectedStatusError");
         expect(errJson).toContain("unexpected list secrets status 503");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacySecretsListNetworkError on transport failure", () => {
+  it.live("fails with SecretsListNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySecretsList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(secretsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("LegacySecretsListNetworkError");
+        expect(errJson).toContain("SecretsListNetworkError");
         expect(errJson).toContain("failed to list secrets");
       }
     }).pipe(Effect.provide(layer));
@@ -242,7 +242,7 @@ describe("legacy secrets list integration", () => {
   it.live("withJsonErrorHandling emits a fail event in JSON mode on 503", () => {
     const { layer, out } = setup({ format: "json", status: 503, response: [] });
     return Effect.gen(function* () {
-      yield* legacySecretsList({ projectRef: Option.none() }).pipe(withJsonErrorHandling);
+      yield* secretsList({ projectRef: Option.none() }).pipe(withJsonErrorHandling);
       expect(out.messages.some((m) => m.type === "fail")).toBe(true);
     }).pipe(Effect.provide(layer));
   });

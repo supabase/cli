@@ -1,8 +1,8 @@
 import type { ConfigChange } from "@supabase/config";
 import { projectConfigApiBlockKeys } from "@supabase/config/internal";
 
-import { LEGACY_BRANCH_UUID_PATTERN } from "../../command-internal/legacy-ref-patterns.ts";
-import { legacySanitizeInlineName } from "../../command-internal/legacy-http-errors.ts";
+import { BRANCH_UUID_PATTERN } from "../../command-internal/ref-patterns.ts";
+import { sanitizeInlineName } from "../../command-internal/http-errors.ts";
 
 /**
  * Shared pure formatters, payload fragments, and input adapters for the
@@ -13,7 +13,7 @@ import { legacySanitizeInlineName } from "../../command-internal/legacy-http-err
  * wording (CLI-2064, Hoist Before You Duplicate).
  *
  * Every non-constant string interpolated into TEXT output goes through
- * `legacySanitizeInlineName`: path segments (`[remotes.*]` names,
+ * `sanitizeInlineName`: path segments (`[remotes.*]` names,
  * `sms.test_otp` record keys) and env-var/branch names are unconstrained
  * user/API-controlled strings, so a hostile value could otherwise emit raw
  * ANSI or forge output lines (e.g. a name ending `\nNo config differences
@@ -29,7 +29,7 @@ import { legacySanitizeInlineName } from "../../command-internal/legacy-http-err
  */
 const REMOTE_CONFIG_BLOCKS: ReadonlyArray<string> = projectConfigApiBlockKeys;
 
-export interface LegacyConfigApiScope {
+export interface ConfigApiScope {
   /** Blocks the response's `data.attributes` carried with at least one key. */
   readonly present: ReadonlyArray<string>;
   /** Blocks absent from the response — or present but EMPTY, which is how a
@@ -44,7 +44,7 @@ export interface LegacyConfigApiScope {
  * token is not itself prose). Owned here so `diff`/`pull`/`push` never
  * disagree on how a class renders.
  */
-export const LEGACY_CONFIG_CLASS_LABELS: Record<ConfigChange["class"], string> = {
+export const CONFIG_CLASS_LABELS: Record<ConfigChange["class"], string> = {
   update: "update",
   remote_only: "remote-only",
   local_only: "local-only",
@@ -64,9 +64,7 @@ function isPopulatedBlockRecord(value: unknown): value is Readonly<Record<string
  * — echoed to the user so a partially-populated response is never mistaken
  * for a clean bill of health.
  */
-export function legacyConfigApiScope(
-  attributes: Readonly<Record<string, unknown>>,
-): LegacyConfigApiScope {
+export function configApiScope(attributes: Readonly<Record<string, unknown>>): ConfigApiScope {
   const present = REMOTE_CONFIG_BLOCKS.filter((block) => isPopulatedBlockRecord(attributes[block]));
   return {
     present,
@@ -75,7 +73,7 @@ export function legacyConfigApiScope(
 }
 
 /** The scope-echo line, printed to stderr once the response arrived. */
-export function legacyConfigScopeLine(scope: LegacyConfigApiScope): string {
+export function configScopeLine(scope: ConfigApiScope): string {
   const present = scope.present.length === 0 ? "(none)" : scope.present.join(", ");
   const suffix = scope.missing.length === 0 ? "" : ` (not returned: ${scope.missing.join(", ")})`;
   return `Comparison scope: ${present}${suffix}\n`;
@@ -90,22 +88,22 @@ export function legacyConfigScopeLine(scope: LegacyConfigApiScope): string {
  * — a UUID is an identifier, not a display name, so it is never quoted as
  * one.
  */
-export interface LegacyConfigTargetPhraseInput {
+export interface ConfigTargetPhraseInput {
   readonly projectRef: string;
   readonly branch: string | undefined;
 }
 
-export function legacyConfigTargetPhrase(target: LegacyConfigTargetPhraseInput): string {
-  const projectRef = legacySanitizeInlineName(target.projectRef);
+export function configTargetPhrase(target: ConfigTargetPhraseInput): string {
+  const projectRef = sanitizeInlineName(target.projectRef);
   if (target.branch === undefined) {
     return `project ${projectRef}`;
   }
-  return LEGACY_BRANCH_UUID_PATTERN.test(target.branch)
-    ? `branch ${legacySanitizeInlineName(target.branch)} (project ref ${projectRef})`
-    : `'${legacySanitizeInlineName(target.branch)}' (branch ${projectRef})`;
+  return BRANCH_UUID_PATTERN.test(target.branch)
+    ? `branch ${sanitizeInlineName(target.branch)} (project ref ${projectRef})`
+    : `'${sanitizeInlineName(target.branch)}' (branch ${projectRef})`;
 }
 
-export function legacyConfigRenderValue(value: unknown, absent: string): string {
+export function configRenderValue(value: unknown, absent: string): string {
   if (value === undefined) {
     return absent;
   }
@@ -116,11 +114,11 @@ export function legacyConfigRenderValue(value: unknown, absent: string): string 
 }
 
 /** Display-only join — `ConfigChange.path` is segment-array everywhere else. */
-export function legacyConfigRenderPath(path: ReadonlyArray<string>): string {
-  return legacySanitizeInlineName(path.join("."));
+export function configRenderPath(path: ReadonlyArray<string>): string {
+  return sanitizeInlineName(path.join("."));
 }
 
-export function legacyConfigPlural(count: number, singular: string, pluralForm: string): string {
+export function configPlural(count: number, singular: string, pluralForm: string): string {
   return `${count} ${count === 1 ? singular : pluralForm}`;
 }
 
@@ -133,7 +131,7 @@ function nullableValueEntry(key: string, value: unknown): Record<string, unknown
  * diff`'s payload and `config pull`'s planned-change payload (which layers
  * `written`/`skipped_reason` on top).
  */
-export function legacyConfigChangePayloadEntry(change: ConfigChange): Record<string, unknown> {
+export function configChangePayloadEntry(change: ConfigChange): Record<string, unknown> {
   return {
     path: change.path,
     class: change.class,
@@ -145,7 +143,7 @@ export function legacyConfigChangePayloadEntry(change: ConfigChange): Record<str
 }
 
 function renderLocalChangeValue(change: ConfigChange): string {
-  const value = legacyConfigRenderValue(change.local, "(unset)");
+  const value = configRenderValue(change.local, "(unset)");
   // A populated local value on an undeclared path is the schema default the
   // projection materialized — the value a `config push` would write. Say so,
   // or "[remote-only]" reads as "this key exists only remotely", which is
@@ -164,25 +162,25 @@ function renderLocalChangeValue(change: ConfigChange): string {
  * a caller may append its own content (a note, a `[secret]` block) directly
  * after this string without checking whether it ends in a newline itself.
  */
-export function legacyConfigRenderChangeLines(changes: ReadonlyArray<ConfigChange>): string {
+export function configRenderChangeLines(changes: ReadonlyArray<ConfigChange>): string {
   return changes
     .map((change) => {
       const env =
         change.envVariables === undefined
           ? ""
-          : ` (from env ${legacySanitizeInlineName(change.envVariables.join(", "))})`;
+          : ` (from env ${sanitizeInlineName(change.envVariables.join(", "))})`;
       const block = [
-        `${legacyConfigRenderPath(change.path)} [${LEGACY_CONFIG_CLASS_LABELS[change.class]}]`,
+        `${configRenderPath(change.path)} [${CONFIG_CLASS_LABELS[change.class]}]`,
         `  local:  ${renderLocalChangeValue(change)}${env}`,
-        `  remote: ${legacyConfigRenderValue(change.remote, "(not returned)")}`,
+        `  remote: ${configRenderValue(change.remote, "(not returned)")}`,
       ].join("\n");
       return `${block}\n\n`;
     })
     .join("");
 }
 
-export function legacyConfigMaskedCaveat(masked: ReadonlyArray<ReadonlyArray<string>>): string {
-  return `${legacyConfigPlural(masked.length, "credential value", "credential values")} not compared (masked by the API): ${masked.map(legacyConfigRenderPath).join(", ")}`;
+export function configMaskedCaveat(masked: ReadonlyArray<ReadonlyArray<string>>): string {
+  return `${configPlural(masked.length, "credential value", "credential values")} not compared (masked by the API): ${masked.map(configRenderPath).join(", ")}`;
 }
 
 // Cause-neutral wording (review round, CLI-2314): not every `unmanaged` path
@@ -192,14 +190,12 @@ export function legacyConfigMaskedCaveat(masked: ReadonlyArray<ReadonlyArray<str
 // provider is active, not because anything is "disabled". "Not part of the
 // current comparison" covers every surviving `DISABLED_SENTINEL_PRUNES`/
 // `applyRawPresenceMask` reason without overclaiming a specific one.
-export function legacyConfigUnmanagedCaveat(
-  unmanaged: ReadonlyArray<ReadonlyArray<string>>,
-): string {
+export function configUnmanagedCaveat(unmanaged: ReadonlyArray<ReadonlyArray<string>>): string {
   const phrase =
     unmanaged.length === 1
       ? "1 declared property is not part of the current comparison and was not compared"
       : `${unmanaged.length} declared properties are not part of the current comparison and were not compared`;
-  return `${phrase}: ${unmanaged.map(legacyConfigRenderPath).join(", ")}`;
+  return `${phrase}: ${unmanaged.map(configRenderPath).join(", ")}`;
 }
 
 /**
@@ -208,7 +204,7 @@ export function legacyConfigUnmanagedCaveat(
  * is no sanitization concern here; still styled the same way as those two
  * caveats for consistency.
  */
-export function legacyConfigNotReturnedCaveat(missing: ReadonlyArray<string>): string {
+export function configNotReturnedCaveat(missing: ReadonlyArray<string>): string {
   const phrase =
     missing.length === 1
       ? "1 block was not returned by the API and was not compared"

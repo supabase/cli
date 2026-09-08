@@ -9,10 +9,10 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option, Redacted } from "effect";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 
-import { LegacyStackConfigError, legacyLoadStackConfig } from "./stack-config.ts";
+import { StackConfigError, loadStackConfig } from "./stack-config.ts";
 
 const load = (projectRoot: string) =>
-  legacyLoadStackConfig(projectRoot).pipe(Effect.provide(BunServices.layer));
+  loadStackConfig(projectRoot).pipe(Effect.provide(BunServices.layer));
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -43,7 +43,7 @@ function project(contents: string, signingKeys?: string): string {
   return root;
 }
 
-describe("legacyLoadStackConfig", () => {
+describe("loadStackConfig", () => {
   it.effect("maps service settings, secrets, function files, and explicit ports", () => {
     const root = project(`
 project_id = "stack-config-test"
@@ -197,7 +197,7 @@ env = { TOKEN = "env(SUPABASE_STACK_TEST_MISSING_ENV)" }
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure)).toBe(true);
-        if (Option.isSome(failure)) expect(failure.value).toBeInstanceOf(LegacyStackConfigError);
+        if (Option.isSome(failure)) expect(failure.value).toBeInstanceOf(StackConfigError);
         const message = String(exit.cause);
         expect(message).toContain("functions/.env");
         expect(message).toContain("lowercase");
@@ -400,7 +400,7 @@ enabled = false
     const root = mkdtempSync(join(tmpdir(), "supabase-stack-config-empty-"));
     roots.push(root);
     return Effect.gen(function* () {
-      const exit = yield* legacyLoadStackConfig(root).pipe(Effect.exit);
+      const exit = yield* loadStackConfig(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("supabase init");
     }).pipe(Effect.provide(BunServices.layer));

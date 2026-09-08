@@ -2,20 +2,20 @@ import { Effect, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { resolveLegacyAccessToken } from "../../../command-internal/legacy-resolve-token.ts";
-import { sanitizeLegacyErrorBody } from "../../../command-internal/legacy-http-errors.ts";
-import { legacyGoQuote } from "../../../command-internal/legacy-go-quote.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
+import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
+import { goQuote } from "../../../command-internal/go-quote.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
-  LegacySnippetsDownloadNetworkError,
-  LegacySnippetsDownloadUnexpectedStatusError,
-  LegacySnippetsInvalidIdError,
+  SnippetsDownloadNetworkError,
+  SnippetsDownloadUnexpectedStatusError,
+  SnippetsInvalidIdError,
 } from "../snippets.errors.ts";
-import type { LegacySnippetsDownloadFlags } from "./download.command.ts";
+import type { SnippetsDownloadFlags } from "./download.command.ts";
 
 const DASH_BYTE = 0x2d;
 
@@ -82,7 +82,7 @@ function isUrnUuidPrefix(bytes: Uint8Array): boolean {
  * non-UUID input would surface as a `SchemaError` with a `failed to download
  * snippet:` prefix instead of `invalid snippet ID:`.
  */
-export function legacyParseSnippetUuid(
+export function parseSnippetUuid(
   input: string,
 ): { readonly canonical: string } | { readonly error: string } {
   let s = new TextEncoder().encode(input);
@@ -93,7 +93,7 @@ export function legacyParseSnippetUuid(
     // urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
     case 45: {
       if (!isUrnUuidPrefix(s)) {
-        return { error: `invalid urn prefix: ${legacyGoQuote(s.subarray(0, 9))}` };
+        return { error: `invalid urn prefix: ${goQuote(s.subarray(0, 9))}` };
       }
       s = s.subarray(9);
       break;
@@ -132,7 +132,7 @@ export function legacyParseSnippetUuid(
 // `/v1/snippets/{id}` payload omits `description`, which the generated
 // `V1GetASnippetOutput` schema declares as `Union[String, Null]` (required).
 // Routing through the typed client surfaces `SchemaError: Missing key …` on
-// every non-test response. Same workaround as `legacy-linked-project-cache.layer.ts`.
+// every non-test response. Same workaround as `linked-project-cache.layer.ts`.
 function asRecord(obj: unknown): Record<string, unknown> {
   return typeof obj === "object" && obj !== null ? (obj as Record<string, unknown>) : {};
 }
@@ -143,28 +143,28 @@ function readSql(body: unknown): string {
   return typeof sql === "string" ? sql : "";
 }
 
-export const legacySnippetsDownload = Effect.fn("legacy.snippets.download")(function* (
-  flags: LegacySnippetsDownloadFlags,
+export const snippetsDownload = Effect.fn("snippets.download")(function* (
+  flags: SnippetsDownloadFlags,
 ) {
   const output = yield* Output;
   const httpClient = yield* HttpClient.HttpClient;
-  const cliSettings = yield* LegacyCliSettings;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const cliSettings = yield* CommandSettings;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
     const ref = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
-      const parsed = legacyParseSnippetUuid(flags.snippetId);
+      const parsed = parseSnippetUuid(flags.snippetId);
       if ("error" in parsed) {
-        return yield* new LegacySnippetsInvalidIdError({
+        return yield* new SnippetsInvalidIdError({
           message: `invalid snippet ID: ${parsed.error}`,
         });
       }
 
-      const tokenOpt = yield* resolveLegacyAccessToken;
+      const tokenOpt = yield* resolveAccessToken;
       const authHeader: (
         req: HttpClientRequest.HttpClientRequest,
       ) => HttpClientRequest.HttpClientRequest = Option.isSome(tokenOpt)
@@ -180,7 +180,7 @@ export const legacySnippetsDownload = Effect.fn("legacy.snippets.download")(func
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
         Effect.catch(
           (cause) =>
-            new LegacySnippetsDownloadNetworkError({
+            new SnippetsDownloadNetworkError({
               message: `failed to download snippet: ${cause.reason.description ?? cause.reason._tag}`,
             }),
         ),
@@ -189,8 +189,8 @@ export const legacySnippetsDownload = Effect.fn("legacy.snippets.download")(func
       if (response.status !== 200) {
         yield* fetching?.fail() ?? Effect.void;
         const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-        const body = sanitizeLegacyErrorBody(rawBody);
-        return yield* new LegacySnippetsDownloadUnexpectedStatusError({
+        const body = sanitizeErrorBody(rawBody);
+        return yield* new SnippetsDownloadUnexpectedStatusError({
           status: response.status,
           body,
           message: `unexpected download snippet status ${response.status}: ${body}`,
@@ -200,7 +200,7 @@ export const legacySnippetsDownload = Effect.fn("legacy.snippets.download")(func
       const rawBody = yield* response.json.pipe(
         Effect.catch(
           (cause) =>
-            new LegacySnippetsDownloadNetworkError({
+            new SnippetsDownloadNetworkError({
               message: `failed to download snippet: ${String(cause)}`,
               // 200-response body decode failure — an API-response problem, not
               // a transport/network failure.
@@ -220,7 +220,7 @@ export const legacySnippetsDownload = Effect.fn("legacy.snippets.download")(func
       }
 
       // `-o`/`--output` is ignored entirely; this always prints the raw SQL —
-      // no branching on `LegacyOutputFlag`.
+      // no branching on `OutputFlag`.
       yield* output.raw(readSql(rawBody) + "\n");
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));

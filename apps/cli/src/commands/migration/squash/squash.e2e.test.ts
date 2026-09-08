@@ -7,7 +7,7 @@ import { runSupabase, stripAnsi } from "../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
-describe("supabase migration squash (legacy)", () => {
+describe("supabase migration squash", () => {
   let workdir: string;
   beforeEach(() => {
     workdir = mkdtempSync(join(tmpdir(), "sb-mig-squash-e2e-"));
@@ -21,7 +21,7 @@ describe("supabase migration squash (legacy)", () => {
   // Real-subprocess guard for the production layer graph: `--version 0_init` is
   // not a valid integer, so the bare `invalid version number` message
   // (no repair-style `failed to parse <v>:` prefix) must surface — proving the
-  // real `legacyMigrationSquashRuntimeLayer` builds end to end, without ever
+  // real `migrationSquashRuntimeLayer` builds end to end, without ever
   // touching Docker/Postgres. This is the same class of missing-service bug the
   // `migration fetch` e2e exists to catch. Unlike a declined confirmation prompt
   // (a genuine cancellation), this is a genuine validation error, so the usual
@@ -34,7 +34,6 @@ describe("supabase migration squash (legacy)", () => {
       const { exitCode, stderr } = await runSupabase(
         ["migration", "squash", "--version", "0_init"],
         {
-          entrypoint: "legacy",
           cwd: workdir,
         },
       );
@@ -60,7 +59,6 @@ describe("supabase migration squash (legacy)", () => {
       );
 
       const { exitCode, stdout, stderr } = await runSupabase(["migration", "squash", "--local"], {
-        entrypoint: "legacy",
         cwd: workdir,
       });
 

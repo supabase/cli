@@ -1,54 +1,51 @@
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/legacy-go-output.encoders.ts";
+import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
+import { GO_SSL_ENFORCEMENT_RESPONSE } from "../ssl-enforcement.go-payload.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
-import { LEGACY_GO_SSL_ENFORCEMENT_RESPONSE } from "../ssl-enforcement.go-payload.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
-import {
-  LegacySslEnforcementMutuallyExclusiveFlagsError,
-  LegacySslEnforcementNoEnableDisableFlagError,
-  LegacySslEnforcementUpdateNetworkError,
-  LegacySslEnforcementUpdateUnexpectedStatusError,
+  SslEnforcementMutuallyExclusiveFlagsError,
+  SslEnforcementNoEnableDisableFlagError,
+  SslEnforcementUpdateNetworkError,
+  SslEnforcementUpdateUnexpectedStatusError,
 } from "../ssl-enforcement.errors.ts";
 import { printSslStatus } from "../ssl-enforcement.format.ts";
-import type { LegacySslEnforcementUpdateFlags } from "./update.command.ts";
+import type { SslEnforcementUpdateFlags } from "./update.command.ts";
 
 // (Lowercase `ssl` in the network message is intentional.)
-const mapUpdateError = mapLegacyHttpError({
-  networkError: LegacySslEnforcementUpdateNetworkError,
-  statusError: LegacySslEnforcementUpdateUnexpectedStatusError,
+const mapUpdateError = mapHttpError({
+  networkError: SslEnforcementUpdateNetworkError,
+  statusError: SslEnforcementUpdateUnexpectedStatusError,
   networkMessage: (cause) => `failed to update ssl enforcement: ${cause}`,
   statusMessage: (status, body) => `unexpected update SSL status ${status}: ${body}`,
 });
 
-export const legacySslEnforcementUpdate = Effect.fn("legacy.ssl-enforcement.update")(function* (
-  flags: LegacySslEnforcementUpdateFlags,
+export const sslEnforcementUpdate = Effect.fn("ssl-enforcement.update")(function* (
+  flags: SslEnforcementUpdateFlags,
 ) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   // Telemetry flushes on every invocation, including validation failures — matches Go's
   // PersistentPostRun semantics. The linked-project cache write happens only after the ref
   // has been resolved (it requires `ref` as input), so it wraps the inner sub-effect.
   yield* Effect.gen(function* () {
     if (flags.enableDbSslEnforcement && flags.disableDbSslEnforcement) {
-      return yield* new LegacySslEnforcementMutuallyExclusiveFlagsError();
+      return yield* new SslEnforcementMutuallyExclusiveFlagsError();
     }
     if (!flags.enableDbSslEnforcement && !flags.disableDbSslEnforcement) {
-      return yield* new LegacySslEnforcementNoEnableDisableFlagError();
+      return yield* new SslEnforcementNoEnableDisableFlagError();
     }
 
     const ref = yield* resolver.resolve(flags.projectRef);
@@ -78,11 +75,11 @@ export const legacySslEnforcementUpdate = Effect.fn("legacy.ssl-enforcement.upda
         return;
       }
       if (goFmt === "yaml") {
-        yield* output.raw(encodeLegacyGoYaml(response, LEGACY_GO_SSL_ENFORCEMENT_RESPONSE));
+        yield* output.raw(encodeGoYaml(response, GO_SSL_ENFORCEMENT_RESPONSE));
         return;
       }
       if (goFmt === "toml") {
-        yield* output.raw(encodeLegacyGoToml(response, LEGACY_GO_SSL_ENFORCEMENT_RESPONSE));
+        yield* output.raw(encodeGoToml(response, GO_SSL_ENFORCEMENT_RESPONSE));
         return;
       }
       if (goFmt === "env") {

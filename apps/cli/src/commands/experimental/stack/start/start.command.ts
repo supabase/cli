@@ -1,8 +1,8 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyExperimentalStackStart } from "./start.handler.ts";
+import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { experimentalStackStart } from "./start.handler.ts";
 
 const config = {
   stack: Flag.string("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
@@ -24,9 +24,9 @@ const config = {
   ),
 } as const;
 
-export type LegacyExperimentalStackStartFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type ExperimentalStackStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyExperimentalStackStartCommand = Command.make("start", config).pipe(
+export const experimentalStackStartCommand = Command.make("start", config).pipe(
   Command.withDescription("Create or resume a managed local Supabase stack."),
   Command.withShortDescription("Start a managed local stack"),
   Command.withExamples([
@@ -40,8 +40,8 @@ export const legacyExperimentalStackStartCommand = Command.make("start", config)
     },
   ]),
   Command.withHandler((flags) =>
-    legacyExperimentalStackStart(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, config }),
+    experimentalStackStart(flags).pipe(
+      withCommandTelemetry({ flags, config }),
       withJsonErrorHandling,
     ),
   ),

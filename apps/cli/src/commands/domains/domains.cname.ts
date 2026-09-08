@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { LegacyDomainsCnameError } from "./domains.errors.ts";
+import { DomainsCnameError } from "./domains.errors.ts";
 
 // Cloudflare DNS-over-HTTPS record type for CNAME (IANA DNS parameter 5).
 const CNAME_TYPE = 5;
@@ -15,11 +15,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Internal discriminated failure for the CNAME verification pipeline:
  * `transport: true` for resolver failures (fetch error, non-200, timeout),
  * `transport: false` for a genuine finding about the user's DNS records
- * (no CNAME answer). Consumed exclusively by {@link verifyLegacyCname}, which
- * folds it into `LegacyDomainsCnameError` so telemetry can tell a Cloudflare
+ * (no CNAME answer). Consumed exclusively by {@link verifyCname}, which
+ * folds it into `DomainsCnameError` so telemetry can tell a Cloudflare
  * DoH outage apart from a misconfigured record.
  */
-export interface LegacyCnameFailure {
+export interface CnameFailure {
   readonly transport: boolean;
   readonly detail: string;
 }
@@ -37,7 +37,7 @@ export interface LegacyCnameFailure {
 export function parseFirstCname(
   payload: unknown,
   host: string,
-): Effect.Effect<string, LegacyCnameFailure> {
+): Effect.Effect<string, CnameFailure> {
   const answers = isRecord(payload) && Array.isArray(payload["Answer"]) ? payload["Answer"] : [];
   for (const answer of answers) {
     if (isRecord(answer) && answer["type"] === CNAME_TYPE && typeof answer["data"] === "string") {
@@ -45,7 +45,7 @@ export function parseFirstCname(
     }
   }
   // Cap the embedded answer dump (mirrors the 1024-byte policy in
-  // `sanitizeLegacyErrorBody`) so an oversized DNS response can't flood the
+  // `sanitizeErrorBody`) so an oversized DNS response can't flood the
   // error envelope. Both the cap and the readable-JSON format are deliberate
   // TS divergences: `ResolveCNAME` (`apps/cli-go/internal/utils/api.go:73-78`)
   // JSON-marshals the answers to a `[]byte`, then formats that `[]byte` with
@@ -72,7 +72,7 @@ export function formatCnameCause(cause: unknown): string {
   return String(cause);
 }
 
-const transportFailure = (cause: unknown): LegacyCnameFailure => ({
+const transportFailure = (cause: unknown): CnameFailure => ({
   transport: true,
   detail: formatCnameCause(cause),
 });
@@ -86,7 +86,7 @@ const transportFailure = (cause: unknown): LegacyCnameFailure => ({
  * The `HttpClient` is passed in (not yielded) so this helper carries no service
  * requirement and composes cleanly into the create handler.
  */
-export const verifyLegacyCname = Effect.fnUntraced(function* (args: {
+export const verifyCname = Effect.fnUntraced(function* (args: {
   readonly httpClient: HttpClient.HttpClient;
   readonly projectHost: string;
   readonly ref: string;
@@ -103,7 +103,7 @@ export const verifyLegacyCname = Effect.fnUntraced(function* (args: {
       .execute(request)
       .pipe(Effect.mapError(transportFailure));
     if (response.status !== 200) {
-      return yield* Effect.fail<LegacyCnameFailure>({
+      return yield* Effect.fail<CnameFailure>({
         transport: true,
         detail: `unexpected DNS query status ${response.status}`,
       });
@@ -113,11 +113,11 @@ export const verifyLegacyCname = Effect.fnUntraced(function* (args: {
   }).pipe(
     Effect.timeout("10 seconds"),
     Effect.mapError((cause) => {
-      const failure: LegacyCnameFailure =
+      const failure: CnameFailure =
         typeof cause === "object" && cause !== null && "transport" in cause
           ? cause
           : transportFailure(cause);
-      return new LegacyDomainsCnameError({
+      return new DomainsCnameError({
         message: `expected custom hostname '${args.customHostname}' to have a CNAME record pointing to your project at '${expected}', but it failed to resolve: ${failure.detail}`,
         transport: failure.transport,
       });
@@ -126,7 +126,7 @@ export const verifyLegacyCname = Effect.fnUntraced(function* (args: {
 
   if (resolved !== expected) {
     return yield* Effect.fail(
-      new LegacyDomainsCnameError({
+      new DomainsCnameError({
         message: `expected custom hostname '${args.customHostname}' to have a CNAME record pointing to your project at '${expected}', but it is currently set to '${resolved}'`,
       }),
     );

@@ -5,17 +5,17 @@ import {
   type StackRuntimePreference,
 } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
-import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
+import { OutputFlag } from "../../../../command-internal/global-flags.ts";
+import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import {
-  LegacyExperimentalStackApi,
-  LegacyExperimentalStackTargetResolver,
+  ExperimentalStackApi,
+  ExperimentalStackTargetResolver,
 } from "../stack.shared.ts";
-import { legacyLoadStackConfig } from "../stack-config.ts";
-import type { LegacyExperimentalStackStartFlags } from "./start.command.ts";
+import { loadStackConfig } from "../stack-config.ts";
+import type { ExperimentalStackStartFlags } from "./start.command.ts";
 import {
-  LegacyExperimentalStackStartError,
-  LegacyExperimentalStackTargetFlagsError,
+  ExperimentalStackStartError,
+  ExperimentalStackTargetFlagsError,
 } from "./start.errors.ts";
 
 const statusPayload = (status: StackStatus) => ({
@@ -54,32 +54,32 @@ const eagerlyActivate = <
   value: T,
 ): T => (value.enabled === false ? value : Object.assign({}, value, { activation: "eager" }));
 
-export const legacyValidateExperimentalStackStartTarget = (
-  flags: Pick<LegacyExperimentalStackStartFlags, "stack" | "stackId">,
+export const validateExperimentalStackStartTarget = (
+  flags: Pick<ExperimentalStackStartFlags, "stack" | "stackId">,
 ) =>
   Option.isSome(flags.stack) && Option.isSome(flags.stackId)
     ? Effect.fail(
-        new LegacyExperimentalStackTargetFlagsError({
+        new ExperimentalStackTargetFlagsError({
           message: "--stack and --stack-id cannot be used together",
         }),
       )
     : Effect.void;
 
-export const legacyExperimentalStackStart = Effect.fn("legacy.experimental.stack.start")(function* (
-  flags: LegacyExperimentalStackStartFlags,
+export const experimentalStackStart = Effect.fn("experimental.stack.start")(function* (
+  flags: ExperimentalStackStartFlags,
 ) {
   const output = yield* Output;
-  const settings = yield* LegacyCliSettings;
-  const resolver = yield* LegacyExperimentalStackTargetResolver;
-  const stackApi = yield* LegacyExperimentalStackApi;
-  const legacyOutput = yield* Effect.serviceOption(LegacyOutputFlag);
-  if (Option.isSome(legacyOutput) && Option.isSome(legacyOutput.value))
-    return yield* new LegacyExperimentalStackStartError({
+  const settings = yield* CommandSettings;
+  const resolver = yield* ExperimentalStackTargetResolver;
+  const stackApi = yield* ExperimentalStackApi;
+  const outputFlag = yield* Effect.serviceOption(OutputFlag);
+  if (Option.isSome(outputFlag) && Option.isSome(outputFlag.value))
+    return yield* new ExperimentalStackStartError({
       reason: "flags",
       message: "The legacy -o/--output flag is not supported here; use --output-format json.",
       suggestion: "Use --output-format json or --output-format text.",
     });
-  yield* legacyValidateExperimentalStackStartTarget(flags);
+  yield* validateExperimentalStackStartTarget(flags);
 
   const target = yield* resolver.resolve({
     projectRoot: settings.workdir,
@@ -87,10 +87,10 @@ export const legacyExperimentalStackStart = Effect.fn("legacy.experimental.stack
     ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
     runtime: flags.runtime,
   });
-  const config = yield* legacyLoadStackConfig(target.projectRoot).pipe(
+  const config = yield* loadStackConfig(target.projectRoot).pipe(
     Effect.mapError(
       (error) =>
-        new LegacyExperimentalStackStartError({
+        new ExperimentalStackStartError({
           reason: "invalid-config",
           message: error.message,
           cause: error,
@@ -140,19 +140,19 @@ export const legacyExperimentalStackStart = Effect.fn("legacy.experimental.stack
   // not recreate package lifecycle or runtime ownership here.
   const stack =
     target.id !== undefined
-      ? yield* stackApi.openStack(target.id).pipe(Effect.mapError(legacyStackStartError))
+      ? yield* stackApi.openStack(target.id).pipe(Effect.mapError(stackStartError))
       : yield* stackApi
           .createStack({
             projectRoot: target.projectRoot,
             ...(target.name === undefined ? {} : { name: target.name }),
             ...(runtime === undefined ? {} : { runtime }),
           })
-          .pipe(Effect.mapError(legacyStackStartError));
+          .pipe(Effect.mapError(stackStartError));
   const starting = yield* output.task("Starting local Supabase stack...");
   const status = yield* stack.start({ config: startConfig }).pipe(
     Effect.tapError((error) => starting.fail(error.message)),
     Effect.tap(() => starting.succeed("Stack is ready.")),
-    Effect.mapError(legacyStackStartError),
+    Effect.mapError(stackStartError),
   );
   if (output.format === "text") {
     yield* output.raw(renderStatus(status));
@@ -162,7 +162,7 @@ export const legacyExperimentalStackStart = Effect.fn("legacy.experimental.stack
   return status;
 });
 
-const legacyStackStartError = (error: unknown) => {
+const stackStartError = (error: unknown) => {
   const stackError = isStackError(error) ? error : undefined;
   const message = stackError === undefined ? String(error) : stackError.message;
   const classification =
@@ -232,7 +232,7 @@ const legacyStackStartError = (error: unknown) => {
           })),
           Match.orElse(() => ({ reason: "unknown" as const })),
         );
-  return new LegacyExperimentalStackStartError({
+  return new ExperimentalStackStartError({
     ...classification,
     message,
     ...("suggestion" in classification ? { suggestion: classification.suggestion } : {}),

@@ -10,7 +10,7 @@
  * table.
  *
  * `Bun.Archive` — which this repo already uses to build the pgdata baseline
- * marker, `legacyPgDataBaselineMarkerTar` — is not the same tool. It builds
+ * marker, `pgDataBaselineMarkerTar` — is not the same tool. It builds
  * from path-to-contents pairs and exposes no per-entry metadata: every entry
  * comes out as a regular file with mode `0644` and the current wall-clock time,
  * so a symlink cannot be stored at all, an executable loses its bit, and the

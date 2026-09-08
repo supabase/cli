@@ -4,9 +4,9 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import { Layer } from "effect";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacySecretsUnset } from "./unset.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { secretsUnset } from "./unset.handler.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -19,9 +19,9 @@ const config = {
   ),
 } as const;
 
-export type LegacySecretsUnsetFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type SecretsUnsetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacySecretsUnsetCommand = Command.make("unset", config).pipe(
+export const secretsUnsetCommand = Command.make("unset", config).pipe(
   Command.withDescription("Unset a secret(s) from the linked Supabase project."),
   Command.withShortDescription("Unset a secret(s) on Supabase"),
   Command.withExamples([
@@ -35,14 +35,9 @@ export const legacySecretsUnsetCommand = Command.make("unset", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacySecretsUnset(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
-      withJsonErrorHandling,
-    ),
+    secretsUnset(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
-  // `stdinLayer`: the confirmation prompt reads piped stdin via `legacyPromptYesNo`
+  // `stdinLayer`: the confirmation prompt reads piped stdin via `promptYesNo`
   // (`Console.ReadLine`, `console.go:38-61`) on a non-TTY stdin.
-  Command.provide(
-    Layer.mergeAll(legacyManagementApiRuntimeLayer(["secrets", "unset"]), stdinLayer),
-  ),
+  Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["secrets", "unset"]), stdinLayer)),
 );

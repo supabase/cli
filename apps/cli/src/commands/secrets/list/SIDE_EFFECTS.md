@@ -2,13 +2,13 @@
 
 ## Files Read
 
-| Path                                      | Format                    | When                                                                                            |
-| ----------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------- |
-| `/proc/sys/kernel/osrelease` (Linux)      | plain text                | once on layer init — disables keyring on WSL (`WSL` / `Microsoft` substring match)              |
-| keyring `"Supabase CLI"` / `<profile>`    | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliSettings.profile` |
-| keyring `"Supabase CLI"` / `access-token` | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                        |
-| `~/.supabase/access-token`                | plain text (token string) | last-resort fallback after env + keyring miss                                                   |
-| `<workdir>/supabase/.temp/project-ref`    | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                   |
+| Path                                      | Format                    | When                                                                                          |
+| ----------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| `/proc/sys/kernel/osrelease` (Linux)      | plain text                | once on layer init — disables keyring on WSL (`WSL` / `Microsoft` substring match)            |
+| keyring `"Supabase CLI"` / `<profile>`    | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile` |
+| keyring `"Supabase CLI"` / `access-token` | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
+| `~/.supabase/access-token`                | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
+| `<workdir>/supabase/.temp/project-ref`    | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                 |
 
 ## Files Written
 
@@ -35,16 +35,16 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                  |
-| ---- | ------------------------------------------------------------------------------------------ |
-| `0`  | success — secrets printed to stdout                                                        |
-| `1`  | `LegacyPlatformAuthRequiredError` — no token in env/keyring/file                           |
-| `1`  | `LegacyInvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`        |
-| `1`  | `LegacyProjectNotLinkedError` — `--project-ref` unset, env/file empty, and stdin not a TTY |
-| `1`  | `LegacyInvalidProjectRefError` — resolved ref violates `^[a-z]{20}$`                       |
-| `1`  | `LegacySecretsListUnexpectedStatusError` — non-2xx response from the secrets endpoint      |
-| `1`  | `LegacySecretsListNetworkError` — transport-level network failure                          |
-| `1`  | `LegacySecretsEnvNotSupportedError` — `--output env` flag is rejected                      |
+| Code | Condition                                                                               |
+| ---- | --------------------------------------------------------------------------------------- |
+| `0`  | success — secrets printed to stdout                                                     |
+| `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                               |
+| `1`  | `InvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`           |
+| `1`  | `ProjectRefNotLinkedError` — `--project-ref` unset, env/file empty, and stdin not a TTY |
+| `1`  | `InvalidProjectRefError` — resolved ref violates `^[a-z]{20}$`                          |
+| `1`  | `SecretsListUnexpectedStatusError` — non-2xx response from the secrets endpoint         |
+| `1`  | `SecretsListNetworkError` — transport-level network failure                             |
+| `1`  | `SecretsEnvNotSupportedError` — `--output env` flag is rejected                         |
 
 ## Telemetry Events Fired
 
@@ -74,7 +74,7 @@ TOML document wrapping the sorted array as `[[secrets]]` (CLI-1975): PascalCase 
 
 ### `--output env`
 
-Fails immediately with `LegacySecretsEnvNotSupportedError("--output env flag is not supported")`.
+Fails immediately with `SecretsEnvNotSupportedError("--output env flag is not supported")`.
 
 ### `--output-format json`
 

@@ -1,4 +1,4 @@
-import { renderGlamourTable } from "../../output/legacy-glamour-table.ts";
+import { renderGlamourTable } from "../../output/glamour-table.ts";
 
 const SECRETS_HEADERS = ["NAME", "DIGEST"] as const;
 

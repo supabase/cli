@@ -43,12 +43,11 @@ const className = name
   .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
   .join("");
 
-// `supabase-go` is the Go sidecar the legacy shell spawns via
-// apps/cli/src/shared/legacy/go-proxy.layer.ts. It is looked up by exact
+// `supabase-go` is the Go sidecar the CLI spawns via
+// apps/cli/src/command-internal/go-proxy.layer.ts. It is looked up by exact
 // filename colocated with process.execPath, so we MUST install it with its
-// original name right next to the SFE. The `if File.exist?` guard makes the
-// formula work for both the `legacy` shell (ships both binaries) and the
-// future `next` shell (SFE only).
+// original name right next to the SFE. The `if File.exist?` guard keeps the
+// formula working for a build that ships only the SFE.
 const installBlock = [
   `    bin.install "supabase"`,
   `    bin.install "supabase-go" if File.exist?("supabase-go")`,

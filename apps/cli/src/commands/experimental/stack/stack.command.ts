@@ -1,18 +1,18 @@
 import { Layer } from "effect";
 import { Command } from "effect/unstable/cli";
-import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
-import { legacyDebugLoggerLayer } from "../../../command-internal/legacy-debug-logger.layer.ts";
-import { legacyExperimentalStackStartCommand } from "./start/start.command.ts";
+import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
+import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
+import { experimentalStackStartCommand } from "./start/start.command.ts";
 import {
-  legacyExperimentalStackApiLayer,
-  legacyExperimentalStackTargetResolverLayer,
+  experimentalStackApiLayer,
+  experimentalStackTargetResolverLayer,
 } from "./stack.shared.ts";
 
-export const legacyExperimentalStackCommand = Command.make("stack").pipe(
+export const experimentalStackCommand = Command.make("stack").pipe(
   Command.withDescription("Manage an experimental managed local Supabase stack."),
   Command.withShortDescription("Manage a managed local stack"),
-  Command.withSubcommands([legacyExperimentalStackStartCommand]),
-  Command.provide(legacyExperimentalStackTargetResolverLayer),
-  Command.provide(legacyExperimentalStackApiLayer),
-  Command.provide(legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer))),
+  Command.withSubcommands([experimentalStackStartCommand]),
+  Command.provide(experimentalStackTargetResolverLayer),
+  Command.provide(experimentalStackApiLayer),
+  Command.provide(commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer))),
 );

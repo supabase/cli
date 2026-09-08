@@ -3,12 +3,12 @@ import { Command, Flag } from "effect/unstable/cli";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { LegacySeedLinkedFlag, LegacySeedLocalFlag } from "../seed.flags.ts";
-import { legacyAssertSeedTargetsExclusive } from "./buckets.flags.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { SeedLinkedFlag, SeedLocalFlag } from "../seed.flags.ts";
+import { assertSeedTargetsExclusive } from "./buckets.flags.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
-import { legacyStorageGatewayRuntimeLayer } from "../../../command-internal/legacy-storage-runtime.layer.ts";
-import { legacySeedBuckets } from "./buckets.handler.ts";
+import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
+import { seedBuckets } from "./buckets.handler.ts";
 
 const config = {
   // TS-only override of the linked project ref — see push.command.ts (db push).
@@ -22,13 +22,13 @@ const config = {
 // `--linked`/`--local` are scoped globals on the `seed` group (`seed.flags.ts`),
 // so this leaf only owns `--project-ref` above; the handler selects the target
 // from the changed argv set, not these parsed values.
-export type LegacyBucketsFlags = {
+export type BucketsFlags = {
   readonly linked: boolean;
   readonly local: boolean;
   readonly projectRef: Option.Option<string>;
 };
 
-export const legacyBucketsCommand = Command.make("buckets", config).pipe(
+export const bucketsCommand = Command.make("buckets", config).pipe(
   Command.withDescription("Seed buckets declared in [storage.buckets]."),
   Command.withShortDescription("Seed buckets declared in [storage.buckets]"),
   Command.withHandler((leafFlags) =>
@@ -37,16 +37,16 @@ export const legacyBucketsCommand = Command.make("buckets", config).pipe(
       // flag-validation rejection doesn't emit `cli_command_executed` (Go rejects
       // it at cobra flag validation, before RunE/PostRun).
       const cliArgs = yield* CliArgs;
-      yield* legacyAssertSeedTargetsExclusive(cliArgs.args);
+      yield* assertSeedTargetsExclusive(cliArgs.args);
       // Read the persistent seed-group flags for the telemetry flags map (Go logs
       // the resolved flag values); target selection itself uses the changed set.
-      const flags: LegacyBucketsFlags = {
-        linked: yield* LegacySeedLinkedFlag,
-        local: yield* LegacySeedLocalFlag,
+      const flags: BucketsFlags = {
+        linked: yield* SeedLinkedFlag,
+        local: yield* SeedLocalFlag,
         projectRef: leafFlags.projectRef,
       };
-      return yield* legacySeedBuckets(flags).pipe(
-        withLegacyCommandInstrumentation({
+      return yield* seedBuckets(flags).pipe(
+        withCommandTelemetry({
           flags: {
             linked: flags.linked,
             local: flags.local,
@@ -59,7 +59,5 @@ export const legacyBucketsCommand = Command.make("buckets", config).pipe(
       );
     }).pipe(withJsonErrorHandling),
   ),
-  Command.provide(
-    Layer.mergeAll(legacyStorageGatewayRuntimeLayer(["seed", "buckets"]), stdinLayer),
-  ),
+  Command.provide(Layer.mergeAll(storageGatewayRuntimeLayer(["seed", "buckets"]), stdinLayer)),
 );

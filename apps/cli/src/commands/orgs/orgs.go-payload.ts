@@ -1,29 +1,29 @@
 import {
-  type LegacyGoType,
-  legacyGoSlice,
-  legacyGoString,
-  legacyGoStruct,
-  legacyGoTomlListWrapper,
-} from "../../command-internal/legacy-go-struct-output.encoders.ts";
+  type GoType,
+  goSlice,
+  goString,
+  goStruct,
+  goTomlListWrapper,
+} from "../../command-internal/go-struct-output.encoders.ts";
 
 /**
  * Type shape for `api.OrganizationResponseV1` (`apps/cli-go/pkg/api/types.gen.go`).
  * Shared by `orgs list` and `orgs create` for `-o yaml` / `-o toml` (CLI-1975).
  */
-export const LEGACY_GO_ORGANIZATION_RESPONSE: LegacyGoType = legacyGoStruct([
-  ["id", legacyGoString],
-  ["name", legacyGoString],
-  ["slug", legacyGoString],
+export const GO_ORGANIZATION_RESPONSE: GoType = goStruct([
+  ["id", goString],
+  ["name", goString],
+  ["slug", goString],
 ]);
 
 /** `orgs list -o yaml` encodes the bare `[]api.OrganizationResponseV1`. */
-export const LEGACY_GO_ORGS_LIST: LegacyGoType = legacyGoSlice(LEGACY_GO_ORGANIZATION_RESPONSE);
+export const GO_ORGS_LIST: GoType = goSlice(GO_ORGANIZATION_RESPONSE);
 
 /**
  * `orgs list -o toml` wraps the slice:
  * `struct{ Organizations []api.OrganizationResponseV1 `toml:"organizations"` }`.
  */
-export const LEGACY_GO_ORGS_TOML_WRAPPER: LegacyGoType = legacyGoTomlListWrapper(
+export const GO_ORGS_TOML_WRAPPER: GoType = goTomlListWrapper(
   "organizations",
-  LEGACY_GO_ORGANIZATION_RESPONSE,
+  GO_ORGANIZATION_RESPONSE,
 );
