@@ -3,10 +3,7 @@ import { Command } from "effect/unstable/cli";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
 import { experimentalStackStartCommand } from "./start/start.command.ts";
-import {
-  experimentalStackApiLayer,
-  experimentalStackTargetResolverLayer,
-} from "./stack.shared.ts";
+import { experimentalStackApiLayer, experimentalStackTargetResolverLayer } from "./stack.shared.ts";
 
 export const experimentalStackCommand = Command.make("stack").pipe(
   Command.withDescription("Manage an experimental managed local Supabase stack."),

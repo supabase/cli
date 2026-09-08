@@ -13,9 +13,7 @@ export class ExperimentalStackTargetFlagsError extends Data.TaggedError(
   }
 }
 
-export class ExperimentalStackStartError extends Data.TaggedError(
-  "ExperimentalStackStartError",
-)<{
+export class ExperimentalStackStartError extends Data.TaggedError("ExperimentalStackStartError")<{
   readonly reason:
     | "invalid-config"
     | "flags"

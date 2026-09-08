@@ -24,10 +24,7 @@ import {
   experimentalStackTargetResolverLayer,
   ExperimentalStackApi,
 } from "../stack.shared.ts";
-import {
-  experimentalStackStart,
-  validateExperimentalStackStartTarget,
-} from "./start.handler.ts";
+import { experimentalStackStart, validateExperimentalStackStartTarget } from "./start.handler.ts";
 import { ExperimentalStackStartError } from "./start.errors.ts";
 import { experimentalStackStartCommand } from "./start.command.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
