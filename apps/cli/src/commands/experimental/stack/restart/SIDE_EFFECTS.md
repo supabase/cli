@@ -33,11 +33,11 @@ Artifact URLs and registry requests depend on the selected runtime and releases.
 
 ## Exit Codes
 
-| Code | Condition |
-| --- | --- |
-| `0` | The selected stack restarted successfully. |
-| `1` | Invalid flags, missing stack/configuration, or a configuration, preparation, stop, or start failure. |
-| `130` | The CLI waiter was interrupted. |
+| Code  | Condition                                                                                            |
+| ----- | ---------------------------------------------------------------------------------------------------- |
+| `0`   | The selected stack restarted successfully.                                                           |
+| `1`   | Invalid flags, missing stack/configuration, or a configuration, preparation, stop, or start failure. |
+| `130` | The CLI waiter was interrupted.                                                                      |
 
 ## Telemetry Events Fired
 
