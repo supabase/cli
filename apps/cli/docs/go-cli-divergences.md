@@ -20,15 +20,13 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 
 - `db diff`, `db pull`, and `db schema declarative generate`/`sync` have a TS-only
   `--strict-coverage` flag (no Go equivalent). It applies whenever the bundled
-  pg-delta engine runs (always for the declarative commands; for `db diff` and
-  migration-style `db pull` when pg-delta is selected via
-  `[experimental.pgdelta] enabled = true`, `--use-pg-delta`, or
-  `--diff-engine pg-delta`): coverage gaps that the engine reports — statements
-  it skipped or objects it could not represent — normally surface as warnings,
-  and `--strict-coverage` promotes them to hard failures. Selecting migra (the
-  `db diff` / migration-style `db pull` default, or explicitly via `--use-migra`
-  / `--diff-engine migra`) accepts the flag but has no effect, since migra does
-  not emit coverage diagnostics. Default behavior (omitted flag) matches Go.
+  pg-delta engine runs — always for the declarative commands, and by default for
+  `db diff` and migration-style `db pull`: coverage gaps that the engine reports —
+  statements it skipped or objects it could not represent — normally surface as
+  warnings, and `--strict-coverage` promotes them to hard failures. Selecting migra
+  instead (`--use-migra`, `--diff-engine migra`, or `[experimental.pgdelta]
+  enabled = false`) accepts the flag but has no effect, since migra does not emit
+  coverage diagnostics. Default behavior (omitted flag) matches Go.
 - `db push` has a TS-only `--skip-vault` flag. It applies migrations without
   resolving or updating `[db.vault]` secrets; default behavior still matches Go.
 - Every command that resolves a linked project ref for its own database
