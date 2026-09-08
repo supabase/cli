@@ -1,6 +1,6 @@
 # `supabase inspect db <subcommand>`
 
-Single shared side-effect document for all 13 active `inspect db` subcommands and
+Single shared side-effect document for all 14 active `inspect db` subcommands and
 their 12 deprecated aliases. Every subcommand has the same surface — it resolves a
 Postgres connection from `--db-url` / `--linked` / `--local`, runs one read-only
 `SELECT`, and renders the result as a Glamour ASCII table. They differ only in the
@@ -46,7 +46,7 @@ no new config reads.
 ## Database Queries
 
 Each subcommand runs one read-only `SELECT` (the embedded Go `<name>.sql`). The
-5 schema-filtered queries take `$1` = the LIKE-escaped internal-schema list;
+6 schema-filtered queries take `$1` = the LIKE-escaped internal-schema list;
 `db-stats` additionally takes `$2` = the database name.
 
 | Subcommand           | SQL file                 | InternalSchemas param?      |
@@ -64,6 +64,7 @@ Each subcommand runs one read-only `SELECT` (the embedded Go `<name>.sql`). The
 | long-running-queries | long_running_queries.sql | no                          |
 | role-stats           | role_stats.sql           | no                          |
 | traffic-profile      | traffic_profile.sql      | no                          |
+| toast-sizes          | toast_sizes.sql          | yes (`$1`)                  |
 
 Deprecated aliases run an active subcommand's query: `cache-hit`→db-stats;
 `index-usage`/`total-index-size`/`index-sizes`/`unused-indexes`/`seq-scans`/`table-record-counts`→index-stats;

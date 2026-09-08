@@ -19,6 +19,7 @@ import { outliersSpec } from "./outliers/outliers.query.ts";
 import { replicationSlotsSpec } from "./replication-slots/replication-slots.query.ts";
 import { roleStatsSpec } from "./role-stats/role-stats.query.ts";
 import { tableStatsSpec } from "./table-stats/table-stats.query.ts";
+import { toastSizesSpec } from "./toast-sizes/toast-sizes.query.ts";
 import { trafficProfileSpec } from "./traffic-profile/traffic-profile.query.ts";
 import { vacuumStatsSpec } from "./vacuum-stats/vacuum-stats.query.ts";
 
@@ -248,11 +249,27 @@ const cases: ReadonlyArray<Case> = [
     },
     expect: ["public", "100", "50", "12.0", "1:1 (Balanced)"],
   },
+  {
+    spec: toastSizesSpec,
+    params: "schemas1",
+    row: {
+      name: "public.events",
+      total_size: "120 kB",
+      heap_size: "80 kB",
+      toast_size: "40 kB",
+      toast_live_chunks: 1200,
+      toast_dead_chunks: 80,
+      toast_dead_pct: "6.3",
+      last_autovacuum: "2025-01-15 03:00",
+      last_vacuum: "",
+    },
+    expect: ["public.events", "120 kB", "40 kB", "1200", "80", "6.3", "2025-01-15 03:00"],
+  },
 ];
 
 describe("inspect db specs (per-subcommand correctness)", () => {
-  it("covers all 13 active subcommands", () => {
-    expect(cases).toHaveLength(13);
+  it("covers all 14 active subcommands", () => {
+    expect(cases).toHaveLength(14);
   });
 
   for (const testCase of cases) {
