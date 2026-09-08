@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import semanticRelease, { type Result } from "semantic-release";
 import { afterEach, describe, expect, test } from "vitest";
+import { filterCommitsToPackage } from "../../../packages/config/scripts/semantic-release-path-filter.ts";
 import { HISTORICAL_INTERVALS, TRAINS } from "./fixtures/release-history.fixtures.ts";
 
 const CHARACTERIZATION_PLUGIN = fileURLToPath(
@@ -166,7 +167,11 @@ async function runRelease(history: History, options: RunOptions): Promise<Result
   );
 }
 
-function expectRelease(result: Result, version: string, gitTag: string): void {
+function expectRelease(
+  result: Result,
+  version: string,
+  gitTag: string,
+): asserts result is Exclude<Result, false> {
   expect(result).not.toBe(false);
   if (result === false) {
     throw new Error("semantic-release unexpectedly reported no release");
@@ -394,14 +399,16 @@ test("config ownership follows paths when conventional scope disagrees", async (
 });
 
 describe.each(HISTORICAL_INTERVALS)("historical interval: $name", (fixture) => {
-  test("records current and hybrid results", async () => {
+  test("replays complete history and records current and hybrid results", async () => {
     const train = TRAINS.find(({ train }) => train === fixture.train);
     if (!train) {
       throw new Error(`unknown train ${fixture.train}`);
     }
     const history = await createHistory(`${train.legacyPrefix}${fixture.version}`);
+    const sourceShaByGeneratedSha = new Map<string, string>();
     for (const historicalCommit of fixture.commits) {
-      await commit(history, historicalCommit.message, historicalCommit.path);
+      const generatedSha = await commit(history, historicalCommit.message, historicalCommit.path);
+      sourceShaByGeneratedSha.set(generatedSha, historicalCommit.sourceSha);
     }
     await pushCurrentBranch(history);
 
@@ -415,6 +422,20 @@ describe.each(HISTORICAL_INTERVALS)("historical interval: $name", (fixture) => {
       current,
       fixture.currentVersion,
       `${train.legacyPrefix}${fixture.currentVersion}`,
+    );
+    expect(current.commits.map(({ hash }) => sourceShaByGeneratedSha.get(hash))).toEqual(
+      fixture.commits.map(({ sourceSha }) => sourceSha).reverse(),
+    );
+
+    const selectedCommits =
+      fixture.train === "config"
+        ? await filterCommitsToPackage(current.commits, history.repo)
+        : current.commits;
+    expect(selectedCommits.map(({ hash }) => sourceShaByGeneratedSha.get(hash))).toEqual(
+      fixture.commits
+        .filter(({ selected }) => selected)
+        .map(({ sourceSha }) => sourceSha)
+        .reverse(),
     );
 
     const hybrid = await withCompatibilityTags(
