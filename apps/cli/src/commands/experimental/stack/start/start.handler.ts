@@ -1,15 +1,13 @@
 import { Effect, Match, Option } from "effect";
-import {
-  isStackError,
-  type StackStatus,
-  type StackRuntimePreference,
-} from "@supabase/stack/effect";
+import { isStackError, type StackRuntimePreference } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
 import {
   LegacyExperimentalStackApi,
   LegacyExperimentalStackTargetResolver,
+  legacyRenderStackStatus,
+  legacyStackStatusPayload,
 } from "../stack.shared.ts";
 import { legacyLoadStackConfig } from "../stack-config.ts";
 import type { LegacyExperimentalStackStartFlags } from "./start.command.ts";
@@ -17,36 +15,6 @@ import {
   LegacyExperimentalStackStartError,
   LegacyExperimentalStackTargetFlagsError,
 } from "./start.errors.ts";
-
-const statusPayload = (status: StackStatus) => ({
-  id: status.id,
-  lifecycle: status.lifecycle,
-  desired_lifecycle: status.desiredLifecycle,
-  runtime: status.runtime,
-  endpoints: status.endpoints,
-  versions: status.versions,
-  capabilities: status.capabilities,
-  artifacts: status.artifacts,
-});
-
-const renderStatus = (status: StackStatus): string => {
-  const lines = [
-    `Stack ${status.id}`,
-    `Runtime: ${status.runtime.kind}`,
-    `Lifecycle: ${status.lifecycle}`,
-  ];
-  const endpoints = Object.entries(status.endpoints);
-  if (endpoints.length > 0) {
-    lines.push("Endpoints:");
-    for (const [name, endpoint] of endpoints) {
-      if (endpoint !== undefined) lines.push(`  ${name}: ${endpoint.url}`);
-    }
-  }
-  const dormant = status.capabilities.filter((capability) => capability.state === "dormant");
-  if (dormant.length > 0)
-    lines.push(`Dormant capabilities: ${dormant.map(({ name }) => name).join(", ")}`);
-  return `${lines.join("\n")}\n`;
-};
 
 const eagerlyActivate = <
   T extends { readonly enabled?: boolean; readonly activation?: "eager" | "lazy" },
@@ -155,9 +123,9 @@ export const legacyExperimentalStackStart = Effect.fn("legacy.experimental.stack
     Effect.mapError(legacyStackStartError),
   );
   if (output.format === "text") {
-    yield* output.raw(renderStatus(status));
+    yield* output.raw(legacyRenderStackStatus(status));
   } else {
-    yield* output.success("", statusPayload(status));
+    yield* output.success("", legacyStackStatusPayload(status));
   }
   return status;
 });

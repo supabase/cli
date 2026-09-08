@@ -9,6 +9,7 @@ import {
   type StackRuntimePreference,
 } from "@supabase/stack/effect";
 import type { StackId } from "@supabase/stack";
+import type { StackStatus } from "@supabase/stack/effect";
 import { StackNotFoundError } from "@supabase/stack/effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
@@ -121,6 +122,35 @@ export const legacyExperimentalStackApiLayer = Layer.effect(
     };
   }),
 );
+
+export const legacyStackStatusPayload = (status: StackStatus) => ({
+  id: status.id,
+  lifecycle: status.lifecycle,
+  desired_lifecycle: status.desiredLifecycle,
+  runtime: status.runtime,
+  endpoints: status.endpoints,
+  versions: status.versions,
+  capabilities: status.capabilities,
+  artifacts: status.artifacts,
+});
+
+export const legacyRenderStackStatus = (status: StackStatus): string => {
+  const lines = [
+    `Stack ${status.id}`,
+    `Runtime: ${status.runtime.kind}`,
+    `Lifecycle: ${status.lifecycle}`,
+  ];
+  const endpoints = Object.entries(status.endpoints);
+  if (endpoints.length > 0) {
+    lines.push("Endpoints:");
+    for (const [name, endpoint] of endpoints)
+      if (endpoint !== undefined) lines.push(`  ${name}: ${endpoint.url}`);
+  }
+  const dormant = status.capabilities.filter(({ state }) => state === "dormant");
+  if (dormant.length > 0)
+    lines.push(`Dormant capabilities: ${dormant.map(({ name }) => name).join(", ")}`);
+  return `${lines.join("\n")}\n`;
+};
 
 /** Runtime configuration for the first stack command. Later commands reuse this layer. */
 export const legacyExperimentalStackTargetResolverLayer = Layer.succeed(

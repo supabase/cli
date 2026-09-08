@@ -1,9 +1,13 @@
 import { Effect, Match, Option } from "effect";
-import { isStackError, isStackId, type StackStatus } from "@supabase/stack/effect";
+import { isStackError, isStackId, type StackError } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
-import { LegacyExperimentalStackApi } from "../stack.shared.ts";
+import {
+  LegacyExperimentalStackApi,
+  legacyRenderStackStatus,
+  legacyStackStatusPayload,
+} from "../stack.shared.ts";
 import { legacyLoadStackConfig } from "../stack-config.ts";
 import type { LegacyExperimentalStackRestartFlags } from "./restart.command.ts";
 import { LegacyExperimentalStackRestartError } from "./restart.errors.ts";
@@ -18,7 +22,7 @@ const validateFlags = (flags: LegacyExperimentalStackRestartFlags) =>
       )
     : Effect.void;
 
-const mapStackError = (error: import("@supabase/stack/effect").StackError) => {
+const mapStackError = (error: StackError) => {
   const classification = Match.value(error).pipe(
     Match.tag("StackNotFoundError", () => ({ reason: "not-found" as const })),
     Match.tag("InvalidStackIdentityError", () => ({ reason: "flags" as const })),
@@ -76,38 +80,8 @@ const mapStackError = (error: import("@supabase/stack/effect").StackError) => {
   });
 };
 
-const catchStackError = <A, R>(
-  effect: Effect.Effect<A, import("@supabase/stack/effect").StackError, R>,
-) => effect.pipe(Effect.catchIf(isStackError, (error) => Effect.fail(mapStackError(error))));
-
-const statusPayload = (status: StackStatus) => ({
-  id: status.id,
-  lifecycle: status.lifecycle,
-  desired_lifecycle: status.desiredLifecycle,
-  runtime: status.runtime,
-  endpoints: status.endpoints,
-  versions: status.versions,
-  capabilities: status.capabilities,
-  artifacts: status.artifacts,
-});
-
-const renderStatus = (status: StackStatus): string => {
-  const lines = [
-    `Stack ${status.id}`,
-    `Runtime: ${status.runtime.kind}`,
-    `Lifecycle: ${status.lifecycle}`,
-  ];
-  const endpoints = Object.entries(status.endpoints);
-  if (endpoints.length > 0) {
-    lines.push("Endpoints:");
-    for (const [name, endpoint] of endpoints)
-      if (endpoint !== undefined) lines.push(`  ${name}: ${endpoint.url}`);
-  }
-  const dormant = status.capabilities.filter(({ state }) => state === "dormant");
-  if (dormant.length > 0)
-    lines.push(`Dormant capabilities: ${dormant.map(({ name }) => name).join(", ")}`);
-  return `${lines.join("\n")}\n`;
-};
+const catchStackError = <A, R>(effect: Effect.Effect<A, StackError, R>) =>
+  effect.pipe(Effect.catchIf(isStackError, (error) => Effect.fail(mapStackError(error))));
 
 export const legacyExperimentalStackRestart = Effect.fn("legacy.experimental.stack.restart")(
   function* (flags: LegacyExperimentalStackRestartFlags) {
@@ -118,6 +92,7 @@ export const legacyExperimentalStackRestart = Effect.fn("legacy.experimental.sta
       return yield* new LegacyExperimentalStackRestartError({
         reason: "flags",
         message: "The legacy -o/--output flag is not supported here; use --output-format json.",
+        suggestion: "Use --output-format json or --output-format text.",
       });
     yield* validateFlags(flags);
     const api = yield* LegacyExperimentalStackApi;
@@ -144,8 +119,14 @@ export const legacyExperimentalStackRestart = Effect.fn("legacy.experimental.sta
           if (Option.isNone(found))
             return yield* new LegacyExperimentalStackRestartError({
               reason: "not-found",
-              message: "No managed stack exists for the selected project.",
-              suggestion: "Run supabase experimental stack start first.",
+              message:
+                stackName === undefined
+                  ? "No managed stack exists for the selected project."
+                  : `No managed stack named "${stackName}" was found for this project.`,
+              suggestion:
+                stackName === undefined
+                  ? "Run supabase experimental stack start first."
+                  : "Choose an existing --stack name or omit --stack for the current project.",
             });
           return { id: found.value.id, projectRoot: found.value.projectRoot };
         });
@@ -170,8 +151,8 @@ export const legacyExperimentalStackRestart = Effect.fn("legacy.experimental.sta
       Effect.tapError((error) => task.fail(error.message)),
       Effect.tap(() => task.clear()),
     );
-    if (output.format === "text") yield* output.raw(renderStatus(status));
-    else yield* output.success("", statusPayload(status));
+    if (output.format === "text") yield* output.raw(legacyRenderStackStatus(status));
+    else yield* output.success("", legacyStackStatusPayload(status));
     return status;
   },
 );

@@ -28,14 +28,31 @@ import { legacyExperimentalStackRestartCommand } from "./restart.command.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 
 const stackId = StackIdSchema.make("a".repeat(64));
-const status = (lifecycle: StackStatus["lifecycle"] = "running"): StackStatus => ({
+const status = (lifecycle: StackStatus["lifecycle"] = "running", rich = false): StackStatus => ({
   id: stackId,
   lifecycle,
   desiredLifecycle: "running",
   runtime: { kind: "native" },
-  endpoints: {},
+  endpoints: rich
+    ? {
+        api: {
+          protocol: "http",
+          address: "127.0.0.1",
+          port: 54321,
+          url: "http://127.0.0.1:54321",
+        },
+      }
+    : {},
   versions: {},
-  capabilities: [],
+  capabilities: rich
+    ? [
+        {
+          name: "functions",
+          activation: "lazy",
+          state: "dormant",
+        },
+      ]
+    : [],
   artifacts: [],
 });
 
@@ -46,29 +63,27 @@ const flags = (stack = Option.none<string>(), stackIdFlag = Option.none<string>(
 
 const makeFixture = (options: {
   readonly target?: "current" | "id" | "name";
-  readonly config?: "valid" | "invalid" | "missing";
+  readonly config?: "valid" | "invalid";
   readonly prepare?: "ok" | "fail";
   readonly stop?: "ok" | "fail";
   readonly start?: "ok" | "fail" | "port";
   readonly format?: "text" | "json";
   readonly legacyOutput?: boolean;
   readonly missingTarget?: boolean;
+  readonly richStatus?: boolean;
 }) => {
   const root = mkdtempSync(join(tmpdir(), "supabase-experimental-stack-restart-"));
   const projectRoot = join(root, "selected-project");
   mkdirSync(join(projectRoot, "supabase"), { recursive: true });
-  if (options.config !== "missing")
-    writeFileSync(
-      join(projectRoot, "supabase", "config.toml"),
-      options.config === "invalid"
-        ? 'project_id = "unterminated\n'
-        : 'project_id = "restart-test"\n',
-    );
+  writeFileSync(
+    join(projectRoot, "supabase", "config.toml"),
+    options.config === "invalid" ? 'project_id = "unterminated\n' : 'project_id = "restart-test"\n',
+  );
   const calls: string[] = [];
   let lifecycle: StackStatus["lifecycle"] = "running";
   const stack: EffectStack = {
     id: stackId,
-    status: () => Effect.succeed(status(lifecycle)),
+    status: () => Effect.succeed(status(lifecycle, options.richStatus)),
     credentials: () => Effect.die("credentials unused"),
     prepare: () => {
       calls.push("prepare");
@@ -92,7 +107,7 @@ const makeFixture = (options: {
           ? Effect.fail(new PortUnavailableError({ message: "port 54321 is unavailable" }))
           : Effect.sync(() => {
               lifecycle = "running";
-              return status(lifecycle);
+              return status(lifecycle, options.richStatus);
             });
     },
     destroy: () => {
@@ -139,7 +154,6 @@ const makeFixture = (options: {
     calls,
     stack,
     out,
-    projectRoot,
     cleanup: () => rmSync(root, { recursive: true, force: true }),
     layer,
     effect: legacyExperimentalStackRestart(selectedFlags).pipe(
@@ -190,12 +204,14 @@ describe("experimental stack restart", () => {
   });
 
   it.effect("renders a concise text result after restart", () => {
-    const fixture = makeFixture({ format: "text" });
+    const fixture = makeFixture({ format: "text", richStatus: true });
     return fixture.effect.pipe(
       Effect.tap(() =>
         Effect.sync(() => {
           expect(fixture.out.stdoutText).toContain(`Stack ${stackId}`);
           expect(fixture.out.stdoutText).toContain("Lifecycle: running");
+          expect(fixture.out.stdoutText).toContain("http://127.0.0.1:54321");
+          expect(fixture.out.stdoutText).toContain("Dormant capabilities: functions");
         }),
       ),
     );
@@ -258,20 +274,40 @@ describe("experimental stack restart", () => {
       flags(Option.some("name"), Option.some(stackId)),
     ).pipe(Effect.provide(invalid.layer), Effect.exit);
     return Effect.gen(function* () {
-      expect(Exit.isFailure(yield* legacy.effect.pipe(Effect.exit))).toBe(true);
+      const legacyError = yield* legacy.effect.pipe(Effect.flip);
+      expect(legacyError.suggestion).toContain("--output-format");
       expect(Exit.isFailure(yield* invalidEffect)).toBe(true);
       expect(legacy.calls).toEqual([]);
       expect(invalid.calls).toEqual([]);
     }).pipe(Effect.ensuring(Effect.sync(invalid.cleanup)));
   });
 
+  it.effect("rejects malformed stack ids before inspection or lifecycle calls", () => {
+    const fixture = makeFixture({});
+    const malformed = legacyExperimentalStackRestart(
+      flags(Option.none(), Option.some("not-a-stack-id")),
+    ).pipe(Effect.provide(fixture.layer));
+    return malformed.pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.reason).toBe("flags");
+          expect(error[ErrorActionabilityId]).toEqual(actionability.provideFlags);
+          expect(fixture.calls).toEqual([]);
+        }),
+      ),
+      Effect.ensuring(Effect.sync(fixture.cleanup)),
+    );
+  });
+
   it.effect("fails a missing named target without lifecycle calls", () => {
     const fixture = makeFixture({ target: "name", missingTarget: true });
     return fixture.effect.pipe(
-      Effect.exit,
-      Effect.tap((exit) =>
+      Effect.flip,
+      Effect.tap((error) =>
         Effect.sync(() => {
-          expect(Exit.isFailure(exit)).toBe(true);
+          expect(error.message).toContain('No managed stack named "feature-a"');
+          expect(error.suggestion).toContain("existing --stack name");
           expect(fixture.calls).toEqual([]);
         }),
       ),
