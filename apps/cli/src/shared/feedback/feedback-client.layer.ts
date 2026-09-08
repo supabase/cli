@@ -19,13 +19,14 @@ interface FeedbackEnvironment {
 }
 
 const FEEDBACK_STAGING: FeedbackEnvironment = {
-  url: "https://imrwaufzgcaczqmpnxyr.supabase.co",
-  key: "sb_publishable_puOyAlqG5J_XfBMTDM2Ckw_L5mieFdb",
+  url: "https://actixlblmrqglneypada.supabase.co",
+  key: "sb_publishable_wLdx7w89KWFq-39s4emmnA__9XR9r-_",
 };
 
-// No dedicated production feedback project exists yet (CLI-1946): production
-// intentionally reuses the staging values until one is provisioned.
-const FEEDBACK_PRODUCTION: FeedbackEnvironment = { ...FEEDBACK_STAGING };
+const FEEDBACK_PRODUCTION: FeedbackEnvironment = {
+  url: "https://xguihxuzqibwxjnimxev.supabase.co",
+  key: "sb_publishable__4DBgvrDe7ec234wnvCAog_LPzBtkQe",
+};
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
