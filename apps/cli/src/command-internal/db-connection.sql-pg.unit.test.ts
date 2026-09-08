@@ -913,15 +913,15 @@ describe("batchFailureError", () => {
 
 describe("shouldDiscardBatchClient", () => {
   it("discards a client whose batch never reached the wire", () => {
-    expect(
-      shouldDiscardBatchClient({ outcome: "unsent" }, Exit.succeed(undefined), false),
-    ).toBe(true);
+    expect(shouldDiscardBatchClient({ outcome: "unsent" }, Exit.succeed(undefined), false)).toBe(
+      true,
+    );
   });
 
   it("keeps a written batch's client on success or once its failure rolled back", () => {
-    expect(
-      shouldDiscardBatchClient({ outcome: "submitted" }, Exit.succeed(undefined), false),
-    ).toBe(false);
+    expect(shouldDiscardBatchClient({ outcome: "submitted" }, Exit.succeed(undefined), false)).toBe(
+      false,
+    );
     expect(
       shouldDiscardBatchClient(
         { outcome: "submitted" },
@@ -942,12 +942,8 @@ describe("shouldDiscardBatchClient", () => {
   });
 
   it("discards a client whose batch was interrupted or died mid-flight", () => {
-    expect(shouldDiscardBatchClient({ outcome: "submitted" }, Exit.interrupt(1), true)).toBe(
-      true,
-    );
-    expect(shouldDiscardBatchClient({ outcome: "submitted" }, Exit.die("boom"), true)).toBe(
-      true,
-    );
+    expect(shouldDiscardBatchClient({ outcome: "submitted" }, Exit.interrupt(1), true)).toBe(true);
+    expect(shouldDiscardBatchClient({ outcome: "submitted" }, Exit.die("boom"), true)).toBe(true);
     // Interrupted before the batch was even constructed: no batch, still discard.
     expect(shouldDiscardBatchClient(undefined, Exit.interrupt(1), false)).toBe(true);
   });
