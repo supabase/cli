@@ -1,29 +1,29 @@
 /**
  * Studio env + container spec builder, gated on `config.studio.enabled` and
  * `!isContainerExcluded(config.studio.image, excluded)` — see
- * `legacy-service-catalog.ts`'s `studio` entry (`excludeKey: "studio"`, gated
+ * `service-catalog.ts`'s `studio` entry (`excludeKey: "studio"`, gated
  * on `studio.enabled`, depends on pg-meta being healthy/running). Gating,
  * image resolution/pre-pull, and edge-function bind-mount resolution
  * (`serve.PopulatePerFunctionConfigs`, out of scope here — see
- * {@link LegacyStudioContainerInput.functionBinds}) are the caller's job (a
+ * {@link StudioContainerInput.functionBinds}) are the caller's job (a
  * future `start.handler.ts`).
  *
  * `workdir`/`containerSnippetsPath`: the host snippets path is
  * `filepath.Join(workdir, "supabase", "snippets")` — a plain top-level
  * `<project>/supabase/snippets` directory, NOT under `supabase/.temp/` (that
  * directory is reserved for the link-state cache, see
- * `legacy-temp-paths.ts`; snippets are user content Studio's SQL Editor
+ * `temp-paths.ts`; snippets are user content Studio's SQL Editor
  * reads/writes, meant to persist, not a cache). `containerSnippetsPath` is
  * that host path translated to its in-container mount form (see
- * {@link legacyToDockerPath}), computed once by
- * {@link legacyBuildStudioContainerSpec} and threaded into both the bind mount
- * and {@link legacyBuildStudioEnv}'s `SNIPPETS_MANAGEMENT_FOLDER`.
+ * {@link toDockerMountPath}), computed once by
+ * {@link buildStudioContainerSpec} and threaded into both the bind mount
+ * and {@link buildStudioEnv}'s `SNIPPETS_MANAGEMENT_FOLDER`.
  */
 
 import { join } from "node:path";
 
-import { legacyToDockerPath } from "../../../command-internal/legacy-docker-path.ts";
-import type { LegacyStartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
+import { toDockerMountPath } from "../../../command-internal/docker-path.ts";
+import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
 
 /** Container-internal port Studio listens on — hardcoded, never configurable. */
 const STUDIO_CONTAINER_PORT = 3000;
@@ -34,17 +34,17 @@ const STUDIO_NETWORK_ALIASES = ["studio"];
 /**
  * The default analytics API key — never decoded from `config.toml`, never
  * overridable — so this is always the value regardless of the resolved
- * project config, exactly like `legacy-local-config-values.ts`'s other
+ * project config, exactly like `local-config-values.ts`'s other
  * hardcoded, schema-absent constants (`DEFAULT_DB_PASSWORD`, the S3
  * credential triple).
  */
 const LOGFLARE_PRIVATE_ACCESS_TOKEN = "api-key";
 
-export interface LegacyBuildStudioEnvInput {
+export interface BuildStudioEnvInput {
   /** The db password — becomes `POSTGRES_PASSWORD`. */
   readonly dbPassword: string;
   /**
-   * `LegacyCliSettings.workdir`, the already-resolved absolute project root —
+   * `CommandSettings.workdir`, the already-resolved absolute project root —
    * `EDGE_FUNCTIONS_MANAGEMENT_FOLDER` is resolved against it
    * (`<workdir>/supabase/functions`).
    */
@@ -64,8 +64,8 @@ export interface LegacyBuildStudioEnvInput {
   readonly logflareContainerName: string;
   /**
    * `config.studio.api_url`, post-`SUPABASE_STUDIO_API_URL`-override AND
-   * post-config-validation's host-rewrite (`legacyResolveStudioApiUrl`) —
-   * `SUPABASE_PUBLIC_URL`. Distinct from `LegacyLocalConfigValues.studioUrl`
+   * post-config-validation's host-rewrite (`resolveStudioApiUrl`) —
+   * `SUPABASE_PUBLIC_URL`. Distinct from `LocalConfigValues.studioUrl`
    * (the `http://<hostname>:<port>` value `status` reports). This is NOT
    * simply the raw `studio.api_url` field: under a default config its host
    * (`127.0.0.1`) matches the local hostname, so it's rewritten to
@@ -73,19 +73,19 @@ export interface LegacyBuildStudioEnvInput {
    * the caller must apply that same rewrite before passing this field in.
    */
   readonly studioApiUrl: string;
-  /** `legacyResolveLocalConfigValues(...).jwtSecret` — `AUTH_JWT_SECRET`. */
+  /** `resolveLocalConfigValues(...).jwtSecret` — `AUTH_JWT_SECRET`. */
   readonly jwtSecret: string;
-  /** `legacyResolveLocalConfigValues(...).anonKey` — `SUPABASE_ANON_KEY`. */
+  /** `resolveLocalConfigValues(...).anonKey` — `SUPABASE_ANON_KEY`. */
   readonly anonKey: string;
-  /** `legacyResolveLocalConfigValues(...).serviceRoleKey` — `SUPABASE_SERVICE_KEY`. */
+  /** `resolveLocalConfigValues(...).serviceRoleKey` — `SUPABASE_SERVICE_KEY`. */
   readonly serviceRoleKey: string;
-  /** `legacyResolveLocalConfigValues(...).publishableKey` — `SUPABASE_PUBLISHABLE_KEY`. */
+  /** `resolveLocalConfigValues(...).publishableKey` — `SUPABASE_PUBLISHABLE_KEY`. */
   readonly publishableKey: string;
-  /** `legacyResolveLocalConfigValues(...).secretKey` — `SUPABASE_SECRET_KEY`. */
+  /** `resolveLocalConfigValues(...).secretKey` — `SUPABASE_SECRET_KEY`. */
   readonly secretKey: string;
-  /** `legacyResolveLocalConfigValues(...).storageS3AccessKeyId` — `S3_PROTOCOL_ACCESS_KEY_ID`. */
+  /** `resolveLocalConfigValues(...).storageS3AccessKeyId` — `S3_PROTOCOL_ACCESS_KEY_ID`. */
   readonly s3AccessKeyId: string;
-  /** `legacyResolveLocalConfigValues(...).storageS3SecretAccessKey` — `S3_PROTOCOL_ACCESS_KEY_SECRET`. */
+  /** `resolveLocalConfigValues(...).storageS3SecretAccessKey` — `S3_PROTOCOL_ACCESS_KEY_SECRET`. */
   readonly s3SecretAccessKey: string;
   /**
    * `config.studio.openai_api_key`, decrypted/resolved by the caller —
@@ -98,7 +98,7 @@ export interface LegacyBuildStudioEnvInput {
   readonly apiExtraSearchPath: ReadonlyArray<string>;
   /** `config.api.max_rows` — `PGRST_DB_MAX_ROWS`. */
   readonly apiMaxRows: number;
-  /** `legacyEnvOverrideBool`-resolved `analytics.enabled` — `NEXT_PUBLIC_ENABLE_LOGS`. */
+  /** `envOverrideBool`-resolved `analytics.enabled` — `NEXT_PUBLIC_ENABLE_LOGS`. */
   readonly analyticsEnabled: boolean;
   /** `config.analytics.backend`, post-`SUPABASE_ANALYTICS_BACKEND`-override — `NEXT_ANALYTICS_BACKEND_PROVIDER`. */
   readonly analyticsBackend: "postgres" | "bigquery";
@@ -106,12 +106,12 @@ export interface LegacyBuildStudioEnvInput {
 
 /**
  * Builds Studio's container env. Returns a `KEY -> value` map —
- * {@link LegacyStartContainerSpec.env}'s own shape, chosen so secret values
+ * {@link StartContainerSpec.env}'s own shape, chosen so secret values
  * never round-trip through this process's own `docker create` argv (see that
  * field's doc comment in `docker-create-args.ts`). Pure — no Effect or I/O —
  * so every env var mapping is unit-testable in isolation.
  */
-export function legacyBuildStudioEnv(input: LegacyBuildStudioEnvInput): Record<string, string> {
+export function buildStudioEnv(input: BuildStudioEnvInput): Record<string, string> {
   return {
     CURRENT_CLI_VERSION: input.cliVersion,
     STUDIO_PG_META_URL: `http://${input.pgMetaContainerName}:8080`,
@@ -133,7 +133,7 @@ export function legacyBuildStudioEnv(input: LegacyBuildStudioEnvInput): Record<s
     LOGFLARE_URL: `http://${input.logflareContainerName}:4000`,
     NEXT_PUBLIC_ENABLE_LOGS: String(input.analyticsEnabled),
     NEXT_ANALYTICS_BACKEND_PROVIDER: input.analyticsBackend,
-    EDGE_FUNCTIONS_MANAGEMENT_FOLDER: legacyToDockerPath(
+    EDGE_FUNCTIONS_MANAGEMENT_FOLDER: toDockerMountPath(
       join(input.workdir, "supabase", "functions"),
     ),
     SNIPPETS_MANAGEMENT_FOLDER: input.containerSnippetsPath,
@@ -143,10 +143,10 @@ export function legacyBuildStudioEnv(input: LegacyBuildStudioEnvInput): Record<s
   };
 }
 
-export interface LegacyStudioContainerInput {
+export interface StudioContainerInput {
   /** `config.studio.image`, already resolved/pulled by the caller. */
   readonly image: string;
-  /** `legacyServiceContainerName("studio", projectId)`. */
+  /** `serviceContainerName("studio", projectId)`. */
   readonly containerName: string;
   /** The shared Docker network every `start` container joins. */
   readonly networkId: string;
@@ -160,21 +160,19 @@ export interface LegacyStudioContainerInput {
    * future edge-functions-serve integration supplies these.
    */
   readonly functionBinds: ReadonlyArray<string>;
-  /** Every value {@link legacyBuildStudioEnv} needs, minus the path this builder derives itself. */
-  readonly env: Omit<LegacyBuildStudioEnvInput, "containerSnippetsPath">;
+  /** Every value {@link buildStudioEnv} needs, minus the path this builder derives itself. */
+  readonly env: Omit<BuildStudioEnvInput, "containerSnippetsPath">;
 }
 
 /**
- * Assembles Studio's {@link LegacyStartContainerSpec}, including the snippets
+ * Assembles Studio's {@link StartContainerSpec}, including the snippets
  * bind mount and its Docker-path form, derived from `workdir` once and
- * reused for both the bind and {@link legacyBuildStudioEnv}'s
+ * reused for both the bind and {@link buildStudioEnv}'s
  * `SNIPPETS_MANAGEMENT_FOLDER`.
  */
-export function legacyBuildStudioContainerSpec(
-  input: LegacyStudioContainerInput,
-): LegacyStartContainerSpec {
+export function buildStudioContainerSpec(input: StudioContainerInput): StartContainerSpec {
   const hostSnippetsPath = join(input.env.workdir, "supabase", "snippets");
-  const containerSnippetsPath = legacyToDockerPath(hostSnippetsPath);
+  const containerSnippetsPath = toDockerMountPath(hostSnippetsPath);
 
   // Order-preserving dedup; `Set` iteration order is first-seen-wins.
   const binds = Array.from(
@@ -184,7 +182,7 @@ export function legacyBuildStudioContainerSpec(
   return {
     image: input.image,
     containerName: input.containerName,
-    env: legacyBuildStudioEnv({ ...input.env, containerSnippetsPath }),
+    env: buildStudioEnv({ ...input.env, containerSnippetsPath }),
     binds,
     healthcheck: {
       test: [

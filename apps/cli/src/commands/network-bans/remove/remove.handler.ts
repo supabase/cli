@@ -1,36 +1,36 @@
 import { isIP } from "node:net";
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
-  LegacyNetworkBansInvalidIpError,
-  LegacyNetworkBansRemoveNetworkError,
-  LegacyNetworkBansRemoveUnexpectedStatusError,
+  NetworkBansInvalidIpError,
+  NetworkBansRemoveNetworkError,
+  NetworkBansRemoveUnexpectedStatusError,
 } from "../network-bans.errors.ts";
-import type { LegacyNetworkBansRemoveFlags } from "./remove.command.ts";
+import type { NetworkBansRemoveFlags } from "./remove.command.ts";
 
-const mapRemoveError = mapLegacyHttpError({
-  networkError: LegacyNetworkBansRemoveNetworkError,
-  statusError: LegacyNetworkBansRemoveUnexpectedStatusError,
+const mapRemoveError = mapHttpError({
+  networkError: NetworkBansRemoveNetworkError,
+  statusError: NetworkBansRemoveUnexpectedStatusError,
   networkMessage: (cause) => `failed to remove network bans: ${cause}`,
   statusMessage: (status, body) => `unexpected unban status ${status}: ${body}`,
 });
 
-export const legacyNetworkBansRemove = Effect.fn("legacy.network-bans.remove")(function* (
-  flags: LegacyNetworkBansRemoveFlags,
+export const networkBansRemove = Effect.fn("network-bans.remove")(function* (
+  flags: NetworkBansRemoveFlags,
 ) {
   const output = yield* Output;
-  const legacyOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const outputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
     // Go resolves the project ref in `PersistentPreRunE` (`cmd/root.go:108-114`),
@@ -41,7 +41,7 @@ export const legacyNetworkBansRemove = Effect.fn("legacy.network-bans.remove")(f
     yield* Effect.gen(function* () {
       for (const ip of flags.dbUnbanIp) {
         if (isIP(ip) === 0) {
-          return yield* new LegacyNetworkBansInvalidIpError({ input: ip });
+          return yield* new NetworkBansInvalidIpError({ input: ip });
         }
       }
 
@@ -58,7 +58,7 @@ export const legacyNetworkBansRemove = Effect.fn("legacy.network-bans.remove")(f
       // structured success event instead, but only when `--output` is unset
       // (CLAUDE.md item 6).
       if (
-        Option.isNone(legacyOutputFlag) &&
+        Option.isNone(outputFlag) &&
         (output.format === "json" || output.format === "stream-json")
       ) {
         yield* output.success("Successfully removed network bans.");

@@ -1,35 +1,29 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
 import { Effect, Option, Result } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../../command-internal/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
+import { GO_SSO_PROVIDER_RESPONSE } from "../sso.go-payload.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
 import {
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
-import { LEGACY_GO_SSO_PROVIDER_RESPONSE } from "../sso.go-payload.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import {
-  legacyGateResponse,
-  legacySuggestUpgrade,
-} from "../../../command-internal/legacy-upgrade-suggest.ts";
-import {
-  LegacySsoRemoveNetworkError,
-  LegacySsoRemoveNotFoundError,
-  LegacySsoRemoveUnexpectedStatusError,
-  LegacySsoTomlEncodeError,
+  SsoRemoveNetworkError,
+  SsoRemoveNotFoundError,
+  SsoRemoveUnexpectedStatusError,
+  SsoTomlEncodeError,
 } from "../sso.errors.ts";
 import { renderSingleProvider, validateUuid } from "../sso.format.ts";
-import type { LegacySsoRemoveFlags } from "./remove.command.ts";
+import type { SsoRemoveFlags } from "./remove.command.ts";
 
-const mapStatusOrNetwork = mapLegacyHttpError({
-  networkError: LegacySsoRemoveNetworkError,
-  statusError: LegacySsoRemoveUnexpectedStatusError,
+const mapStatusOrNetwork = mapHttpError({
+  networkError: SsoRemoveNetworkError,
+  statusError: SsoRemoveUnexpectedStatusError,
   networkMessage: (cause) => `failed to remove sso provider: ${cause}`,
   statusMessage: (_status, body) => `Unexpected error removing identity provider: ${body}`,
 });
@@ -37,23 +31,23 @@ const mapStatusOrNetwork = mapLegacyHttpError({
 const handleRemoveError = (ref: string, providerId: string, cause: SupabaseApiError) =>
   Effect.gen(function* () {
     const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
-    if (mapped._tag === "LegacySsoRemoveUnexpectedStatusError") {
-      const upgradeSuggested = yield* legacySuggestUpgrade({
+    if (mapped._tag === "SsoRemoveUnexpectedStatusError") {
+      const upgradeSuggested = yield* suggestUpgrade({
         projectRef: ref,
         featureKey: "auth.saml_2",
         statusCode: mapped.status,
-        response: legacyGateResponse(cause),
+        response: gateResponse(cause),
       });
       if (mapped.status === 404) {
         return yield* Effect.fail(
-          new LegacySsoRemoveNotFoundError({
+          new SsoRemoveNotFoundError({
             message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
             upgradeSuggested,
           }),
         );
       }
       return yield* Effect.fail(
-        new LegacySsoRemoveUnexpectedStatusError({
+        new SsoRemoveUnexpectedStatusError({
           status: mapped.status,
           body: mapped.body,
           message: mapped.message,
@@ -64,15 +58,13 @@ const handleRemoveError = (ref: string, providerId: string, cause: SupabaseApiEr
     return yield* Effect.fail(mapped);
   });
 
-export const legacySsoRemove = Effect.fn("legacy.sso.remove")(function* (
-  flags: LegacySsoRemoveFlags,
-) {
+export const ssoRemove = Effect.fn("sso.remove")(function* (flags: SsoRemoveFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
     const providerId = yield* validateUuid(flags.providerId).pipe(
@@ -97,15 +89,15 @@ export const legacySsoRemove = Effect.fn("legacy.sso.remove")(function* (
         return;
       }
       if (goFmt === "yaml") {
-        yield* output.raw(encodeLegacyGoYaml(response, LEGACY_GO_SSO_PROVIDER_RESPONSE));
+        yield* output.raw(encodeGoYaml(response, GO_SSO_PROVIDER_RESPONSE));
         return;
       }
       if (goFmt === "toml") {
         // TOML encode failure wrapping — same pattern as list/show.
         const toml = yield* Effect.try({
-          try: () => encodeLegacyGoToml(response, LEGACY_GO_SSO_PROVIDER_RESPONSE),
+          try: () => encodeGoToml(response, GO_SSO_PROVIDER_RESPONSE),
           catch: (cause) =>
-            new LegacySsoTomlEncodeError({
+            new SsoTomlEncodeError({
               message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
             }),
         });

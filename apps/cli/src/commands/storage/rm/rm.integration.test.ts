@@ -1,10 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option } from "effect";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach } from "vitest";
 
-import { setupLegacyStorage } from "../../../../tests/helpers/legacy-storage.ts";
-import { LEGACY_VALID_REF, useLegacyTempWorkdir } from "../../../../tests/helpers/legacy-mocks.ts";
-import { legacyStorageRm } from "./rm.handler.ts";
+import { setupStorage } from "../../../../tests/helpers/storage.ts";
+import { VALID_REF, useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
+import { storageRm } from "./rm.handler.ts";
+
+function writeAncestorConfig(root: string, toml: string): void {
+  const dir = join(root, "supabase");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "config.toml"), toml);
+}
 
 const BUCKET = "/storage/v1/bucket";
 const DELETE_OBJECT = (bucket: string) => `/storage/v1/object/${bucket}`;
@@ -19,15 +27,15 @@ function prefixCount(body: unknown): number {
     : -1;
 }
 
-describe("legacy storage rm", () => {
-  const tmp = useLegacyTempWorkdir("supabase-storage-rm-");
+describe("storage rm", () => {
+  const tmp = useTempWorkdir("supabase-storage-rm-");
 
   afterEach(() => {
     delete process.env["SUPABASE_YES"];
   });
 
   it.live("deletes multiple objects after confirmation", () => {
-    const { layer, requests } = setupLegacyStorage(tmp.current, {
+    const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       yes: true,
@@ -40,7 +48,7 @@ describe("legacy storage rm", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/abstract.pdf", "ss:///private/docs/readme.md"],
         recursive: false,
         linked: true,
@@ -56,14 +64,14 @@ describe("legacy storage rm", () => {
   });
 
   it.live("echoes the confirmation and deletes with --yes", () => {
-    const { layer, out } = setupLegacyStorage(tmp.current, {
+    const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       yes: true,
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
         linked: true,
@@ -81,13 +89,13 @@ describe("legacy storage rm", () => {
     // viper AutomaticEnv (root.go:318-320) means `SUPABASE_YES` is equivalent to
     // `--yes`; the flag layer is left at its default `false` to prove the env path.
     process.env["SUPABASE_YES"] = "1";
-    const { layer, out, requests } = setupLegacyStorage(tmp.current, {
+    const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
         linked: true,
@@ -105,14 +113,14 @@ describe("legacy storage rm", () => {
     // `--local` and (default) `--linked` branches load the project `.env`
     // files before the confirmation prompt, so the deletion auto-confirms
     // with no --yes flag and no env var set in the shell.
-    const { layer, out, requests } = setupLegacyStorage(tmp.current, {
+    const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       files: { "supabase/.env": "SUPABASE_YES=true\n" },
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
         linked: true,
@@ -132,13 +140,13 @@ describe("legacy storage rm", () => {
       // that reads the project `.env` files, so an unlinked workdir must
       // fail with the not-linked guidance even when `supabase/.env` is
       // malformed — the malformed file must never be reached.
-      const { layer, requests } = setupLegacyStorage(tmp.current, {
+      const { layer, requests } = setupStorage(tmp.current, {
         toml: 'project_id = "test"\n',
         linkedFails: true,
         files: { "supabase/.env": "!=\n" },
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyStorageRm({
+        const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
           linked: true,
@@ -154,14 +162,14 @@ describe("legacy storage rm", () => {
   );
 
   it.live("skips the bucket when the confirmation is declined", () => {
-    const { layer, requests } = setupLegacyStorage(tmp.current, {
+    const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       confirm: [false],
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
         linked: true,
@@ -176,7 +184,7 @@ describe("legacy storage rm", () => {
   it.live("honors a piped 'y' on non-TTY stdin and deletes", () => {
     // Go scans piped stdin before defaulting (`console.go:74-82`); a piped `y`
     // overrides the `n` default and deletes, even on a non-terminal.
-    const { layer, requests, out } = setupLegacyStorage(tmp.current, {
+    const { layer, requests, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       stdinIsTty: false,
@@ -184,7 +192,7 @@ describe("legacy storage rm", () => {
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
         linked: true,
@@ -201,7 +209,7 @@ describe("legacy storage rm", () => {
   it.live("falls back to the default (no) on an unparseable piped answer", () => {
     // Unrecognized input is treated as unanswered, so the confirmation
     // prompt keeps the `n` default and the deletion is skipped.
-    const { layer, requests } = setupLegacyStorage(tmp.current, {
+    const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       stdinIsTty: false,
@@ -209,7 +217,7 @@ describe("legacy storage rm", () => {
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
         linked: true,
@@ -222,14 +230,14 @@ describe("legacy storage rm", () => {
   });
 
   it.live("uses the default (no) when non-interactive and skips deletion", () => {
-    const { layer, requests } = setupLegacyStorage(tmp.current, {
+    const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       format: "json",
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
         linked: true,
@@ -243,7 +251,7 @@ describe("legacy storage rm", () => {
 
   it.live("chunks explicit deletes by the storage API limit (1000)", () => {
     const files = Array.from({ length: 1001 }, (_, i) => `ss:///private/file-${i}.txt`);
-    const { layer, requests } = setupLegacyStorage(tmp.current, {
+    const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       yes: true,
@@ -263,7 +271,7 @@ describe("legacy storage rm", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files,
         recursive: false,
         linked: true,
@@ -281,12 +289,12 @@ describe("legacy storage rm", () => {
   });
 
   it.live("fails with missing bucket when a path targets the root", () => {
-    const { layer, requests } = setupLegacyStorage(tmp.current, {
+    const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///"],
         recursive: false,
         linked: true,
@@ -300,12 +308,12 @@ describe("legacy storage rm", () => {
   });
 
   it.live("requires -r to delete a directory prefix", () => {
-    const { layer, requests } = setupLegacyStorage(tmp.current, {
+    const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/"],
         recursive: false,
         linked: true,
@@ -319,12 +327,12 @@ describe("legacy storage rm", () => {
   });
 
   it.live("requires -r when no paths are given", () => {
-    const { layer } = setupLegacyStorage(tmp.current, {
+    const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: [],
         recursive: false,
         linked: true,
@@ -337,7 +345,7 @@ describe("legacy storage rm", () => {
   });
 
   it.live("with -r and no paths, clears and deletes every bucket", () => {
-    const { layer, out, requests } = setupLegacyStorage(tmp.current, {
+    const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       yes: true,
@@ -349,7 +357,7 @@ describe("legacy storage rm", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: [],
         recursive: true,
         linked: true,
@@ -365,7 +373,7 @@ describe("legacy storage rm", () => {
   });
 
   it.live("recursively deletes a directory and tolerates a missing bucket on delete", () => {
-    const { layer, out } = setupLegacyStorage(tmp.current, {
+    const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       yes: true,
@@ -384,7 +392,7 @@ describe("legacy storage rm", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///test"],
         recursive: true,
         linked: true,
@@ -397,7 +405,7 @@ describe("legacy storage rm", () => {
   });
 
   it.live("recursively deletes a nested directory tree", () => {
-    const { layer, requests } = setupLegacyStorage(tmp.current, {
+    const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       yes: true,
@@ -442,7 +450,7 @@ describe("legacy storage rm", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/dir"],
         recursive: true,
         linked: true,
@@ -461,7 +469,7 @@ describe("legacy storage rm", () => {
   });
 
   it.live("deletes a now-empty bucket and prints its success message", () => {
-    const { layer, out } = setupLegacyStorage(tmp.current, {
+    const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       yes: true,
@@ -476,7 +484,7 @@ describe("legacy storage rm", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///test"],
         recursive: true,
         linked: true,
@@ -490,7 +498,7 @@ describe("legacy storage rm", () => {
   });
 
   it.live("fails with Object not found for an empty recursive directory", () => {
-    const { layer } = setupLegacyStorage(tmp.current, {
+    const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       yes: true,
@@ -500,7 +508,7 @@ describe("legacy storage rm", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/dir"],
         recursive: true,
         linked: true,
@@ -513,7 +521,7 @@ describe("legacy storage rm", () => {
   });
 
   it.live("emits a { deleted, buckets_deleted } result in json mode", () => {
-    const { layer, out } = setupLegacyStorage(tmp.current, {
+    const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       yes: true,
@@ -521,7 +529,7 @@ describe("legacy storage rm", () => {
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
         linked: true,
@@ -537,7 +545,7 @@ describe("legacy storage rm", () => {
 
   it.live("propagates a 500 from the object DELETE", () => {
     // A non-404 status escapes the bucket-not-found tolerance and fails hard.
-    const { layer } = setupLegacyStorage(tmp.current, {
+    const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       yes: true,
@@ -551,7 +559,7 @@ describe("legacy storage rm", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
         linked: true,
@@ -564,14 +572,14 @@ describe("legacy storage rm", () => {
   });
 
   it.live("propagates a 503 from the bucket service when listing for -r", () => {
-    const { layer, requests } = setupLegacyStorage(tmp.current, {
+    const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       yes: true,
       routes: [{ method: "GET", match: BUCKET, status: 503, body: { message: "unavailable" } }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: [],
         recursive: true,
         linked: true,
@@ -585,13 +593,13 @@ describe("legacy storage rm", () => {
   });
 
   it.live("targets the linked project's Storage host and flushes telemetry", () => {
-    const { layer, requests, telemetry, linkedCache } = setupLegacyStorage(tmp.current, {
+    const { layer, requests, telemetry, linkedCache } = setupStorage(tmp.current, {
       // No `--local`, so the linked path resolves the ref + service-role key.
       yes: true,
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
         linked: true,
@@ -599,25 +607,23 @@ describe("legacy storage rm", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      expect(
-        requests.some((r) => r.url.startsWith(`https://${LEGACY_VALID_REF}.supabase.co`)),
-      ).toBe(true);
+      expect(requests.some((r) => r.url.startsWith(`https://${VALID_REF}.supabase.co`))).toBe(true);
       expect(telemetry.flushed).toBe(true);
       expect(linkedCache.cached).toBe(true);
-      expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+      expect(linkedCache.cachedRef).toBe(VALID_REF);
     });
   });
 
-  it.live("deletes from the project given via --project-ref, overriding LEGACY_VALID_REF", () => {
+  it.live("deletes from the project given via --project-ref, overriding VALID_REF", () => {
     // `opts.projectRef` (the fake's own fallback) is left at its default
-    // (LEGACY_VALID_REF) — the flag must win over it and drive the gateway host.
+    // (VALID_REF) — the flag must win over it and drive the gateway host.
     const FLAG_REF = "flagflagflagflagflag";
-    const { layer, requests, linkedCache } = setupLegacyStorage(tmp.current, {
+    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
       yes: true,
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
         linked: true,
@@ -626,7 +632,7 @@ describe("legacy storage rm", () => {
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.url.startsWith(`https://${FLAG_REF}.supabase.co`))).toBe(true);
-      expect(requests.some((r) => r.url.includes(LEGACY_VALID_REF))).toBe(false);
+      expect(requests.some((r) => r.url.includes(VALID_REF))).toBe(false);
       expect(linkedCache.cached).toBe(true);
       expect(linkedCache.cachedRef).toBe(FLAG_REF);
     });
@@ -634,13 +640,13 @@ describe("legacy storage rm", () => {
 
   it.live("rejects --project-ref combined with --local", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    const { layer, requests, linkedCache } = setupLegacyStorage(tmp.current, {
+    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       yes: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
         linked: false,
@@ -656,8 +662,93 @@ describe("legacy storage rm", () => {
     });
   });
 
+  it.live(
+    "does not delete anything when --workdir names a config-less subdirectory of a real ancestor project",
+    () => {
+      // CLI-2285 regression, destructive-command variant: the ancestor
+      // project's config.toml declares a non-default [api] port — if this
+      // silently climbed to it, `storage rm -r` would target whatever
+      // (possibly running) local stack that ancestor points at. An EXPLICIT
+      // --workdir must hard-fail before the gateway is ever built, so no
+      // DELETE is ever issued.
+      writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
+      const sub = join(tmp.current, "nested", "dir");
+      mkdirSync(sub, { recursive: true });
+      const { layer, requests } = setupStorage(sub, {
+        local: true,
+        yes: true,
+        explicitWorkdir: true,
+        routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageRm({
+          files: ["ss:///private/a.pdf"],
+          recursive: false,
+          linked: true,
+          local: true,
+          projectRef: Option.none(),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("StorageMissingProjectConfigError");
+        expect(requests.some((r) => r.method === "DELETE")).toBe(false);
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live(
+    "a defaulted workdir with no project anywhere still proceeds using the embedded default config",
+    () => {
+      // Mirrors the regression above with explicitWorkdir flipped: a
+      // DEFAULTED workdir must keep its established tolerant fallback
+      // (`loadStorageConfig`'s `decodeDefaultCliConfig({})` branch)
+      // rather than hard-failing — the deletion still proceeds.
+      const { layer, requests } = setupStorage(tmp.current, {
+        local: true,
+        yes: true,
+        routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageRm({
+          files: ["ss:///private/a.pdf"],
+          recursive: false,
+          linked: true,
+          local: true,
+          projectRef: Option.none(),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(requests.some((r) => r.method === "DELETE")).toBe(true);
+      });
+    },
+  );
+
+  it.live(
+    "an explicit --workdir naming a directory that does not exist at all fails before any credential resolution",
+    () => {
+      const missing = join(tmp.current, "does-not-exist");
+      const { layer, requests } = setupStorage(missing, {
+        local: true,
+        yes: true,
+        explicitWorkdir: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageRm({
+          files: ["ss:///private/a.pdf"],
+          recursive: false,
+          linked: true,
+          local: true,
+          projectRef: Option.none(),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("StorageWorkdirError");
+        expect(JSON.stringify(exit)).toContain("failed to change workdir: chdir");
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
+
   it.live("emits a { deleted, buckets_deleted } result in stream-json mode", () => {
-    const { layer, out } = setupLegacyStorage(tmp.current, {
+    const { layer, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       yes: true,
@@ -665,7 +756,7 @@ describe("legacy storage rm", () => {
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyStorageRm({
+      const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
         linked: true,

@@ -1,11 +1,8 @@
-import {
-  legacyInspectDeprecationNotice,
-  legacyMakeInspectDbHandler,
-} from "../legacy-inspect-query.ts";
-import { legacyIndexStatsSpec } from "../index-stats/index-stats.query.ts";
+import { inspectDeprecationNotice, makeInspectDbHandler } from "../inspect-query.ts";
+import { indexStatsSpec } from "../index-stats/index-stats.query.ts";
 
-export const legacyInspectDbIndexSizes = legacyMakeInspectDbHandler(
-  legacyIndexStatsSpec,
-  "legacy.inspect.db.index-sizes",
-  legacyInspectDeprecationNotice("index-sizes", "index-stats"),
+export const inspectDbIndexSizes = makeInspectDbHandler(
+  indexStatsSpec,
+  "inspect.db.index-sizes",
+  inspectDeprecationNotice("index-sizes", "index-stats"),
 );

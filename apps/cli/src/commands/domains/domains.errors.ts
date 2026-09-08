@@ -1,6 +1,6 @@
 import { Data } from "effect";
 
-import { mapLegacyHttpError } from "../../command-internal/legacy-http-errors.ts";
+import { mapHttpError } from "../../command-internal/http-errors.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -12,7 +12,7 @@ import {
  * Transport-level failure talking to the Management API custom-hostname
  * endpoints. Message format: `failed to <verb> custom hostname: <err>`.
  */
-export class LegacyDomainsNetworkError extends Data.TaggedError("LegacyDomainsNetworkError")<{
+class DomainsNetworkError extends Data.TaggedError("DomainsNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -28,9 +28,7 @@ export class LegacyDomainsNetworkError extends Data.TaggedError("LegacyDomainsNe
  * success (201 for create/reverify/activate, 200 for get/delete). Message
  * format: `unexpected <verb> hostname status <code>: <body>`.
  */
-export class LegacyDomainsUnexpectedStatusError extends Data.TaggedError(
-  "LegacyDomainsUnexpectedStatusError",
-)<{
+class DomainsUnexpectedStatusError extends Data.TaggedError("DomainsUnexpectedStatusError")<{
   readonly status: number;
   readonly body: string;
   readonly message: string;
@@ -48,7 +46,7 @@ export class LegacyDomainsUnexpectedStatusError extends Data.TaggedError(
  * not resolve to a CNAME, or it resolved to a host other than the expected
  * Supabase subdomain.
  */
-export class LegacyDomainsCnameError extends Data.TaggedError("LegacyDomainsCnameError")<{
+export class DomainsCnameError extends Data.TaggedError("DomainsCnameError")<{
   readonly message: string;
   /**
    * Set when the DNS-over-HTTPS resolver call itself failed (timeout,
@@ -68,14 +66,14 @@ export class LegacyDomainsCnameError extends Data.TaggedError("LegacyDomainsCnam
 /**
  * Build the network/status error mapper for a custom-hostname subcommand. The
  * error strings differ only by verb, so each handler supplies its verb and
- * shares the dispatch + body-truncation policy from `mapLegacyHttpError`.
+ * shares the dispatch + body-truncation policy from `mapHttpError`.
  *
  * @param verb - the established phrasing, e.g. `"create"`, `"get"`, `"re-verify"`.
  */
-export function mapLegacyDomainsHttpError(verb: string) {
-  return mapLegacyHttpError({
-    networkError: LegacyDomainsNetworkError,
-    statusError: LegacyDomainsUnexpectedStatusError,
+export function mapDomainsHttpError(verb: string) {
+  return mapHttpError({
+    networkError: DomainsNetworkError,
+    statusError: DomainsUnexpectedStatusError,
     networkMessage: (cause) => `failed to ${verb} custom hostname: ${cause}`,
     statusMessage: (status, body) => `unexpected ${verb} hostname status ${status}: ${body}`,
   });

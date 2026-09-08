@@ -1,14 +1,14 @@
 import { Effect, FileSystem } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
-export type LegacySsoFileErrorReason =
+export type SsoFileErrorReason =
   | "not_found"
   | "permission"
   | "invalid_content"
   | "invalid_url"
   | "other";
 
-function fileErrorReason(cause: PlatformError): LegacySsoFileErrorReason {
+function fileErrorReason(cause: PlatformError): SsoFileErrorReason {
   if (cause.reason._tag === "NotFound") return "not_found";
   if (cause.reason._tag === "PermissionDenied") return "permission";
   return "other";
@@ -19,9 +19,9 @@ function fileErrorReason(cause: PlatformError): LegacySsoFileErrorReason {
  * (both commands bind the same Go `ssoNameIDFormat` enum var,
  * `cmd/sso.go:158,176`). Order matters twice: it drives the CLI help text
  * and it is joined verbatim into pflag's `invalid argument … must be one of
- * [ … ]` error (`legacyPflagEnumValue`), which must byte-match Go.
+ * [ … ]` error (`pflagEnumValue`), which must byte-match Go.
  */
-export const LEGACY_SSO_NAME_ID_FORMATS = [
+export const SSO_NAME_ID_FORMATS = [
   "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
   "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
   "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
@@ -66,7 +66,7 @@ export const readMetadataFile =
   <Eopen, Eutf>(factory: {
     readonly openError: (args: {
       readonly message: string;
-      readonly reason: LegacySsoFileErrorReason;
+      readonly reason: SsoFileErrorReason;
     }) => Eopen;
     readonly nonUtf8Error: (args: { readonly source: string; readonly message: string }) => Eutf;
   }) =>
@@ -98,7 +98,7 @@ export const readAttributeMappingFile =
   <E>(factory: {
     readonly openError: (args: {
       readonly message: string;
-      readonly reason: LegacySsoFileErrorReason;
+      readonly reason: SsoFileErrorReason;
     }) => E;
   }) =>
   (path: string): Effect.Effect<unknown, E, FileSystem.FileSystem> =>

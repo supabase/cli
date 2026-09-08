@@ -11,18 +11,18 @@
  * "storage.enabled && storage.image_transformation.enabled"`, `dependsOn:
  * ["storage"]`) — this module only builds the container spec once called.
  * The caller must pass the SAME `isImgProxyEnabled` boolean it used for this
- * gating decision into `storage.service.ts`'s `LegacyStorageEnvInput.
+ * gating decision into `storage.service.ts`'s `StorageEnvInput.
  * imageTransformationEnabled` — see that file's header.
  */
 
-import { legacyServiceContainerName } from "../../../command-internal/legacy-docker-ids.ts";
-import type { LegacyStartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
+import { serviceContainerName } from "../../../command-internal/docker-ids.ts";
+import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
 
 /**
  * The ImgProxy env — entirely static, no `config.toml` field feeds any of
  * these values.
  */
-export function legacyBuildImgproxyEnv(): Record<string, string> {
+export function buildImgproxyEnv(): Record<string, string> {
   return {
     IMGPROXY_BIND: ":5001",
     IMGPROXY_LOCAL_FILESYSTEM_ROOT: "/",
@@ -38,8 +38,8 @@ export function legacyBuildImgproxyEnv(): Record<string, string> {
   };
 }
 
-export interface LegacyImgproxyContainerSpecInput {
-  /** The sanitized project id — see `legacyServiceContainerName`'s callers. */
+export interface ImgproxyContainerSpecInput {
+  /** The sanitized project id — see `serviceContainerName`'s callers. */
   readonly projectId: string;
   /** `container.HostConfig.NetworkMode`/`network.NetworkingConfig` target — the `--network-id` override or `utils.NetId`. */
   readonly networkId: string;
@@ -51,17 +51,15 @@ export interface LegacyImgproxyContainerSpecInput {
  * Builds the `docker create` spec for the ImgProxy container. `volumesFrom`
  * mounts Storage's own volumes — no `ports`/`exposedPorts`; ImgProxy is
  * reached only via its Docker network alias, from Storage's own
- * `IMGPROXY_URL` env var (`storage.service.ts`'s `legacyBuildStorageEnv`).
+ * `IMGPROXY_URL` env var (`storage.service.ts`'s `buildStorageEnv`).
  */
-export function legacyBuildImgproxyContainerSpec(
-  input: LegacyImgproxyContainerSpecInput,
-): LegacyStartContainerSpec {
+export function buildImgproxyContainerSpec(input: ImgproxyContainerSpecInput): StartContainerSpec {
   return {
     image: input.image,
-    containerName: legacyServiceContainerName("imgproxy", input.projectId),
-    env: legacyBuildImgproxyEnv(),
+    containerName: serviceContainerName("imgproxy", input.projectId),
+    env: buildImgproxyEnv(),
     binds: [],
-    volumesFrom: [legacyServiceContainerName("storage", input.projectId)],
+    volumesFrom: [serviceContainerName("storage", input.projectId)],
     healthcheck: {
       test: ["CMD", "imgproxy", "health"],
       intervalSeconds: 10,

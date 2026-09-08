@@ -13,12 +13,12 @@
  * volume-existence check finds no existing volume (a brand-new, first-ever
  * start).
  */
-export const LEGACY_START_STARTING_DATABASE_MESSAGE = "Starting database...\n";
+export const START_STARTING_DATABASE_MESSAGE = "Starting database...\n";
 
 /**
  * Go's `fmt.Fprintln(w, "Starting database from backup...")`
  * (`apps/cli-go/internal/db/start/start.go:165-175`) — printed instead of
- * {@link LEGACY_START_STARTING_DATABASE_MESSAGE} when the pre-create
+ * {@link START_STARTING_DATABASE_MESSAGE} when the pre-create
  * volume-existence check finds an EXISTING volume (a restart reusing the
  * already-persisted Postgres data). Despite the wording, this has nothing to
  * do with any `--from-backup` file-restore flag — Go's own `fromBackup`
@@ -28,5 +28,4 @@ export const LEGACY_START_STARTING_DATABASE_MESSAGE = "Starting database...\n";
  * volume-already-exists case, not that flag (see `db/start/start.handler.ts`'s
  * own message-selection logic).
  */
-export const LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE =
-  "Starting database from backup...\n";
+export const START_STARTING_DATABASE_FROM_BACKUP_MESSAGE = "Starting database from backup...\n";

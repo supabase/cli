@@ -14,7 +14,7 @@ const E2E_TIMEOUT_MS = 30_000;
  * (they don't need a live local stack); these only exercise what the in-process
  * suites bypass.
  */
-describe("supabase storage (legacy)", () => {
+describe("supabase storage", () => {
   let projectDir: string;
 
   beforeAll(() => {
@@ -29,7 +29,6 @@ describe("supabase storage (legacy)", () => {
 
   test("lists the four subcommands in --help", { timeout: E2E_TIMEOUT_MS }, async () => {
     const { exitCode, stdout } = await runSupabase(["storage", "--help"], {
-      entrypoint: "legacy",
       cwd: projectDir,
     });
     expect(exitCode).toBe(0);
@@ -44,7 +43,7 @@ describe("supabase storage (legacy)", () => {
     // experimental-gate error wins (see the next test).
     const { exitCode, stdout, stderr } = await runSupabase(
       ["storage", "ls", "--local", "--linked", "ss:///", "--experimental"],
-      { entrypoint: "legacy", cwd: projectDir },
+      { cwd: projectDir },
     );
     expect(exitCode).toBe(1);
     expect(`${stdout}${stderr}`).toContain(
@@ -61,7 +60,6 @@ describe("supabase storage (legacy)", () => {
       const { exitCode, stdout, stderr } = await runSupabase(
         ["storage", "ls", "ss:///", "--local"],
         {
-          entrypoint: "legacy",
           cwd: projectDir,
         },
       );
@@ -80,7 +78,7 @@ describe("supabase storage (legacy)", () => {
     // "Unrecognized flag") and must NOT be blocked by the experimental gate.
     const { stdout, stderr } = await runSupabase(
       ["storage", "ls", "ss:///", "--local", "--experimental"],
-      { entrypoint: "legacy", cwd: projectDir },
+      { cwd: projectDir },
     );
     const combined = `${stdout}${stderr}`;
     expect(combined).not.toContain("Unrecognized flag");

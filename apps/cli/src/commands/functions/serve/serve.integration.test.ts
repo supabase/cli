@@ -21,27 +21,27 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { beforeEach, vi } from "vitest";
 
 import {
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyPlatformApiService,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  buildTestRuntime,
+  mockCommandSettings,
+  mockCommandPlatformApiService,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { toDockerPath } from "../../../shared/functions/functions-docker.ts";
 import {
   mockOutput,
   mockProcessControl,
   mockRuntimeInfo,
 } from "../../../../tests/helpers/mocks.ts";
-import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../shared/legacy/global-flags.ts";
+import { DebugFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { FileWatcher, type FileWatchEvent } from "../../../shared/runtime/file-watcher.service.ts";
 import {
   ProcessControl,
   type CliProcessSignal,
 } from "../../../shared/runtime/process-control.service.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
-import { legacyGetRegistryImageUrl } from "../../../command-internal/legacy-docker-registry.ts";
-import type { LegacyFunctionsServeFlags } from "./serve.handler.ts";
+import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
+import type { FunctionsServeFlags } from "../../../shared/functions/serve.ts";
 
 const deployMockState = vi.hoisted(() => ({
   runCalls: [] as Array<{
@@ -89,8 +89,7 @@ vi.mock("../../../shared/functions/functions-docker.ts", async () => {
     typeof import("../../../shared/functions/functions-docker.ts")
   >("../../../shared/functions/functions-docker.ts");
   const { Effect } = await import("effect");
-  const { legacyGetRegistryImageUrl } =
-    await import("../../../command-internal/legacy-docker-registry.ts");
+  const { getRegistryImageUrl } = await import("../../../command-internal/docker-registry.ts");
 
   return {
     ...actual,
@@ -104,7 +103,7 @@ vi.mock("../../../shared/functions/functions-docker.ts", async () => {
       }),
     // Stubbed to the pure registry-mapping step only, skipping the actual
     // cache-check/pull: the real implementation
-    // (`legacyMakeDockerImageResolver`) does `docker image inspect`/`docker
+    // (`makeDockerImageResolver`) does `docker image inspect`/`docker
     // pull` via the real `ChildProcessSpawner` directly (not through this
     // file's mocked `runChildProcess` below), so leaving it real here would
     // insert un-mocked spawns — and real 4s/8s retry backoffs on a miss —
@@ -113,7 +112,7 @@ vi.mock("../../../shared/functions/functions-docker.ts", async () => {
     resolveFunctionsDockerImage: (
       image: string,
       projectEnvValues?: Readonly<Record<string, string>>,
-    ) => Effect.sync(() => legacyGetRegistryImageUrl(image, projectEnvValues)),
+    ) => Effect.sync(() => getRegistryImageUrl(image, projectEnvValues)),
     runChildProcess: (command: string, args: ReadonlyArray<string>, options?: unknown) =>
       Effect.suspend(() => {
         const envFile = args.flatMap((value, index) =>
@@ -161,12 +160,12 @@ vi.mock("../../../shared/functions/functions-docker.ts", async () => {
   };
 });
 
-const tempRoot = useLegacyTempWorkdir("supabase-functions-serve-int-");
+const tempRoot = useTempWorkdir("supabase-functions-serve-int-");
 
 // Root bypasses POSIX permission bits, so chmod-based failure tests can't run there.
 const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
 
-const { legacyFunctionsServe } = await import("./serve.handler.ts");
+const { functionsServe } = await import("./serve.handler.ts");
 
 interface LogProcessBehavior {
   readonly exitCode?: number;
@@ -176,7 +175,7 @@ interface LogProcessBehavior {
   readonly onSpawn?: () => void;
 }
 
-function baseFlags(overrides: Partial<LegacyFunctionsServeFlags> = {}): LegacyFunctionsServeFlags {
+function baseFlags(overrides: Partial<FunctionsServeFlags> = {}): FunctionsServeFlags {
   return {
     noVerifyJwt: Option.none(),
     envFile: Option.none(),
@@ -375,18 +374,18 @@ interface SetupOptions {
 function setupServe(options: SetupOptions = {}) {
   const workdir = options.workdir ?? tempRoot.current;
   const out = mockOutput({ format: "text", interactive: false });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cliSettings = mockLegacyCliSettings({
+  const telemetry = mockTelemetryStateTracked();
+  const cliSettings = mockCommandSettings({
     workdir,
     projectId: options.projectId ?? Option.none(),
   });
-  const api = mockLegacyPlatformApiService({ v1: {} });
+  const api = mockCommandPlatformApiService({ v1: {} });
   const processControl = options.processControl ?? mockProcessControl();
   const fileWatcher = options.fileWatcher ?? mockFileWatcher();
   const childSpawner = options.childSpawner ?? mockDockerLogSpawner([{ exitCode: 1 }]);
 
   const layer = Layer.mergeAll(
-    buildLegacyTestRuntime({
+    buildTestRuntime({
       out,
       api,
       cliSettings,
@@ -400,8 +399,8 @@ function setupServe(options: SetupOptions = {}) {
     }),
     fileWatcher.layer,
     childSpawner.layer,
-    Layer.succeed(LegacyDebugFlag, options.debug ?? false),
-    Layer.succeed(LegacyNetworkIdFlag, options.networkId ?? Option.none()),
+    Layer.succeed(DebugFlag, options.debug ?? false),
+    Layer.succeed(NetworkIdFlag, options.networkId ?? Option.none()),
   );
 
   return { layer, out, telemetry, processControl, fileWatcher, childSpawner };
@@ -428,7 +427,7 @@ beforeEach(() => {
   deployMockState.reset();
 });
 
-describe("legacy functions serve integration", () => {
+describe("functions serve integration", () => {
   it.live("overlays each Function's env file on the shared fallback", () => {
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {
@@ -477,7 +476,7 @@ describe("legacy functions serve integration", () => {
       );
 
       const { layer, out } = setupServe({ childSpawner });
-      yield* legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+      yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       const dockerRun = deployMockState.runCalls.find(
         (call) => call.command === "docker" && call.args[0] === "create",
@@ -558,7 +557,7 @@ describe("legacy functions serve integration", () => {
       );
 
       const { layer } = setupServe({ childSpawner });
-      yield* legacyFunctionsServe(baseFlags({ envFile: Option.some("custom.env") })).pipe(
+      yield* functionsServe(baseFlags({ envFile: Option.some("custom.env") })).pipe(
         Effect.provide(layer),
         Effect.flip,
       );
@@ -603,10 +602,7 @@ describe("legacy functions serve integration", () => {
       yield* Effect.promise(() => writeFunctionFile("hello", ".env", "API-KEY=secret-value\n"));
 
       const { layer } = setupServe();
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -689,10 +685,7 @@ describe("legacy functions serve integration", () => {
 
         const { layer, out, telemetry } = setupServe({ childSpawner });
 
-        const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-          Effect.provide(layer),
-          Effect.flip,
-        );
+        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
         if (error instanceof Error) {
@@ -862,10 +855,7 @@ describe("legacy functions serve integration", () => {
 
       const { layer } = setupServe({ childSpawner });
 
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
       expect(error).toBeInstanceOf(Error);
 
       const dockerRun = deployMockState.runCalls.find(
@@ -876,9 +866,7 @@ describe("legacy functions serve integration", () => {
         throw new Error("expected docker create call");
       }
 
-      expect(dockerRun.args).toContain(
-        legacyGetRegistryImageUrl(dockerfileServiceImage("edgeruntime")),
-      );
+      expect(dockerRun.args).toContain(getRegistryImageUrl(dockerfileServiceImage("edgeruntime")));
       expect(dockerRun.args.join(" ")).not.toContain(multilineValue);
       expect(dockerRun.args.join(" ")).not.toContain("EOF_ENV_0");
 
@@ -976,10 +964,7 @@ describe("legacy functions serve integration", () => {
 
         const { layer } = setupServe({ childSpawner });
 
-        const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-          Effect.provide(layer),
-          Effect.flip,
-        );
+        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
         expect(error).toBeInstanceOf(Error);
 
         expect(existsSync(staleMultilineEnvDir)).toBe(false);
@@ -1014,10 +999,7 @@ describe("legacy functions serve integration", () => {
       );
 
       const { layer } = setupServe();
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -1041,10 +1023,7 @@ describe("legacy functions serve integration", () => {
       );
 
       const { layer } = setupServe();
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -1113,10 +1092,7 @@ describe("legacy functions serve integration", () => {
       );
 
       const { layer } = setupServe({ childSpawner });
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -1188,10 +1164,7 @@ describe("legacy functions serve integration", () => {
       );
 
       const { layer } = setupServe({ childSpawner });
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -1287,10 +1260,7 @@ describe("legacy functions serve integration", () => {
       );
 
       const { layer } = setupServe({ childSpawner });
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -1341,10 +1311,7 @@ describe("legacy functions serve integration", () => {
       );
 
       const { layer } = setupServe();
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       const steps = deployMockState.runCalls.map((call) => call.args.slice(0, 2));
@@ -1382,10 +1349,7 @@ describe("legacy functions serve integration", () => {
       );
 
       const { layer } = setupServe();
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       expect(String(error)).toContain(
@@ -1484,7 +1448,7 @@ describe("legacy functions serve integration", () => {
         processControl,
         workdir: projectRoot,
       });
-      const fiber = yield* legacyFunctionsServe(baseFlags()).pipe(
+      const fiber = yield* functionsServe(baseFlags()).pipe(
         Effect.provide(layer),
         Effect.forkChild({ startImmediately: true }),
       );
@@ -1524,6 +1488,98 @@ describe("legacy functions serve integration", () => {
     });
   });
 
+  it.live(
+    "does not let an ancestor project's deno.json get misattributed to this project's own function when --workdir names a config-less subdirectory of it",
+    () => {
+      // CLI-2285: `resolveServeConfig` used to pass NO `search` option to
+      // `inferFunctionsManifest`, so it always climbed ancestors (the
+      // package default) regardless of `goConfigCompat`, while the config
+      // load right next to it already used `search: false` for the legacy
+      // shell. A function directory with no deno.json of its own would
+      // still be reported as HAVING one — borrowed from an unrelated
+      // ANCESTOR project's own deno.json of the same slug — because the
+      // manifest's filesystem walk climbed to find the ancestor's project
+      // root even though the config load never did. The borrowed import map
+      // path is then re-anchored under THIS project's own supabase dir,
+      // where no such file exists. Same fix, same shape of regression test,
+      // as deploy.integration.test.ts's "does not treat an ancestor
+      // project's deno.json as this project's own import map…" test.
+      deployMockState.runHandler = (command, args) => {
+        if (command !== "docker") {
+          throw new Error(`unexpected process: ${command}`);
+        }
+        if (args[0] === "container" && args[1] === "inspect") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "container" && args[1] === "rm") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
+          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+        }
+        if (args[0] === "exec") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected docker args: ${args.join(" ")}`);
+      };
+
+      const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
+      const nestedWorkdir = join(tempRoot.current, "nested", "dir");
+
+      return Effect.gen(function* () {
+        // Ancestor project: a real config.toml plus a real function with
+        // BOTH an entrypoint and a deno.json, at the same slug the
+        // sub-project below serves.
+        yield* Effect.promise(() => writeCliConfig('project_id = "ancestor-project"\n'));
+        yield* Effect.promise(() =>
+          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("ancestor"))\n'),
+        );
+        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+        // The sub-project actually served has its OWN entrypoint, but
+        // deliberately no deno.json of its own — and no config.toml either,
+        // which is what makes it "config-less" relative to the ancestor.
+        yield* Effect.promise(() =>
+          mkdir(join(nestedWorkdir, "supabase", "functions", "hello"), { recursive: true }),
+        );
+        yield* Effect.promise(() =>
+          writeFile(
+            join(nestedWorkdir, "supabase", "functions", "hello", "index.ts"),
+            "Deno.serve(() => new Response())\n",
+          ),
+        );
+
+        const { layer } = setupServe({ childSpawner, workdir: nestedWorkdir });
+        yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+        const dockerRun = deployMockState.runCalls.find(
+          (call) => call.command === "docker" && call.args[0] === "create",
+        );
+        expect(dockerRun).toBeDefined();
+        if (dockerRun === undefined) {
+          throw new Error("expected docker create call");
+        }
+
+        const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
+        const functionsConfigEntry = envs.find((entry) =>
+          entry.startsWith("SUPABASE_INTERNAL_FUNCTIONS_CONFIG="),
+        );
+        expect(functionsConfigEntry).toBeDefined();
+        if (functionsConfigEntry === undefined) {
+          throw new Error("missing functions config env");
+        }
+        const functionsConfig = JSON.parse(
+          functionsConfigEntry.slice("SUPABASE_INTERNAL_FUNCTIONS_CONFIG=".length),
+        );
+        // The sub-project's own "hello" is still served — not silently
+        // dropped — but with no import map, since the ancestor's deno.json
+        // must never be borrowed for it.
+        expect(functionsConfig).toHaveProperty("hello");
+        expect(functionsConfig.hello).not.toHaveProperty("importMapPath");
+      });
+    },
+  );
+
   it.live("restarts the runtime when watched files change", () => {
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {
@@ -1558,7 +1614,7 @@ describe("legacy functions serve integration", () => {
       yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
       const { layer, out } = setupServe({ fileWatcher, childSpawner });
-      const fiber = yield* legacyFunctionsServe(baseFlags()).pipe(
+      const fiber = yield* functionsServe(baseFlags()).pipe(
         Effect.provide(layer),
         Effect.forkChild({ startImmediately: true }),
       );
@@ -1649,7 +1705,7 @@ describe("legacy functions serve integration", () => {
       yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
       const { layer, out } = setupServe({ processControl, childSpawner });
-      const fiber = yield* legacyFunctionsServe(baseFlags()).pipe(
+      const fiber = yield* functionsServe(baseFlags()).pipe(
         Effect.provide(layer),
         Effect.forkChild({ startImmediately: true }),
       );
@@ -1724,7 +1780,7 @@ describe("legacy functions serve integration", () => {
       yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
       const { layer, out } = setupServe({ processControl });
-      const fiber = yield* legacyFunctionsServe(baseFlags()).pipe(
+      const fiber = yield* functionsServe(baseFlags()).pipe(
         Effect.provide(layer),
         Effect.forkChild({ startImmediately: true }),
       );
@@ -1803,7 +1859,7 @@ describe("legacy functions serve integration", () => {
         yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
         const { layer } = setupServe({ processControl, childSpawner });
-        const fiber = yield* legacyFunctionsServe(baseFlags()).pipe(
+        const fiber = yield* functionsServe(baseFlags()).pipe(
           Effect.provide(layer),
           Effect.forkChild({ startImmediately: true }),
         );
@@ -1870,7 +1926,7 @@ describe("legacy functions serve integration", () => {
         childSpawner,
       });
 
-      const error = yield* legacyFunctionsServe(
+      const error = yield* functionsServe(
         baseFlags({
           inspectMode: Option.some("wait"),
           inspectMain: true,
@@ -1929,7 +1985,7 @@ describe("legacy functions serve integration", () => {
       );
 
       const { layer } = setupServe({ childSpawner });
-      yield* legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+      yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       const dockerRun = deployMockState.runCalls.find(
         (call) => call.command === "docker" && call.args[0] === "create",
@@ -2013,10 +2069,7 @@ describe("legacy functions serve integration", () => {
       );
 
       const { layer } = setupServe({ childSpawner });
-      yield* legacyFunctionsServe(baseFlags({ inspect: true })).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      yield* functionsServe(baseFlags({ inspect: true })).pipe(Effect.provide(layer), Effect.flip);
 
       const dockerRun = deployMockState.runCalls.find(
         (call) => call.command === "docker" && call.args[0] === "create",
@@ -2108,10 +2161,7 @@ describe("legacy functions serve integration", () => {
       yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
       const { layer } = setupServe({ childSpawner });
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -2198,10 +2248,7 @@ describe("legacy functions serve integration", () => {
         yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
         const { layer } = setupServe({ childSpawner });
-        const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-          Effect.provide(layer),
-          Effect.flip,
-        );
+        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
         if (error instanceof Error) {
@@ -2289,10 +2336,7 @@ describe("legacy functions serve integration", () => {
         yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
         const { layer } = setupServe({ childSpawner });
-        const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-          Effect.provide(layer),
-          Effect.flip,
-        );
+        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
         if (error instanceof Error) {
@@ -2368,10 +2412,7 @@ describe("legacy functions serve integration", () => {
       yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
       const { layer } = setupServe({ childSpawner });
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -2438,10 +2479,7 @@ describe("legacy functions serve integration", () => {
       yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
       const { layer } = setupServe({ childSpawner });
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -2509,10 +2547,7 @@ describe("legacy functions serve integration", () => {
       yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
       const { layer } = setupServe({ childSpawner });
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -2591,10 +2626,7 @@ describe("legacy functions serve integration", () => {
           childSpawner,
           projectId: Option.some("overrideprojectaaaaa"),
         });
-        const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-          Effect.provide(layer),
-          Effect.flip,
-        );
+        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
         if (error instanceof Error) {
@@ -2653,7 +2685,7 @@ describe("legacy functions serve integration", () => {
   it.live("fails inspect flag conflicts before startup work begins", () => {
     return Effect.gen(function* () {
       const { layer } = setupServe();
-      const error = yield* legacyFunctionsServe(
+      const error = yield* functionsServe(
         baseFlags({
           inspect: true,
           inspectMode: Option.some("run"),
@@ -2677,10 +2709,7 @@ describe("legacy functions serve integration", () => {
       yield* Effect.promise(() => writeCliConfig("not valid toml ]["));
 
       const { layer } = setupServe();
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(JSON.stringify(error)).toContain("CliConfigParseError");
       expect(deployMockState.runCalls).toHaveLength(0);
@@ -2713,10 +2742,7 @@ describe("legacy functions serve integration", () => {
       yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
       const { layer } = setupServe();
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -2751,10 +2777,7 @@ describe("legacy functions serve integration", () => {
       yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
       const { layer } = setupServe();
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -2807,10 +2830,7 @@ describe("legacy functions serve integration", () => {
       yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
       const { layer } = setupServe();
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -2840,10 +2860,7 @@ describe("legacy functions serve integration", () => {
       yield* Effect.promise(() => writeCliConfig("not valid toml ]["));
 
       const { layer } = setupServe();
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toHaveProperty("_tag", "CliConfigParseError");
       expect(deployMockState.runCalls).toHaveLength(0);
@@ -2899,10 +2916,7 @@ describe("legacy functions serve integration", () => {
       yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
       const { layer } = setupServe();
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -2937,10 +2951,7 @@ describe("legacy functions serve integration", () => {
       yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
       const { layer } = setupServe();
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -2990,10 +3001,7 @@ describe("legacy functions serve integration", () => {
       process.env["SUPABASE_ENV"] = "development";
 
       const { layer } = setupServe({ childSpawner });
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -3067,10 +3075,7 @@ describe("legacy functions serve integration", () => {
         process.env["SUPABASE_ENV"] = "development";
 
         const { layer } = setupServe({ childSpawner });
-        const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-          Effect.provide(layer),
-          Effect.flip,
-        );
+        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
         if (error instanceof Error) {
@@ -3147,10 +3152,7 @@ describe("legacy functions serve integration", () => {
         yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
         const { layer } = setupServe({ childSpawner });
-        const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-          Effect.provide(layer),
-          Effect.flip,
-        );
+        const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
         if (error instanceof Error) {
@@ -3192,7 +3194,7 @@ describe("legacy functions serve integration", () => {
       yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
       const { layer } = setupServe();
-      const error = yield* legacyFunctionsServe(
+      const error = yield* functionsServe(
         baseFlags({
           envFile: Option.some(".env"),
         }),
@@ -3239,10 +3241,7 @@ describe("legacy functions serve integration", () => {
       );
 
       const { layer, out } = setupServe();
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -3295,10 +3294,7 @@ describe("legacy functions serve integration", () => {
       );
 
       const { layer, out } = setupServe();
-      const exit = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
+      const exit = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isSuccess(exit)) {
@@ -3339,10 +3335,7 @@ describe("legacy functions serve integration", () => {
           );
 
           const { layer } = setupServe();
-          const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-            Effect.provide(layer),
-            Effect.flip,
-          );
+          const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
           expect(error).toBeInstanceOf(Error);
           if (error instanceof Error) {
@@ -3372,10 +3365,7 @@ describe("legacy functions serve integration", () => {
           );
 
           const { layer } = setupServe();
-          const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-            Effect.provide(layer),
-            Effect.flip,
-          );
+          const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
           expect(error).toBeInstanceOf(Error);
           if (error instanceof Error) {
@@ -3435,7 +3425,7 @@ describe("legacy functions serve integration", () => {
           yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
           const { layer } = setupServe({ childSpawner });
-          yield* legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+          yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
           const dockerRun = deployMockState.runCalls.find(
             (call) => call.command === "docker" && call.args[0] === "create",
@@ -3494,7 +3484,7 @@ describe("legacy functions serve integration", () => {
           yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
           const { layer } = setupServe({ childSpawner });
-          yield* legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+          yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
           expect(deployMockState.networkCalls).toEqual([
             { networkMode: "env-network", projectId: "test-project" },
@@ -3548,7 +3538,7 @@ describe("legacy functions serve integration", () => {
         yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
         const { layer } = setupServe({ childSpawner, networkId: Option.some("flag-network") });
-        yield* legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+        yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
         expect(deployMockState.networkCalls).toEqual([
           { networkMode: "flag-network", projectId: "test-project" },
@@ -3574,10 +3564,7 @@ describe("legacy functions serve integration", () => {
       );
 
       const { layer } = setupServe();
-      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
-        Effect.provide(layer),
-        Effect.flip,
-      );
+      const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       if (error instanceof Error) {
@@ -3606,7 +3593,7 @@ describe("legacy functions serve integration", () => {
         yield* Effect.promise(() => chmod(stagingRoot, 0o555));
 
         const { layer } = setupServe();
-        const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        const error = yield* functionsServe(baseFlags()).pipe(
           Effect.provide(layer),
           Effect.flip,
           Effect.ensuring(Effect.promise(() => chmod(stagingRoot, 0o755))),

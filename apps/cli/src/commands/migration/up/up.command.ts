@@ -2,9 +2,9 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyMigrationDbRuntimeLayer } from "../migration.layers.ts";
-import { legacyMigrationUp } from "./up.handler.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { migrationDbRuntimeLayer } from "../migration.layers.ts";
+import { migrationUp } from "./up.handler.ts";
 
 const config = {
   includeAll: Flag.boolean("include-all").pipe(
@@ -32,14 +32,14 @@ const config = {
   ),
 } as const;
 
-export type LegacyMigrationUpFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type MigrationUpFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyMigrationUpCommand = Command.make("up", config).pipe(
+export const migrationUpCommand = Command.make("up", config).pipe(
   Command.withDescription("Apply pending migrations to local database."),
   Command.withShortDescription("Apply pending migrations to local database"),
   Command.withHandler((flags) =>
-    legacyMigrationUp(flags).pipe(
-      withLegacyCommandInstrumentation({
+    migrationUp(flags).pipe(
+      withCommandTelemetry({
         flags: {
           "include-all": flags.includeAll,
           "db-url": flags.dbUrl,
@@ -54,5 +54,5 @@ export const legacyMigrationUpCommand = Command.make("up", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyMigrationDbRuntimeLayer(["migration", "up"])),
+  Command.provide(migrationDbRuntimeLayer(["migration", "up"])),
 );

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
@@ -15,39 +15,30 @@ import {
   mockRuntimeInfo,
 } from "../../../../tests/helpers/mocks.ts";
 import {
-  mockLegacyCliSettings,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-  legacySequentialExecBatch,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  mockCommandSettings,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+  sequentialExecBatch,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
-  LegacyDebugFlag,
-  LegacyExperimentalFlag,
-  LegacyNetworkIdFlag,
-} from "../../../shared/legacy/global-flags.ts";
+  DebugFlag,
+  ExperimentalFlag,
+  NetworkIdFlag,
+} from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
-import { LegacyDbConnectError } from "../../../command-internal/legacy-db-connection.errors.ts";
-import {
-  LegacyDbConnection,
-  type LegacyDbSession,
-} from "../../../command-internal/legacy-db-connection.service.ts";
-import { legacyDockerRunLayer } from "../../../command-internal/legacy-docker-run.layer.ts";
-import { LegacyEdgeRuntimeScriptError } from "../../../command-internal/legacy-edge-runtime-script.errors.ts";
-import {
-  LegacyEdgeRuntimeScript,
-  type LegacyEdgeRuntimeRunOpts,
-} from "../../../command-internal/legacy-edge-runtime-script.service.ts";
-import { LegacyPgDeltaSslProbe } from "../../../command-internal/legacy-pgdelta-ssl-probe.service.ts";
-import { legacyDbStart } from "./start.handler.ts";
-import type { LegacyDbStartFlags } from "./start.command.ts";
+import { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
+import { DbConnection, type DbSession } from "../../../command-internal/db-connection.service.ts";
+import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
+import { dbStart } from "./start.handler.ts";
+import type { DbStartFlags } from "./start.command.ts";
 
-const DEFAULT_FLAGS: LegacyDbStartFlags = { fromBackup: Option.none() };
+const DEFAULT_FLAGS: DbStartFlags = { fromBackup: Option.none() };
 const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
 const PG_NET_DROP_FINGERPRINT = "drop extension if exists pg_net";
 const GLOBALS_FINGERPRINT = "CREATE ROLE anon";
 
-function flags(fromBackup?: string): LegacyDbStartFlags {
+function flags(fromBackup?: string): DbStartFlags {
   return { fromBackup: fromBackup === undefined ? Option.none() : Option.some(fromBackup) };
 }
 
@@ -142,7 +133,7 @@ function bindsFromCreateArgs(args: ReadonlyArray<string>): ReadonlyArray<string>
   return binds;
 }
 
-/** The three PG15+ one-shot migrate jobs (`legacyStartSetupLocalDatabase`'s `LegacyDockerRun` calls). */
+/** The three PG15+ one-shot migrate jobs (`startSetupLocalDatabase`'s `DockerRun` calls). */
 function dbSetupJobCalls(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<SpawnRecord> {
   return spawned.filter((s) => s.args[0] === "run" && s.args[1] === "--rm");
 }
@@ -198,7 +189,7 @@ function freshVolumeRoute(
 }
 
 /**
- * Makes `legacyIsLocalDbRunning`'s pre-bring-up `container inspect` succeed
+ * Makes `isLocalDbRunning`'s pre-bring-up `container inspect` succeed
  * unconditionally, simulating an already-up local db — this is the very first
  * Docker call the handler makes, so no other `container inspect` call happens on
  * this path (the already-running short-circuit returns before `StartDatabase`).
@@ -213,7 +204,7 @@ function alreadyRunningRoute(
 }
 
 /**
- * Makes `legacyIsLocalDbRunning`'s pre-bring-up `container inspect` fail for a
+ * Makes `isLocalDbRunning`'s pre-bring-up `container inspect` fail for a
  * reason other than "no such container" — simulates an unreachable Docker daemon
  * during the running-check, which `AssertSupabaseDbIsRunning` propagates instead of
  * treating as "not running".
@@ -236,10 +227,10 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
   ),
 );
 
-/** Mirrors `start.integration.test.ts`'s own `fakeDbSession` — PG15+ (this suite's default) never calls `exec`/`query` (its schema init is three one-shot `LegacyDockerRun` jobs instead). */
+/** Mirrors `start.integration.test.ts`'s own `fakeDbSession` — PG15+ (this suite's default) never calls `exec`/`query` (its schema init is three one-shot `DockerRun` jobs instead). */
 function fakeDbSession() {
   const calls: Array<{ kind: "exec" | "query"; sql: string }> = [];
-  const session: LegacyDbSession = {
+  const session: DbSession = {
     exec: (sql) =>
       Effect.sync(() => {
         calls.push({ kind: "exec", sql });
@@ -249,7 +240,7 @@ function fakeDbSession() {
         calls.push({ kind: "query", sql });
         return [];
       }),
-    execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+    execBatch: (statements) => sequentialExecBatch(session)(statements),
     extensionExists: () => Effect.succeed(false),
     copyToCsv: () => Effect.succeed(new Uint8Array()),
     queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
@@ -257,7 +248,7 @@ function fakeDbSession() {
   return { session, calls };
 }
 
-const tempRoot = useLegacyTempWorkdir("supabase-db-start-int-");
+const tempRoot = useTempWorkdir("supabase-db-start-int-");
 
 function writeConfig(workdir: string, contents: string) {
   mkdirSync(join(workdir, "supabase"), { recursive: true });
@@ -280,11 +271,7 @@ interface SetupOpts {
   readonly experimental?: boolean;
   /** `--debug`. Defaults to `false`. */
   readonly debug?: boolean;
-  /** `LegacyEdgeRuntimeScript`'s mocked stdout for the pg-delta catalog-export call (`db-setup.ts`'s `legacyTryCacheMigrationsCatalog`). Only ever reached on a fresh volume with pg-delta enabled. */
-  readonly catalogStdout?: string;
-  /** Fails the mocked catalog-export call with this message instead of succeeding. */
-  readonly catalogExportFailWith?: string;
-  /** Number of initial `LegacyDbConnection.connect` attempts that fail before succeeding. */
+  /** Number of initial `DbConnection.connect` attempts that fail before succeeding. */
   readonly connectFailures?: number;
   /** Whether the mocked connect failures are dial-level (`retryable`). Defaults to `true`. */
   readonly connectFailuresRetryable?: boolean;
@@ -299,8 +286,8 @@ function setup(opts: SetupOpts = {}) {
     }
   }
   const out = mockOutput({ format: opts.format ?? "text" });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cliSettings = mockLegacyCliSettings({ workdir });
+  const telemetry = mockTelemetryStateTracked();
+  const cliSettings = mockCommandSettings({ workdir });
   const baseRoute = opts.route ?? defaultRoute();
   const route =
     opts.running === true
@@ -310,32 +297,16 @@ function setup(opts: SetupOpts = {}) {
         : baseRoute;
   const child = mockContainerCliSpawner(route);
   const dbSession = fakeDbSession();
-  const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
-  const edgeRuntime = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
-      edgeRunCalls.push(runOpts);
-      if (opts.catalogExportFailWith !== undefined) {
-        return Effect.fail(
-          new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
-        );
-      }
-      return Effect.succeed({ stdout: opts.catalogStdout ?? '{"version":1}', stderr: "" });
-    },
-  });
-  const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
-    requireSsl: () => Effect.succeed(false),
-    requireSslForHost: () => Effect.succeed(false),
-  });
 
   let connectAttempts = 0;
   const connectFailures = opts.connectFailures ?? 0;
-  const dbConnection = Layer.succeed(LegacyDbConnection, {
+  const dbConnection = Layer.succeed(DbConnection, {
     connect: () =>
       Effect.suspend(() => {
         connectAttempts += 1;
         if (connectAttempts <= connectFailures) {
           return Effect.fail(
-            new LegacyDbConnectError({
+            new DbConnectError({
               message:
                 "failed to connect to postgres: failed to connect to `host=127.0.0.1 user=postgres database=postgres`: connect ECONNREFUSED 127.0.0.1:54322",
               ...(opts.connectFailuresRetryable === false ? {} : { retryable: true }),
@@ -354,21 +325,16 @@ function setup(opts: SetupOpts = {}) {
     child.layer,
     alwaysReadyHttpClientLayer,
     dbConnection,
-    legacyDockerRunLayer.pipe(
-      Layer.provide(child.layer),
-      Layer.provide(mockProcessControl().layer),
-    ),
+    dockerRunLayer.pipe(Layer.provide(child.layer), Layer.provide(mockProcessControl().layer)),
     mockProcessControl().layer,
     mockRuntimeInfo({ platform: opts.platform ?? "linux", cwd: opts.cwd ?? workdir }),
     Layer.succeed(
-      LegacyNetworkIdFlag,
+      NetworkIdFlag,
       opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
     ),
     Layer.succeed(CliArgs, { args: ["db", "start"] }),
-    Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
-    Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
-    edgeRuntime,
-    sslProbe,
+    Layer.succeed(ExperimentalFlag, opts.experimental ?? false),
+    Layer.succeed(DebugFlag, opts.debug ?? false),
   );
   return {
     layer,
@@ -376,7 +342,6 @@ function setup(opts: SetupOpts = {}) {
     telemetry,
     child,
     dbSession,
-    edgeRunCalls,
     get connectAttempts() {
       return connectAttempts;
     },
@@ -386,7 +351,7 @@ function setup(opts: SetupOpts = {}) {
 const currentBranchPath = (workdir: string) =>
   join(workdir, "supabase", ".branches", "_current_branch");
 
-describe("legacy db start", () => {
+describe("db start", () => {
   beforeEach(() => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
   });
@@ -398,13 +363,13 @@ describe("legacy db start", () => {
   it.live("reports an already-running database without starting a container", () => {
     const { layer, out, telemetry, child } = setup({ running: true });
     return Effect.gen(function* () {
-      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Postgres database is already running.");
       expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       expect(telemetry.flushed).toBe(true);
-      // `initCurrentBranch` is inside `legacyStartDatabase`, never reached on
+      // `initCurrentBranch` is inside `startDatabase`, never reached on
       // the already-running short-circuit — the already-running check
-      // returns before `legacyStartDatabase` is ever called.
+      // returns before `startDatabase` is ever called.
       expect(existsSync(currentBranchPath(tempRoot.current))).toBe(false);
     });
   });
@@ -414,7 +379,7 @@ describe("legacy db start", () => {
     () => {
       const { layer, out, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
       return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Starting database...\n");
         expect(out.stderrText).not.toContain("Starting database from backup...");
         expect(createArgs(child.spawned)).not.toBeUndefined();
@@ -432,7 +397,7 @@ describe("legacy db start", () => {
     () => {
       const s = setup({ route: freshVolumeRoute(defaultRoute()), connectFailures: 2 });
       return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer));
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer));
         expect(s.connectAttempts).toBe(3);
         expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
       });
@@ -447,7 +412,7 @@ describe("legacy db start", () => {
       connectFailuresRetryable: false,
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer), Effect.exit);
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(s.connectAttempts).toBe(1);
     });
@@ -461,10 +426,10 @@ describe("legacy db start", () => {
         route: freshVolumeRoute(defaultRoute()),
       });
       return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Initialising schema...");
         // PG <= 14's `initSchema` execs globals.sql + the initial-schema SQL directly over the
-        // `LegacyDbConnection` session — no PG15+ one-shot `docker run --rm` migrate jobs at all.
+        // `DbConnection` session — no PG15+ one-shot `docker run --rm` migrate jobs at all.
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
         expect(dbSession.calls.length).toBeGreaterThan(0);
         expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
@@ -476,12 +441,12 @@ describe("legacy db start", () => {
     "a fresh volume with realtime disabled skips the realtime migrate job AND never attempts JWKS resolution",
     () => {
       // A configured (but unreachable) third-party JWKS issuer would fail
-      // `legacyResolveLocalJwks` if it were ever called — the PG15 realtime
+      // `resolveLocalJwks` if it were ever called — the PG15 realtime
       // job resolves JWKS itself, gated on `Realtime.Enabled`, so a fresh
       // volume with realtime disabled must never even attempt it, regardless
       // of what it would have resolved to. This is the one place `db
       // start`'s own JWKS gating is directly observable
-      // (`legacyStartDatabase`'s `setup.jwks` is a LAZY `Effect`, evaluated
+      // (`startDatabase`'s `setup.jwks` is a LAZY `Effect`, evaluated
       // only when reached).
       const previousFetch = globalThis.fetch;
       globalThis.fetch = Object.assign(() => Promise.reject(new Error("ECONNREFUSED")), {
@@ -493,7 +458,7 @@ describe("legacy db start", () => {
         route: freshVolumeRoute(defaultRoute()),
       });
       return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         // Default config: storage and auth stay enabled — only the realtime job is skipped.
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(2);
         expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
@@ -520,10 +485,10 @@ describe("legacy db start", () => {
         route: freshVolumeRoute(defaultRoute()),
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
+          expect(JSON.stringify(exit.cause)).toContain("DbConfigLoadError");
         }
         // The container was already created/started/healthy by the time JWKS resolution runs
         // (deep inside the fresh-volume setup step) — the rollback still tears it down.
@@ -539,69 +504,11 @@ describe("legacy db start", () => {
   );
 
   it.live(
-    "caches the migrations catalog after a fresh-volume setup with the legacy pg-delta engine",
-    () => {
-      const { layer, out, edgeRunCalls } = setup({
-        configContents: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-        projectEnvContents: "SUPABASE_USE_PG_DELTA_NEXT=false\n",
-        route: freshVolumeRoute(defaultRoute()),
-        catalogStdout: '{"snapshot":"ok"}',
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-        // Runs once, AFTER the fresh-volume migrate+seed pipeline — the
-        // catalog cache runs immediately after the migrate-and-seed step.
-        expect(edgeRunCalls).toHaveLength(1);
-        const tempDir = join(tempRoot.current, "supabase", ".temp", "pgdelta");
-        const catalogFiles = readdirSync(tempDir).filter((name) =>
-          name.startsWith("catalog-local-migrations-"),
-        );
-        expect(catalogFiles).toHaveLength(1);
-        expect(readFileSync(join(tempDir, catalogFiles[0]!), "utf8")).toBe('{"snapshot":"ok"}');
-      });
-    },
-  );
-
-  it.live(
-    "warns without failing db start when the legacy migrations-catalog export fails on a fresh volume",
-    () => {
-      const { layer, out } = setup({
-        configContents: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-        projectEnvContents: "SUPABASE_USE_PG_DELTA_NEXT=false\n",
-        route: freshVolumeRoute(defaultRoute()),
-        catalogExportFailWith: "edge-runtime script produced no output",
-      });
-      return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isSuccess(exit)).toBe(true);
-        expect(out.stderrText).toContain(
-          "Warning: failed to cache migrations catalog: edge-runtime script produced no output",
-        );
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
-      });
-    },
-  );
-
-  it.live(
-    "does not attempt to cache the migrations catalog on a fresh volume when pg-delta is disabled",
-    () => {
-      const { layer, out, edgeRunCalls } = setup({ route: freshVolumeRoute(defaultRoute()) });
-      return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(edgeRunCalls).toHaveLength(0);
-        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-        expect(existsSync(join(tempRoot.current, "supabase", ".temp", "pgdelta"))).toBe(false);
-      });
-    },
-  );
-
-  it.live(
     "restarts against an existing volume: skips the SetupLocalDatabase-equivalent pipeline but still writes _current_branch",
     () => {
       const { layer, out, child, dbSession } = setup();
       return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Starting database from backup...\n");
         expect(out.stderrText).not.toContain("Initialising schema...");
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
@@ -626,7 +533,7 @@ describe("legacy db start", () => {
       projectEnvContents: "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED=true\n",
     });
     return Effect.gen(function* () {
-      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).not.toContain("Initialising schema...");
       expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
       expect(
@@ -642,7 +549,7 @@ describe("legacy db start", () => {
     () => {
       const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
       return Effect.gen(function* () {
-        yield* legacyDbStart(flags("/abs/host/backup.sql")).pipe(Effect.provide(layer));
+        yield* dbStart(flags("/abs/host/backup.sql")).pipe(Effect.provide(layer));
         const args = createArgs(child.spawned);
         expect(args).not.toBeUndefined();
         const script = args?.[(args?.indexOf("-c") ?? -1) + 1];
@@ -661,7 +568,7 @@ describe("legacy db start", () => {
     () => {
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(flags("/abs/host/backup.sql")).pipe(
+        const exit = yield* dbStart(flags("/abs/host/backup.sql")).pipe(
           Effect.provide(layer),
           Effect.exit,
         );
@@ -669,7 +576,7 @@ describe("legacy db start", () => {
         if (Exit.isFailure(exit)) {
           const error = Cause.squash(exit.cause);
           expect(error).toMatchObject({
-            _tag: "LegacyStartBackupVolumeExistsError",
+            _tag: "StartBackupVolumeExistsError",
             message: "backup volume already exists",
           });
           expect((error as { suggestion?: string }).suggestion).toContain(
@@ -692,7 +599,7 @@ describe("legacy db start", () => {
       cwd: "/caller/here",
     });
     return Effect.gen(function* () {
-      yield* legacyDbStart(flags("dump.sql")).pipe(Effect.provide(layer));
+      yield* dbStart(flags("dump.sql")).pipe(Effect.provide(layer));
       const args = createArgs(child.spawned);
       expect(bindsFromCreateArgs(args ?? [])).toContain("/caller/here/dump.sql:/etc/backup.sql:ro");
     });
@@ -701,7 +608,7 @@ describe("legacy db start", () => {
   it.live("treats an empty --from-backup as a normal no-backup start", () => {
     const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
     return Effect.gen(function* () {
-      yield* legacyDbStart(flags("")).pipe(Effect.provide(layer));
+      yield* dbStart(flags("")).pipe(Effect.provide(layer));
       const args = createArgs(child.spawned);
       expect(bindsFromCreateArgs(args ?? []).some((b) => b.endsWith(":/etc/backup.sql:ro"))).toBe(
         false,
@@ -718,12 +625,12 @@ describe("legacy db start", () => {
       route: freshVolumeRoute(defaultRoute({ neverHealthy: true })),
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(rollbackWasAttempted(child.spawned)).toBe(true);
       // This run's own volume was confirmed fresh (`freshVolumeRoute`), so
       // the rollback prunes it too. A regression that hardcoded
-      // `legacyRollbackStart`'s `deleteVolumes` to `false` would still pass
+      // `rollbackStart`'s `deleteVolumes` to `false` would still pass
       // every OTHER assertion in this file, since only the "backup volume
       // already exists" test (a non-fresh-volume scenario) currently asserts
       // the negative half.
@@ -741,7 +648,7 @@ describe("legacy db start", () => {
       // the process — so a `SUPABASE_DEBUG` set only there, never in the shell or via `--debug`,
       // still gated the rollback's `Pruned …:` stderr reports. Delete any shell `SUPABASE_DEBUG`
       // first: shell *presence* (even `false`) suppresses the project value entirely, per
-      // `legacyViperEnvBoolWithProjectFallback`'s own semantics.
+      // `viperEnvBoolWithProjectFallback`'s own semantics.
       const previous = process.env["SUPABASE_DEBUG"];
       delete process.env["SUPABASE_DEBUG"];
       const { layer, child } = setup({
@@ -759,7 +666,7 @@ describe("legacy db start", () => {
         return true;
       }) as typeof globalThis.process.stderr.write;
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
         expect(writes.some((chunk) => chunk.includes("Pruned containers:"))).toBe(true);
@@ -783,11 +690,11 @@ describe("legacy db start", () => {
         route: freshVolumeRoute(defaultRoute({ neverHealthy: true })),
       });
       return Effect.gen(function* () {
-        // The log dump (`legacyWaitForHealthyServices`'s own unconditional behavior on timeout,
+        // The log dump (`waitForHealthyServices`'s own unconditional behavior on timeout,
         // teed straight to the real process stderr, not the mocked `Output` service) still runs —
         // exercised by every other health-timeout test via the shared `../../../shared/db-bootstrap/health-check.ts` suite;
         // this test only asserts the command-level outcome that's specific to `--from-backup`.
-        yield* legacyDbStart(flags("/abs/host/backup.sql")).pipe(Effect.provide(layer));
+        yield* dbStart(flags("/abs/host/backup.sql")).pipe(Effect.provide(layer));
         expect(rollbackWasAttempted(child.spawned)).toBe(false);
         expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
       });
@@ -797,7 +704,7 @@ describe("legacy db start", () => {
   it.live("proceeds with no config file (missing config is tolerated)", () => {
     const { layer, child } = setup({ skipConfig: true, route: freshVolumeRoute(defaultRoute()) });
     return Effect.gen(function* () {
-      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(createArgs(child.spawned)).not.toBeUndefined();
     });
   });
@@ -808,10 +715,10 @@ describe("legacy db start", () => {
       const { layer, child } = setup({});
       writeFileSync(join(tempRoot.current, "supabase", ".env"), "not a valid env line at all\n");
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
+          expect(JSON.stringify(exit.cause)).toContain("DbConfigLoadError");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       });
@@ -821,7 +728,7 @@ describe("legacy db start", () => {
   it.live("fails fast on a malformed config.toml", () => {
     const { layer, child, telemetry } = setup({ configContents: 'project_id = "unterminated\n' });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("failed to load config");
@@ -837,7 +744,7 @@ describe("legacy db start", () => {
       running: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("failed to parse config: missing private key");
@@ -854,7 +761,7 @@ describe("legacy db start", () => {
         networkId: "custom-network",
       });
       return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(
           child.spawned.some((s) => s.args[0] === "network" && s.args.at(-1) === "custom-network"),
         ).toBe(true);
@@ -873,7 +780,7 @@ describe("legacy db start", () => {
     process.env["SUPABASE_NETWORK_ID"] = "env-network";
     const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
     return Effect.gen(function* () {
-      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(
         child.spawned.some((s) => s.args[0] === "network" && s.args.at(-1) === "env-network"),
       ).toBe(true);
@@ -895,7 +802,7 @@ describe("legacy db start", () => {
         networkId: "",
       });
       return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(
           child.spawned.some(
             (s) => s.args[0] === "network" && s.args.at(-1) === "supabase_network_test",
@@ -915,10 +822,10 @@ describe("legacy db start", () => {
         configContents: 'project_id = "test"\n[db]\nhealth_timeout = "not-a-duration"\n',
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
+          expect(JSON.stringify(exit.cause)).toContain("DbConfigLoadError");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       });
@@ -945,11 +852,11 @@ describe("legacy db start", () => {
         configContents: `project_id = "test"\n${tomlFragment}`,
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -971,11 +878,11 @@ describe("legacy db start", () => {
         "SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT=bogus\n",
       );
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.rate_limit");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1008,11 +915,11 @@ describe("legacy db start", () => {
       const { layer, child } = setup({});
       writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1020,9 +927,9 @@ describe("legacy db start", () => {
     },
   );
 
-  // Regression test for the exact gap the review thread found: `legacyEnvOverrideRealtimeIpVersion`/
-  // `legacyEnvOverrideRealtimeMaxHeaderLength` used to be invoked ONLY inside
-  // `legacyResolveDbBootstrapConfig`, which never runs once `legacyIsLocalDbRunning`
+  // Regression test for the exact gap the review thread found: `envOverrideRealtimeIpVersion`/
+  // `envOverrideRealtimeMaxHeaderLength` used to be invoked ONLY inside
+  // `resolveDbBootstrapConfig`, which never runs once `isLocalDbRunning`
   // short-circuits — so a malformed override was silently ignored whenever
   // Postgres was already running, unlike the established behavior of
   // decoding both fields unconditionally before the already-running check
@@ -1036,11 +943,11 @@ describe("legacy db start", () => {
       const { layer, child } = setup({ running: true });
       writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1048,10 +955,10 @@ describe("legacy db start", () => {
     },
   );
 
-  // Same gap, same shape, whole `db.settings.*` group: `legacyResolveDbSettingsEnvOverrides`
-  // was only ever invoked building `legacyStartDatabase`'s
+  // Same gap, same shape, whole `db.settings.*` group: `resolveDbSettingsEnvOverrides`
+  // was only ever invoked building `startDatabase`'s
   // `postgresSpec.db.settings`, which never runs once
-  // `legacyIsLocalDbRunning` short-circuits — so a malformed override was
+  // `isLocalDbRunning` short-circuits — so a malformed override was
   // silently ignored whenever Postgres was already running, unlike the
   // established behavior of decoding the entire `db.settings` struct
   // unconditionally before the already-running check (review:
@@ -1065,11 +972,11 @@ describe("legacy db start", () => {
       const { layer, child } = setup({ running: true });
       writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1078,9 +985,9 @@ describe("legacy db start", () => {
   );
 
   // Same gap, same shape, different field: `storage.enabled` (a plain bool)
-  // was only ever resolved inside `legacyResolveDbBootstrapConfig` (gating
+  // was only ever resolved inside `resolveDbBootstrapConfig` (gating
   // the fresh-volume storage migrate job), which never runs once
-  // `legacyIsLocalDbRunning` short-circuits — so a malformed override was
+  // `isLocalDbRunning` short-circuits — so a malformed override was
   // silently ignored whenever Postgres was already running, unlike the
   // established behavior of decoding it unconditionally before the
   // already-running check (review: PRRT_kwDOErm0O86VooCL).
@@ -1093,11 +1000,11 @@ describe("legacy db start", () => {
         "SUPABASE_STORAGE_ENABLED=not-a-bool\n",
       );
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("storage.enabled");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1108,9 +1015,9 @@ describe("legacy db start", () => {
   // Same gap, same shape, different fields: `edge_runtime.enabled`,
   // `db.network_restrictions.enabled`, `studio.enabled`, and
   // `local_smtp.enabled` were only ever resolved inside
-  // `legacyResolveLocalConfigValues` (the not-running branch's own
+  // `resolveLocalConfigValues` (the not-running branch's own
   // config-values resolver, called below), which never runs once
-  // `legacyIsLocalDbRunning` short-circuits — so a malformed override was
+  // `isLocalDbRunning` short-circuits — so a malformed override was
   // silently ignored whenever Postgres was already running, unlike the
   // established behavior of decoding all four unconditionally before the
   // already-running check (review: PRRT_kwDOErm0O86Vo7zx).
@@ -1125,11 +1032,11 @@ describe("legacy db start", () => {
       const { layer, child } = setup({ running: true });
       writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1139,8 +1046,8 @@ describe("legacy db start", () => {
 
   // Regression test for the review thread this fix closes: `studio.api_url`
   // was resolved (`studioApiUrlForValidation`) but never parsed with
-  // `legacyGoUrlParse` in this eager battery — only
-  // `legacyResolveLocalConfigValues` (the not-running branch, called well
+  // `goUrlParse` in this eager battery — only
+  // `resolveLocalConfigValues` (the not-running branch, called well
   // after the already-running short-circuit below) ever validated it.
   // Validation parses `studio.api_url` immediately after the `studio.port`
   // check, still inside the studio-enabled gate — so a malformed
@@ -1155,11 +1062,11 @@ describe("legacy db start", () => {
         "SUPABASE_STUDIO_API_URL=http://[::1\n",
       );
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("Invalid config for studio.api_url");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1169,7 +1076,7 @@ describe("legacy db start", () => {
 
   // Regression test for the sibling review thread: `local_smtp.port` was resolved
   // (`localSmtpPortForValidation`) but the `local_smtp.enabled`-gated zero check never ran in this
-  // eager battery — only `legacyResolveLocalConfigValues`'s `mailpitEnabled`/`mailpitPort` pair
+  // eager battery — only `resolveLocalConfigValues`'s `mailpitEnabled`/`mailpitPort` pair
   // (the not-running branch, called well after the already-running short-circuit below) ever
   // checked it. Validation rejects `local_smtp.port === 0` ONLY when
   // `local_smtp.enabled` — so an enabled `[local_smtp]` section with a zero
@@ -1183,11 +1090,11 @@ describe("legacy db start", () => {
         configContents: 'project_id = "test"\n[local_smtp]\nenabled = true\nport = 0\n',
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("Missing required field in config: local_smtp.port");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1197,7 +1104,7 @@ describe("legacy db start", () => {
 
   // Same gap, same shape, different field: `auth.jwt_expiry` (a plain uint)
   // was only ever resolved as part of `values.authJwtExpiry`
-  // (`legacyResolveLocalConfigValues`), which this handler calls ONLY in the
+  // (`resolveLocalConfigValues`), which this handler calls ONLY in the
   // not-running branch — so a malformed override was silently ignored
   // whenever Postgres was already running, unlike the established behavior
   // of decoding it unconditionally before the already-running check
@@ -1211,11 +1118,11 @@ describe("legacy db start", () => {
         "SUPABASE_AUTH_JWT_EXPIRY=not-a-uint\n",
       );
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.jwt_expiry");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1225,7 +1132,7 @@ describe("legacy db start", () => {
 
   // Same gap, same shape, different field: `api.port` (a plain uint16) was
   // only ever resolved as part of `values.apiPort`
-  // (`legacyResolveLocalConfigValues`), which this handler calls ONLY in the
+  // (`resolveLocalConfigValues`), which this handler calls ONLY in the
   // not-running branch — so a malformed override was silently ignored
   // whenever Postgres was already running, unlike the established behavior
   // of decoding it unconditionally before the already-running check
@@ -1236,11 +1143,11 @@ describe("legacy db start", () => {
       const { layer, child } = setup({ running: true });
       writeFileSync(join(tempRoot.current, "supabase", ".env"), "SUPABASE_API_PORT=not-a-port\n");
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("api.port");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1251,7 +1158,7 @@ describe("legacy db start", () => {
   // Same gap, same shape, remaining root-level `auth.*` scalars: none of
   // these is referenced by any auth-enabled gate, so — like `auth.jwt_expiry`
   // above — each was only ever resolved as part of
-  // `legacyResolveLocalConfigValues`, which this handler calls ONLY in the
+  // `resolveLocalConfigValues`, which this handler calls ONLY in the
   // not-running branch, and a malformed override was silently ignored
   // whenever Postgres was already running, unlike the established behavior
   // of decoding all of them unconditionally before the already-running
@@ -1278,11 +1185,11 @@ describe("legacy db start", () => {
       const { layer, child } = setup({ running: true });
       writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1295,7 +1202,7 @@ describe("legacy db start", () => {
     () => {
       // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema at
       // all — `auth.passkey.enabled` is decoded unconditionally via
-      // `legacyResolveGotruePasskeyWebauthn`'s raw-document read, so the
+      // `resolveGotruePasskeyWebauthn`'s raw-document read, so the
       // malformed value must live directly in config.toml here since
       // `@supabase/config` never sees (or rejects) this unmodeled field —
       // there's no schema-level bool coercion to catch it first
@@ -1305,11 +1212,11 @@ describe("legacy db start", () => {
           'project_id = "test"\n[auth]\nenabled = false\n[auth.passkey]\nenabled = "bad"\n',
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.passkey");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1323,7 +1230,7 @@ describe("legacy db start", () => {
       // `auth.external` is a genuine dynamic map keyed by provider name — an
       // unmodeled/custom provider name like `custom` is a legitimate config
       // shape `@supabase/config`'s schema silently drops at decode time, so
-      // `legacyResolveAuthExternalProviders`'s raw-document read is the only
+      // `resolveAuthExternalProviders`'s raw-document read is the only
       // place this malformed value is ever seen — same override-only-throw
       // reasoning as the passkey test above (review: PRRT_kwDOErm0O86VlOHQ).
       const { layer, child } = setup({
@@ -1331,11 +1238,11 @@ describe("legacy db start", () => {
           'project_id = "test"\n[auth]\nenabled = false\n[auth.external.custom]\nenabled = "bad"\n',
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.external");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1348,14 +1255,14 @@ describe("legacy db start", () => {
     () => {
       // `auth.hook.<type>.*` is bound like every other nested field, decoded
       // in the same unconditional config-load pass as `auth.external` above.
-      // `legacyResolveAuthHooks` only applies the env override when the
+      // `resolveAuthHooks` only applies the env override when the
       // `[auth.hook.<type>]` section is present in the raw document
       // (`@supabase/config`'s schema always decodes a `{ enabled: false }`
       // default regardless of file presence, which would otherwise erase the
       // presence signal the env override needs) — so the section must exist
       // in config.toml for the override below to be reached at all. `db
       // start` never built a GoTrue container, so nothing else in this
-      // handler called `legacyResolveAuthHooks` before now (review:
+      // handler called `resolveAuthHooks` before now (review:
       // PRRT_kwDOErm0O86WBGSW).
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[auth.hook.send_email]\nenabled = false\n',
@@ -1365,11 +1272,11 @@ describe("legacy db start", () => {
         "SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED=bogus\n",
       );
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.hook");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1386,7 +1293,7 @@ describe("legacy db start", () => {
       // empirically that this decode failure fires even with `auth.enabled = false`,
       // well before the auth-enabled-gated email validation and before the
       // already-running check. `db start` never built a GoTrue container, so
-      // nothing else in this handler called `legacyResolveAuthEmailSmtp`
+      // nothing else in this handler called `resolveAuthEmailSmtp`
       // before now (review: PRRT_kwDOErm0O86WC8J3).
       const { layer, child } = setup({
         configContents:
@@ -1397,11 +1304,11 @@ describe("legacy db start", () => {
         "SUPABASE_AUTH_EMAIL_SMTP_PORT=bogus\n",
       );
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.email.smtp");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1414,7 +1321,7 @@ describe("legacy db start", () => {
     () => {
       // Only keys already bound from the merged config are intercepted — an
       // absent `[auth.email.smtp]` section never picks up an env override
-      // alone (confirmed empirically), so `legacyResolveAuthEmailSmtp`'s own
+      // alone (confirmed empirically), so `resolveAuthEmailSmtp`'s own
       // presence gate must return `undefined` and the eager check below must
       // be a no-op rather than failing on a section the config never mentions.
       const { layer, child } = setup({
@@ -1426,7 +1333,7 @@ describe("legacy db start", () => {
         "SUPABASE_AUTH_EMAIL_SMTP_PORT=bogus\n",
       );
       return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(createArgs(child.spawned)).not.toBeUndefined();
       });
     },
@@ -1452,11 +1359,11 @@ describe("legacy db start", () => {
         "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus\n",
       );
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("storage.image_transformation.enabled");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1478,7 +1385,7 @@ describe("legacy db start", () => {
         "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus\n",
       );
       return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(createArgs(child.spawned)).not.toBeUndefined();
       });
     },
@@ -1502,11 +1409,11 @@ describe("legacy db start", () => {
         "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
       );
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("db.ssl_enforcement.enabled");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1530,11 +1437,11 @@ describe("legacy db start", () => {
         "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
       );
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("db.ssl_enforcement.enabled");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1557,7 +1464,7 @@ describe("legacy db start", () => {
         "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
       );
       return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(createArgs(child.spawned)).not.toBeUndefined();
       });
     },
@@ -1569,11 +1476,11 @@ describe("legacy db start", () => {
       // Experimental validation rejects ANY present `[experimental.webhooks]`
       // section whose `enabled` isn't explicitly `true` — this runs
       // unconditionally inside config loading, before the already-running
-      // check. `db start`'s own `legacyCheckDbToml` call (D's shared
-      // db/migration config pipeline, `legacy-db-config.toml-read.ts`)
+      // check. `db start`'s own `checkDbToml` call (D's shared
+      // db/migration config pipeline, `db-config.toml-read.ts`)
       // previously never populated
-      // `LegacyExperimentalInput.webhooksPresent`/`webhooksEnabled` at all,
-      // so `legacyValidateResolvedConfig`'s existing webhooks check never
+      // `ExperimentalInput.webhooksPresent`/`webhooksEnabled` at all,
+      // so `validateResolvedConfig`'s existing webhooks check never
       // ran for `db start` (or any other D caller) — silently accepted
       // regardless of whether Postgres was already running (review:
       // PRRT_kwDOErm0O86WE42i).
@@ -1582,11 +1489,11 @@ describe("legacy db start", () => {
         running: true,
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const message = JSON.stringify(exit.cause);
-          expect(message).toContain("LegacyDbConfigLoadError");
+          expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(
             "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
           );
@@ -1602,7 +1509,7 @@ describe("legacy db start", () => {
     // must be a no-op rather than failing on a section the config never mentions.
     const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
     return Effect.gen(function* () {
-      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(createArgs(child.spawned)).not.toBeUndefined();
     });
   });
@@ -1628,7 +1535,7 @@ describe("legacy db start", () => {
             "utf8",
           );
           expect(onDiskConfig).toBe(configContents ?? 'project_id = "test"\n');
-          yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
           expect(out.stderrText).not.toContain("auto_expose_new_tables");
         }
       });
@@ -1638,17 +1545,17 @@ describe("legacy db start", () => {
   it.live(
     "prints @supabase/config's deprecated-[inbucket]-section WARN only once on a fresh, not-already-running start",
     () => {
-      // `legacyLoadLocalProjectContext` wraps `@supabase/config`'s `loadCliConfig`, which
+      // `loadLocalProjectContext` wraps `@supabase/config`'s `loadCliConfig`, which
       // unconditionally `Console.error`s a deprecation WARN for a legacy `[inbucket]` section
       // (`packages/config/src/io.ts`'s `normalizeDeprecatedSMTPSections`, pinned to the real
       // console — not this file's `Output` service, so it must be observed with a raw
       // `console.error` spy, same idiom as `stop`/`status`'s own identical deprecated-provider
       // tests). This handler used to load that context TWICE on the not-running path: once
       // eagerly here (ahead of the already-running short-circuit), and again inside
-      // `legacyBuildLocalDbContainerInputs`'s own, now-removed, internal
+      // `buildLocalDbContainerInputs`'s own, now-removed, internal
       // reload — doubling this WARN for one invocation, unlike the
       // established single config-load call. Threading the eagerly-loaded
-      // context through as `legacyBuildLocalDbContainerInputs`'s
+      // context through as `buildLocalDbContainerInputs`'s
       // `preloadedContext` fixes this.
       const { layer } = setup({
         configContents: 'project_id = "test"\n[inbucket]\n',
@@ -1659,7 +1566,7 @@ describe("legacy db start", () => {
         warnings.push(args.map((a) => String(a)).join(" "));
       });
       return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         const inbucketWarnings = warnings.filter((m) =>
           m.includes(
             "WARN: config section [inbucket] is deprecated. Please use [local_smtp] instead.",
@@ -1681,11 +1588,11 @@ describe("legacy db start", () => {
       running: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const message = JSON.stringify(exit.cause);
-        expect(message).toContain("LegacyDbConfigLoadError");
+        expect(message).toContain("DbConfigLoadError");
         expect(message).toContain("auth.email.max_frequency");
       }
       expect(out.stderrText).not.toContain("already running");
@@ -1700,7 +1607,7 @@ describe("legacy db start", () => {
         route: freshVolumeRoute(defaultRoute()),
       });
       return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("WARN: no SMS provider is enabled. Disabling phone login");
       });
     },
@@ -1718,7 +1625,7 @@ describe("legacy db start", () => {
         route: freshVolumeRoute(defaultRoute()),
       });
       return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).not.toContain("no SMS provider is enabled");
       });
     },
@@ -1732,7 +1639,7 @@ describe("legacy db start", () => {
         platform: "darwin",
       });
       return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         const args = createArgs(child.spawned);
         expect(args?.includes("--add-host")).toBe(false);
       });
@@ -1742,7 +1649,7 @@ describe("legacy db start", () => {
   it.live("propagates a Docker inspect failure", () => {
     const { layer } = setup({ runningFails: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("failed to inspect service");
@@ -1758,7 +1665,7 @@ describe("legacy db start", () => {
     });
     const { layer, child } = setup({ route });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(rollbackWasAttempted(child.spawned)).toBe(true);
       // Same reasoning as the health-timeout rollback test above — this run's own volume was
@@ -1770,7 +1677,7 @@ describe("legacy db start", () => {
   it.live("emits a json result when the database is already running", () => {
     const { layer, out } = setup({ running: true, format: "json" });
     return Effect.gen(function* () {
-      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["status"]).toBe("already-running");
     });
@@ -1779,7 +1686,7 @@ describe("legacy db start", () => {
   it.live("emits a json result after starting the database", () => {
     const { layer, out, child } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(createArgs(child.spawned)).not.toBeUndefined();
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["status"]).toBe("started");

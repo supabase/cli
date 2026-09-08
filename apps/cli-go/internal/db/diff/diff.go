@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
+	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/utils"
 	configpkg "github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
@@ -30,8 +31,13 @@ import (
 
 type DiffFunc func(context.Context, pgconn.Config, pgconn.Config, []string, ...func(*pgx.ConnConfig)) (string, error)
 
-func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, usePgDelta bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
-	result, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDelta, options...)
+// DatabaseDiff is the result of diffing a target database against a shadow baseline.
+type DatabaseDiff struct {
+	SQL string
+}
+
+func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
+	result, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, options...)
 	if err != nil {
 		return err
 	}
@@ -100,22 +106,23 @@ func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 	return declared, nil
 }
 
-func shouldApplyDeclarativeWithPgDelta(usePgDelta bool) bool {
-	if !usePgDelta {
-		return false
-	}
-	schemas := utils.Config.Db.Migrations.SchemaPaths
-	if len(schemas) == 0 {
-		return true
-	}
-	if len(schemas) != 1 {
-		return false
-	}
-	return cleanSchemaPath(schemas[0]) == cleanSchemaPath(utils.GetDeclarativeDir())
-}
+var warnDiff = `WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
+Run ` + utils.Aqua("supabase db reset") + ` to verify that the new migration does not generate errors.`
 
-func cleanSchemaPath(path string) string {
-	return filepath.ToSlash(filepath.Clean(path))
+func SaveDiff(result DatabaseDiff, file string, fsys afero.Fs) error {
+	out := result.SQL
+	if len(out) < 2 {
+		fmt.Fprintln(os.Stderr, "No schema changes found")
+	} else if len(file) > 0 {
+		path := new.GetMigrationPath(utils.GetCurrentTimestamp(), file)
+		if err := utils.WriteFile(path, []byte(out), fsys); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, warnDiff)
+	} else {
+		fmt.Println(out)
+	}
+	return nil
 }
 
 // https://github.com/djrobstep/migra/blob/master/migra/statements.py#L6
@@ -208,9 +215,9 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
 
-func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, usePgDelta bool, options ...func(*pgx.ConnConfig)) (DatabaseDiff, error) {
+func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, options ...func(*pgx.ConnConfig)) (DatabaseDiff, error) {
 	fmt.Fprintln(w, "Creating shadow database...")
-	shadowSource, err := PrepareShadowSource(ctx, schema, utils.IsLocalDatabase(config), usePgDelta, fsys, options...)
+	shadowSource, err := PrepareShadowSource(ctx, utils.IsLocalDatabase(config), fsys, options...)
 	if err != nil {
 		return DatabaseDiff{}, err
 	}
@@ -219,37 +226,10 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 	if shadowSource.TargetOverride != nil {
 		config = *shadowSource.TargetOverride
 	}
-	// Load all user defined schemas
 	if len(schema) > 0 {
 		fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
 	} else {
 		fmt.Fprintln(w, "Diffing schemas...")
-	}
-	if usePgDelta {
-		// pg-delta always goes through the diffPgDeltaRefDetailed seam so callers get
-		// the execution-aware per-unit files (db pull writes one migration file each);
-		// db diff/declarative flatten them back via SQL. This mirrors the config-based
-		// differ (DiffPgDelta) exactly, so it is safe to bypass the injected differ()
-		// here — differ() remains the migra engine path below.
-		var debugCapture *PgDeltaDebugCapture
-		if IsPgDeltaDebugEnabled() {
-			// Capture the shadow baseline catalog and edge-runtime stderr so an
-			// empty diff can be inspected later.
-			debugCapture = &PgDeltaDebugCapture{}
-			if snapshot, exportErr := exportCatalogPgDelta(ctx, utils.ToPostgresURL(shadowConfig), "postgres", options...); exportErr == nil {
-				debugCapture.SourceCatalog = snapshot
-			} else {
-				fmt.Fprintf(w, "Warning: failed to export shadow pg-delta catalog: %v\n", exportErr)
-			}
-		}
-		result, err := diffPgDeltaRefDetailed(ctx, utils.ToPostgresURL(shadowConfig), utils.ToPostgresURL(config), schema, pgDeltaFormatOptions(), options...)
-		if err != nil {
-			return DatabaseDiff{}, err
-		}
-		if debugCapture != nil {
-			debugCapture.Stderr = result.Stderr
-		}
-		return DatabaseDiff{SQL: joinPgDeltaFiles(result.Files), Files: result.Files, Debug: debugCapture}, nil
 	}
 	output, err := differ(ctx, shadowConfig, config, schema, options...)
 	if err != nil {

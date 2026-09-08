@@ -2,109 +2,92 @@ import { Clock, Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
-  LegacyDebugFlag,
-  LegacyDnsResolverFlag,
-  LegacyNetworkIdFlag,
-  legacyResolveExperimentalWithProjectEnv,
-  legacyResolveYesWithProjectEnv,
-} from "../../../shared/legacy/global-flags.ts";
+  DebugFlag,
+  DnsResolverFlag,
+  NetworkIdFlag,
+  resolveExperimentalWithProjectEnv,
+  resolveYesWithProjectEnv,
+} from "../../../command-internal/global-flags.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { LegacyGoProxy } from "../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { legacyAqua, legacyBold } from "../../../command-internal/legacy-colors.ts";
-import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { aqua, bold } from "../../../command-internal/colors.ts";
+import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import {
-  legacyIpv6Suggestion,
-  legacyIsIPv6ConnectivityError,
-} from "../../../command-internal/legacy-connect-errors.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import { legacyResolveDbImage } from "../../../command-internal/legacy-db-image.ts";
+  ipv6Suggestion,
+  isIPv6ConnectivityError,
+} from "../../../command-internal/connect-errors.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import { resolveDbImage } from "../../../command-internal/db-image.ts";
+import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import {
-  LegacyDbConnection,
-  type LegacyPgConnInput,
-} from "../../../command-internal/legacy-db-connection.service.ts";
+  applyProjectEnv,
+  loadProjectEnv,
+  readDbToml,
+  resolveDeclarativeDir,
+} from "../../../command-internal/db-config.toml-read.ts";
+import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
+import { makeDir } from "../../../command-internal/make-dir.ts";
+import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
 import {
-  legacyApplyProjectEnv,
-  legacyLoadProjectEnv,
-  legacyReadDbToml,
-  legacyResolveDeclarativeDir,
-} from "../../../command-internal/legacy-db-config.toml-read.ts";
-import type { LegacyDbConnType } from "../../../command-internal/legacy-db-target-flags.ts";
-import { legacyMakeDir } from "../../../command-internal/legacy-make-dir.ts";
-import { legacyToPostgresURL } from "../../../command-internal/legacy-postgres-url.ts";
-import { legacySchemaToCsvField } from "../../../command-internal/legacy-schema-flags.ts";
-import {
-  legacyBuildLocalDbContainerInputs,
-  type LegacyLocalDbContainerInputs,
+  buildLocalDbContainerInputs,
+  type LocalDbContainerInputs,
 } from "../../../command-internal/db-bootstrap/local-container-inputs.ts";
-import { legacyWithShadowDatabase } from "../../../command-internal/db-bootstrap/shadow-cache.ts";
+import { withShadowDatabase } from "../../../command-internal/db-bootstrap/shadow-cache.ts";
+import { shadowRunInputFromLocalContainerInputs } from "../../../command-internal/db-bootstrap/shadow-database.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
-  legacyCreateShadowDatabase,
-  legacyPrepareRawShadow,
-  legacyRemoveShadowDatabase,
-  legacyShadowRunInputFromLocalContainerInputs,
-} from "../../../command-internal/db-bootstrap/shadow-database.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+  updateDeclarativeSchemaPathsConfig,
+  warnPreservedUnmanagedDeclarativeFiles,
+  writeDeclarativeSchemas,
+} from "../shared/pgdelta.write.ts";
 import {
-  legacyUpdateDeclarativeSchemaPathsConfig,
-  legacyWarnPreservedUnmanagedDeclarativeFiles,
-  legacyWriteDeclarativeSchemas,
-} from "../shared/legacy-pgdelta.write.ts";
+  parseBoolEnv,
+  resolveDeclarativeFromArgs,
+  resolvePullDiffEngine,
+  schemaPathsTransitionWarning,
+  shouldUsePgDelta,
+} from "../../../command-internal/diff-engine.ts";
+import { diffMigra } from "../shared/migra.ts";
+import { writePgDeltaMigrations } from "../shared/pgdelta-migrations.write.ts";
+import { type DumpOptions, buildSchemaDumpEnv } from "../../../command-internal/pg-dump.env.ts";
+import { streamPgDump } from "../../../command-internal/pg-dump.run.ts";
 import {
-  legacyParseBoolEnv,
-  legacyResolveDeclarativeFromArgs,
-  legacyResolvePullDiffEngine,
-  legacySchemaPathsTransitionWarning,
-  legacyShouldUsePgDelta,
-} from "../../../command-internal/legacy-diff-engine.ts";
-import { legacyDiffMigra } from "../shared/legacy-migra.ts";
-import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
+  emitPoolerFallbackWarning,
+  isDirectLinkedHost,
+  runWithPoolerFallback,
+} from "../shared/pooler-fallback.ts";
+import { dumpSchemaScript } from "../../../command-internal/pg-dump.scripts.ts";
 import {
-  type LegacyDumpOptions,
-  legacyBuildSchemaDumpEnv,
-} from "../../../command-internal/legacy-pg-dump.env.ts";
-import { legacyStreamPgDump } from "../../../command-internal/legacy-pg-dump.run.ts";
+  formatMigrationTimestamp,
+  getMigrationPath,
+} from "../../../command-internal/migration-file.ts";
+import { debugBundleMessage } from "../shared/debug-bundle.ts";
+import { PgDeltaEngine, type PgDeltaDatabaseEndpoint } from "../shared/pgdelta-engine.service.ts";
 import {
-  legacyEmitPoolerFallbackWarning,
-  legacyIsDirectLinkedHost,
-  legacyRunWithPoolerFallback,
-} from "../shared/legacy-pooler-fallback.ts";
-import { legacyDumpSchemaScript } from "../../../command-internal/legacy-pg-dump.scripts.ts";
+  type PgDeltaContext,
+  isPgDeltaDebugEnabled,
+  resolvePgDeltaProjectId,
+} from "../../../command-internal/pgdelta.ts";
+import { prepareShadowSource } from "../shared/shadow-source.ts";
+import type { DbPullFlags } from "./pull.command.ts";
 import {
-  legacyFormatMigrationTimestamp,
-  legacyGetMigrationPath,
-} from "../../../command-internal/legacy-migration-file.ts";
-import { legacyDebugBundleMessage, legacyFormatDebugId } from "../shared/legacy-debug-bundle.ts";
-import {
-  LegacyPgDeltaEngine,
-  type LegacyPgDeltaDatabaseEndpoint,
-} from "../shared/legacy-pgdelta-engine.service.ts";
-import {
-  type LegacyPgDeltaContext,
-  legacyIsPgDeltaDebugEnabled,
-  legacyResolvePgDeltaProjectId,
-} from "../../../command-internal/legacy-pgdelta.ts";
-import { legacySaveEmptyPgDeltaPullDebug } from "./pull.debug.ts";
-import { legacyPrepareShadowSource } from "../shared/legacy-shadow-source.ts";
-import type { LegacyDbPullFlags } from "./pull.command.ts";
-import {
-  LegacyDbPullDumpError,
-  LegacyDbPullEngineConflictError,
-  LegacyDbPullInSyncError,
-  LegacyDbPullMigrationConflictError,
-  LegacyDbPullTargetFlagsError,
-  LegacyDbPullWriteError,
+  DbPullDumpError,
+  DbPullEngineConflictError,
+  DbPullInSyncError,
+  DbPullMigrationConflictError,
+  DbPullTargetFlagsError,
+  DbPullWriteError,
 } from "./pull.errors.ts";
 import {
-  legacyListRemoteMigrations,
-  legacyLoadLocalVersions,
-  legacyReconcileMigrations,
-} from "../../../command-internal/legacy-migration-history.ts";
-import { legacyUpdateMigrationHistory } from "./pull.sync.ts";
+  listRemoteMigrations,
+  loadLocalVersions,
+  reconcileMigrations,
+} from "../../../command-internal/migration-history.ts";
+import { updateMigrationHistory } from "./pull.sync.ts";
 
 // Established output contract; ends with a `.`.
 const DEPRECATION_LINE =
@@ -122,104 +105,52 @@ const IN_SYNC_SUGGESTION =
 /** Migration-file mode for the initial pg_dump seed. */
 const MIGRATION_FILE_MODE = 0o644;
 
-// `--experimental`'s structured-dump `db pull` mode (Go's `format.WriteStructuredSchemas`)
-// stays delegated to the bundled Go binary rather than retired or ported: Go's formatter
-// routes DDL through a PostgreSQL AST parser (`multigres`) with no TS equivalent.
-// `--declarative` (native pg-delta export) covers the same per-object-files outcome via
-// catalog introspection for schema objects, though its output tree and cluster-object
-// coverage differ (see SIDE_EFFECTS.md), so this mode is on a deprecation path — the same
-// decision `db diff --use-pg-schema` makes (keep delegating, flag for removal), NOT the
-// same OUTPUT: Go's `db diff --use-pg-schema` prints its own experimental warning from
-// inside the delegated child, so the TS parent deliberately stays silent there. Go's `db
-// pull --experimental` prints nothing of the kind — this line is a TS-fork-only,
-// forward-looking addition with no Go counterpart (unlike `DEPRECATION_LINE` below, which
-// byte-matches pflag's `MarkDeprecated`). Printed to stderr right alongside the existing
-// `--use-pg-delta` deprecation line below.
+// `--experimental` without `--declarative` used to dump remote SQL through Go's
+// multigres AST splitter. That path is deprecated: the in-process declarative
+// export covers the same per-object-files outcome. Printed only when the
+// experimental gate selected this branch (not when `--declarative` already did).
 const EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE =
   "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in a future release. Use --declarative instead to pull the remote schema as per-object files.";
 
-/** Rebuilds the `db pull` argv for the Go-delegated `--experimental` structured-dump branch. */
-const rebuildDelegateArgs = (flags: LegacyDbPullFlags): Array<string> => {
-  const args = ["db", "pull"];
-  // Called only once the parent has already decided to delegate (`legacyResolveExperimentalWithProjectEnv`'s
-  // last-occurrence-wins argv rescan resolved `true`), so state it explicitly rather than
-  // relying on root's own `globalArgs` forwarding: root derives `--experimental` from the
-  // PARSED `LegacyExperimentalFlag` (first-occurrence-wins, e.g. `Param.ts`'s
-  // `providedValues[0]`), which can disagree with the rescan on a repeated flag
-  // (`--experimental=false --experimental=true` resolves `true` here but `false` there). A
-  // duplicate `--experimental` is harmless — pflag's own last-`Set()`-wins rule still applies
-  // in the delegated child.
-  args.push("--experimental");
-  if (Option.isSome(flags.name)) args.push(flags.name.value);
-  const pushTarget = (name: string, value: Option.Option<boolean>) => {
-    // Target flags (linked/local) are selectors: Go's ParseDatabaseConfig keys off
-    // `flag.Changed` before the value (`internal/utils/flags/db_url.go`), so a
-    // Changed-but-false flag still selects that target. Forward whenever `Some`
-    // so the delegated child resolves the same target the native path did, instead
-    // of falling through to a different default.
-    if (Option.isSome(value)) args.push(value.value ? `--${name}` : `--${name}=false`);
-  };
-  // Delegation only ever happens in MIGRATION mode — the declarative branch
-  // returns before reaching the delegate call sites — so the resolved decision
-  // here is always `useDeclarative === false`. Go binds `--declarative` and
-  // `--use-pg-delta` to one last-occurrence-wins variable (`cmd/db.go:531-532`), so
-  // replaying only the truthy alias (e.g. forwarding `--declarative` for
-  // `db pull --declarative --use-pg-delta=false`) would flip the child back to
-  // declarative export. Forward an explicit `--declarative=false` when an alias was
-  // passed so the child resolves migration mode deterministically. Never forward
-  // `--use-pg-delta`: the parent already prints its deprecation line and Go's
-  // MarkDeprecated (`cmd/db.go:533`) would re-print it. The "alias present" guard
-  // also keeps us clear of Go's mutually-exclusive [declarative diff-engine] group
-  // (which fires on `Changed`), since an alias and `--diff-engine` can't co-occur.
-  if (Option.isSome(flags.declarative) || Option.isSome(flags.usePgDelta)) {
-    args.push("--declarative=false");
-  }
-  if (Option.isSome(flags.diffEngine)) args.push("--diff-engine", flags.diffEngine.value);
-  // Re-encode each parsed schema as a CSV field so the Go child's pflag StringSlice
-  // CSV parse doesn't re-split a comma-containing schema (e.g. `"tenant,one"`).
-  for (const s of flags.schema) args.push("--schema", legacySchemaToCsvField(s));
-  if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
-  pushTarget("linked", flags.linked);
-  pushTarget("local", flags.local);
-  if (Option.isSome(flags.password)) args.push("--password", flags.password.value);
-  return args;
+export type DbPullInvoke = {
+  /** Skip `Finished supabase db pull.` — Go's `db remote commit` has no PostRun line. */
+  readonly skipFinishedLine?: boolean;
 };
 
-export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: LegacyDbPullFlags) {
+export const dbPull = Effect.fn("db.pull")(function* (flags: DbPullFlags, invoke?: DbPullInvoke) {
   const output = yield* Output;
-  const resolver = yield* LegacyDbConfigResolver;
-  const connection = yield* LegacyDbConnection;
-  const pgDeltaEngine = yield* LegacyPgDeltaEngine;
-  const proxy = yield* LegacyGoProxy;
-  const cliSettings = yield* LegacyCliSettings;
-  const telemetryState = yield* LegacyTelemetryState;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
+  const resolver = yield* DbConfigResolver;
+  const connection = yield* DbConnection;
+  const pgDeltaEngine = yield* PgDeltaEngine;
+  const cliSettings = yield* CommandSettings;
+  const telemetryState = yield* TelemetryState;
+  const linkedProjectCache = yield* LinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const dnsResolver = yield* LegacyDnsResolverFlag;
-  const debug = yield* LegacyDebugFlag;
+  const dnsResolver = yield* DnsResolverFlag;
+  const debug = yield* DebugFlag;
   const cliArgs = yield* CliArgs;
 
   // `--yes` OR `SUPABASE_YES`. The project `.env` is loaded before the migration
   // history prompt, so a `SUPABASE_YES` set only in `supabase/.env` auto-confirms
   // the native initial-migra history repair too.
-  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
-  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
+  const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+  const yes = yield* resolveYesWithProjectEnv(projectEnv);
   // `EXPERIMENTAL` resolves from *either* the global `--experimental` pflag or
   // `SUPABASE_EXPERIMENTAL`, with the same bound-pflag-wins-over-env precedence
-  // `legacyResolveExperimentalWithProjectEnv` already implements for `db
+  // `resolveExperimentalWithProjectEnv` already implements for `db
   // reset`/declarative generate/sync — reuse it here instead of re-deriving the
   // gate. Resolved once up front, same as `yes` above; declarative mode ignores it
   // below.
-  const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnv);
+  const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
 
   let linkedRefForCache: string | undefined;
 
   yield* Effect.gen(function* () {
     // Make an allowlisted `supabase/.env` registry override visible to the
-    // synchronous `process.env` reader in `legacyGetRegistryImageUrl` (the pg_dump
+    // synchronous `process.env` reader in `getRegistryImageUrl` (the pg_dump
     // seed + migra/pg-delta diff images), reverted when this scope closes.
-    yield* legacyApplyProjectEnv(projectEnv);
+    yield* applyProjectEnv(projectEnv);
     const name = Option.getOrElse(flags.name, () => "remote_schema");
     // `--declarative` and the deprecated `--use-pg-delta` both bind to the same
     // `useDeclarative` outcome, so when BOTH are passed the LAST occurrence in
@@ -230,19 +161,18 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     // Option value already equals its argv value, so the OR is exact.
     const useDeclarative =
       Option.isSome(flags.declarative) && Option.isSome(flags.usePgDelta)
-        ? (legacyResolveDeclarativeFromArgs(cliArgs.args) ?? false)
+        ? (resolveDeclarativeFromArgs(cliArgs.args) ?? false)
         : Option.getOrElse(flags.declarative, () => false) ||
           Option.getOrElse(flags.usePgDelta, () => false);
     if (Option.isSome(flags.usePgDelta)) {
       yield* output.raw(`${DEPRECATION_LINE}\n`, "stderr");
     }
-    // Declarative mode never delegates. Computed once here — reused below for both
-    // the deprecation print and the branch that actually delegates — so the two
-    // can never drift.
-    const delegatesExperimentalPull = !useDeclarative && experimental;
-    if (delegatesExperimentalPull) {
+    // Deprecated `--experimental` dump: same in-process export as `--declarative`.
+    const useExperimentalExport = experimental && !useDeclarative;
+    if (useExperimentalExport) {
       yield* output.raw(`${EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE}\n`, "stderr");
     }
+    const useDeclarativeExport = useDeclarative || useExperimentalExport;
 
     // Mutually exclusive flag groups: `[db-url linked local]`, `[declarative
     // diff-engine]`, `[use-pg-delta diff-engine]`. "set" means the flag was
@@ -253,7 +183,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     if (Option.isSome(flags.local)) targetSet.push("local");
     if (targetSet.length > 1) {
       return yield* Effect.fail(
-        new LegacyDbPullTargetFlagsError({
+        new DbPullTargetFlagsError({
           message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
         }),
       );
@@ -264,14 +194,14 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     ] as const) {
       if (present && Option.isSome(flags.diffEngine)) {
         return yield* Effect.fail(
-          new LegacyDbPullEngineConflictError({
+          new DbPullEngineConflictError({
             message: `if any flags in the group [${flagName} diff-engine] are set none of the others can be; [${[flagName, "diff-engine"].sort().join(" ")}] were all set`,
           }),
         );
       }
     }
 
-    const connType: LegacyDbConnType = Option.isSome(flags.dbUrl)
+    const connType: DbConnType = Option.isSome(flags.dbUrl)
       ? "db-url"
       : Option.isSome(flags.local)
         ? "local"
@@ -282,31 +212,9 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     // for the full TS-only rationale.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
       return yield* Effect.fail(
-        new LegacyDbPullTargetFlagsError({
+        new DbPullTargetFlagsError({
           message:
             "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
-    }
-
-    // `--experimental`'s structured-dump mode delegates the whole pull to the
-    // bundled Go binary via `rebuildDelegateArgs`, which cannot forward a
-    // TS-only flag: the delegated child re-resolves the workdir's own linked
-    // ref itself (Go's `LoadProjectRef`, `internal/utils/flags/
-    // project_ref.go:54-76`), so `--project-ref` would be silently dropped and
-    // the child would target the wrong project — the exact wrong-project
-    // hazard the guard above exists to prevent for the native paths. Passing
-    // `SUPABASE_PROJECT_ID` through the child's env instead was considered and
-    // rejected: that variable ALSO overrides the child's own `Config.ProjectId`
-    // (and therefore its shadow/edge-runtime container labels,
-    // `pkg/config/config.go:563-570`) — a coupling `--project-ref` deliberately
-    // avoids (see `LegacyProjectRefResolver`'s use below). Mirrors
-    // `diff.handler.ts`'s identical `--use-pg-schema` guard.
-    if (Option.isSome(flags.projectRef) && delegatesExperimentalPull) {
-      return yield* Effect.fail(
-        new LegacyDbPullTargetFlagsError({
-          message:
-            "--project-ref is not supported with the --experimental structured-dump pull; use --declarative instead",
         }),
       );
     }
@@ -324,7 +232,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     // `--db-url` never merge a remote block, so only the linked path pre-resolves a ref.
     let linkedRef: string | undefined;
     if (connType === "linked") {
-      const projectRefResolver = yield* LegacyProjectRefResolver;
+      const projectRefResolver = yield* ProjectRefResolver;
       linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
       // Cache the ref the moment it's known, not after `toml`/`localInputs` below (both
       // fallible) resolve: the project cache should still be written even when a LATER step
@@ -333,19 +241,19 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       // succeed (`diff.handler.ts`'s identical fix).
       linkedRefForCache = linkedRef;
     }
-    const toml = yield* legacyReadDbToml(fs, path, cliSettings.workdir, linkedRef);
+    const toml = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
 
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeInfo = yield* RuntimeInfo;
-    const networkIdFlag = yield* LegacyNetworkIdFlag;
+    const networkIdFlag = yield* NetworkIdFlag;
     // Validate native shadow inputs before target resolution performs remote side effects.
-    const localInputs: Option.Option<LegacyLocalDbContainerInputs> = delegatesExperimentalPull
+    const localInputs: Option.Option<LocalDbContainerInputs> = useExperimentalExport
       ? Option.none()
       : Option.some(
-          yield* legacyBuildLocalDbContainerInputs(
+          yield* buildLocalDbContainerInputs(
             spawner,
             cliSettings.workdir,
             networkIdFlag,
@@ -372,43 +280,42 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
     }
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
-    const targetUrl = legacyToPostgresURL(resolved.conn);
-    const ctx: LegacyPgDeltaContext = {
+    const targetUrl = toPostgresURL(resolved.conn);
+    const ctx: PgDeltaContext = {
       // `SUPABASE_PROJECT_ID` env override wins, then config.toml's `project_id`, then
       // the workdir basename fallback, with the matched `[remotes.<ref>]` block's own
       // `project_id` (`toml.projectId`, already gated on `remoteOverrideKeys` by
-      // `legacyReadDbToml`) suppressing the raw env argument on the linked path — see
+      // `readDbToml`) suppressing the raw env argument on the linked path — see
       // that helper's own doc comment, and `diff.handler.ts`'s identical call site.
-      projectId: legacyResolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
+      projectId: resolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
       cwd: cliSettings.workdir,
-      npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
       denoVersion: toml.denoVersion,
       projectEnv: toml.projectEnv,
     };
     const formatOptions = Option.getOrElse(toml.pgDelta.formatOptions, () => "");
 
     // A linked direct connection may need the IPv4 transaction pooler from Docker.
-    const targetEndpoint: LegacyPgDeltaDatabaseEndpoint = {
+    const targetEndpoint: PgDeltaDatabaseEndpoint = {
       kind: "database",
       ref: targetUrl,
       connection: resolved.conn,
       connectOptions: { isLocal: resolved.isLocal, dnsResolver },
     };
     const withPoolerFallback = <A, E extends { readonly message: string }, R>(
-      directTarget: LegacyPgDeltaDatabaseEndpoint,
-      attempt: (target: LegacyPgDeltaDatabaseEndpoint) => Effect.Effect<A, E, R>,
+      directTarget: PgDeltaDatabaseEndpoint,
+      attempt: (target: PgDeltaDatabaseEndpoint) => Effect.Effect<A, E, R>,
     ) =>
       attempt(directTarget).pipe(
         Effect.catch((error) =>
           Effect.gen(function* () {
             if (
-              legacyIsDirectLinkedHost({
+              isDirectLinkedHost({
                 connType,
                 host: resolved.conn.host,
                 isLocal: resolved.isLocal,
                 projectHost: cliSettings.projectHost,
               }) &&
-              legacyIsIPv6ConnectivityError(error.message)
+              isIPv6ConnectivityError(error.message)
             ) {
               // A pooler resolution failure is treated as "no fallback" (re-fail the
               // ORIGINAL diff error), not surfaced as its own error.
@@ -422,10 +329,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 })
                 .pipe(Effect.orElseSucceed(() => Option.none()));
               if (Option.isSome(pooler)) {
-                yield* legacyEmitPoolerFallbackWarning(resolved.conn.host);
+                yield* emitPoolerFallbackWarning(resolved.conn.host);
                 return yield* attempt({
                   kind: "database",
-                  ref: legacyToPostgresURL(pooler.value),
+                  ref: toPostgresURL(pooler.value),
                   connection: pooler.value,
                   connectOptions: { isLocal: false, dnsResolver },
                 });
@@ -436,154 +343,66 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         ),
       );
 
-    const usePgDeltaDiff = legacyResolvePullDiffEngine({
+    const usePgDeltaDiff = resolvePullDiffEngine({
       engineFlagChanged: Option.isSome(flags.diffEngine),
       engine: Option.getOrElse(flags.diffEngine, () => "migra"),
-      pgDeltaDefault: legacyShouldUsePgDelta({
+      pgDeltaDefault: shouldUsePgDelta({
         configEnabled: toml.pgDelta.enabled,
         usePgDeltaFlag: false,
-        envEnabled: legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
+        envEnabled: parseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
       }),
     });
-    const usesPgDeltaNext = usePgDeltaDiff && pgDeltaEngine.implementation === "next";
-
-    // Runs the Go-delegated `--experimental` structured dump (still delegated, see
-    // `EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE` above for why). In machine-output
-    // mode the child's stdout is captured and a structured envelope is emitted instead,
-    // so scripted callers get valid JSON rather than the Go child's human output on
-    // stdout (stdout is payload-only in machine mode). The child is run with a
-    // non-TTY stdin (`"ignore"`) so any prompt takes its default without blocking the
-    // JSON caller. The EXPERIMENTAL structured dump returns before writing a migration or
-    // touching `schema_migrations`, so `remoteHistoryUpdated` is `false`; `schemaWritten`
-    // stays `null` — the child owns the write and doesn't surface the path on stdout.
-    const delegatePull = (
-      engine: "migra" | "pg-delta",
-      opts: { readonly remoteHistoryUpdated: boolean },
-    ) =>
-      Effect.gen(function* () {
-        const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
-        if (output.format !== "text") {
-          yield* proxy.execCapture(rebuildDelegateArgs(flags), {
-            env,
-            stdin: "ignore",
-            suppressChildTelemetry: true,
-          });
-          yield* output.success("Schema pulled.", {
-            declarative: false,
-            schemaWritten: null,
-            remoteHistoryUpdated: opts.remoteHistoryUpdated,
-            engine,
-          });
-          return;
-        }
-        yield* proxy.exec(rebuildDelegateArgs(flags), { env, suppressChildTelemetry: true });
-      });
 
     // Connectivity check, run before dialing.
     yield* Effect.scoped(
       Effect.gen(function* () {
-        // Local vs remote keyed off the resolver's `isLocal`. The delegated
-        // `--experimental` branch skips this print: the Go child's own connectivity
-        // check already prints the line, so the parent printing too would double it.
-        // (The parent still dials below, so a parent-side connect failure on the
-        // delegate path surfaces without the line; pre-existing delegate behavior.)
-        if (!delegatesExperimentalPull) {
-          yield* output.raw(
-            `Connecting to ${resolved.isLocal ? "local" : "remote"} database...\n`,
-            "stderr",
-          );
-        }
+        yield* output.raw(
+          `Connecting to ${resolved.isLocal ? "local" : "remote"} database...\n`,
+          "stderr",
+        );
         const session = yield* connection.connect(resolved.conn, {
           isLocal: resolved.isLocal,
           dnsResolver,
         });
 
-        // Declarative export path.
-        if (useDeclarative) {
+        // Declarative export path (`--declarative` or deprecated `--experimental`).
+        if (useDeclarativeExport) {
           yield* output.raw("Preparing declarative schema export using pg-delta...\n", "stderr");
-          const declarativeDirRel = legacyResolveDeclarativeDir(path, toml.pgDelta);
+          const declarativeDirRel = resolveDeclarativeDir(path, toml.pgDelta);
           const declarativeDir = path.resolve(cliSettings.workdir, declarativeDirRel);
-          const exportSchema = (
-            target: LegacyPgDeltaDatabaseEndpoint,
-            source?: LegacyPgDeltaDatabaseEndpoint,
-          ) =>
+          const exportSchema = (target: PgDeltaDatabaseEndpoint) =>
             pgDeltaEngine.exportDeclarativeSchema({
               context: ctx,
-              ...(source !== undefined ? { source } : {}),
               target,
               schema: flags.schema,
               formatOptions,
               ...(connType === "linked" && linkedRef !== undefined
                 ? { projectRef: linkedRef }
                 : {}),
-              debug: legacyIsPgDeltaDebugEnabled(),
+              debug: isPgDeltaDebugEnabled(),
               strictCoverage: flags.strictCoverage,
-              noCache: false,
             });
-          // Legacy export owns an interrupt-safe empty-shadow lifecycle; next reads the target.
-          const exported =
-            pgDeltaEngine.implementation === "next"
-              ? yield* withPoolerFallback(targetEndpoint, (target) => exportSchema(target))
-              : yield* Effect.gen(function* () {
-                  const declLocalInputs = Option.getOrThrow(localInputs);
-                  const resolvedDeclShadowImage = yield* declLocalInputs.resolvePostgresImage;
-                  // The legacy exporter still needs the historical empty baseline. Keep it
-                  // native and workflow-owned; the bundled next exporter reads only target.
-                  const rawShadowInput = legacyShadowRunInputFromLocalContainerInputs(
-                    declLocalInputs,
-                    resolvedDeclShadowImage,
-                    toml,
-                    fs,
-                    path,
-                  );
-                  return yield* Effect.acquireUseRelease(
-                    legacyCreateShadowDatabase(spawner, rawShadowInput),
-                    (handle) =>
-                      Effect.gen(function* () {
-                        const shadow = yield* legacyPrepareRawShadow(
-                          spawner,
-                          handle,
-                          rawShadowInput,
-                        );
-                        return yield* withPoolerFallback(targetEndpoint, (target) =>
-                          exportSchema(target, {
-                            kind: "database",
-                            ref: shadow.sourceUrl,
-                            connectOptions: { isLocal: true, dnsResolver: "native" },
-                          }),
-                        );
-                      }),
-                    (handle) => legacyRemoveShadowDatabase(spawner, handle.containerId),
-                  );
-                });
-          const written = yield* legacyWriteDeclarativeSchemas(
-            fs,
-            path,
-            declarativeDir,
-            exported,
-          ).pipe(
-            Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
+          const exported = yield* withPoolerFallback(targetEndpoint, (target) =>
+            exportSchema(target),
           );
-          yield* legacyWarnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
+          const written = yield* writeDeclarativeSchemas(fs, path, declarativeDir, exported).pipe(
+            Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })),
+          );
+          yield* warnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
           // Preserve the legacy schema_paths workflow only when pg-delta is disabled.
           if (!toml.pgDelta.enabled) {
-            yield* legacyUpdateDeclarativeSchemaPathsConfig(
+            yield* updateDeclarativeSchemaPathsConfig(
               fs,
               path,
               cliSettings.workdir,
               declarativeDirRel,
-            ).pipe(
-              Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
-            );
+            ).pipe(Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })));
           }
           // Prints the config's declarative_schema_path or the relative
           // `supabase/schemas` default — never the resolved absolute directory
           // (established output contract). The json payload below keeps the
           // absolute path for machine consumers.
-          yield* output.raw(
-            `Declarative schema written to ${legacyBold(declarativeDirRel)}\n`,
-            "stderr",
-          );
+          yield* output.raw(`Declarative schema written to ${bold(declarativeDirRel)}\n`, "stderr");
           if (output.format !== "text") {
             yield* output.success("Declarative schema pulled.", {
               declarative: true,
@@ -591,47 +410,32 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               remoteHistoryUpdated: false,
               engine: "pg-delta",
             });
-          } else {
-            yield* output.raw(`Finished ${legacyAqua("supabase db pull")}.\n`);
+          } else if (invoke?.skipFinishedLine !== true) {
+            yield* output.raw(`Finished ${aqua("supabase db pull")}.\n`);
           }
           return;
         }
 
-        // Only next ignores schema_paths in favor of the migrations baseline.
-        if (
-          !delegatesExperimentalPull &&
-          usesPgDeltaNext &&
-          toml.schemaPaths !== undefined &&
-          toml.schemaPaths.length > 0
-        ) {
-          yield* output.raw(legacySchemaPathsTransitionWarning, "stderr");
-        }
-
-        // Structured dump still delegates to Go's PostgreSQL DDL formatter.
-        if (delegatesExperimentalPull) {
-          // The structured-dump path returns before writing a migration or touching
-          // schema_migrations, so no history repair.
-          yield* delegatePull(usePgDeltaDiff ? "pg-delta" : "migra", {
-            remoteHistoryUpdated: false,
-          });
-          return;
+        // pg-delta ignores schema_paths in favor of the migrations baseline.
+        if (usePgDeltaDiff && toml.schemaPaths !== undefined && toml.schemaPaths.length > 0) {
+          yield* output.raw(schemaPathsTransitionWarning, "stderr");
         }
 
         // Migration-file path.
         const nowMillis = yield* Clock.currentTimeMillis;
-        const timestamp = legacyFormatMigrationTimestamp(nowMillis);
-        const migrationPath = legacyGetMigrationPath(path, cliSettings.workdir, timestamp, name);
+        const timestamp = formatMigrationTimestamp(nowMillis);
+        const migrationPath = getMigrationPath(path, cliSettings.workdir, timestamp, name);
 
-        const remote = yield* legacyListRemoteMigrations(session);
-        const local = yield* legacyLoadLocalVersions(
+        const remote = yield* listRemoteMigrations(session);
+        const local = yield* loadLocalVersions(
           fs,
           path,
           path.join(cliSettings.workdir, "supabase", "migrations"),
         );
-        const sync = legacyReconcileMigrations(remote, local, connType === "local");
+        const sync = reconcileMigrations(remote, local, connType === "local");
         if (sync.kind === "conflict") {
           return yield* Effect.fail(
-            new LegacyDbPullMigrationConflictError({
+            new DbPullMigrationConflictError({
               message:
                 "The remote database's migration history does not match local files in supabase/migrations directory.",
               suggestion: sync.suggestion,
@@ -651,15 +455,15 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // Built above, before `resolver.resolve()` (see that build's doc comment — it's what
         // used to run here, right before the initial-dump write below, but even that was still
         // after `resolver.resolve()`/`connection.connect()`). `Option.getOrThrow` is safe here:
-        // this point is only reached after the `if (delegatesExperimentalPull) { …; return; }`
-        // check above already returned, so `localInputs` was always built.
+        // this point is only reached after the declarative-export branch already
+        // returned, so `localInputs` was always built.
         const pullLocalInputs = Option.getOrThrow(localInputs);
 
         if (seededFromDump) {
-          yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(
-            Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
+          yield* makeDir(fs, path.dirname(migrationPath)).pipe(
+            Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })),
           );
-          const { image } = yield* legacyResolveDbImage(
+          const { image } = yield* resolveDbImage(
             fs,
             path,
             cliSettings.workdir,
@@ -668,20 +472,20 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           );
           // Default dump options: no schema filter (so the internal-schema exclude
           // list applies) and comments stripped.
-          const dumpEnvOpt: LegacyDumpOptions = {
+          const dumpEnvOpt: DumpOptions = {
             schema: [],
             keepComments: false,
             excludeTable: [],
             columnInsert: false,
           };
           const toDumpOpenError = (cause: { readonly message: string }) =>
-            new LegacyDbPullDumpError({
+            new DbPullDumpError({
               message: `failed to open dump file: ${cause.message}`,
               fileOpen: true,
             });
           // Stream pg_dump → migration file, (re)truncating per attempt so a pooler
           // retry leaves only the successful attempt's bytes.
-          const runSchemaDump = (target: LegacyPgConnInput) => {
+          const runSchemaDump = (target: PgConnInput) => {
             // Reset per attempt alongside the truncate, zeroing the file before the
             // pooler retry. In-sync is decided from the file on disk, so only the
             // final successful attempt's bytes count: a partial direct write that
@@ -698,17 +502,17 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                       const file = yield* fs
                         .open(migrationPath, { flag: "a" })
                         .pipe(Effect.mapError(toDumpOpenError));
-                      return yield* legacyStreamPgDump({
+                      return yield* streamPgDump({
                         image,
-                        script: legacyDumpSchemaScript,
-                        env: legacyBuildSchemaDumpEnv(target, dumpEnvOpt),
+                        script: dumpSchemaScript,
+                        env: buildSchemaDumpEnv(target, dumpEnvOpt),
                         projectEnvValues: projectEnv,
                         onStdout: (chunk) => {
                           if (chunk.length > 0) seedWroteBytes = true;
                           return file.writeAll(chunk).pipe(
                             Effect.mapError(
                               (cause) =>
-                                new LegacyDbPullWriteError({
+                                new DbPullWriteError({
                                   message: `failed to write migration file: ${cause.message}`,
                                 }),
                             ),
@@ -725,7 +529,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // Container-level IPv6 → IPv4-pooler retry, shared with `db dump`. `db pull`
           // prints "Dumping…" once above, so it passes `Effect.void` for the retry
           // re-print.
-          const dumpResult = yield* legacyRunWithPoolerFallback({
+          const dumpResult = yield* runWithPoolerFallback({
             result: yield* runSchemaDump(resolved.conn),
             connType,
             host: resolved.conn.host,
@@ -746,10 +550,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           });
           if (dumpResult.exitCode !== 0) {
             return yield* Effect.fail(
-              new LegacyDbPullDumpError({
+              new DbPullDumpError({
                 message: `error running container: exit ${dumpResult.exitCode}`,
-                ...(legacyIsIPv6ConnectivityError(dumpResult.stderr)
-                  ? { suggestion: legacyIpv6Suggestion() }
+                ...(isIPv6ConnectivityError(dumpResult.stderr)
+                  ? { suggestion: ipv6Suggestion() }
                   : {}),
               }),
             );
@@ -760,16 +564,15 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // For the initial pull (no local migrations) the schema filter is ignored.
         const diffSchema = sync.kind === "missing" ? [] : flags.schema;
         // Pooler fallback retries the complete shadow-and-diff attempt.
-        const runShadowDiff = (targetEndpoint: LegacyPgDeltaDatabaseEndpoint) =>
+        const runShadowDiff = (targetEndpoint: PgDeltaDatabaseEndpoint) =>
           Effect.gen(function* () {
             yield* output.raw("Creating shadow database...\n", "stderr");
             const resolvedPullShadowImage = yield* pullLocalInputs.resolvePostgresImage;
-            // Legacy may substitute a declarative target; next always uses the live target.
-            const migrationMode: "legacy" | "pgdelta-next" = usesPgDeltaNext
+            const migrationMode: "legacy" | "pgdelta-next" = usePgDeltaDiff
               ? "pgdelta-next"
               : "legacy";
             const shadowInput = {
-              ...legacyShadowRunInputFromLocalContainerInputs(
+              ...shadowRunInputFromLocalContainerInputs(
                 pullLocalInputs,
                 resolvedPullShadowImage,
                 toml,
@@ -777,28 +580,26 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 path,
               ),
               targetLocal: resolved.isLocal,
-              usePgDelta: usePgDeltaDiff,
               migrationMode,
               // `toml.schemaPathPatterns`, NOT `pullLocalInputs.context.config.db.migrations.
               // schema_paths`: the latter is the raw `@supabase/config` field, which never
               // applies `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` — `toml` above
-              // (`legacyReadDbToml`) already resolves that env override.
+              // (`readDbToml`) already resolves that env override.
               schemaPaths: toml.schemaPathPatterns,
               pgDelta: toml.pgDelta,
-              ctx,
             };
-            // `legacyWithShadowDatabase` (`shadow-cache.ts`) owns the interrupt-safe lifecycle
+            // `withShadowDatabase` (`shadow-cache.ts`) owns the interrupt-safe lifecycle
             // and the cache seam. Each pooler-retry attempt still acquires and releases its own
             // shadow — on the warm path every attempt restores a fresh container from the same
             // cached snapshot. The key's webhooks policy must mirror what
-            // `legacyPrepareShadowSource` selects for this mode (legacy migrate forces `pg_net`
+            // `prepareShadowSource` selects for this mode (legacy migrate forces `pg_net`
             // on, next follows config), or the two engines could restore each other's tars.
-            return yield* legacyWithShadowDatabase(
+            return yield* withShadowDatabase(
               spawner,
               shadowInput,
               (handle) =>
                 Effect.gen(function* () {
-                  const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
+                  const shadow = yield* prepareShadowSource(spawner, handle, shadowInput);
                   const target = shadow.targetUrlOverride ?? targetEndpoint.ref;
                   yield* output.raw(
                     diffSchema.length > 0
@@ -830,11 +631,11 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                       },
                       schema: diffSchema,
                       formatOptions,
-                      debug: legacyIsPgDeltaDebugEnabled(),
+                      debug: isPgDeltaDebugEnabled(),
                       strictCoverage: flags.strictCoverage,
                     });
                   }
-                  const sql = yield* legacyDiffMigra(ctx, {
+                  const sql = yield* diffMigra(ctx, {
                     source: shadow.sourceUrl,
                     target,
                     schema: diffSchema,
@@ -856,51 +657,17 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // initial-migra path seeded the file with a pg_dump above, so its empty second
         // pass is swallowed and falls through to the shared tail below.
         if (diffEmpty && !seededFromDump) {
-          // Preserve the legacy empty-diff debug bundle contract.
-          if (pgDeltaEngine.implementation === "legacy" && diffOutcome.debug !== undefined) {
-            const debugDir = yield* legacySaveEmptyPgDeltaPullDebug({
-              ctx,
-              conn: resolved.conn,
-              targetUrl,
-              sourceCatalog: diffOutcome.debug.sourceSnapshot,
-              pgDeltaStderr: diffOutcome.debug.stderr,
-              id: legacyFormatDebugId(yield* Clock.currentTimeMillis),
-              fs,
-              path,
-              workdir: cliSettings.workdir,
-            }).pipe(
-              Effect.catch((error) =>
-                output
-                  .raw(
-                    `Warning: failed to save pg-delta debug bundle: ${error.message}\n`,
-                    "stderr",
-                  )
-                  .pipe(Effect.as(undefined)),
-              ),
-            );
-            if (debugDir !== undefined) {
-              return yield* Effect.fail(
-                new LegacyDbPullInSyncError({
-                  message: `No schema changes found (debug bundle: ${debugDir})`,
-                  suggestion: IN_SYNC_SUGGESTION,
-                }),
-              );
-            }
-          }
-          if (
-            pgDeltaEngine.implementation === "next" &&
-            diffOutcome.debug?.directory !== undefined
-          ) {
-            yield* output.raw(legacyDebugBundleMessage(diffOutcome.debug.directory), "stderr");
+          if (diffOutcome.debug?.directory !== undefined) {
+            yield* output.raw(debugBundleMessage(diffOutcome.debug.directory), "stderr");
             return yield* Effect.fail(
-              new LegacyDbPullInSyncError({
+              new DbPullInSyncError({
                 message: `No schema changes found (debug bundle: ${diffOutcome.debug.directory})`,
                 suggestion: IN_SYNC_SUGGESTION,
               }),
             );
           }
           return yield* Effect.fail(
-            new LegacyDbPullInSyncError({
+            new DbPullInSyncError({
               message: "No schema changes found",
               suggestion: IN_SYNC_SUGGESTION,
             }),
@@ -922,7 +689,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // overwritten. Empty plans are handled by the `diffEmpty` in-sync branch
           // above, so `planFiles` is non-empty here.
           const planFiles = diffOutcome.files ?? [];
-          const writtenUnits = yield* legacyWritePgDeltaMigrations(fs, path, {
+          const writtenUnits = yield* writePgDeltaMigrations(fs, path, {
             workdir: cliSettings.workdir,
             baseMillis: nowMillis,
             name,
@@ -932,9 +699,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               sql: file.sql,
               transactionMode: file.transactionMode,
             })),
-          }).pipe(
-            Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
-          );
+          }).pipe(Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })));
           for (const unit of writtenUnits) {
             writtenMigrations.push({ path: unit.path, version: unit.version });
           }
@@ -947,7 +712,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                   const file = yield* fs.open(migrationPath, { flag: "a" }).pipe(
                     Effect.mapError(
                       (cause) =>
-                        new LegacyDbPullWriteError({
+                        new DbPullWriteError({
                           message: `failed to open migration file: ${cause.message}`,
                         }),
                     ),
@@ -955,7 +720,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                   yield* file.writeAll(new TextEncoder().encode(out)).pipe(
                     Effect.mapError(
                       (cause) =>
-                        new LegacyDbPullWriteError({
+                        new DbPullWriteError({
                           message: `failed to write migration file: ${cause.message}`,
                         }),
                     ),
@@ -963,13 +728,13 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 }),
               );
             } else {
-              yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(
-                Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
+              yield* makeDir(fs, path.dirname(migrationPath)).pipe(
+                Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })),
               );
               yield* fs.writeFileString(migrationPath, out).pipe(
                 Effect.mapError(
                   (cause) =>
-                    new LegacyDbPullWriteError({
+                    new DbPullWriteError({
                       message: `failed to write migration file: ${cause.message}`,
                     }),
                 ),
@@ -981,7 +746,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // empty → in sync.
           if (seededFromDump && !seedWroteBytes && diffEmpty) {
             return yield* Effect.fail(
-              new LegacyDbPullInSyncError({
+              new DbPullInSyncError({
                 message: "No schema changes found",
                 suggestion: IN_SYNC_SUGGESTION,
               }),
@@ -995,7 +760,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // Display-only — `writtenMigrations` keeps absolute paths for file I/O
           // and the json payload.
           yield* output.raw(
-            `Schema written to ${legacyBold(path.relative(cliSettings.workdir, written.path))}\n`,
+            `Schema written to ${bold(path.relative(cliSettings.workdir, written.path))}\n`,
             "stderr",
           );
         }
@@ -1007,9 +772,9 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         const updateHistoryTitle = "Update remote migration history table?";
         // Honors `--yes`, scans piped stdin on a non-TTY before falling back to the
         // default, and otherwise prompts on a real TTY.
-        const shouldUpdate = yield* legacyPromptYesNo(output, yes, updateHistoryTitle, true);
+        const shouldUpdate = yield* promptYesNo(output, yes, updateHistoryTitle, true);
         if (shouldUpdate) {
-          yield* legacyUpdateMigrationHistory(session, fs, path, writtenMigrations);
+          yield* updateMigrationHistory(session, fs, path, writtenMigrations);
           remoteHistoryUpdated = true;
         }
 
@@ -1025,8 +790,8 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             remoteHistoryUpdated,
             engine: usePgDeltaDiff ? "pg-delta" : "migra",
           });
-        } else {
-          yield* output.raw(`Finished ${legacyAqua("supabase db pull")}.\n`);
+        } else if (invoke?.skipFinishedLine !== true) {
+          yield* output.raw(`Finished ${aqua("supabase db pull")}.\n`);
         }
       }),
     );
@@ -1038,7 +803,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     ),
     Effect.ensuring(telemetryState.flush),
     // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply above to this
-    // command run: `legacyApplyProjectEnv` registers a finalizer that reverts it.
+    // command run: `applyProjectEnv` registers a finalizer that reverts it.
     Effect.scoped,
   );
 });

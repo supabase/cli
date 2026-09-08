@@ -7,35 +7,32 @@
 
 import type { ProjectConfig } from "@supabase/config";
 
-export function legacyIsRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+import { configIsRecord } from "../config.paths.ts";
 
-export function legacyValueAtPath(root: unknown, path: ReadonlyArray<string>): unknown {
+export const isRecord = configIsRecord;
+
+export function valueAtPath(root: unknown, path: ReadonlyArray<string>): unknown {
   let current: unknown = root;
   for (const segment of path) {
-    if (!legacyIsRecord(current)) return undefined;
+    if (!configIsRecord(current)) return undefined;
     current = current[segment];
   }
   return current;
 }
 
-export function legacySamePath(a: ReadonlyArray<string>, b: ReadonlyArray<string>): boolean {
+export function samePath(a: ReadonlyArray<string>, b: ReadonlyArray<string>): boolean {
   return a.length === b.length && a.every((segment, index) => segment === b[index]);
 }
 
-export function legacyIsPrefixOf(
-  prefix: ReadonlyArray<string>,
-  path: ReadonlyArray<string>,
-): boolean {
+export function isPrefixOf(prefix: ReadonlyArray<string>, path: ReadonlyArray<string>): boolean {
   return prefix.length <= path.length && prefix.every((segment, index) => path[index] === segment);
 }
 
-export function legacyPathIn(
+export function pathIn(
   path: ReadonlyArray<string>,
   paths: ReadonlyArray<ReadonlyArray<string>>,
 ): boolean {
-  return paths.some((candidate) => legacySamePath(candidate, path));
+  return paths.some((candidate) => samePath(candidate, path));
 }
 
 /**
@@ -44,7 +41,7 @@ export function legacyPathIn(
  * no delimiter (and can't collide on one, since a segment may itself
  * contain a `.`).
  */
-export function legacyComparePaths(a: ReadonlyArray<string>, b: ReadonlyArray<string>): number {
+export function comparePaths(a: ReadonlyArray<string>, b: ReadonlyArray<string>): number {
   const length = Math.min(a.length, b.length);
   for (let index = 0; index < length; index += 1) {
     const left = a[index] ?? "";
@@ -66,12 +63,12 @@ export function legacyComparePaths(a: ReadonlyArray<string>, b: ReadonlyArray<st
  * without a boolean `enabled` field — and callers must never coerce that
  * into `false`/`""`.
  */
-export function legacyContainerEnabled(
+export function containerEnabled(
   local: ProjectConfig,
   path: ReadonlyArray<string>,
 ): boolean | undefined {
-  const container = legacyValueAtPath(local, path);
-  if (!legacyIsRecord(container)) {
+  const container = valueAtPath(local, path);
+  if (!configIsRecord(container)) {
     return undefined;
   }
   const enabled = container["enabled"];

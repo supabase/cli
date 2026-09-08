@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  legacyClassifyDeclarativeCompatibilityGap,
-  legacyClassifyDeclarativeLoadCompatibility,
-  legacyExtensionDeclaration,
-  legacyFormatDeclarativeGapEvidence,
-  legacyFormatDeclarativeUpgradeGate,
-  legacyFormatStagedExportAdoption,
-  legacyResolveDeclarativeMigrationName,
-  legacyResolveDeclarativeSyncApplyDecision,
-  legacyResolveStagedDeclarativeDir,
+  classifyDeclarativeCompatibilityGap,
+  classifyDeclarativeLoadCompatibility,
+  extensionDeclaration,
+  formatDeclarativeGapEvidence,
+  formatDeclarativeUpgradeGate,
+  formatStagedExportAdoption,
+  resolveDeclarativeMigrationName,
+  resolveDeclarativeSyncApplyDecision,
+  resolveStagedDeclarativeDir,
 } from "./declarative.flow.ts";
 
 const stuck = (message: string) => ({
@@ -27,27 +27,25 @@ const removals = {
 };
 
 const classifyGap = (
-  overrides: Partial<Parameters<typeof legacyClassifyDeclarativeCompatibilityGap>[0]> = {},
+  overrides: Partial<Parameters<typeof classifyDeclarativeCompatibilityGap>[0]> = {},
 ) =>
-  legacyClassifyDeclarativeCompatibilityGap({
-    implementation: "next",
+  classifyDeclarativeCompatibilityGap({
     manifestPresent: false,
     removals,
     ...overrides,
   });
 
 const classifyLoad = (
-  overrides: Partial<Parameters<typeof legacyClassifyDeclarativeLoadCompatibility>[0]>,
+  overrides: Partial<Parameters<typeof classifyDeclarativeLoadCompatibility>[0]>,
 ) =>
-  legacyClassifyDeclarativeLoadCompatibility({
-    implementation: "next",
+  classifyDeclarativeLoadCompatibility({
     manifestPresent: false,
     diagnostics: [],
     files: [],
     ...overrides,
   });
 
-describe("legacyClassifyDeclarativeCompatibilityGap", () => {
+describe("classifyDeclarativeCompatibilityGap", () => {
   it.each([
     {
       name: "repairs known implicit extensions",
@@ -98,11 +96,6 @@ describe("legacyClassifyDeclarativeCompatibilityGap", () => {
       expected: { recommendedAction: "none" },
     },
     {
-      name: "leaves legacy behavior unchanged",
-      overrides: { implementation: "legacy" as const },
-      expected: { recommendedAction: "none" },
-    },
-    {
       name: "ignores an empty removal set",
       overrides: { removals: { extensions: [], extensionIntents: [] } },
       expected: { recommendedAction: "none" },
@@ -112,11 +105,11 @@ describe("legacyClassifyDeclarativeCompatibilityGap", () => {
   });
 
   it("formats repair and staging instructions", () => {
-    expect(legacyExtensionDeclaration("uuid-ossp")).toBe(
+    expect(extensionDeclaration("uuid-ossp")).toBe(
       'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";',
     );
-    const { suggestion } = legacyFormatDeclarativeUpgradeGate({
-      evidence: legacyFormatDeclarativeGapEvidence(classifyGap()),
+    const { suggestion } = formatDeclarativeUpgradeGate({
+      evidence: formatDeclarativeGapEvidence(classifyGap()),
       context: { declarativeDir: "supabase/schemas", schema: [], platform: "posix" },
     });
     expect(suggestion).toContain(
@@ -125,8 +118,8 @@ describe("legacyClassifyDeclarativeCompatibilityGap", () => {
   });
 
   it("derives staged-export commands from a custom declarative path", () => {
-    const { suggestion } = legacyFormatDeclarativeUpgradeGate({
-      evidence: legacyFormatDeclarativeGapEvidence(classifyGap()),
+    const { suggestion } = formatDeclarativeUpgradeGate({
+      evidence: formatDeclarativeGapEvidence(classifyGap()),
       context: { declarativeDir: "supabase/custom schema", schema: [], platform: "posix" },
     });
 
@@ -137,8 +130,8 @@ describe("legacyClassifyDeclarativeCompatibilityGap", () => {
   });
 
   it("preserves schema filters in staged-export and follow-up sync commands", () => {
-    const { suggestion } = legacyFormatDeclarativeUpgradeGate({
-      evidence: legacyFormatDeclarativeGapEvidence(classifyGap()),
+    const { suggestion } = formatDeclarativeUpgradeGate({
+      evidence: formatDeclarativeGapEvidence(classifyGap()),
       context: {
         declarativeDir: "supabase/schemas",
         schema: ["app", "tenant,one"],
@@ -155,10 +148,10 @@ describe("legacyClassifyDeclarativeCompatibilityGap", () => {
   });
 });
 
-describe("legacyFormatDeclarativeUpgradeGate", () => {
+describe("formatDeclarativeUpgradeGate", () => {
   it("renders one template with indented evidence and no --debug-style guidance", () => {
-    const gate = legacyFormatDeclarativeUpgradeGate({
-      evidence: legacyFormatDeclarativeGapEvidence(classifyGap()),
+    const gate = formatDeclarativeUpgradeGate({
+      evidence: formatDeclarativeGapEvidence(classifyGap()),
       context: { declarativeDir: "supabase/schemas", schema: [], platform: "posix" },
     });
 
@@ -189,7 +182,7 @@ describe("legacyFormatDeclarativeUpgradeGate", () => {
   });
 
   it("offers no extension.sql alternative — the staged upgrade is the only recovery", () => {
-    const gate = legacyFormatDeclarativeUpgradeGate({
+    const gate = formatDeclarativeUpgradeGate({
       evidence: [
         "members.sql:3 uses extensions.uuid_generate_v4(), but the tree does not declare uuid-ossp.",
       ],
@@ -204,14 +197,14 @@ describe("legacyFormatDeclarativeUpgradeGate", () => {
 
   it("reports ambiguous extension removals as their own evidence line", () => {
     expect(
-      legacyFormatDeclarativeGapEvidence(
+      formatDeclarativeGapEvidence(
         classifyGap({ removals: { extensions: ["postgis"], extensionIntents: [] } }),
       ),
     ).toEqual(["Extensions: postgis"]);
   });
 
   it("omits the evidence block entirely when there is nothing to report", () => {
-    const gate = legacyFormatDeclarativeUpgradeGate({
+    const gate = formatDeclarativeUpgradeGate({
       evidence: [],
       context: { declarativeDir: "supabase/schemas", schema: [], platform: "posix" },
     });
@@ -220,7 +213,7 @@ describe("legacyFormatDeclarativeUpgradeGate", () => {
   });
 
   it("renders single-line PowerShell recovery commands on windows", () => {
-    const gate = legacyFormatDeclarativeUpgradeGate({
+    const gate = formatDeclarativeUpgradeGate({
       evidence: [],
       context: { declarativeDir: "supabase/custom schema", schema: [], platform: "windows" },
     });
@@ -238,7 +231,7 @@ describe("legacyFormatDeclarativeUpgradeGate", () => {
   });
 
   it("escapes quotes PowerShell-style in windows adoption commands", () => {
-    const lines = legacyFormatStagedExportAdoption({
+    const lines = formatStagedExportAdoption({
       declarativeDir: "supabase/it's here",
       schema: [],
       platform: "windows",
@@ -249,7 +242,7 @@ describe("legacyFormatDeclarativeUpgradeGate", () => {
   });
 });
 
-describe("legacyClassifyDeclarativeLoadCompatibility", () => {
+describe("classifyDeclarativeLoadCompatibility", () => {
   it.each([
     ["extensions.uuid_generate_v4()", "uuid-ossp"],
     ["extensions.digest(text, text)", "pgcrypto"],
@@ -342,28 +335,23 @@ describe("legacyClassifyDeclarativeLoadCompatibility", () => {
     });
   });
 
-  it("requires next, no manifest, and an error-level non-converging diagnostic", () => {
+  it("requires no manifest and an error-level non-converging diagnostic", () => {
     const files = [{ name: "members.sql", sql: "select extensions.uuid_generate_v4();" }];
     const diagnostic = stuck("members.sql: function extensions.uuid_generate_v4() does not exist");
     const classify = (
-      implementation: "legacy" | "next",
       manifestPresent: boolean,
       diagnostics: ReadonlyArray<{ code: string; severity: string; message: string }>,
     ) =>
       classifyLoad({
-        implementation,
         manifestPresent,
         diagnostics,
         files,
       });
 
-    expect(classify("legacy", false, [diagnostic])).toEqual([]);
-    expect(classify("next", true, [diagnostic])).toEqual([]);
-    expect(classify("next", false, [{ ...diagnostic, severity: "warning" }])).toEqual([]);
-    expect(classify("next", false, [{ ...diagnostic, code: "invalid_routine_body" }])).toEqual([]);
-    expect(classify("next", false, [{ ...diagnostic, code: "max_rounds_exceeded" }])).toHaveLength(
-      1,
-    );
+    expect(classify(true, [diagnostic])).toEqual([]);
+    expect(classify(false, [{ ...diagnostic, severity: "warning" }])).toEqual([]);
+    expect(classify(false, [{ ...diagnostic, code: "invalid_routine_body" }])).toEqual([]);
+    expect(classify(false, [{ ...diagnostic, code: "max_rounds_exceeded" }])).toHaveLength(1);
   });
 
   it("does not classify an extension already declared anywhere in the tree", () => {
@@ -425,24 +413,24 @@ describe("legacyClassifyDeclarativeLoadCompatibility", () => {
   });
 });
 
-describe("legacyResolveStagedDeclarativeDir", () => {
+describe("resolveStagedDeclarativeDir", () => {
   it("suffixes the last path segment to produce a sibling directory", () => {
-    expect(legacyResolveStagedDeclarativeDir("supabase/schemas")).toBe("supabase/schemas-next");
+    expect(resolveStagedDeclarativeDir("supabase/schemas")).toBe("supabase/schemas-next");
   });
 
   it("strips trailing separators so the staged dir cannot nest inside the tree", () => {
-    expect(legacyResolveStagedDeclarativeDir("./schemas/")).toBe("./schemas-next");
-    expect(legacyResolveStagedDeclarativeDir("supabase/schemas//")).toBe("supabase/schemas-next");
-    expect(legacyResolveStagedDeclarativeDir("supabase\\schemas\\")).toBe("supabase\\schemas-next");
+    expect(resolveStagedDeclarativeDir("./schemas/")).toBe("./schemas-next");
+    expect(resolveStagedDeclarativeDir("supabase/schemas//")).toBe("supabase/schemas-next");
+    expect(resolveStagedDeclarativeDir("supabase\\schemas\\")).toBe("supabase\\schemas-next");
   });
 
   it("strips trailing current-directory segments", () => {
-    expect(legacyResolveStagedDeclarativeDir("supabase/schemas/.")).toBe("supabase/schemas-next");
-    expect(legacyResolveStagedDeclarativeDir("supabase/schemas/./")).toBe("supabase/schemas-next");
+    expect(resolveStagedDeclarativeDir("supabase/schemas/.")).toBe("supabase/schemas-next");
+    expect(resolveStagedDeclarativeDir("supabase/schemas/./")).toBe("supabase/schemas-next");
   });
 
   it("prints adoption commands that target the sibling staged directory", () => {
-    const lines = legacyFormatStagedExportAdoption({
+    const lines = formatStagedExportAdoption({
       declarativeDir: "./schemas/",
       schema: [],
       platform: "posix",
@@ -451,16 +439,16 @@ describe("legacyResolveStagedDeclarativeDir", () => {
   });
 });
 
-describe("legacyResolveDeclarativeMigrationName", () => {
+describe("resolveDeclarativeMigrationName", () => {
   it.each([
     ["my_change", "declarative_sync", "my_change"],
     ["", "declarative_sync", "declarative_sync"],
   ])("resolves name=%j file=%j", (name, file, expected) => {
-    expect(legacyResolveDeclarativeMigrationName(name, file)).toBe(expected);
+    expect(resolveDeclarativeMigrationName(name, file)).toBe(expected);
   });
 });
 
-describe("legacyResolveDeclarativeSyncApplyDecision", () => {
+describe("resolveDeclarativeSyncApplyDecision", () => {
   it.each([
     ["--no-apply wins", { apply: true, noApply: true, yes: true, tty: true }, "skip"],
     ["--apply applies", { apply: true, noApply: false, yes: false, tty: false }, "apply"],
@@ -472,6 +460,6 @@ describe("legacyResolveDeclarativeSyncApplyDecision", () => {
       "skip",
     ],
   ] as const)("%s", (_name, options, expected) => {
-    expect(legacyResolveDeclarativeSyncApplyDecision(options)).toBe(expected);
+    expect(resolveDeclarativeSyncApplyDecision(options)).toBe(expected);
   });
 });

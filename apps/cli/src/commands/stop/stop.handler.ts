@@ -3,30 +3,30 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { emitSuccessTrailer } from "../../shared/cli/success-trailer.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
-import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyAqua } from "../../command-internal/legacy-colors.ts";
-import { LegacyDebugFlag } from "../../shared/legacy/global-flags.ts";
-import { legacyCliProjectFilterValue } from "../../command-internal/legacy-docker-ids.ts";
+import { CommandSettings } from "../../config/command-settings.service.ts";
+import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
+import { aqua } from "../../command-internal/colors.ts";
+import { DebugFlag } from "../../command-internal/global-flags.ts";
+import { cliProjectFilterValue } from "../../command-internal/docker-ids.ts";
 import {
-  legacyListVolumesByLabel,
-  type LegacyContainerIdName,
-} from "../../command-internal/legacy-docker-lifecycle.ts";
-import { legacyDockerRemoveAll } from "../../command-internal/legacy-docker-remove-all.ts";
-import { legacyCleanupStartSecrets } from "../../command-internal/legacy-start-secrets-cleanup.ts";
-import { legacyResolveLocalConfigValues } from "../../command-internal/legacy-local-config-values.ts";
-import { legacyLoadLocalProjectContext } from "../../command-internal/legacy-local-project-context.ts";
-import { legacyValidateWorkdirIsDirectory } from "../../command-internal/legacy-workdir-validation.ts";
-import type { LegacyStopFlags } from "./stop.command.ts";
+  listVolumesByLabel,
+  type ContainerIdName,
+} from "../../command-internal/docker-lifecycle.ts";
+import { dockerRemoveAll } from "../../command-internal/docker-remove-all.ts";
+import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
+import { resolveLocalConfigValues } from "../../command-internal/local-config-values.ts";
+import { loadLocalProjectContext } from "../../command-internal/local-project-context.ts";
+import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
+import type { StopFlags } from "./stop.command.ts";
 import {
-  LegacyStopConfigLoadError,
-  LegacyStopContainerError,
-  LegacyStopContainerPruneError,
-  LegacyStopListError,
-  LegacyStopMutuallyExclusiveError,
-  LegacyStopNetworkPruneError,
-  LegacyStopVolumePruneError,
-  LegacyStopWorkdirError,
+  StopConfigLoadError,
+  StopContainerError,
+  StopContainerPruneError,
+  StopListError,
+  StopMutuallyExclusiveError,
+  StopNetworkPruneError,
+  StopVolumePruneError,
+  StopWorkdirError,
 } from "./stop.errors.ts";
 
 /**
@@ -42,7 +42,7 @@ import {
  * (never overriding an already-set var) *before* reading
  * `SUPABASE_PROJECT_ID` — so an env-file-only value
  * overrides config.toml too, not only an ambient shell export.
- * `legacyResolveProjectEnvironmentValues` implements that full precedence
+ * `resolveProjectEnvironmentValues` implements that full precedence
  * chain (see its doc comment) on top of `loadCliProjectEnvironment`'s
  * `supabase/`-dir-only result, so it's used here instead of reading
  * `process.env` directly. It still returns a usable map (falling back to
@@ -53,7 +53,7 @@ import {
  * only still matters for keys neither source produced.
  *
  * The config/env-derived (default) branch is sanitized with
- * `legacySanitizeProjectId` before it's used as a filter value,
+ * `sanitizeProjectId` before it's used as a filter value,
  * matching how config validation sanitizes the resolved project id
  * singleton once at config-load time — every
  * later reader, including the Docker LABEL `start` writes, sees that same
@@ -67,61 +67,62 @@ import {
  * to the config.toml branch exactly like an absent flag, so that's mirrored
  * here with a non-empty check rather than `Option.isSome` alone.
  */
-const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProjectIdFilter")(
-  function* (flags: LegacyStopFlags, cliSettings: LegacyCliSettings["Service"]) {
-    // The `!all` check reads the resolved value (not
-    // presence), so this branch stays value-based — `Option.getOrElse` mirrors
-    // the boolean flag's default of `false` when `--all` was never passed.
-    if (Option.getOrElse(flags.all, () => false)) return "";
-    if (Option.isSome(flags.projectId) && flags.projectId.value.length > 0) {
-      return flags.projectId.value;
-    }
+const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilter")(function* (
+  flags: StopFlags,
+  cliSettings: CommandSettings["Service"],
+) {
+  // The `!all` check reads the resolved value (not
+  // presence), so this branch stays value-based — `Option.getOrElse` mirrors
+  // the boolean flag's default of `false` when `--all` was never passed.
+  if (Option.getOrElse(flags.all, () => false)) return "";
+  if (Option.isSome(flags.projectId) && flags.projectId.value.length > 0) {
+    return flags.projectId.value;
+  }
 
-    // `legacyLoadLocalProjectContext` covers the config-load/env/project-id
-    // resolution sequence — see its own doc comment for the full
-    // rationale (including why workdir validation stays out of it
-    // and is instead handled by `legacyStop`'s own unconditional call above).
-    const context = yield* legacyLoadLocalProjectContext(
-      cliSettings.workdir,
-      (message) => new LegacyStopConfigLoadError({ message }),
-    );
+  // `loadLocalProjectContext` covers the config-load/env/project-id
+  // resolution sequence — see its own doc comment for the full
+  // rationale (including why workdir validation stays out of it
+  // and is instead handled by `stop`'s own unconditional call above).
+  const context = yield* loadLocalProjectContext(
+    cliSettings.workdir,
+    (message) => new StopConfigLoadError({ message }),
+  );
 
-    // VALIDATE config before any Docker call — the default `stop` path runs
-    // full config validation before ever touching Docker — unlike the
-    // `--all`/`--project-id` branches above, which bypass config loading
-    // entirely and so must NOT run this. `legacyResolveLocalConfigValues` is
-    // reused purely for its throwing side effects (its resolved URLs/keys are
-    // discarded); it gives `stop` the same partial-but-growing config validation
-    // coverage `status` already has (`status.handler.ts`), rather than a one-off
-    // re-implementation.
-    yield* Effect.try({
-      try: () =>
-        legacyResolveLocalConfigValues(
-          context.config,
-          context.hostname,
-          cliSettings.workdir,
-          context.projectEnvValues,
-          context.loaded?.document,
-        ),
-      catch: (cause) =>
-        new LegacyStopConfigLoadError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+  // VALIDATE config before any Docker call — the default `stop` path runs
+  // full config validation before ever touching Docker — unlike the
+  // `--all`/`--project-id` branches above, which bypass config loading
+  // entirely and so must NOT run this. `resolveLocalConfigValues` is
+  // reused purely for its throwing side effects (its resolved URLs/keys are
+  // discarded); it gives `stop` the same partial-but-growing config validation
+  // coverage `status` already has (`status.handler.ts`), rather than a one-off
+  // re-implementation.
+  yield* Effect.try({
+    try: () =>
+      resolveLocalConfigValues(
+        context.config,
+        context.hostname,
+        cliSettings.workdir,
+        context.projectEnvValues,
+        context.loaded?.document,
+      ),
+    catch: (cause) =>
+      new StopConfigLoadError({
+        message: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
 
-    return context.projectId;
-  },
-);
+  return context.projectId;
+});
 
-export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopFlags) {
+export const stop = Effect.fn("stop")(function* (flags: StopFlags) {
   const output = yield* Output;
-  const cliSettings = yield* LegacyCliSettings;
-  const telemetryState = yield* LegacyTelemetryState;
+  const cliSettings = yield* CommandSettings;
+  const telemetryState = yield* TelemetryState;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
-  // Threaded into `legacyDockerRemoveAll` below — `--debug` gates that
+  // Threaded into `dockerRemoveAll` below — `--debug` gates that
   // function's `Pruned …:` stderr reports.
-  const debug = yield* LegacyDebugFlag;
+  const debug = yield* DebugFlag;
 
   yield* Effect.gen(function* () {
     // The resolved `--workdir`/`SUPABASE_WORKDIR` is `chdir`'d into
@@ -129,8 +130,8 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
     // own flag validation or handler body. A missing or non-directory path fails
     // immediately, so this must win over every later error, including the
     // `--project-id`/`--all` mutual-exclusivity check below.
-    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
-      Effect.mapError((error) => new LegacyStopWorkdirError({ message: error.message })),
+    yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
+      Effect.mapError((error) => new StopWorkdirError({ message: error.message })),
     );
 
     // Presence-based, matching the "explicitly set" check (see the doc comment on
@@ -138,7 +139,7 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
     // must reject too, not just `--all`/`--all=true`.
     if (Option.isSome(flags.projectId) && Option.isSome(flags.all)) {
       return yield* Effect.fail(
-        new LegacyStopMutuallyExclusiveError({
+        new StopMutuallyExclusiveError({
           // The group name keeps declaration order,
           // but the "were all set" list is sorted.
           message:
@@ -154,7 +155,7 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
     // only `--no-backup` deletes volumes. Matching that exactly (not the
     // seemingly-intended-but-dead semantics of the flag's own description).
     const deleteVolumes = flags.noBackup;
-    const filterValue = legacyCliProjectFilterValue(searchProjectIdFilter);
+    const filterValue = cliProjectFilterValue(searchProjectIdFilter);
 
     // This line prints unconditionally and immediately, straight to stdout,
     // before any Docker call runs. The debounced
@@ -166,39 +167,39 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
       yield* output.raw("Stopping containers...\n");
     }
 
-    // `legacyDockerRemoveAll`: list -> stop
+    // `dockerRemoveAll`: list -> stop
     // concurrently -> container prune -> conditional volume prune -> network prune. See
-    // `legacy-docker-remove-all.ts` for the full rationale. Its 5 neutral, stage-tagged
+    // `docker-remove-all.ts` for the full rationale. Its 5 neutral, stage-tagged
     // failure variants are remapped here into `stop`'s own tagged errors.
     //
     // The containers its listing step finds are captured via `onContainersRemoved` — fired only
     // once `container prune` has CONFIRMED they're actually gone (not merely listed), so
-    // `legacyCleanupStartSecrets` reclaims exactly the staged-secret directories
+    // `cleanupStartSecrets` reclaims exactly the staged-secret directories
     // (`<workdir>/supabase/.temp/start-secrets/<name>`) belonging to containers this run actually
     // tore down, never a guess, never a container the stop stage itself failed on (so `container
     // prune` never ran and nothing was actually removed), and never a blanket delete of the whole
     // parent directory (see that function's doc comment for why that'd be unsafe) — and without a
     // second, separately `docker ps`'d listing call, which would cost an extra real Docker Engine
-    // API request (see `legacyDockerRemoveAll`'s doc comment). Each container's own
-    // `LEGACY_CLI_WORKDIR_LABEL` value is used to locate its directory — NOT `cliSettings.workdir`
+    // API request (see `dockerRemoveAll`'s doc comment). Each container's own
+    // `CLI_WORKDIR_LABEL` value is used to locate its directory — NOT `cliSettings.workdir`
     // unconditionally — since `stop --all`/`stop --project-id <other>` may be tearing down a
     // DIFFERENT project's containers than the one this invocation's own cwd/`--workdir` points at;
     // `cliSettings.workdir` is passed through only as the fallback for a container with no such label
     // (created before this label existed).
     //
-    // Run via `Effect.ensuring` rather than a plain statement after this pipe: `legacyDockerRemoveAll`'s
+    // Run via `Effect.ensuring` rather than a plain statement after this pipe: `dockerRemoveAll`'s
     // LATER stages (volume prune, network prune) can still independently fail AFTER `container
     // prune` has already confirmed removal, and a plain `yield*` below would never run once that
     // later failure propagates — leaking staged secret directories for containers a later `stop`
-    // can no longer rediscover (they're already gone). `legacyRollbackStart` (`command-internal/db-bootstrap/rollback.ts`)
-    // already runs this same cleanup unconditionally after its own `legacyDockerRemoveAll` call for
+    // can no longer rediscover (they're already gone). `rollbackStart` (`command-internal/db-bootstrap/rollback.ts`)
+    // already runs this same cleanup unconditionally after its own `dockerRemoveAll` call for
     // the identical reason; this makes `stop` consistent with that sibling caller, just without
     // swallowing the teardown error itself. The finalizer is wrapped in `Effect.suspend` so
     // `removedContainers` is read at FINALIZER-RUN time, not at pipe-construction time (before
     // `onContainersRemoved` has fired) — same pattern as
     // `storage/ls/ls.handler.ts`/`storage/rm/rm.handler.ts`.
-    let removedContainers: ReadonlyArray<LegacyContainerIdName> = [];
-    yield* legacyDockerRemoveAll(
+    let removedContainers: ReadonlyArray<ContainerIdName> = [];
+    yield* dockerRemoveAll(
       spawner,
       filterValue,
       deleteVolumes,
@@ -208,28 +209,26 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
       debug,
     ).pipe(
       Effect.catchTags({
-        LegacyDockerRemoveAllListError: (error) =>
-          Effect.fail(new LegacyStopListError({ message: error.message })),
-        LegacyDockerRemoveAllStopError: (error) =>
-          Effect.fail(new LegacyStopContainerError({ message: error.message })),
-        LegacyDockerRemoveAllContainerPruneError: (error) =>
-          Effect.fail(new LegacyStopContainerPruneError({ message: error.message })),
-        LegacyDockerRemoveAllVolumePruneError: (error) =>
-          Effect.fail(new LegacyStopVolumePruneError({ message: error.message })),
-        LegacyDockerRemoveAllNetworkPruneError: (error) =>
-          Effect.fail(new LegacyStopNetworkPruneError({ message: error.message })),
+        DockerRemoveAllListError: (error) =>
+          Effect.fail(new StopListError({ message: error.message })),
+        DockerRemoveAllStopError: (error) =>
+          Effect.fail(new StopContainerError({ message: error.message })),
+        DockerRemoveAllContainerPruneError: (error) =>
+          Effect.fail(new StopContainerPruneError({ message: error.message })),
+        DockerRemoveAllVolumePruneError: (error) =>
+          Effect.fail(new StopVolumePruneError({ message: error.message })),
+        DockerRemoveAllNetworkPruneError: (error) =>
+          Effect.fail(new StopNetworkPruneError({ message: error.message })),
       }),
       Effect.ensuring(
-        Effect.suspend(() => legacyCleanupStartSecrets(removedContainers, cliSettings.workdir)),
+        Effect.suspend(() => cleanupStartSecrets(removedContainers, cliSettings.workdir)),
       ),
     );
 
     if (output.format === "text") {
-      // Written to stdout (no stream arg): `legacyAqua` must target stdout's own
-      // TTY status, not stderr's — see `legacy-colors.ts`'s doc comment.
-      yield* output.raw(
-        `Stopped ${legacyAqua("supabase", process.stdout)} local development setup.\n`,
-      );
+      // Written to stdout (no stream arg): `aqua` must target stdout's own
+      // TTY status, not stderr's — see `colors.ts`'s doc comment.
+      yield* output.raw(`Stopped ${aqua("supabase", process.stdout)} local development setup.\n`);
     } else {
       yield* output.success("Stopped supabase local development setup.", {
         project_id_filter: searchProjectIdFilter,
@@ -240,7 +239,7 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
     // Post-run suggestion: only meaningful in text mode — json/
     // stream-json payloads have no equivalent field to carry this hint.
     if (output.format === "text") {
-      const remainingVolumes = yield* legacyListVolumesByLabel(spawner, filterValue).pipe(
+      const remainingVolumes = yield* listVolumesByLabel(spawner, filterValue).pipe(
         Effect.orElseSucceed(() => []),
       );
       if (remainingVolumes.length > 0) {
@@ -249,7 +248,7 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
             ? `docker volume ls --filter label=com.supabase.cli.project=${searchProjectIdFilter}`
             : "docker volume ls --filter label=com.supabase.cli.project";
         yield* emitSuccessTrailer(
-          `Local data are backed up to docker volume. Use docker to show them: ${legacyAqua(listVolumeCommand)}\n`,
+          `Local data are backed up to docker volume. Use docker to show them: ${aqua(listVolumeCommand)}\n`,
         );
       }
     }

@@ -17,11 +17,11 @@ import {
 import { cliSettingsLayer } from "../../shared/config/cli-settings.layer.ts";
 import { processControlLayer } from "../../shared/runtime/process-control.layer.ts";
 import { EventCommandExecuted } from "../../shared/telemetry/event-catalog.ts";
-import { legacyAnalyticsLayer } from "../../telemetry/legacy-analytics.layer.ts";
-import { legacyTelemetryCommand } from "./telemetry.command.ts";
+import { analyticsLayer } from "../../telemetry/analytics.layer.ts";
+import { telemetryCommand } from "./telemetry.command.ts";
 
 function makeTempDir(): string {
-  return mkdtempSync(path.join(tmpdir(), "supabase-legacy-telemetry-"));
+  return mkdtempSync(path.join(tmpdir(), "supabase-telemetry-"));
 }
 
 function telemetryPath(dir: string): string {
@@ -45,11 +45,11 @@ function setup(dir: string) {
   return { out, analytics, layer };
 }
 
-// Wires the REAL `legacyAnalyticsLayer` (consent-gated, backed by
+// Wires the REAL `analyticsLayer` (consent-gated, backed by
 // `telemetryRuntimeLayer` reading `dir`'s telemetry.json) instead of
 // `mockAnalytics()` — the un-mocked boundary `Analytics.capture` calls
 // actually pass through. No PostHog key is set in the test env, so
-// `legacyAnalyticsLayer` resolves to its no-op branch regardless of consent
+// `analyticsLayer` resolves to its no-op branch regardless of consent
 // (real-network PostHog delivery has no test double anywhere in this repo);
 // this proves the command runs the real consent-gated layer end-to-end
 // without crashing, not the exact PostHog call count. The snapshot-timing
@@ -65,7 +65,7 @@ function setupWithRealAnalytics(dir: string) {
     Layer.provide(runtimeInfoLayer),
     Layer.provide(cliProjectContextLayer),
   );
-  const analyticsLayer = legacyAnalyticsLayer.pipe(
+  const analytics = analyticsLayer.pipe(
     Layer.provide(configLayer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(ttyLayer),
@@ -73,7 +73,7 @@ function setupWithRealAnalytics(dir: string) {
   );
   const layer = Layer.mergeAll(
     out.layer,
-    analyticsLayer,
+    analytics,
     BunServices.layer,
     processControlLayer,
     envLayer,
@@ -81,17 +81,17 @@ function setupWithRealAnalytics(dir: string) {
   return { out, layer };
 }
 
-function legacyTestRoot() {
-  return Command.make("supabase").pipe(Command.withSubcommands([legacyTelemetryCommand]));
+function testRoot() {
+  return Command.make("supabase").pipe(Command.withSubcommands([telemetryCommand]));
 }
 
-describe("legacy telemetry integration", () => {
+describe("telemetry integration", () => {
   it.live("status creates legacy telemetry.json and prints Go-style enabled output", () => {
     const dir = makeTempDir();
     const { out, layer } = setup(dir);
 
     return Effect.gen(function* () {
-      yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })(["telemetry", "status"]);
+      yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["telemetry", "status"]);
       expect(out.stdoutText).toBe("Telemetry is enabled.\n");
       expect(existsSync(telemetryPath(dir))).toBe(true);
       const config = readTelemetryConfig(dir);
@@ -120,7 +120,7 @@ describe("legacy telemetry integration", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })(["telemetry", "enable"]);
+      yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["telemetry", "enable"]);
       expect(out.stdoutText).toBe("Telemetry is enabled.\n");
       const config = readTelemetryConfig(dir);
       expect(config.enabled).toBe(true);
@@ -150,7 +150,7 @@ describe("legacy telemetry integration", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })(["telemetry", "disable"]);
+      yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["telemetry", "disable"]);
       expect(out.stdoutText).toBe("Telemetry is disabled.\n");
       const config = readTelemetryConfig(dir);
       expect(config.enabled).toBe(false);
@@ -170,7 +170,7 @@ describe("legacy telemetry integration", () => {
     writeFileSync(telemetryPath(dir), "{not valid json}");
 
     return Effect.gen(function* () {
-      yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })(["telemetry", "status"]);
+      yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["telemetry", "status"]);
       expect(out.stdoutText).toBe("Telemetry is enabled.\n");
       const config = readTelemetryConfig(dir);
       expect(config.enabled).toBe(true);
@@ -190,14 +190,14 @@ describe("legacy telemetry integration", () => {
   // The snapshot-timing mechanism itself — that the pre-toggle value survives the
   // handler's own on-disk write — is proven directly against `telemetryRuntimeLayer`
   // in `shared/telemetry/runtime.layer.unit.test.ts`. The two tests further below
-  // run the same commands through the REAL, consent-gated `legacyAnalyticsLayer`
+  // run the same commands through the REAL, consent-gated `analyticsLayer`
   // (not this mock) to prove the production wiring doesn't crash end-to-end.
   it.live("disable no longer force-suppresses cli_command_executed", () => {
     const dir = makeTempDir();
     const { analytics, layer } = setup(dir);
 
     return Effect.gen(function* () {
-      yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })(["telemetry", "disable"]);
+      yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["telemetry", "disable"]);
       expect(analytics.captured.map((event) => event.event)).toContain(EventCommandExecuted);
     }).pipe(
       Effect.provide(layer),
@@ -210,7 +210,7 @@ describe("legacy telemetry integration", () => {
     const { analytics, layer } = setup(dir);
 
     return Effect.gen(function* () {
-      yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })(["telemetry", "enable"]);
+      yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["telemetry", "enable"]);
       expect(analytics.captured.map((event) => event.event)).toContain(EventCommandExecuted);
     }).pipe(
       Effect.provide(layer),
@@ -233,7 +233,7 @@ describe("legacy telemetry integration", () => {
     const { out, layer } = setupWithRealAnalytics(dir);
 
     return Effect.gen(function* () {
-      yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })(["telemetry", "disable"]);
+      yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["telemetry", "disable"]);
       expect(out.stdoutText).toBe("Telemetry is disabled.\n");
       expect(readTelemetryConfig(dir).enabled).toBe(false);
     }).pipe(
@@ -257,7 +257,7 @@ describe("legacy telemetry integration", () => {
     const { out, layer } = setupWithRealAnalytics(dir);
 
     return Effect.gen(function* () {
-      yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })(["telemetry", "enable"]);
+      yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["telemetry", "enable"]);
       expect(out.stdoutText).toBe("Telemetry is enabled.\n");
       expect(readTelemetryConfig(dir).enabled).toBe(true);
     }).pipe(
@@ -285,10 +285,7 @@ describe("legacy telemetry integration", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })([
-          "telemetry",
-          "status",
-        ]);
+        yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["telemetry", "status"]);
         expect(out.stdoutText).toBe("Telemetry is enabled.\n");
         const config = readTelemetryConfig(dir);
         expect(config.enabled).toBe(true);

@@ -1,21 +1,18 @@
 import { Layer } from "effect";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { legacyCredentialsLayer } from "../../../auth/legacy-credentials.layer.ts";
-import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts";
-import { legacyPlatformApiFactoryLayer } from "../../../auth/legacy-platform-api-factory.layer.ts";
-import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
-import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
-import { legacyDbConfigLayer } from "../../../command-internal/legacy-db-config.layer.ts";
-import { legacyDbConnectionLayer } from "../../../command-internal/legacy-db-connection.layer.ts";
-import { legacyDebugLoggerLayer } from "../../../command-internal/legacy-debug-logger.layer.ts";
-import { legacyDockerRunLayer } from "../../../command-internal/legacy-docker-run.layer.ts";
-import { legacyEdgeRuntimeScriptLayer } from "../../../command-internal/legacy-edge-runtime-script.layer.ts";
+import { commandCredentialsLayer } from "../../../auth/command-credentials.layer.ts";
+import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
+import { commandPlatformApiFactoryLayer } from "../../../auth/command-platform-api-factory.layer.ts";
+import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
+import { projectRefLayer } from "../../../config/project-ref.layer.ts";
+import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
+import { dbConnectionLayer } from "../../../command-internal/db-connection.layer.ts";
+import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
-import { legacyIdentityStitchLayer } from "../../../command-internal/legacy-identity-stitch.ts";
-import { legacyPgDeltaSslProbeLayer } from "../../../command-internal/legacy-pgdelta-ssl-probe.layer.ts";
-import { legacyLinkedProjectCacheLayer } from "../../../telemetry/legacy-linked-project-cache.layer.ts";
-import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
+import { identityStitchLayer } from "../../../command-internal/identity-stitch.ts";
+import { linkedProjectCacheLayer } from "../../../telemetry/linked-project-cache.layer.ts";
+import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 
 /**
  * Runtime layer for `supabase db push`. Same shape as `db lint`: it spans local
@@ -23,65 +20,57 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  * connection, the db-config resolver, project-ref resolution, and the
  * linked-project cache.
  *
- * Like `db lint`, it deliberately uses the **lazy** `legacyPlatformApiFactoryLayer`
+ * Like `db lint`, it deliberately uses the **lazy** `commandPlatformApiFactoryLayer`
  * (not the eager management-API runtime) so the auth-free `--local` path never
- * resolves an access token at layer-build time. `legacyCliSettingsLayer` is provided
- * to each consumer that needs it (legacy CLAUDE.md item 5); the single
- * `legacyIdentityStitchLayer` reference is shared so the factory, the cache, and
+ * resolves an access token at layer-build time. `commandSettingsLayer` is provided
+ * to each consumer that needs it (CLAUDE.md invariant 5); the single
+ * `identityStitchLayer` reference is shared so the factory, the cache, and
  * the db-config resolver share one `stitchAttempted` guard.
  */
-const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
-const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
-const credentials = legacyCredentialsLayer.pipe(
+const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
+const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
+const credentials = commandCredentialsLayer.pipe(
   Layer.provide(cliSettings),
-  Layer.provide(legacyDebugLoggerLayer),
+  Layer.provide(debugLoggerLayer),
 );
 
-const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
+const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
   Layer.provide(credentials),
   Layer.provide(cliSettings),
-  Layer.provide(legacyDebugLoggerLayer),
-  Layer.provide(legacyIdentityStitchLayer),
+  Layer.provide(debugLoggerLayer),
+  Layer.provide(identityStitchLayer),
 );
 
-const projectRef = legacyProjectRefLayer.pipe(
+const projectRef = projectRefLayer.pipe(
   Layer.provide(platformApiFactory),
   Layer.provide(cliSettings),
 );
 
-const linkedProjectCache = legacyLinkedProjectCacheLayer.pipe(
+const linkedProjectCache = linkedProjectCacheLayer.pipe(
   Layer.provide(credentials),
   Layer.provide(cliSettings),
   Layer.provide(httpClient),
-  Layer.provide(legacyIdentityStitchLayer),
+  Layer.provide(identityStitchLayer),
 );
 
-const dbConfig = legacyDbConfigLayer.pipe(
+const dbConfig = dbConfigLayer.pipe(
   Layer.provide(cliSettings),
-  Layer.provide(legacyDbConnectionLayer),
-  Layer.provide(legacyDebugLoggerLayer),
-  Layer.provide(legacyIdentityStitchLayer),
+  Layer.provide(dbConnectionLayer),
+  Layer.provide(debugLoggerLayer),
+  Layer.provide(identityStitchLayer),
 );
 
-const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
-  Layer.provide(legacyDockerRunLayer),
-  Layer.provide(cliSettings),
-);
-
-export const legacyDbPushRuntimeLayer = Layer.mergeAll(
+export const dbPushRuntimeLayer = Layer.mergeAll(
   dbConfig,
-  legacyDbConnectionLayer,
-  legacyDockerRunLayer,
-  edgeRuntime,
-  legacyPgDeltaSslProbeLayer,
+  dbConnectionLayer,
   cliSettings,
   httpClient,
   credentials,
   projectRef,
   linkedProjectCache,
-  legacyIdentityStitchLayer,
-  legacyTelemetryStateLayer,
-  // `legacyPromptYesNo`'s non-TTY branch reads the piped answer via `Stdin`;
+  identityStitchLayer,
+  telemetryStateLayer,
+  // `promptYesNo`'s non-TTY branch reads the piped answer via `Stdin`;
   // without it a CI/piped `db push` that reaches a confirmation prompt fails
   // with a missing-service defect instead of honoring `y`/`n` or the default.
   stdinLayer,

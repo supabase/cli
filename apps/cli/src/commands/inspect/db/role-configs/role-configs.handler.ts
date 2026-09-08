@@ -1,11 +1,8 @@
-import {
-  legacyInspectDeprecationNotice,
-  legacyMakeInspectDbHandler,
-} from "../legacy-inspect-query.ts";
-import { legacyRoleStatsSpec } from "../role-stats/role-stats.query.ts";
+import { inspectDeprecationNotice, makeInspectDbHandler } from "../inspect-query.ts";
+import { roleStatsSpec } from "../role-stats/role-stats.query.ts";
 
-export const legacyInspectDbRoleConfigs = legacyMakeInspectDbHandler(
-  legacyRoleStatsSpec,
-  "legacy.inspect.db.role-configs",
-  legacyInspectDeprecationNotice("role-configs", "role-stats"),
+export const inspectDbRoleConfigs = makeInspectDbHandler(
+  roleStatsSpec,
+  "inspect.db.role-configs",
+  inspectDeprecationNotice("role-configs", "role-stats"),
 );

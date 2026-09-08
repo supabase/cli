@@ -7,8 +7,10 @@ coverage/
 !.env.example
 .claude/
 .agents/.repos/effect-v3
+.repos/slim-services/
 .worktrees/
 .supabase/
+erl_crash.dump
 # Stray `supabase` project dir created by running the CLI at the repo root
 # (e.g. supabase/.temp/linked-project.json). This monorepo has no top-level
 # Supabase project — real fixtures live under apps/cli-e2e/fixtures/.
@@ -23,6 +25,7 @@ packages/cli-*/bin/
 
 # Turbo
 .turbo/
+apps/cli/.supabase/
 
 # Transient render dir created by packages/api/scripts/generated-output-sync.unit.test.ts
 packages/api/.generated-output-sync-*/

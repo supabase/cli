@@ -1,14 +1,10 @@
 import { Command } from "effect/unstable/cli";
-import { legacyConfigDiffCommand } from "./diff/diff.command.ts";
-import { legacyConfigPullCommand } from "./pull/pull.command.ts";
-import { legacyConfigPushCommand } from "./push/push.command.ts";
+import { configDiffCommand } from "./diff/diff.command.ts";
+import { configPullCommand } from "./pull/pull.command.ts";
+import { configPushCommand } from "./push/push.command.ts";
 
-export const legacyConfigCommand = Command.make("config").pipe(
+export const configCommand = Command.make("config").pipe(
   Command.withDescription("Manage Supabase project configurations."),
   Command.withShortDescription("Manage project configurations"),
-  Command.withSubcommands([
-    legacyConfigDiffCommand,
-    legacyConfigPullCommand,
-    legacyConfigPushCommand,
-  ]),
+  Command.withSubcommands([configDiffCommand, configPullCommand, configPushCommand]),
 );

@@ -2,9 +2,9 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacySnippetsList } from "./list.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { snippetsList } from "./list.handler.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -12,9 +12,9 @@ const config = {
     Flag.optional,
   ),
 };
-export type LegacySnippetsListFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type SnippetsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacySnippetsListCommand = Command.make("list", config).pipe(
+export const snippetsListCommand = Command.make("list", config).pipe(
   Command.withDescription("List all SQL snippets of the linked project."),
   Command.withShortDescription("List all SQL snippets"),
   Command.withExamples([
@@ -28,13 +28,13 @@ export const legacySnippetsListCommand = Command.make("list", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacySnippetsList(flags).pipe(
+    snippetsList(flags).pipe(
       // No `safeFlags` — `--project-ref` is not on the telemetry-safe list,
       // so the telemetry payload redacts the value (the default behavior for
       // unmarked flags).
-      withLegacyCommandInstrumentation({ flags }),
+      withCommandTelemetry({ flags }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["snippets", "list"])),
+  Command.provide(managementApiRuntimeLayer(["snippets", "list"])),
 );

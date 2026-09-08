@@ -111,7 +111,7 @@ function parseDotEnv(
       // godotenv-style quoted value spanning multiple physical lines (e.g. a
       // PEM block); Go's `loadNestedEnv` parses this fine (`godotenv@v1.5.1`'s
       // cursor-based scanner never splits into lines up front; see
-      // `legacy-dotenv.ts` for the Go-compatible reference implementation used
+      // `dotenv.ts` for the Go-compatible reference implementation used
       // elsewhere in this repo). Accumulate subsequent lines until the opened
       // quote closes (or EOF), then match the same per-line pattern against
       // the joined multiline chunk — its quoted-value alternatives use
@@ -187,7 +187,7 @@ export interface LoadCliProjectEnvironmentOptions {
    * intentionally non-test `.env.local` is invisible to Go in that mode and
    * must not fail config loading here either. Defaults to `false` so
    * existing callers that don't have a `SUPABASE_ENV` gate of their own
-   * (`next/`, `secrets set`) are unaffected.
+   * (`packages/stack`, `secrets set`) are unaffected.
    */
   readonly skipEnvLocal?: boolean;
 }
@@ -201,7 +201,7 @@ export interface InternalResolveCliConfigOptions {
    * Opt into Go/viper-parity `env()` matching (case-agnostic
    * `^env\((.*)\)$`). Defaults to `false`, which uses the pre-PR-#5765 strict
    * SCREAMING_SNAKE_CASE matcher (`ENV_CAPTURE_REGEX_STRICT`). Only the
-   * Go-parity legacy shell sets this to `true`.
+   * Go-parity CLI sets this to `true`.
    */
   readonly goViperCompat?: boolean;
 }

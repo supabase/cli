@@ -1,7 +1,7 @@
 import type { ApiKeyResponse } from "@supabase/api/effect";
 
-import { apiKeysToEnv } from "../../command-internal/legacy-api-keys.format.ts";
-import { type LegacyDbConfig, toPostgresUrl } from "./bootstrap.pgconfig.ts";
+import { apiKeysToEnv } from "../../command-internal/api-keys.format.ts";
+import { type DbConfig, toPostgresUrl } from "./bootstrap.pgconfig.ts";
 
 type ApiKey = typeof ApiKeyResponse.Type;
 
@@ -32,7 +32,7 @@ const EXPO_PUBLIC_SUPABASE_URL = "EXPO_PUBLIC_SUPABASE_URL";
  */
 export function buildDotEnv(
   keys: ReadonlyArray<ApiKey>,
-  config: LegacyDbConfig,
+  config: DbConfig,
   supabaseUrl: string,
   example: Readonly<Record<string, string>> | undefined,
 ): Record<string, string> {
