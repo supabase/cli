@@ -64,7 +64,7 @@ Each subcommand runs one read-only `SELECT` (the embedded Go `<name>.sql`). The
 | long-running-queries | long_running_queries.sql | no                          |
 | role-stats           | role_stats.sql           | no                          |
 | traffic-profile      | traffic_profile.sql      | no                          |
-| toast-sizes          | toast_sizes.sql          | yes (`$1`)                  |
+| toast-sizes          | toast-sizes.query.ts     | yes (`$1`)                  |
 
 Deprecated aliases run an active subcommand's query: `cache-hit`→db-stats;
 `index-usage`/`total-index-size`/`index-sizes`/`unused-indexes`/`seq-scans`/`table-record-counts`→index-stats;

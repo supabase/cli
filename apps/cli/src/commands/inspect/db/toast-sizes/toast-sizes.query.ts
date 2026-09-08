@@ -12,7 +12,7 @@ SELECT
   FORMAT('%I.%I', n.nspname, main.relname)                            AS name,
   pg_size_pretty(pg_total_relation_size(main.oid))                    AS total_size,
   pg_size_pretty(pg_relation_size(main.oid))                          AS heap_size,
-  pg_size_pretty(pg_relation_size(main.reltoastrelid))                AS toast_size,
+  pg_size_pretty(pg_total_relation_size(main.reltoastrelid))          AS toast_size,
   COALESCE(ts.n_live_tup, 0)                                          AS toast_live_chunks,
   COALESCE(ts.n_dead_tup, 0)                                          AS toast_dead_chunks,
   COALESCE(
@@ -26,8 +26,9 @@ JOIN pg_namespace n ON n.oid = main.relnamespace
 LEFT JOIN pg_stat_all_tables ts ON ts.relid = main.reltoastrelid
 WHERE main.relkind = 'r'
   AND main.reltoastrelid <> 0
+  AND pg_total_relation_size(main.reltoastrelid) > 0
   AND NOT n.nspname LIKE ANY($1)
-ORDER BY pg_relation_size(main.reltoastrelid) DESC`;
+ORDER BY pg_total_relation_size(main.reltoastrelid) DESC`;
 
 export const toastSizesSpec: InspectQuerySpec = {
   name: "toast-sizes",
