@@ -307,6 +307,9 @@ describe("managed and pass-through secrets", () => {
         "stopped",
       ).pipe(Effect.exit);
       expect(errorOf(escapingExit)).toBeInstanceOf(InvalidJwtSigningMaterialError);
+      expect(errorOf(escapingExit)?.message).toContain(
+        "JWT signing key file must be inside project root",
+      );
 
       const outside = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-outside-" });
       yield* fs.writeFileString(
@@ -328,6 +331,9 @@ describe("managed and pass-through secrets", () => {
         "stopped",
       ).pipe(Effect.exit);
       expect(errorOf(symlinkExit)).toBeInstanceOf(InvalidJwtSigningMaterialError);
+      expect(errorOf(symlinkExit)?.message).toContain(
+        "JWT signing key file must be inside project root",
+      );
     }).pipe(Effect.provide(layer)),
   );
 

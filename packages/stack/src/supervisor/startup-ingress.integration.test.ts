@@ -21,8 +21,9 @@ import {
   // oxlint-disable-next-line effecttsgo/node-builtin-import -- native loopback HTTP server is the integration protocol boundary under test.
 } from "node:http";
 import { deriveStackId } from "../identity/Identity.ts";
+import type { StackError } from "../public/Errors.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
-import { bindHostListener } from "./HostListener.ts";
+import { bindHostListener, type HostListener } from "./HostListener.ts";
 import { makeSupervisorIngress } from "./Ingress.ts";
 import { makeSupervisor, type SupervisorRuntime } from "./Supervisor.ts";
 import type { RuntimeDriver } from "../runtime/RuntimeDriver.ts";
@@ -110,7 +111,7 @@ describe("startup ingress", () => {
           Context.add(Path.Path, path),
           Context.add(Crypto.Crypto, crypto),
         );
-        const listenerBound = yield* Deferred.make<import("./HostListener.ts").HostListener>();
+        const listenerBound = yield* Deferred.make<HostListener, StackError>();
         const startEntered = yield* Deferred.make<void>();
         const releaseStart = yield* Deferred.make<void>();
         const activationCalls = yield* Ref.make(0);
@@ -194,7 +195,22 @@ describe("startup ingress", () => {
           runtime,
         });
         const starting = yield* Effect.forkChild(
-          supervisor.start({ config: { listeners: { api: { enabled: true } } } }),
+          supervisor
+            .start({
+              config: {
+                listeners: {
+                  api: { enabled: true },
+                  database: { enabled: false },
+                  pooler: { enabled: false },
+                  studio: { enabled: false },
+                  mailUi: { enabled: false },
+                  smtp: { enabled: false },
+                  pop3: { enabled: false },
+                  functionsInspector: { enabled: false },
+                },
+              },
+            })
+            .pipe(Effect.tapCause((cause) => Deferred.failCause(listenerBound, cause))),
         );
         const listener = yield* Deferred.await(listenerBound);
         if (listener.binding.kind !== "http") return yield* Effect.die("API listener is not HTTP");
