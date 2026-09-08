@@ -7,6 +7,7 @@ import {
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
+import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
 import {
   LegacyExperimentalStackApi,
   LegacyExperimentalStackTargetResolver,
@@ -54,7 +55,7 @@ const eagerlyActivate = <
   value: T,
 ): T => (value.enabled === false ? value : Object.assign({}, value, { activation: "eager" }));
 
-export const legacyValidateExperimentalStackStartTarget = (
+const legacyValidateExperimentalStackStartTarget = (
   flags: Pick<LegacyExperimentalStackStartFlags, "stack" | "stackId">,
 ) =>
   Option.isSome(flags.stack) && Option.isSome(flags.stackId)
@@ -68,98 +69,102 @@ export const legacyValidateExperimentalStackStartTarget = (
 export const legacyExperimentalStackStart = Effect.fn("legacy.experimental.stack.start")(function* (
   flags: LegacyExperimentalStackStartFlags,
 ) {
-  const output = yield* Output;
-  const settings = yield* LegacyCliSettings;
-  const resolver = yield* LegacyExperimentalStackTargetResolver;
-  const stackApi = yield* LegacyExperimentalStackApi;
-  const legacyOutput = yield* Effect.serviceOption(LegacyOutputFlag);
-  if (Option.isSome(legacyOutput) && Option.isSome(legacyOutput.value))
-    return yield* new LegacyExperimentalStackStartError({
-      reason: "flags",
-      message: "The legacy -o/--output flag is not supported here; use --output-format json.",
-      suggestion: "Use --output-format json or --output-format text.",
-    });
-  yield* legacyValidateExperimentalStackStartTarget(flags);
+  const telemetryState = yield* LegacyTelemetryState;
+  const body = Effect.gen(function* () {
+    const output = yield* Output;
+    const settings = yield* LegacyCliSettings;
+    const resolver = yield* LegacyExperimentalStackTargetResolver;
+    const stackApi = yield* LegacyExperimentalStackApi;
+    const legacyOutput = yield* Effect.serviceOption(LegacyOutputFlag);
+    if (Option.isSome(legacyOutput) && Option.isSome(legacyOutput.value))
+      return yield* new LegacyExperimentalStackStartError({
+        reason: "flags",
+        message: "The legacy -o/--output flag is not supported here; use --output-format json.",
+        suggestion: "Use --output-format json or --output-format text.",
+      });
+    yield* legacyValidateExperimentalStackStartTarget(flags);
 
-  const target = yield* resolver.resolve({
-    projectRoot: settings.workdir,
-    ...(Option.isSome(flags.stack) ? { name: flags.stack.value } : {}),
-    ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
-    runtime: flags.runtime,
+    const target = yield* resolver.resolve({
+      projectRoot: settings.workdir,
+      ...(Option.isSome(flags.stack) ? { name: flags.stack.value } : {}),
+      ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
+      runtime: flags.runtime,
+    });
+    const config = yield* legacyLoadStackConfig(target.projectRoot).pipe(
+      Effect.mapError(
+        (error) =>
+          new LegacyExperimentalStackStartError({
+            reason: "invalid-config",
+            message: error.message,
+            cause: error,
+          }),
+      ),
+    );
+    const startConfig = flags.eager
+      ? {
+          ...config,
+          capabilities: {
+            ...config.capabilities,
+            ...(config.capabilities?.rest === undefined
+              ? {}
+              : { rest: eagerlyActivate(config.capabilities.rest) }),
+            ...(config.capabilities?.auth === undefined
+              ? {}
+              : { auth: eagerlyActivate(config.capabilities.auth) }),
+            ...(config.capabilities?.realtime === undefined
+              ? {}
+              : { realtime: eagerlyActivate(config.capabilities.realtime) }),
+            ...(config.capabilities?.storage === undefined
+              ? {}
+              : { storage: eagerlyActivate(config.capabilities.storage) }),
+            ...(config.capabilities?.functions === undefined
+              ? {}
+              : { functions: eagerlyActivate(config.capabilities.functions) }),
+            ...(config.capabilities?.studio === undefined
+              ? {}
+              : { studio: eagerlyActivate(config.capabilities.studio) }),
+            ...(config.capabilities?.mail === undefined
+              ? {}
+              : { mail: eagerlyActivate(config.capabilities.mail) }),
+            ...(config.capabilities?.analytics === undefined
+              ? {}
+              : { analytics: eagerlyActivate(config.capabilities.analytics) }),
+            ...(config.capabilities?.pooler === undefined
+              ? {}
+              : { pooler: eagerlyActivate(config.capabilities.pooler) }),
+          },
+          preparation: flags.preparation,
+        }
+      : { ...config, preparation: flags.preparation };
+    const runtime: StackRuntimePreference | undefined = target.runtime;
+    // The package's public Effect API reads SUPABASE_HOME only at its runtime
+    // composition boundary and launches the detached owner through the compiled
+    // dispatch sentinel. The CLI adapter resolves the target and config; it does
+    // not recreate package lifecycle or runtime ownership here.
+    const stack =
+      target.id !== undefined
+        ? yield* stackApi.openStack(target.id).pipe(Effect.mapError(legacyStackStartError))
+        : yield* stackApi
+            .createStack({
+              projectRoot: target.projectRoot,
+              ...(target.name === undefined ? {} : { name: target.name }),
+              ...(runtime === undefined ? {} : { runtime }),
+            })
+            .pipe(Effect.mapError(legacyStackStartError));
+    const starting = yield* output.task("Starting local Supabase stack...");
+    const status = yield* stack.start({ config: startConfig }).pipe(
+      Effect.tapError((error) => starting.fail(error.message)),
+      Effect.tap(() => starting.succeed("Stack is ready.")),
+      Effect.mapError(legacyStackStartError),
+    );
+    if (output.format === "text") {
+      yield* output.raw(renderStatus(status));
+    } else {
+      yield* output.success("", statusPayload(status));
+    }
+    return status;
   });
-  const config = yield* legacyLoadStackConfig(target.projectRoot).pipe(
-    Effect.mapError(
-      (error) =>
-        new LegacyExperimentalStackStartError({
-          reason: "invalid-config",
-          message: error.message,
-          cause: error,
-        }),
-    ),
-  );
-  const startConfig = flags.eager
-    ? {
-        ...config,
-        capabilities: {
-          ...config.capabilities,
-          ...(config.capabilities?.rest === undefined
-            ? {}
-            : { rest: eagerlyActivate(config.capabilities.rest) }),
-          ...(config.capabilities?.auth === undefined
-            ? {}
-            : { auth: eagerlyActivate(config.capabilities.auth) }),
-          ...(config.capabilities?.realtime === undefined
-            ? {}
-            : { realtime: eagerlyActivate(config.capabilities.realtime) }),
-          ...(config.capabilities?.storage === undefined
-            ? {}
-            : { storage: eagerlyActivate(config.capabilities.storage) }),
-          ...(config.capabilities?.functions === undefined
-            ? {}
-            : { functions: eagerlyActivate(config.capabilities.functions) }),
-          ...(config.capabilities?.studio === undefined
-            ? {}
-            : { studio: eagerlyActivate(config.capabilities.studio) }),
-          ...(config.capabilities?.mail === undefined
-            ? {}
-            : { mail: eagerlyActivate(config.capabilities.mail) }),
-          ...(config.capabilities?.analytics === undefined
-            ? {}
-            : { analytics: eagerlyActivate(config.capabilities.analytics) }),
-          ...(config.capabilities?.pooler === undefined
-            ? {}
-            : { pooler: eagerlyActivate(config.capabilities.pooler) }),
-        },
-        preparation: flags.preparation,
-      }
-    : { ...config, preparation: flags.preparation };
-  const runtime: StackRuntimePreference | undefined = target.runtime;
-  // The package's public Effect API reads SUPABASE_HOME only at its runtime
-  // composition boundary and launches the detached owner through the compiled
-  // dispatch sentinel. The CLI adapter resolves the target and config; it does
-  // not recreate package lifecycle or runtime ownership here.
-  const stack =
-    target.id !== undefined
-      ? yield* stackApi.openStack(target.id).pipe(Effect.mapError(legacyStackStartError))
-      : yield* stackApi
-          .createStack({
-            projectRoot: target.projectRoot,
-            ...(target.name === undefined ? {} : { name: target.name }),
-            ...(runtime === undefined ? {} : { runtime }),
-          })
-          .pipe(Effect.mapError(legacyStackStartError));
-  const starting = yield* output.task("Starting local Supabase stack...");
-  const status = yield* stack.start({ config: startConfig }).pipe(
-    Effect.tapError((error) => starting.fail(error.message)),
-    Effect.tap(() => starting.succeed("Stack is ready.")),
-    Effect.mapError(legacyStackStartError),
-  );
-  if (output.format === "text") {
-    yield* output.raw(renderStatus(status));
-  } else {
-    yield* output.success("", statusPayload(status));
-  }
-  return status;
+  return yield* body.pipe(Effect.ensuring(telemetryState.flush));
 });
 
 const legacyStackStartError = (error: unknown) => {

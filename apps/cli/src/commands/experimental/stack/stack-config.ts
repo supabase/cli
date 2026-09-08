@@ -1,9 +1,9 @@
 import type { CliConfig } from "@supabase/config";
 import { Effect, Data, FileSystem, Option, Path, Redacted, Schema } from "effect";
-import { parse as parseDotenv } from "dotenv";
 import { StackConfigSchema, type StackConfig } from "@supabase/stack/effect";
 
 import { legacyLoadLocalProjectContext } from "../../../command-internal/legacy-local-project-context.ts";
+import { parseDotEnv } from "../../../command-internal/legacy-dotenv.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -49,10 +49,11 @@ const secret = (value: unknown): Redacted.Redacted<string> | undefined => {
 
 const parseEnv = (contents: string): Record<string, Redacted.Redacted<string>> =>
   Object.fromEntries(
-    Object.entries(parseDotenv(contents)).map(([key, value]) => [key, Redacted.make(value)]),
+    Object.entries(parseDotEnv(contents)).map(([key, value]) => [key, Redacted.make(value)]),
   );
 
 const envKeyPattern = /^[A-Z_][A-Z0-9_]*$/u;
+const defaultStudioApiUrl = "http://127.0.0.1";
 
 const validateEnvKeys = (
   values: Readonly<Record<string, Redacted.Redacted<string>>>,
@@ -83,7 +84,16 @@ const legacyReadFunctionEnvironments = (
         Effect.flatMap((exists) =>
           exists
             ? fs.readFileString(file).pipe(
-                Effect.map(parseEnv),
+                Effect.flatMap((contents) =>
+                  Effect.try({
+                    try: () => parseEnv(contents),
+                    // Keep parser diagnostics free of dotenv values, which may contain secrets.
+                    catch: () =>
+                      new LegacyStackConfigError({
+                        message: `Failed to parse environment file ${file}`,
+                      }),
+                  }),
+                ),
                 Effect.flatMap((values) => validateEnvKeys(values, file)),
               )
             : Effect.succeed({}),
@@ -173,8 +183,8 @@ const authProviderNames = [
   "zoom",
 ] as const;
 
-const legacyStackProjectPath = (value: string): string =>
-  value.length === 0 || value.startsWith("/")
+const legacyStackProjectPath = (path: Path.Path, value: string): string =>
+  value.length === 0 || path.isAbsolute(value)
     ? value
     : `supabase/${value.startsWith("./") ? value.slice(2) : value}`;
 
@@ -614,7 +624,9 @@ const legacyConfigInput = (
         legacyFunctionsSettings(projectRoot, path, config, document, projectEnvValues),
       ),
       studio: capability(studio.enabled, {
-        api_url: studio.api_url,
+        // A host-only default must remain unset so the stack runtime can append
+        // the allocated API listener port. Explicit URLs remain caller-owned.
+        api_url: studio.api_url === defaultStudioApiUrl ? undefined : studio.api_url,
         openai_api_key: secret(studio.openai_api_key),
       }),
       mail: capability(mail.enabled, {
@@ -648,13 +660,40 @@ const legacyConfigInput = (
       jwt: {
         ...(auth.jwt_issuer === undefined ? {} : { issuer: auth.jwt_issuer }),
         ...(auth.signing_keys_path !== undefined
-          ? { signing: { kind: "jwks-file", path: legacyStackProjectPath(auth.signing_keys_path) } }
+          ? {
+              signing: {
+                kind: "jwks-file",
+                path: legacyStackProjectPath(path, auth.signing_keys_path),
+              },
+            }
           : secret(auth.jwt_secret) === undefined
             ? {}
             : { signing: { kind: "symmetric", secret: secret(auth.jwt_secret) } }),
       },
     },
   };
+};
+
+const findEncryptedSecret = (value: unknown, path = "config"): string | undefined => {
+  if (Redacted.isRedacted(value)) {
+    const secretValue = Redacted.value(value);
+    return typeof secretValue === "string" && secretValue.startsWith("encrypted:")
+      ? path
+      : undefined;
+  }
+  if (Array.isArray(value)) {
+    for (const [index, item] of value.entries()) {
+      const found = findEncryptedSecret(item, `${path}[${index}]`);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (!isRecord(value)) return undefined;
+  for (const [key, item] of Object.entries(value)) {
+    const found = findEncryptedSecret(item, `${path}.${key}`);
+    if (found !== undefined) return found;
+  }
+  return undefined;
 };
 
 const legacyConfigValidationError = (
@@ -713,7 +752,11 @@ export const legacyLoadStackConfig = (projectRoot: string): LegacyStackConfigEff
               ),
               context.config.edge_runtime.enabled === false,
             ).pipe(
-              Effect.mapError((cause) => new LegacyStackConfigError({ message: String(cause) })),
+              Effect.mapError((cause) =>
+                cause instanceof LegacyStackConfigError
+                  ? cause
+                  : new LegacyStackConfigError({ message: String(cause) }),
+              ),
               Effect.flatMap(
                 (
                   environments: Readonly<{
@@ -793,16 +836,26 @@ export const legacyLoadStackConfig = (projectRoot: string): LegacyStackConfigEff
                 },
               ),
               Effect.flatMap((input) =>
-                Schema.decodeUnknownEffect(StackConfigSchema)(withoutUndefined(input), {
-                  onExcessProperty: "error",
-                }).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new LegacyStackConfigError({
-                        message: `invalid stack config: ${String(cause)}`,
-                      }),
-                  ),
-                ),
+                Effect.gen(function* () {
+                  const encryptedPath = findEncryptedSecret(input);
+                  if (encryptedPath !== undefined)
+                    return yield* new LegacyStackConfigError({
+                      message: `${encryptedPath} uses an encrypted secret, which the experimental stack does not support; decrypt it before starting the stack`,
+                    });
+                  return yield* Schema.decodeUnknownEffect(StackConfigSchema)(
+                    withoutUndefined(input),
+                    {
+                      onExcessProperty: "error",
+                    },
+                  ).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new LegacyStackConfigError({
+                          message: `invalid stack config: ${String(cause)}`,
+                        }),
+                    ),
+                  );
+                }),
               ),
             ),
       ),

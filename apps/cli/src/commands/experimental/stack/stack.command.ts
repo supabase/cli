@@ -2,6 +2,7 @@ import { Layer } from "effect";
 import { Command } from "effect/unstable/cli";
 import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../command-internal/legacy-debug-logger.layer.ts";
+import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 import { legacyExperimentalStackStartCommand } from "./start/start.command.ts";
 import {
   legacyExperimentalStackApiLayer,
@@ -15,4 +16,5 @@ export const legacyExperimentalStackCommand = Command.make("stack").pipe(
   Command.provide(legacyExperimentalStackTargetResolverLayer),
   Command.provide(legacyExperimentalStackApiLayer),
   Command.provide(legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer))),
+  Command.provide(legacyTelemetryStateLayer),
 );
