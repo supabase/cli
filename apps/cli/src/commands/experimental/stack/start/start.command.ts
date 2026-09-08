@@ -1,10 +1,17 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { legacyStringSliceFlag } from "../../../../command-internal/legacy-string-slice-flag.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyExperimentalStackStart } from "./start.handler.ts";
+import { legacyExperimentalStackStartExcludableCapabilities } from "./start.options.ts";
 
 const config = {
+  exclude: legacyStringSliceFlag(
+    "exclude",
+    `Capabilities to leave disabled. [${legacyExperimentalStackStartExcludableCapabilities.join(", ")}]`,
+    { alias: "x" },
+  ),
   stack: Flag.string("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
   stackId: Flag.string("stack-id").pipe(
     Flag.withDescription("Open an existing stack by id."),

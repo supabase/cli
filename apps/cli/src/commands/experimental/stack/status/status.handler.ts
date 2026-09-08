@@ -1,3 +1,8 @@
+import {
+  legacyEncodeStackEnv,
+  legacyStackEnvOverrides,
+  legacyStackEnvValues,
+} from "./status.env.ts";
 import { Effect, Match, Option } from "effect";
 import {
   isStackError,
@@ -171,12 +176,33 @@ export const legacyExperimentalStackStatus = Effect.fn("legacy.experimental.stac
         suggestion: "Use --output-format json or --output-format text.",
       });
     yield* validateFlags(flags);
+    if (!flags.env && flags.overrideName.length > 0)
+      return yield* new LegacyExperimentalStackStatusError({
+        reason: "flags",
+        message: "--override-name requires --env.",
+      });
+    const envNames = yield* legacyStackEnvOverrides(flags.overrideName);
     const target = yield* findDescriptor(
       settings.workdir,
       Option.getOrUndefined(flags.stack),
       Option.getOrUndefined(flags.stackId),
     );
     const api = yield* LegacyExperimentalStackApi;
+    if (flags.env) {
+      const stack = yield* catchStackError(api.openStack(target.id));
+      const status = yield* catchStackError(stack.status());
+      if (status.lifecycle !== "running")
+        return yield* new LegacyExperimentalStackStatusError({
+          reason: "runtime",
+          message: "The stack must be running to export connection variables.",
+          suggestion: "Run supabase stack start first.",
+        });
+      const credentials = yield* catchStackError(stack.credentials());
+      const values = legacyStackEnvValues(status, credentials, envNames);
+      if (output.format === "text") yield* output.raw(yield* legacyEncodeStackEnv(values));
+      else yield* output.success("", values);
+      return target.inspection;
+    }
     const loaded = yield* legacyLoadStackConfig(target.projectRoot).pipe(
       Effect.map((config) => ({ config, warning: undefined })),
       Effect.catchTag("LegacyStackConfigError", () =>

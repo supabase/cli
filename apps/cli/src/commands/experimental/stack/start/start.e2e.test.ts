@@ -9,6 +9,7 @@ import { access, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:f
 import { execFile as execFileCallback } from "node:child_process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- compiled CLI fixture requires host process/filesystem APIs
 import path from "node:path";
+import { parse as parseDotenv } from "dotenv";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
 import { makeTempHome, runSupabase } from "../../../../../tests/helpers/cli.ts";
@@ -51,14 +52,14 @@ enabled = false
 `;
 
 // oxlint-disable-next-line effecttsgo/async-function -- subprocess cleanup is a foreign Promise boundary
-async function inspectAndDestroyStack(home: string, stackId: string) {
+async function inspectAndDestroyStack(home: string, stackId: string, destroy = true) {
   const script = `
     import { inspectStack, openStack, StackIdSchema } from "@supabase/stack";
     const id = StackIdSchema.make(process.argv.at(-1));
     const inspection = await inspectStack(id);
     const stack = await openStack(id);
     const status = await stack.status();
-    await stack.destroy();
+    if (${destroy}) await stack.destroy();
     console.log(JSON.stringify({
       owner: inspection.owner,
       projectRoot: inspection.descriptor.projectRoot,
@@ -170,14 +171,25 @@ describe("experimental stack start (compiled e2e)", () => {
       expect(aliasStart.exitCode, aliasStart.stderr).toBe(0);
       expect(aliasStart.stdout).toContain(idText);
 
-      const observed = await inspectAndDestroyStack(homeDir.dir, idText);
-      stackDestroyed = true;
+      const envStatus = await runSupabase(
+        ["status", "--stack-id", idText, "--env", "--output-format", "text"],
+        aliasOptions,
+      );
+      expect(envStatus.exitCode, envStatus.stderr).toBe(0);
+      expect(parseDotenv(envStatus.stdout).DB_URL).toMatch(/^postgres(?:ql)?:\/\//u);
+      const observed = await inspectAndDestroyStack(homeDir.dir, idText, false);
       expect(observed.owner).toBe("running");
       expect(observed.projectRoot).toBe(await realpath(projectRoot));
       expect(observed.runtime).toEqual({ kind: "native" });
       expect(observed.lifecycle).toBe("running");
       expect(observed.database).toBe("ready");
 
+      const destroyed = await runSupabase(
+        ["stack", "destroy", "--stack-id", idText, "--yes"],
+        aliasOptions,
+      );
+      expect(destroyed.exitCode, destroyed.stderr).toBe(0);
+      stackDestroyed = true;
       await expect(access(path.join(homeDir.dir, "managed", "stacks", idText))).rejects.toThrow();
     },
   );

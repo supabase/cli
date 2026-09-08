@@ -1,4 +1,4 @@
-import { Effect, Match, Option } from "effect";
+import { Effect, Match, Option, Result } from "effect";
 import {
   isStackError,
   isStackId,
@@ -12,18 +12,20 @@ import { LegacyExperimentalStackApi } from "../stack.shared.ts";
 import { LegacyExperimentalStackStopError } from "./stop.errors.ts";
 
 export interface LegacyExperimentalStackStopFlags {
+  readonly all: boolean;
   readonly stack: Option.Option<string>;
   readonly stackId: Option.Option<string>;
 }
 
 export const legacyValidateExperimentalStackStopTarget = (
-  flags: Pick<LegacyExperimentalStackStopFlags, "stack" | "stackId">,
+  flags: Pick<LegacyExperimentalStackStopFlags, "all" | "stack" | "stackId">,
 ) =>
-  Option.isSome(flags.stack) && Option.isSome(flags.stackId)
+  (flags.all && (Option.isSome(flags.stack) || Option.isSome(flags.stackId))) ||
+  (Option.isSome(flags.stack) && Option.isSome(flags.stackId))
     ? Effect.fail(
         new LegacyExperimentalStackStopError({
           reason: "flags",
-          message: "--stack and --stack-id cannot be used together",
+          message: "--all, --stack, and --stack-id cannot be used together",
         }),
       )
     : Effect.void;
@@ -79,6 +81,42 @@ export const legacyExperimentalStackStop = Effect.fn("legacy.experimental.stack.
       suggestion: "Use --output-format json, --output-format text, or --output-format stream-json.",
     });
   yield* legacyValidateExperimentalStackStopTarget(flags);
+
+  if (flags.all) {
+    const stacks = yield* stackApi.listStacks().pipe(Effect.mapError(stopError));
+    const stopping = yield* output.task(`Stopping ${stacks.length} managed stack(s)...`);
+    const results = yield* Effect.forEach(
+      stacks,
+      (descriptor) =>
+        stackApi.openStack(descriptor.id).pipe(
+          Effect.flatMap((stack) => stack.stop()),
+          Effect.result,
+          Effect.map((result) => ({ descriptor, result })),
+        ),
+      { concurrency: 1 },
+    );
+    const failures = results.flatMap(({ descriptor, result }) =>
+      Result.isFailure(result) ? [{ descriptor, error: result.failure }] : [],
+    );
+    if (failures.length > 0) {
+      const message = `Failed to stop ${failures.length} of ${stacks.length} managed stacks: ${failures
+        .map(
+          ({ descriptor, error }) =>
+            `${descriptor.id}: ${error instanceof Error ? error.message : String(error)}`,
+        )
+        .join("; ")}`;
+      yield* stopping.fail(message);
+      return yield* new LegacyExperimentalStackStopError({
+        reason: "lifecycle",
+        message,
+        cause: failures,
+      });
+    }
+    yield* stopping.clear();
+    if (output.format === "text") yield* output.raw(`Stopped ${stacks.length} managed stack(s).\n`);
+    else yield* output.success("", { stopped: stacks.map(({ id }) => id) });
+    return;
+  }
 
   const id = Option.isSome(flags.stackId) ? flags.stackId.value : undefined;
   const targetOption =

@@ -1,3 +1,4 @@
+import { legacyExperimentalStackDestroyCommand } from "./destroy/destroy.command.ts";
 import { Layer } from "effect";
 import { Command } from "effect/unstable/cli";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -31,6 +32,9 @@ export const legacyExperimentalStackCommand = Command.make("stack").pipe(
     ),
     legacyExperimentalStackStopCommand.pipe(
       Command.provide(commandRuntimeLayer(["stack", "stop"])),
+    ),
+    legacyExperimentalStackDestroyCommand.pipe(
+      Command.provide(commandRuntimeLayer(["stack", "destroy"])),
     ),
     legacyExperimentalStackStatusCommand.pipe(
       Command.provide(commandRuntimeLayer(["stack", "status"])),

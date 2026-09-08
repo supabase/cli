@@ -102,6 +102,7 @@ const flags = (overrides: Partial<Parameters<typeof legacyExperimentalStackStart
   preparation: "background" as const,
   eager: false,
   ...overrides,
+  exclude: overrides.exclude ?? [],
 });
 
 function handlerLayer(opts: {
@@ -276,6 +277,63 @@ describe("experimental stack start targeting", () => {
       expect(setup.out.stdoutText).toContain("Stack");
     }).pipe(
       Effect.provide(setup.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("applies capability exclusions only to the start request", () => {
+    const root = project();
+    let startConfig: unknown;
+    const stack = fakeStack("e".repeat(64), (config) => {
+      startConfig = config;
+      return Effect.succeed(status("e".repeat(64)));
+    });
+    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+    return Effect.gen(function* () {
+      yield* legacyExperimentalStackStart(flags({ exclude: ["rest", "functions"] }));
+      expect(startConfig).toMatchObject({
+        config: {
+          capabilities: {
+            rest: { enabled: false },
+            functions: { enabled: false },
+          },
+        },
+      });
+      expect(startConfig).not.toMatchObject({
+        config: { capabilities: { auth: { enabled: false } } },
+      });
+    }).pipe(
+      Effect.provide(setup.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("rejects unknown and mandatory capability exclusions before resolving a target", () => {
+    const root = project();
+    let resolved = false;
+    const setup = handlerLayer({
+      root,
+      target: { projectRoot: root },
+      stack: fakeStack("e".repeat(64), () => Effect.succeed(status("e".repeat(64)))),
+    });
+    const resolver = Layer.succeed(LegacyExperimentalStackTargetResolver, {
+      resolve: () => {
+        resolved = true;
+        return Effect.die("resolver should not run");
+      },
+    });
+    return Effect.gen(function* () {
+      const unknown = yield* legacyExperimentalStackStart(flags({ exclude: ["gotrue"] })).pipe(
+        Effect.flip,
+      );
+      expect(unknown.message).toContain("Unknown stack capabilities");
+      const database = yield* legacyExperimentalStackStart(flags({ exclude: ["database"] })).pipe(
+        Effect.flip,
+      );
+      expect(database.message).toContain("cannot be excluded");
+      expect(resolved).toBe(false);
+    }).pipe(
+      Effect.provide(Layer.mergeAll(setup.layer, resolver)),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });
@@ -537,6 +595,26 @@ describe("experimental stack start targeting", () => {
 });
 
 describe("experimental stack start parser", () => {
+  it.live("parses comma-separated and repeated capability exclusions", () => {
+    let parsed: readonly string[] | undefined;
+    const command = legacyExperimentalStackStartCommand.pipe(
+      Command.withHandler((flags) => Effect.sync(() => (parsed = flags.exclude))),
+    );
+    return Effect.gen(function* () {
+      yield* Command.runWith(command, { version: "0.0.0-test" })([
+        "--exclude",
+        "rest,auth",
+        "--exclude",
+        "functions",
+        "-x",
+        "storage",
+      ]);
+      expect(parsed).toEqual(["rest", "auth", "functions", "storage"]);
+    }).pipe(
+      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
+    );
+  });
+
   it.live("parses --stack and --runtime through the command", () => {
     let parsed: { stack: Option.Option<string>; runtime: string } | undefined;
     const command = legacyExperimentalStackStartCommand.pipe(

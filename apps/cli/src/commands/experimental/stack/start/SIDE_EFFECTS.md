@@ -20,8 +20,16 @@ never emits those values.
 `--stack` and `--stack-id` are mutually exclusive. `--runtime auto` uses the
 package default; `docker` selects the Docker container runtime; `native`
 selects the native runtime. `--preparation` controls background versus
-on-demand artifact preparation, and `--eager` requests enabled capabilities be
-activated before the command returns.
+on-demand artifact preparation, and `--eager` requests every enabled capability
+be activated and ready before the command returns. `--exclude` is a
+per-invocation override for optional capabilities (`rest`, `auth`, `realtime`,
+`storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`). It does
+not modify the project config, but the effective configuration is persisted in
+the stack state by the package. A later start without `--exclude` uses the
+project configuration again and restores those capabilities; stop the stack
+first when applying that changed configuration. The database capability is
+mandatory and cannot be excluded; unknown capability names are rejected before
+the stack is created or opened.
 
 The command owns only the start request. Once the package reports readiness,
 the detached stack owner remains alive after the CLI process exits. If the CLI

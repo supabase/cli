@@ -5,6 +5,7 @@ import { legacyRootForBackend } from "../../../cli/root.ts";
 const canonicalStackCommands = [
   "start",
   "stop",
+  "destroy",
   "status",
   "list",
   "logs",
@@ -19,7 +20,7 @@ const complete = (backend: "legacy" | "stack", args: ReadonlyArray<string>) => {
 };
 
 describe("experimental stack command routing", () => {
-  it("exposes the same seven canonical stack paths from both backend roots", () => {
+  it("exposes the same eight canonical stack paths from both backend roots", () => {
     for (const backend of ["legacy", "stack"] as const) {
       expect(complete(backend, ["stack", ""])).toEqual(
         expect.arrayContaining([...canonicalStackCommands]),
@@ -50,7 +51,11 @@ describe("experimental stack command routing", () => {
     expect(complete("legacy", ["status", "--"])).toEqual(
       expect.arrayContaining(["--override-name"]),
     );
-    expect(complete("stack", ["status", "--"])).not.toContain("--override-name");
+    expect(complete("stack", ["status", "--"])).toEqual(
+      expect.arrayContaining(["--env", "--override-name"]),
+    );
+    expect(complete("stack", ["stop", "--"])).toContain("--all");
+    expect(complete("stack", ["start", "--"])).toContain("--exclude");
     expect(complete("stack", ["stop", "--"])).not.toContain("--no-backup");
   });
 });

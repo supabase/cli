@@ -1199,6 +1199,8 @@ describe("Supervisor composition", () => {
           /^postgresql:\/\/postgres:.+@127\.0\.0\.1:\d+\/postgres$/,
         );
         expect(Redacted.value(credentials.database.password)).toEqual(expect.any(String));
+        if (credentials.api === undefined)
+          return yield* new StackStateInvalidError({ message: "API credentials are missing" });
         expect(credentials.api.publishableKey).toEqual(expect.any(String));
         expect(Redacted.value(credentials.api.secretKey)).toEqual(expect.any(String));
         expect(credentials.api.anonJwt).toEqual(expect.any(String));
@@ -1290,113 +1292,121 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("fails closed when Auth is disabled or a required secret slot is absent", () =>
-    run(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture();
-        yield* fixture.supervisor.start({
-          config: { capabilities: { rest: {}, auth: { enabled: false } } },
-        });
-        const running = yield* fixture.store
-          .read(fixture.id)
-          .pipe(Effect.provideContext(fixture.context));
-        if (running === undefined)
-          return yield* new StackStateInvalidError({ message: "running fixture state is missing" });
-        const state = {
-          ...running,
-          ports: [
-            { field: "api", port: 55433, intent: "exact" as const },
-            { field: "database", port: 55432, intent: "exact" as const },
-          ] as const,
-        };
-        yield* fixture.store
-          .replace(fixture.id, state)
-          .pipe(Effect.provideContext(fixture.context));
-        const authDisabled = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
-        expect(errorOf(authDisabled)).toEqual(
-          expect.objectContaining({ tag: "InvalidStackConfigError" }),
-        );
-        if (state.definition === undefined)
-          return yield* new StackStateInvalidError({ message: "running definition is missing" });
-        const baseSecrets = {
-          ...state.secrets,
-          "secret:auth.settings.publishable_key": {
-            policy: "managed" as const,
-            value: "publishable",
-          },
-          "secret:auth.settings.secret_key": { policy: "managed" as const, value: "secret" },
-          "secret:auth.settings.anon_key": { policy: "managed" as const, value: "anon" },
-          "secret:auth.settings.service_role_key": { policy: "managed" as const, value: "service" },
-        };
-        const missingSecret = {
-          ...state,
-          definition: {
-            ...state.definition,
-            capabilities: {
-              ...state.definition.capabilities,
-              auth: { ...state.definition.capabilities.auth, enabled: true },
+  it.live(
+    "returns database credentials when Auth is disabled and fails closed for missing secrets",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const fixture = yield* makeFixture();
+          yield* fixture.supervisor.start({
+            config: { capabilities: { rest: {}, auth: { enabled: false } } },
+          });
+          const running = yield* fixture.store
+            .read(fixture.id)
+            .pipe(Effect.provideContext(fixture.context));
+          if (running === undefined)
+            return yield* new StackStateInvalidError({
+              message: "running fixture state is missing",
+            });
+          const state = {
+            ...running,
+            ports: [
+              { field: "api", port: 55433, intent: "exact" as const },
+              { field: "database", port: 55432, intent: "exact" as const },
+            ] as const,
+          };
+          yield* fixture.store
+            .replace(fixture.id, state)
+            .pipe(Effect.provideContext(fixture.context));
+          const authDisabled = yield* invokeCredentials(fixture.supervisor);
+          expect(authDisabled.database.url).toEqual(expect.anything());
+          expect(authDisabled.api).toBeUndefined();
+          if (state.definition === undefined)
+            return yield* new StackStateInvalidError({ message: "running definition is missing" });
+          const baseSecrets = {
+            ...state.secrets,
+            "secret:auth.settings.publishable_key": {
+              policy: "managed" as const,
+              value: "publishable",
             },
-          },
-          secrets: Object.fromEntries(
-            Object.entries(baseSecrets).filter(
-              ([slot]) => slot !== "secret:auth.settings.publishable_key",
+            "secret:auth.settings.secret_key": { policy: "managed" as const, value: "secret" },
+            "secret:auth.settings.anon_key": { policy: "managed" as const, value: "anon" },
+            "secret:auth.settings.service_role_key": {
+              policy: "managed" as const,
+              value: "service",
+            },
+          };
+          const missingSecret = {
+            ...state,
+            definition: {
+              ...state.definition,
+              capabilities: {
+                ...state.definition.capabilities,
+                auth: { ...state.definition.capabilities.auth, enabled: true },
+              },
+            },
+            secrets: Object.fromEntries(
+              Object.entries(baseSecrets).filter(
+                ([slot]) => slot !== "secret:auth.settings.publishable_key",
+              ),
             ),
-          ),
-        };
-        yield* fixture.store
-          .replace(fixture.id, missingSecret)
-          .pipe(Effect.provideContext(fixture.context));
-        const missingExit = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
-        expect(errorOf(missingExit)).toEqual(
-          expect.objectContaining({ tag: "StackSecretMismatchError" }),
-        );
-        const storageSecretMissing = {
-          ...missingSecret,
-          secrets: Object.fromEntries(
-            Object.entries(baseSecrets).filter(
-              ([slot]) => slot !== "secret:storage.settings.s3_protocol.secret_access_key",
+          };
+          yield* fixture.store
+            .replace(fixture.id, missingSecret)
+            .pipe(Effect.provideContext(fixture.context));
+          const missingExit = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
+          expect(errorOf(missingExit)).toEqual(
+            expect.objectContaining({ tag: "StackSecretMismatchError" }),
+          );
+          const storageSecretMissing = {
+            ...missingSecret,
+            secrets: Object.fromEntries(
+              Object.entries(baseSecrets).filter(
+                ([slot]) => slot !== "secret:storage.settings.s3_protocol.secret_access_key",
+              ),
             ),
-          ),
-        };
-        yield* fixture.store
-          .replace(fixture.id, storageSecretMissing)
-          .pipe(Effect.provideContext(fixture.context));
-        const storageExit = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
-        expect(errorOf(storageExit)).toEqual(
-          expect.objectContaining({ tag: "StackSecretMismatchError" }),
-        );
-        const complete = { ...missingSecret, secrets: baseSecrets };
-        const missingApiListener = {
-          ...complete,
-          ports: [{ field: "database", port: 55432, intent: "exact" as const }] as const,
-        };
-        yield* fixture.store
-          .replace(fixture.id, missingApiListener)
-          .pipe(Effect.provideContext(fixture.context));
-        const listenerExit = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
-        expect(errorOf(listenerExit)).toEqual(
-          expect.objectContaining({ tag: "InvalidStackConfigError" }),
-        );
+          };
+          yield* fixture.store
+            .replace(fixture.id, storageSecretMissing)
+            .pipe(Effect.provideContext(fixture.context));
+          const storageExit = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
+          expect(errorOf(storageExit)).toEqual(
+            expect.objectContaining({ tag: "StackSecretMismatchError" }),
+          );
+          const complete = { ...missingSecret, secrets: baseSecrets };
+          const missingApiListener = {
+            ...complete,
+            ports: [{ field: "database", port: 55432, intent: "exact" as const }] as const,
+          };
+          yield* fixture.store
+            .replace(fixture.id, missingApiListener)
+            .pipe(Effect.provideContext(fixture.context));
+          const listenerExit = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
+          expect(errorOf(listenerExit)).toEqual(
+            expect.objectContaining({ tag: "InvalidStackConfigError" }),
+          );
 
-        const disabledDatabase = {
-          ...complete,
-          definition: {
-            ...complete.definition,
-            listeners: {
-              ...complete.definition.listeners,
-              database: { ...complete.definition.listeners.database, enabled: false },
+          const disabledDatabase = {
+            ...complete,
+            definition: {
+              ...complete.definition,
+              listeners: {
+                ...complete.definition.listeners,
+                database: { ...complete.definition.listeners.database, enabled: false },
+              },
             },
-          },
-        };
-        yield* fixture.store
-          .replace(fixture.id, disabledDatabase)
-          .pipe(Effect.provideContext(fixture.context));
-        const disabledDatabaseExit = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
-        expect(errorOf(disabledDatabaseExit)).toEqual(
-          expect.objectContaining({ tag: "InvalidStackConfigError" }),
-        );
-      }),
-    ),
+          };
+          yield* fixture.store
+            .replace(fixture.id, disabledDatabase)
+            .pipe(Effect.provideContext(fixture.context));
+          const disabledDatabaseExit = yield* invokeCredentials(fixture.supervisor).pipe(
+            Effect.exit,
+          );
+          expect(errorOf(disabledDatabaseExit)).toEqual(
+            expect.objectContaining({ tag: "InvalidStackConfigError" }),
+          );
+        }),
+      ),
   );
 
   it.live("acknowledges stop only after runtime cleanup", () =>

@@ -22,7 +22,7 @@ const EffectStorageCredentialsSchema = Schema.Struct({
 
 export const EffectStackCredentialsSchema = Schema.Struct({
   database: EffectDatabaseCredentialsSchema,
-  api: EffectApiCredentialsSchema,
+  api: Schema.optionalKey(EffectApiCredentialsSchema),
   storage: Schema.optionalKey(EffectStorageCredentialsSchema),
 });
 export interface EffectStackCredentials {
@@ -30,7 +30,7 @@ export interface EffectStackCredentials {
     readonly url: Redacted.Redacted<string>;
     readonly password: Redacted.Redacted<string>;
   };
-  readonly api: {
+  readonly api?: {
     readonly publishableKey: string;
     readonly secretKey: Redacted.Redacted<string>;
     readonly anonJwt: string;
@@ -49,12 +49,14 @@ export const PromiseStackCredentialsSchema = Schema.Struct({
     url: Schema.String,
     password: Schema.String,
   }),
-  api: Schema.Struct({
-    publishableKey: Schema.String,
-    secretKey: Schema.String,
-    anonJwt: Schema.String,
-    serviceRoleJwt: Schema.String,
-  }),
+  api: Schema.optionalKey(
+    Schema.Struct({
+      publishableKey: Schema.String,
+      secretKey: Schema.String,
+      anonJwt: Schema.String,
+      serviceRoleJwt: Schema.String,
+    }),
+  ),
   storage: Schema.optionalKey(
     Schema.Struct({
       endpoint: Schema.String,

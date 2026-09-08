@@ -448,16 +448,21 @@ const databaseQuery = async (
   }
 };
 
+const apiCredentials = (credentials: PromiseStackCredentials) => {
+  if (credentials.api === undefined) throw new Error("API credentials are required");
+  return credentials.api;
+};
+
 const apiHeaders = (
   credentials: PromiseStackCredentials,
-  token: string = credentials.api.anonJwt,
+  token: string = apiCredentials(credentials).anonJwt,
 ): Record<string, string> => ({
-  apikey: credentials.api.publishableKey,
+  apikey: apiCredentials(credentials).publishableKey,
   Authorization: `Bearer ${token}`,
 });
 
 const serviceHeaders = (credentials: PromiseStackCredentials): Record<string, string> =>
-  apiHeaders(credentials, credentials.api.serviceRoleJwt);
+  apiHeaders(credentials, apiCredentials(credentials).serviceRoleJwt);
 
 const functionSource = (table: string, marker: string): string => `
 Deno.serve(async () => {
@@ -771,7 +776,9 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   const socket = await (async (): Promise<WebSocket> => {
     try {
       return await activate(stack, "realtime", async () => {
-        const candidate = await openSocket(makeRealtimeUrl(api, credentials.api.publishableKey));
+        const candidate = await openSocket(
+          makeRealtimeUrl(api, apiCredentials(credentials).publishableKey),
+        );
         openedSocket = candidate;
         return candidate;
       });
@@ -987,7 +994,9 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
       await request(api.url, "/auth/v1/settings", { headers: apiHeaders(credentials) });
     });
     await activate(stack, "realtime", async () => {
-      const probe = await openSocket(makeRealtimeUrl(api, credentials.api.publishableKey));
+      const probe = await openSocket(
+        makeRealtimeUrl(api, apiCredentials(credentials).publishableKey),
+      );
       probe.close();
     });
     await activate(stack, "storage", async () => {

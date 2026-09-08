@@ -3,13 +3,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
 import { join } from "node:path";
+import { parse as parseDotenv } from "dotenv";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Redacted, Stream } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import {
   InvalidStackConfigError,
   StackNotFoundError,
+  StackNotRunningError,
   StackIdSchema,
   StackStateFormatUnsupportedError,
   type StackInspection,
@@ -43,6 +45,8 @@ const capabilityNames = [
 const flags = (stack = Option.none<string>(), stackId = Option.none<string>()) => ({
   stack,
   stackId,
+  env: false,
+  overrideName: [] as string[],
 });
 
 const makeStatus = (
@@ -68,13 +72,16 @@ const makeStatus = (
 const runStatus = (options: {
   readonly config?: "valid" | "missing" | "invalid";
   readonly owner?: StackInspection["owner"];
+  readonly credentialFailure?: boolean;
+  readonly storageCredentials?: boolean;
+  readonly authDisabled?: boolean;
   readonly status?: StackStatus;
   readonly drift?: StackInspection["configDrift"];
   readonly flags?: ReturnType<typeof flags>;
   readonly compareFailure?: "typed" | "defect";
   readonly missingTarget?: boolean;
   readonly legacyOutput?: boolean;
-  readonly outputFormat?: "text" | "json";
+  readonly outputFormat?: "text" | "json" | "stream-json";
 }) => {
   const root = mkdtempSync(join(tmpdir(), "supabase-stack-status-"));
   const projectRoot = join(root, "project");
@@ -110,7 +117,48 @@ const runStatus = (options: {
       return Effect.succeed(options.missingTarget ? Option.none() : Option.some(descriptor));
     },
     listStacks: () => Effect.succeed([]),
-    openStack: () => Effect.die("open must not run"),
+    openStack: () =>
+      Effect.succeed({
+        id,
+        status: () => Effect.succeed(options.status ?? makeStatus(id)),
+        credentials: () =>
+          options.credentialFailure
+            ? Effect.fail(
+                new StackNotRunningError({ stackId: id, message: "Stack is not running" }),
+              )
+            : Effect.succeed({
+                database: {
+                  url: Redacted.make("postgresql://postgres:p%40ss@127.0.0.1:54322/postgres"),
+                  password: Redacted.make("p@ss"),
+                },
+                ...(options.authDisabled
+                  ? {}
+                  : {
+                      api: {
+                        anonJwt: "anon-token",
+                        serviceRoleJwt: Redacted.make("service-role-token"),
+                        publishableKey: "sb_publishable_test",
+                        secretKey: Redacted.make("sb_secret_test"),
+                      },
+                    }),
+                ...(options.storageCredentials
+                  ? {
+                      storage: {
+                        endpoint: "http://127.0.0.1:54321/storage/v1/s3",
+                        region: "local",
+                        accessKeyId: "storage-access",
+                        secretAccessKey: Redacted.make("storage-secret"),
+                      },
+                    }
+                  : {}),
+              }),
+        prepare: () => Effect.die("unused"),
+        start: () => Effect.die("unused"),
+        stop: () => Effect.die("unused"),
+        destroy: () => Effect.die("unused"),
+        logs: () => Effect.die("unused"),
+        followLogs: () => Stream.empty,
+      }),
     inspectStack: (_stackId, inspectOptions) => {
       inspectInputs.push(inspectOptions);
       if (options.missingTarget === true)
@@ -365,6 +413,172 @@ describe("experimental stack status", () => {
       expect(legacy.findInputs).toHaveLength(0);
     });
   });
+
+  it.effect("parses env selection and repeated CSV variable overrides", () =>
+    Command.runWith(
+      legacyExperimentalStackStatusCommand.pipe(
+        Command.withHandler((input) =>
+          Effect.sync(() => {
+            expect(input.env).toBe(true);
+            expect(input.overrideName).toEqual([
+              "API_URL=APP_URL",
+              "ANON_KEY=APP_KEY",
+              "DB_URL=DATABASE_URL",
+            ]);
+          }),
+        ),
+      ),
+      { version: "0.0.0-test" },
+    )([
+      "--env",
+      "--override-name",
+      "API_URL=APP_URL,ANON_KEY=APP_KEY",
+      "--override-name",
+      "DB_URL=DATABASE_URL",
+    ]).pipe(
+      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
+    ),
+  );
+
+  it.effect("exports the running stack credentials as dotenv with renamed variables", () => {
+    const run = runStatus({
+      config: "invalid",
+      flags: { ...flags(), env: true, overrideName: ["API_URL=NEXT_PUBLIC_SUPABASE_URL"] },
+    });
+    return run.effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(parseDotenv(run.out.stdoutText)).toEqual({
+            NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
+            DB_URL: "postgresql://postgres:p%40ss@127.0.0.1:54322/postgres",
+            ANON_KEY: "anon-token",
+            SERVICE_ROLE_KEY: "service-role-token",
+            PUBLISHABLE_KEY: "sb_publishable_test",
+            SECRET_KEY: "sb_secret_test",
+          });
+          expect(run.inspectInputs).toHaveLength(0);
+        }),
+      ),
+    );
+  });
+
+  for (const outputFormat of ["json", "stream-json"] as const) {
+    it.effect(`exports a variable map in ${outputFormat}`, () => {
+      const run = runStatus({ outputFormat, flags: { ...flags(), env: true } });
+      return run.effect.pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            expect(
+              run.out.messages.find((message) => message.type === "success")?.data,
+            ).toMatchObject({ API_URL: "http://127.0.0.1:54321", SECRET_KEY: "sb_secret_test" });
+            expect(run.out.stdoutText).toBe("");
+          }),
+        ),
+      );
+    });
+  }
+
+  it.effect("exports optional service URLs and storage credentials only when available", () => {
+    const run = runStatus({
+      storageCredentials: true,
+      flags: { ...flags(), env: true },
+      status: {
+        ...makeStatus(id),
+        endpoints: {
+          studio: {
+            protocol: "http",
+            address: "127.0.0.1",
+            port: 54323,
+            url: "http://127.0.0.1:54323",
+          },
+          mailUi: {
+            protocol: "http",
+            address: "127.0.0.1",
+            port: 54324,
+            url: "http://127.0.0.1:54324",
+          },
+        },
+      },
+    });
+    return run.effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const values = parseDotenv(run.out.stdoutText);
+          expect(values.API_URL).toBeUndefined();
+          expect(values).toMatchObject({
+            STUDIO_URL: "http://127.0.0.1:54323",
+            INBUCKET_URL: "http://127.0.0.1:54324",
+            S3_PROTOCOL_ACCESS_KEY_SECRET: "storage-secret",
+            S3_PROTOCOL_REGION: "local",
+          });
+        }),
+      ),
+    );
+  });
+
+  it.effect("exports a database-only stack without inventing API credentials", () => {
+    const run = runStatus({
+      authDisabled: true,
+      flags: { ...flags(), env: true },
+      status: { ...makeStatus(id), endpoints: {} },
+    });
+    return run.effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(parseDotenv(run.out.stdoutText)).toEqual({
+            DB_URL: "postgresql://postgres:p%40ss@127.0.0.1:54322/postgres",
+          });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps ordinary status independent of credentials and free of secrets", () => {
+    const run = runStatus({ status: makeStatus(id), credentialFailure: true });
+    return run.effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(run.out.stdoutText).toContain("Lifecycle: running");
+          expect(run.out.stdoutText).not.toContain("sb_secret_test");
+        }),
+      ),
+    );
+  });
+
+  it.effect("rejects invalid or colliding variable renames before discovery", () =>
+    Effect.forEach(
+      [
+        { ...flags(), overrideName: ["API_URL=APP_URL"] },
+        { ...flags(), env: true, overrideName: ["UNKNOWN=APP_URL"] },
+        { ...flags(), env: true, overrideName: ["API_URL=NOT-VALID"] },
+        { ...flags(), env: true, overrideName: ["API_URL=DB_URL"] },
+        { ...flags(), env: true, overrideName: ["API_URL"] },
+        { ...flags(), env: true, overrideName: ["API_URL=A=B"] },
+      ],
+      (input) =>
+        Effect.gen(function* () {
+          const run = runStatus({ flags: input });
+          expect(Exit.isFailure(yield* run.effect.pipe(Effect.exit))).toBe(true);
+          expect(run.findInputs).toHaveLength(0);
+          expect(run.out.stdoutText).toBe("");
+        }),
+    ),
+  );
+
+  it.effect("exports no partial secrets when the stack is stopped or credentials fail", () =>
+    Effect.forEach(
+      [
+        { status: { ...makeStatus(id), lifecycle: "stopped" as const } },
+        { credentialFailure: true },
+      ],
+      (options) =>
+        Effect.gen(function* () {
+          const run = runStatus({ ...options, flags: { ...flags(), env: true } });
+          expect(Exit.isFailure(yield* run.effect.pipe(Effect.exit))).toBe(true);
+          expect(run.out.stdoutText).toBe("");
+        }),
+    ),
+  );
 
   it.effect("does not retry discovery failures", () => {
     const run = runStatus({});

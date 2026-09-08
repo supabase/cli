@@ -52,6 +52,7 @@ const status = (id: string): StackStatus => ({
 });
 
 const flags = (overrides: Partial<Parameters<typeof legacyExperimentalStackStop>[0]> = {}) => ({
+  all: false,
   stack: Option.none<string>(),
   stackId: Option.none<string>(),
   ...overrides,
@@ -63,6 +64,8 @@ function setup(opts: {
   stop?: () => Effect.Effect<void, StackStopError>;
   openFailure?: OpenStackError;
   findFailure?: StackDiscoveryError;
+  allStacks?: ReadonlyArray<string>;
+  stopFailureIds?: ReadonlyArray<string>;
 }) {
   const out = mockOutput();
   const state = {
@@ -72,18 +75,21 @@ function setup(opts: {
     destroyCalled: false,
   };
   const id = opts.found?.id ?? "a".repeat(64);
+  const stopFor = (stackId: string) =>
+    opts.stopFailureIds?.includes(stackId)
+      ? Effect.fail(new StackStateInvalidError({ message: `stop failed for ${stackId}` }))
+      : opts.stop === undefined
+        ? Effect.sync(() => {
+            state.stopCalls += 1;
+          })
+        : opts.stop();
   const stack = {
     id: StackIdSchema.make(id),
     status: () => Effect.succeed(status(id)),
     credentials: () => Effect.die("unused"),
     prepare: () => Effect.die("unused"),
     start: () => Effect.die("unused"),
-    stop:
-      opts.stop ??
-      (() =>
-        Effect.sync(() => {
-          state.stopCalls += 1;
-        })),
+    stop: () => stopFor(id),
     destroy: () =>
       Effect.sync(() => {
         state.destroyCalled = true;
@@ -101,12 +107,20 @@ function setup(opts: {
         desiredLifecycle: "running" as const,
       }
     : undefined;
+  const allDescriptors = (opts.allStacks ?? []).map((stackId) => ({
+    id: StackIdSchema.make(stackId),
+    projectRoot: opts.root,
+    name: `stack-${stackId.slice(0, 6)}`,
+    branchContext: "ordinary-workspace",
+    runtime: { kind: "native" as const },
+    desiredLifecycle: "running" as const,
+  }));
   const layer = Layer.mergeAll(
     out.layer,
     mockLegacyCliSettings({ workdir: opts.root }),
     Layer.succeed(LegacyExperimentalStackApi, {
       createStack: () => Effect.die("must not create"),
-      listStacks: () => Effect.succeed([]),
+      listStacks: () => Effect.succeed(allDescriptors),
       findStack: (input) =>
         Effect.sync(() => {
           state.findInputs.push(input);
@@ -120,7 +134,7 @@ function setup(opts: {
         if (opts.openFailure !== undefined) return Effect.fail(opts.openFailure);
         return Effect.sync(() => {
           state.openedIds.push(stackId);
-          return stack;
+          return { ...stack, id: StackIdSchema.make(stackId), stop: () => stopFor(stackId) };
         });
       },
       inspectStack: () => Effect.die("must not inspect"),
@@ -266,8 +280,7 @@ describe("experimental stack stop", () => {
   });
 
   it.effect("is idempotent when no current stack exists and does not read config", () => {
-    // oxlint-disable-next-line effecttsgo/global-date -- unique fixture directory identity
-    const root = join(tmpdir(), `supabase-stack-stop-missing-${Date.now()}`);
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-missing-"));
     const setupResult = setup({ root });
     return Effect.gen(function* () {
       yield* legacyExperimentalStackStop(flags());
@@ -276,12 +289,16 @@ describe("experimental stack stop", () => {
           message.message.includes("No managed stack found"),
         ),
       ).toBe(true);
-    }).pipe(Effect.provide(setupResult.layer));
+    }).pipe(
+      Effect.provide(setupResult.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
   });
 
   it.effect("rejects explicit legacy output and mutually exclusive targets", () =>
     Effect.gen(function* () {
       const targetFailure = yield* legacyValidateExperimentalStackStopTarget({
+        all: false,
         stack: Option.some("feature-a"),
         stackId: Option.some("a".repeat(64)),
       }).pipe(Effect.flip);
@@ -289,6 +306,36 @@ describe("experimental stack stop", () => {
       expect(targetFailure.message).toContain("cannot be used together");
     }),
   );
+
+  it.effect("treats --all as a successful no-op when no managed stacks exist", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-all-empty-"));
+    const setupResult = setup({ root });
+    return Effect.gen(function* () {
+      yield* legacyExperimentalStackStop(flags({ all: true }));
+      expect(setupResult.state.openedIds).toEqual([]);
+      expect(setupResult.state.stopCalls).toBe(0);
+      expect(setupResult.out.stdoutText).toContain("Stopped 0 managed stack");
+    }).pipe(
+      Effect.provide(setupResult.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("attempts every stack and reports a partial failure", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-all-partial-"));
+    const first = "1".repeat(64);
+    const second = "2".repeat(64);
+    const setupResult = setup({ root, allStacks: [first, second], stopFailureIds: [first] });
+    return Effect.gen(function* () {
+      const failure = yield* legacyExperimentalStackStop(flags({ all: true })).pipe(Effect.flip);
+      expect(failure.message).toContain("Failed to stop 1 of 2");
+      expect(setupResult.state.openedIds).toEqual([first, second]);
+      expect(setupResult.state.stopCalls).toBe(1);
+    }).pipe(
+      Effect.provide(setupResult.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
 
   it.effect("does not report success when package stop fails", () => {
     const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-failure-"));
