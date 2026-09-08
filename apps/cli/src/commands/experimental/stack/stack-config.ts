@@ -68,11 +68,16 @@ const validateEnvKeys = (
       );
 };
 
-const legacyReadFunctionEnvironments = (projectRoot: string) =>
+const legacyReadFunctionEnvironments = (
+  projectRoot: string,
+  disabledFunctions: ReadonlySet<string> = new Set(),
+  skip = false,
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const root = path.join(projectRoot, "supabase", "functions");
+    if (skip) return { shared: {}, functions: {}, path };
     const read = (file: string) =>
       fs.exists(file).pipe(
         Effect.flatMap((exists) =>
@@ -91,10 +96,11 @@ const legacyReadFunctionEnvironments = (projectRoot: string) =>
       if (!/^[A-Za-z0-9_-]+$/u.test(entry)) continue;
       const info = yield* fs.stat(path.join(root, entry)).pipe(Effect.option);
       if (Option.isNone(info) || info.value.type !== "Directory") continue;
+      if (disabledFunctions.has(entry)) continue;
       const functionEnv = yield* read(path.join(root, entry, ".env"));
       result[entry] = { ...shared, ...functionEnv };
     }
-    return { shared, functions: result };
+    return { shared, functions: result, path };
   });
 
 const section = (document: Readonly<Record<string, unknown>> | undefined, name: string) => {
@@ -174,29 +180,39 @@ const legacyStackProjectPath = (value: string): string =>
 
 /** Converts a CLI function path (relative to supabase/) to the stack resolver's
  * function-directory-relative form. */
-const legacyFunctionRelativePath = (value: string, name: string): string => {
-  if (value.length === 0 || value.startsWith("/")) return value;
-  const normalized = value.replace(/^\.\//, "").replace(/^supabase\//, "");
-  const target = normalized.split("/").filter((part) => part.length > 0);
-  const base = ["functions", name];
-  let common = 0;
-  while (common < base.length && common < target.length && base[common] === target[common])
-    common += 1;
-  return [...base.slice(common).map(() => ".."), ...target.slice(common)].join("/");
+const legacyFunctionRelativePath = (
+  path: Path.Path,
+  projectRoot: string,
+  value: string,
+  name: string,
+): string => {
+  if (value.length === 0) return value;
+  const functionsRoot = path.join(projectRoot, "supabase", "functions");
+  const functionRoot = path.join(functionsRoot, name);
+  const target = path.isAbsolute(value)
+    ? path.normalize(value)
+    : path.normalize(
+        path.join(projectRoot, "supabase", value.startsWith("./") ? value.slice(2) : value),
+      );
+  return path.relative(functionRoot, target).replaceAll(path.sep, "/");
 };
 
 const legacyFunctionPathError = (
+  path: Path.Path,
+  projectRoot: string,
   name: string,
   field: string,
   value: string,
 ): string | undefined => {
   if (value.length === 0) return undefined;
-  const normalized = value.replace(/^\.\//u, "").replace(/^supabase\//u, "");
-  if (
-    value.startsWith("/") ||
-    !normalized.startsWith("functions/") ||
-    normalized.split("/").includes("..")
-  )
+  const functionsRoot = path.join(projectRoot, "supabase", "functions");
+  const target = path.isAbsolute(value)
+    ? path.normalize(value)
+    : path.normalize(
+        path.join(projectRoot, "supabase", value.startsWith("./") ? value.slice(2) : value),
+      );
+  const relative = path.relative(functionsRoot, target);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`))
     return `functions.${name}.${field} path must be inside supabase/functions`;
   return undefined;
 };
@@ -483,6 +499,8 @@ const legacyAuthSettings = (auth: CliConfig["auth"]) => ({
 });
 
 const legacyFunctionsSettings = (
+  projectRoot: string,
+  path: Path.Path,
   config: CliConfig,
   document?: Record<string, unknown>,
   projectEnvValues: Readonly<Record<string, string>> = {},
@@ -497,15 +515,15 @@ const legacyFunctionsSettings = (
         ...(value.verify_jwt === undefined ? {} : { verify_jwt: value.verify_jwt }),
         ...(value.import_map === undefined
           ? {}
-          : { import_map: legacyFunctionRelativePath(value.import_map, name) }),
+          : { import_map: legacyFunctionRelativePath(path, projectRoot, value.import_map, name) }),
         ...(value.entrypoint === undefined
           ? {}
-          : { entrypoint: legacyFunctionRelativePath(value.entrypoint, name) }),
+          : { entrypoint: legacyFunctionRelativePath(path, projectRoot, value.entrypoint, name) }),
         ...(value.static_files === undefined
           ? {}
           : {
-              static_files: value.static_files.map((path) =>
-                legacyFunctionRelativePath(path, name),
+              static_files: value.static_files.map((filePath) =>
+                legacyFunctionRelativePath(path, projectRoot, filePath, name),
               ),
             }),
         env: Object.fromEntries(
@@ -546,6 +564,8 @@ const legacyFunctionsSettings = (
 };
 
 const legacyConfigInput = (
+  projectRoot: string,
+  path: Path.Path,
   config: CliConfig,
   document?: Record<string, unknown>,
   projectEnvValues: Readonly<Record<string, string>> = {},
@@ -590,7 +610,7 @@ const legacyConfigInput = (
       }),
       functions: capability(
         config.edge_runtime.enabled,
-        legacyFunctionsSettings(config, document, projectEnvValues),
+        legacyFunctionsSettings(projectRoot, path, config, document, projectEnvValues),
       ),
       studio: capability(studio.enabled, {
         api_url: studio.api_url,
@@ -637,6 +657,8 @@ const legacyConfigInput = (
 };
 
 const legacyConfigValidationError = (
+  path: Path.Path,
+  projectRoot: string,
   config: CliConfig,
   projectEnvValues: Readonly<Record<string, string>>,
 ): string | undefined => {
@@ -652,7 +674,7 @@ const legacyConfigValidationError = (
       ...functionConfig.static_files.map((path) => ["static_files", path] as const),
     ] as const) {
       if (typeof value !== "string") continue;
-      const pathError = legacyFunctionPathError(name, field, value);
+      const pathError = legacyFunctionPathError(path, projectRoot, name, field, value);
       if (pathError !== undefined) return pathError;
     }
     for (const value of Object.values(functionConfig.env)) {
@@ -679,7 +701,15 @@ export const legacyLoadStackConfig = (projectRoot: string): LegacyStackConfigEff
               message: `No Supabase project configuration found in ${projectRoot}. Run supabase init first.`,
             }),
           )
-        : legacyReadFunctionEnvironments(projectRoot).pipe(
+        : legacyReadFunctionEnvironments(
+            projectRoot,
+            new Set(
+              Object.entries(context.config.functions)
+                .filter(([, functionConfig]) => functionConfig.enabled === false)
+                .map(([name]) => name),
+            ),
+            context.config.edge_runtime.enabled === false,
+          ).pipe(
             Effect.mapError((cause) => new LegacyStackConfigError({ message: String(cause) })),
             Effect.flatMap(
               (
@@ -688,15 +718,20 @@ export const legacyLoadStackConfig = (projectRoot: string): LegacyStackConfigEff
                   readonly functions: Readonly<
                     Record<string, Readonly<Record<string, Redacted.Redacted<string>>>>
                   >;
+                  readonly path: Path.Path;
                 }>,
               ) => {
                 const validationError = legacyConfigValidationError(
+                  environments.path,
+                  projectRoot,
                   context.config,
                   context.projectEnvValues,
                 );
                 if (validationError !== undefined)
                   return Effect.fail(new LegacyStackConfigError({ message: validationError }));
                 const input = legacyConfigInput(
+                  projectRoot,
+                  environments.path,
                   context.config,
                   context.loaded?.document,
                   context.projectEnvValues,

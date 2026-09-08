@@ -197,16 +197,20 @@ const legacyStackStartError = (error: unknown) => {
             "StackVersionUnsupportedError",
             "InvalidStackIdentityError",
             "InvalidProjectRootError",
-            "StackStateInvalidError",
-            "StackStateFormatUnsupportedError",
             "StackSecretMismatchError",
             "InvalidJwtSigningMaterialError",
-            () => ({
-              reason: "invalid-config" as const,
-              suggestion:
-                "Run supabase experimental stack status to inspect the persisted stack state.",
-            }),
+            () => ({ reason: "invalid-config" as const }),
           ),
+          Match.tag("StackStateInvalidError", () => ({
+            reason: "invalid-config" as const,
+            suggestion:
+              "Run supabase experimental stack status to inspect the persisted stack state.",
+          })),
+          Match.tag("StackStateFormatUnsupportedError", () => ({
+            reason: "invalid-config" as const,
+            suggestion:
+              "Run supabase experimental stack status to inspect the persisted state and use a compatible stack version.",
+          })),
           Match.tag("StackNotFoundError", () => ({ reason: "flags" as const })),
           Match.tag(
             "StackOwnershipConflictError",

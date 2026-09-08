@@ -214,6 +214,23 @@ import_map = "./import_map.json"
     });
   });
 
+  it.effect(
+    "rejects supabase-prefixed function paths that resolve outside the project root",
+    () => {
+      const root = project(`project_id = "stack-config-nested-supabase"
+
+[functions.hello]
+entrypoint = "supabase/functions/hello/index.ts"
+`);
+      return Effect.gen(function* () {
+        const exit = yield* load(root).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit))
+          expect(String(exit.cause)).toContain("functions.hello.entrypoint");
+      });
+    },
+  );
+
   it.effect("resolves supabase-prefixed signing paths beneath the config directory", () => {
     const root = project(
       `project_id = "stack-config-signing-path"
@@ -289,6 +306,18 @@ enabled = false
 [functions.hello]
 env = { TOKEN = "env(SUPABASE_STACK_TEST_DISABLED_MISSING_ENV)" }
 `);
+    return Effect.gen(function* () {
+      const config = yield* load(root);
+      expect(config.capabilities?.functions).toEqual({ enabled: false });
+    });
+  });
+
+  it.effect("does not read disabled edge runtime dotenv files", () => {
+    const root = project(`project_id = "stack-config-disabled-dotenv"
+[edge_runtime]
+enabled = false
+`);
+    writeFileSync(join(root, "supabase", "functions", ".env"), "lowercase=value\n");
     return Effect.gen(function* () {
       const config = yield* load(root);
       expect(config.capabilities?.functions).toEqual({ enabled: false });
