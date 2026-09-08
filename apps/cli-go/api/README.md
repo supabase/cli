@@ -16,8 +16,13 @@ longer breaks unrelated pull requests.
 
 ## Updating the specification
 
-The specification is generated from our NestJS middleware. The latest release is
-viewable as [Swagger UI](https://api.supabase.com/api/v1).
+The specification is generated from our NestJS middleware. `v1-openapi.yaml` is
+refreshed from **staging** (`https://api.supabase.green/api/v1-yaml`) by the API
+Sync workflow, so staging is the snapshot's authoritative upstream and the Go
+client tracks the API as staging exposes it. The production release is viewable
+as [Swagger UI](https://api.supabase.com/api/v1), which is useful for reading the
+shipped API but is not what the snapshot is generated from -- expect it to lag
+the snapshot.
 
 Refreshing the snapshot by hand is rarely necessary, since API Sync does it
 automatically. To pick up a change from local development before it reaches staging:

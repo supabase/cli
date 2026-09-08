@@ -8,6 +8,9 @@ patches/*.patch text eol=lf
 # statistics and collapses them in pull request diffs -- they are build output to
 # be regenerated, not code to review, and together they outweigh the hand-written
 # source. The attribute is GitHub-only: git, CI, and local diffs are unaffected.
+# Collapsed is not hidden. v1-openapi.yaml and the lockfiles do carry changes
+# worth reading -- an upstream API change, a dependency substitution -- and both
+# stay one click away in review.
 # Regeneration is owned by `go generate` in apps/cli-go and by the `generate`
 # turbo task, whose `outputs` in turbo.json are the source of truth for this list.
 # Only the generated files are listed, not their hand-written inputs
