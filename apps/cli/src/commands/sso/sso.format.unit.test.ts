@@ -13,7 +13,7 @@ import {
   renderInfoMarkdown,
   renderListProviders,
   renderSingleProvider,
-  toLegacySsoProviderView,
+  toSsoProviderView,
   validateUuid,
 } from "./sso.format.ts";
 
@@ -238,14 +238,14 @@ describe("formatSsoMetadataXml (xmlfmt parity port)", () => {
   });
 });
 
-describe("toLegacySsoProviderView coercion", () => {
+describe("toSsoProviderView coercion", () => {
   it("returns an empty view for non-object inputs", () => {
-    expect(toLegacySsoProviderView(null).id).toBe("");
-    expect(toLegacySsoProviderView("string").id).toBe("");
+    expect(toSsoProviderView(null).id).toBe("");
+    expect(toSsoProviderView("string").id).toBe("");
   });
 
   it("preserves arbitrary attribute_mapping data (incl. user keys)", () => {
-    const view = toLegacySsoProviderView({
+    const view = toSsoProviderView({
       id: "abc",
       saml: { attribute_mapping: { keys: { a: { default: 3 } } } },
     });

@@ -4,7 +4,7 @@ import {
   remoteProjectIdEntries,
 } from "@supabase/config/internal";
 
-import { legacySanitizeInlineName } from "../../../command-internal/legacy-http-errors.ts";
+import { sanitizeInlineName } from "../../../command-internal/http-errors.ts";
 
 /**
  * `config pull`'s scope resolution: WHERE a pulled value gets written —
@@ -39,15 +39,15 @@ import { legacySanitizeInlineName } from "../../../command-internal/legacy-http-
  * 5. Otherwise: the config root.
  */
 
-export interface LegacyConfigPullDestinationRoot {
+interface ConfigPullDestinationRoot {
   readonly kind: "root";
 }
 
-export interface LegacyConfigPullDestinationRemote {
+interface ConfigPullDestinationRemote {
   readonly kind: "remote";
   /**
    * The `[remotes.<label>]` block's name — sanitized (control-char
-   * stripped, `legacySanitizeRemoteLabel`) when this destination CREATES the
+   * stripped, `sanitizeRemoteLabel`) when this destination CREATES the
    * block; verbatim, matching the file's own declared name exactly, when
    * REUSING an existing one (an already-written label is never rewritten by
    * this resolver).
@@ -58,20 +58,18 @@ export interface LegacyConfigPullDestinationRemote {
   readonly created: boolean;
 }
 
-export type LegacyConfigPullDestination =
-  | LegacyConfigPullDestinationRoot
-  | LegacyConfigPullDestinationRemote;
+export type ConfigPullDestination = ConfigPullDestinationRoot | ConfigPullDestinationRemote;
 
-export interface LegacyConfigPullScopeOk {
+interface ConfigPullScopeOk {
   readonly ok: true;
-  readonly destination: LegacyConfigPullDestination;
+  readonly destination: ConfigPullDestination;
 }
 
 /**
  * The label that would govern this pull — either `--remote-label` or a
  * branch-derived name — conflicts with an existing `[remotes.*]` block.
  * `label` is the FINAL SANITIZED label that triggered the check (matching
- * `legacySanitizeRemoteLabel(rawRequestedOrDerivedLabel)`, never the raw,
+ * `sanitizeRemoteLabel(rawRequestedOrDerivedLabel)`, never the raw,
  * unsanitized flag/branch value — a hostile value that only LOOKS distinct
  * from an existing block's name before sanitization must still be caught).
  * Two distinct situations both surface here (kept as one variant — the
@@ -92,7 +90,7 @@ export interface LegacyConfigPullScopeOk {
  *    exactly why it matched — signaling "this ref is already tracked
  *    elsewhere; drop --remote-label to reuse that block, or rename it".
  */
-export interface LegacyConfigPullScopeLabelCollision {
+export interface ConfigPullScopeLabelCollision {
   readonly ok: false;
   readonly reason: "label_collision";
   readonly label: string;
@@ -111,19 +109,19 @@ export interface LegacyConfigPullScopeLabelCollision {
  * itself would never select for a read; rewriting the block's `project_id`
  * would erase the user's env-var indirection).
  */
-export interface LegacyConfigPullScopeEnvProjectId {
+interface ConfigPullScopeEnvProjectId {
   readonly ok: false;
   readonly reason: "env_project_id";
   readonly label: string;
   readonly envVariables: ReadonlyArray<string>;
 }
 
-export type LegacyConfigPullScopeResult =
-  | LegacyConfigPullScopeOk
-  | LegacyConfigPullScopeLabelCollision
-  | LegacyConfigPullScopeEnvProjectId;
+export type ConfigPullScopeResult =
+  | ConfigPullScopeOk
+  | ConfigPullScopeLabelCollision
+  | ConfigPullScopeEnvProjectId;
 
-export interface LegacyResolveConfigPullDestinationInput {
+export interface ResolveConfigPullDestinationInput {
   /** `LoadedCliConfig.rawDocument?.["remotes"]` — pre-`env()`-interpolation,
    * remotes intact. */
   readonly rawRemotes: unknown;
@@ -151,7 +149,7 @@ export interface LegacyResolveConfigPullDestinationInput {
 /**
  * Control-character strip for a label about to become both a persisted
  * `[remotes.<label>]` document-path segment and inline text/JSON output —
- * mirrors `legacySanitizeInlineName`'s hostile-string defense (PR #6168) so
+ * mirrors `sanitizeInlineName`'s hostile-string defense (PR #6168) so
  * the label is clean at the point it is WRITTEN, not merely at the point
  * it's later displayed (every future read of the file already gets a clean
  * value, without relying on each consumer to re-sanitize it). QUOTING the
@@ -165,8 +163,8 @@ export interface LegacyResolveConfigPullDestinationInput {
  * past an existing `[remotes.staging]` block tracking a different project
  * entirely, instead of colliding with it.
  */
-export function legacySanitizeRemoteLabel(label: string): string {
-  return legacySanitizeInlineName(label);
+export function sanitizeRemoteLabel(label: string): string {
+  return sanitizeInlineName(label);
 }
 
 function extractEnvVariables(rawProjectId: string | undefined): ReadonlyArray<string> {
@@ -180,7 +178,7 @@ function extractEnvVariables(rawProjectId: string | undefined): ReadonlyArray<st
 /**
  * The one rule applied to a FINAL, SANITIZED label — whether it came from
  * `--remote-label` or was derived from a branch name — that both
- * `legacyResolveConfigPullDestination`'s rule 1 and rule 4 delegate to:
+ * `resolveConfigPullDestination`'s rule 1 and rule 4 delegate to:
  * reuse when an existing block by that name already tracks the target ref,
  * refuse when it merely resolves there via `env(...)`, collide when it
  * tracks something else, and otherwise either collide (a DIFFERENT block
@@ -194,7 +192,7 @@ function resolveNamedLabelDestination(input: {
   readonly interpolatedRemotes: unknown;
   readonly projectRef: string;
   readonly matchedByRef: string | undefined;
-}): LegacyConfigPullScopeResult {
+}): ConfigPullScopeResult {
   const existingEntry = remoteProjectIdEntries(input.rawRemotes).find(
     (entry) => entry.name === input.finalLabel,
   );
@@ -239,9 +237,9 @@ function resolveNamedLabelDestination(input: {
   };
 }
 
-export function legacyResolveConfigPullDestination(
-  input: LegacyResolveConfigPullDestinationInput,
-): LegacyConfigPullScopeResult {
+export function resolveConfigPullDestination(
+  input: ResolveConfigPullDestinationInput,
+): ConfigPullScopeResult {
   const matchedByRef = remoteNameForProjectRef(input.rawRemotes, input.projectRef);
 
   // 1. `--remote-label` forces a destination, resolved FIRST — even for a
@@ -250,7 +248,7 @@ export function legacyResolveConfigPullDestination(
   // fresh, explicitly-requested block.
   if (input.requestedLabel !== undefined) {
     return resolveNamedLabelDestination({
-      finalLabel: legacySanitizeRemoteLabel(input.requestedLabel),
+      finalLabel: sanitizeRemoteLabel(input.requestedLabel),
       rawRemotes: input.rawRemotes,
       interpolatedRemotes: input.interpolatedRemotes,
       projectRef: input.projectRef,
@@ -290,7 +288,7 @@ export function legacyResolveConfigPullDestination(
   if (input.targetWasBranch) {
     const label = input.branchLabelCandidate ?? input.projectRef;
     return resolveNamedLabelDestination({
-      finalLabel: legacySanitizeRemoteLabel(label),
+      finalLabel: sanitizeRemoteLabel(label),
       rawRemotes: input.rawRemotes,
       interpolatedRemotes: input.interpolatedRemotes,
       projectRef: input.projectRef,

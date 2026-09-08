@@ -17,18 +17,19 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 
 ## Files Read
 
-| Path                                                                                                      | Format     | When                                                                                                                                                                                                                                                                                                                        |
-| --------------------------------------------------------------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                                                                          | TOML       | always (db port/password, `[experimental.pgdelta]`, deno_version)                                                                                                                                                                                                                                                           |
-| `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file                 | dotenv     | shadow provisioning (all native targets, including the explicit `--from/--to migrations` shadow)                                                                                                                                                                                                                            |
-| `api.tls.cert_path` / `api.tls.key_path` (under `<workdir>/supabase/`)                                    | PEM        | shadow provisioning, when `api.enabled && api.tls.enabled`                                                                                                                                                                                                                                                                  |
-| `<workdir>/supabase/migrations/*.sql`                                                                     | SQL        | shadow provisioning (applied to the shadow source) — `--use-pgadmin` too, via the SAME `legacyMigrateShadowDatabase`                                                                                                                                                                                                        |
-| `<workdir>/supabase/roles.sql`                                                                            | SQL        | shadow provisioning, PG14 and PG15 alike (unlike `db reset`'s PG15-only local path); also hashed into the shadow-baseline cache key on every cache-eligible acquire, warm hits included (where no baseline is applied at all); missing file tolerated                                                                       |
-| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`                                             | tar        | warm shadow-cache hit — the matching snapshot is streamed into the fresh shadow; every cache-eligible acquire (warm hit and successful cold export) also enumerates and `stat`s every `shadow-baseline-*.tar` for LRU keep-3 + 2-day mtime TTL and may delete other keys (`SUPABASE_HOME` overrides the `~/.supabase` root) |
-| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial`                               | tar        | abandoned-partial sweep on every cache-eligible acquire (warm hit and cold export) — enumerated and `stat`ed, and removed when older than 5 minutes (a crashed/SIGKILLed earlier export's leftover)                                                                                                                         |
-| `[db.migrations].schema_paths` globs / `<workdir>/supabase/database/**` / `<workdir>/supabase/schemas/**` | SQL        | migra engine only, for the local-target declarative-schema fallback; pg-delta always compares the migrations baseline directly to the live target                                                                                                                                                                           |
-| `~/.supabase/access-token`                                                                                | plain text | `--linked` / `--db-url` with no `SUPABASE_ACCESS_TOKEN`                                                                                                                                                                                                                                                                     |
-| `<workdir>/supabase/.temp/project-ref`                                                                    | plain text | `--linked` ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                                                                                                                                                                                                                  |
+| Path                                                                                                      | Format                                                                                | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                                                                          | TOML                                                                                  | always (db port/password, `[experimental.pgdelta]`, deno_version)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file                 | dotenv                                                                                | shadow provisioning (all native targets, including the explicit `--from/--to migrations` shadow)                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `api.tls.cert_path` / `api.tls.key_path` (under `<workdir>/supabase/`)                                    | PEM                                                                                   | shadow provisioning, when `api.enabled && api.tls.enabled`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `auth.email.template.*` / `auth.email.notification.*` `content_path` (config-relative or absolute)        | text (existence/readability only — bytes discarded, used only to validate the config) | only when `auth.enabled`, for every configured template and every notification with `enabled = true` — via the same `readDbToml`/`checkDbToml` `Config.Validate` pipeline shared by every `db`/`migration` subcommand that loads config (`db dump`/`pull`/`reset`/`push`/`schema declarative generate`/`sync`, `migration up`/`down`/`squash` — documented once here rather than duplicated per file, CLI-2339); the resolved path is CONFINED to the project root (symlinks dereferenced with `realpathSync`) — a path resolving outside it aborts before the read |
+| `<workdir>/supabase/migrations/*.sql`                                                                     | SQL                                                                                   | shadow provisioning (applied to the shadow source) — `--use-pgadmin` too, via the SAME `migrateShadowDatabase`                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `<workdir>/supabase/roles.sql`                                                                            | SQL                                                                                   | shadow provisioning, PG14 and PG15 alike (unlike `db reset`'s PG15-only local path); also hashed into the shadow-baseline cache key on every cache-eligible acquire, warm hits included (where no baseline is applied at all); missing file tolerated                                                                                                                                                                                                                                                                                                               |
+| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`                                             | tar                                                                                   | warm shadow-cache hit — the matching snapshot is streamed into the fresh shadow; every cache-eligible acquire (warm hit and successful cold export) also enumerates and `stat`s every `shadow-baseline-*.tar` for LRU keep-3 + 2-day mtime TTL and may delete other keys (`SUPABASE_HOME` overrides the `~/.supabase` root)                                                                                                                                                                                                                                         |
+| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial`                               | tar                                                                                   | abandoned-partial sweep on every cache-eligible acquire (warm hit and cold export) — enumerated and `stat`ed, and removed when older than 5 minutes (a crashed/SIGKILLed earlier export's leftover)                                                                                                                                                                                                                                                                                                                                                                 |
+| `[db.migrations].schema_paths` globs / `<workdir>/supabase/database/**` / `<workdir>/supabase/schemas/**` | SQL                                                                                   | migra engine only, for the local-target declarative-schema fallback; pg-delta always compares the migrations baseline directly to the live target                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `~/.supabase/access-token`                                                                                | plain text                                                                            | `--linked` / `--db-url` with no `SUPABASE_ACCESS_TOKEN`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `<workdir>/supabase/.temp/project-ref`                                                                    | plain text                                                                            | `--linked` ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ## Files Written
 
@@ -45,14 +46,14 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 ## Docker
 
 - Edge-runtime container (migra engine only).
-- Shadow Postgres container — provisioned and torn down natively (`legacyPrepareShadowSource`
-  in `commands/db/shared/legacy-shadow-source.ts`, over the lower-level primitives in
+- Shadow Postgres container — provisioned and torn down natively (`prepareShadowSource`
+  in `commands/db/shared/shadow-source.ts`, over the lower-level primitives in
   `command-internal/db-bootstrap/shadow-database.ts`), no longer via a Go seam. Explicit
   `--from/--to migrations` provisions its migrations shadow through the pg-delta shadow layer
-  (`legacy-pgdelta-next-shadow.layer.ts`), which builds on the same shadow-baseline cache
-  primitives (`legacyAcquireShadowDatabase`), with no declarative-schema-override branch.
+  (`pgdelta-next-shadow.layer.ts`), which builds on the same shadow-baseline cache
+  primitives (`acquireShadowDatabase`), with no declarative-schema-override branch.
   `--use-pgadmin` provisions its OWN shadow via a
-  narrower composition — `legacyCreateShadowDatabase` -> health-wait -> `legacyMigrateShadowDatabase`
+  narrower composition — `createShadowDatabase` -> health-wait -> `migrateShadowDatabase`
   directly (`diff.handler.ts`'s pgadmin branch) — with no declarative-schema-override branch and
   no `targetUrlOverride`.
 - `supabase/migra` container — the migra OOM bash fallback only.
@@ -90,7 +91,7 @@ of this command's own target resolve, ahead of the differ container.
 | `SUPABASE_SHADOW_CACHE`                                                               | shadow baseline cache; on by default, opt-out (`0`/`false`); the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes)                                 | no        |
 | `PGDELTA_DEBUG`                                                                       | pg-delta debug capture                                                                                                                                                                                              | no        |
 | `SUPABASE_SSL_DEBUG`                                                                  | migra SSL debug logging                                                                                                                                                                                             | no        |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                    | overrides the differ's / shadow's image registry (shell **or** project `.env`, applied for the run via `legacyApplyProjectEnv`, matching `db push`/`db pull`/`db dump`)                                             | no        |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                    | overrides the differ's / shadow's image registry (shell **or** project `.env`, applied for the run via `applyProjectEnv`, matching `db push`/`db pull`/`db dump`)                                                   | no        |
 
 `SUPABASE_DB_SHADOW_PORT`/`SUPABASE_NETWORK_ID`/`--network-id`/`SUPABASE_PROJECT_ID`/
 `SUPABASE_DB_HEALTH_TIMEOUT` all apply to `--use-pgadmin` too — its shadow is provisioned
@@ -101,9 +102,9 @@ pg-delta is the default engine, and the explicit `[experimental.pgdelta] enabled
 config rollback is authoritative.
 
 `SUPABASE_INTERNAL_IMAGE_REGISTRY` applies to the differ's own image resolution too. The
-docker-run layer's resolver (`legacy-docker-run.layer.ts`) is built once, statically, with
+docker-run layer's resolver (`docker-run.layer.ts`) is built once, statically, with
 no `projectEnvValues` in scope, so it falls back to reading `process.env` directly at
-`runCapture` call time — the handler's own `legacyApplyProjectEnv(cfg.projectEnv)` call
+`runCapture` call time — the handler's own `applyProjectEnv(cfg.projectEnv)` call
 (right after the config load) is what makes a registry override set only in
 `supabase/.env`/project-root dotenv (not the ambient shell) visible to it by then.
 
@@ -157,12 +158,12 @@ transaction metadata.
   stderr diagnostics. So `db diff --use-pgadmin > out.sql` captures them. In `json`/`stream-json`
   mode these are diagnostics, not payload, so they redirect to STDERR instead — see below.
 - **Progress-streaming UX delta**: this port batches progress instead of streaming it live —
-  `LegacyDockerRun.runStream` only exposes an `onStdout` hook (no `onStderr` equivalent), so this
+  `DockerRun.runStream` only exposes an `onStdout` hook (no `onStderr` equivalent), so this
   port buffers each run's stderr via `runCapture` and only filters/emits its status lines once
   that run's container has already exited — one status BATCH per `--schema` run, not a
   continuous stream. That batch is processed and emitted before this port's own exit-code
   check, so a run that goes on to exit non-zero still has its own captured statuses printed
-  first, not dropped. See `legacy-pgadmin-diff.ts`'s own doc comment on `legacyDiffSchemaPgAdmin`
+  first, not dropped. See `pgadmin-diff.ts`'s own doc comment on `diffSchemaPgAdmin`
   for the full rationale and the possible follow-up (adding an `onStderr` hook to `runStream`).
 - Order: `Creating shadow database...` → shadow setup diagnostics (stderr, shared
   with the migra/pg-delta path) → `Diffing local database with current migrations...`
@@ -182,7 +183,7 @@ transaction metadata.
   `--db-url` / `--linked` / `--local` are a mutually-exclusive target group
   (default `--local`).
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution `LegacyProjectRefResolver`
+  command) overrides ONLY the linked-ref resolution `ProjectRefResolver`
   performs (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) — unlike
   `SUPABASE_PROJECT_ID`, it does not affect the shadow container's project
   id/labels. It never implies `--linked`: passing it with a resolved
@@ -239,7 +240,7 @@ the plain create/remove lifecycle.
   USER'S db, `target` is the SHADOW.
 - The shadow `target` URL is a hardcoded template string
   (`postgresql://postgres:postgres@127.0.0.1:<port>/postgres`), not built via
-  `legacyToPostgresURL`, so it ignores `SUPABASE_SERVICES_HOSTNAME`/`[db] password`.
+  `toPostgresURL`, so it ignores `SUPABASE_SERVICES_HOSTNAME`/`[db] password`.
 - `AssertSupabaseDbIsRunning` runs for `--linked`/`--db-url` too, and AFTER config load +
   target resolution — every other engine on this command never runs this check at all.
 - The `NOTE: …DESKTOP mode.` prefix (`supabase/pgadmin4#24`) is trimmed from the front of
@@ -257,11 +258,11 @@ the plain create/remove lifecycle.
   rather than the raw parser error text.
 
 **Deliberate divergence:** every run's own stdout is genuinely parsed
-(`legacyParsePgAdminDiffEntries`, trimming that run's own DESKTOP-mode NOTE prefix off its own
+(`parsePgAdminDiffEntries`, trimming that run's own DESKTOP-mode NOTE prefix off its own
 buffer), and every run's filtered DDLs are aggregated into one final diff before the header is
-rendered once (`legacyRenderPgAdminDiff`). A multi-`--schema` diff where every run's own
+rendered once (`renderPgAdminDiff`). A multi-`--schema` diff where every run's own
 `--json-diff` output is independently well-formed succeeds. A genuinely malformed run (or a
-concatenation WITHIN a single run's own buffer — see `legacyProcessPgAdminDiffOutput`'s own doc
+concatenation WITHIN a single run's own buffer — see `processPgAdminDiffOutput`'s own doc
 comment, still exercised by this file's unit tests) still fails with `invalid_output`.
 
 **Network reachability:** with the differ container on the project's default Docker network

@@ -1,18 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, beforeEach, vi } from "vitest";
 import type { WorkerLogEntry } from "../../../shared/workers/worker-logs-api.ts";
-import { legacyRenderWorkerLogLine, legacyWorkerLogLevel } from "./workers-logs.format.ts";
+import { renderWorkerLogLine, workerLogLevel } from "./workers-logs.format.ts";
 
 const ESCAPE = "\u001b";
 
 /**
  * Colour is decided by the stream, so the tests supply one — and by the
- * environment, so the tests pin that too. `legacySupportsColor` consults
+ * environment, so the tests pin that too. `supportsColor` consults
  * NO_COLOR / CLICOLOR / CLICOLOR_FORCE / CI *before* it ever asks the stream,
  * so a fake stream alone does not make these deterministic: under CI, where
  * `CI` is set, a `hasColors: () => true` stream still renders plain.
  *
- * Neutralised the same way `legacy-colors.unit.test.ts` does it — empty string
+ * Neutralised the same way `colors.unit.test.ts` does it — empty string
  * reads as unset for every variable the gate consults.
  */
 const PLAIN = { hasColors: () => false };
@@ -57,10 +57,10 @@ function entry(overrides: Partial<WorkerLogEntry> = {}): WorkerLogEntry {
   };
 }
 
-describe("legacyWorkerLogLevel", () => {
+describe("workerLogLevel", () => {
   it("derives the level from a request status, which arrives as a string", () => {
     const at = (status: string) =>
-      legacyWorkerLogLevel(entry({ stream: "worker_ingress_logs", attributes: { status } }));
+      workerLogLevel(entry({ stream: "worker_ingress_logs", attributes: { status } }));
 
     expect(at("200")).toBe("info");
     expect(at("301")).toBe("info");
@@ -72,21 +72,19 @@ describe("legacyWorkerLogLevel", () => {
 
   it("reports no level for a request row with an unusable status", () => {
     expect(
-      legacyWorkerLogLevel(entry({ stream: "worker_ingress_logs", attributes: {} })),
+      workerLogLevel(entry({ stream: "worker_ingress_logs", attributes: {} })),
     ).toBeUndefined();
     expect(
-      legacyWorkerLogLevel(entry({ stream: "worker_ingress_logs", attributes: { status: "wat" } })),
+      workerLogLevel(entry({ stream: "worker_ingress_logs", attributes: { status: "wat" } })),
     ).toBeUndefined();
   });
 
   it("marks a failed build as an error and other events as info", () => {
     expect(
-      legacyWorkerLogLevel(
-        entry({ stream: "worker_api_logs", attributes: { event: "build_failed" } }),
-      ),
+      workerLogLevel(entry({ stream: "worker_api_logs", attributes: { event: "build_failed" } })),
     ).toBe("error");
     expect(
-      legacyWorkerLogLevel(
+      workerLogLevel(
         entry({ stream: "worker_api_logs", attributes: { event: "deploy_accepted" } }),
       ),
     ).toBe("info");
@@ -95,17 +93,17 @@ describe("legacyWorkerLogLevel", () => {
   it("reports no level for guest output rather than guessing one", () => {
     // Nothing short of parsing tenant text could tell, so absent is the honest
     // answer.
-    expect(legacyWorkerLogLevel(entry())).toBeUndefined();
+    expect(workerLogLevel(entry())).toBeUndefined();
   });
 
   it("reports no level for an unknown stream", () => {
-    expect(legacyWorkerLogLevel(entry({ stream: "worker_future_logs" }))).toBeUndefined();
+    expect(workerLogLevel(entry({ stream: "worker_future_logs" }))).toBeUndefined();
   });
 });
 
-describe("legacyRenderWorkerLogLine", () => {
+describe("renderWorkerLogLine", () => {
   it("prints the time and message for guest output", () => {
-    expect(legacyRenderWorkerLogLine(entry(), { showStream: false, colorStream: PLAIN })).toBe(
+    expect(renderWorkerLogLine(entry(), { showStream: false, colorStream: PLAIN })).toBe(
       `${T}  workers shim: listening on :8080 (serving)`,
     );
   });
@@ -113,7 +111,7 @@ describe("legacyRenderWorkerLogLine", () => {
   it("composes the request line from attributes, not the message", () => {
     // On the wire `event_message` is only "GET /" - status and duration live in
     // log_attributes, so the useful line has to be assembled.
-    const line = legacyRenderWorkerLogLine(
+    const line = renderWorkerLogLine(
       entry({
         stream: "worker_ingress_logs",
         message: "GET /",
@@ -126,7 +124,7 @@ describe("legacyRenderWorkerLogLine", () => {
   });
 
   it("prints the event and reason for a build line", () => {
-    const line = legacyRenderWorkerLogLine(
+    const line = renderWorkerLogLine(
       entry({
         stream: "worker_api_logs",
         message: "build_failed ref/api",
@@ -140,7 +138,7 @@ describe("legacyRenderWorkerLogLine", () => {
 
   it("falls back to the message for an unknown stream", () => {
     // The log contract is additive-only, so a new stream must still print.
-    const line = legacyRenderWorkerLogLine(
+    const line = renderWorkerLogLine(
       entry({ stream: "worker_future_logs", message: "something new" }),
       { showStream: false, colorStream: PLAIN },
     );
@@ -153,7 +151,7 @@ describe("legacyRenderWorkerLogLine", () => {
     // asserted on a UTC machine too, where local and UTC would otherwise coincide.
     const utc = new Date(AT).toISOString().slice(11, 19);
     const offsetMinutes = new Date(AT).getTimezoneOffset();
-    const line = legacyRenderWorkerLogLine(entry(), { showStream: false, colorStream: PLAIN });
+    const line = renderWorkerLogLine(entry(), { showStream: false, colorStream: PLAIN });
 
     expect(line.startsWith(`${T}  `)).toBe(true);
     if (offsetMinutes !== 0) {
@@ -163,31 +161,31 @@ describe("legacyRenderWorkerLogLine", () => {
 
   it("renders a blank guest line as a blank line, not a dropped entry", () => {
     expect(
-      legacyRenderWorkerLogLine(entry({ message: "" }), { showStream: false, colorStream: PLAIN }),
+      renderWorkerLogLine(entry({ message: "" }), { showStream: false, colorStream: PLAIN }),
     ).toBe(`${T}  `);
   });
 
   it("strips ANSI escapes a worker printed, so it cannot forge output", () => {
-    const line = legacyRenderWorkerLogLine(
-      entry({ message: `${ESCAPE}[31mfake error${ESCAPE}[0m` }),
-      { showStream: false, colorStream: PLAIN },
-    );
+    const line = renderWorkerLogLine(entry({ message: `${ESCAPE}[31mfake error${ESCAPE}[0m` }), {
+      showStream: false,
+      colorStream: PLAIN,
+    });
 
     expect(line).toBe(`${T}  fake error`);
     expect(line).not.toContain(ESCAPE);
   });
 
   it("strips a cursor-repositioning sequence", () => {
-    const line = legacyRenderWorkerLogLine(
-      entry({ message: `${ESCAPE}[2A${ESCAPE}[1Goverwritten` }),
-      { showStream: false, colorStream: PLAIN },
-    );
+    const line = renderWorkerLogLine(entry({ message: `${ESCAPE}[2A${ESCAPE}[1Goverwritten` }), {
+      showStream: false,
+      colorStream: PLAIN,
+    });
 
     expect(line).toBe(`${T}  overwritten`);
   });
 
   it("strips an OSC window-title sequence", () => {
-    const line = legacyRenderWorkerLogLine(entry({ message: `${ESCAPE}]0;title${ESCAPE}\\kept` }), {
+    const line = renderWorkerLogLine(entry({ message: `${ESCAPE}]0;title${ESCAPE}\\kept` }), {
       showStream: false,
       colorStream: PLAIN,
     });
@@ -198,7 +196,7 @@ describe("legacyRenderWorkerLogLine", () => {
   // A carriage return returns the cursor to column zero, so a line carrying one
   // can overwrite the timestamp and tag already printed to its left.
   it("strips a carriage return so a line cannot overwrite its own prefix", () => {
-    const line = legacyRenderWorkerLogLine(entry({ message: "harmless\r00:00:00  forged" }), {
+    const line = renderWorkerLogLine(entry({ message: "harmless\r00:00:00  forged" }), {
       showStream: false,
       colorStream: PLAIN,
     });
@@ -209,7 +207,7 @@ describe("legacyRenderWorkerLogLine", () => {
 
   it("folds a CRLF to a newline rather than dropping the break", () => {
     expect(
-      legacyRenderWorkerLogLine(entry({ message: "first\r\nsecond" }), {
+      renderWorkerLogLine(entry({ message: "first\r\nsecond" }), {
         showStream: false,
         colorStream: PLAIN,
       }),
@@ -219,7 +217,7 @@ describe("legacyRenderWorkerLogLine", () => {
   // The request path is chosen by whoever called the worker, so it is as
   // untrusted as anything the worker printed itself.
   it("strips control sequences from request attributes", () => {
-    const line = legacyRenderWorkerLogLine(
+    const line = renderWorkerLogLine(
       entry({
         stream: "worker_ingress_logs",
         attributes: {
@@ -238,7 +236,7 @@ describe("legacyRenderWorkerLogLine", () => {
 
   // A build reason is relayed from the builder, which reports what it was given.
   it("strips control sequences from build attributes", () => {
-    const line = legacyRenderWorkerLogLine(
+    const line = renderWorkerLogLine(
       entry({
         stream: "worker_api_logs",
         attributes: { event: `build_failed${ESCAPE}[2A`, reason: "oom\rforged" },
@@ -254,7 +252,7 @@ describe("legacyRenderWorkerLogLine", () => {
     const trace = "TypeError: boom\n    at handler (index.js:3:11)\n\tat run (index.js:9:2)";
 
     expect(
-      legacyRenderWorkerLogLine(entry({ message: trace }), {
+      renderWorkerLogLine(entry({ message: trace }), {
         showStream: false,
         colorStream: PLAIN,
       }),
@@ -271,11 +269,11 @@ describe("legacyRenderWorkerLogLine", () => {
       attributes: { status: "404", method: "GET", path: "/" },
     });
 
-    const errorLine = legacyRenderWorkerLogLine(server, {
+    const errorLine = renderWorkerLogLine(server, {
       showStream: false,
       colorStream: COLOURED,
     });
-    const warnLine = legacyRenderWorkerLogLine(client, {
+    const warnLine = renderWorkerLogLine(client, {
       showStream: false,
       colorStream: COLOURED,
     });
@@ -288,7 +286,7 @@ describe("legacyRenderWorkerLogLine", () => {
   });
 
   it("leaves an info line untinted, so the exceptions stand out", () => {
-    const line = legacyRenderWorkerLogLine(
+    const line = renderWorkerLogLine(
       entry({
         stream: "worker_ingress_logs",
         attributes: { status: "200", method: "GET", path: "/" },
@@ -300,7 +298,7 @@ describe("legacyRenderWorkerLogLine", () => {
   });
 
   it("emits no escapes at all for a stream that cannot colour", () => {
-    const line = legacyRenderWorkerLogLine(
+    const line = renderWorkerLogLine(
       entry({
         stream: "worker_ingress_logs",
         attributes: { status: "500", method: "GET", path: "/" },
@@ -313,7 +311,7 @@ describe("legacyRenderWorkerLogLine", () => {
 
   it("tags each stream with the word --kind accepts", () => {
     const tagged = (stream: string, attributes: Record<string, string> = {}) =>
-      legacyRenderWorkerLogLine(entry({ stream, attributes }), {
+      renderWorkerLogLine(entry({ stream, attributes }), {
         showStream: true,
         colorStream: PLAIN,
       });
@@ -326,8 +324,8 @@ describe("legacyRenderWorkerLogLine", () => {
   });
 
   it("pads the tags so messages line up", () => {
-    const app = legacyRenderWorkerLogLine(entry(), { showStream: true, colorStream: PLAIN });
-    const build = legacyRenderWorkerLogLine(
+    const app = renderWorkerLogLine(entry(), { showStream: true, colorStream: PLAIN });
+    const build = renderWorkerLogLine(
       entry({ stream: "worker_api_logs", attributes: { event: "deploy_accepted" } }),
       { showStream: true, colorStream: PLAIN },
     );
@@ -337,7 +335,7 @@ describe("legacyRenderWorkerLogLine", () => {
   });
 
   it("names an unknown stream rather than hiding it behind a placeholder", () => {
-    const line = legacyRenderWorkerLogLine(
+    const line = renderWorkerLogLine(
       entry({ stream: "worker_future_logs", message: "from the future" }),
       { showStream: true, colorStream: PLAIN },
     );
@@ -347,7 +345,7 @@ describe("legacyRenderWorkerLogLine", () => {
   });
 
   it("omits the tag when one stream was pinned", () => {
-    const line = legacyRenderWorkerLogLine(entry(), { showStream: false, colorStream: PLAIN });
+    const line = renderWorkerLogLine(entry(), { showStream: false, colorStream: PLAIN });
 
     expect(line).not.toContain("[");
     expect(line).toBe(`${T}  workers shim: listening on :8080 (serving)`);

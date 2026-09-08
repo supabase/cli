@@ -52,14 +52,14 @@ disables formatting without disabling safe compaction.
 ## Docker
 
 - Edge-runtime container (migra engine only).
-- Shadow Postgres container — provisioned and torn down natively (`legacyPrepareShadowSource` in
-  `commands/db/shared/legacy-shadow-source.ts`, over the lower-level primitives in
+- Shadow Postgres container — provisioned and torn down natively (`prepareShadowSource` in
+  `commands/db/shared/shadow-source.ts`, over the lower-level primitives in
   `command-internal/db-bootstrap/shadow-database.ts`), no longer via a Go seam. Torn down with
   `docker rm -f -v` on every run, cache or no cache — see the shadow baseline cache section
   below. Migration-style pulls only; `--declarative` provisions no shadow.
 - `supabase/migra` container — the migra OOM bash fallback only.
 - `pg_dump` container — the initial-migra pull's native remote-schema dump
-  (`legacyStreamPgDump`, shared with `db dump`).
+  (`streamPgDump`, shared with `db dump`).
 
 ### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 
@@ -152,7 +152,7 @@ Progress strings still go to stderr; stdout carries a single structured envelope
 - `--declarative` / deprecated `--use-pg-delta` are mutually exclusive with
   `--diff-engine`; `--db-url` / `--linked` (default) / `--local` are a target group.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution `LegacyProjectRefResolver`
+  command) overrides ONLY the linked-ref resolution `ProjectRefResolver`
   performs (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) — unlike
   `SUPABASE_PROJECT_ID`, it does not affect the shadow container's project
   id/labels. It never implies `--linked`: passing it with a resolved

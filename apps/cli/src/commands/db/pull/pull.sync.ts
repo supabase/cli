@@ -1,17 +1,17 @@
 import { Effect, type FileSystem, type Path } from "effect";
 
 import { Output } from "../../../shared/output/output.service.ts";
-import type { LegacyDbSession } from "../../../command-internal/legacy-db-connection.service.ts";
+import type { DbSession } from "../../../command-internal/db-connection.service.ts";
 import {
   MIGRATE_FILE_PATTERN,
   UPSERT_MIGRATION_VERSION,
-  legacyCreateMigrationTable,
-} from "../../../command-internal/legacy-migration-history.ts";
-import { legacySplitAndTrim } from "../../../command-internal/legacy-sql-split.ts";
-import { LegacyDbPullWriteError } from "./pull.errors.ts";
+  createMigrationTable,
+} from "../../../command-internal/migration-history.ts";
+import { splitAndTrim } from "../../../command-internal/sql-split.ts";
+import { DbPullWriteError } from "./pull.errors.ts";
 
 /** A pulled migration file paired with the version to record in the history. */
-export interface LegacyPulledMigration {
+export interface PulledMigration {
   readonly path: string;
   readonly version: string;
 }
@@ -24,11 +24,11 @@ export interface LegacyPulledMigration {
  * plan crosses a transaction boundary writes several ordered files, so several
  * versions are recorded in one pass.
  */
-export const legacyUpdateMigrationHistory = (
-  session: LegacyDbSession,
+export const updateMigrationHistory = (
+  session: DbSession,
   fs: FileSystem.FileSystem,
   path: Path.Path,
-  migrations: ReadonlyArray<LegacyPulledMigration>,
+  migrations: ReadonlyArray<PulledMigration>,
 ) =>
   Effect.gen(function* () {
     const output = yield* Output;
@@ -43,7 +43,7 @@ export const legacyUpdateMigrationHistory = (
       const match = MIGRATE_FILE_PATTERN.exec(path.basename(migration.path));
       if (match === null || match[1] !== migration.version) {
         return yield* Effect.fail(
-          new LegacyDbPullWriteError({
+          new DbPullWriteError({
             message: `glob supabase/migrations/${migration.version}_*.sql: file does not exist`,
           }),
         );
@@ -57,8 +57,8 @@ export const legacyUpdateMigrationHistory = (
     yield* Effect.gen(function* () {
       // Create the history schema/table first, in its OWN transaction. Keeping it
       // outside the upsert transaction below avoids nesting BEGINs
-      // (`legacyCreateMigrationTable` issues its own BEGIN/COMMIT).
-      yield* legacyCreateMigrationTable(session);
+      // (`createMigrationTable` issues its own BEGIN/COMMIT).
+      yield* createMigrationTable(session);
       // Record every version in ONE explicit transaction: a mid-loop failure
       // (dropped connection, unreadable migration file) must record NONE of them.
       // Without a transaction here each UPSERT autocommits, so a failure partway
@@ -68,7 +68,7 @@ export const legacyUpdateMigrationHistory = (
         yield* session.exec("BEGIN");
         for (const entry of resolved) {
           const content = yield* fs.readFileString(entry.migrationPath);
-          const statements = legacySplitAndTrim(content);
+          const statements = splitAndTrim(content);
           yield* session.query(UPSERT_MIGRATION_VERSION, [entry.version, entry.name, statements]);
         }
         yield* session.exec("COMMIT");
@@ -76,13 +76,13 @@ export const legacyUpdateMigrationHistory = (
         // Roll back on ANY failure inside the transaction — including a migration
         // file read that fails after BEGIN. `Effect.ignore` keeps a ROLLBACK
         // failure from masking the original error (`tapError` re-raises the
-        // original). Mirrors `legacyCreateMigrationTable`'s rollback handling.
+        // original). Mirrors `createMigrationTable`'s rollback handling.
         Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)),
       );
     }).pipe(
       Effect.mapError(
         (cause) =>
-          new LegacyDbPullWriteError({
+          new DbPullWriteError({
             message: `failed to update migration table: ${cause.message}`,
           }),
       ),

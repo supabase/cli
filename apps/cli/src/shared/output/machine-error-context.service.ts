@@ -7,8 +7,7 @@ import { Context } from "effect";
  * surfacing to an agent — even when the command itself is about to fail —
  * calls `set` before its handler can fail; `jsonOutputLayer`/`streamJsonOutputLayer`'s
  * `fail` read it optionally via `Effect.serviceOption`, so a command that never
- * provides this layer renders the exact same envelope as today. `next/` never
- * provides it either, so this is completely inert there.
+ * provides this layer renders the exact same envelope as today.
  *
  * Fields are spread onto the TOP LEVEL of the envelope, next to `_tag`/`error`
  * (json) or `type`/`error`/`timestamp` (stream-json) — never inside `error`

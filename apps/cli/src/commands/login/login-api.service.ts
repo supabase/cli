@@ -1,30 +1,30 @@
 import type { Effect, Option } from "effect";
 import { Context } from "effect";
 
-import type { LegacyLoginVerificationError } from "./login.errors.ts";
+import type { LoginVerificationError } from "./login.errors.ts";
 
 /**
  * Subset of `AccessTokenResponse` (`login.go:39-45`) the decrypt step
  * consumes. `id` / `created_at` are returned by the API but unused.
  */
-export type LegacyLoginSessionResponse = {
+export type LoginApiSessionResponse = {
   readonly access_token: string;
   readonly public_key: string;
   readonly nonce: string;
 };
 
-interface LegacyLoginApiShape {
+interface LoginApiShape {
   /**
    * Polls `GET {apiHost}/platform/cli/login/{sessionId}?device_code=<code>`
    * (`pollForAccessToken`, `login.go:132-157`). Expects HTTP 200 with a
    * 10s timeout; any transport / status / parse failure becomes a
-   * `LegacyLoginVerificationError` that drives the retry loop.
+   * `LoginVerificationError` that drives the retry loop.
    */
   readonly fetchLoginSession: (
     apiHost: string,
     sessionId: string,
     deviceCode: string,
-  ) => Effect.Effect<LegacyLoginSessionResponse, LegacyLoginVerificationError>;
+  ) => Effect.Effect<LoginApiSessionResponse, LoginVerificationError>;
   /**
    * Best-effort fetch of the authenticated user's `gotrue_id` from
    * `GET {apiHost}/v1/profile` (`getProfileGotrueID`, `login.go:301-310`).
@@ -34,6 +34,4 @@ interface LegacyLoginApiShape {
   readonly fetchGotrueId: (apiHost: string, token: string) => Effect.Effect<Option.Option<string>>;
 }
 
-export class LegacyLoginApi extends Context.Service<LegacyLoginApi, LegacyLoginApiShape>()(
-  "supabase/legacy/LoginApi",
-) {}
+export class LoginApi extends Context.Service<LoginApi, LoginApiShape>()("supabase/cli/LoginApi") {}

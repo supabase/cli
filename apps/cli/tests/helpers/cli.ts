@@ -16,9 +16,7 @@ export { stripAnsi } from "./ansi.ts";
 
 const BINARY_EXT = process.platform === "win32" ? ".exe" : "";
 const SHIM_PATH = fileURLToPath(new URL("../../dist/supabase.js", import.meta.url));
-const LEGACY_BINARY_PATH = fileURLToPath(
-  new URL(`../../dist/supabase-legacy${BINARY_EXT}`, import.meta.url),
-);
+const BINARY_PATH = fileURLToPath(new URL(`../../dist/supabase${BINARY_EXT}`, import.meta.url));
 
 // E2E subprocesses should only enter agent output mode when a test explicitly
 // opts in via `options.env`. Keep this list aligned with @vercel/detect-agent
@@ -59,7 +57,7 @@ function subprocessBaseEnv(): Record<string, string> {
 function assertBuildArtifactsExist(binaryPath: string): void {
   if (!existsSync(SHIM_PATH) || !existsSync(binaryPath)) {
     throw new Error(
-      `Missing legacy CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking e2e tests.\n` +
+      `Missing CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking e2e tests.\n` +
         `  expected shim:   ${SHIM_PATH}\n` +
         `  expected binary: ${binaryPath}`,
     );
@@ -70,10 +68,12 @@ type RunResult = {
   stdout: string;
   stderr: string;
   exitCode: number;
+  /** Set when the harness exit bound fired and SIGKILLed the process group. */
+  timedOutAfterMs?: number;
 };
 
 const DEFAULT_EXIT_TIMEOUT_MS = 60_000;
-const DEFAULT_LEGACY_STACK_CLEANUP_TIMEOUT_MS = 120_000;
+const DEFAULT_STACK_CLEANUP_TIMEOUT_MS = 120_000;
 const OUTPUT_TAIL_LENGTH = 4_000;
 
 interface SpawnedSupabase {
@@ -173,9 +173,9 @@ export async function makeTempCliProject(prefix = "supabase-cli-e2e-") {
   return project;
 }
 
-export async function makeTempLegacyStackProject(
-  prefix = "supabase-legacy-stack-e2e-",
-  cleanupTimeoutMs = DEFAULT_LEGACY_STACK_CLEANUP_TIMEOUT_MS,
+export async function makeTempCliStackProject(
+  prefix = "supabase-stack-e2e-",
+  cleanupTimeoutMs = DEFAULT_STACK_CLEANUP_TIMEOUT_MS,
 ) {
   const project = await makeTempProject(prefix);
   const cleanup = async () => {
@@ -189,14 +189,13 @@ export async function makeTempLegacyStackProject(
     }
 
     const stopped = await runSupabase(["stop", "--no-backup"], {
-      entrypoint: "legacy",
       cwd: project.dir,
       exitTimeoutMs: cleanupTimeoutMs,
     });
     if (stopped.exitCode !== 0) {
       throw new Error(
         [
-          `Failed to stop legacy stack in ${project.dir} (exit code ${stopped.exitCode}).`,
+          `Failed to stop stack in ${project.dir} (exit code ${stopped.exitCode}).`,
           `stdout:\n${stopped.stdout}`,
           `stderr:\n${stopped.stderr}`,
         ].join("\n"),
@@ -306,8 +305,6 @@ export function spawnSupabase(
     cleanupProcessGroupOnClose?: boolean;
     /** Maximum time to wait for the process to exit before force-killing it. */
     exitTimeoutMs?: number;
-    /** Which source entrypoint to execute. Only the legacy shell remains. */
-    entrypoint?: "legacy";
   },
 ): SpawnedSupabase {
   const ownHome = options?.home ? null : makeTempHome();
@@ -336,8 +333,8 @@ export function spawnSupabase(
   for (const [key, value] of Object.entries(mergedEnv)) {
     if (value !== undefined) env[key] = value;
   }
-  assertBuildArtifactsExist(LEGACY_BINARY_PATH);
-  env["SUPABASE_CLI_BINARY_OVERRIDE"] = LEGACY_BINARY_PATH;
+  assertBuildArtifactsExist(BINARY_PATH);
+  env["SUPABASE_CLI_BINARY_OVERRIDE"] = BINARY_PATH;
   execCmd = "node";
   execArgs = [SHIM_PATH, ...args];
   const proc = spawn(execCmd, execArgs, {
@@ -410,8 +407,10 @@ export function spawnSupabase(
       return closeResult;
     }
 
+    let timedOut = false;
     const result = await new Promise<RunResult>((resolve) => {
       const timeout = setTimeout(() => {
+        timedOut = true;
         killProcessGroup(proc.pid!, "SIGKILL");
         try {
           proc.kill("SIGKILL");
@@ -430,7 +429,7 @@ export function spawnSupabase(
     });
 
     disposeOwnHome();
-    return result;
+    return timedOut ? { ...result, timedOutAfterMs: timeoutMs } : result;
   };
 
   return {
@@ -530,8 +529,6 @@ export async function runSupabase(
     untilTimeoutMs?: number;
     /** Maximum time to wait for the command to exit before force-killing it. */
     exitTimeoutMs?: number;
-    /** Which source entrypoint to execute. Only the legacy shell remains. */
-    entrypoint?: "legacy";
   },
 ): Promise<RunResult> {
   const spawned = spawnSupabase(args, options);
@@ -553,12 +550,21 @@ export async function runSupabase(
 }
 
 export function requireCliSuccess(
-  result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string },
+  result: {
+    readonly exitCode: number;
+    readonly stdout: string;
+    readonly stderr: string;
+    readonly timedOutAfterMs?: number;
+  },
   command: string,
 ): void {
   if (result.exitCode !== 0) {
+    const reason =
+      result.timedOutAfterMs === undefined
+        ? `exit ${result.exitCode}`
+        : `exit ${result.exitCode}; harness SIGKILLed it after ${result.timedOutAfterMs}ms without exit`;
     throw new Error(
-      `${command} failed (exit ${result.exitCode})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      `${command} failed (${reason})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
     );
   }
 }

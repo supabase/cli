@@ -3,17 +3,17 @@ import { Effect, Option } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  LEGACY_VALID_REF,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { legacySsoInfo } from "./info.handler.ts";
+  buildTestRuntime,
+  VALID_REF,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { ssoInfo } from "./info.handler.ts";
 
-const tempRoot = useLegacyTempWorkdir("supabase-sso-info-int-");
+const tempRoot = useTempWorkdir("supabase-sso-info-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -23,12 +23,12 @@ interface SetupOpts {
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const analytics = mockAnalytics();
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
-  const api = mockLegacyPlatformApi();
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
+  const api = mockCommandPlatformApi();
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
 
-  const layer = buildLegacyTestRuntime({
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -41,15 +41,15 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, analytics, telemetry, cache };
 }
 
-const expectedAcsUrl = `https://${LEGACY_VALID_REF}.supabase.co/auth/v1/sso/saml/acs`;
-const expectedEntityId = `https://${LEGACY_VALID_REF}.supabase.co/auth/v1/sso/saml/metadata`;
-const expectedRelayState = `https://${LEGACY_VALID_REF}.supabase.co`;
+const expectedAcsUrl = `https://${VALID_REF}.supabase.co/auth/v1/sso/saml/acs`;
+const expectedEntityId = `https://${VALID_REF}.supabase.co/auth/v1/sso/saml/metadata`;
+const expectedRelayState = `https://${VALID_REF}.supabase.co`;
 
-describe("legacy sso info integration", () => {
+describe("sso info integration", () => {
   it.live("renders a 3-row markdown table in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("Single sign-on URL (ACS URL)");
       expect(out.stdoutText).toContain("Audience URI (SP Entity ID)");
       expect(out.stdoutText).toContain("Default Relay State");
@@ -67,7 +67,7 @@ describe("legacy sso info integration", () => {
   it.live("emits exactly one space between the ACS URL label and the column separator", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ projectRef: Option.none() });
       expect(out.stdoutText).toContain(`Single sign-on URL (ACS URL) | ${expectedAcsUrl}`);
       expect(out.stdoutText).not.toContain("Single sign-on URL (ACS URL)  |");
     }).pipe(Effect.provide(layer));
@@ -76,7 +76,7 @@ describe("legacy sso info integration", () => {
   it.live("TS --output-format=json emits a structured payload", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacySsoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toEqual({
@@ -90,7 +90,7 @@ describe("legacy sso info integration", () => {
   it.live("Go --output=env emits ACS_URL / ENTITY_ID / RELAY_STATE alphabetized", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
-      yield* legacySsoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("ACS_URL=");
       expect(out.stdoutText).toContain("ENTITY_ID=");
       expect(out.stdoutText).toContain("RELAY_STATE=");
@@ -100,7 +100,7 @@ describe("legacy sso info integration", () => {
   it.live("Go --output=json sorts keys alphabetically and includes all three", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
-      yield* legacySsoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ projectRef: Option.none() });
       expect(out.stdoutText).toContain('"acs_url"');
       expect(out.stdoutText).toContain('"entity_id"');
       expect(out.stdoutText).toContain('"relay_state"');
@@ -114,7 +114,7 @@ describe("legacy sso info integration", () => {
   it.live("Go --output=yaml emits the three keys", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
-      yield* legacySsoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("acs_url:");
       expect(out.stdoutText).toContain("entity_id:");
       expect(out.stdoutText).toContain("relay_state:");
@@ -124,7 +124,7 @@ describe("legacy sso info integration", () => {
   it.live("Go --output=toml emits the three keys", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
-      yield* legacySsoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("acs_url");
       expect(out.stdoutText).toContain("entity_id");
       expect(out.stdoutText).toContain("relay_state");
@@ -135,7 +135,7 @@ describe("legacy sso info integration", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoInfo({ projectRef: Option.some(flagRef) });
+      yield* ssoInfo({ projectRef: Option.some(flagRef) });
       expect(out.stdoutText).toContain(`https://${flagRef}.supabase.co`);
     }).pipe(Effect.provide(layer));
   });
@@ -143,7 +143,7 @@ describe("legacy sso info integration", () => {
   it.live("flushes telemetry + linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ projectRef: Option.none() });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -152,7 +152,7 @@ describe("legacy sso info integration", () => {
   it.live("does NOT make any API call", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoInfo({ projectRef: Option.none() });
+      yield* ssoInfo({ projectRef: Option.none() });
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });

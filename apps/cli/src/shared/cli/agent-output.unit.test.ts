@@ -42,11 +42,11 @@ describe("resolveAgentOutputFormat", () => {
     ).toBe("json");
   });
 
-  it("keeps legacy --output authoritative over the agent JSON default", () => {
+  it("keeps --output authoritative over the agent JSON default", () => {
     expect(
       resolveAgentOutputFormat({
         explicitOutputFormat: Option.none(),
-        legacyOutputFormat: Option.some("pretty"),
+        goOutputFormat: Option.some("pretty"),
         detectedAgentName: Option.some("codex"),
       }),
     ).toBe("text");
@@ -116,6 +116,57 @@ describe("resolveAgentOutputFormat", () => {
         Option.some("codex"),
       ),
     ).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--log-level", "error", "--version"], Option.some("codex")),
+    ).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--log-level=error", "--version"], Option.some("codex")),
+    ).toBe("text");
+    // Version wins over Completions/Wizard (built-in action precedence), so
+    // these argv render the version line and must resolve to text.
+    expect(
+      resolveAgentOutputFormatFromArgs(
+        ["--completions", "bash", "--version"],
+        Option.some("codex"),
+      ),
+    ).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["--wizard", "--version"], Option.some("codex"))).toBe(
+      "text",
+    );
+    expect(
+      resolveAgentOutputFormatFromArgs(["--wizard=true", "--version"], Option.some("codex")),
+    ).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--debug=false", "--version"], Option.some("codex")),
+    ).toBe("text");
+    // An invalid inline value on a SKIPPED boolean still serves the action
+    // (presence is scanned before `--wizard=bogus` parses) — text. On the
+    // action flag ITSELF it fails that flag's own parse — no action, so the
+    // error keeps the agent JSON envelope.
+    expect(
+      resolveAgentOutputFormatFromArgs(["--wizard=bogus", "--version"], Option.some("codex")),
+    ).toBe("text");
+    // The parser consumes a space-separated boolean literal too.
+    expect(
+      resolveAgentOutputFormatFromArgs(["--wizard", "false", "--version"], Option.some("codex")),
+    ).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--debug", "0", "--version"], Option.some("codex")),
+    ).toBe("text");
+    // Boundary: a non-literal operand is NOT skipped — the walk bails
+    // conservatively even though the renderer still serves the version here
+    // (ledgered with the walk-consolidation follow-up).
+    expect(
+      resolveAgentOutputFormatFromArgs(["--wizard", "bogus", "--version"], Option.some("codex")),
+    ).toBe("json");
+    expect(resolveAgentOutputFormatFromArgs(["--version=true"], Option.some("codex"))).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["--version=0"], Option.some("codex"))).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["-v=true"], Option.some("codex"))).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["--help=true"], Option.some("codex"))).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["--version=bogus"], Option.some("codex"))).toBe(
+      "json",
+    );
+    expect(resolveAgentOutputFormatFromArgs(["--help=bogus"], Option.some("codex"))).toBe("json");
     expect(resolveAgentOutputFormatFromArgs(["--help"], Option.some("codex"))).toBe("text");
     expect(
       resolveAgentOutputFormatFromArgs(["db", "reset", "--version", "1"], Option.some("codex")),

@@ -1,18 +1,18 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
-  legacyAppendStorageVectorEnv,
-  legacyBuildStorageContainerSpec,
-  legacyBuildStorageEnv,
-  type LegacyStorageContainerSpecInput,
-  type LegacyStorageEnvInput,
+  appendStorageVectorEnv,
+  buildStorageContainerSpec,
+  buildStorageEnv,
+  type StorageContainerSpecInput,
+  type StorageEnvInput,
 } from "./storage.service.ts";
 
 afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-const baseEnvInput: LegacyStorageEnvInput = {
+const baseEnvInput: StorageEnvInput = {
   targetMigration: "",
   anonKey: "anon-key",
   serviceRoleKey: "service-role-key",
@@ -30,9 +30,9 @@ const baseEnvInput: LegacyStorageEnvInput = {
   vectorBucketsEnabled: false,
 };
 
-describe("legacyBuildStorageEnv", () => {
+describe("buildStorageEnv", () => {
   test("wires the resolved auth keys, JWT secret, and JWKS", () => {
-    const env = legacyBuildStorageEnv(baseEnvInput);
+    const env = buildStorageEnv(baseEnvInput);
     expect(env["ANON_KEY"]).toBe("anon-key");
     expect(env["SERVICE_KEY"]).toBe("service-role-key");
     expect(env["AUTH_JWT_SECRET"]).toBe(baseEnvInput.jwtSecret);
@@ -40,14 +40,14 @@ describe("legacyBuildStorageEnv", () => {
   });
 
   test("wires DATABASE_URL as the supabase_storage_admin role against the internal DB address", () => {
-    const env = legacyBuildStorageEnv(baseEnvInput);
+    const env = buildStorageEnv(baseEnvInput);
     expect(env["DATABASE_URL"]).toBe(
       "postgresql://supabase_storage_admin:postgres@supabase_db_proj:5432/postgres",
     );
   });
 
   test("wires the resolved S3 credentials, not hardcoded literals", () => {
-    const env = legacyBuildStorageEnv({
+    const env = buildStorageEnv({
       ...baseEnvInput,
       s3AccessKeyId: "custom-access-key",
       s3SecretAccessKey: "custom-secret-key",
@@ -59,12 +59,12 @@ describe("legacyBuildStorageEnv", () => {
   });
 
   test("converts file_size_limit from a human-readable string to a byte count", () => {
-    const env = legacyBuildStorageEnv({ ...baseEnvInput, fileSizeLimit: "5MiB" });
+    const env = buildStorageEnv({ ...baseEnvInput, fileSizeLimit: "5MiB" });
     expect(env["FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
   });
 
   test("matches Go's remaining static env values", () => {
-    const env = legacyBuildStorageEnv(baseEnvInput);
+    const env = buildStorageEnv(baseEnvInput);
     expect(env).toMatchObject({
       STORAGE_BACKEND: "file",
       FILE_STORAGE_BACKEND_PATH: "/mnt",
@@ -80,19 +80,19 @@ describe("legacyBuildStorageEnv", () => {
 
   describe("image-transformation / ImgProxy gate", () => {
     test("ENABLE_IMAGE_TRANSFORMATION and IMGPROXY_URL reflect the caller-resolved compound flag", () => {
-      const disabled = legacyBuildStorageEnv({
+      const disabled = buildStorageEnv({
         ...baseEnvInput,
         imageTransformationEnabled: false,
       });
       expect(disabled["ENABLE_IMAGE_TRANSFORMATION"]).toBe("false");
 
-      const enabled = legacyBuildStorageEnv({ ...baseEnvInput, imageTransformationEnabled: true });
+      const enabled = buildStorageEnv({ ...baseEnvInput, imageTransformationEnabled: true });
       expect(enabled["ENABLE_IMAGE_TRANSFORMATION"]).toBe("true");
       expect(enabled["IMAGE_TRANSFORMATION_ENABLED"]).toBe("true");
     });
 
     test("IMGPROXY_URL always points at the imgproxy container regardless of the gate", () => {
-      const env = legacyBuildStorageEnv(baseEnvInput);
+      const env = buildStorageEnv(baseEnvInput);
       expect(env["IMGPROXY_URL"]).toBe("http://supabase_imgproxy_proj:5001");
     });
   });
@@ -100,17 +100,17 @@ describe("legacyBuildStorageEnv", () => {
   describe("S3 protocol gate", () => {
     test("S3_PROTOCOL_ENABLED reflects config.storage.s3_protocol.enabled directly", () => {
       expect(
-        legacyBuildStorageEnv({ ...baseEnvInput, s3ProtocolEnabled: true })["S3_PROTOCOL_ENABLED"],
+        buildStorageEnv({ ...baseEnvInput, s3ProtocolEnabled: true })["S3_PROTOCOL_ENABLED"],
       ).toBe("true");
       expect(
-        legacyBuildStorageEnv({ ...baseEnvInput, s3ProtocolEnabled: false })["S3_PROTOCOL_ENABLED"],
+        buildStorageEnv({ ...baseEnvInput, s3ProtocolEnabled: false })["S3_PROTOCOL_ENABLED"],
       ).toBe("false");
     });
   });
 
   describe("vector-buckets env branch", () => {
     test("omits every VECTOR_* key when vectorBucketsEnabled is false", () => {
-      const env = legacyBuildStorageEnv({ ...baseEnvInput, vectorBucketsEnabled: false });
+      const env = buildStorageEnv({ ...baseEnvInput, vectorBucketsEnabled: false });
       expect(env["VECTOR_ENABLED"]).toBeUndefined();
       expect(env["VECTOR_BUCKET_PROVIDER"]).toBeUndefined();
       expect(env["VECTOR_STORE_MIGRATIONS_ENABLED"]).toBeUndefined();
@@ -118,7 +118,7 @@ describe("legacyBuildStorageEnv", () => {
     });
 
     test("appends the four VECTOR_* keys with Go's defaults when enabled and no override is set", () => {
-      const env = legacyBuildStorageEnv({ ...baseEnvInput, vectorBucketsEnabled: true });
+      const env = buildStorageEnv({ ...baseEnvInput, vectorBucketsEnabled: true });
       expect(env["VECTOR_ENABLED"]).toBe("true");
       expect(env["VECTOR_BUCKET_PROVIDER"]).toBe("pgvector");
       expect(env["VECTOR_STORE_MIGRATIONS_ENABLED"]).toBe("true");
@@ -128,14 +128,14 @@ describe("legacyBuildStorageEnv", () => {
     });
 
     test("VECTOR_DATABASE_URL defaults to the postgres role, distinct from DATABASE_URL's storage_admin role", () => {
-      const env = legacyBuildStorageEnv({ ...baseEnvInput, vectorBucketsEnabled: true });
+      const env = buildStorageEnv({ ...baseEnvInput, vectorBucketsEnabled: true });
       expect(env["VECTOR_DATABASE_URL"]).not.toBe(env["DATABASE_URL"]);
       expect(env["VECTOR_DATABASE_URL"]).toContain("postgres:postgres@");
       expect(env["DATABASE_URL"]).toContain("supabase_storage_admin:postgres@");
     });
 
     test("respects a projectEnvValues override over the default, matching Go's envOrDefault", () => {
-      const env = legacyBuildStorageEnv({
+      const env = buildStorageEnv({
         ...baseEnvInput,
         vectorBucketsEnabled: true,
         projectEnvValues: { VECTOR_ENABLED: "false", VECTOR_BUCKET_PROVIDER: "custom" },
@@ -147,7 +147,7 @@ describe("legacyBuildStorageEnv", () => {
     });
 
     test("an override that is set but empty is used verbatim, matching os.LookupEnv (not treated as unset)", () => {
-      const env = legacyBuildStorageEnv({
+      const env = buildStorageEnv({
         ...baseEnvInput,
         vectorBucketsEnabled: true,
         projectEnvValues: { VECTOR_BUCKET_PROVIDER: "" },
@@ -157,10 +157,10 @@ describe("legacyBuildStorageEnv", () => {
   });
 });
 
-describe("legacyAppendStorageVectorEnv", () => {
+describe("appendStorageVectorEnv", () => {
   test("preserves the base env and appends the four vector keys", () => {
     const base = { EXISTING_KEY: "unchanged" };
-    const appended = legacyAppendStorageVectorEnv(base, {
+    const appended = appendStorageVectorEnv(base, {
       dbHost: "supabase_db_proj",
       dbPassword: "postgres",
     });
@@ -176,8 +176,8 @@ describe("legacyAppendStorageVectorEnv", () => {
   });
 });
 
-describe("legacyBuildStorageContainerSpec", () => {
-  const input: LegacyStorageContainerSpecInput = {
+describe("buildStorageContainerSpec", () => {
+  const input: StorageContainerSpecInput = {
     projectId: "proj",
     networkId: "supabase_network_proj",
     image: "supabase/storage-api:v1",
@@ -197,7 +197,7 @@ describe("legacyBuildStorageContainerSpec", () => {
   };
 
   test("derives the container name, DB host, and imgproxy host from projectId", () => {
-    const spec = legacyBuildStorageContainerSpec(input);
+    const spec = buildStorageContainerSpec(input);
     expect(spec.containerName).toBe("supabase_storage_proj");
     expect(spec.env["DATABASE_URL"]).toBe(
       "postgresql://supabase_storage_admin:postgres@supabase_db_proj:5432/postgres",
@@ -206,14 +206,14 @@ describe("legacyBuildStorageContainerSpec", () => {
   });
 
   test("mounts its own named volume at /mnt, with no ports/exposedPorts", () => {
-    const spec = legacyBuildStorageContainerSpec(input);
+    const spec = buildStorageContainerSpec(input);
     expect(spec.binds).toEqual(["supabase_storage_proj:/mnt"]);
     expect(spec.ports).toBeUndefined();
     expect(spec.exposedPorts).toBeUndefined();
   });
 
   test("builds the wget-based healthcheck against the IPv4 loopback", () => {
-    const spec = legacyBuildStorageContainerSpec(input);
+    const spec = buildStorageContainerSpec(input);
     expect(spec.healthcheck).toEqual({
       test: [
         "CMD",
@@ -231,7 +231,7 @@ describe("legacyBuildStorageContainerSpec", () => {
 
   test("uses BusyBox wget flags on a slim storage image", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const spec = legacyBuildStorageContainerSpec({
+    const spec = buildStorageContainerSpec({
       ...input,
       image: "ghcr.io/supabase/cli/storage:v1.72.1",
     });
@@ -245,7 +245,7 @@ describe("legacyBuildStorageContainerSpec", () => {
   });
 
   test("network alias is 'storage'", () => {
-    const spec = legacyBuildStorageContainerSpec(input);
+    const spec = buildStorageContainerSpec(input);
     expect(spec.networkAliases).toEqual(["storage"]);
     expect(spec.networkId).toBe("supabase_network_proj");
     expect(spec.restartPolicy).toBe("unless-stopped");
@@ -253,14 +253,14 @@ describe("legacyBuildStorageContainerSpec", () => {
   });
 
   test("propagates the image-transformation gate through to ENABLE_IMAGE_TRANSFORMATION", () => {
-    const withImgproxy = legacyBuildStorageContainerSpec({
+    const withImgproxy = buildStorageContainerSpec({
       ...input,
       imageTransformationEnabled: true,
     });
     expect(withImgproxy.env["ENABLE_IMAGE_TRANSFORMATION"]).toBe("true");
     expect(withImgproxy.env["IMAGE_TRANSFORMATION_ENABLED"]).toBe("true");
 
-    const withoutImgproxy = legacyBuildStorageContainerSpec({
+    const withoutImgproxy = buildStorageContainerSpec({
       ...input,
       imageTransformationEnabled: false,
     });
@@ -269,7 +269,7 @@ describe("legacyBuildStorageContainerSpec", () => {
   });
 
   test("propagates the vector-buckets flag through to the container env", () => {
-    const spec = legacyBuildStorageContainerSpec({ ...input, vectorBucketsEnabled: true });
+    const spec = buildStorageContainerSpec({ ...input, vectorBucketsEnabled: true });
     expect(spec.env["VECTOR_ENABLED"]).toBe("true");
     expect(spec.env["VECTOR_DATABASE_URL"]).toBe(
       "postgresql://postgres:postgres@supabase_db_proj:5432/postgres",

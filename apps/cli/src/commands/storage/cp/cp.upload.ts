@@ -1,16 +1,13 @@
 import * as nodePath from "node:path";
 
-import {
-  legacySplitBucketPrefix,
-  legacyStorageIsDir,
-} from "../../../command-internal/legacy-storage-url.ts";
+import { splitBucketPrefix, storageIsDir } from "../../../command-internal/storage-url.ts";
 
 /**
  * Pure destination-key resolution for `storage cp` recursive uploads. Kept
  * free of Effect/services so the branch matrix stays unit-testable.
  */
 
-export interface LegacyUploadDstPathInput {
+export interface UploadDstPathInput {
   /** The destination object path (`dstParsed.Path`, e.g. `/private/dir/`). */
   readonly remotePath: string;
   /** `filepath.Rel(localPath, filePath)` — `"."` when `localPath` is the file itself. */
@@ -38,11 +35,11 @@ export interface LegacyUploadDstPathInput {
  * Remote keys are joined with POSIX semantics (Go uses `path.Join`); the relative
  * segment's OS separators are normalised to `/`.
  */
-export function legacyResolveUploadDstPath(input: LegacyUploadDstPathInput): string {
+export function resolveUploadDstPath(input: UploadDstPathInput): string {
   let dstPath = input.remotePath;
   if (input.relPath === ".") {
-    const [, prefix] = legacySplitBucketPrefix(dstPath);
-    if (legacyStorageIsDir(prefix) || (input.dirExists && !input.fileExists)) {
+    const [, prefix] = splitBucketPrefix(dstPath);
+    if (storageIsDir(prefix) || (input.dirExists && !input.fileExists)) {
       dstPath = nodePath.posix.join(dstPath, input.fileName);
     }
     return dstPath;

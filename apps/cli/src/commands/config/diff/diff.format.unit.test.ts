@@ -1,8 +1,8 @@
 import type { ConfigChangeSet } from "@supabase/config";
 import { describe, expect, test } from "vitest";
 
-import { legacyConfigApiScope, legacyConfigScopeLine } from "../config.format.ts";
-import { legacyConfigDiffSummaryMessage, legacyRenderConfigDiffText } from "./diff.format.ts";
+import { configApiScope, configScopeLine } from "../config.format.ts";
+import { configDiffSummaryMessage, renderConfigDiffText } from "./diff.format.ts";
 
 const EMPTY_CHANGE_SET: ConfigChangeSet = {
   changes: [],
@@ -12,14 +12,14 @@ const EMPTY_CHANGE_SET: ConfigChangeSet = {
   absencePolicy: "absent-is-hands-off",
 };
 
-describe("legacyConfigApiScope", () => {
+describe("configApiScope", () => {
   test("lists record blocks the response carried, dropping non-records and empty records", () => {
     // An EMPTY block record is how a permission-truncated response most
     // plausibly reports a block it could not read — claiming it was
     // "compared" while all its keys render (not returned) would be false,
     // and with --exit-code that is a permanently red CI no file edit fixes.
     expect(
-      legacyConfigApiScope({
+      configApiScope({
         api: { max_rows: 5 },
         auth: {},
         database: null,
@@ -33,10 +33,10 @@ describe("legacyConfigApiScope", () => {
   });
 });
 
-describe("legacyConfigScopeLine", () => {
+describe("configScopeLine", () => {
   test("calls out blocks the response did not return", () => {
     expect(
-      legacyConfigScopeLine({
+      configScopeLine({
         present: ["api", "auth"],
         missing: ["database", "pooler", "realtime", "storage"],
       }),
@@ -45,7 +45,7 @@ describe("legacyConfigScopeLine", () => {
 
   test("an empty response scope renders (none)", () => {
     expect(
-      legacyConfigScopeLine({
+      configScopeLine({
         present: [],
         missing: ["api", "auth", "database", "pooler", "realtime", "storage"],
       }),
@@ -55,14 +55,14 @@ describe("legacyConfigScopeLine", () => {
   });
 });
 
-describe("legacyConfigDiffSummaryMessage", () => {
+describe("configDiffSummaryMessage", () => {
   test("a missing block's caveat travels with the summary message, not just the text renderer", () => {
     // Mirrors the hazard documented above: a partial API response (e.g. a
     // scoped token returning `auth: {}`) must not report an unqualified "No
     // config differences found." in machine `.message` — an agent echoing
     // just `.message` would otherwise wrongly claim a full comparison.
     expect(
-      legacyConfigDiffSummaryMessage(EMPTY_CHANGE_SET, { present: ["api"], missing: ["auth"] }),
+      configDiffSummaryMessage(EMPTY_CHANGE_SET, { present: ["api"], missing: ["auth"] }),
     ).toBe(
       "No config differences found. 1 block was not returned by the API and was not compared: auth.",
     );
@@ -70,7 +70,7 @@ describe("legacyConfigDiffSummaryMessage", () => {
 
   test("multiple missing blocks pluralize the caveat", () => {
     expect(
-      legacyConfigDiffSummaryMessage(EMPTY_CHANGE_SET, {
+      configDiffSummaryMessage(EMPTY_CHANGE_SET, {
         present: [],
         missing: ["auth", "storage"],
       }),
@@ -80,9 +80,9 @@ describe("legacyConfigDiffSummaryMessage", () => {
   });
 
   test("no caveat when every block was returned", () => {
-    expect(
-      legacyConfigDiffSummaryMessage(EMPTY_CHANGE_SET, { present: ["api"], missing: [] }),
-    ).toBe("No config differences found.");
+    expect(configDiffSummaryMessage(EMPTY_CHANGE_SET, { present: ["api"], missing: [] })).toBe(
+      "No config differences found.",
+    );
   });
 
   test("the missing-block caveat travels alongside the masked/unmanaged caveats", () => {
@@ -90,18 +90,16 @@ describe("legacyConfigDiffSummaryMessage", () => {
       ...EMPTY_CHANGE_SET,
       masked: [["auth", "external", "github", "secret"]],
     };
-    expect(
-      legacyConfigDiffSummaryMessage(changeSet, { present: ["api"], missing: ["storage"] }),
-    ).toBe(
+    expect(configDiffSummaryMessage(changeSet, { present: ["api"], missing: ["storage"] })).toBe(
       "No config differences found. 1 block was not returned by the API and was not compared: storage. " +
         "1 credential value not compared (masked by the API): auth.external.github.secret.",
     );
   });
 });
 
-describe("legacyRenderConfigDiffText", () => {
+describe("renderConfigDiffText", () => {
   // Pins the exact byte shape once the per-change loop moved to
-  // `legacyConfigRenderChangeLines` (`../config.format.ts`, shared with
+  // `configRenderChangeLines` (`../config.format.ts`, shared with
   // `config push`): one blank line between change blocks, one blank line
   // between the last change block and the counts line, no blank line before
   // the `Note:` lines.
@@ -122,7 +120,7 @@ describe("legacyRenderConfigDiffText", () => {
       counts: { update: 1, remote_only: 1, local_only: 0, total: 2 },
       absencePolicy: "absent-is-hands-off",
     };
-    expect(legacyRenderConfigDiffText(changeSet, { present: ["api", "auth"], missing: [] })).toBe(
+    expect(renderConfigDiffText(changeSet, { present: ["api", "auth"], missing: [] })).toBe(
       "api.max_rows [update]\n" +
         "  local:  500\n" +
         "  remote: 1000\n" +
@@ -139,7 +137,7 @@ describe("legacyRenderConfigDiffText", () => {
 
   test("no differences renders the empty-state line with no leading blank", () => {
     expect(
-      legacyRenderConfigDiffText(
+      renderConfigDiffText(
         {
           changes: [],
           masked: [],

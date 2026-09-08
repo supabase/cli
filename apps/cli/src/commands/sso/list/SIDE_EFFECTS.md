@@ -2,12 +2,12 @@
 
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                            |
-| ---------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------- |
-| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliSettings.profile` |
-| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                        |
-| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                   |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                  |
+| Path                                           | Format                    | When                                                                                          |
+| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile` |
+| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
+| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                |
 
 ## Files Written
 
@@ -33,12 +33,12 @@
 
 ## Exit Codes
 
-| Code | Condition                                                 |
-| ---- | --------------------------------------------------------- |
-| `0`  | success                                                   |
-| `1`  | `LegacySsoListSamlDisabledError` — 404 from list endpoint |
-| `1`  | `LegacySsoListUnexpectedStatusError` — other non-2xx      |
-| `1`  | `LegacySsoListNetworkError` — transport-level failure     |
+| Code | Condition                                           |
+| ---- | --------------------------------------------------- |
+| `0`  | success                                             |
+| `1`  | `SsoListSamlDisabledError` — 404 from list endpoint |
+| `1`  | `SsoListUnexpectedStatusError` — other non-2xx      |
+| `1`  | `SsoListNetworkError` — transport-level failure     |
 
 ## Telemetry Events Fired
 

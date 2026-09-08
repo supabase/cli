@@ -368,13 +368,6 @@ async function forceCleanup(
       rmSync(stackDir, { recursive: true, force: true });
     } catch {}
   }
-
-  if (homeDir !== undefined) {
-    const managedStacksRoot = path.join(normalizeDir(homeDir), "managed", "stacks");
-    try {
-      rmSync(managedStacksRoot, { recursive: true, force: true });
-    } catch {}
-  }
 }
 
 function createRealEnvironment(): CleanupEnvironment {

@@ -8,67 +8,67 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
-  LEGACY_FAKE_SHADOW_CONTAINER_ID,
-  LEGACY_VALID_REF,
-  legacyFailWriteStringMatchingFsLayer,
-  legacyFailWriteStringOnNthCallFsLayer,
-  legacyWithEnv,
-  mockLegacyCliSettings,
-  mockLegacyDockerDaemonCliSpawner,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyShadowContainerCliSpawner,
-  mockLegacyTelemetryStateTracked,
-  useLegacyShadowCacheDisabled,
-  useLegacyTempWorkdir,
-  legacySequentialExecBatch,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  FAKE_SHADOW_CONTAINER_ID,
+  VALID_REF,
+  failWriteStringMatchingFsLayer,
+  failWriteStringOnNthCallFsLayer,
+  withEnvVar,
+  mockCommandSettings,
+  mockDockerDaemonCliSpawner,
+  mockLinkedProjectCacheTracked,
+  mockShadowContainerCliSpawner,
+  mockTelemetryStateTracked,
+  useShadowCacheDisabled,
+  useTempWorkdir,
+  sequentialExecBatch,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
-  LegacyDebugFlag,
-  LegacyDnsResolverFlag,
-  LegacyExperimentalFlag,
-  LegacyNetworkIdFlag,
-} from "../../../shared/legacy/global-flags.ts";
-import { LegacyGoProxy } from "../../../shared/legacy/go-proxy.service.ts";
+  DebugFlag,
+  DnsResolverFlag,
+  ExperimentalFlag,
+  NetworkIdFlag,
+} from "../../../command-internal/global-flags.ts";
+import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
-import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
+import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import {
-  LegacyProjectRefResolver,
+  ProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
-} from "../../../config/legacy-project-ref.service.ts";
-import { LegacyDbConfigLoadError } from "../../../command-internal/legacy-db-config.errors.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
+} from "../../../config/project-ref.service.ts";
+import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import {
-  LegacyDbConnection,
-  type LegacyDbSession,
-  type LegacyPgConnInput,
-} from "../../../command-internal/legacy-db-connection.service.ts";
-import { LegacyDbConnectError } from "../../../command-internal/legacy-db-connection.errors.ts";
-import { LegacyDockerRunError } from "../../../command-internal/legacy-docker-run.errors.ts";
+  DbConnection,
+  type DbSession,
+  type PgConnInput,
+} from "../../../command-internal/db-connection.service.ts";
+import { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
+import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import {
-  LegacyDockerRun,
-  type LegacyDockerRunOpts,
-} from "../../../command-internal/legacy-docker-run.service.ts";
-import { LegacyEdgeRuntimeScriptError } from "../../../command-internal/legacy-edge-runtime-script.errors.ts";
+  DockerRun,
+  type DockerRunOpts,
+} from "../../../command-internal/docker-run.service.ts";
+import { EdgeRuntimeScriptError } from "../../../command-internal/edge-runtime-script.errors.ts";
 import {
-  type LegacyEdgeRuntimeRunOpts,
-  LegacyEdgeRuntimeScript,
-} from "../../../command-internal/legacy-edge-runtime-script.service.ts";
-import { LegacyPgDeltaSslProbe } from "../../../command-internal/legacy-pgdelta-ssl-probe.service.ts";
+  type EdgeRuntimeRunOpts,
+  EdgeRuntimeScript,
+} from "../../../command-internal/edge-runtime-script.service.ts";
+import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.service.ts";
 import {
-  LegacyPgDeltaEngine,
-  type LegacyPgDeltaDatabaseDiffInput,
-  type LegacyPgDeltaExplicitDiffInput,
-  type LegacyPgDeltaHazardReport,
-} from "../shared/legacy-pgdelta-engine.service.ts";
-import type { LegacyDbDiffFlags } from "./diff.command.ts";
-import { legacyDbDiff } from "./diff.handler.ts";
+  PgDeltaEngine,
+  type PgDeltaDatabaseDiffInput,
+  type PgDeltaExplicitDiffInput,
+  type PgDeltaHazardReport,
+} from "../shared/pgdelta-engine.service.ts";
+import type { DbDiffFlags } from "./diff.command.ts";
+import { dbDiff } from "./diff.handler.ts";
 import {
-  LEGACY_PGADMIN_DESKTOP_NOTE_PREFIX,
-  LEGACY_PGADMIN_DIFF_HEADER,
-} from "./legacy-pgadmin-diff.ts";
+  PGADMIN_DESKTOP_NOTE_PREFIX,
+  PGADMIN_DIFF_HEADER,
+} from "./pgadmin-diff.ts";
 
 interface SetupOpts {
   readonly format?: OutputFormat;
@@ -79,7 +79,7 @@ interface SetupOpts {
   readonly diffFiles?: ReadonlyArray<{ readonly name: string; readonly sql: string }>;
   // Exact suffixes returned by the pg-delta renderer, parallel to `diffFiles`.
   readonly diffSuffixes?: ReadonlyArray<string | null>;
-  readonly hazards?: LegacyPgDeltaHazardReport;
+  readonly hazards?: PgDeltaHazardReport;
   readonly oom?: boolean; // edge-runtime OOMs; the bash fallback returns `diffSql`
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
   // When set, the PGDELTA_DEBUG shadow-catalog export fails with this message
@@ -97,23 +97,23 @@ interface SetupOpts {
   readonly failWriteMatching?: (path: string) => boolean;
   // When set, the shadow container never reports healthy — for the interrupt-during-
   // health-wait regression coverage (review: PRRT_kwDOErm0O86XMrID). See
-  // `mockLegacyShadowContainerCliSpawner`'s own doc comment for why this is required
+  // `mockShadowContainerCliSpawner`'s own doc comment for why this is required
   // (not `Effect.never`) to observe a genuinely suspended retry loop. Only the
   // `--use-pgadmin` branch still gates on the Docker healthcheck; the shadow-source
   // branch gates on `neverConnectableShadow` below instead.
   readonly neverHealthyShadow?: boolean;
   // When set, every connect to the shadow's own port is refused, so the readiness gate
-  // (`legacyWaitForShadowReady`) keeps polling — the shadow-source branch's equivalent of
+  // (`waitForShadowReady`) keeps polling — the shadow-source branch's equivalent of
   // `neverHealthyShadow`, since that wait no longer consults the Docker healthcheck.
   readonly neverConnectableShadow?: boolean;
-  // `LegacyCliSettings.projectId` (the `SUPABASE_PROJECT_ID` env-only reader). Defaults
+  // `CommandSettings.projectId` (the `SUPABASE_PROJECT_ID` env-only reader). Defaults
   // to `Option.some("test")`; pass `Option.none()` to exercise the
-  // config.toml/workdir-basename fallback `legacyResolveLocalProjectId` provides for
+  // config.toml/workdir-basename fallback `resolveLocalProjectId` provides for
   // the pg-delta edge-runtime cache bind.
   readonly projectId?: Option.Option<string>;
   // Simulates a genuinely unlinked workdir: `loadProjectRef` fails with
-  // `LegacyProjectNotLinkedError` absent an explicit `--project-ref` flag,
-  // instead of silently falling back to `opts.linkedRef ?? LEGACY_VALID_REF`.
+  // `ProjectRefNotLinkedError` absent an explicit `--project-ref` flag,
+  // instead of silently falling back to `opts.linkedRef ?? VALID_REF`.
   readonly linkedFails?: boolean;
   // --- CLI-1968 (native --use-pgadmin) ---
   // Per-differ-run `--json-diff` stdout, one entry per `runCapture` call to the differ
@@ -121,7 +121,7 @@ interface SetupOpts {
   // 2nd `--schema` run; …). Falls back to `""` (an empty/"No schema changes" diff) once
   // exhausted, so a single-run test only needs a one-element array.
   readonly pgadminStdout?: ReadonlyArray<string>;
-  // Per-differ-run stderr (the raw text `legacyProcessPgAdminDiffProgress` filters).
+  // Per-differ-run stderr (the raw text `processPgAdminDiffProgress` filters).
   // Falls back to `""` once exhausted.
   readonly pgadminStderr?: ReadonlyArray<string>;
   // Applied to every differ `runCapture` call (the failure tests below only ever drive
@@ -131,7 +131,7 @@ interface SetupOpts {
   // returning a result — `"spawn"` (daemon unreachable) or `"pull"` (registry failure).
   readonly pgadminDockerFail?: "spawn" | "pull";
   // Makes the pre-flight `docker container inspect supabase_db_<projectId>` probe
-  // (`legacyIsLocalDbRunning`, run before `--use-pgadmin` provisions anything) report
+  // (`isLocalDbRunning`, run before `--use-pgadmin` provisions anything) report
   // "container not found" — surfaces as "supabase start is not running.".
   readonly dbNotRunning?: boolean;
   // Makes that SAME probe fail with a daemon-unreachable stderr instead — the
@@ -143,7 +143,7 @@ interface SetupOpts {
   readonly platform?: NodeJS.Platform;
   // Swaps the stateless shadow spawner for the stateful Docker model, whose
   // `stop`/`cp`/`start` really move bytes. Required by (and only by) the tests that
-  // enable the shadow BASELINE CACHE — see `mockLegacyDockerDaemonCliSpawner`.
+  // enable the shadow BASELINE CACHE — see `mockDockerDaemonCliSpawner`.
   readonly statefulDocker?: boolean;
 }
 
@@ -155,34 +155,34 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
 );
 
 /** `[db] shadow_port`'s schema default — the port every connect to the shadow itself dials. */
-const LEGACY_SHADOW_PORT = 54320;
+const SHADOW_PORT = 54320;
 
 /**
- * Records every `LegacyDbConnection.connect` target's database name, and every `exec`/`query`
+ * Records every `DbConnection.connect` target's database name, and every `exec`/`query`
  * SQL run against it.
  *
  * `neverConnectableShadow` makes every connect to the SHADOW port fail (leaving the local
  * target's own connects untouched) — the shadow's readiness gate is now a direct connect probe
- * (`legacyWaitForShadowReady`), so a shadow that never accepts a connection is what keeps a
+ * (`waitForShadowReady`), so a shadow that never accepts a connection is what keeps a
  * provisioning fiber genuinely suspended inside that retry loop.
  */
 function fakeShadowDbConnection(opts: { readonly neverConnectableShadow?: boolean } = {}) {
   const connectedDatabases: Array<string> = [];
   const execCalls: Array<string> = [];
-  const layer = Layer.succeed(LegacyDbConnection, {
-    connect: (cfg: LegacyPgConnInput) =>
+  const layer = Layer.succeed(DbConnection, {
+    connect: (cfg: PgConnInput) =>
       Effect.gen(function* () {
         connectedDatabases.push(cfg.database);
-        if (opts.neverConnectableShadow === true && cfg.port === LEGACY_SHADOW_PORT) {
-          return yield* Effect.fail(new LegacyDbConnectError({ message: "connection refused" }));
+        if (opts.neverConnectableShadow === true && cfg.port === SHADOW_PORT) {
+          return yield* Effect.fail(new DbConnectError({ message: "connection refused" }));
         }
-        const session: LegacyDbSession = {
+        const session: DbSession = {
           exec: (sql) =>
             Effect.sync(() => {
               execCalls.push(sql);
             }),
           query: () => Effect.succeed([]),
-          execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+          execBatch: (statements) => sequentialExecBatch(session)(statements),
           extensionExists: () => Effect.succeed(false),
           copyToCsv: () => Effect.succeed(new Uint8Array()),
           queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
@@ -195,13 +195,13 @@ function fakeShadowDbConnection(opts: { readonly neverConnectableShadow?: boolea
 
 function setup(workdir: string, opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
 
   // A real docker-spawner fake backs container create/start/health-inspect/cleanup,
   // and a real (fake) Postgres session backs the shadow's own
   // platform-baseline/migration/declarative setup.
-  const shadowSpawner = mockLegacyShadowContainerCliSpawner({
+  const shadowSpawner = mockShadowContainerCliSpawner({
     neverHealthy: opts.neverHealthyShadow ?? false,
     dbNotRunning: opts.dbNotRunning ?? false,
     dbInspectFailsWith: opts.dbInspectFailsWith,
@@ -210,13 +210,13 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // daemon that actually holds container state and carries `docker cp` bytes, so the cache
   // tests below opt into the stateful model instead.
   const dockerDaemon =
-    opts.statefulDocker === true ? mockLegacyDockerDaemonCliSpawner() : undefined;
+    opts.statefulDocker === true ? mockDockerDaemonCliSpawner() : undefined;
   const shadowDbConnection = fakeShadowDbConnection({
     neverConnectableShadow: opts.neverConnectableShadow ?? false,
   });
 
-  const explicitDiffCalls: LegacyPgDeltaExplicitDiffInput[] = [];
-  const databaseDiffCalls: LegacyPgDeltaDatabaseDiffInput[] = [];
+  const explicitDiffCalls: PgDeltaExplicitDiffInput[] = [];
+  const databaseDiffCalls: PgDeltaDatabaseDiffInput[] = [];
   const pgDeltaResult = () => {
     const sql = opts.diffSql ?? "";
     const files =
@@ -248,8 +248,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     };
   };
   const pgDeltaEngine = Layer.succeed(
-    LegacyPgDeltaEngine,
-    LegacyPgDeltaEngine.of({
+    PgDeltaEngine,
+    PgDeltaEngine.of({
       diffExplicit: (input) =>
         Effect.sync(() => {
           explicitDiffCalls.push(input);
@@ -265,22 +265,22 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     }),
   );
 
-  const edgeCalls: LegacyEdgeRuntimeRunOpts[] = [];
-  const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
+  const edgeCalls: EdgeRuntimeRunOpts[] = [];
+  const edge = Layer.succeed(EdgeRuntimeScript, {
+    run: (runOpts: EdgeRuntimeRunOpts) => {
       edgeCalls.push(runOpts);
       if (opts.oom) {
         return Effect.fail(
-          new LegacyEdgeRuntimeScriptError({ message: "Fatal JavaScript out of memory" }),
+          new EdgeRuntimeScriptError({ message: "Fatal JavaScript out of memory" }),
         );
       }
       if (opts.diffFailWith !== undefined) {
-        return Effect.fail(new LegacyEdgeRuntimeScriptError({ message: opts.diffFailWith }));
+        return Effect.fail(new EdgeRuntimeScriptError({ message: opts.diffFailWith }));
       }
       const diffSql = opts.diffSql ?? "";
       // The pg-delta diff script (uniquely identified by `renderPlanFiles`) prints a
       // JSON envelope with one file per plan unit; wrap the test's raw SQL into a
-      // single-unit envelope so `legacyDiffPgDelta` parses it. The migra script
+      // single-unit envelope so `diffPgDelta` parses it. The migra script
       // returns raw SQL unchanged.
       const isPgDelta = runOpts.script.includes("renderPlanFiles");
       const planFiles =
@@ -303,28 +303,28 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   // `dockerCalls` tracks the migra OOM bash fallback's own `runCapture` calls — the
-  // native shadow's PG15+ one-shot setup jobs (`legacyRunStartMigrateJob`) go through
+  // native shadow's PG15+ one-shot setup jobs (`runStartMigrateJob`) go through
   // `runStream` instead (constant-memory stdout discard), so they're tracked
   // separately in `shadowSetupJobCalls` (their `env`, notably `DB_HOST`, is the one
   // shadow-specific parameterization that matters to get right).
   const dockerCalls: unknown[] = [];
   // The pgAdmin differ's own `runCapture` calls, tracked separately from
   // `dockerCalls` (the migra OOM bash fallback's image) so pgadmin tests never
-  // conflate the two — both go through the SAME `LegacyDockerRun.runCapture` seam,
+  // conflate the two — both go through the SAME `DockerRun.runCapture` seam,
   // distinguished only by `image`.
-  const differCalls: Array<LegacyDockerRunOpts> = [];
+  const differCalls: Array<DockerRunOpts> = [];
   // The `runCapture` SECOND (options) argument for every differ call, parallel to
   // `differCalls` — pinned `undefined` below, since the differ's raw stderr is
-  // never teed to the parent terminal (see `legacy-pgadmin-diff.ts`'s own doc
+  // never teed to the parent terminal (see `pgadmin-diff.ts`'s own doc
   // comment).
   const differCaptureOpts: Array<{ readonly teeStderr?: boolean } | undefined> = [];
   // Snapshots `process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]` at the moment each
-  // differ `runCapture` call is made — the real `legacyDockerRunLayer`'s own image
+  // differ `runCapture` call is made — the real `dockerRunLayer`'s own image
   // resolver reads that key straight off `process.env` at call time (no
   // `projectEnvValues` threaded through), so this stands in for it here.
   const differRegistryEnvAtCall: Array<string | undefined> = [];
   const shadowSetupJobCalls: Array<{ readonly env: Readonly<Record<string, string>> }> = [];
-  const docker = Layer.succeed(LegacyDockerRun, {
+  const docker = Layer.succeed(DockerRun, {
     run: () => Effect.die("run unused"),
     runCapture: (dockerOpts, captureOpts) => {
       if (dockerOpts.image.includes("pgadmin-schema-diff")) {
@@ -333,7 +333,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         differRegistryEnvAtCall.push(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]);
         if (opts.pgadminDockerFail !== undefined) {
           return Effect.fail(
-            new LegacyDockerRunError({
+            new DockerRunError({
               message: "failed to run docker: not found",
               reason: opts.pgadminDockerFail,
               daemonDown: opts.pgadminDockerFail === "spawn",
@@ -365,7 +365,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   const resolverCalls: unknown[] = [];
-  const resolver = Layer.succeed(LegacyDbConfigResolver, {
+  const resolver = Layer.succeed(DbConfigResolver, {
     resolve: (resolveFlags) => {
       resolverCalls.push(resolveFlags);
       // A threaded `--project-ref` flag wins over the fixed `opts.linkedRef` test
@@ -392,29 +392,29 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   // The linked ref is now pre-loaded (for the config-override print, ahead of
   // `resolver.resolve()`'s own network work — review: PRRT_kwDOErm0O86XHvYl) via
-  // `LegacyProjectRefResolver`, mirroring the SAME ref `resolver`'s own mock embeds in
+  // `ProjectRefResolver`, mirroring the SAME ref `resolver`'s own mock embeds in
   // its resolved `ref` above, so both stay consistent regardless of whether a test sets
   // `opts.linkedRef` (mirrors `reset.integration.test.ts`'s identical mock).
   // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
   // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
   // (not just `opts.linkedRef`) drives the linked ref.
-  const projectRefResolver = Layer.succeed(LegacyProjectRefResolver, {
-    resolve: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
-    resolveForLink: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
-    resolveOptional: () => Effect.succeed(Option.some(opts.linkedRef ?? LEGACY_VALID_REF)),
+  const projectRefResolver = Layer.succeed(ProjectRefResolver, {
+    resolve: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
+    resolveForLink: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(opts.linkedRef ?? VALID_REF)),
     loadProjectRef: (flagValue: Option.Option<string>) =>
       Option.isSome(flagValue) && flagValue.value.length > 0
         ? Effect.succeed(flagValue.value)
         : opts.linkedFails === true
-          ? Effect.fail(new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
-          : Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
-    promptProjectRef: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
+          ? Effect.fail(new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
+          : Effect.succeed(opts.linkedRef ?? VALID_REF),
+    promptProjectRef: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
   });
 
   const proxyCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> = [];
   const proxyCaptureCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> =
     [];
-  const proxy = Layer.succeed(LegacyGoProxy, {
+  const proxy = Layer.succeed(GoProxy, {
     exec: (args, execOpts) => Effect.sync(() => void proxyCalls.push({ args, env: execOpts?.env })),
     execCapture: (args, execOpts) =>
       Effect.sync(() => {
@@ -441,27 +441,27 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolver,
     projectRefResolver,
     proxy,
-    mockLegacyCliSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
-    Layer.succeed(LegacyDnsResolverFlag, "native"),
+    mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
+    Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(
-      LegacyNetworkIdFlag,
+      NetworkIdFlag,
       opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
     ),
-    Layer.succeed(LegacyPgDeltaSslProbe, {
+    Layer.succeed(PgDeltaSslProbe, {
       requireSsl: () => Effect.succeed(false),
       requireSslForHost: () => Effect.succeed(false),
     }),
-    Layer.succeed(LegacyExperimentalFlag, false),
-    Layer.succeed(LegacyDebugFlag, false),
+    Layer.succeed(ExperimentalFlag, false),
+    Layer.succeed(DebugFlag, false),
     Layer.succeed(CliArgs, { args: [] }),
     mockRuntimeInfo({ platform: opts.platform ?? "linux" }),
   );
   // Merged last so its `FileSystem` overrides everything above (last-wins).
   const failWriteLayer =
     opts.failWriteMatching !== undefined
-      ? legacyFailWriteStringMatchingFsLayer(opts.failWriteMatching)
+      ? failWriteStringMatchingFsLayer(opts.failWriteMatching)
       : opts.failWriteOnCall !== undefined
-        ? legacyFailWriteStringOnNthCallFsLayer(opts.failWriteOnCall)
+        ? failWriteStringOnNthCallFsLayer(opts.failWriteOnCall)
         : undefined;
   const layer = failWriteLayer === undefined ? baseLayer : Layer.merge(baseLayer, failWriteLayer);
 
@@ -488,7 +488,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   };
 }
 
-const flags = (over: Partial<LegacyDbDiffFlags> = {}): LegacyDbDiffFlags => ({
+const flags = (over: Partial<DbDiffFlags> = {}): DbDiffFlags => ({
   useMigra: over.useMigra ?? Option.none(),
   usePgAdmin: over.usePgAdmin ?? Option.none(),
   usePgSchema: over.usePgSchema ?? Option.none(),
@@ -520,8 +520,8 @@ const stderr = (out: ReturnType<typeof mockOutput>) =>
       .join(""),
   );
 
-const tmp = useLegacyTempWorkdir();
-useLegacyShadowCacheDisabled();
+const tmp = useTempWorkdir();
+useShadowCacheDisabled();
 
 // --- native --use-pgadmin fixtures ---
 
@@ -536,31 +536,31 @@ function pgadminEntry(overrides: Record<string, unknown> = {}) {
   };
 }
 
-/** `legacyProcessPgAdminDiffOutput`'s exact output for a single default `pgadminEntry()`. */
-const PGADMIN_DIFF_SQL = `${LEGACY_PGADMIN_DIFF_HEADER}\n\nALTER TABLE test;\n`;
+/** `processPgAdminDiffOutput`'s exact output for a single default `pgadminEntry()`. */
+const PGADMIN_DIFF_SQL = `${PGADMIN_DIFF_HEADER}\n\nALTER TABLE test;\n`;
 
 // The default `resolver`/shadow-port fixtures in `setup()` below (conn
 // 127.0.0.1:54322, shadow port 54320) — `source` is the user's db (via
-// `legacyToPostgresURL`) and `target` is the shadow (a raw, hardcoded connection
+// `toPostgresURL`) and `target` is the shadow (a raw, hardcoded connection
 // string).
 const PGADMIN_SOURCE_URL =
   "postgresql://postgres:postgres@127.0.0.1:54322/postgres?connect_timeout=10";
 const PGADMIN_TARGET_URL = "postgresql://postgres:postgres@127.0.0.1:54320/postgres";
 
-describe("legacy db diff", () => {
+describe("db diff", () => {
   it.effect(
     "diffs local with the default pg-delta engine (no pgdelta config section) and prints SQL to stdout",
     () => {
       const s = setup(tmp.current, { diffSql: "create table players ();\n" });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(flags());
+        yield* dbDiff(flags());
         // With NO `[experimental.pgdelta]` section, `enabled` defaults to TRUE
         // (CLI-1588), so the diff routes through the pg-delta engine — not migra's
         // edge-runtime script.
         expect(s.databaseDiffCalls).toHaveLength(1);
         expect(s.edgeCalls).toEqual([]);
         // The native shadow was created once (one `docker create`) and removed once
-        // (one `docker rm -f -v`) — see `mockLegacyShadowContainerCliSpawner`.
+        // (one `docker rm -f -v`) — see `mockShadowContainerCliSpawner`.
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
         expect(stdout(s.out)).toBe("create table players ();\n\n");
@@ -573,11 +573,11 @@ describe("legacy db diff", () => {
         // `DB_HOST` — NOT the real `db` container's name, and not some other slice length
         // (a mutation from `.slice(0, 12)` to `.slice(0, 8)` must fail this). This is the
         // one shadow-specific parameterization that matters
-        // (`legacyBuildShadowSetupDatabaseInput`'s `dbHost`). The default config enables
+        // (`buildShadowSetupDatabaseInput`'s `dbHost`). The default config enables
         // realtime (and PG >= 15 by default), so this always exercises at least one
         // one-shot job — Realtime's own env sets `DB_HOST` directly; Storage/Auth embed
         // the same host inside a `DATABASE_URL`-style connection string instead.
-        const expectedHost = LEGACY_FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
+        const expectedHost = FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
         expect(s.shadowSetupJobCalls.length).toBeGreaterThan(0);
         let sawHost = false;
         for (const call of s.shadowSetupJobCalls) {
@@ -600,7 +600,7 @@ describe("legacy db diff", () => {
   it.effect("diffs local with pgdelta when --use-pg-delta is set", () => {
     const s = setup(tmp.current, { diffSql: "create table p ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(
+      yield* dbDiff(
         flags({ usePgDelta: Option.some(true), strictCoverage: true, schema: ["public"] }),
       );
       expect(s.databaseDiffCalls).toHaveLength(1);
@@ -623,7 +623,7 @@ describe("legacy db diff", () => {
           connectOptions: { isLocal: true, dnsResolver: "native" },
         },
       });
-      // pg-delta runs in-process through LegacyPgDeltaEngine; the handler never
+      // pg-delta runs in-process through PgDeltaEngine; the handler never
       // invokes the edge runtime for it.
       expect(s.edgeCalls).toEqual([]);
       expect(stderr(s.out)).toContain("Diffing schemas: public");
@@ -639,7 +639,7 @@ describe("legacy db diff", () => {
     );
     const s = setup(tmp.current, { diffSql: "create table players ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags());
+      yield* dbDiff(flags());
       // Explicitly disabling pg-delta opts back into migra: the diff runs through
       // migra's edge-runtime script (not pg-delta's `renderPlanFiles` script, and
       // not the pg-delta engine service).
@@ -653,7 +653,7 @@ describe("legacy db diff", () => {
   it.effect("--use-migra overrides the pg-delta default when no pgdelta config exists", () => {
     const s = setup(tmp.current, { diffSql: "create table players ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ useMigra: Option.some(true) }));
+      yield* dbDiff(flags({ useMigra: Option.some(true) }));
       // No `[experimental.pgdelta]` section, so pg-delta is the default — the
       // `--use-migra` flag must still win and route through migra.
       expect(s.databaseDiffCalls).toEqual([]);
@@ -685,7 +685,7 @@ describe("legacy db diff", () => {
       diffSql: "create table result ();\n",
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
+      yield* dbDiff(flags({ usePgDelta: Option.some(true) }));
       expect(s.databaseDiffCalls[0]).not.toHaveProperty("declarativeFiles");
       expect(s.databaseDiffCalls[0]).not.toHaveProperty("declarativeManifest");
       expect(s.shadowConnectedDatabases).not.toContain("contrib_regression");
@@ -732,25 +732,25 @@ describe("legacy db diff", () => {
       diffSql: "create table result ();\n",
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags());
+      yield* dbDiff(flags());
       expect(stderr(s.out)).not.toContain("schema_paths no longer changes the migrations baseline");
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("PG14: provisions a shadow via the SQL-exec init path (no PG15+ one-shot jobs)", () => {
-    // This covers the PG14 branch of the `legacySetupDatabase` pipeline, which execs
-    // SQL directly via the session instead of the three one-shot `LegacyDockerRun`
+    // This covers the PG14 branch of the `setupDatabase` pipeline, which execs
+    // SQL directly via the session instead of the three one-shot `DockerRun`
     // jobs (the PG15+ short-id DNS resolution path is covered separately).
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\nmajor_version = 14\n");
     const s = setup(tmp.current, { diffSql: "create table pg14 ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags());
+      yield* dbDiff(flags());
       expect(stdout(s.out)).toBe("create table pg14 ();\n\n");
       expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
       expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-      // PG14's `legacyStartInitSchemaPre15` execs SQL over the session directly —
-      // no one-shot `LegacyDockerRun` jobs run for this branch.
+      // PG14's `startInitSchemaPre15` execs SQL over the session directly —
+      // no one-shot `DockerRun` jobs run for this branch.
       expect(s.dockerCalls).toEqual([]);
       expect(s.shadowExecCalls.length).toBeGreaterThan(0);
     }).pipe(Effect.provide(s.layer));
@@ -763,7 +763,7 @@ describe("legacy db diff", () => {
       // one-shot platform-baseline job exiting non-zero) still removes it.
       const s = setup(tmp.current, { diffSql: "create table x ();\n", failShadowSetupJob: true });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbDiff(flags()).pipe(Effect.exit);
+        const exit = yield* dbDiff(flags()).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
@@ -796,7 +796,7 @@ describe("legacy db diff", () => {
       diffSql: "alter table x;\n",
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ linked: Option.some(true) }));
+      yield* dbDiff(flags({ linked: Option.some(true) }));
       expect(s.databaseDiffCalls[0]?.target.connectOptions.isLocal).toBe(false);
       expect(s.databaseDiffCalls[0]?.source.connectOptions.isLocal).toBe(true);
     }).pipe(Effect.provide(s.layer));
@@ -811,7 +811,7 @@ describe("legacy db diff", () => {
       // matched `[remotes.<ref>]` override too, not just the `cfg`/`toml` read used for
       // pg-delta/schema_paths. `major_version` is a clean, directly-observable probe: PG <= 14
       // is the ONLY branch that emits a `--tmpfs` flag on the shadow's `docker create` argv
-      // (`legacyBuildShadowPostgresContainerSpec`) — a base config of 17 (>= 15, no tmpfs)
+      // (`buildShadowPostgresContainerSpec`) — a base config of 17 (>= 15, no tmpfs)
       // overridden by a remote block's `major_version = 14` must flip that flag on.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
@@ -834,7 +834,7 @@ describe("legacy db diff", () => {
         diffSql: "alter table x;\n",
       });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(flags({ linked: Option.some(true) }));
+        yield* dbDiff(flags({ linked: Option.some(true) }));
         const createArgs = s.shadowSpawned.find((c) => c.args[0] === "create")?.args ?? [];
         expect(createArgs).toContain("--tmpfs");
         // The PG15+ one-shot platform-baseline jobs (`initSchema15`) never run for PG14 —
@@ -864,7 +864,7 @@ describe("legacy db diff", () => {
     );
     const s = setup(tmp.current, { diffSql: "create table players ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags());
+      yield* dbDiff(flags());
       // The local default never merges a remote block, so the base (migra) engine wins.
       expect(s.edgeCalls[0]?.script).not.toContain("renderPlanFiles");
     }).pipe(Effect.provide(s.layer));
@@ -877,13 +877,13 @@ describe("legacy db diff", () => {
       diffSql: "alter table x;\n",
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ linked: Option.some(true) }));
+      yield* dbDiff(flags({ linked: Option.some(true) }));
       expect(s.cache.cached).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("diffs the project given via --project-ref without a linked workdir", () => {
-    // The fake resolver fails as "unlinked" (`LegacyProjectNotLinkedError`)
+    // The fake resolver fails as "unlinked" (`ProjectRefNotLinkedError`)
     // absent the flag — only the flag can resolve a ref here.
     const FLAG_REF = "flagflagflagflagflag";
     const s = setup(tmp.current, {
@@ -892,7 +892,7 @@ describe("legacy db diff", () => {
       linkedFails: true,
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }));
+      yield* dbDiff(flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }));
       expect(s.cache.cached).toBe(true);
       expect(s.cache.cachedRef).toBe(FLAG_REF);
     }).pipe(Effect.provide(s.layer));
@@ -900,7 +900,7 @@ describe("legacy db diff", () => {
 
   it.effect("--project-ref overrides an already-linked workdir's project ref", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    // The workdir already resolves to LEGACY_VALID_REF (e.g. via
+    // The workdir already resolves to VALID_REF (e.g. via
     // .temp/project-ref) — the flag must win over it.
     const s = setup(tmp.current, {
       isLocal: false,
@@ -908,7 +908,7 @@ describe("legacy db diff", () => {
       diffSql: "alter table x;\n",
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }));
+      yield* dbDiff(flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }));
       expect(s.cache.cached).toBe(true);
       expect(s.cache.cachedRef).toBe(FLAG_REF);
       expect(s.cache.cachedRef).not.toBe("abcdefghijklmnopqrst");
@@ -920,7 +920,7 @@ describe("legacy db diff", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyDbDiff(flags({ local: Option.some(true), projectRef: Option.some(FLAG_REF) })),
+        dbDiff(flags({ local: Option.some(true), projectRef: Option.some(FLAG_REF) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain(
@@ -956,7 +956,7 @@ describe("legacy db diff", () => {
       );
       const s = setup(tmp.current, { isLocal: false, diffSql: "create table m ();\n" });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(
+        yield* dbDiff(
           flags({
             from: Option.some("linked"),
             to: Option.some("migrations"),
@@ -998,7 +998,7 @@ describe("legacy db diff", () => {
       );
       const s = setup(tmp.current, { isLocal: false, diffSql: "create table m ();\n" });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(
+        yield* dbDiff(
           flags({
             from: Option.some("local"),
             to: Option.some("migrations"),
@@ -1025,7 +1025,7 @@ describe("legacy db diff", () => {
       const s = setup(tmp.current);
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacyDbDiff(
+          dbDiff(
             flags({
               from: Option.some("local"),
               to: Option.some("migrations"),
@@ -1046,8 +1046,8 @@ describe("legacy db diff", () => {
     "caches the linked ref even when the merged config fails to load afterward (review: PRRT_kwDOErm0O86XLe6s)",
     () => {
       // The project ref is cached the moment it's known, and stays cached even when a
-      // LATER step (here, `legacyReadDbToml`'s own config-load) fails afterward.
-      // `db.migrations.enabled = "notabool"` fails `legacyReadDbToml`'s own bool
+      // LATER step (here, `readDbToml`'s own config-load) fails afterward.
+      // `db.migrations.enabled = "notabool"` fails `readDbToml`'s own bool
       // parse AFTER the ref is already known, exercising exactly that gap.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
@@ -1060,7 +1060,7 @@ describe("legacy db diff", () => {
         diffSql: "alter table x;\n",
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbDiff(flags({ linked: Option.some(true) })).pipe(Effect.exit);
+        const exit = yield* dbDiff(flags({ linked: Option.some(true) })).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(s.cache.cached).toBe(true);
         expect(s.cache.cachedRef).toBe("abcdefghijklmnopqrst");
@@ -1080,7 +1080,7 @@ describe("legacy db diff", () => {
       return Effect.gen(function* () {
         // Migra is opt-in now that pg-delta is the default engine (CLI-1588);
         // pg-delta ignores the declarative contrib_regression override entirely.
-        yield* legacyDbDiff(flags({ useMigra: Option.some(true) }));
+        yield* dbDiff(flags({ useMigra: Option.some(true) }));
         expect(stdout(s.out)).toBe("create table o ();\n\n");
         // The declarative-schema file was migrated into the contrib_regression override.
         expect(s.shadowConnectedDatabases).toContain("contrib_regression");
@@ -1094,7 +1094,7 @@ describe("legacy db diff", () => {
     () => {
       const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
+        yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
         // --use-pgadmin no longer delegates to the bundled Go binary.
         expect(s.proxyCalls).toEqual([]);
         expect(s.proxyCaptureCalls).toEqual([]);
@@ -1127,7 +1127,7 @@ describe("legacy db diff", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyDbDiff(flags({ usePgSchema: Option.some(true), projectRef: Option.some(FLAG_REF) })),
+        dbDiff(flags({ usePgSchema: Option.some(true), projectRef: Option.some(FLAG_REF) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("--project-ref is not supported with --use-pg-schema");
@@ -1146,7 +1146,7 @@ describe("legacy db diff", () => {
       pgadminStdout: [JSON.stringify([pgadminEntry()])],
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(
+      yield* dbDiff(
         flags({
           usePgAdmin: Option.some(true),
           linked: Option.some(true),
@@ -1188,7 +1188,7 @@ describe("legacy db diff", () => {
         pgadminStdout: [JSON.stringify([pgadminEntry()])],
       });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true), linked: Option.some(true) }));
+        yield* dbDiff(flags({ usePgAdmin: Option.some(true), linked: Option.some(true) }));
         expect(stderr(s.out)).toContain("Loading config override: [remotes.staging]");
         expect(s.proxyCalls).toEqual([]);
         expect(s.differCalls).toHaveLength(1);
@@ -1219,9 +1219,9 @@ describe("legacy db diff", () => {
         pgadminStdout: [JSON.stringify([pgadminEntry()])],
       });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true), linked: Option.some(true) }));
-        // `mockLegacyShadowContainerCliSpawner` distinguishes this SEPARATE
-        // `legacyIsLocalDbRunning` preflight probe from the shadow's own (64-hex-id)
+        yield* dbDiff(flags({ usePgAdmin: Option.some(true), linked: Option.some(true) }));
+        // `mockShadowContainerCliSpawner` distinguishes this SEPARATE
+        // `isLocalDbRunning` preflight probe from the shadow's own (64-hex-id)
         // health-check inspect by the `supabase_db_` container-name prefix.
         const inspectTargets = s.shadowSpawned
           .filter((c) => c.args[0] === "container" && c.args[1] === "inspect")
@@ -1239,7 +1239,7 @@ describe("legacy db diff", () => {
       writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\nmajor_version = 16\n");
       const s = setup(tmp.current);
       return Effect.gen(function* () {
-        const exit = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+        const exit = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
           Effect.exit,
         );
         expect(Exit.isFailure(exit)).toBe(true);
@@ -1257,7 +1257,7 @@ describe("legacy db diff", () => {
     writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\nmajor_version = 16\n");
     const s = setup(tmp.current, { diffSql: "create table x ();\n" });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbDiff(flags()).pipe(Effect.exit);
+      const exit = yield* dbDiff(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
@@ -1265,11 +1265,11 @@ describe("legacy db diff", () => {
   it.effect(
     "validates the shadow's own local config (api.tls cert file) BEFORE resolving the connection",
     () => {
-      // `db.major_version` above is caught by `cfg` (`legacyReadDbToml`'s "D" pipeline),
+      // `db.major_version` above is caught by `cfg` (`readDbToml`'s "D" pipeline),
       // which already runs ahead of `resolver.resolve()`. `api.tls` is "L only" — `cfg`
       // only tracks its dotted keys for remote-override gating, it never reads the cert/key
-      // files (see `legacyBuildLocalDbContainerInputs`'s doc comment) — so this is the ONE
-      // config error only `legacyBuildLocalDbContainerInputs`'s own validation catches, and
+      // files (see `buildLocalDbContainerInputs`'s doc comment) — so this is the ONE
+      // config error only `buildLocalDbContainerInputs`'s own validation catches, and
       // it must run strictly before `resolver.resolve()` ever runs — so `resolverCalls`
       // must stay empty here, proving the shadow's config validation ran first, not just
       // that the command failed.
@@ -1288,9 +1288,9 @@ describe("legacy db diff", () => {
       );
       const s = setup(tmp.current, { diffSql: "create table x ();\n" });
       return Effect.gen(function* () {
-        const error = yield* legacyDbDiff(flags()).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(LegacyDbConfigLoadError);
-        if (error instanceof LegacyDbConfigLoadError) {
+        const error = yield* dbDiff(flags()).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(DbConfigLoadError);
+        if (error instanceof DbConfigLoadError) {
           expect(error.message).toContain("failed to read TLS cert");
         }
         expect(s.resolverCalls).toHaveLength(0);
@@ -1305,7 +1305,7 @@ describe("legacy db diff", () => {
     // remaining delegate path.
     const s = setup(tmp.current);
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ usePgSchema: Option.some(true), schema: ["tenant,one"] }));
+      yield* dbDiff(flags({ usePgSchema: Option.some(true), schema: ["tenant,one"] }));
       const args = s.proxyCalls[0]?.args ?? [];
       const idx = args.indexOf("--schema");
       expect(args[idx + 1]).toBe('"tenant,one"');
@@ -1320,7 +1320,7 @@ describe("legacy db diff", () => {
       // container unchanged.
       const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true), schema: ["tenant,one"] }));
+        yield* dbDiff(flags({ usePgAdmin: Option.some(true), schema: ["tenant,one"] }));
         const call = s.differCalls[0];
         const idx = call?.cmd.indexOf("--schema") ?? -1;
         expect(call?.cmd[idx + 1]).toBe("tenant,one");
@@ -1333,7 +1333,7 @@ describe("legacy db diff", () => {
     () => {
       const s = setup(tmp.current);
       return Effect.gen(function* () {
-        yield* legacyDbDiff(flags({ usePgSchema: Option.some(true) }));
+        yield* dbDiff(flags({ usePgSchema: Option.some(true) }));
         // The TS wrapper prints its own deprecation notice pointing at pg-delta /
         // the migra rollback, additive to (not a replacement for) the
         // delegated Go child's own "experimental" warning (unchanged, printed by
@@ -1354,7 +1354,7 @@ describe("legacy db diff", () => {
   it.effect("does not print the --use-pg-schema deprecation warning on other diff paths", () => {
     const s = setup(tmp.current, { diffSql: "create table g ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags());
+      yield* dbDiff(flags());
       expect(stderr(s.out)).not.toContain('"--use-pg-schema" is deprecated');
     }).pipe(Effect.provide(s.layer));
   });
@@ -1364,7 +1364,7 @@ describe("legacy db diff", () => {
     () => {
       const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
+        yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
         expect(stderr(s.out)).not.toContain('"--use-pg-schema" is deprecated');
       }).pipe(Effect.provide(s.layer));
     },
@@ -1378,7 +1378,7 @@ describe("legacy db diff", () => {
         pgadminStdout: [JSON.stringify([pgadminEntry()])],
       });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
+        yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
         // stdout stays payload-only in machine mode — no status lines leak into it.
         expect(stdout(s.out)).toBe("");
         // The status lines are diagnostics, not payload, so machine mode redirects
@@ -1410,7 +1410,7 @@ describe("legacy db diff", () => {
         pgadminStdout: [JSON.stringify([pgadminEntry()])],
       });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(
+        yield* dbDiff(
           flags({ usePgAdmin: Option.some(true), file: Option.some("pgadmin_diff") }),
         );
         const success = s.out.messages.find((m) => m.type === "success");
@@ -1428,7 +1428,7 @@ describe("legacy db diff", () => {
       pgadminStdout: [JSON.stringify([pgadminEntry()])],
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
+      yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
       const success = s.out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ diff: PGADMIN_DIFF_SQL, engine: "pgadmin" });
     }).pipe(Effect.provide(s.layer));
@@ -1437,7 +1437,7 @@ describe("legacy db diff", () => {
   it.effect("--use-pg-schema in json mode wraps the captured SQL in a structured envelope", () => {
     const s = setup(tmp.current, { format: "json", delegateStdout: "create table e ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ usePgSchema: Option.some(true) }));
+      yield* dbDiff(flags({ usePgSchema: Option.some(true) }));
       expect(stdout(s.out)).toBe("");
       expect(s.proxyCaptureCalls).toHaveLength(1);
       const success = s.out.messages.find((m) => m.type === "success");
@@ -1472,7 +1472,7 @@ describe("legacy db diff", () => {
       diffSql: "create table live_only ();\n",
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
+      yield* dbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
       expect(stdout(s.out)).toBe("");
       expect(stderr(s.out)).toContain("schema_paths no longer changes the migrations baseline");
       expect(stderr(s.out)).toContain("db diff -f uses supabase/migrations as its baseline");
@@ -1497,7 +1497,7 @@ describe("legacy db diff", () => {
       diffSql: "create table dogfood_note ();\n",
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(
+      yield* dbDiff(
         flags({ usePgDelta: Option.some(true), file: Option.some("dogfood_note") }),
       );
       const success = s.out.messages.find((message) => message.type === "success");
@@ -1537,7 +1537,7 @@ describe("legacy db diff", () => {
       diffSql: "create table dogfood_note ();\n",
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(
+      yield* dbDiff(
         flags({ usePgDelta: Option.some(true), file: Option.some("dogfood_note") }),
       );
       const success = s.out.messages.find((message) => message.type === "success");
@@ -1557,7 +1557,7 @@ describe("legacy db diff", () => {
       diffSuffixes: ["_1", "_2"],
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
+      yield* dbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
       const dir = join(tmp.current, "supabase", "migrations");
       const files = readdirSync(dir).sort();
       expect(files).toHaveLength(2);
@@ -1576,7 +1576,7 @@ describe("legacy db diff", () => {
     // before writing.
     const s = setup(tmp.current, { diffSql: "create table g ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ file: Option.some("snapshots/remote") }));
+      yield* dbDiff(flags({ file: Option.some("snapshots/remote") }));
       const migrationsRoot = join(tmp.current, "supabase", "migrations");
       const dirs = readdirSync(migrationsRoot);
       expect(dirs).toHaveLength(1);
@@ -1588,7 +1588,7 @@ describe("legacy db diff", () => {
   it.effect("explicit --from local --to linked prints the diff to stdout", () => {
     const s = setup(tmp.current, { isLocal: false, diffSql: "create table e ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ from: Option.some("local"), to: Option.some("linked") }));
+      yield* dbDiff(flags({ from: Option.some("local"), to: Option.some("linked") }));
       // Explicit mode is pg-delta and never provisions a shadow.
       expect(s.explicitDiffCalls[0]).toMatchObject({
         source: {
@@ -1620,7 +1620,7 @@ describe("legacy db diff", () => {
   it.effect("explicit URL endpoints retain the raw ref and remote connection options", () => {
     const s = setup(tmp.current, { diffSql: "create table u ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(
+      yield* dbDiff(
         flags({
           from: Option.some("postgresql://source.example/postgres"),
           to: Option.some("postgresql://desired.example/postgres"),
@@ -1642,7 +1642,7 @@ describe("legacy db diff", () => {
   it.effect("explicit --output writes raw SQL to the given path", () => {
     const s = setup(tmp.current, { diffSql: "create table w ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(
+      yield* dbDiff(
         flags({
           from: Option.some("local"),
           to: Option.some("local"),
@@ -1663,7 +1663,7 @@ describe("legacy db diff", () => {
       // remaining delegate path.
       const s = setup(tmp.current);
       return Effect.gen(function* () {
-        yield* legacyDbDiff(flags({ usePgSchema: Option.some(true), linked: Option.some(false) }));
+        yield* dbDiff(flags({ usePgSchema: Option.some(true), linked: Option.some(false) }));
         expect(s.proxyCalls[0]?.args).toEqual(["db", "diff", "--use-pg-schema", "--linked=false"]);
       }).pipe(Effect.provide(s.layer));
     },
@@ -1677,7 +1677,7 @@ describe("legacy db diff", () => {
       // `<timestamp>_.sql`.
       const s = setup(tmp.current, { diffSql: "create table y ();\n" });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(flags({ file: Option.some("") }));
+        yield* dbDiff(flags({ file: Option.some("") }));
         expect(stdout(s.out)).toContain("create table y ();");
         const migrationsDir = join(tmp.current, "supabase", "migrations");
         expect(existsSync(migrationsDir) ? readdirSync(migrationsDir) : []).toEqual([]);
@@ -1692,7 +1692,7 @@ describe("legacy db diff", () => {
       // through to stdout rather than writing SQL into the project directory.
       const s = setup(tmp.current, { diffSql: "create table z ();\n" });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(
+        yield* dbDiff(
           flags({ from: Option.some("local"), to: Option.some("local"), output: Option.some("") }),
         );
         // Reaching stdout proves it didn't try to write SQL to the resolved workdir.
@@ -1704,7 +1704,7 @@ describe("legacy db diff", () => {
   it.effect("explicit --from migrations routes the migrations endpoint to the strategy", () => {
     const s = setup(tmp.current, { diffSql: "create table m ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("local") }));
+      yield* dbDiff(flags({ from: Option.some("migrations"), to: Option.some("local") }));
       expect(s.explicitDiffCalls[0]?.source).toEqual({ kind: "migrations" });
       expect(s.edgeCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));
@@ -1734,7 +1734,7 @@ describe("legacy db diff", () => {
       diffSql: "create table m ();\n",
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ from: Option.some("linked"), to: Option.some("migrations") }));
+      yield* dbDiff(flags({ from: Option.some("linked"), to: Option.some("migrations") }));
       expect(s.explicitDiffCalls[0]?.desired).toEqual({
         kind: "migrations",
         projectRef: "abcdefghijklmnopqrst",
@@ -1776,7 +1776,7 @@ describe("legacy db diff", () => {
       diffSql: "create table m ();\n",
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("linked") }));
+      yield* dbDiff(flags({ from: Option.some("migrations"), to: Option.some("linked") }));
       expect(s.explicitDiffCalls[0]?.source).toEqual({ kind: "migrations" });
       expect(s.explicitDiffCalls[0]?.toml?.majorVersion).toBe(17);
       expect(s.explicitDiffCalls[0]?.toml?.webhooksEnabled).toBe(false);
@@ -1809,7 +1809,7 @@ describe("legacy db diff", () => {
       diffSql: "create table m ();\n",
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(
+      yield* dbDiff(
         flags({
           from: Option.some("local"),
           to: Option.some("migrations"),
@@ -1848,7 +1848,7 @@ describe("legacy db diff", () => {
       diffSql: "create table m ();\n",
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbDiff(
+      const exit = yield* dbDiff(
         flags({
           from: Option.some("local"),
           to: Option.some("migrations"),
@@ -1864,7 +1864,7 @@ describe("legacy db diff", () => {
     // is unset and runs the normal local diff, not an unknown-target error.
     const s = setup(tmp.current, { diffSql: "create table e ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ from: Option.some(""), to: Option.some("") }));
+      yield* dbDiff(flags({ from: Option.some(""), to: Option.some("") }));
       // Reaching the native path proves it didn't enter explicit mode and error.
       expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
       expect(stdout(s.out)).toBe("create table e ();\n\n");
@@ -1874,7 +1874,7 @@ describe("legacy db diff", () => {
   it.effect("an explicit --from with an empty --to still errors 'must set both'", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {
-      const exit = yield* legacyDbDiff(
+      const exit = yield* dbDiff(
         flags({ from: Option.some("local"), to: Option.some("") }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -1888,7 +1888,7 @@ describe("legacy db diff", () => {
     // db-url); a real bad URL would surface the resolver's parse error.
     const s = setup(tmp.current, { diffSql: "create table p ();\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(
+      yield* dbDiff(
         flags({
           from: Option.some("local"),
           to: Option.some("local"),
@@ -1902,7 +1902,7 @@ describe("legacy db diff", () => {
   it.effect("fails when --from is set without --to", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {
-      const exit = yield* legacyDbDiff(flags({ from: Option.some("local") })).pipe(Effect.exit);
+      const exit = yield* dbDiff(flags({ from: Option.some("local") })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
@@ -1910,7 +1910,7 @@ describe("legacy db diff", () => {
   it.effect("fails on engine-flag conflict (--use-migra with --use-pg-delta)", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {
-      const exit = yield* legacyDbDiff(
+      const exit = yield* dbDiff(
         flags({ useMigra: Option.some(true), usePgDelta: Option.some(true) }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -1920,7 +1920,7 @@ describe("legacy db diff", () => {
   it.effect("fails on target mutex (--linked with --local)", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {
-      const exit = yield* legacyDbDiff(
+      const exit = yield* dbDiff(
         flags({ linked: Option.some(true), local: Option.some(true) }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -1930,7 +1930,7 @@ describe("legacy db diff", () => {
   it.effect("warns on drop statements in the diff", () => {
     const s = setup(tmp.current, { diffSql: "drop table gone;\n" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags());
+      yield* dbDiff(flags());
       expect(stderr(s.out)).toContain("Found drop statements in schema diff");
       expect(stderr(s.out)).toContain("drop table gone");
     }).pipe(Effect.provide(s.layer));
@@ -1948,7 +1948,7 @@ describe("legacy db diff", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
+      yield* dbDiff(flags({ usePgDelta: Option.some(true) }));
       expect(stderr(s.out)).toContain("Found destructive changes in schema diff");
       expect(stderr(s.out)).toContain(sql);
     }).pipe(Effect.provide(s.layer));
@@ -1959,7 +1959,7 @@ describe("legacy db diff", () => {
     return Effect.gen(function* () {
       // Migra is opt-in now that pg-delta is the default engine (CLI-1588); this
       // test pins the migra envelope's `engine` value specifically.
-      yield* legacyDbDiff(flags({ useMigra: Option.some(true) }));
+      yield* dbDiff(flags({ useMigra: Option.some(true) }));
       // No raw SQL on stdout in machine mode; the envelope carries it instead.
       expect(stdout(s.out)).toBe("");
       const success = s.out.messages.find((m) => m.type === "success");
@@ -1974,7 +1974,7 @@ describe("legacy db diff", () => {
   it.effect("prints 'No schema changes found' and exits 0 on an empty diff", () => {
     const s = setup(tmp.current, { diffSql: "" });
     return Effect.gen(function* () {
-      yield* legacyDbDiff(flags());
+      yield* dbDiff(flags());
       expect(stderr(s.out)).toContain("No schema changes found");
       expect(stdout(s.out)).toBe("");
     }).pipe(Effect.provide(s.layer));
@@ -1988,7 +1988,7 @@ describe("legacy db diff", () => {
     return Effect.gen(function* () {
       // Migra is opt-in now that pg-delta is the default engine (CLI-1588); the
       // crash is injected into migra's edge-runtime script run.
-      const exit = yield* legacyDbDiff(flags({ useMigra: Option.some(true) })).pipe(Effect.exit);
+      const exit = yield* dbDiff(flags({ useMigra: Option.some(true) })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(stderr(s.out)).not.toContain("No schema changes found");
     }).pipe(Effect.provide(s.layer));
@@ -1999,7 +1999,7 @@ describe("legacy db diff", () => {
     return Effect.gen(function* () {
       // Migra is opt-in now that pg-delta is the default engine (CLI-1588).
       // Pass --schema so the fallback does not need a live DB to list schemas.
-      yield* legacyDbDiff(flags({ useMigra: Option.some(true), schema: ["public"] }));
+      yield* dbDiff(flags({ useMigra: Option.some(true), schema: ["public"] }));
       expect(s.dockerCalls).toHaveLength(1);
       expect(stdout(s.out)).toBe("create table fb ();\n\n");
     }).pipe(Effect.provide(s.layer));
@@ -2016,7 +2016,7 @@ describe("legacy db diff", () => {
     });
     return Effect.gen(function* () {
       // Migra is opt-in now that pg-delta is the default engine (CLI-1588).
-      yield* legacyDbDiff(flags({ useMigra: Option.some(true), schema: ["public"] }));
+      yield* dbDiff(flags({ useMigra: Option.some(true), schema: ["public"] }));
       expect(s.dockerCalls).toHaveLength(1);
       expect((s.dockerCalls[0] as { network: unknown }).network).toEqual({
         _tag: "named",
@@ -2030,29 +2030,29 @@ describe("legacy db diff", () => {
     () => {
       // Regression test for the acquireUseRelease restructuring (review:
       // PRRT_kwDOErm0O86XMrID): an earlier shape passed the ENTIRE
-      // `legacyPrepareShadowSource` (create -> health-wait -> migrate ->
+      // `prepareShadowSource` (create -> health-wait -> migrate ->
       // declarative-apply) as `acquireUseRelease`'s `acquire`, which Effect's
       // `uninterruptibleMask` (no `restore` around `acquire`) made completely
       // uninterruptible — a SIGINT landing during the readiness wait (which can run
-      // for up to 30 real seconds, `LEGACY_HEALTH_CHECK_TIMEOUT_SECONDS`) was silently
+      // for up to 30 real seconds, `HEALTH_CHECK_TIMEOUT_SECONDS`) was silently
       // swallowed until the wait gave up on its own. `acquire` is now ONLY
-      // `legacyCreateShadowDatabase` (container creation); the readiness wait runs
+      // `createShadowDatabase` (container creation); the readiness wait runs
       // inside the interruptible `use` phase instead, so a `Fiber.interrupt` here must
       // land promptly.
       const s = setup(tmp.current, { neverConnectableShadow: true });
       return Effect.gen(function* () {
-        const fiber = yield* legacyDbDiff(flags()).pipe(
+        const fiber = yield* dbDiff(flags()).pipe(
           Effect.provide(s.layer),
           Effect.forkChild({ startImmediately: true }),
         );
         // Wait until the shadow's readiness gate has actually refused a connect at
         // least once — proving the fiber is genuinely suspended inside
-        // `legacyWaitForShadowReady`'s retry loop, not merely past the `create` call.
+        // `waitForShadowReady`'s retry loop, not merely past the `create` call.
         while (s.shadowConnectedDatabases.length === 0) {
           yield* Effect.sleep("5 millis");
         }
         // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
-        // including `legacyRemoveShadowDatabase`) has fully completed — if `acquire`
+        // including `removeShadowDatabase`) has fully completed — if `acquire`
         // still covered the readiness wait, this call would hang for up to 30 real
         // seconds (or until this test's own timeout), instead of resolving as soon
         // as the in-flight probe returns.
@@ -2071,7 +2071,7 @@ describe("legacy db diff", () => {
       () => {
         const s = setup(tmp.current, { pgadminStdout: [""] });
         return Effect.gen(function* () {
-          yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
+          yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
           expect(stderr(s.out)).toContain("No schema changes found");
           expect(stdout(s.out)).toBe(
             "Creating shadow database...\nDiffing local database with current migrations...\n",
@@ -2089,7 +2089,7 @@ describe("legacy db diff", () => {
           pgadminStdout: [JSON.stringify([pgadminEntry({ status: "Identical" })])],
         });
         return Effect.gen(function* () {
-          yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
+          yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
           expect(stderr(s.out)).toContain("No schema changes found");
         }).pipe(Effect.provide(s.layer));
       },
@@ -2098,7 +2098,7 @@ describe("legacy db diff", () => {
     it.effect("writes a timestamped migration for --use-pgadmin --file instead of printing", () => {
       const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(
+        yield* dbDiff(
           flags({ usePgAdmin: Option.some(true), file: Option.some("pgadmin_diff") }),
         );
         expect(stdout(s.out)).not.toContain("ALTER TABLE");
@@ -2114,7 +2114,7 @@ describe("legacy db diff", () => {
     it.effect("creates nested parent directories for a nested --use-pgadmin --file name", () => {
       const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(
+        yield* dbDiff(
           flags({ usePgAdmin: Option.some(true), file: Option.some("snapshots/remote") }),
         );
         const migrationsRoot = join(tmp.current, "supabase", "migrations");
@@ -2130,7 +2130,7 @@ describe("legacy db diff", () => {
       () => {
         const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
         return Effect.gen(function* () {
-          yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true), file: Option.some("") }));
+          yield* dbDiff(flags({ usePgAdmin: Option.some(true), file: Option.some("") }));
           expect(stdout(s.out)).toContain("ALTER TABLE test;");
           const migrationsDir = join(tmp.current, "supabase", "migrations");
           expect(existsSync(migrationsDir) ? readdirSync(migrationsDir) : []).toEqual([]);
@@ -2145,7 +2145,7 @@ describe("legacy db diff", () => {
           pgadminStdout: [JSON.stringify([pgadminEntry({ diff_ddl: "drop table gone;" })])],
         });
         return Effect.gen(function* () {
-          yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
+          yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
           expect(stderr(s.out)).not.toContain("Finished");
           expect(stderr(s.out)).not.toContain("Found drop statements");
           expect(stdout(s.out)).toContain("drop table gone;");
@@ -2157,16 +2157,16 @@ describe("legacy db diff", () => {
       "invokes the differ with the exact argv, image, network, labels, and empty env/binds (no --schema)",
       () => {
         const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
-        // `LegacyCliSettings.projectId` only feeds pg-delta's own project id (a
+        // `CommandSettings.projectId` only feeds pg-delta's own project id (a
         // SEPARATE mechanism); the shadow/differ's docker network+labels come from
-        // `legacyLoadLocalProjectContext`'s REAL resolution (no config.toml
+        // `loadLocalProjectContext`'s REAL resolution (no config.toml
         // `project_id`/`SUPABASE_PROJECT_ID` here), which falls back to the workdir
         // basename — same as the pg-delta Deno-cache-volume tests above.
         const projectId = basename(tmp.current);
         return Effect.gen(function* () {
-          yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
+          yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
           expect(s.differCalls).toHaveLength(1);
-          const call = s.differCalls[0] as LegacyDockerRunOpts;
+          const call = s.differCalls[0] as DockerRunOpts;
           expect(call.image).toBe(dockerfileServiceImage("differ"));
           expect(call.image).toBe("supabase/pgadmin-schema-diff:cli-0.0.5");
           expect(call.cmd).toEqual(["--json-diff", PGADMIN_SOURCE_URL, PGADMIN_TARGET_URL]);
@@ -2194,8 +2194,8 @@ describe("legacy db diff", () => {
         networkId: "custom-net",
       });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
-        const call = s.differCalls[0] as LegacyDockerRunOpts;
+        yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
+        const call = s.differCalls[0] as DockerRunOpts;
         expect(call.network).toEqual({ _tag: "named", name: "custom-net" });
       }).pipe(Effect.provide(s.layer));
     });
@@ -2208,8 +2208,8 @@ describe("legacy db diff", () => {
           platform: "darwin",
         });
         return Effect.gen(function* () {
-          yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
-          const call = s.differCalls[0] as LegacyDockerRunOpts;
+          yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
+          const call = s.differCalls[0] as DockerRunOpts;
           expect(call.extraHosts).toEqual([]);
         }).pipe(Effect.provide(s.layer));
       },
@@ -2225,8 +2225,8 @@ describe("legacy db diff", () => {
         );
         const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
         return Effect.gen(function* () {
-          yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
-          const call = s.differCalls[0] as LegacyDockerRunOpts;
+          yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
+          const call = s.differCalls[0] as DockerRunOpts;
           expect(call.cmd.at(-1)).toBe(PGADMIN_TARGET_URL);
           expect(call.cmd.join(" ")).not.toContain("distinctive-pw");
         }).pipe(Effect.provide(s.layer));
@@ -2236,7 +2236,7 @@ describe("legacy db diff", () => {
     it.effect(
       "a supabase/.env-only SUPABASE_INTERNAL_IMAGE_REGISTRY reaches the differ's image resolver during the run, and reverts after",
       () => {
-        // `legacyDockerRunLayer`'s own image resolver has no `projectEnvValues` in
+        // `dockerRunLayer`'s own image resolver has no `projectEnvValues` in
         // scope, so it falls back to reading `process.env` directly at `runCapture`
         // call time; this mock docker layer records that same read
         // (`differRegistryEnvAtCall`) since it replaces the real resolver wholesale
@@ -2250,7 +2250,7 @@ describe("legacy db diff", () => {
         );
         const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
         return Effect.gen(function* () {
-          yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
+          yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
           expect(s.differRegistryEnvAtCall).toEqual(["registry.example.com"]);
           // Reverted once the handler's scope closes — no leak into a later command
           // (or a later test) sharing this process.
@@ -2277,7 +2277,7 @@ describe("legacy db diff", () => {
           ],
         });
         return Effect.gen(function* () {
-          yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
+          yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
           const text = stdout(s.out);
           expect(text).toContain("Comparing Tables \n");
           expect(text).toContain("Diffing 1\n");
@@ -2289,10 +2289,10 @@ describe("legacy db diff", () => {
 
     it.effect("still parses --json-diff output prefixed with the DESKTOP-mode NOTE line", () => {
       const s = setup(tmp.current, {
-        pgadminStdout: [`${LEGACY_PGADMIN_DESKTOP_NOTE_PREFIX}${JSON.stringify([pgadminEntry()])}`],
+        pgadminStdout: [`${PGADMIN_DESKTOP_NOTE_PREFIX}${JSON.stringify([pgadminEntry()])}`],
       });
       return Effect.gen(function* () {
-        yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
+        yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
         expect(stdout(s.out)).toContain("ALTER TABLE test;");
       }).pipe(Effect.provide(s.layer));
     });
@@ -2304,16 +2304,16 @@ describe("legacy db diff", () => {
           pgadminStdout: [JSON.stringify([pgadminEntry({ diff_ddl: "create table pub ();" })]), ""],
         });
         return Effect.gen(function* () {
-          yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true), schema: ["public", "app"] }));
+          yield* dbDiff(flags({ usePgAdmin: Option.some(true), schema: ["public", "app"] }));
           expect(s.differCalls).toHaveLength(2);
-          expect((s.differCalls[0] as LegacyDockerRunOpts).cmd).toEqual([
+          expect((s.differCalls[0] as DockerRunOpts).cmd).toEqual([
             "--schema",
             "public",
             "--json-diff",
             PGADMIN_SOURCE_URL,
             PGADMIN_TARGET_URL,
           ]);
-          expect((s.differCalls[1] as LegacyDockerRunOpts).cmd).toEqual([
+          expect((s.differCalls[1] as DockerRunOpts).cmd).toEqual([
             "--schema",
             "app",
             "--json-diff",
@@ -2334,24 +2334,24 @@ describe("legacy db diff", () => {
       ">=2 --schema runs each emitting a diff array succeed, aggregating every run's DDL under ONE header (CLI-1968 round 2: parsed per run, not concatenated then parsed once)",
       () => {
         // Completes the intended shared-buffer algorithm's own purpose (see
-        // `legacy-pgadmin-diff.ts`'s own header comment): each run's stdout is
+        // `pgadmin-diff.ts`'s own header comment): each run's stdout is
         // parsed on its own, so >=2 `--schema` runs that each emit a full JSON
         // array no longer concatenate into one buffer and fail a single
         // `JSON.parse` — every run's own DESKTOP-mode NOTE prefix (`pgadmin4#24`)
         // is trimmed from that run's own buffer too, not just the very first run's.
         const s = setup(tmp.current, {
           pgadminStdout: [
-            `${LEGACY_PGADMIN_DESKTOP_NOTE_PREFIX}${JSON.stringify([pgadminEntry({ diff_ddl: "create table pub ();" })])}`,
-            `${LEGACY_PGADMIN_DESKTOP_NOTE_PREFIX}${JSON.stringify([pgadminEntry({ diff_ddl: "create table app ();" })])}`,
+            `${PGADMIN_DESKTOP_NOTE_PREFIX}${JSON.stringify([pgadminEntry({ diff_ddl: "create table pub ();" })])}`,
+            `${PGADMIN_DESKTOP_NOTE_PREFIX}${JSON.stringify([pgadminEntry({ diff_ddl: "create table app ();" })])}`,
           ],
         });
         return Effect.gen(function* () {
-          yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true), schema: ["public", "app"] }));
+          yield* dbDiff(flags({ usePgAdmin: Option.some(true), schema: ["public", "app"] }));
           const text = stdout(s.out);
           // A single header, not one per run.
-          expect(text.split(LEGACY_PGADMIN_DIFF_HEADER)).toHaveLength(2);
+          expect(text.split(PGADMIN_DIFF_HEADER)).toHaveLength(2);
           expect(text).toContain(
-            `${LEGACY_PGADMIN_DIFF_HEADER}\n\ncreate table pub ();\n\ncreate table app ();\n`,
+            `${PGADMIN_DIFF_HEADER}\n\ncreate table pub ();\n\ncreate table app ();\n`,
           );
           // Per-run "Diffing schema:" ordering is preserved.
           const idxPublic = text.indexOf("Diffing schema: public");
@@ -2367,11 +2367,11 @@ describe("legacy db diff", () => {
     it.effect("fails with invalid_output when a run's own --json-diff stdout doesn't parse", () => {
       const s = setup(tmp.current, { pgadminStdout: ["not valid json"] });
       return Effect.gen(function* () {
-        const error = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+        const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
           Effect.flip,
         );
         expect(error).toMatchObject({
-          _tag: "LegacyDbDiffPgAdminError",
+          _tag: "DbDiffPgAdminError",
           reason: "invalid_output",
         });
         expect((error as { message: string }).message).toContain(
@@ -2391,11 +2391,11 @@ describe("legacy db diff", () => {
           pgadminStderr: ["Comparing Tables 45%\nDiffing 100%\n"],
         });
         return Effect.gen(function* () {
-          const error = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+          const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
             Effect.flip,
           );
           expect(error).toMatchObject({
-            _tag: "LegacyDbDiffPgAdminError",
+            _tag: "DbDiffPgAdminError",
             reason: "differ",
             message: "error running container: exit 1",
           });
@@ -2415,10 +2415,10 @@ describe("legacy db diff", () => {
           pgadminStderr: ["Comparing Tables 45%\n"],
         });
         return Effect.gen(function* () {
-          const error = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+          const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
             Effect.flip,
           );
-          expect(error).toMatchObject({ _tag: "LegacyDbDiffPgAdminError", reason: "differ" });
+          expect(error).toMatchObject({ _tag: "DbDiffPgAdminError", reason: "differ" });
           expect(stderr(s.out)).toContain("Comparing Tables \n");
           expect(stdout(s.out)).toBe("");
         }).pipe(Effect.provide(s.layer));
@@ -2433,11 +2433,11 @@ describe("legacy db diff", () => {
           pgadminStderr: ["some differ crash text\n"],
         });
         return Effect.gen(function* () {
-          const error = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+          const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
             Effect.flip,
           );
           expect(error).toMatchObject({
-            _tag: "LegacyDbDiffPgAdminError",
+            _tag: "DbDiffPgAdminError",
             reason: "differ",
             message: "error running container: exit 1",
           });
@@ -2452,11 +2452,11 @@ describe("legacy db diff", () => {
     it.effect("fails with 'error running container: exit 137' on an OOM-killed differ", () => {
       const s = setup(tmp.current, { pgadminExitCode: 137 });
       return Effect.gen(function* () {
-        const error = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+        const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
           Effect.flip,
         );
         expect(error).toMatchObject({
-          _tag: "LegacyDbDiffPgAdminError",
+          _tag: "DbDiffPgAdminError",
           reason: "differ",
           message: "error running container: exit 137",
         });
@@ -2466,20 +2466,20 @@ describe("legacy db diff", () => {
     it.effect("classifies a differ spawn failure as docker_daemon", () => {
       const s = setup(tmp.current, { pgadminDockerFail: "spawn" });
       return Effect.gen(function* () {
-        const error = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+        const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
           Effect.flip,
         );
-        expect(error).toMatchObject({ _tag: "LegacyDbDiffPgAdminError", reason: "docker_daemon" });
+        expect(error).toMatchObject({ _tag: "DbDiffPgAdminError", reason: "docker_daemon" });
       }).pipe(Effect.provide(s.layer));
     });
 
     it.effect("classifies a differ image-pull failure as registry_pull", () => {
       const s = setup(tmp.current, { pgadminDockerFail: "pull" });
       return Effect.gen(function* () {
-        const error = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+        const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
           Effect.flip,
         );
-        expect(error).toMatchObject({ _tag: "LegacyDbDiffPgAdminError", reason: "registry_pull" });
+        expect(error).toMatchObject({ _tag: "DbDiffPgAdminError", reason: "registry_pull" });
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -2488,10 +2488,10 @@ describe("legacy db diff", () => {
       () => {
         const s = setup(tmp.current, { dbNotRunning: true });
         return Effect.gen(function* () {
-          const error = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+          const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
             Effect.flip,
           );
-          expect(error).toMatchObject({ _tag: "LegacyDbDiffDbNotRunningError" });
+          expect(error).toMatchObject({ _tag: "DbDiffDbNotRunningError" });
           expect(stripAnsi((error as { message: string }).message)).toBe(
             "supabase start is not running.",
           );
@@ -2513,10 +2513,10 @@ describe("legacy db diff", () => {
             "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
         });
         return Effect.gen(function* () {
-          const error = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+          const error = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
             Effect.flip,
           );
-          expect(error).toMatchObject({ _tag: "LegacyDbDiffDbNotRunningError", daemonDown: true });
+          expect(error).toMatchObject({ _tag: "DbDiffDbNotRunningError", daemonDown: true });
           expect((error as { suggestion?: string }).suggestion).toContain("Docker Desktop");
         }).pipe(Effect.provide(s.layer));
       },
@@ -2527,7 +2527,7 @@ describe("legacy db diff", () => {
       () => {
         const s = setup(tmp.current, { failShadowSetupJob: true });
         return Effect.gen(function* () {
-          const exit = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+          const exit = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
             Effect.exit,
           );
           expect(Exit.isFailure(exit)).toBe(true);
@@ -2538,17 +2538,17 @@ describe("legacy db diff", () => {
     );
 
     it.effect(
-      "fails with LegacyDbDiffWriteError when writing the pgAdmin --file migration fails",
+      "fails with DbDiffWriteError when writing the pgAdmin --file migration fails",
       () => {
         const s = setup(tmp.current, {
           pgadminStdout: [JSON.stringify([pgadminEntry()])],
           failWriteMatching: (path) => path.includes("pgadmin_diff"),
         });
         return Effect.gen(function* () {
-          const error = yield* legacyDbDiff(
+          const error = yield* dbDiff(
             flags({ usePgAdmin: Option.some(true), file: Option.some("pgadmin_diff") }),
           ).pipe(Effect.flip);
-          expect(error).toMatchObject({ _tag: "LegacyDbDiffWriteError" });
+          expect(error).toMatchObject({ _tag: "DbDiffWriteError" });
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -2558,7 +2558,7 @@ describe("legacy db diff", () => {
       () => {
         const s = setup(tmp.current);
         return Effect.gen(function* () {
-          const error = yield* legacyDbDiff(
+          const error = yield* dbDiff(
             flags({ usePgAdmin: Option.some(true), usePgDelta: Option.some(true) }),
           ).pipe(Effect.flip);
           expect((error as { message: string }).message).toBe(
@@ -2573,7 +2573,7 @@ describe("legacy db diff", () => {
       () => {
         const s = setup(tmp.current);
         return Effect.gen(function* () {
-          const exit = yield* legacyDbDiff(
+          const exit = yield* dbDiff(
             flags({
               usePgAdmin: Option.some(true),
               linked: Option.some(true),
@@ -2590,7 +2590,7 @@ describe("legacy db diff", () => {
       () => {
         const s = setup(tmp.current, { isLocal: false, diffSql: "create table explicit ();\n" });
         return Effect.gen(function* () {
-          yield* legacyDbDiff(
+          yield* dbDiff(
             flags({
               usePgAdmin: Option.some(true),
               from: Option.some("local"),
@@ -2609,7 +2609,7 @@ describe("legacy db diff", () => {
       () => {
         const s = setup(tmp.current, { neverHealthyShadow: true });
         return Effect.gen(function* () {
-          const fiber = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+          const fiber = yield* dbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
             Effect.provide(s.layer),
             Effect.forkChild({ startImmediately: true }),
           );
@@ -2621,7 +2621,7 @@ describe("legacy db diff", () => {
               (c) =>
                 c.args[0] === "container" &&
                 c.args[1] === "inspect" &&
-                c.args[2] === LEGACY_FAKE_SHADOW_CONTAINER_ID,
+                c.args[2] === FAKE_SHADOW_CONTAINER_ID,
             )
           ) {
             yield* Effect.sleep("5 millis");
@@ -2651,13 +2651,13 @@ describe("legacy db diff", () => {
         statefulDocker: true,
         diffSql: "create table t ();\n",
       });
-      return legacyWithEnv(
+      return withEnvVar(
         "SUPABASE_HOME",
         join(tmp.current, "_supabase_home"),
-        legacyWithEnv(
+        withEnvVar(
           "SUPABASE_SHADOW_CACHE",
           "1",
-          legacyDbDiff(
+          dbDiff(
             flags(
               engine === "pg-delta"
                 ? { usePgDelta: Option.some(true) }

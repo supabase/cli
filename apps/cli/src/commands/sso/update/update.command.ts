@@ -2,26 +2,26 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { legacyStringSliceFlag } from "../../../command-internal/legacy-string-slice-flag.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { LEGACY_SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
-import { legacySsoUpdate } from "./update.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
+import { ssoUpdate } from "./update.handler.ts";
 
 // Go declares all three domain flags with pflag's `StringSliceVar`
 // (`cmd/sso.go:170-172`); malformed CSV fails at parse time with pflag's
-// exact diagnostic (CLI-2005, see `legacyStringSliceFlag`).
-export const legacySsoUpdateDomainsFlag = legacyStringSliceFlag(
+// exact diagnostic (CLI-2005, see `stringSliceFlag`).
+export const ssoUpdateDomainsFlag = stringSliceFlag(
   "domains",
   "Replace domains with this comma separated list of email domains.",
 );
 
-export const legacySsoUpdateAddDomainsFlag = legacyStringSliceFlag(
+export const ssoUpdateAddDomainsFlag = stringSliceFlag(
   "add-domains",
   "Add this comma separated list of email domains to the identity provider.",
 );
 
-export const legacySsoUpdateRemoveDomainsFlag = legacyStringSliceFlag(
+export const ssoUpdateRemoveDomainsFlag = stringSliceFlag(
   "remove-domains",
   "Remove this comma separated list of email domains from the identity provider.",
 );
@@ -31,9 +31,9 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  domains: legacySsoUpdateDomainsFlag,
-  addDomains: legacySsoUpdateAddDomainsFlag,
-  removeDomains: legacySsoUpdateRemoveDomainsFlag,
+  domains: ssoUpdateDomainsFlag,
+  addDomains: ssoUpdateAddDomainsFlag,
+  removeDomains: ssoUpdateRemoveDomainsFlag,
   metadataFile: Flag.string("metadata-file").pipe(
     Flag.withDescription(
       "File containing a SAML 2.0 Metadata XML document describing the identity provider.",
@@ -58,7 +58,7 @@ const config = {
     ),
     Flag.optional,
   ),
-  nameIdFormat: Flag.choice("name-id-format", LEGACY_SSO_NAME_ID_FORMATS).pipe(
+  nameIdFormat: Flag.choice("name-id-format", SSO_NAME_ID_FORMATS).pipe(
     Flag.withDescription(
       "URI reference representing the classification of string-based identifier information.",
     ),
@@ -68,9 +68,9 @@ const config = {
     Argument.withDescription("The ID of the SSO identity provider to update."),
   ),
 };
-export type LegacySsoUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type SsoUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacySsoUpdateCommand = Command.make("update", config).pipe(
+export const ssoUpdateCommand = Command.make("update", config).pipe(
   // This description includes the `of a already added` grammar slip
   // verbatim and intentionally — it is an established output string; do not
   // "fix" the grammar here.
@@ -86,10 +86,10 @@ export const legacySsoUpdateCommand = Command.make("update", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacySsoUpdate(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"], config }),
+    ssoUpdate(flags).pipe(
+      withCommandTelemetry({ flags, safeFlags: ["project-ref"], config }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["sso", "update"])),
+  Command.provide(managementApiRuntimeLayer(["sso", "update"])),
 );

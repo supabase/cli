@@ -31,9 +31,9 @@ formatting without disabling safe compaction.
 
 ## Subprocesses / Containers
 
-| What                                                                                                                                                                        | When                                                           |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `legacyResetLocalDatabase` | smart-mode Local choice when reset is confirmed (or `--reset`) |
+| What                                                                                                                                                                  | When                                                           |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase` | smart-mode Local choice when reset is confirmed (or `--reset`) |
 
 ## Environment Variables
 

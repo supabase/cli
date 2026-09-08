@@ -7,19 +7,19 @@ import { afterEach, beforeAll, describe, expect, test } from "vitest";
 
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import { toSlimImage } from "../../shared/services/slim-images.ts";
-import { legacyBuildHealthCmdArg } from "../../command-internal/db-bootstrap/docker-create-args.ts";
+import { buildHealthCmdArg } from "../../command-internal/db-bootstrap/docker-create-args.ts";
 import {
-  legacySlimWgetHealthcheck,
-  legacySlimWgetWaitCommand,
+  slimWgetHealthcheck,
+  slimWgetWaitCommand,
 } from "../../command-internal/db-bootstrap/slim-runtime.ts";
-import { LEGACY_REALTIME_TENANT_ID } from "../../command-internal/db-bootstrap/realtime-env.ts";
+import { REALTIME_TENANT_ID } from "../../command-internal/db-bootstrap/realtime-env.ts";
 import { ensureImage, resolveDeadline } from "../../../tests/helpers/docker-image.ts";
 import { overrideStackPorts, requireCliSuccess, runSupabase } from "../../../tests/helpers/cli.ts";
 import {
-  legacySanitizeProjectId,
-  legacyServiceContainerName,
+  sanitizeProjectId,
+  serviceContainerName,
   localDbContainerId,
-} from "../../command-internal/legacy-docker-ids.ts";
+} from "../../command-internal/docker-ids.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -101,6 +101,31 @@ async function containerHealthStatus(name: string): Promise<string> {
   return stdout.trim();
 }
 
+async function edgeRuntimeFailureDiagnostics(name: string): Promise<string> {
+  let mounts = "<unavailable>";
+  try {
+    const { stdout } = await execFileAsync("docker", [
+      "inspect",
+      name,
+      "--format",
+      "{{json .Mounts}}",
+    ]);
+    mounts = stdout.trim() || "[]";
+  } catch (error) {
+    mounts = `<unavailable: ${error instanceof Error ? error.message : String(error)}>`;
+  }
+
+  let logs = "<unavailable>";
+  try {
+    const { stdout, stderr } = await execFileAsync("docker", ["logs", name]);
+    logs = `${stdout}${stderr}`.trim() || "<empty>";
+  } catch (error) {
+    logs = `<unavailable: ${error instanceof Error ? error.message : String(error)}>`;
+  }
+
+  return `edge runtime Mounts: ${mounts}\nedge runtime logs:\n${logs}`;
+}
+
 async function runWgetInImage(
   image: string,
   args: ReadonlyArray<string>,
@@ -156,7 +181,6 @@ describe("supabase start slim images (e2e)", () => {
   afterEach(async () => {
     if (projectDir === undefined) return;
     await runSupabase(["stop", "--no-backup"], {
-      entrypoint: "legacy",
       cwd: projectDir,
       env: SLIM_ENV,
     }).catch(() => undefined);
@@ -172,13 +196,13 @@ describe("supabase start slim images (e2e)", () => {
         const image = expectedSlimImage(alias);
         const probe =
           alias === "realtime"
-            ? legacySlimWgetHealthcheck("http://127.0.0.1:9/", {
-                header: `Host:${LEGACY_REALTIME_TENANT_ID}`,
+            ? slimWgetHealthcheck("http://127.0.0.1:9/", {
+                header: `Host:${REALTIME_TENANT_ID}`,
               })
-            : legacySlimWgetHealthcheck("http://127.0.0.1:9/");
+            : slimWgetHealthcheck("http://127.0.0.1:9/");
         expectBusyBoxAccepted(await runWgetInImage(image, probe.test.slice(2)), image);
         if (alias === "vector") {
-          const waitArgs = legacySlimWgetWaitCommand("http://127.0.0.1:9/").split(" ").slice(1);
+          const waitArgs = slimWgetWaitCommand("http://127.0.0.1:9/").split(" ").slice(1);
           expectBusyBoxAccepted(await runWgetInImage(image, waitArgs), `${image} wait`);
         }
       }
@@ -190,15 +214,14 @@ describe("supabase start slim images (e2e)", () => {
     { timeout: START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS },
     async () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-slim-start-e2e-"));
-      const projectId = legacySanitizeProjectId(path.basename(projectDir));
-      const edgeRuntimeContainer = legacyServiceContainerName("edge_runtime", projectId);
+      const projectId = sanitizeProjectId(path.basename(projectDir));
+      const edgeRuntimeContainer = serviceContainerName("edge_runtime", projectId);
       const dbContainer = localDbContainerId(projectId);
-      const storageContainer = legacyServiceContainerName("storage", projectId);
-      const authContainer = legacyServiceContainerName("auth", projectId);
-      const realtimeContainer = legacyServiceContainerName("realtime", projectId);
+      const storageContainer = serviceContainerName("storage", projectId);
+      const authContainer = serviceContainerName("auth", projectId);
+      const realtimeContainer = serviceContainerName("realtime", projectId);
 
       const init = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
         env: DOCKER_IO_ENV,
@@ -206,7 +229,6 @@ describe("supabase start slim images (e2e)", () => {
       requireCliSuccess(init, "init");
 
       const created = await runSupabase(["functions", "new", "hello", "--auth", "none"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
         env: { ...DOCKER_IO_ENV, SUPABASE_YES: "1" },
@@ -217,7 +239,6 @@ describe("supabase start slim images (e2e)", () => {
       const apiPort = readSectionPort(config, "api");
 
       const start = await runSupabase(START_ARGS, {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: START_TIMEOUT_MS,
         env: SLIM_ENV,
@@ -230,19 +251,19 @@ describe("supabase start slim images (e2e)", () => {
 
       expect(await containerHealthcheckTest(authContainer)).toEqual([
         "CMD-SHELL",
-        legacyBuildHealthCmdArg(legacySlimWgetHealthcheck("http://127.0.0.1:9999/health").test),
+        buildHealthCmdArg(slimWgetHealthcheck("http://127.0.0.1:9999/health").test),
       ]);
       expect(await containerHealthcheckTest(realtimeContainer)).toEqual([
         "CMD-SHELL",
-        legacyBuildHealthCmdArg(
-          legacySlimWgetHealthcheck("http://127.0.0.1:4000/api/ping", {
-            header: `Host:${LEGACY_REALTIME_TENANT_ID}`,
+        buildHealthCmdArg(
+          slimWgetHealthcheck("http://127.0.0.1:4000/api/ping", {
+            header: `Host:${REALTIME_TENANT_ID}`,
           }).test,
         ),
       ]);
       expect(await containerHealthcheckTest(storageContainer)).toEqual([
         "CMD-SHELL",
-        legacyBuildHealthCmdArg(legacySlimWgetHealthcheck("http://127.0.0.1:5000/status").test),
+        buildHealthCmdArg(slimWgetHealthcheck("http://127.0.0.1:5000/status").test),
       ]);
       expect(await containerHealthStatus(authContainer)).toBe("healthy");
       expect(await containerHealthStatus(realtimeContainer)).toBe("healthy");
@@ -254,7 +275,11 @@ describe("supabase start slim images (e2e)", () => {
         body: JSON.stringify({ name: "Functions" }),
       });
       const body = await invoked.text();
-      expect(invoked.ok, body).toBe(true);
+      if (!invoked.ok) {
+        throw new Error(
+          `Functions request failed (${invoked.status}): ${body}\n${await edgeRuntimeFailureDiagnostics(edgeRuntimeContainer)}`,
+        );
+      }
       expect(JSON.parse(body)).toEqual({ message: "Hello Functions!" });
     },
   );

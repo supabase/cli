@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, inject, test } from "vitest";
 import { createHarness, exec, makeTempDir } from "@supabase/cli-test-helpers";
-import { ACCESS_TOKEN, isRecording, PROJECT_REF, TARGET } from "./env.ts";
+import { ACCESS_TOKEN, isRecording, PROJECT_REF } from "./env.ts";
 import { testBehaviour } from "./test-context.ts";
 
 describe("init", () => {
@@ -69,7 +69,7 @@ describe("link", () => {
     const serverUrl = inject("replayServerUrl") as string;
     const dir = makeTempDir("cli-e2e-link-no-ref-");
     using _ = dir;
-    const harness = createHarness(TARGET, {
+    const harness = createHarness({
       apiUrl: serverUrl,
       accessToken: ACCESS_TOKEN,
       cwd: dir.path,

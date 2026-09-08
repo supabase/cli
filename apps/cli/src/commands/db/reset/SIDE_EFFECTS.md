@@ -16,17 +16,17 @@ same container-bootstrap primitives `db start` uses — see that command's own
 (`command-internal/db-bootstrap/restart-services.ts`), the storage-health gate
 (`command-internal/db-bootstrap/await-storage-ready.ts`), bucket seeding, and the
 git-branch line are all native TS — including the local target's own
-`--experimental` schema-files apply (`legacyMigrateAndSeed`, shared with the remote
+`--experimental` schema-files apply (`migrateAndSeed`, shared with the remote
 path's branch above).
 
 The whole local-reset composition is hoisted into `command-internal/db-bootstrap/
-reset-local-database.ts`'s `legacyResetLocalDatabase` (CLI-2062), which this
+reset-local-database.ts`'s `resetLocalDatabase` (CLI-2062), which this
 handler's own `cfg.isLocal` branch calls as a thin wrapper (keeping only version/
 seed-flags resolution and the JSON envelope, which are specific to this top-level
 command). `db schema declarative`'s smart-target local-reset prompt and `db schema
 sync`'s failed-apply recovery reset both call the SAME function in-process now,
 instead of shelling out to a second `supabase-go` child through the previously
-removed `LegacyDeclarativeSeam.execInherit` seam — see those commands' own
+removed `DeclarativeSeam.execInherit` seam — see those commands' own
 `SIDE_EFFECTS.md`.
 
 ## Files Read
@@ -42,7 +42,7 @@ removed `LegacyDeclarativeSeam.execInherit` seam — see those commands' own
 | seed files from `--sql-paths` or `[db.seed].sql_paths`                                    | SQL        | when seeding is enabled (not `--no-seed`); `--sql-paths` overrides config                                             |
 | schema files from `[db.migrations].schema_paths`                                          | SQL        | when the `--experimental` schema-files branch is taken, either target (see Notes)                                     |
 | `<workdir>/supabase/buckets/`                                                             | files      | local path, when storage is up and `[storage.buckets]` configure objects                                              |
-| `<workdir>/supabase/roles.sql`                                                            | SQL        | local PG15 path only, via the reused `legacyStartSetupLocalDatabase` pipeline — missing file tolerated                |
+| `<workdir>/supabase/roles.sql`                                                            | SQL        | local PG15 path only, via the reused `startSetupLocalDatabase` pipeline — missing file tolerated                      |
 | `~/.docker/config.json`                                                                   | JSON       | via the `docker`/`podman` CLI itself, for registry auth — never read directly by this process                         |
 
 ## Files Written
@@ -64,7 +64,7 @@ equivalent, PG15) or `InitSchema14`/`ApplyApiPrivileges` (PG14).
 | `docker container inspect supabase_db_<project>`                                                                             | local path                            | `AssertSupabaseDbIsRunning` probe (Podman fallback)                                                                                                                                                                                                       |
 | `docker container rm -f supabase_db_<project>` / `docker volume rm -f <same>`                                                | local path, PG15                      | remove the existing container/volume before recreating (Podman fallback)                                                                                                                                                                                  |
 | `docker network create` / `docker volume create` / `docker create` / `docker start`                                          | local path, PG15                      | recreate the Postgres container (same primitives `db start` uses)                                                                                                                                                                                         |
-| `docker run --rm <realtime\|storage\|gotrue image>`                                                                          | local path, PG15, per enabled service | the one-shot `initSchema15` migrate jobs (`legacyStartSetupLocalDatabase`)                                                                                                                                                                                |
+| `docker run --rm <realtime\|storage\|gotrue image>`                                                                          | local path, PG15, per enabled service | the one-shot `initSchema15` migrate jobs (`startSetupLocalDatabase`)                                                                                                                                                                                      |
 | `docker restart <db container>`                                                                                              | local path, PG14                      | `RestartDatabase` — pg_cron must restart after `pg_terminate_backend`                                                                                                                                                                                     |
 | `docker restart <storage\|auth\|realtime\|pooler container>`                                                                 | local path, both PG14 and PG15        | concurrent satellite-container restart, not-found tolerated per service                                                                                                                                                                                   |
 | `docker container inspect <kong container>` + `docker exec <kong> kong reload --nginx-conf /home/kong/custom_nginx.template` | local path, both PG14 and PG15        | reload Kong so it re-resolves the restarted containers' addresses (issue #6016) — the `--nginx-conf` flag is load-bearing: a bare `kong reload` regenerates nginx.conf from Kong's default template and drops the custom `email_templates` server (#6059) |
@@ -80,7 +80,7 @@ child) is fully native as of CLI-1958.
 
 | Statement                                                                                                                                        | When                                                                                                       |
 | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| `legacyDropObjectsSql` `DO` block (drops user schemas/extensions/public objects, truncates auth/migrations)                                      | always, first                                                                                              |
+| `dropObjectsSql` `DO` block (drops user schemas/extensions/public objects, truncates auth/migrations)                                            | always, first                                                                                              |
 | `SELECT vault.update_secret(...)` / `vault.create_secret(...)`                                                                                   | when `[db.vault]` has syncable secrets                                                                     |
 | schema-file statements (no history bookkeeping, no `RESET ALL` between files)                                                                    | `--experimental` + no resolved version + pg-delta not enabled (see Notes)                                  |
 | migration statements + `schema_migrations` history insert (per file, transactional; pipeline-incompatible statements run standalone — see Notes) | otherwise, when `[db.migrations].enabled`, for migrations `≤ --version`                                    |
@@ -90,7 +90,7 @@ child) is fully native as of CLI-1958.
 ### Local path (native, in TS)
 
 **PG15+:** the container/volume are removed and recreated (see "Subprocesses"), then
-the reused `legacyStartSetupLocalDatabase` pipeline runs the initial schema (as
+the reused `startSetupLocalDatabase` pipeline runs the initial schema (as
 one-shot Docker jobs, not SQL over a session), `ApplyApiPrivileges`, a vault upsert,
 a `roles.sql` seed, and `MigrateAndSeed` (migrations `≤ --version`, seed unless
 `--no-seed`) — over a fresh host-facing Postgres connection.
@@ -137,9 +137,10 @@ the whole reset** (not just "skip buckets").
 | `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED`                                                                    | overrides `[experimental.pgdelta].enabled`; a truthy value flips the reset gate (`experimental && resolvedVersion === "" && !toml.pgDelta.enabled`) back to timestamped migrations even with `--experimental` set — switches between two different destructive code paths              | no                                                      |
 | `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS`                                                                      | overrides `[db.migrations].schema_paths` (viper `AutomaticEnv`, beats the config-file value) for the schema-files apply branch — genuinely effective on both targets now                                                                                                               | no (no dedicated flag — config-file-only otherwise)     |
 | `SUPABASE_PROJECT_ID`                                                                                      | overrides the local container id; ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag                                                                                                                                    | no                                                      |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                                         | overrides the image registry used to resolve the local path's container images (scoped for the whole run via `legacyApplyProjectEnv`)                                                                                                                                                  | no (project `.env` or shell)                            |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                                         | overrides the image registry used to resolve the local path's container images (scoped for the whole run via `applyProjectEnv`)                                                                                                                                                        | no (project `.env` or shell)                            |
 | `SUPABASE_USE_SLIM_IMAGES`                                                                                 | resolves the local-reset Postgres image and the realtime/storage/auth migrate-job images from slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB, and flag-off `15.8.1.085` stay on docker.io | no (ambient shell only)                                 |
 | `SUPABASE_DB_PORT` / `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | local-path container-recreate config overrides, same as `db start`                                                                                                                                                                                                                     | no                                                      |
+| `SUPABASE_API_PORT` / `SUPABASE_API_EXTERNAL_URL` / `SUPABASE_API_TLS_*` / `SUPABASE_API_ENABLED`          | local-path bucket-seed step: override the matching `[api]` fields for the Storage gateway URL/TLS, same as `seed buckets` (shell or project dotenv; #6452)                                                                                                                             | no                                                      |
 | `SUPABASE_NETWORK_ID` (`--network-id`)                                                                     | forces the recreated container/network onto an existing Docker network                                                                                                                                                                                                                 | no                                                      |
 
 ## Connection loss during migration apply
@@ -207,7 +208,7 @@ path has no confirmation prompt.
   stack, not the flag name: a `--db-url` pointing at the local stack is treated
   as a local reset.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution `LegacyProjectRefResolver`
+  command) overrides ONLY the linked-ref resolution `ProjectRefResolver`
   performs (flag > `SUPABASE_PROJECT_ID` > `~/.supabase/<hash>/project-ref`) —
   unlike `SUPABASE_PROJECT_ID`, it does not affect the local container id. It
   never implies `--linked`: passing it with a resolved `--local`/`--db-url`
@@ -219,7 +220,7 @@ path has no confirmation prompt.
   behaviour as `db push` — see `db push`'s SIDE_EFFECTS Notes (supabase/cli#5139,
   adopted into TS in PR supabase/cli#5671).
 - `--no-seed` forces seeding off; on the
-  local path it feeds `legacyResolveResetSeedConfig`, applied on top of the loaded
+  local path it feeds `resolveResetSeedConfig`, applied on top of the loaded
   `[db.seed]` config inside the recreate's own `MigrateAndSeed` step (same override
   logic on both PG14 and PG15).
 - `--sql-paths` overrides `[db.seed].sql_paths` for one reset and force-enables seeding
@@ -248,18 +249,18 @@ path has no confirmation prompt.
   progress line is printed per file, no
   migration-history row is inserted, and no `RESET ALL` runs between files. Seeding
   still runs afterward, unconditionally, exactly as on the migrations branch. The
-  local target's branch was already native before this port (`legacyMigrateAndSeed`,
+  local target's branch was already native before this port (`migrateAndSeed`,
   reused by both the PG14 and PG15 recreate branches, already implements this exact
   branch); CLI-1958 ports the remote target's copy of the same branch
-  (`legacyApplySchemaFiles`), removing the last Go delegation on this command.
-  `encrypted:` vault secrets are NOT skipped on the remote path — `legacyCheckDbToml`
-  decrypts them into `toml.vault`, and `legacyUpsertVaultSecrets` upserts the
+  (`applySchemaFiles`), removing the last Go delegation on this command.
+  `encrypted:` vault secrets are NOT skipped on the remote path — `checkDbToml`
+  decrypts them into `toml.vault`, and `upsertVaultSecrets` upserts the
   decrypted values unconditionally, before either branch (schema-files or migrations)
   runs.
 - `db schema declarative`/`db schema sync`'s own local-reset paths now call
-  `legacyResetLocalDatabase` in-process too (CLI-2062) — the previous scope boundary
+  `resetLocalDatabase` in-process too (CLI-2062) — the previous scope boundary
   (those two commands shelling out to a second `supabase-go` child via the now-removed
-  `LegacyDeclarativeSeam.execInherit`) is closed. That in-process call collapses to a
+  `DeclarativeSeam.execInherit`) is closed. That in-process call collapses to a
   single telemetry/linked-project-cache finalizer cycle (the outer `db schema
 declarative`/`sync` command's own) — the removed subprocess design used to fire a
   second, independent one from the child process's own execution.

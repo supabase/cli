@@ -12,7 +12,7 @@ import { Flag } from "effect/unstable/cli";
  * descriptions. Harmless — it resolves to the same `false` default — and
  * not something cobra does, so there's no parity requirement to remove it.
  */
-export const LegacyCompletionNoDescriptionsFlagDef = Flag.boolean("no-descriptions").pipe(
+export const CompletionNoDescriptionsFlagDef = Flag.boolean("no-descriptions").pipe(
   Flag.withDescription("disable completion descriptions"),
   Flag.withDefault(false),
 );

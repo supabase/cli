@@ -2,10 +2,10 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyParseSchemaFlags } from "../../../command-internal/legacy-schema-flags.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyDbDiff } from "./diff.handler.ts";
-import { legacyDbDiffRuntimeLayer } from "./diff.layers.ts";
+import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { dbDiff } from "./diff.handler.ts";
+import { dbDiffRuntimeLayer } from "./diff.layers.ts";
 
 const config = {
   // The four engine flags are a mutually-exclusive group, modelled as `Option`
@@ -91,22 +91,22 @@ const config = {
     // `--schema`/`-s` CSV-parses each value; use the shared helper so quoted
     // commas survive and malformed CSV fails at parse time.
     Flag.mapTryCatch(
-      (rawValues) => legacyParseSchemaFlags(rawValues),
+      (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
 } as const;
 
-export type LegacyDbDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DbDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDbDiffCommand = Command.make("diff", config).pipe(
+export const dbDiffCommand = Command.make("diff", config).pipe(
   Command.withDescription(
     "Compares a shadow built from supabase/migrations with a live database (--local by default, --linked, or --db-url). Declarative files under supabase/schemas are not part of this baseline. Output is printed by default; in normal mode, -f names and saves the complete diff as a migration and does not filter objects. Explicit --from/--to output is flattened review SQL, not a portable apply script.",
   ),
   Command.withShortDescription("Diffs the local database for schema changes"),
   Command.withHandler((flags) =>
-    legacyDbDiff(flags).pipe(
-      withLegacyCommandInstrumentation({
+    dbDiff(flags).pipe(
+      withCommandTelemetry({
         flags: {
           "use-migra": flags.useMigra,
           "use-pgadmin": flags.usePgAdmin,
@@ -131,5 +131,5 @@ export const legacyDbDiffCommand = Command.make("diff", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyDbDiffRuntimeLayer),
+  Command.provide(dbDiffRuntimeLayer),
 );

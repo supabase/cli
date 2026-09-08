@@ -35,7 +35,7 @@ require (
 	github.com/muesli/reflow v0.3.0
 	github.com/oapi-codegen/nullable v1.2.0
 	github.com/olekukonko/tablewriter v1.1.4
-	github.com/posthog/posthog-go v1.24.3
+	github.com/posthog/posthog-go v1.24.4
 	github.com/spf13/afero v1.15.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10

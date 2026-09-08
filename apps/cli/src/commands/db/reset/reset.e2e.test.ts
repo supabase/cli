@@ -7,7 +7,7 @@ import { runSupabase, stripAnsi } from "../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
-describe("supabase db reset (legacy)", () => {
+describe("supabase db reset", () => {
   let workdir: string;
   beforeEach(() => {
     workdir = mkdtempSync(join(tmpdir(), "sb-db-reset-e2e-"));
@@ -29,7 +29,7 @@ describe("supabase db reset (legacy)", () => {
     async () => {
       const { exitCode, stderr } = await runSupabase(
         ["db", "reset", "--db-url", "postgresql://postgres:postgres@127.0.0.1:9999/postgres"],
-        { entrypoint: "legacy", cwd: workdir, stdin: "n\n" },
+        { cwd: workdir, stdin: "n\n" },
       );
       expect(exitCode).toBe(1);
       // The destructive confirmation (default No → `[y/N]`) actually rendered and

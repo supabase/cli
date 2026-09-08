@@ -9,29 +9,29 @@
  * ports (SMTP, POP3) get published alongside the always-on web UI port.
  */
 
-import { legacyServiceContainerName } from "../../../command-internal/legacy-docker-ids.ts";
-import type { LegacyStartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
+import { serviceContainerName } from "../../../command-internal/docker-ids.ts";
+import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
 
 /**
- * Also this service's `containerSuffix` in `LEGACY_SERVICE_CATALOG`
- * (`legacy-service-catalog.ts`). Mailpit keeps the internal "inbucket" name
+ * Also this service's `containerSuffix` in `SERVICE_CATALOG`
+ * (`service-catalog.ts`). Mailpit keeps the internal "inbucket" name
  * (the product it replaced) for the container/alias/id, even though the
  * user-facing service and config section are "Mailpit"/`config.inbucket`.
  */
-const LEGACY_MAILPIT_CONTAINER_SUFFIX = "inbucket";
+const MAILPIT_CONTAINER_SUFFIX = "inbucket";
 
-export interface LegacyMailpitContainerSpecInput {
+export interface MailpitContainerSpecInput {
   /**
    * The already-resolved `config.inbucket.image`. Not part of the decoded
    * `@supabase/config` schema; resolution is the caller's responsibility,
    * same as every other service in this port.
    */
   readonly image: string;
-  /** The project id, used to derive this container's own name via {@link legacyServiceContainerName}. */
+  /** The project id, used to derive this container's own name via {@link serviceContainerName}. */
   readonly projectId: string;
   /**
    * `container.HostConfig.NetworkMode`'s target — resolved once per `start`
-   * run, not per-container (see `LegacyStartContainerSpec.networkId`'s doc
+   * run, not per-container (see `StartContainerSpec.networkId`'s doc
    * comment in `docker-create-args.ts`).
    */
   readonly networkId: string;
@@ -51,9 +51,7 @@ export interface LegacyMailpitContainerSpecInput {
 }
 
 /** Builds the `docker create` spec for the Mailpit/Inbucket container. */
-export function legacyBuildMailpitContainerSpec(
-  input: LegacyMailpitContainerSpecInput,
-): LegacyStartContainerSpec {
+export function buildMailpitContainerSpec(input: MailpitContainerSpecInput): StartContainerSpec {
   const ports: Array<{ hostPort: string; containerPort: string }> = [
     { hostPort: String(input.port), containerPort: "8025" },
   ];
@@ -66,7 +64,7 @@ export function legacyBuildMailpitContainerSpec(
 
   return {
     image: input.image,
-    containerName: legacyServiceContainerName(LEGACY_MAILPIT_CONTAINER_SUFFIX, input.projectId),
+    containerName: serviceContainerName(MAILPIT_CONTAINER_SUFFIX, input.projectId),
     env: {
       // Disable reverse DNS lookups in Mailpit to avoid slow/delayed DNS resolution.
       MP_SMTP_DISABLE_RDNS: "true",
@@ -83,7 +81,7 @@ export function legacyBuildMailpitContainerSpec(
     },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
-    networkAliases: [LEGACY_MAILPIT_CONTAINER_SUFFIX],
+    networkAliases: [MAILPIT_CONTAINER_SUFFIX],
     labels: {},
   };
 }

@@ -76,15 +76,16 @@ root.
 
 ## Exit Codes
 
-| Code | Condition                                                                                          |
-| ---- | -------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                            |
-| `1`  | invalid worker name — the name must be a DNS label                                                 |
-| `1`  | no name given, and nowhere to ask for one — stdin or stdout is not a terminal, or `-o` is in force |
-| `1`  | bad `--source`: outside the project, or a path the CLI owns                                        |
-| `1`  | destination exists and is not empty                                                                |
-| `1`  | the worker is already recorded in `config.toml`, in any form                                       |
-| `1`  | the rendered `config.toml` would not parse, or `[workers]` is a sealed inline table                |
+| Code | Condition                                                                                                                                       |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                         |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`WorkersNewWorkdirError`) — beats every prompt and filesystem write |
+| `1`  | invalid worker name — the name must be a DNS label                                                                                              |
+| `1`  | no name given, and nowhere to ask for one — stdin or stdout is not a terminal, or `-o` is in force                                              |
+| `1`  | bad `--source`: outside the project, or a path the CLI owns                                                                                     |
+| `1`  | destination exists and is not empty                                                                                                             |
+| `1`  | the worker is already recorded in `config.toml`, in any form                                                                                    |
+| `1`  | the rendered `config.toml` would not parse, or `[workers]` is a sealed inline table                                                             |
 
 ## Environment Variables
 
@@ -110,3 +111,8 @@ Nothing is emitted for a failure the parser catches, such as a
 the instrumentation either — and `telemetry.json` is not written. A missing name
 is _not_ one of those: the argument is optional, so a bare `workers new` reaches
 the handler, which asks for the name or fails for want of anywhere to ask.
+
+## Notes
+
+- A non-existent `--workdir`/`SUPABASE_WORKDIR` now fails before any directory or file is created (CLI-2285) — previously a typo'd `--workdir` could scaffold a fresh `supabase/workers/…` tree (plus a new `config.toml`) at the wrong path.
+- The `Created new Worker at <path>` line (and the equivalent machine-format `source` field) shows the absolute path when `--workdir`/`SUPABASE_WORKDIR` was set explicitly, since the scaffolded directory is then not necessarily relative to the terminal the command was run from.

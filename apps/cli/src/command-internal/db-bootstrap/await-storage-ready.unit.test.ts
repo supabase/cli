@@ -4,8 +4,8 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as TestClock from "effect/testing/TestClock";
 
-import { LegacyHealthCheckTimeoutError } from "./health-check.ts";
-import { legacyAwaitStorageReady } from "./await-storage-ready.ts";
+import { HealthCheckTimeoutError } from "./health-check.ts";
+import { awaitStorageReady } from "./await-storage-ready.ts";
 
 const unusedHttpClientLayer = Layer.succeed(
   HttpClient.HttpClient,
@@ -58,10 +58,10 @@ function mockSpawner(
 const HEALTHY_STATE = '{"Running":true,"Status":"running","Health":{"Status":"healthy"}}';
 const STARTING_STATE = '{"Running":true,"Status":"running","Health":{"Status":"starting"}}';
 
-describe("legacyAwaitStorageReady", () => {
+describe("awaitStorageReady", () => {
   it.live("resolves true immediately when storage already reports healthy", () => {
     const mock = mockSpawner(() => ({ exitCode: 0, stdout: HEALTHY_STATE }));
-    return legacyAwaitStorageReady(mock.spawner, "proj").pipe(
+    return awaitStorageReady(mock.spawner, "proj").pipe(
       Effect.provide(unusedHttpClientLayer),
       Effect.map((ready) => {
         expect(ready).toBe(true);
@@ -76,7 +76,7 @@ describe("legacyAwaitStorageReady", () => {
       exitCode: 1,
       stderr: "Cannot connect to the Docker daemon\n",
     }));
-    return legacyAwaitStorageReady(mock.spawner, "proj").pipe(
+    return awaitStorageReady(mock.spawner, "proj").pipe(
       Effect.provide(unusedHttpClientLayer),
       Effect.map((ready) => {
         expect(ready).toBe(false);
@@ -89,7 +89,7 @@ describe("legacyAwaitStorageReady", () => {
       exitCode: 1,
       stderr: "Error: No such container: supabase_storage_proj\n",
     }));
-    return legacyAwaitStorageReady(mock.spawner, "proj").pipe(
+    return awaitStorageReady(mock.spawner, "proj").pipe(
       Effect.provide(unusedHttpClientLayer),
       Effect.map((ready) => {
         expect(ready).toBe(false);
@@ -110,7 +110,7 @@ describe("legacyAwaitStorageReady", () => {
           return { exitCode: 0 };
         });
 
-        const fiber = yield* legacyAwaitStorageReady(mock.spawner, "proj").pipe(
+        const fiber = yield* awaitStorageReady(mock.spawner, "proj").pipe(
           Effect.provide(unusedHttpClientLayer),
           Effect.forkChild({ startImmediately: true }),
         );
@@ -133,7 +133,7 @@ describe("legacyAwaitStorageReady", () => {
           return { exitCode: 0 };
         });
 
-        const fiber = yield* legacyAwaitStorageReady(mock.spawner, "proj").pipe(
+        const fiber = yield* awaitStorageReady(mock.spawner, "proj").pipe(
           Effect.provide(unusedHttpClientLayer),
           Effect.forkChild({ startImmediately: true }),
         );
@@ -146,7 +146,7 @@ describe("legacyAwaitStorageReady", () => {
 
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(Cause.squash(exit.cause)).toBeInstanceOf(LegacyHealthCheckTimeoutError);
+          expect(Cause.squash(exit.cause)).toBeInstanceOf(HealthCheckTimeoutError);
         }
       }),
   );
@@ -162,7 +162,7 @@ describe("legacyAwaitStorageReady", () => {
           return { exitCode: 0 };
         });
 
-        const fiber = yield* legacyAwaitStorageReady(mock.spawner, "proj").pipe(
+        const fiber = yield* awaitStorageReady(mock.spawner, "proj").pipe(
           Effect.provide(unusedHttpClientLayer),
           Effect.forkChild({ startImmediately: true }),
         );

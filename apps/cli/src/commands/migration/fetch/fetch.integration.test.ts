@@ -5,26 +5,23 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import {
-  LEGACY_VALID_REF,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  VALID_REF,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../shared/legacy/global-flags.ts";
+import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyDbConfigLoadError } from "../../../command-internal/legacy-db-config.errors.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import type {
-  LegacyDbConfigFlags,
-  LegacyResolvedDbConfig,
-} from "../../../command-internal/legacy-db-config.types.ts";
-import { LegacyDbConnection } from "../../../command-internal/legacy-db-connection.service.ts";
-import { legacyMigrationFetch } from "./fetch.handler.ts";
-import type { LegacyMigrationFetchFlags } from "./fetch.command.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import { DbConnection } from "../../../command-internal/db-connection.service.ts";
+import { migrationFetch } from "./fetch.handler.ts";
+import type { MigrationFetchFlags } from "./fetch.command.ts";
 
 const SELECT_SQL =
   "SELECT version, coalesce(name, '') as name, statements FROM supabase_migrations.schema_migrations";
@@ -43,7 +40,7 @@ interface SetupOpts {
   readonly confirm?: boolean;
   readonly rows?: ReadonlyArray<MigrationRow>;
   readonly resolveFails?: boolean;
-  /** Raw argv seen by `resolveLegacyDbTargetFlags` (e.g. to exercise a flag conflict). */
+  /** Raw argv seen by `resolveDbTargetFlags` (e.g. to exercise a flag conflict). */
   readonly cliArgs?: ReadonlyArray<string>;
 }
 
@@ -52,14 +49,14 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     format: opts.format ?? "text",
     promptConfirmResponses: opts.confirm === undefined ? undefined : [opts.confirm],
   });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
 
-  const resolver = Layer.succeed(LegacyDbConfigResolver, {
-    resolve: (_flags: LegacyDbConfigFlags) =>
+  const resolver = Layer.succeed(DbConfigResolver, {
+    resolve: (_flags: DbConfigFlags) =>
       opts.resolveFails === true
         ? Effect.fail(
-            new LegacyDbConfigLoadError({
+            new DbConfigLoadError({
               message: "failed to parse config: invalid connection string",
             }),
           )
@@ -72,12 +69,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
               database: "postgres",
             },
             isLocal: false,
-            ref: Option.some(LEGACY_VALID_REF),
-          } satisfies LegacyResolvedDbConfig),
+            ref: Option.some(VALID_REF),
+          } satisfies ResolvedDbConfig),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
-  const connection = Layer.succeed(LegacyDbConnection, {
+  const connection = Layer.succeed(DbConnection, {
     connect: () =>
       Effect.succeed({
         exec: () => Effect.void,
@@ -96,16 +93,16 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
   // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
-  // (not just the hardcoded `LEGACY_VALID_REF` fallback) drives the linked ref.
-  const projectRef = Layer.succeed(LegacyProjectRefResolver, {
-    resolve: () => Effect.succeed(LEGACY_VALID_REF),
-    resolveForLink: () => Effect.succeed(LEGACY_VALID_REF),
-    resolveOptional: () => Effect.succeed(Option.some(LEGACY_VALID_REF)),
+  // (not just the hardcoded `VALID_REF` fallback) drives the linked ref.
+  const projectRef = Layer.succeed(ProjectRefResolver, {
+    resolve: () => Effect.succeed(VALID_REF),
+    resolveForLink: () => Effect.succeed(VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
     loadProjectRef: (flagValue: Option.Option<string>) =>
       Effect.succeed(
-        Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : LEGACY_VALID_REF,
+        Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : VALID_REF,
       ),
-    promptProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
+    promptProjectRef: () => Effect.succeed(VALID_REF),
   });
 
   const layer = Layer.mergeAll(
@@ -115,9 +112,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolver,
     connection,
     projectRef,
-    mockLegacyCliSettings({ workdir }),
-    Layer.succeed(LegacyDnsResolverFlag, "native"),
-    Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    mockCommandSettings({ workdir }),
+    Layer.succeed(DnsResolverFlag, "native"),
+    Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     mockTty({ stdinIsTty: opts.isTTY ?? true }),
     mockStdin(
@@ -131,7 +128,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   return { layer, out, telemetry, cache };
 }
 
-const flags = (over: Partial<LegacyMigrationFetchFlags> = {}): LegacyMigrationFetchFlags => ({
+const flags = (over: Partial<MigrationFetchFlags> = {}): MigrationFetchFlags => ({
   dbUrl: over.dbUrl ?? Option.none(),
   linked: over.linked ?? true,
   local: over.local ?? false,
@@ -139,9 +136,9 @@ const flags = (over: Partial<LegacyMigrationFetchFlags> = {}): LegacyMigrationFe
 });
 
 const migrationsDir = (workdir: string) => join(workdir, "supabase", "migrations");
-const tmp = useLegacyTempWorkdir();
+const tmp = useTempWorkdir();
 
-describe("legacy migration fetch", () => {
+describe("migration fetch", () => {
   it.live("writes migration files joined with the Go separator when the dir is empty", () => {
     const { layer, out } = setup(tmp.current, {
       rows: [
@@ -153,7 +150,7 @@ describe("legacy migration fetch", () => {
       ],
     });
     return Effect.gen(function* () {
-      yield* legacyMigrationFetch(flags());
+      yield* migrationFetch(flags());
       // The connection banner prints to stderr before dialing.
       expect(out.stderrText).toContain("Connecting to remote database...");
       const dir = migrationsDir(tmp.current);
@@ -173,7 +170,7 @@ describe("legacy migration fetch", () => {
       rows: [{ version: "20240101000000", name: "empty", statements: [] }],
     });
     return Effect.gen(function* () {
-      yield* legacyMigrationFetch(flags());
+      yield* migrationFetch(flags());
       const dir = migrationsDir(tmp.current);
       expect(readFileSync(join(dir, "20240101000000_empty.sql"), "utf8")).toBe(";\n");
     }).pipe(Effect.provide(layer));
@@ -187,7 +184,7 @@ describe("legacy migration fetch", () => {
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
     });
     return Effect.gen(function* () {
-      yield* legacyMigrationFetch(flags());
+      yield* migrationFetch(flags());
       expect(readdirSync(migrationsDir(tmp.current))).toContain("20240101000000_init.sql");
     }).pipe(Effect.provide(layer));
   });
@@ -200,11 +197,11 @@ describe("legacy migration fetch", () => {
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationFetch(flags()).pipe(Effect.exit);
+      const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
       }
       expect(readdirSync(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
@@ -222,11 +219,11 @@ describe("legacy migration fetch", () => {
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationFetch(flags()).pipe(Effect.exit);
+      const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
       }
       expect(readdirSync(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
@@ -240,7 +237,7 @@ describe("legacy migration fetch", () => {
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
     });
     return Effect.gen(function* () {
-      yield* legacyMigrationFetch(flags());
+      yield* migrationFetch(flags());
       expect(out.stderrText).toContain("[Y/n] y");
       expect(readdirSync(migrationsDir(tmp.current))).toContain("20240101000000_init.sql");
     }).pipe(Effect.provide(layer));
@@ -259,7 +256,7 @@ describe("legacy migration fetch", () => {
         rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
       });
       return Effect.gen(function* () {
-        yield* legacyMigrationFetch(flags());
+        yield* migrationFetch(flags());
         expect(out.stderrText).toContain("[Y/n] y");
         expect(readdirSync(migrationsDir(tmp.current))).toContain("20240101000000_init.sql");
       }).pipe(Effect.provide(layer));
@@ -278,7 +275,7 @@ describe("legacy migration fetch", () => {
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
     });
     return Effect.gen(function* () {
-      yield* legacyMigrationFetch(flags());
+      yield* migrationFetch(flags());
       // The prompt label reached stderr (it was NOT format-gated into a silent default).
       expect(out.stderrText).toContain("[Y/n]");
       expect(out.messages).toContainEqual(
@@ -302,11 +299,11 @@ describe("legacy migration fetch", () => {
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationFetch(flags()).pipe(Effect.exit);
+      const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("OperationCanceledError");
       }
       expect(readdirSync(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
@@ -319,11 +316,11 @@ describe("legacy migration fetch", () => {
       rows: [{ version: "20240101000000", name: "../../../etc/passwd", statements: [] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationFetch(flags()).pipe(Effect.exit);
+      const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyMigrationFetchWriteError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationFetchWriteError");
       }
       // Nothing is written when the guard fires.
       expect(readdirSync(migrationsDir(tmp.current))).toEqual([]);
@@ -338,7 +335,7 @@ describe("legacy migration fetch", () => {
       rows: [{ version: "-1", name: "legacy", statements: ["select 1"] }],
     });
     return Effect.gen(function* () {
-      yield* legacyMigrationFetch(flags());
+      yield* migrationFetch(flags());
       expect(readdirSync(migrationsDir(tmp.current))).toEqual(["-1_legacy.sql"]);
     }).pipe(Effect.provide(layer));
   });
@@ -350,11 +347,11 @@ describe("legacy migration fetch", () => {
       rows: [{ version: "../../etc", name: "x", statements: [] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationFetch(flags()).pipe(Effect.exit);
+      const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyMigrationFetchWriteError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationFetchWriteError");
       }
       expect(readdirSync(migrationsDir(tmp.current))).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -369,11 +366,11 @@ describe("legacy migration fetch", () => {
     writeFileSync(join(tmp.current, "supabase", "migrations"), "not a directory");
     const { layer } = setup(tmp.current, { rows: [] });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationFetch(flags()).pipe(Effect.exit);
+      const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyMigrationFetchWriteError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationFetchWriteError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -384,11 +381,11 @@ describe("legacy migration fetch", () => {
     // failing, the supabase/migrations dir must NOT be created and no prompt is shown.
     const { layer, out } = setup(tmp.current, { resolveFails: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationFetch(flags()).pipe(Effect.exit);
+      const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyDbConfigLoadError");
+        expect(Option.isSome(failure) && failure.value._tag).toBe("DbConfigLoadError");
       }
       // The config failed before any side effect: no migrations dir, no overwrite prompt.
       expect(existsSync(migrationsDir(tmp.current))).toBe(false);
@@ -402,7 +399,7 @@ describe("legacy migration fetch", () => {
       // Cobra's `MarkFlagsMutuallyExclusive` validates at parse time, ahead of the root
       // `PersistentPreRunE` that runs `ParseDatabaseConfig`/`loadNestedEnv` — so a flag
       // conflict must surface even when `supabase/.env` is malformed (which would abort a
-      // project-env load with a DIFFERENT error, `LegacyDbConfigLoadError`, if the env load
+      // project-env load with a DIFFERENT error, `DbConfigLoadError`, if the env load
       // ran first). Locks in the fix that reordered the project-env load in `fetch.handler.ts`
       // to run after this flag-group check.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
@@ -411,15 +408,13 @@ describe("legacy migration fetch", () => {
         cliArgs: ["--db-url", "postgresql://x", "--linked"],
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyMigrationFetch(
-          flags({ dbUrl: Option.some("postgresql://x") }),
-        ).pipe(Effect.exit);
+        const exit = yield* migrationFetch(flags({ dbUrl: Option.some("postgresql://x") })).pipe(
+          Effect.exit,
+        );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
-          expect(Option.isSome(failure) && failure.value._tag).toBe(
-            "LegacyMigrationTargetFlagsError",
-          );
+          expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationTargetFlagsError");
         }
       }).pipe(Effect.provide(layer));
     },
@@ -428,16 +423,16 @@ describe("legacy migration fetch", () => {
   it.live(
     "fetches from the project given via --project-ref, overriding the default linked ref",
     () => {
-      // The fake resolver's own fallback (LEGACY_VALID_REF) represents whatever
+      // The fake resolver's own fallback (VALID_REF) represents whatever
       // the workdir would resolve to absent the flag — the flag must win over it
       // and drive the cached ref.
       const FLAG_REF = "flagflagflagflagflag";
       const { layer, cache } = setup(tmp.current, { rows: [] });
       return Effect.gen(function* () {
-        yield* legacyMigrationFetch(flags({ projectRef: Option.some(FLAG_REF) }));
+        yield* migrationFetch(flags({ projectRef: Option.some(FLAG_REF) }));
         expect(cache.cached).toBe(true);
         expect(cache.cachedRef).toBe(FLAG_REF);
-        expect(cache.cachedRef).not.toBe(LEGACY_VALID_REF);
+        expect(cache.cachedRef).not.toBe(VALID_REF);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -446,15 +441,13 @@ describe("legacy migration fetch", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, out, cache } = setup(tmp.current, { cliArgs: ["--local"] });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationFetch(
+      const exit = yield* migrationFetch(
         flags({ linked: false, local: true, projectRef: Option.some(FLAG_REF) }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe(
-          "LegacyMigrationTargetFlagsError",
-        );
+        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationTargetFlagsError");
         expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );

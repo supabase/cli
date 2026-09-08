@@ -3,16 +3,16 @@ import { Effect, Exit, Option } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  LEGACY_VALID_REF,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  buildTestRuntime,
+  VALID_REF,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
-import { legacySsoShow } from "./show.handler.ts";
+import { ssoShow } from "./show.handler.ts";
 
 const VALID_PROVIDER_ID = "b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8";
 
@@ -28,7 +28,7 @@ const PROVIDER = {
   updated_at: "2023-03-28T13:50:14.464Z",
 };
 
-const tempRoot = useLegacyTempWorkdir("supabase-sso-show-int-");
+const tempRoot = useTempWorkdir("supabase-sso-show-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -41,16 +41,16 @@ interface SetupOpts {
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const analytics = mockAnalytics();
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
 
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     network: opts.network,
     response: { status: opts.status ?? 200, body: opts.body ?? PROVIDER },
   });
 
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -63,12 +63,12 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, analytics, telemetry, cache };
 }
 
-describe("legacy sso show integration", () => {
+describe("sso show integration", () => {
   it.live("rejects bad UUID with Go-format message", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoShow({
+        ssoShow({
           projectRef: Option.none(),
           providerId: "not-a-uuid",
           metadata: false,
@@ -77,7 +77,7 @@ describe("legacy sso show integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoInvalidUuidError");
+        expect(dump).toContain("SsoInvalidUuidError");
         expect(dump).toContain('identity provider ID \\"not-a-uuid\\" is not a UUID');
       }
     }).pipe(Effect.provide(layer));
@@ -86,7 +86,7 @@ describe("legacy sso show integration", () => {
   it.live("renders single-provider markdown for valid UUID + 200", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoShow({
+      yield* ssoShow({
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -101,7 +101,7 @@ describe("legacy sso show integration", () => {
     const { layer } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoShow({
+        ssoShow({
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -110,7 +110,7 @@ describe("legacy sso show integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoShowNotFoundError");
+        expect(dump).toContain("SsoShowNotFoundError");
         expect(dump).toContain("An identity provider with ID");
         expect(dump).toContain("could not be found");
       }
@@ -121,7 +121,7 @@ describe("legacy sso show integration", () => {
     const { layer } = setup({ status: 500, body: { error: "boom" } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoShow({
+        ssoShow({
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -130,7 +130,7 @@ describe("legacy sso show integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoShowUnexpectedStatusError");
+        expect(dump).toContain("SsoShowUnexpectedStatusError");
         expect(dump).toContain("Unexpected error fetching identity provider");
       }
     }).pipe(Effect.provide(layer));
@@ -140,7 +140,7 @@ describe("legacy sso show integration", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoShow({
+        ssoShow({
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -148,7 +148,7 @@ describe("legacy sso show integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoShowNetworkError");
+        expect(JSON.stringify(exit.cause)).toContain("SsoShowNetworkError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -157,7 +157,7 @@ describe("legacy sso show integration", () => {
     const { layer } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySsoShow({
+        ssoShow({
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -166,7 +166,7 @@ describe("legacy sso show integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoShowEnvNotSupportedError");
+        expect(dump).toContain("SsoShowEnvNotSupportedError");
         expect(dump).toContain("--output env flag is not supported");
       }
     }).pipe(Effect.provide(layer));
@@ -175,7 +175,7 @@ describe("legacy sso show integration", () => {
   it.live("Go --output=json encodes response with Go's HTML escaping", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
-      yield* legacySsoShow({
+      yield* ssoShow({
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -192,7 +192,7 @@ describe("legacy sso show integration", () => {
   it.live("Go --output=yaml encodes the provider with yaml.v3's byte shape", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
-      yield* legacySsoShow({
+      yield* ssoShow({
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -219,7 +219,7 @@ updatedat: "2023-03-28T13:50:14.464Z"
   it.live("Go --output=toml encodes the provider with BurntSushi's byte shape", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
-      yield* legacySsoShow({
+      yield* ssoShow({
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -244,7 +244,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
   it.live("TS --output-format=json emits success", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacySsoShow({
+      yield* ssoShow({
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -257,7 +257,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
   it.live("Go --output=pretty matches text mode", () => {
     const { layer, out } = setup({ goOutput: "pretty" });
     return Effect.gen(function* () {
-      yield* legacySsoShow({
+      yield* ssoShow({
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -269,7 +269,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
   it.live("--metadata short-circuits and prints raw XML", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoShow({
+      yield* ssoShow({
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: true,
@@ -281,7 +281,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
   it.live("--metadata prints empty string + newline when metadata_xml absent", () => {
     const { layer, out } = setup({ body: { id: VALID_PROVIDER_ID } });
     return Effect.gen(function* () {
-      yield* legacySsoShow({
+      yield* ssoShow({
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: true,
@@ -294,7 +294,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     const { layer, analytics } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
       yield* Effect.exit(
-        legacySsoShow({
+        ssoShow({
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -307,7 +307,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
   it.live("flushes telemetry + linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoShow({
+      yield* ssoShow({
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -320,7 +320,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
   it.live("hits GET /v1/projects/{ref}/config/auth/sso/providers/{id}", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoShow({
+      yield* ssoShow({
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -328,7 +328,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
       const req = api.requests.find((r) => r.url.includes(VALID_PROVIDER_ID));
       expect(req?.method).toBe("GET");
       expect(req?.url).toContain(
-        `/v1/projects/${LEGACY_VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
+        `/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
       );
     }).pipe(Effect.provide(layer));
   });

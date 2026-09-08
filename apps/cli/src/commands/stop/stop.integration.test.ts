@@ -9,17 +9,17 @@ import { vi } from "vitest";
 
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
-  mockLegacyCliSettings,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../tests/helpers/legacy-mocks.ts";
-import { LegacyDebugFlag } from "../../shared/legacy/global-flags.ts";
-import { legacyStop } from "./stop.handler.ts";
-import type { LegacyStopFlags } from "./stop.command.ts";
+  mockCommandSettings,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../tests/helpers/command-mocks.ts";
+import { DebugFlag } from "../../command-internal/global-flags.ts";
+import { stop } from "./stop.handler.ts";
+import type { StopFlags } from "./stop.command.ts";
 
-const tempRoot = useLegacyTempWorkdir("supabase-stop-int-");
+const tempRoot = useTempWorkdir("supabase-stop-int-");
 
-function flags(overrides: Partial<LegacyStopFlags> = {}): LegacyStopFlags {
+function flags(overrides: Partial<StopFlags> = {}): StopFlags {
   return {
     projectId: Option.none(),
     backup: true,
@@ -61,8 +61,8 @@ type RouteResult = {
  * step-array mock `gen types` uses for its single linear pipeline.
  *
  * `stop`'s single `ps` listing uses the combined `--format "{{.ID}}\t{{.Names}}\t{{.Label
- * \"com.supabase.cli.workdir\"}}"` (via `legacyDockerRemoveAll`'s `onContainersRemoved`
- * hook, see that function's doc comment) so `legacyCleanupStartSecrets` gets container
+ * \"com.supabase.cli.workdir\"}}"` (via `dockerRemoveAll`'s `onContainersRemoved`
+ * hook, see that function's doc comment) so `cleanupStartSecrets` gets container
  * names/workdirs from the same request that lists ids to stop, rather than a second,
  * separately-formatted `docker ps` call — which would cost an extra real Docker Engine
  * API request. `stdout` for a `ps` route response is one `<id>\t<name>`
@@ -156,7 +156,7 @@ function mockRoutedContainerCliSpawner(
 /**
  * Default happy-path router: `ps` lists one container, `docker version` reports
  * an API version comfortably at/above the `volume prune --all` gate (1.42, see
- * `legacyDockerSupportsVolumePruneAllFlag`), everything else succeeds empty.
+ * `dockerSupportsVolumePruneAllFlag`), everything else succeeds empty.
  */
 function defaultRoute(
   opts: {
@@ -185,7 +185,7 @@ interface SetupOpts {
   readonly skipConfig?: boolean;
   /** Defaults to `tempRoot.current` — override for `--workdir`-resolution tests. */
   readonly workdir?: string;
-  /** `--debug` — gates `legacyDockerRemoveAll`'s `Pruned …:` stderr reports. */
+  /** `--debug` — gates `dockerRemoveAll`'s `Pruned …:` stderr reports. */
   readonly debug?: boolean;
 }
 
@@ -198,8 +198,8 @@ function setup(opts: SetupOpts = {}) {
     format: opts.format ?? "text",
     interactive: (opts.format ?? "text") === "text",
   });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cliSettings = mockLegacyCliSettings({ workdir, projectId: Option.none() });
+  const telemetry = mockTelemetryStateTracked();
+  const cliSettings = mockCommandSettings({ workdir, projectId: Option.none() });
   const child = mockRoutedContainerCliSpawner(opts.route ?? defaultRoute(), {
     dockerMissing: opts.dockerMissing,
     failSpawnFor: opts.failSpawnFor,
@@ -211,13 +211,13 @@ function setup(opts: SetupOpts = {}) {
     cliSettings,
     telemetry.layer,
     child.layer,
-    Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
+    Layer.succeed(DebugFlag, opts.debug ?? false),
   );
 
   return { workdir, out, telemetry, child, layer };
 }
 
-describe("legacy stop integration", () => {
+describe("stop integration", () => {
   it.live(
     "stops the current project's containers with backup and suggests the volume command",
     () => {
@@ -226,7 +226,7 @@ describe("legacy stop integration", () => {
         route: defaultRoute({ containerIds: ["c1", "c2"], volumeNames: ["supabase_db_demo"] }),
       });
       return Effect.gen(function* () {
-        yield* legacyStop(flags());
+        yield* stop(flags());
         const psCall = child.spawned.find((s) => s.args[0] === "ps");
         expect(psCall?.args).toEqual([
           "ps",
@@ -257,11 +257,11 @@ describe("legacy stop integration", () => {
   it.live(
     "reclaims staged-secret directories for containers it tears down, leaving unrelated ones alone",
     () => {
-      // legacyCleanupStartSecrets (command-internal/legacy-start-secrets-cleanup.ts)
+      // cleanupStartSecrets (command-internal/start-secrets-cleanup.ts)
       // reclaims start's staged plaintext-secret directories
       // (<workdir>/supabase/.temp/start-secrets/<container-name>) for exactly
       // the containers this stop run tore down — captured via
-      // `legacyDockerRemoveAll`'s `onContainersRemoved` hook, never a blanket
+      // `dockerRemoveAll`'s `onContainersRemoved` hook, never a blanket
       // delete of the whole start-secrets/ parent (see that function's doc
       // comment for why). `defaultRoute`'s `ps` stdout carries no third
       // (workdir-label) column, so this also exercises the backward-compatible
@@ -279,7 +279,7 @@ describe("legacy stop integration", () => {
       mkdirSync(unmatchedDir, { recursive: true });
       writeFileSync(join(unmatchedDir, "secret-0"), "unrelated project's secret");
       return Effect.gen(function* () {
-        yield* legacyStop(flags());
+        yield* stop(flags());
         expect(existsSync(matchedDir)).toBe(false);
         expect(existsSync(unmatchedDir)).toBe(true);
       }).pipe(Effect.provide(layer));
@@ -292,7 +292,7 @@ describe("legacy stop integration", () => {
       // `stop --all`/`stop --project-id <other>` can tear down a DIFFERENT project's containers
       // than the one this invocation's own cwd/`--workdir` points at. Each container's own
       // `com.supabase.cli.workdir` label (read back via the widened `docker ps --format`, see
-      // `legacyListContainerIdsAndNames`) must be used to locate its staged-secret directory —
+      // `listContainerIdsAndNames`) must be used to locate its staged-secret directory —
       // never this invocation's `cliSettings.workdir` unconditionally, which would look in the
       // wrong place and silently orphan the other project's secrets forever.
       const workdir = tempRoot.current;
@@ -322,7 +322,7 @@ describe("legacy stop integration", () => {
       mkdirSync(wrongDir, { recursive: true });
       writeFileSync(join(wrongDir, "secret-0"), "must not be touched");
       return Effect.gen(function* () {
-        yield* legacyStop(flags({ all: Option.some(true) }));
+        yield* stop(flags({ all: Option.some(true) }));
         expect(existsSync(correctDir)).toBe(false);
         expect(existsSync(wrongDir)).toBe(true);
       }).pipe(Effect.provide(layer));
@@ -342,7 +342,7 @@ describe("legacy stop integration", () => {
         route: defaultRoute(),
       });
       return Effect.gen(function* () {
-        yield* legacyStop(flags());
+        yield* stop(flags());
         const psCall = child.spawned.find((s) => s.args[0] === "ps");
         expect(psCall?.args).toEqual([
           "ps",
@@ -362,7 +362,7 @@ describe("legacy stop integration", () => {
     // path must NOT sanitize even though the default (config-derived) path does.
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
-      yield* legacyStop(flags({ projectId: Option.some("Raw Value!!") }));
+      yield* stop(flags({ projectId: Option.some("Raw Value!!") }));
       const psCall = child.spawned.find((s) => s.args[0] === "ps");
       expect(psCall?.args).toEqual([
         "ps",
@@ -378,7 +378,7 @@ describe("legacy stop integration", () => {
   it.live("stops every project's containers with --all without reading config.toml", () => {
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
-      yield* legacyStop(flags({ all: Option.some(true) }));
+      yield* stop(flags({ all: Option.some(true) }));
       const psCall = child.spawned.find((s) => s.args[0] === "ps");
       expect(psCall?.args).toEqual([
         "ps",
@@ -407,7 +407,7 @@ describe("legacy stop integration", () => {
       route: defaultRoute({ volumeNames: ["supabase_db_demo"] }),
     });
     return Effect.gen(function* () {
-      yield* legacyStop(flags({ all: Option.some(true) }));
+      yield* stop(flags({ all: Option.some(true) }));
       expect(out.stderrText).toContain(
         "Local data are backed up to docker volume. Use docker to show them:",
       );
@@ -419,7 +419,7 @@ describe("legacy stop integration", () => {
   it.live("stops a named project with --project-id without reading config.toml", () => {
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
-      yield* legacyStop(flags({ projectId: Option.some("other-project") }));
+      yield* stop(flags({ projectId: Option.some("other-project") }));
       const psCall = child.spawned.find((s) => s.args[0] === "ps");
       expect(psCall?.args).toEqual([
         "ps",
@@ -438,7 +438,7 @@ describe("legacy stop integration", () => {
     // exactly like an absent flag, not resolve to the bare/all-projects filter.
     const { layer, child } = setup({ configuredProjectId: "demo", route: defaultRoute() });
     return Effect.gen(function* () {
-      yield* legacyStop(flags({ projectId: Option.some("") }));
+      yield* stop(flags({ projectId: Option.some("") }));
       const psCall = child.spawned.find((s) => s.args[0] === "ps");
       expect(psCall?.args).toEqual([
         "ps",
@@ -459,7 +459,7 @@ describe("legacy stop integration", () => {
     const { layer, child } = setup({ configuredProjectId: "toml-project", route: defaultRoute() });
     writeEnvFile(tempRoot.current, ".env", "SUPABASE_PROJECT_ID=env-file-project\n");
     return Effect.gen(function* () {
-      yield* legacyStop(flags());
+      yield* stop(flags());
       const psCall = child.spawned.find((s) => s.args[0] === "ps");
       expect(psCall?.args).toEqual([
         "ps",
@@ -477,7 +477,7 @@ describe("legacy stop integration", () => {
     writeEnvFile(tempRoot.current, ".env", "SUPABASE_PROJECT_ID=env-file-project\n");
     process.env["SUPABASE_PROJECT_ID"] = "ambient-project";
     return Effect.gen(function* () {
-      yield* legacyStop(flags());
+      yield* stop(flags());
       const psCall = child.spawned.find((s) => s.args[0] === "ps");
       expect(psCall?.args).toEqual([
         "ps",
@@ -512,7 +512,7 @@ describe("legacy stop integration", () => {
         route: defaultRoute(),
       });
       return Effect.gen(function* () {
-        yield* legacyStop(flags());
+        yield* stop(flags());
         const psCall = child.spawned.find((s) => s.args[0] === "ps");
         expect(psCall?.args).toEqual([
           "ps",
@@ -534,7 +534,7 @@ describe("legacy stop integration", () => {
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     writeEnvFile(tempRoot.current, ".env", "SUPABASE_PROJECT_ID=no-config-project\n");
     return Effect.gen(function* () {
-      yield* legacyStop(flags());
+      yield* stop(flags());
       const psCall = child.spawned.find((s) => s.args[0] === "ps");
       expect(psCall?.args).toEqual([
         "ps",
@@ -554,7 +554,7 @@ describe("legacy stop integration", () => {
     const { layer, child } = setup({ configuredProjectId: "toml-project", route: defaultRoute() });
     writeFileSync(join(tempRoot.current, ".env"), "SUPABASE_PROJECT_ID=root-env-project\n");
     return Effect.gen(function* () {
-      yield* legacyStop(flags());
+      yield* stop(flags());
       const psCall = child.spawned.find((s) => s.args[0] === "ps");
       expect(psCall?.args).toEqual([
         "ps",
@@ -575,10 +575,10 @@ describe("legacy stop integration", () => {
     const missingWorkdir = join(tempRoot.current, "does-not-exist");
     const { layer, child } = setup({ workdir: missingWorkdir, skipConfig: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags()));
+      const exit = yield* Effect.exit(stop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopWorkdirError");
+        expect(JSON.stringify(exit.cause)).toContain("StopWorkdirError");
         expect(JSON.stringify(exit.cause)).toContain(
           `failed to change workdir: chdir ${missingWorkdir}: no such file or directory`,
         );
@@ -592,10 +592,10 @@ describe("legacy stop integration", () => {
     writeFileSync(filePath, "");
     const { layer, child } = setup({ workdir: filePath, skipConfig: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags()));
+      const exit = yield* Effect.exit(stop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopWorkdirError");
+        expect(JSON.stringify(exit.cause)).toContain("StopWorkdirError");
         expect(JSON.stringify(exit.cause)).toContain(
           `failed to change workdir: chdir ${filePath}: not a directory`,
         );
@@ -608,11 +608,11 @@ describe("legacy stop integration", () => {
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyStop(flags({ projectId: Option.some("other-project"), all: Option.some(true) })),
+        stop(flags({ projectId: Option.some("other-project"), all: Option.some(true) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopMutuallyExclusiveError");
+        expect(JSON.stringify(exit.cause)).toContain("StopMutuallyExclusiveError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -625,11 +625,11 @@ describe("legacy stop integration", () => {
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyStop(flags({ projectId: Option.some("other-project"), all: Option.some(false) })),
+        stop(flags({ projectId: Option.some("other-project"), all: Option.some(false) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopMutuallyExclusiveError");
+        expect(JSON.stringify(exit.cause)).toContain("StopMutuallyExclusiveError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -638,7 +638,7 @@ describe("legacy stop integration", () => {
   it.live("deletes data volumes with --no-backup", () => {
     const { layer, child } = setup({ configuredProjectId: "demo", route: defaultRoute() });
     return Effect.gen(function* () {
-      yield* legacyStop(flags({ noBackup: true }));
+      yield* stop(flags({ noBackup: true }));
       const volumePrune = child.spawned.find(
         (s) => s.args[0] === "volume" && s.args[1] === "prune",
       );
@@ -664,7 +664,7 @@ describe("legacy stop integration", () => {
         route: defaultRoute({ dockerApiVersion: "1.41" }),
       });
       return Effect.gen(function* () {
-        yield* legacyStop(flags({ noBackup: true }));
+        yield* stop(flags({ noBackup: true }));
         const volumePrune = child.spawned.find(
           (s) => s.command === "docker" && s.args[0] === "volume" && s.args[1] === "prune",
         );
@@ -685,7 +685,7 @@ describe("legacy stop integration", () => {
       route: defaultRoute({ dockerApiVersion: "1.42" }),
     });
     return Effect.gen(function* () {
-      yield* legacyStop(flags({ noBackup: true }));
+      yield* stop(flags({ noBackup: true }));
       const volumePrune = child.spawned.find(
         (s) => s.command === "docker" && s.args[0] === "volume" && s.args[1] === "prune",
       );
@@ -706,7 +706,7 @@ describe("legacy stop integration", () => {
     // Only `--no-backup` deletes volumes.
     const { layer, child } = setup({ configuredProjectId: "demo", route: defaultRoute() });
     return Effect.gen(function* () {
-      yield* legacyStop(flags({ backup: false }));
+      yield* stop(flags({ backup: false }));
       const volumePrune = child.spawned.find(
         (s) => s.args[0] === "volume" && s.args[1] === "prune",
       );
@@ -717,7 +717,7 @@ describe("legacy stop integration", () => {
   it.live("--no-backup still deletes data volumes even when --backup stays true", () => {
     const { layer, child } = setup({ configuredProjectId: "demo", route: defaultRoute() });
     return Effect.gen(function* () {
-      yield* legacyStop(flags({ backup: true, noBackup: true }));
+      yield* stop(flags({ backup: true, noBackup: true }));
       const volumePrune = child.spawned.find(
         (s) => s.args[0] === "volume" && s.args[1] === "prune",
       );
@@ -735,7 +735,7 @@ describe("legacy stop integration", () => {
   it.live("keeps data volumes by default (no volume prune call)", () => {
     const { layer, child } = setup({ configuredProjectId: "demo", route: defaultRoute() });
     return Effect.gen(function* () {
-      yield* legacyStop(flags());
+      yield* stop(flags());
       const volumePrune = child.spawned.find(
         (s) => s.args[0] === "volume" && s.args[1] === "prune",
       );
@@ -749,10 +749,10 @@ describe("legacy stop integration", () => {
     writeFileSync(join(workdir, "supabase", "config.toml"), "not valid toml =====");
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags()));
+      const exit = yield* Effect.exit(stop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopConfigLoadError");
+        expect(JSON.stringify(exit.cause)).toContain("StopConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -778,10 +778,10 @@ project_id = "aaaaaaaaaaaaaaaaaaaa"
     );
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags()));
+      const exit = yield* Effect.exit(stop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopConfigLoadError");
+        expect(JSON.stringify(exit.cause)).toContain("StopConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -803,10 +803,10 @@ project_id = "short"
     );
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags()));
+      const exit = yield* Effect.exit(stop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopConfigLoadError");
+        expect(JSON.stringify(exit.cause)).toContain("StopConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -831,7 +831,7 @@ additional_redirect_urls = "http://a,http://b"
       );
       const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
       return Effect.gen(function* () {
-        yield* legacyStop(flags());
+        yield* stop(flags());
         const psCall = child.spawned.find((s) => s.args[0] === "ps");
         expect(psCall?.args).toEqual([
           "ps",
@@ -865,7 +865,7 @@ enabled = true
       warnings.push(args.map((a) => String(a)).join(" "));
     });
     return Effect.gen(function* () {
-      yield* legacyStop(flags());
+      yield* stop(flags());
       expect(warnings.some((m) => m.includes('WARN: disabling deprecated "slack" provider'))).toBe(
         true,
       );
@@ -887,10 +887,10 @@ enabled = true
       );
       const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStop(flags()));
+        const exit = yield* Effect.exit(stop(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyStopConfigLoadError");
+          expect(JSON.stringify(exit.cause)).toContain("StopConfigLoadError");
           expect(JSON.stringify(exit.cause)).toContain("Postgres version 12.x is unsupported");
         }
         expect(child.spawned).toEqual([]);
@@ -908,7 +908,7 @@ enabled = true
     );
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags({ all: Option.some(true) })));
+      const exit = yield* Effect.exit(stop(flags({ all: Option.some(true) })));
       expect(Exit.isSuccess(exit)).toBe(true);
       const psCall = child.spawned.find((s) => s.args[0] === "ps");
       expect(psCall?.args).toContain("label=com.supabase.cli.project");
@@ -926,7 +926,7 @@ enabled = true
     );
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags({ projectId: Option.some("explicit") })));
+      const exit = yield* Effect.exit(stop(flags({ projectId: Option.some("explicit") })));
       expect(Exit.isSuccess(exit)).toBe(true);
       const psCall = child.spawned.find((s) => s.args[0] === "ps");
       expect(psCall?.args).toContain("label=com.supabase.cli.project=explicit");
@@ -943,10 +943,10 @@ enabled = true
       },
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags()));
+      const exit = yield* Effect.exit(stop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopContainerError");
+        expect(JSON.stringify(exit.cause)).toContain("StopContainerError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -957,7 +957,7 @@ enabled = true
       // The stop stage failing means `container prune` never even runs, so none of the listed
       // containers were actually removed — some may still be live. `onContainersRemoved` only
       // fires once `container prune` confirms removal, so it never fires here, and
-      // `legacyCleanupStartSecrets` must not delete anything.
+      // `cleanupStartSecrets` must not delete anything.
       const { layer, workdir } = setup({
         configuredProjectId: "demo",
         route: (args) => {
@@ -970,10 +970,10 @@ enabled = true
       mkdirSync(stagedDir, { recursive: true });
       writeFileSync(join(stagedDir, "secret-0"), "kong.yml contents");
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStop(flags()));
+        const exit = yield* Effect.exit(stop(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyStopContainerError");
+          expect(JSON.stringify(exit.cause)).toContain("StopContainerError");
         }
         expect(existsSync(stagedDir)).toBe(true);
       }).pipe(Effect.provide(layer));
@@ -990,10 +990,10 @@ enabled = true
       failSpawnFor: (args) => args[0] === "stop",
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags()));
+      const exit = yield* Effect.exit(stop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopContainerError");
+        expect(JSON.stringify(exit.cause)).toContain("StopContainerError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1014,10 +1014,10 @@ enabled = true
         },
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStop(flags()));
+        const exit = yield* Effect.exit(stop(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyStopContainerError");
+          expect(JSON.stringify(exit.cause)).toContain("StopContainerError");
         }
       }).pipe(Effect.provide(layer));
     },
@@ -1032,10 +1032,10 @@ enabled = true
       },
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags()));
+      const exit = yield* Effect.exit(stop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopContainerPruneError");
+        expect(JSON.stringify(exit.cause)).toContain("StopContainerPruneError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1049,10 +1049,10 @@ enabled = true
       },
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags({ noBackup: true })));
+      const exit = yield* Effect.exit(stop(flags({ noBackup: true })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopVolumePruneError");
+        expect(JSON.stringify(exit.cause)).toContain("StopVolumePruneError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1066,10 +1066,10 @@ enabled = true
       },
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags()));
+      const exit = yield* Effect.exit(stop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopNetworkPruneError");
+        expect(JSON.stringify(exit.cause)).toContain("StopNetworkPruneError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1090,7 +1090,7 @@ enabled = true
     mkdirSync(matchedDir, { recursive: true });
     writeFileSync(join(matchedDir, "secret-0"), "kong.yml contents");
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags()));
+      const exit = yield* Effect.exit(stop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(existsSync(matchedDir)).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -1105,10 +1105,10 @@ enabled = true
       },
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags()));
+      const exit = yield* Effect.exit(stop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopListError");
+        expect(JSON.stringify(exit.cause)).toContain("StopListError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1120,7 +1120,7 @@ enabled = true
       dockerMissing: true,
     });
     return Effect.gen(function* () {
-      yield* legacyStop(flags());
+      yield* stop(flags());
       // The failed `docker` attempt is recorded before the `podman` fallback fires
       // (`spawnContainerCli`'s `Effect.catch` retries the same argv), so the
       // successful call is the LAST matching record, not the first.
@@ -1141,7 +1141,7 @@ enabled = true
       dockerMissing: true,
     });
     return Effect.gen(function* () {
-      yield* legacyStop(flags({ noBackup: true }));
+      yield* stop(flags({ noBackup: true }));
       const volumePruneCalls = child.spawned.filter(
         (s) => s.args[0] === "volume" && s.args[1] === "prune",
       );
@@ -1163,7 +1163,7 @@ enabled = true
       route: defaultRoute({ volumeNames: ["supabase_db_demo"] }),
     });
     return Effect.gen(function* () {
-      yield* legacyStop(flags());
+      yield* stop(flags());
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ project_id_filter: "demo", backup: true });
       expect(out.stdoutText).not.toContain("\x1b[?25l");
@@ -1178,7 +1178,7 @@ enabled = true
       route: defaultRoute({ volumeNames: [] }),
     });
     return Effect.gen(function* () {
-      yield* legacyStop(flags());
+      yield* stop(flags());
       expect(out.stderrText).not.toContain("Local data are backed up");
     }).pipe(Effect.provide(layer));
   });
@@ -1189,7 +1189,7 @@ enabled = true
       route: (args) => (args[0] === "ps" ? { exitCode: 1 } : { exitCode: 0 }),
     });
     return Effect.gen(function* () {
-      yield* Effect.exit(legacyStop(flags()));
+      yield* Effect.exit(stop(flags()));
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -1201,10 +1201,10 @@ enabled = true
       failSpawnFor: (args) => args[0] === "container" && args[1] === "prune",
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags()));
+      const exit = yield* Effect.exit(stop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopContainerPruneError");
+        expect(JSON.stringify(exit.cause)).toContain("StopContainerPruneError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1216,10 +1216,10 @@ enabled = true
       failSpawnFor: (args) => args[0] === "volume" && args[1] === "prune",
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags({ noBackup: true })));
+      const exit = yield* Effect.exit(stop(flags({ noBackup: true })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopVolumePruneError");
+        expect(JSON.stringify(exit.cause)).toContain("StopVolumePruneError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1231,10 +1231,10 @@ enabled = true
       failSpawnFor: (args) => args[0] === "network" && args[1] === "prune",
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags()));
+      const exit = yield* Effect.exit(stop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopNetworkPruneError");
+        expect(JSON.stringify(exit.cause)).toContain("StopNetworkPruneError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1249,13 +1249,13 @@ enabled = true
       failSpawnFor: (args) => args[0] === "volume" && args[1] === "ls",
     });
     return Effect.gen(function* () {
-      yield* legacyStop(flags());
+      yield* stop(flags());
       expect(out.stdoutText).toContain("Stopped");
       expect(out.stderrText).not.toContain("Local data are backed up");
     }).pipe(Effect.provide(layer));
   });
 
-  // `legacyDockerRemoveAll`'s `--debug` prune reports (`legacy-docker-remove-all.ts`'s
+  // `dockerRemoveAll`'s `--debug` prune reports (`docker-remove-all.ts`'s
   // `reportPruned`) write straight to `process.stderr`, bypassing the mocked `Output`
   // service entirely — a raw `vi.spyOn` on `process.stderr.write` is the only way to
   // observe them, same boundary the file already spies at for `console.error` above.
@@ -1280,7 +1280,7 @@ enabled = true
     });
     const writeSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     return Effect.gen(function* () {
-      yield* legacyStop(flags({ noBackup: true }));
+      yield* stop(flags({ noBackup: true }));
       const prunedWrites = writeSpy.mock.calls
         .map((call) => call[0])
         .filter((chunk): chunk is string => typeof chunk === "string" && chunk.includes("Pruned"));
@@ -1299,7 +1299,7 @@ enabled = true
     });
     const writeSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     return Effect.gen(function* () {
-      yield* legacyStop(flags({ noBackup: true }));
+      yield* stop(flags({ noBackup: true }));
       const prunedWrites = writeSpy.mock.calls.filter(
         (call) => typeof call[0] === "string" && call[0].includes("Pruned"),
       );

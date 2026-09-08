@@ -1,8 +1,4 @@
-import {
-  legacyInspectBacktickStmt,
-  legacyInspectText,
-  type LegacyInspectQuerySpec,
-} from "../legacy-inspect-query.ts";
+import { inspectBacktickStmt, inspectText, type InspectQuerySpec } from "../inspect-query.ts";
 
 const SQL = `SELECT
   (interval '1 millisecond' * total_exec_time)::text AS total_exec_time,
@@ -35,16 +31,16 @@ LIMIT 10`;
  * `inspect db outliers` — pg_stat_statements ordered by total execution time.
  * The `query` column is whitespace-collapsed and rendered first.
  */
-export const legacyOutliersSpec: LegacyInspectQuerySpec = {
+export const outliersSpec: InspectQuerySpec = {
   name: "outliers",
   sql: SQL,
   params: () => [],
   headers: ["Query", "Execution Time", "Proportion of exec time", "Number Calls", "Sync IO time"],
   project: (row) => [
-    legacyInspectBacktickStmt(row["query"]),
-    legacyInspectText(row["total_exec_time"]),
-    legacyInspectText(row["prop_exec_time"]),
-    legacyInspectText(row["ncalls"]),
-    legacyInspectText(row["sync_io_time"]),
+    inspectBacktickStmt(row["query"]),
+    inspectText(row["total_exec_time"]),
+    inspectText(row["prop_exec_time"]),
+    inspectText(row["ncalls"]),
+    inspectText(row["sync_io_time"]),
   ],
 };

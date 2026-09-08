@@ -4,12 +4,12 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
 
 import {
-  makeTempLegacyStackProject,
+  makeTempCliStackProject,
   overrideStackPorts,
   requireCliSuccess,
   runSupabase,
 } from "../../../tests/helpers/cli.ts";
-import { legacySanitizeProjectId } from "../../command-internal/legacy-docker-ids.ts";
+import { sanitizeProjectId } from "../../command-internal/docker-ids.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -35,7 +35,7 @@ const STOP_TEST_TIMEOUT_MS =
 // SUPABASE_ACCESS_TOKEN it gates on is otherwise irrelevant here. See
 // AGENTS.md's "e2e tests" section for the full convention.
 describe("supabase stop (e2e)", () => {
-  let project: Awaited<ReturnType<typeof makeTempLegacyStackProject>> | undefined;
+  let project: Awaited<ReturnType<typeof makeTempCliStackProject>> | undefined;
   let projectId: string | undefined;
 
   afterEach(async () => {
@@ -48,14 +48,13 @@ describe("supabase stop (e2e)", () => {
     "starts a real local stack, then stops it and removes its containers",
     { timeout: STOP_TEST_TIMEOUT_MS },
     async () => {
-      project = await makeTempLegacyStackProject("sb-stop-e2e-");
+      project = await makeTempCliStackProject("sb-stop-e2e-");
       const projectDir = project.dir;
       // No `project_id` override, so the cli resolves it from the workdir
-      // basename (see legacy-docker-ids.ts).
+      // basename (see docker-ids.ts).
       projectId = path.basename(projectDir);
 
       const init = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
       });
@@ -68,20 +67,18 @@ describe("supabase stop (e2e)", () => {
       // exists to stop.
       const start = await runSupabase(
         ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
-        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
+        { cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
       );
       requireCliSuccess(start, "start setup");
 
       // Sanity: confirm the stack is actually up before testing `stop` against it.
       const before = await runSupabase(["status"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
       });
       requireCliSuccess(before, "status setup");
 
       const stop = await runSupabase(["stop"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: STOP_COMMAND_TIMEOUT_MS,
       });
@@ -111,15 +108,14 @@ describe("supabase stop (e2e)", () => {
     "stop --no-backup --debug reports real pruned containers, volumes, and network",
     { timeout: STOP_TEST_TIMEOUT_MS },
     async () => {
-      project = await makeTempLegacyStackProject("sb-stop-e2e-");
+      project = await makeTempCliStackProject("sb-stop-e2e-");
       const projectDir = project.dir;
       // Sanitizing is a no-op for a `mkdtemp`-generated basename (already
       // alphanumeric/`-`), but mirrors the port's actual resolution rather
       // than assuming that stays true (same note as `start.e2e.test.ts`).
-      projectId = legacySanitizeProjectId(path.basename(projectDir));
+      projectId = sanitizeProjectId(path.basename(projectDir));
 
       const init = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
       });
@@ -128,7 +124,7 @@ describe("supabase stop (e2e)", () => {
 
       const start = await runSupabase(
         ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
-        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
+        { cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
       );
       requireCliSuccess(start, "start setup");
 
@@ -138,7 +134,6 @@ describe("supabase stop (e2e)", () => {
       // assumption (`Deleted …:` headers, `Total reclaimed space:` trailer)
       // that mocked integration fixtures cannot validate by construction.
       const stop = await runSupabase(["stop", "--no-backup", "--debug"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: STOP_COMMAND_TIMEOUT_MS,
       });

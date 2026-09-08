@@ -11,9 +11,7 @@ import {
 // Templates match the established `errors.Errorf(...)` phrasing byte-for-byte.
 // ---------------------------------------------------------------------------
 
-export class LegacyProjectsListNetworkError extends Data.TaggedError(
-  "LegacyProjectsListNetworkError",
-)<{
+export class ProjectsListNetworkError extends Data.TaggedError("ProjectsListNetworkError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -21,8 +19,8 @@ export class LegacyProjectsListNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyProjectsListUnexpectedStatusError extends Data.TaggedError(
-  "LegacyProjectsListUnexpectedStatusError",
+export class ProjectsListUnexpectedStatusError extends Data.TaggedError(
+  "ProjectsListUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -42,9 +40,7 @@ export class LegacyProjectsListUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacyProjectsCreateNetworkError extends Data.TaggedError(
-  "LegacyProjectsCreateNetworkError",
-)<{
+export class ProjectsCreateNetworkError extends Data.TaggedError("ProjectsCreateNetworkError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -52,8 +48,8 @@ export class LegacyProjectsCreateNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyProjectsCreateUnexpectedStatusError extends Data.TaggedError(
-  "LegacyProjectsCreateUnexpectedStatusError",
+export class ProjectsCreateUnexpectedStatusError extends Data.TaggedError(
+  "ProjectsCreateUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -65,9 +61,7 @@ export class LegacyProjectsCreateUnexpectedStatusError extends Data.TaggedError(
 }
 
 // Interactive org list fetched by `create` when `--org-id` is omitted.
-export class LegacyProjectsOrgsListNetworkError extends Data.TaggedError(
-  "LegacyProjectsOrgsListNetworkError",
-)<{
+export class ProjectsOrgsListNetworkError extends Data.TaggedError("ProjectsOrgsListNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -78,8 +72,8 @@ export class LegacyProjectsOrgsListNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyProjectsOrgsListUnexpectedStatusError extends Data.TaggedError(
-  "LegacyProjectsOrgsListUnexpectedStatusError",
+export class ProjectsOrgsListUnexpectedStatusError extends Data.TaggedError(
+  "ProjectsOrgsListUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -90,9 +84,7 @@ export class LegacyProjectsOrgsListUnexpectedStatusError extends Data.TaggedErro
   }
 }
 
-export class LegacyProjectsDeleteNetworkError extends Data.TaggedError(
-  "LegacyProjectsDeleteNetworkError",
-)<{
+export class ProjectsDeleteNetworkError extends Data.TaggedError("ProjectsDeleteNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -103,8 +95,8 @@ export class LegacyProjectsDeleteNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyProjectsDeleteUnexpectedStatusError extends Data.TaggedError(
-  "LegacyProjectsDeleteUnexpectedStatusError",
+export class ProjectsDeleteUnexpectedStatusError extends Data.TaggedError(
+  "ProjectsDeleteUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -116,9 +108,7 @@ export class LegacyProjectsDeleteUnexpectedStatusError extends Data.TaggedError(
 }
 
 // "Project does not exist:<ref>" (404 branch of the delete flow).
-export class LegacyProjectsDeleteNotFoundError extends Data.TaggedError(
-  "LegacyProjectsDeleteNotFoundError",
-)<{
+export class ProjectsDeleteNotFoundError extends Data.TaggedError("ProjectsDeleteNotFoundError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -126,9 +116,7 @@ export class LegacyProjectsDeleteNotFoundError extends Data.TaggedError(
   }
 }
 
-export class LegacyProjectsApiKeysNetworkError extends Data.TaggedError(
-  "LegacyProjectsApiKeysNetworkError",
-)<{
+export class ProjectsApiKeysNetworkError extends Data.TaggedError("ProjectsApiKeysNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -139,8 +127,8 @@ export class LegacyProjectsApiKeysNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyProjectsApiKeysUnexpectedStatusError extends Data.TaggedError(
-  "LegacyProjectsApiKeysUnexpectedStatusError",
+export class ProjectsApiKeysUnexpectedStatusError extends Data.TaggedError(
+  "ProjectsApiKeysUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -156,9 +144,7 @@ export class LegacyProjectsApiKeysUnexpectedStatusError extends Data.TaggedError
 // ---------------------------------------------------------------------------
 
 // `list` rejects `--output env` (`utils.ErrEnvNotSupported`).
-export class LegacyProjectsEnvNotSupportedError extends Data.TaggedError(
-  "LegacyProjectsEnvNotSupportedError",
-)<{
+export class ProjectsEnvNotSupportedError extends Data.TaggedError("ProjectsEnvNotSupportedError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -168,8 +154,8 @@ export class LegacyProjectsEnvNotSupportedError extends Data.TaggedError(
 
 // Non-interactive `create` missing required params — `--org-id`,
 // `--db-password`, `--region` are required, plus exactly 1 positional arg.
-export class LegacyProjectsCreateMissingArgError extends Data.TaggedError(
-  "LegacyProjectsCreateMissingArgError",
+export class ProjectsCreateMissingArgError extends Data.TaggedError(
+  "ProjectsCreateMissingArgError",
 )<{
   readonly message: string;
 }> {
@@ -179,9 +165,7 @@ export class LegacyProjectsCreateMissingArgError extends Data.TaggedError(
 }
 
 // Interactive `create` name prompt returned blank.
-export class LegacyProjectsCreateNameEmptyError extends Data.TaggedError(
-  "LegacyProjectsCreateNameEmptyError",
-)<{
+export class ProjectsCreateNameEmptyError extends Data.TaggedError("ProjectsCreateNameEmptyError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -191,8 +175,8 @@ export class LegacyProjectsCreateNameEmptyError extends Data.TaggedError(
 
 // `delete` non-interactive with no positional ref — exactly 1 positional
 // arg is required on a non-TTY.
-export class LegacyProjectsDeleteRefRequiredError extends Data.TaggedError(
-  "LegacyProjectsDeleteRefRequiredError",
+export class ProjectsDeleteRefRequiredError extends Data.TaggedError(
+  "ProjectsDeleteRefRequiredError",
 )<{
   readonly message: string;
 }> {
@@ -202,9 +186,7 @@ export class LegacyProjectsDeleteRefRequiredError extends Data.TaggedError(
 }
 
 // User declined the delete confirmation prompt (`errors.New(context.Canceled)`).
-export class LegacyProjectsDeleteCancelledError extends Data.TaggedError(
-  "LegacyProjectsDeleteCancelledError",
-)<{
+export class ProjectsDeleteCancelledError extends Data.TaggedError("ProjectsDeleteCancelledError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

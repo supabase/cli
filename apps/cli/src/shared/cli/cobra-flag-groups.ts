@@ -41,7 +41,7 @@ const PFLAG_BOOLEAN_FALSE_VALUES: ReadonlySet<string> = new Set([
  * Last explicit `--<flagName>`/`--<flagName>=<value>` boolean occurrence in
  * argv, or `undefined` when the flag never appears — matching pflag/viper's
  * shared-variable last-`Set()`-wins semantics (mirrors
- * `legacyExperimentalFlagFromArgs`, `shared/legacy/global-flags.ts`). A bare
+ * `experimentalFlagFromArgs`, `command-internal/global-flags.ts`). A bare
  * `--<flagName>` records pflag's bool `NoOptDefVal` (`true`); an inline value
  * is parsed through pflag's `strconv.ParseBool` false set — anything else
  * (including garbage) is truthy, same as `cast.ToBool`'s permissive default.
@@ -101,14 +101,23 @@ export function lastExplicitLongFlagValue(
 
 /**
  * Value-taking long flags registered persistently on the Go root command
- * (`apps/cli-go/cmd/root.go:324-333`: `--workdir`, `--network-id`,
+ * (`apps/cli-go/cmd/root.go:337-348`: `--workdir`, `--network-id`,
  * `--profile`, `--output`, `--dns-resolver`, `--agent`), plus the TS-only
- * `--output-format` global (`shared/cli/global-flags.ts`) which the TS
- * parser accepts on any subcommand. pflag lets any of these consume the
- * following argv token, so a pflag-faithful scan must know them or it will
- * miscount positionals on perfectly normal invocations like
- * `sso update --workdir . <id>`. Keep in sync with `globalFlagsWithValues`
- * in `shared/cli/run.ts`.
+ * globals the TS parser accepts on any subcommand: `--output-format`
+ * (`shared/cli/global-flags.ts`) and the CLI library's built-in
+ * `--log-level`. pflag lets any of these consume the following argv token,
+ * so a pflag-faithful scan must know them or it will miscount positionals
+ * on perfectly normal invocations like `sso update --workdir . <id>` — or
+ * `sso update --log-level error <id>`, which mis-reported
+ * `accepts 1 arg(s), received 2` before `log-level` was listed here
+ * (issue #6482). `--completions`, the other value-taking built-in, is
+ * deliberately absent: every consumer of this set runs inside a command
+ * handler, which a parsed `--completions` never reaches (its print-and-exit
+ * action runs first); only the pre-parse scanners (`globalFlagsWithValues`
+ * in `shared/cli/run.ts`, the predicates in `shared/cli/agent-output.ts`)
+ * need it. No manual sync is required: both pre-parse consumers read
+ * `GLOBAL_VALUE_FLAG_TOKENS` below, which is derived from this set plus
+ * `--completions`.
  */
 export const PERSISTENT_VALUE_FLAG_NAMES: ReadonlySet<string> = new Set([
   "workdir",
@@ -118,14 +127,30 @@ export const PERSISTENT_VALUE_FLAG_NAMES: ReadonlySet<string> = new Set([
   "dns-resolver",
   "agent",
   "output-format",
+  "log-level",
 ]);
 
 /**
  * Shorthands of the persistent value-taking flags above (`-o` → `--output`,
- * `cmd/root.go:330`), mapped to their canonical long names.
+ * `cmd/root.go:344`), mapped to their canonical long names.
  */
 export const PERSISTENT_VALUE_FLAG_SHORTHANDS: ReadonlyMap<string, string> = new Map([
   ["o", "output"],
+]);
+
+/**
+ * Token-keyed view of every value-taking global the TS parser accepts:
+ * `PERSISTENT_VALUE_FLAG_NAMES` as `--` tokens, its shorthands, and the
+ * `--completions` built-in (needed by pre-parse scanners only — see above).
+ * Derived rather than hand-copied so the registries cannot drift apart, which
+ * is how issue #6482 happened. Consumed by `run.ts`'s argv scanners and
+ * `agent-output.ts`'s format predicates; pinned to its exact expected
+ * contents in `cobra-flag-groups.unit.test.ts`.
+ */
+export const GLOBAL_VALUE_FLAG_TOKENS: ReadonlySet<string> = new Set([
+  ...[...PERSISTENT_VALUE_FLAG_NAMES].map((name) => `--${name}`),
+  ...[...PERSISTENT_VALUE_FLAG_SHORTHANDS.keys()].map((short) => `-${short}`),
+  "--completions",
 ]);
 
 export interface PflagArgvScanSpec {

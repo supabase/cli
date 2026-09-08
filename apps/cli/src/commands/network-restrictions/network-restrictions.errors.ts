@@ -6,8 +6,8 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-export class LegacyNetworkRestrictionsGetNetworkError extends Data.TaggedError(
-  "LegacyNetworkRestrictionsGetNetworkError",
+export class NetworkRestrictionsGetNetworkError extends Data.TaggedError(
+  "NetworkRestrictionsGetNetworkError",
 )<{
   readonly message: string;
   readonly decode?: boolean;
@@ -19,8 +19,8 @@ export class LegacyNetworkRestrictionsGetNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyNetworkRestrictionsGetUnexpectedStatusError extends Data.TaggedError(
-  "LegacyNetworkRestrictionsGetUnexpectedStatusError",
+export class NetworkRestrictionsGetUnexpectedStatusError extends Data.TaggedError(
+  "NetworkRestrictionsGetUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -31,8 +31,8 @@ export class LegacyNetworkRestrictionsGetUnexpectedStatusError extends Data.Tagg
   }
 }
 
-export class LegacyNetworkRestrictionsUpdateNetworkError extends Data.TaggedError(
-  "LegacyNetworkRestrictionsUpdateNetworkError",
+export class NetworkRestrictionsUpdateNetworkError extends Data.TaggedError(
+  "NetworkRestrictionsUpdateNetworkError",
 )<{
   readonly message: string;
   readonly decode?: boolean;
@@ -44,8 +44,8 @@ export class LegacyNetworkRestrictionsUpdateNetworkError extends Data.TaggedErro
   }
 }
 
-export class LegacyNetworkRestrictionsUpdateUnexpectedStatusError extends Data.TaggedError(
-  "LegacyNetworkRestrictionsUpdateUnexpectedStatusError",
+export class NetworkRestrictionsUpdateUnexpectedStatusError extends Data.TaggedError(
+  "NetworkRestrictionsUpdateUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -56,8 +56,8 @@ export class LegacyNetworkRestrictionsUpdateUnexpectedStatusError extends Data.T
   }
 }
 
-export class LegacyNetworkRestrictionsInvalidCidrError extends Data.TaggedError(
-  "LegacyNetworkRestrictionsInvalidCidrError",
+export class NetworkRestrictionsInvalidCidrError extends Data.TaggedError(
+  "NetworkRestrictionsInvalidCidrError",
 )<{
   readonly input: string;
   readonly message: string;
@@ -71,8 +71,8 @@ export class LegacyNetworkRestrictionsInvalidCidrError extends Data.TaggedError(
   }
 }
 
-export class LegacyNetworkRestrictionsPrivateIpError extends Data.TaggedError(
-  "LegacyNetworkRestrictionsPrivateIpError",
+export class NetworkRestrictionsPrivateIpError extends Data.TaggedError(
+  "NetworkRestrictionsPrivateIpError",
 )<{
   readonly input: string;
   readonly message: string;

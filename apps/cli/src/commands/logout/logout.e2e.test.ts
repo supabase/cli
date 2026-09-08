@@ -16,7 +16,7 @@ function seedTokenFile(home: string): string {
   return tokenPath;
 }
 
-describe("supabase logout (legacy)", () => {
+describe("supabase logout", () => {
   // Deliberate Go quirk (parity note 1): under SUPABASE_NO_KEYRING=1 the profile
   // keyring delete is unsupported, so logout removes the file token yet still
   // reports "not logged in" and exits 0.
@@ -27,7 +27,6 @@ describe("supabase logout (legacy)", () => {
       using home = makeTempHome();
       const tokenPath = seedTokenFile(home.dir);
       const { exitCode, stderr } = await runSupabase(["logout", "--yes"], {
-        entrypoint: "legacy",
         home: home.dir,
         env: { HOME: home.dir },
       });
@@ -48,7 +47,6 @@ describe("supabase logout (legacy)", () => {
       using home = makeTempHome();
       seedTokenFile(home.dir);
       const { exitCode, stderr } = await runSupabase(["logout"], {
-        entrypoint: "legacy",
         home: home.dir,
         env: { HOME: home.dir },
         stdin: "n\n",
@@ -67,7 +65,6 @@ describe("supabase logout (legacy)", () => {
     async () => {
       using home = makeTempHome();
       const { exitCode, stderr } = await runSupabase(["logout", "--yes"], {
-        entrypoint: "legacy",
         home: home.dir,
         env: { HOME: home.dir },
       });

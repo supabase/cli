@@ -13,14 +13,14 @@ import {
 } from "@supabase/config/internal";
 
 import {
-  legacyConfigDeepEqualValue,
-  legacyConfigDeepSetAtPath,
-  legacyConfigIsDeclaredAtPath,
-  legacyConfigIsRecord,
-  legacyConfigPathKey,
-  legacyConfigValueAtPath,
+  configDeepEqualValue,
+  configDeepSetAtPath,
+  configIsDeclaredAtPath,
+  configIsRecord,
+  configPathKey,
+  configValueAtPath,
 } from "../config.paths.ts";
-import type { LegacyConfigPullDestination } from "./pull.scope.ts";
+import type { ConfigPullDestination } from "./pull.scope.ts";
 
 /**
  * `config pull`'s write plan: classifies every `ConfigChange` `config diff`'s
@@ -31,7 +31,7 @@ import type { LegacyConfigPullDestination } from "./pull.scope.ts";
  * decides WHAT would change and WHERE (`documentPath`); applying it is
  * `applyConfigEdits`'s job (`@supabase/config/internal`), and running it is
  * `pull.handler.ts`'s. `diffProjectConfig` is a pure, synchronous import
- * (no Effect, no services) — {@link legacyExpandConfigPullChangeSet} below
+ * (no Effect, no services) — {@link expandConfigPullChangeSet} below
  * calls it directly rather than taking it as an injected callback.
  *
  * Also owns the plan-level half of CLI-2064's fixpoint/validation fix (a live
@@ -39,28 +39,28 @@ import type { LegacyConfigPullDestination } from "./pull.scope.ts";
  * siblings — e.g. flipping a disabled SMS provider's `enabled` on — used to
  * write only the toggle, leaving its now-required siblings at their stale
  * local values and bricking the next config load). {@link
- * legacyExpandConfigPullChangeSet} re-classifies after projecting each
+ * expandConfigPullChangeSet} re-classifies after projecting each
  * round's writes so a newly-un-gated sibling is absorbed into the SAME plan
  * (`pull.handler.ts`'s job to run it); {@link
- * legacyDropConfigPullUnvalidatableFamilies} is the write-side counterpart to
+ * dropConfigPullUnvalidatableFamilies} is the write-side counterpart to
  * `pull.handler.ts`'s post-plan schema-validation gate — when that gate finds
  * the projected document still doesn't decode, it drops every write under the
  * offending family here rather than write a file the CLI itself cannot load.
  */
 
-export type LegacyConfigPullSkipReason =
+export type ConfigPullSkipReason =
   | "env_reference"
   | "local_only"
   | "remote_env_reference"
   | "unwritable"
   | "would_invalidate";
 
-export interface LegacyConfigPullSkip {
+interface ConfigPullSkip {
   readonly change: ConfigChange;
-  readonly reason: LegacyConfigPullSkipReason;
+  readonly reason: ConfigPullSkipReason;
 }
 
-export interface LegacyConfigPullPlannedWrite {
+interface ConfigPullPlannedWrite {
   readonly change: ConfigChange;
   /** `change.path`, prefixed with `["remotes", label]` when the destination
    * is a `[remotes.*]` block — the exact path `applyConfigEdits` edits. */
@@ -68,7 +68,7 @@ export interface LegacyConfigPullPlannedWrite {
   readonly value: ConfigEditValue;
 }
 
-export type LegacyConfigPullWarningKind =
+type ConfigPullWarningKind =
   | "dual_scope"
   | "duplicates_root"
   | "array_drift"
@@ -77,12 +77,12 @@ export type LegacyConfigPullWarningKind =
   | "would_invalidate";
 
 /**
- * One field {@link legacyDropConfigPullUnvalidatableFamilies} found still
+ * One field {@link dropConfigPullUnvalidatableFamilies} found still
  * missing/invalid in `pull.handler.ts`'s schema-validation gate — carried on
  * a `would_invalidate` warning so its note can name what actually blocked the
  * family, not just the family itself.
  */
-export interface LegacyConfigPullMissingField {
+export interface ConfigPullMissingField {
   readonly path: ReadonlyArray<string>;
   /**
    * Set when this field's LOCAL (pre-pull) spelling is an unresolved
@@ -92,8 +92,8 @@ export interface LegacyConfigPullMissingField {
   readonly envVariable?: string;
 }
 
-export interface LegacyConfigPullWarning {
-  readonly kind: LegacyConfigPullWarningKind;
+export interface ConfigPullWarning {
+  readonly kind: ConfigPullWarningKind;
   /**
    * Absent for `uncommitted_changes` — a repository-level warning, not a
    * per-path one, constructed by `pull.handler.ts`'s own git dirty check
@@ -119,19 +119,19 @@ export interface LegacyConfigPullWarning {
    * any other asymmetric/cross-path prune too, not dead code.
    * Always carries `path`. `would_invalidate` also carries
    * `path` — the nearest enclosing family/provider table
-   * {@link legacyDropConfigPullUnvalidatableFamilies} dropped every write
+   * {@link dropConfigPullUnvalidatableFamilies} dropped every write
    * under (e.g. `["auth","sms","twilio"]`), constructed by `pull.handler.ts`
    * from its post-plan schema-validation gate.
    */
   readonly path?: ReadonlyArray<string>;
-  /** `would_invalidate` only — see {@link LegacyConfigPullMissingField}. */
-  readonly missingFields?: ReadonlyArray<LegacyConfigPullMissingField>;
+  /** `would_invalidate` only — see {@link ConfigPullMissingField}. */
+  readonly missingFields?: ReadonlyArray<ConfigPullMissingField>;
 }
 
-export interface LegacyConfigPullPlan {
-  readonly writes: ReadonlyArray<LegacyConfigPullPlannedWrite>;
-  readonly skipped: ReadonlyArray<LegacyConfigPullSkip>;
-  readonly warnings: ReadonlyArray<LegacyConfigPullWarning>;
+export interface ConfigPullPlan {
+  readonly writes: ReadonlyArray<ConfigPullPlannedWrite>;
+  readonly skipped: ReadonlyArray<ConfigPullSkip>;
+  readonly warnings: ReadonlyArray<ConfigPullWarning>;
   /**
    * `["remotes", label]` when `destination` creates a brand new block,
    * `undefined` otherwise — surfaced so a caller composing a message doesn't
@@ -140,9 +140,9 @@ export interface LegacyConfigPullPlan {
   readonly createdTable: ReadonlyArray<string> | undefined;
 }
 
-export interface LegacyPlanConfigPullInput {
+export interface PlanConfigPullInput {
   readonly changeSet: ConfigChangeSet;
-  readonly destination: LegacyConfigPullDestination;
+  readonly destination: ConfigPullDestination;
   /**
    * The BASE config document — loaded with NO `[remotes.*]` overlay applied,
    * regardless of `destination` — used only to detect `duplicates_root`/
@@ -152,7 +152,7 @@ export interface LegacyPlanConfigPullInput {
    * from, overlay included).
    */
   readonly rootDocument: Readonly<Record<string, unknown>>;
-  /** Carried for parity with `legacyResolveConfigPullDestination`'s own input
+  /** Carried for parity with `resolveConfigPullDestination`'s own input
    * shape; not otherwise consulted by the planner (every path-scoped
    * decision is already fully determined by `changeSet` + `destination` +
    * `rootDocument`). */
@@ -168,7 +168,7 @@ function isConfigEditValue(value: unknown): value is ConfigEditValue {
       (item) => typeof item === "string" || typeof item === "number" || typeof item === "boolean",
     );
   }
-  if (legacyConfigIsRecord(value)) {
+  if (configIsRecord(value)) {
     return Object.values(value).every((child) => isConfigEditValue(child));
   }
   return false;
@@ -203,7 +203,7 @@ function containsRemoteEnvReference(value: ConfigEditValue): boolean {
 }
 
 const dualScopePathKeys: ReadonlySet<string> = new Set(
-  dualScopeProjectConfigPaths.map(legacyConfigPathKey),
+  dualScopeProjectConfigPaths.map(configPathKey),
 );
 
 /**
@@ -213,7 +213,7 @@ const dualScopePathKeys: ReadonlySet<string> = new Set(
  */
 function isDualScopePath(path: ReadonlyArray<string>): boolean {
   for (let length = path.length; length >= 1; length--) {
-    if (dualScopePathKeys.has(legacyConfigPathKey(path.slice(0, length)))) {
+    if (dualScopePathKeys.has(configPathKey(path.slice(0, length)))) {
       return true;
     }
   }
@@ -221,7 +221,7 @@ function isDualScopePath(path: ReadonlyArray<string>): boolean {
 }
 
 function documentPathFor(
-  destination: LegacyConfigPullDestination,
+  destination: ConfigPullDestination,
   path: ReadonlyArray<string>,
 ): ReadonlyArray<string> {
   return destination.kind === "remote" ? ["remotes", destination.label, ...path] : path;
@@ -247,9 +247,9 @@ function documentPathFor(
  * (`diffProjectConfig` excludes both before classification), so they never
  * need a skip reason here — asserted by construction, not re-checked.
  */
-export function legacyPlanConfigPull(input: LegacyPlanConfigPullInput): LegacyConfigPullPlan {
-  const writes: Array<LegacyConfigPullPlannedWrite> = [];
-  const skipped: Array<LegacyConfigPullSkip> = [];
+export function planConfigPull(input: PlanConfigPullInput): ConfigPullPlan {
+  const writes: Array<ConfigPullPlannedWrite> = [];
+  const skipped: Array<ConfigPullSkip> = [];
 
   for (const change of input.changeSet.changes) {
     if (change.class === "local_only") {
@@ -275,7 +275,7 @@ export function legacyPlanConfigPull(input: LegacyPlanConfigPullInput): LegacyCo
     });
   }
 
-  const warnings: Array<LegacyConfigPullWarning> = [];
+  const warnings: Array<ConfigPullWarning> = [];
   for (const write of writes) {
     if (input.destination.kind === "root" && isDualScopePath(write.change.path)) {
       // Writing a dual-scope path to the config ROOT silently reconfigures
@@ -288,14 +288,14 @@ export function legacyPlanConfigPull(input: LegacyPlanConfigPullInput): LegacyCo
     if (input.destination.kind !== "remote") {
       continue;
     }
-    const rootValue = legacyConfigValueAtPath(input.rootDocument, write.change.path);
-    if (legacyConfigDeepEqualValue(write.value, rootValue)) {
+    const rootValue = configValueAtPath(input.rootDocument, write.change.path);
+    if (configDeepEqualValue(write.value, rootValue)) {
       warnings.push({ kind: "duplicates_root", path: write.change.path });
     }
     if (
       write.change.class === "remote_only" &&
       Array.isArray(write.value) &&
-      legacyConfigIsDeclaredAtPath(input.rootDocument, write.change.path)
+      configIsDeclaredAtPath(input.rootDocument, write.change.path)
     ) {
       // Arrays REPLACE wholesale on override, never merge — giving
       // `[remotes.*]` its own copy of a path the config root ALSO declares
@@ -316,7 +316,7 @@ export function legacyPlanConfigPull(input: LegacyPlanConfigPullInput): LegacyCo
  * Intentionally does NOT also check {@link containsRemoteEnvReference}: this
  * predicate only gates what gets PROJECTED onto the fixpoint's own internal
  * `config`/`document` simulation below, never what actually reaches disk —
- * `legacyPlanConfigPull`, called once by the caller over the fixpoint's
+ * `planConfigPull`, called once by the caller over the fixpoint's
  * merged `changeSet`, is the sole gate for that, and every change observed
  * here (including a `remote_env_reference` one) still reaches it via `seen`.
  */
@@ -357,16 +357,16 @@ function countsFor(changes: ReadonlyArray<ConfigChange>): ConfigChangeSet["count
   return { update, remote_only, local_only, total: update + remote_only + local_only };
 }
 
-/** Cap on how many rounds {@link legacyExpandConfigPullChangeSet} projects a
+/** Cap on how many rounds {@link expandConfigPullChangeSet} projects a
  * round's writes and re-diffs — die-free: hitting the cap just stops
  * absorbing further rounds rather than looping forever or throwing;
  * `pull.handler.ts`'s schema-validation gate is the actual safety net against
  * writing something invalid. 4 rounds comfortably covers every real
  * dependency chain this registry has (a toggle gating at most a handful of
  * sibling credential fields, none of which themselves gate further fields). */
-export const LEGACY_CONFIG_PULL_FIXPOINT_ROUND_CAP = 4;
+export const CONFIG_PULL_FIXPOINT_ROUND_CAP = 4;
 
-export interface LegacyExpandConfigPullChangeSetInput {
+export interface ExpandConfigPullChangeSetInput {
   readonly initialChangeSet: ConfigChangeSet;
   /** The BASE `{config, document}` pair `diffProjectConfig` diffed to produce
    * `initialChangeSet` (`loaded.config`/`loaded.document ?? {}` — NOT
@@ -378,7 +378,7 @@ export interface LegacyExpandConfigPullChangeSetInput {
   readonly remote: ProjectConfig;
 }
 
-export interface LegacyConfigPullFixpointResult {
+export interface ConfigPullFixpointResult {
   /** Every change ever observed across every round, in path order — a change
    * that later converges (its own written value now matches remote) still
    * appears here with the local/remote values it carried at DISCOVERY, since
@@ -402,19 +402,19 @@ export interface LegacyConfigPullFixpointResult {
  * that were `unmanaged` (ADR 0021's disabled-provider gates) before those
  * writes landed — e.g. flipping a disabled SMS provider's `enabled` to `true`
  * un-gates its credential siblings. Repeats until a round projects nothing new
- * to write (or {@link LEGACY_CONFIG_PULL_FIXPOINT_ROUND_CAP} is hit), so a
+ * to write (or {@link CONFIG_PULL_FIXPOINT_ROUND_CAP} is hit), so a
  * newly un-gated sibling gets exactly the SAME skip rules as any other change
- * (`legacyPlanConfigPull`, called once by the caller over this function's
+ * (`planConfigPull`, called once by the caller over this function's
  * merged `changeSet` — never per round: warnings/skips must be derived from
  * the union, not accumulated round-by-round, so a change appears exactly
  * once).
  */
-export function legacyExpandConfigPullChangeSet(
-  input: LegacyExpandConfigPullChangeSetInput,
-): LegacyConfigPullFixpointResult {
+export function expandConfigPullChangeSet(
+  input: ExpandConfigPullChangeSetInput,
+): ConfigPullFixpointResult {
   const seen = new Map<string, ConfigChange>();
   for (const change of input.initialChangeSet.changes) {
-    seen.set(legacyConfigPathKey(change.path), change);
+    seen.set(configPathKey(change.path), change);
   }
 
   let config: EffectiveConfig = input.baseConfig;
@@ -422,25 +422,24 @@ export function legacyExpandConfigPullChangeSet(
   let residual: ConfigChangeSet = input.initialChangeSet;
   const projectedPathKeys = new Set<string>();
 
-  for (let round = 0; round < LEGACY_CONFIG_PULL_FIXPOINT_ROUND_CAP; round++) {
+  for (let round = 0; round < CONFIG_PULL_FIXPOINT_ROUND_CAP; round++) {
     const newlyWritable = [...seen.values()].filter(
-      (change) =>
-        isWritableChange(change) && !projectedPathKeys.has(legacyConfigPathKey(change.path)),
+      (change) => isWritableChange(change) && !projectedPathKeys.has(configPathKey(change.path)),
     );
     if (newlyWritable.length === 0) {
       break;
     }
     for (const change of newlyWritable) {
-      config = legacyConfigDeepSetAtPath(config, change.path, change.remote);
-      document = legacyConfigDeepSetAtPath(document, change.path, change.remote);
-      projectedPathKeys.add(legacyConfigPathKey(change.path));
+      config = configDeepSetAtPath(config, change.path, change.remote);
+      document = configDeepSetAtPath(document, change.path, change.remote);
+      projectedPathKeys.add(configPathKey(change.path));
     }
     residual = diffProjectConfig({
       local: { config, document, valueOrigins: input.valueOrigins },
       remote: input.remote,
     });
     for (const change of residual.changes) {
-      const key = legacyConfigPathKey(change.path);
+      const key = configPathKey(change.path);
       if (!seen.has(key)) {
         seen.set(key, change);
       }
@@ -473,14 +472,14 @@ export function legacyExpandConfigPullChangeSet(
  * when it has no parent), so a family this heuristic doesn't recognize still
  * drops at least the failing field's own container rather than nothing.
  */
-export function legacyConfigPullFamilyRootForPath(
+export function configPullFamilyRootForPath(
   path: ReadonlyArray<string>,
   document: unknown,
 ): ReadonlyArray<string> {
   for (let length = path.length - 1; length >= 1; length--) {
     const candidate = path.slice(0, length);
-    const value = legacyConfigValueAtPath(document, candidate);
-    if (legacyConfigIsRecord(value) && Object.hasOwn(value, "enabled")) {
+    const value = configValueAtPath(document, candidate);
+    if (configIsRecord(value) && Object.hasOwn(value, "enabled")) {
       return candidate;
     }
   }
@@ -493,20 +492,20 @@ export function legacyConfigPullFamilyRootForPath(
  * "set VAR and rerun" remediation. `document` must be in the same (raw,
  * pre-write) namespace as `path`.
  */
-export function legacyConfigPullEnvVariableAtPath(
+export function configPullEnvVariableAtPath(
   path: ReadonlyArray<string>,
   document: unknown,
 ): string | undefined {
-  const value = legacyConfigValueAtPath(document, path);
+  const value = configValueAtPath(document, path);
   if (typeof value !== "string") {
     return undefined;
   }
   return ENV_CAPTURE_REGEX.exec(value)?.[1];
 }
 
-export interface LegacyConfigPullWouldInvalidateFamily {
+export interface ConfigPullWouldInvalidateFamily {
   readonly root: ReadonlyArray<string>;
-  readonly missingFields: ReadonlyArray<LegacyConfigPullMissingField>;
+  readonly missingFields: ReadonlyArray<ConfigPullMissingField>;
 }
 
 /** Whether `path` falls at or under `root` — the "belongs to this family"
@@ -536,15 +535,15 @@ function isUnderFamilyRoot(root: ReadonlyArray<string>, path: ReadonlyArray<stri
  * retrying instead of looping on a no-op drop). Pure: the caller owns
  * re-validating the reduced plan.
  */
-export function legacyDropConfigPullUnvalidatableFamilies(
-  plan: LegacyConfigPullPlan,
-  families: ReadonlyArray<LegacyConfigPullWouldInvalidateFamily>,
-): LegacyConfigPullPlan {
+export function dropConfigPullUnvalidatableFamilies(
+  plan: ConfigPullPlan,
+  families: ReadonlyArray<ConfigPullWouldInvalidateFamily>,
+): ConfigPullPlan {
   if (families.length === 0) {
     return plan;
   }
-  const droppedByRoot = new Map<string, Array<LegacyConfigPullPlannedWrite>>();
-  const writes: Array<LegacyConfigPullPlannedWrite> = [];
+  const droppedByRoot = new Map<string, Array<ConfigPullPlannedWrite>>();
+  const writes: Array<ConfigPullPlannedWrite> = [];
   for (const write of plan.writes) {
     const family = families.find((candidate) =>
       isUnderFamilyRoot(candidate.root, write.change.path),
@@ -553,7 +552,7 @@ export function legacyDropConfigPullUnvalidatableFamilies(
       writes.push(write);
       continue;
     }
-    const key = legacyConfigPathKey(family.root);
+    const key = configPathKey(family.root);
     const bucket = droppedByRoot.get(key);
     if (bucket === undefined) {
       droppedByRoot.set(key, [write]);
@@ -571,7 +570,7 @@ export function legacyDropConfigPullUnvalidatableFamilies(
       .map((write) => ({ change: write.change, reason: "would_invalidate" as const })),
   ];
   const droppedFamilies = families.filter((family) =>
-    droppedByRoot.has(legacyConfigPathKey(family.root)),
+    droppedByRoot.has(configPathKey(family.root)),
   );
   const survivingWarnings = plan.warnings.filter((warning) => {
     const path = warning.path;

@@ -1,18 +1,18 @@
 import { Layer } from "effect";
 
-import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
+import { httpClientLayer } from "../../auth/http-debug.layer.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
-import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.ts";
-import { legacyDbConfigLayer } from "../../command-internal/legacy-db-config.layer.ts";
-import { legacyDbConnectionLayer } from "../../command-internal/legacy-db-connection.layer.ts";
-import { legacyDebugLoggerLayer } from "../../command-internal/legacy-debug-logger.layer.ts";
-import { legacyDockerRunLayer } from "../../command-internal/legacy-docker-run.layer.ts";
-import { legacyIdentityStitchLayer } from "../../command-internal/legacy-identity-stitch.ts";
-import { legacyLinkedDbResolverRuntimeLayer } from "../../command-internal/legacy-management-api-runtime.layer.ts";
-import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
+import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
+import { dbConfigLayer } from "../../command-internal/db-config.layer.ts";
+import { dbConnectionLayer } from "../../command-internal/db-connection.layer.ts";
+import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
+import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
+import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
+import { linkedDbResolverRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
+import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 
-const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 
 /**
  * Runtime layer for `supabase migration new`. The leanest of the migration
@@ -21,18 +21,18 @@ const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerL
  * runtime span. `Output`, `Analytics`, `Stdio`, `FileSystem`, `Path`, `Clock`,
  * and `Tty` come from the root layer.
  */
-export const legacyMigrationNewRuntimeLayer = Layer.mergeAll(
+export const migrationNewRuntimeLayer = Layer.mergeAll(
   cliSettings,
-  legacyTelemetryStateLayer,
+  telemetryStateLayer,
   stdinLayer,
   commandRuntimeLayer(["migration", "new"]),
 );
 
-const dbConfig = legacyDbConfigLayer.pipe(
+const dbConfig = dbConfigLayer.pipe(
   Layer.provide(cliSettings),
-  Layer.provide(legacyDbConnectionLayer),
-  Layer.provide(legacyDebugLoggerLayer),
-  Layer.provide(legacyIdentityStitchLayer),
+  Layer.provide(dbConnectionLayer),
+  Layer.provide(debugLoggerLayer),
+  Layer.provide(identityStitchLayer),
 );
 
 /**
@@ -43,37 +43,37 @@ const dbConfig = legacyDbConfigLayer.pipe(
  * (project-ref + linked-project cache), the shared identity stitcher, telemetry
  * flush, piped stdin (for the migration confirm prompt, which reads
  * stdin), and the command runtime span. `Output`, `Analytics`, `Stdio`,
- * `FileSystem`, `Path`, `Clock`, `Tty`, and `LegacyYesFlag` come from the root.
+ * `FileSystem`, `Path`, `Clock`, `Tty`, and `YesFlag` come from the root.
  *
- * `legacyIdentityStitchLayer` is provided by the SAME reference to `dbConfig` and
+ * `identityStitchLayer` is provided by the SAME reference to `dbConfig` and
  * the linked resolver so Effect memoises one shared identity-stitch attempt
- * (legacy CLAUDE.md rule 5).
+ * (CLAUDE.md invariant 5).
  */
-export const legacyMigrationDbRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
+export const migrationDbRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
   Layer.mergeAll(
     dbConfig,
-    legacyDbConnectionLayer,
+    dbConnectionLayer,
     cliSettings,
-    legacyIdentityStitchLayer,
-    legacyTelemetryStateLayer,
+    identityStitchLayer,
+    telemetryStateLayer,
     stdinLayer,
-    legacyLinkedDbResolverRuntimeLayer(commandPath).pipe(Layer.provide(legacyIdentityStitchLayer)),
+    linkedDbResolverRuntimeLayer(commandPath).pipe(Layer.provide(identityStitchLayer)),
     commandRuntimeLayer(commandPath),
   );
 
-const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
 
 /**
- * Runtime layer for `supabase migration squash` — `legacyMigrationDbRuntimeLayer`'s bundle
- * plus the three services only squash needs: `LegacyDockerRun` (the `pg_dump` one-shot
+ * Runtime layer for `supabase migration squash` — `migrationDbRuntimeLayer`'s bundle
+ * plus the three services only squash needs: `DockerRun` (the `pg_dump` one-shot
  * container + the shadow's PG15+ one-shot setup jobs), `HttpClient` (the native shadow's
- * health-check wait), and `LegacyDebugLogger` (used on the
+ * health-check wait), and `DebugLogger` (used on the
  * `LoadLocalVersions` fallback). `ChildProcessSpawner`/`RuntimeInfo`/`Tty`/`FileSystem`/
  * `Path` come from the root layer, same as `db diff`.
  */
-export const legacyMigrationSquashRuntimeLayer = Layer.mergeAll(
-  legacyMigrationDbRuntimeLayer(["migration", "squash"]),
-  legacyDockerRunLayer,
+export const migrationSquashRuntimeLayer = Layer.mergeAll(
+  migrationDbRuntimeLayer(["migration", "squash"]),
+  dockerRunLayer,
   httpClient,
-  legacyDebugLoggerLayer,
+  debugLoggerLayer,
 );

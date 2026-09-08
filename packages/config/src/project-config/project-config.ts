@@ -280,7 +280,7 @@ function copyHostedValueForDocument(value: unknown, path: ReadonlyArray<string>)
  * on ITS first pull. `unmanaged` paths never reach `config diff`'s
  * `changes` array at all (`hasAncestorPathKey`, `./config-diff.ts`), and
  * `config pull`'s planner only ever writes from `changes`
- * (`legacyPlanConfigPull`, `pull.plan.ts`) — so excluding these four
+ * (`planConfigPull`, `pull.plan.ts`) — so excluding these four
  * permanently blocked `config pull` from ever syncing the platform's real
  * Postgres version or pooler settings into the file, for every project,
  * forever. `pooler.enabled`/`pooler.port` stay excluded: `v2GetProjectConfig`
@@ -824,7 +824,7 @@ function applySmsProviderPrecedence(result: Record<string, unknown>): void {
  * extremely common, since most setups don't run every local service — even
  * though the hosted project's real config is unrelated to that toggle and
  * may still fully exist and differ from it.
- * `legacyPushResourceEnabled` (`apps/cli/src/commands/config/push/
+ * `pushResourceEnabled` (`apps/cli/src/commands/config/push/
  * push.plan.ts`) no longer gates the whole `auth`/`storage` resource on this
  * flag either, for the same reason.
  */
@@ -1039,7 +1039,7 @@ function applyRawPresenceMask(
   result: Record<string, unknown>,
   document: Record<string, unknown>,
 ): void {
-  // Matches `legacyPresenceIn`/`authPresenceIn`'s own predicate EXACTLY
+  // Matches `presenceIn`/`authPresenceIn`'s own predicate EXACTLY
   // (`x?.["key"] !== undefined`) — a VALUE comparison, not `Object.hasOwn`
   // (engineer review round on PR #6339, item 3): a raw document with an own
   // key set to an explicit `undefined` (`{ auth: { captcha: undefined } }`)

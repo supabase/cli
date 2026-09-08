@@ -33,14 +33,14 @@ The Management API exposes this read operation as `POST .../network-bans/retriev
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                       |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — network bans printed to stdout                                                                                                        |
-| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                         |
-| `1`  | API non-2xx (`LegacyNetworkBansGetUnexpectedStatusError`)                                                                                       |
-| `1`  | transport failure (`LegacyNetworkBansGetNetworkError`)                                                                                          |
-| `1`  | `--output env` requested (`LegacyNetworkBansEnvNotSupportedError`)                                                                              |
+| Code | Condition                                                                                                                                 |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — network bans printed to stdout                                                                                                  |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
+| `1`  | project ref unresolved (`ProjectRefNotLinkedError` / `InvalidProjectRefError`)                                                            |
+| `1`  | API non-2xx (`NetworkBansGetUnexpectedStatusError`)                                                                                       |
+| `1`  | transport failure (`NetworkBansGetNetworkError`)                                                                                          |
+| `1`  | `--output env` requested (`NetworkBansEnvNotSupportedError`)                                                                              |
 
 ## Telemetry Events Fired
 
@@ -64,7 +64,7 @@ Stderr heading followed by the banned IP array rendered as JSON (alphabetical ke
 
 ### `--output env`
 
-Fails with `LegacyNetworkBansEnvNotSupportedError`.
+Fails with `NetworkBansEnvNotSupportedError`.
 
 ### `--output-format json`
 

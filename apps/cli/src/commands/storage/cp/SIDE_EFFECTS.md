@@ -5,13 +5,14 @@ Copies objects between local paths and the Storage service. The scheme of `src`/
 
 ## Files Read
 
-| Path                                     | Format     | When                                                               |
-| ---------------------------------------- | ---------- | ------------------------------------------------------------------ |
-| `<workdir>/supabase/config.toml`         | TOML       | always (local creds; `[storage.buckets.*]` for bucket auto-create) |
-| `~/.supabase/access-token`               | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                    |
-| `~/.supabase/<hash>/linked-project.json` | JSON       | linked path, to resolve the project ref                            |
-| local Kong TLS cert/key                  | PEM        | local + `api.enabled` + `api.tls.enabled`                          |
-| upload source files                      | bytes      | upload: sniff (≤512 bytes) + streamed body                         |
+| Path                                          | Format     | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`              | TOML       | always (local creds; `[storage.buckets.*]` for bucket auto-create). With an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target, a missing project config is now a hard failure (`StorageMissingProjectConfigError`) rather than a fall-back to embedded defaults — the default `api.port` would otherwise point the operation at a different local stack; a REMOTE (`--project-ref`/`--linked`) target never hard-fails on this, since credential resolution there reads the Management API, not local config |
+| `~/.supabase/access-token`                    | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `~/.supabase/<hash>/linked-project.json`      | JSON       | linked path, to resolve the project ref                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| local Kong TLS cert/key                       | PEM        | local + `api.enabled` + `api.tls.enabled`                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | local path, to resolve the `SUPABASE_API_*` overrides for the gateway URL/TLS (#6452)                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| upload source files                           | bytes      | upload: sniff (≤512 bytes) + streamed body                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ## Files Written
 
@@ -38,7 +39,8 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 ## Environment Variables
 
 `SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_AUTH_JWT_SECRET`, `SUPABASE_ACCESS_TOKEN`,
-`SUPABASE_PROJECT_ID`, `SUPABASE_SERVICES_HOSTNAME` — same roles as `storage ls`.
+`SUPABASE_PROJECT_ID`, `SUPABASE_SERVICES_HOSTNAME`, and the `SUPABASE_API_*`
+override family — same roles as `storage ls`.
 `SUPABASE_PROJECT_ID`'s linked-ref resolution is superseded by `--project-ref` when set.
 
 `storage` is an experimental command: `cp` requires `--experimental`
@@ -50,6 +52,8 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 | Code | Condition                                                                                                                                                                               |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success                                                                                                                                                                                 |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`StorageWorkdirError`) — beats every other guard                                                            |
+| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target holds no project config (`StorageMissingProjectConfigError`)                                                               |
 | `1`  | invalid/parse url, unsupported operation (local→local), copy-between-buckets, object-not-found (recursive download), file create/read failure, API non-2xx, network, auth, config parse |
 | `1`  | `--project-ref` set with `--local` (see Notes)                                                                                                                                          |
 

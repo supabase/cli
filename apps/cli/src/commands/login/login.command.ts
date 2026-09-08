@@ -1,10 +1,10 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
-import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
+import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
-import { legacyLoginRuntimeLayer } from "./login.layers.ts";
-import { legacyLogin } from "./login.handler.ts";
+import { loginRuntimeLayer } from "./login.layers.ts";
+import { login } from "./login.handler.ts";
 
 const config = {
   token: Flag.string("token").pipe(
@@ -21,13 +21,13 @@ const config = {
   ),
 } as const;
 
-export type LegacyLoginFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type LoginFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyLoginCommand = Command.make("login", config).pipe(
+export const loginCommand = Command.make("login", config).pipe(
   Command.withDescription("Authenticate using an access token."),
   Command.withShortDescription("Authenticate using an access token"),
   Command.withHandler((flags) =>
-    legacyLogin(flags).pipe(withLegacyCommandInstrumentation({ flags }), withJsonErrorHandling),
+    login(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
-  Command.provide(legacyLoginRuntimeLayer),
+  Command.provide(loginRuntimeLayer),
 );
