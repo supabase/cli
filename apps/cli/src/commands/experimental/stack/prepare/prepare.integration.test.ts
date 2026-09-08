@@ -1,5 +1,7 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -339,8 +341,7 @@ describe("experimental stack prepare", () => {
       const stack = fakeStack("2".repeat(64), () =>
         Effect.gen(function* () {
           yield* Deferred.succeed(started, undefined);
-          yield* Effect.never;
-          return { capabilities: [] };
+          return yield* Effect.never;
         }),
       );
       const setupResult = setup({
