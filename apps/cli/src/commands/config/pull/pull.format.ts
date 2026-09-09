@@ -1,78 +1,40 @@
-import type { ConfigChange, ConfigChangeSet, ConfigFormat } from "@supabase/config";
+import type { ConfigChangeSet } from "@supabase/config";
 
 import { sanitizeInlineName } from "../../../command-internal/http-errors.ts";
-import { configPathKey } from "../config.paths.ts";
 import {
-  CONFIG_CLASS_LABELS,
-  configChangePayloadEntry,
+  CONFIG_PULL_PAYLOAD_VERSION,
+  configPullPayload,
+  renderConfigPullText,
+  type ConfigPullContext,
+  type ConfigPullOutcome,
+} from "../../../command-internal/config-pull-run.ts";
+import {
   type ConfigApiScope,
   configMaskedCaveat,
   configNotReturnedCaveat,
   configPlural,
-  configRenderPath,
-  configRenderValue,
   configTargetPhrase,
   type ConfigTargetPhraseInput,
   configUnmanagedCaveat,
 } from "../config.format.ts";
 import type { ConfigPullDestination } from "./pull.scope.ts";
-import type { ConfigPullPlan, ConfigPullSkipReason, ConfigPullWarning } from "./pull.plan.ts";
+import type { ConfigPullPlan } from "./pull.plan.ts";
 
 /**
  * Pure formatters, payload builders, and input adapters for `config pull` —
  * no Effect, no services, unit-testable in isolation. The API-scope
  * classification, target-naming phrase, value/path rendering, and
  * masked/unmanaged/not-returned caveat wording shared with `config diff` live
- * in `../config.format.ts` (hoisted, CLI-2064).
+ * in `../config.format.ts` (hoisted, CLI-2064). `configPullPayload`/
+ * `renderConfigPullText`/`ConfigPullOutcome`/`ConfigPullContext`/
+ * `CONFIG_PULL_PAYLOAD_VERSION` are hoisted to
+ * `command-internal/config-pull-run.ts` (CLI-1272, reused by the `supabase
+ * pull` orchestrator) and re-exported here so this file's own call sites and
+ * test suite keep resolving them from the same path.
  */
 
-/**
- * Version of the machine payload's own shape — bump when the payload
- * contract changes incompatibly. A NEW payload, independent of `config
- * diff`'s `CONFIG_DIFF_PAYLOAD_VERSION` (never bumped by this file).
- */
-export const CONFIG_PULL_PAYLOAD_VERSION = 1;
-
-/**
- * A change's actual disposition once the confirmation prompt (and
- * `--dry-run`) are known — broader than {@link ConfigPullSkipReason}
- * (the pure PLANNING-time reason a change was never even attempted): a
- * change `planConfigPull` planned to write still ends up unwritten when
- * the run is a dry run or the user declined.
- */
-type ConfigPullChangeSkipReason = ConfigPullSkipReason | "declined" | "dry_run";
-
-/**
- * The run's actual outcome, known only after the confirmation prompt (or
- * `--dry-run`) resolves — layered on top of {@link ConfigPullPlan},
- * which only knows what WOULD be written. `dryRun` and `declined` are
- * mutually exclusive: a `--dry-run` run never reaches the prompt.
- */
-export interface ConfigPullOutcome {
-  readonly dryRun: boolean;
-  /** The confirmation prompt (§1.4) was declined — every planned write
-   * becomes `skipped_reason: "declined"` instead of being applied. */
-  readonly declined: boolean;
-}
-
-export interface ConfigPullContext {
-  /** The resolved target's project ref. */
-  readonly projectRef: string;
-  /** The branch name or UUID `--project-ref` carried, when it named one. */
-  readonly branch: string | undefined;
-  /** The local file's `$schema` ref (or the current schema URL). */
-  readonly configSchema: string;
-  /** The config file path, rendered relative like the rest of the family
-   * (`supabase/config.toml`). */
-  readonly configPath: string;
-  readonly format: ConfigFormat;
-  /** Matched `[remotes.<name>]` block the DIFF operand was merged from —
-   * independent of `destination` (a brand-new `[remotes.*]` block being
-   * CREATED has no applied overlay to diff against yet). Mirrors `config
-   * diff`'s own `target.local_scope`. */
-  readonly appliedRemote: string | undefined;
-  readonly destination: ConfigPullDestination;
-}
+export { CONFIG_PULL_PAYLOAD_VERSION, configPullPayload, renderConfigPullText };
+export type { ConfigPullContext, ConfigPullOutcome };
 
 /** The destination-echo line, printed to stderr before any network call —
  * shares `config diff`'s target-naming phrase so the two commands read the
@@ -98,198 +60,6 @@ export function configPullDestinationLine(
  */
 export function configPullCreatedBlockLabel(createdTable: ReadonlyArray<string>): string {
   return sanitizeInlineName(createdTable[1] ?? "");
-}
-
-interface ChangeStatus {
-  readonly written: boolean;
-  readonly reason?: ConfigPullChangeSkipReason;
-}
-
-/**
- * Every `changeSet.changes` entry's actual disposition: `plan.writes` unless
- * the run outcome turns a planned write into a skip (`dryRun`/`declined`),
- * else `plan.skipped`'s own planning-time reason.
- */
-function buildChangeStatus(
-  plan: ConfigPullPlan,
-  outcome: ConfigPullOutcome,
-): ReadonlyMap<string, ChangeStatus> {
-  const status = new Map<string, ChangeStatus>();
-  const writeSkipReason: ConfigPullChangeSkipReason | undefined = outcome.dryRun
-    ? "dry_run"
-    : outcome.declined
-      ? "declined"
-      : undefined;
-  for (const write of plan.writes) {
-    status.set(
-      configPathKey(write.change.path),
-      writeSkipReason === undefined
-        ? { written: true }
-        : { written: false, reason: writeSkipReason },
-    );
-  }
-  for (const skip of plan.skipped) {
-    status.set(configPathKey(skip.change.path), { written: false, reason: skip.reason });
-  }
-  return status;
-}
-
-function writtenCount(plan: ConfigPullPlan, outcome: ConfigPullOutcome): number {
-  return outcome.dryRun || outcome.declined ? 0 : plan.writes.length;
-}
-
-function renderLocal(local: unknown, declared: boolean): string {
-  const value = configRenderValue(local, "(unset)");
-  return local !== undefined && !declared
-    ? `${value} (schema default — not declared in config.toml)`
-    : value;
-}
-
-function warningMessage(warning: ConfigPullWarning, configPath: string): string {
-  const path = warning.path === undefined ? undefined : configRenderPath(warning.path);
-  switch (warning.kind) {
-    case "dual_scope":
-      return `${path} also configures the local stack (\`supabase start\`) — writing it to the config root changes local dev behavior too.`;
-    case "duplicates_root":
-      return `${path} already matches the config root's value — this remote block now carries a redundant copy.`;
-    case "array_drift":
-      return `${path} is an array also declared at the config root — the two copies will not stay in sync.`;
-    case "uncommitted_changes":
-      return `${configPath} has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.`;
-    case "unpushable":
-      return `${path} was written here, but \`config push\` cannot send it back to the platform — it will keep showing as out of sync.`;
-    case "would_invalidate": {
-      const fields = warning.missingFields ?? [];
-      const fieldNames = fields.map((field) => configRenderPath(field.path));
-      const envVariables = fields
-        .map((field) => field.envVariable)
-        .filter((name): name is string => name !== undefined)
-        .map((name) => sanitizeInlineName(name));
-      const remedy =
-        envVariables.length > 0
-          ? `set ${envVariables.join(", ")} and rerun, or configure it manually`
-          : "configure it manually";
-      return `${path} was not changed: it requires ${fieldNames.join(", ")} — ${remedy}.`;
-    }
-  }
-}
-
-/**
- * Text-mode-only rewording of {@link ConfigPullSkipReason} for the
- * per-change marker (`renderConfigPullText`) — the machine payload's
- * own `skipped_reason` token (`configPullPayload`) is untouched.
- */
-function humanizeSkipReason(reason: ConfigPullSkipReason): string {
-  switch (reason) {
-    case "env_reference":
-      return "env() reference";
-    case "remote_env_reference":
-      return "remote value looks like env() — not written";
-    case "unwritable":
-      return "not representable";
-    case "local_only":
-      // Never actually reached: a `local_only` skip's own marker is built
-      // directly (see `changeMarker` below), since the reason would only
-      // restate the change's own class.
-      return "local only";
-    case "would_invalidate":
-      return "requires values pull cannot write";
-  }
-}
-
-/**
- * The per-change marker (`write`/`skip: ...`) — suppresses the skip reason
- * when it would merely restate the change's own class (`local_only`
- * changes are ALWAYS skipped for reason `local_only`, so `[local-only, skip:
- * local_only]` says nothing a reader doesn't already know from the class
- * alone); every other skip reason is humanized for text-mode prose.
- */
-function changeMarker(
-  change: ConfigChange,
-  writePaths: ReadonlySet<string>,
-  skipReasonByPath: ReadonlyMap<string, ConfigPullSkipReason>,
-): string {
-  if (writePaths.has(configPathKey(change.path))) {
-    return "write";
-  }
-  const reason = skipReasonByPath.get(configPathKey(change.path));
-  if (reason === undefined || reason === change.class) {
-    return "not pulled";
-  }
-  return `skip: ${humanizeSkipReason(reason)}`;
-}
-
-/**
- * Human-readable change-by-change body for text mode (stdout), shown BEFORE
- * the confirmation prompt (and reused, unchanged, for `--dry-run`'s output) —
- * so it reports what the plan WOULD do, independent of the run's eventual
- * outcome. The final one-line disposition (wrote / would write / declined)
- * is {@link configPullSummaryMessage}'s job, not this renderer's.
- *
- * A `plan.createdTable` always gets its own line naming the new block —
- * regardless of whether any value write is ALSO planned — so a block-only
- * run (a zero-drift branch/`--remote-label` target, CLI-2064 bug B) states
- * its one action in the body too, not only in its own confirmation prompt
- * (`pull.handler.ts` step 11).
- */
-export function renderConfigPullText(
-  changeSet: ConfigChangeSet,
-  scope: ConfigApiScope,
-  plan: ConfigPullPlan,
-  projectRef: string,
-  configPath: string,
-): string {
-  const writePaths = new Set(plan.writes.map((write) => configPathKey(write.change.path)));
-  const skipReasonByPath = new Map(
-    plan.skipped.map((skip) => [configPathKey(skip.change.path), skip.reason] as const),
-  );
-
-  const lines: Array<string> = [];
-  for (const change of changeSet.changes) {
-    const marker = changeMarker(change, writePaths, skipReasonByPath);
-    lines.push(
-      `${configRenderPath(change.path)} [${CONFIG_CLASS_LABELS[change.class]}, ${marker}]`,
-    );
-    const env =
-      change.envVariables === undefined
-        ? ""
-        : ` (from env ${sanitizeInlineName(change.envVariables.join(", "))})`;
-    lines.push(`  local:  ${renderLocal(change.local, change.declared)}${env}`);
-    lines.push(`  remote: ${configRenderValue(change.remote, "(not returned)")}`);
-    lines.push("");
-  }
-
-  if (plan.warnings.length > 0) {
-    lines.push("Warnings:");
-    for (const warning of plan.warnings) {
-      lines.push(`  ${warningMessage(warning, configPath)}`);
-    }
-    lines.push("");
-  }
-
-  const total = changeSet.counts.total;
-  if (total === 0) {
-    lines.push("No config differences found.");
-  } else {
-    lines.push(
-      `${configPlural(total, "difference", "differences")} found (${plan.writes.length} to write, ${plan.skipped.length} to skip).`,
-    );
-  }
-  if (plan.createdTable !== undefined) {
-    lines.push(
-      `New block [remotes.${configPullCreatedBlockLabel(plan.createdTable)}] will be created (project_id = ${sanitizeInlineName(projectRef)}).`,
-    );
-  }
-  if (scope.missing.length > 0) {
-    lines.push(`Note: ${configNotReturnedCaveat(scope.missing)}`);
-  }
-  if (changeSet.masked.length > 0) {
-    lines.push(`Note: ${configMaskedCaveat(changeSet.masked)}`);
-  }
-  if (changeSet.unmanaged.length > 0) {
-    lines.push(`Note: ${configUnmanagedCaveat(changeSet.unmanaged)}`);
-  }
-  return `${lines.join("\n")}\n`;
 }
 
 /**
@@ -368,92 +138,4 @@ export function configPullSummaryMessage(
     parts.push(`${configUnmanagedCaveat(changeSet.unmanaged)}.`);
   }
   return parts.join(" ");
-}
-
-function destinationPayload(destination: ConfigPullDestination): Record<string, unknown> {
-  return destination.kind === "root"
-    ? { scope: "base", created: false }
-    : {
-        scope: `remotes.${destination.label}`,
-        label: destination.label,
-        created: destination.created,
-      };
-}
-
-/**
- * The structured result for `--output-format json|stream-json` — the only
- * machine-output mechanism this command honors (`-o/--output` is rejected
- * outright, mirroring `config diff`, CLI-2156). Unset sides are explicit
- * `null`s (via `configChangePayloadEntry`), distinguishable from empty
- * values.
- */
-export function configPullPayload(
-  changeSet: ConfigChangeSet,
-  scope: ConfigApiScope,
-  plan: ConfigPullPlan,
-  context: ConfigPullContext,
-  outcome: ConfigPullOutcome,
-): Record<string, unknown> {
-  const status = buildChangeStatus(plan, outcome);
-  const written = writtenCount(plan, outcome);
-  const documentPathByKey = new Map(
-    plan.writes.map((write) => [configPathKey(write.change.path), write.documentPath] as const),
-  );
-  // A block-only run (`plan.createdTable` set, no value writes) still WROTE —
-  // the new block itself — even though `written` (a count of VALUE writes)
-  // stays 0; `dryRun`/`declined` mean the block was only ever a plan, never
-  // actually created.
-  const wrote =
-    written > 0 || (plan.createdTable !== undefined && !outcome.dryRun && !outcome.declined);
-
-  return {
-    schema_version: CONFIG_PULL_PAYLOAD_VERSION,
-    config_schema: context.configSchema,
-    config_path: context.configPath,
-    format: context.format,
-    target: {
-      project_ref: context.projectRef,
-      ...(context.branch === undefined ? {} : { branch: context.branch }),
-      local_scope:
-        context.appliedRemote === undefined ? "base" : `remotes.${context.appliedRemote}`,
-    },
-    destination: destinationPayload(context.destination),
-    dry_run: outcome.dryRun,
-    wrote,
-    scope: { present: scope.present, missing: scope.missing },
-    changes: changeSet.changes.map((change) => {
-      const entry = status.get(configPathKey(change.path));
-      const changeWritten = entry?.written ?? false;
-      const documentPath = documentPathByKey.get(configPathKey(change.path));
-      return {
-        ...configChangePayloadEntry(change),
-        written: changeWritten,
-        ...(entry?.reason === undefined ? {} : { skipped_reason: entry.reason }),
-        // Only an ACTUALLY written entry carries `document_path` — a
-        // dry-run/declined outcome still has a planned `documentPath`, but
-        // nothing landed there, so surfacing it would overstate what
-        // happened.
-        ...(changeWritten && documentPath !== undefined ? { document_path: documentPath } : {}),
-      };
-    }),
-    warnings: plan.warnings.map((warning) => ({
-      kind: warning.kind,
-      ...(warning.path === undefined ? {} : { path: warning.path }),
-      ...(warning.missingFields === undefined
-        ? {}
-        : {
-            missing_fields: warning.missingFields.map((field) => ({
-              path: field.path,
-              ...(field.envVariable === undefined ? {} : { env_variable: field.envVariable }),
-            })),
-          }),
-    })),
-    masked: changeSet.masked,
-    unmanaged: changeSet.unmanaged,
-    counts: {
-      ...changeSet.counts,
-      written,
-      skipped: changeSet.counts.total - written,
-    },
-  };
 }

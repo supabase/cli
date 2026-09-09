@@ -5,7 +5,7 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
-import { mintConfigTargetErrors } from "../config.target.ts";
+import { mintConfigTargetErrors } from "../../../command-internal/project-target.ts";
 
 interface NetworkErrorArgs {
   readonly message: string;

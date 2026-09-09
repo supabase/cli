@@ -28,7 +28,7 @@ export { relativeConfigPath };
  * than silently loading an unrelated ancestor project's config. Every family
  * member keeps its own tagged error class; `makeError` builds it from the
  * shared message text, mirroring `resolveConfigTarget`'s per-family
- * error construction (`config.target.ts`).
+ * error construction (`command-internal/project-target.ts`).
  */
 export function loadLocalConfig<E>(
   cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },

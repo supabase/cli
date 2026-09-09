@@ -9,7 +9,7 @@ import {
   migraRuntimeLayer,
   pgDeltaCommandRuntimeLayer,
   pgDeltaDbConfigRuntimeLayer,
-} from "../shared/pgdelta-engine.layer.ts";
+} from "../../../command-internal/pgdelta-engine-runtime.layer.ts";
 
 export const dbSchemaPullRuntimeLayer = (command: ReadonlyArray<string>) =>
   Layer.mergeAll(
