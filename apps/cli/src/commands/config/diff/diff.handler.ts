@@ -15,13 +15,20 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
-import { mapHttpError, sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
+import {
+  mapHttpError,
+  sanitizeErrorBody,
+  unexpectedStatusMessage,
+} from "../../../command-internal/http-errors.ts";
+import {
+  configTargetErrorsFor,
+  resolveConfigTarget,
+} from "../../../command-internal/project-target.ts";
 import { configIsRecord } from "../config.paths.ts";
 import { loadLocalConfig } from "../config.load.ts";
-import { configTargetErrorsFor, resolveConfigTarget } from "../config.target.ts";
 import { configApiScope, configScopeLine } from "../config.format.ts";
 import { configProjectConfigTry } from "../config.project-config.ts";
-import { configReadStatusMessage, unexpectedStatusMessage } from "../config.read-status.ts";
+import { configReadStatusMessage } from "../config.read-status.ts";
 import {
   configDiffComparisonLine,
   configDiffPayload,
@@ -51,7 +58,7 @@ const mapBranchResolveError = mapHttpError({
   statusMessage: unexpectedStatusMessage,
 });
 
-/** Error construction for `resolveConfigTarget` (`../config.target.ts`), keeping
+/** Error construction for `resolveConfigTarget` (`command-internal/project-target.ts`), keeping
  *  `config diff`'s own tagged error classes; the message wording is shared there. */
 const configTargetErrors = configTargetErrorsFor({
   notLinked: ConfigDiffBranchNotLinkedError,
@@ -127,7 +134,7 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
     let loaded = yield* loadConfig(undefined);
 
     // 3. Resolve the comparison target — hoisted into `resolveConfigTarget`
-    // (`../config.target.ts`, shared with `config pull`/`config push`, CLI-2064). See
+    // (`command-internal/project-target.ts`, shared with `config pull`/`config push`, CLI-2064). See
     // that function's doc comment for the full eager-parent-ref-before-any-spinner
     // and lazy-UUID-parent-resolution rules this preserves.
     const { ref, branch } = yield* resolveConfigTarget(

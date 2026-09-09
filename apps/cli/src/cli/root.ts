@@ -30,6 +30,7 @@ import { networkRestrictionsCommand } from "../commands/network-restrictions/net
 import { orgsCommand } from "../commands/orgs/orgs.command.ts";
 import { postgresConfigCommand } from "../commands/postgres-config/postgres-config.command.ts";
 import { projectsCommand } from "../commands/projects/projects.command.ts";
+import { pullCommand } from "../commands/pull/pull.command.ts";
 import { secretsCommand } from "../commands/secrets/secrets.command.ts";
 import { seedCommand } from "../commands/seed/seed.command.ts";
 import { servicesCommand } from "../commands/services/services.command.ts";
@@ -104,6 +105,7 @@ export const rootCommandForBackend = (backend: StackBackend = "legacy"): CliRoot
       orgsCommand,
       postgresConfigCommand,
       projectsCommand,
+      pullCommand,
       secretsCommand,
       seedCommand,
       servicesCommand,

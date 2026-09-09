@@ -1,4 +1,3 @@
-import { defaultJwtSecret, generateJwt } from "../shared/stack-constants.ts";
 import { Effect, FileSystem, Path } from "effect";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
@@ -7,8 +6,15 @@ import { resolveApiExternalUrl } from "./api-url.ts";
 import { validateApiPort, validateApiTlsPresence } from "./config-validate.ts";
 import { loadProjectEnv } from "./db-config.toml-read.ts";
 import { mapTenantApiKeysError } from "./get-tenant-api-keys.ts";
+import { generateGoJwt } from "./go-jwt.ts";
 import { getHostname } from "./hostname.ts";
-import { envOverride, envOverrideBool, envOverridePort } from "./local-config-values.ts";
+import {
+  decryptAuthSecret,
+  envOverride,
+  envOverrideBool,
+  envOverridePort,
+  resolveJwtSecret,
+} from "./local-config-values.ts";
 import { KONG_LOCAL_CA_CERT } from "./kong-local-ca-cert.ts";
 import { extractServiceKeys } from "./tenant-keys.ts";
 import {
@@ -26,8 +32,9 @@ import {
  * - `projectRef === ""` (local): base URL from `api.external_url` (else
  * `<scheme>://<host>:<api.port>`), with the `SUPABASE_API_*` env/dotenv
  * overrides folded in first (see {@link resolveLocalApiConfig}), service-role
- * key derived from `auth.{service_role_key,jwt_secret}`, and the Kong CA when
- * the URL is https.
+ * key derived from `auth.{service_role_key,jwt_secret}` with their
+ * `SUPABASE_AUTH_*` env/dotenv overrides applied and decrypted (see
+ * {@link resolveLocalServiceRoleKey}), and the Kong CA when the URL is https.
  * - remote: base URL `https://<ref>.<projectHost>`; key from
  * `SUPABASE_AUTH_SERVICE_ROLE_KEY` else `tenant.GetApiKeys`.
  *
@@ -65,12 +72,12 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
   readonly projectRef: string;
   readonly config: StorageConfigView;
   /**
-   * Already-resolved project env map for the `SUPABASE_API_*` fold, when the
-   * caller has one in scope (`seedBucketsRun`, `start`) — same
-   * passthrough idea as `seedBucketsRun`'s own `resolvedConfig`. Either
-   * walk's shape works — a map that omits ambient-shadowed keys
-   * (`loadProjectEnv`) or one that overlays ambient values
-   * (`resolveProjectEnvironmentValues`) — since the override helpers'
+   * Already-resolved project env map for the `SUPABASE_API_*` fold and the
+   * local auth-key resolution, when the caller has one in scope
+   * (`seedBucketsRun`, `start`) — same passthrough idea as `seedBucketsRun`'s
+   * own `resolvedConfig`. Either walk's shape works — a map that omits
+   * ambient-shadowed keys (`loadProjectEnv`) or one that overlays ambient
+   * values (`resolveProjectEnvironmentValues`) — since the override helpers'
    * `map[name] ?? process.env[name]` lookup resolves both identically. When
    * omitted (the `storage` commands), the local branch loads the nested
    * project dotenv walk itself.
@@ -121,7 +128,7 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
     ));
   const api = yield* resolveLocalApiConfig(opts.config.api, projectEnvValues);
   const baseUrl = resolveApiExternalUrl(api, getHostname());
-  const apiKey = yield* resolveLocalServiceRoleKey(opts.config.auth);
+  const apiKey = yield* resolveLocalServiceRoleKey(opts.config.auth, projectEnvValues);
 
   // `status.NewKongClient` installs unconditionally for the local client; its
   // embedded CA only matters for https. `(*api).Validate` resolves cert_path /
@@ -144,6 +151,19 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
   }
   return { baseUrl, apiKey, localKongCa } satisfies StorageCredentials;
 });
+
+/**
+ * The config-load helpers this module composes (`envOverride*`,
+ * `decryptAuthSecret`, `resolveJwtSecret`, `validateApi*`) report invalid
+ * config by throwing. Each throw collapses into the tagged storage config
+ * error with the helper's message preserved — the same collapse every other
+ * consumer of these helpers applies (`wrapDbConfigOverride` →
+ * `DbConfigLoadError`) — keeping this Effect error channel tagged.
+ */
+const toStorageConfigError = (cause: unknown) =>
+  new StorageConfigError({
+    message: cause instanceof Error ? cause.message : String(cause),
+  });
 
 /**
  * Fold the `SUPABASE_API_*` env/dotenv overrides into the `[api]` fields the
@@ -193,79 +213,82 @@ const resolveLocalApiConfig = (
       validateApiPort(resolved.enabled, resolved.port);
       return resolved;
     },
-    // A malformed port/bool override or the canonical zero-port rejection
-    // collapses into the tagged storage config error, preserving the helper's
-    // message — the same collapse every other consumer of these throwing
-    // helpers applies (`wrapDbConfigOverride` → `DbConfigLoadError`),
-    // keeping this Effect error channel tagged.
-    catch: (cause) =>
-      new StorageConfigError({
-        message: cause instanceof Error ? cause.message : String(cause),
-      }),
+    catch: toStorageConfigError,
   });
 
 /**
- * Validate-only entry point for `seedBucketsRun`'s empty-config
- * short-circuit: decodes the `SUPABASE_API_*` overrides and runs the canonical
- * `[api]` config-load checks (`validateApiPort`, then the
- * `validateApiTlsPresence` pairing rule) without building credentials —
- * the cert/key file reads stay on the seeding path (`validateLocalKongTls`),
- * where the established message precedence (jwt-secret length before TLS
- * presence) is preserved. The resolved view is discarded; the seeding path
- * re-resolves through `resolveStorageCredentials`.
+ * Resolve the service-role key for the local Storage gateway:
+ * - jwt secret: `SUPABASE_AUTH_JWT_SECRET` (shell or project dotenv) →
+ * `auth.jwt_secret` → `defaultJwtSecret`; a resolved secret shorter than 16
+ * chars is rejected (`resolveJwtSecret`);
+ * - service-role key: `SUPABASE_AUTH_SERVICE_ROLE_KEY` (shell or project
+ * dotenv) → `auth.service_role_key` → sign from the resolved secret.
+ *
+ * Both fields go through the same `envOverride` → `decryptAuthSecret`
+ * composition the status/stop resolver applies to them
+ * (`local-config-values.ts`), in the same order (jwt secret first, so a short
+ * secret is reported before a broken service-role key), so a value set only in
+ * `supabase/.env`(.local) counts and a dotenvx `encrypted:` value is decrypted
+ * instead of being used as literal key material. An undecryptable value is an
+ * invalid-config hard failure, same as those siblings. As with the `[api]` fold
+ * above, `[remotes.*]` never merges on the local path, so the remote-over-env
+ * precedence those siblings gate on does not arise. The derivation itself stays
+ * symmetric (`generateGoJwt` from the secret — the same signer those siblings
+ * use, so without `auth.signing_keys_path` the minted token is the one `status`
+ * prints); `start` pre-folds its signing-keys-aware key for the
+ * `auth.signing_keys_path` case.
+ *
+ * Empty checks use length, so an explicit `service_role_key = ""` is
+ * regenerated (not sent as the empty string).
  */
-export const validateLocalApiOverrides = Effect.fnUntraced(function* (
-  api: StorageConfigView["api"],
+const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (
+  auth: StorageConfigView["auth"],
   projectEnvValues: Readonly<Record<string, string>>,
 ) {
-  const resolved = yield* resolveLocalApiConfig(api, projectEnvValues);
-  if (resolved.enabled && resolved.tls.enabled) {
-    yield* Effect.try({
-      try: () => validateApiTlsPresence(resolved.tls.cert_path, resolved.tls.key_path),
-      catch: (cause) =>
-        new StorageConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
-  }
+  const jwtSecret = yield* Effect.try({
+    try: () =>
+      resolveJwtSecret(
+        decryptAuthSecret(
+          envOverride("SUPABASE_AUTH_JWT_SECRET", auth.jwt_secret, projectEnvValues),
+          projectEnvValues,
+        ),
+      ),
+    catch: toStorageConfigError,
+  });
+  const configuredKey = yield* Effect.try({
+    try: () =>
+      decryptAuthSecret(
+        envOverride("SUPABASE_AUTH_SERVICE_ROLE_KEY", auth.service_role_key, projectEnvValues),
+        projectEnvValues,
+      ),
+    catch: toStorageConfigError,
+  });
+  return configuredKey !== undefined && configuredKey.length > 0
+    ? configuredKey
+    : generateGoJwt(jwtSecret, "service_role");
 });
 
 /**
- * Resolve the service-role key for the local Storage gateway, mirroring Go's
- * `(*auth).generateAPIKeys` + the Viper
- * `AutomaticEnv`/`SUPABASE_` prefix precedence:
- * - jwt secret: `SUPABASE_AUTH_JWT_SECRET` → `auth.jwt_secret` → `defaultJwtSecret`;
- * a resolved secret shorter than 16 chars is rejected;
- * - service-role key: `SUPABASE_AUTH_SERVICE_ROLE_KEY` → `auth.service_role_key`
- * → sign from the resolved secret.
- *
- * Empty checks use length, so an explicit `service_role_key = ""` is regenerated
- * like Go (not sent as the empty string).
+ * Validate-only entry point for `seedBucketsRun`'s empty-config short-circuit:
+ * runs the config-load checks of the local branch in the seeding path's order —
+ * the `SUPABASE_API_*` decode + `validateApiPort`, the auth override/decrypt +
+ * jwt-secret length, then the `validateApiTlsPresence` pairing rule — without
+ * building credentials. The cert/key file reads stay on the seeding path
+ * (`validateLocalKongTls`). The resolved values are discarded; the seeding path
+ * re-resolves through `resolveStorageCredentials`.
  */
-const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (auth: {
-  readonly jwt_secret?: string;
-  readonly service_role_key?: string;
-}) {
-  const envSecret = process.env["SUPABASE_AUTH_JWT_SECRET"];
-  const configuredSecret =
-    envSecret !== undefined && envSecret.length > 0 ? envSecret : auth.jwt_secret;
-
-  let jwtSecret: string;
-  if (configuredSecret === undefined || configuredSecret.length === 0) {
-    jwtSecret = defaultJwtSecret;
-  } else if (configuredSecret.length < 16) {
-    return yield* new StorageConfigError({
-      message: "Invalid config for auth.jwt_secret. Must be at least 16 characters",
+export const validateLocalStorageConfig = Effect.fnUntraced(function* (
+  config: StorageConfigView,
+  projectEnvValues: Readonly<Record<string, string>>,
+) {
+  const api = yield* resolveLocalApiConfig(config.api, projectEnvValues);
+  yield* resolveLocalServiceRoleKey(config.auth, projectEnvValues);
+  if (api.enabled && api.tls.enabled) {
+    yield* Effect.try({
+      try: () => validateApiTlsPresence(api.tls.cert_path, api.tls.key_path),
+      catch: toStorageConfigError,
     });
-  } else {
-    jwtSecret = configuredSecret;
   }
-
-  const envKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
-  const configuredKey = envKey !== undefined && envKey.length > 0 ? envKey : auth.service_role_key;
-  return configuredKey !== undefined && configuredKey.length > 0
-    ? configuredKey
-    : generateJwt(jwtSecret, "service_role");
 });
 
 /**
@@ -288,10 +311,7 @@ const validateLocalKongTls = Effect.fnUntraced(function* (
   // file reads below are this caller's own I/O.
   yield* Effect.try({
     try: () => validateApiTlsPresence(certPath, keyPath),
-    catch: (cause) =>
-      new StorageConfigError({
-        message: cause instanceof Error ? cause.message : String(cause),
-      }),
+    catch: toStorageConfigError,
   });
 
   if (certPath !== undefined && certPath.length > 0) {
