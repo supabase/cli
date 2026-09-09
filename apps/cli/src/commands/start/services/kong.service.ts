@@ -158,7 +158,7 @@ export interface KongEmailTemplateMount {
  * fixed in-container email-template directory as `<id><ext-of-resolvedPath>`
  * (POSIX — the container is always Linux regardless of the host OS, hence
  * `nodePath.posix.join`, not the platform-dependent `nodePath.join`), and
- * formats the `rw` bind.
+ * formats the `rw,z` bind.
  *
  * A pure formatter over an already-validated path — it makes no containment
  * or existence claims of its own. `start.handler.ts` resolves, confines to
@@ -171,7 +171,7 @@ export function buildKongEmailTemplateBind(mount: KongEmailTemplateMount): strin
     KONG_NGINX_EMAIL_TEMPLATE_DIR,
     `${mount.id}${nodePath.extname(mount.resolvedPath)}`,
   );
-  return `${mount.resolvedPath}:${dockerPath}:rw`;
+  return `${mount.resolvedPath}:${dockerPath}:rw,z`;
 }
 
 const KONG_ENTRYPOINT_HEAD =
