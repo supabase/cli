@@ -1,18 +1,13 @@
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Stream } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import {
   InvalidStackIdentityError,
+  StackCleanupError,
   StackIdSchema,
   StackNotFoundError,
   StackOwnershipConflictError,
-  StackRuntimeMismatchError,
   StackStateFormatUnsupportedError,
   StackStateInvalidError,
   StackUpgradeRequiredError,
@@ -36,7 +31,7 @@ import {
 } from "../../../../shared/telemetry/error-actionability.ts";
 import { ExperimentalStackApi } from "../stack.shared.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
-import { experimentalStackStop, validateExperimentalStackStopTarget } from "./stop.handler.ts";
+import { experimentalStackStop } from "./stop.handler.ts";
 import { ExperimentalStackStopError } from "./stop.errors.ts";
 import { experimentalStackStopCommand } from "./stop.command.ts";
 
@@ -132,8 +127,8 @@ function setup(opts: {
 }
 
 describe("experimental stack stop", () => {
-  it.effect("stops a named stack without destroying its data", () => {
-    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-"));
+  it.effect("stops a named stack without calling destroy", () => {
+    const root = "/tmp/supabase-stack-stop";
     const setupResult = setup({
       root,
       found: { id: "a".repeat(64), name: "feature-a" },
@@ -143,17 +138,14 @@ describe("experimental stack stop", () => {
       expect(setupResult.state.findInputs).toEqual([{ projectRoot: root, name: "feature-a" }]);
       expect(setupResult.state.openedIds).toEqual(["a".repeat(64)]);
       expect(setupResult.state.stopCalls).toBe(1);
+      expect(setupResult.state.destroyCalled).toBe(false);
       expect(setupResult.out.stdoutText).toContain("stopped");
       expect(setupResult.telemetry.flushed).toBe(true);
-    }).pipe(
-      Effect.provide(setupResult.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(setupResult.layer));
   });
 
-  it.effect("opens an explicit id without finding or reading the current project", () => {
-    // oxlint-disable-next-line effecttsgo/global-date -- unique fixture directory identity
-    const root = join(tmpdir(), `supabase-stack-stop-id-${Date.now()}`);
+  it.effect("opens an explicit id without discovering a stack", () => {
+    const root = "/tmp/supabase-stack-stop-id";
     const id = "c".repeat(64);
     const setupResult = setup({ root, found: { id } });
     return Effect.gen(function* () {
@@ -164,22 +156,19 @@ describe("experimental stack stop", () => {
     }).pipe(Effect.provide(setupResult.layer));
   });
 
-  it.effect("stops an already stopped stack repeatedly without destroying data", () => {
-    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-repeat-"));
+  it.effect("invokes stop twice without calling destroy", () => {
+    const root = "/tmp/supabase-stack-stop-repeat";
     const setupResult = setup({ root, found: { id: "d".repeat(64) } });
     return Effect.gen(function* () {
       yield* experimentalStackStop(flags());
       yield* experimentalStackStop(flags());
       expect(setupResult.state.stopCalls).toBe(2);
       expect(setupResult.state.destroyCalled).toBe(false);
-    }).pipe(
-      Effect.provide(setupResult.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(setupResult.layer));
   });
 
   it.effect("classifies an addressed missing stack as actionable flags", () => {
-    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-open-missing-"));
+    const root = "/tmp/supabase-stack-stop-open-missing";
     const setupResult = setup({
       root,
       found: { id: "e".repeat(64) },
@@ -191,14 +180,11 @@ describe("experimental stack stop", () => {
       ).pipe(Effect.flip);
       expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
       expect(setupResult.state.stopCalls).toBe(0);
-    }).pipe(
-      Effect.provide(setupResult.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(setupResult.layer));
   });
 
   it.effect("emits a self-describing JSON stopped result", () => {
-    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-json-"));
+    const root = "/tmp/supabase-stack-stop-json";
     const setupResult = setup({ root, found: { id: "f".repeat(64) } });
     const output = mockOutput({ format: "json" });
     return Effect.gen(function* () {
@@ -208,14 +194,11 @@ describe("experimental stack stop", () => {
         id: "f".repeat(64),
         lifecycle: "stopped",
       });
-    }).pipe(
-      Effect.provide(Layer.mergeAll(setupResult.layer, output.layer)),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(Layer.mergeAll(setupResult.layer, output.layer)));
   });
 
   it.effect("reports a missing named stack without opening or stopping anything", () => {
-    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-named-missing-"));
+    const root = "/tmp/supabase-stack-stop-named-missing";
     const setupResult = setup({ root });
     return Effect.gen(function* () {
       const failure = yield* experimentalStackStop(flags({ stack: Option.some("missing") })).pipe(
@@ -225,14 +208,11 @@ describe("experimental stack stop", () => {
       expect(setupResult.state.findInputs).toEqual([{ projectRoot: root, name: "missing" }]);
       expect(setupResult.state.openedIds).toEqual([]);
       expect(setupResult.state.stopCalls).toBe(0);
-    }).pipe(
-      Effect.provide(setupResult.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(setupResult.layer));
   });
 
   it.effect("classifies invalid stack names as actionable flags", () => {
-    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-invalid-name-"));
+    const root = "/tmp/supabase-stack-stop-invalid-name";
     const setupResult = setup({
       root,
       findFailure: new InvalidStackIdentityError({ message: "The stack name must not be blank" }),
@@ -244,14 +224,11 @@ describe("experimental stack stop", () => {
       expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
       expect(setupResult.state.openedIds).toEqual([]);
       expect(setupResult.state.stopCalls).toBe(0);
-    }).pipe(
-      Effect.provide(setupResult.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(setupResult.layer));
   });
 
   it.effect("rejects malformed ids before opening or stopping anything", () => {
-    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-malformed-"));
+    const root = "/tmp/supabase-stack-stop-malformed";
     const setupResult = setup({ root });
     return Effect.gen(function* () {
       const failure = yield* experimentalStackStop(flags({ stackId: Option.some("invalid") })).pipe(
@@ -261,15 +238,11 @@ describe("experimental stack stop", () => {
       expect(setupResult.state.findInputs).toEqual([]);
       expect(setupResult.state.openedIds).toEqual([]);
       expect(setupResult.state.stopCalls).toBe(0);
-    }).pipe(
-      Effect.provide(setupResult.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(setupResult.layer));
   });
 
-  it.effect("is idempotent when no current stack exists and does not read config", () => {
-    // oxlint-disable-next-line effecttsgo/global-date -- unique fixture directory identity
-    const root = join(tmpdir(), `supabase-stack-stop-missing-${Date.now()}`);
+  it.effect("reports when no current stack exists", () => {
+    const root = "/tmp/supabase-stack-stop-missing";
     const setupResult = setup({ root });
     return Effect.gen(function* () {
       yield* experimentalStackStop(flags());
@@ -278,22 +251,27 @@ describe("experimental stack stop", () => {
           message.message.includes("No managed stack found"),
         ),
       ).toBe(true);
+      expect(setupResult.state.openedIds).toEqual([]);
+      expect(setupResult.state.stopCalls).toBe(0);
     }).pipe(Effect.provide(setupResult.layer));
   });
 
-  it.effect("rejects explicit output and mutually exclusive targets", () =>
-    Effect.gen(function* () {
-      const targetFailure = yield* validateExperimentalStackStopTarget({
-        stack: Option.some("feature-a"),
-        stackId: Option.some("a".repeat(64)),
-      }).pipe(Effect.flip);
+  it.effect("rejects mutually exclusive targets before discovering a stack", () => {
+    const setupResult = setup({ root: "/tmp/supabase-stack-stop-mutex" });
+    return Effect.gen(function* () {
+      const targetFailure = yield* experimentalStackStop(
+        flags({ stack: Option.some("feature-a"), stackId: Option.some("a".repeat(64)) }),
+      ).pipe(Effect.flip);
       expect(targetFailure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
       expect(targetFailure.message).toContain("cannot be used together");
-    }),
-  );
+      expect(setupResult.state.findInputs).toEqual([]);
+      expect(setupResult.state.openedIds).toEqual([]);
+      expect(setupResult.state.stopCalls).toBe(0);
+    }).pipe(Effect.provide(setupResult.layer));
+  });
 
   it.effect("does not report success when package stop fails", () => {
-    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-failure-"));
+    const root = "/tmp/supabase-stack-stop-failure";
     const setupResult = setup({
       root,
       found: { id: "b".repeat(64) },
@@ -304,14 +282,11 @@ describe("experimental stack stop", () => {
       expect(failure).toBeInstanceOf(ExperimentalStackStopError);
       expect(setupResult.out.messages.some((message) => message.type === "success")).toBe(false);
       expect(setupResult.telemetry.flushed).toBe(true);
-    }).pipe(
-      Effect.provide(setupResult.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(setupResult.layer));
   });
 
   it.effect("classifies an ownership conflict as a lifecycle failure", () => {
-    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-conflict-"));
+    const root = "/tmp/supabase-stack-stop-conflict";
     const setupResult = setup({
       root,
       found: { id: "7".repeat(64) },
@@ -321,14 +296,11 @@ describe("experimental stack stop", () => {
       const failure = yield* experimentalStackStop(flags()).pipe(Effect.flip);
       expect(failure.reason).toBe("lifecycle");
       expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
-    }).pipe(
-      Effect.provide(setupResult.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(setupResult.layer));
   });
 
   it.effect("classifies persisted state format failures as invalid config", () => {
-    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-format-"));
+    const root = "/tmp/supabase-stack-stop-format";
     const setupResult = setup({
       root,
       found: { id: "8".repeat(64) },
@@ -343,14 +315,11 @@ describe("experimental stack stop", () => {
       expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
       expect(setupResult.state.stopCalls).toBe(0);
       expect(setupResult.out.messages.some((message) => message.type === "success")).toBe(false);
-    }).pipe(
-      Effect.provide(setupResult.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(setupResult.layer));
   });
 
   it.effect("classifies stack upgrade requirements as lifecycle failures", () => {
-    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-upgrade-"));
+    const root = "/tmp/supabase-stack-stop-upgrade";
     const setupResult = setup({
       root,
       found: { id: "9".repeat(64) },
@@ -366,33 +335,29 @@ describe("experimental stack stop", () => {
       expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
       expect(setupResult.state.stopCalls).toBe(0);
       expect(setupResult.out.messages.some((message) => message.type === "success")).toBe(false);
-    }).pipe(
-      Effect.provide(setupResult.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(setupResult.layer));
   });
 
-  it.effect("classifies an unknown stack error as unknown actionability", () => {
-    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-runtime-"));
+  it.effect("classifies cleanup failures as unknown actionability with debug guidance", () => {
+    const root = "/tmp/supabase-stack-stop-cleanup";
     const setupResult = setup({
       root,
       found: { id: "a".repeat(64) },
-      openFailure: new StackRuntimeMismatchError({ message: "Runtime mismatch" }),
+      stop: () => Effect.fail(new StackCleanupError({ message: "cleanup failed" })),
     });
     return Effect.gen(function* () {
       const failure = yield* experimentalStackStop(flags()).pipe(Effect.flip);
       expect(failure.reason).toBe("unknown");
       expect(failure[ErrorActionabilityId]).toEqual(actionability.unknown);
-      expect(setupResult.state.stopCalls).toBe(0);
+      expect(failure.suggestion).toContain("--debug");
+      expect(setupResult.state.openedIds).toEqual(["a".repeat(64)]);
+      expect(setupResult.state.destroyCalled).toBe(false);
       expect(setupResult.out.messages.some((message) => message.type === "success")).toBe(false);
-    }).pipe(
-      Effect.provide(setupResult.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(setupResult.layer));
   });
 
   it.effect("rejects the output flag with actionable guidance", () => {
-    const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-output-"));
+    const root = "/tmp/supabase-stack-stop-output";
     const setupResult = setup({ root });
     return Effect.gen(function* () {
       const failure = yield* experimentalStackStop(flags()).pipe(Effect.flip);
@@ -402,13 +367,12 @@ describe("experimental stack stop", () => {
       Effect.provide(
         Layer.mergeAll(setupResult.layer, Layer.succeed(OutputFlag, Option.some("json"))),
       ),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });
 });
 
 describe("experimental stack stop parser", () => {
-  it.live("parses a named existing stack", () => {
+  it.live("passes a stack name to the handler", () => {
     let parsed: Option.Option<string> | undefined;
     const command = experimentalStackStopCommand.pipe(
       Command.withHandler((flags) => Effect.sync(() => (parsed = flags.stack))),

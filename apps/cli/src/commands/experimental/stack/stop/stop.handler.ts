@@ -1,65 +1,59 @@
 import { Effect, Match, Option } from "effect";
 import {
-  isStackError,
-  isStackId,
-  StackIdSchema,
   type StackDescriptor,
+  type OpenStackError,
+  type StackDiscoveryError,
+  type StackStopError,
 } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
-import { ExperimentalStackApi } from "../stack.shared.ts";
+import {
+  ExperimentalStackApi,
+  ExperimentalStackTargetError,
+  rejectExperimentalStackOutput,
+  validateExperimentalStackId,
+  validateExperimentalStackTarget,
+} from "../stack.shared.ts";
+import type { ExperimentalStackStopFlags } from "./stop.command.ts";
 import { ExperimentalStackStopError } from "./stop.errors.ts";
 
-export interface ExperimentalStackStopFlags {
-  readonly stack: Option.Option<string>;
-  readonly stackId: Option.Option<string>;
-}
+const mapTargetError = (error: ExperimentalStackTargetError) =>
+  new ExperimentalStackStopError({
+    reason: error.reason,
+    message: error.message,
+    ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
+    cause: error,
+  });
 
-export const validateExperimentalStackStopTarget = (
-  flags: Pick<ExperimentalStackStopFlags, "stack" | "stackId">,
-) =>
-  Option.isSome(flags.stack) && Option.isSome(flags.stackId)
-    ? Effect.fail(
-        new ExperimentalStackStopError({
-          reason: "flags",
-          message: "--stack and --stack-id cannot be used together",
-        }),
-      )
-    : Effect.void;
-
-const stopError = (error: unknown): ExperimentalStackStopError => {
-  const stackError = isStackError(error) ? error : undefined;
-  const classification =
-    stackError === undefined
-      ? { reason: "unknown" as const }
-      : Match.value(stackError).pipe(
-          Match.tag("StackNotFoundError", "InvalidStackIdentityError", () => ({
-            reason: "flags" as const,
-          })),
-          Match.tag(
-            "StackOwnershipConflictError",
-            "StackNotRunningError",
-            "StackMustBeStoppedError",
-            "StackLifecycleConflictError",
-            "StackRuntimeError",
-            "StackCleanupError",
-            () => ({ reason: "lifecycle" as const }),
-          ),
-          Match.tag(
-            "InvalidStackConfigError",
-            "StackStateFormatUnsupportedError",
-            "InvalidProjectRootError",
-            "StackStateInvalidError",
-            () => ({ reason: "invalid-config" as const }),
-          ),
-          Match.tag("StackUpgradeRequiredError", () => ({ reason: "lifecycle" as const })),
-          Match.orElse(() => ({ reason: "unknown" as const })),
-        );
+const stopError = (error: StackDiscoveryError | OpenStackError | StackStopError) => {
+  const classification = Match.value(error).pipe(
+    Match.tag("StackNotFoundError", "InvalidStackIdentityError", () => ({
+      reason: "flags" as const,
+    })),
+    Match.tag(
+      "StackOwnershipConflictError",
+      "StackLifecycleConflictError",
+      "StackUpgradeRequiredError",
+      () => ({ reason: "lifecycle" as const }),
+    ),
+    Match.tag(
+      "StackStateFormatUnsupportedError",
+      "InvalidProjectRootError",
+      "StackStateInvalidError",
+      () => ({ reason: "invalid-config" as const }),
+    ),
+    Match.tag("StackRuntimeMismatchError", () => ({ reason: "unknown" as const })),
+    Match.tag("StackCleanupError", () => ({
+      reason: "unknown" as const,
+      suggestion: "Retry the stack stop with --debug and inspect cleanup diagnostics.",
+    })),
+    Match.exhaustive,
+  );
   return new ExperimentalStackStopError({
     ...classification,
-    message: stackError?.message ?? String(error),
+    message: error.message,
     cause: error,
   });
 };
@@ -75,14 +69,11 @@ export const experimentalStackStop = Effect.fn("experimental.stack.stop")(functi
     const settings = yield* CommandSettings;
     const stackApi = yield* ExperimentalStackApi;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
-    if (Option.isSome(outputFlag) && Option.isSome(outputFlag.value))
-      return yield* new ExperimentalStackStopError({
-        reason: "flags",
-        message: "The legacy -o/--output flag is not supported here; use --output-format json.",
-        suggestion:
-          "Use --output-format json, --output-format text, or --output-format stream-json.",
-      });
-    yield* validateExperimentalStackStopTarget(flags);
+    yield* rejectExperimentalStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
+    yield* validateExperimentalStackTarget({
+      stack: Option.getOrUndefined(flags.stack),
+      stackId: Option.getOrUndefined(flags.stackId),
+    }).pipe(Effect.mapError(mapTargetError));
 
     const id = Option.isSome(flags.stackId) ? flags.stackId.value : undefined;
     const targetOption =
@@ -93,19 +84,15 @@ export const experimentalStackStop = Effect.fn("experimental.stack.stop")(functi
               ...(Option.isSome(flags.stack) ? { name: flags.stack.value } : {}),
             })
             .pipe(Effect.mapError(stopError))
-        : yield* isStackId(id)
-            ? Effect.succeed(
-                Option.some({
-                  id: StackIdSchema.make(id),
-                  projectRoot: settings.workdir,
-                }),
-              )
-            : Effect.fail(
-                new ExperimentalStackStopError({
-                  reason: "flags",
-                  message: "--stack-id must be a lowercase SHA-256 stack id",
-                }),
-              );
+        : yield* validateExperimentalStackId(id).pipe(
+            Effect.mapError(mapTargetError),
+            Effect.map((validId) =>
+              Option.some({
+                id: validId,
+                projectRoot: settings.workdir,
+              }),
+            ),
+          );
     if (Option.isNone(targetOption)) {
       if (Option.isSome(flags.stack))
         return yield* new ExperimentalStackStopError({

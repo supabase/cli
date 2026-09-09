@@ -160,7 +160,7 @@ describe("native hidden flags", () => {
             "hello",
             "--project-ref",
             "abcdefghijklmnopqrst",
-            "--use-docker",
+            "--use-docker=false",
           ]);
           yield* runParser([
             "functions",
@@ -170,7 +170,7 @@ describe("native hidden flags", () => {
             "abcdefghijklmnopqrst",
             "--legacy-bundle",
           ]);
-          yield* runParser(["functions", "deploy", "hello", "--use-docker"]);
+          yield* runParser(["functions", "deploy", "hello", "--use-docker=false"]);
           yield* runParser(["functions", "deploy", "hello", "--legacy-bundle"]);
           yield* runParser(["functions", "serve", "--all=false"]);
         }),
@@ -179,9 +179,9 @@ describe("native hidden flags", () => {
     expect(parsed).toEqual([
       expect.objectContaining({ preview: true }),
       expect.objectContaining({ backup: false }),
-      expect.objectContaining({ useDocker: true }),
+      expect.objectContaining({ useDocker: false }),
       expect.objectContaining({ legacyBundle: true }),
-      expect.objectContaining({ useDocker: true }),
+      expect.objectContaining({ useDocker: false }),
       expect.objectContaining({ legacyBundle: true }),
       expect.objectContaining({ all: false }),
     ]);

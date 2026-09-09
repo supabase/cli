@@ -9,7 +9,9 @@ preserving the stack's persistent state and data volumes. It never destroys the 
 The stack package reads and updates its durable state under `<SUPABASE_HOME or ~/.supabase>`
 and the selected stack's lifecycle state. The CLI reads its normal workdir settings. The
 command does not load `supabase/config.toml`, so a missing or invalid project config does not
-prevent stopping an addressed stack.
+prevent stopping a stack addressed with `--stack-id`. Implicit and named stacks still depend on
+workdir discovery, so removing an ancestor config can change which stack is selected; use an
+explicit `--workdir` when needed.
 
 No project files, credentials, or runtime configuration files are written. The package owns
 the supervisor teardown and state transition; the CLI does not remove containers, volumes,

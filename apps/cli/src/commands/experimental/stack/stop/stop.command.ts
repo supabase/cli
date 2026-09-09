@@ -1,4 +1,5 @@
 import { Command, Flag } from "effect/unstable/cli";
+import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
@@ -14,6 +15,8 @@ const config = {
     Flag.optional,
   ),
 } as const;
+
+export type ExperimentalStackStopFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const experimentalStackStopCommand = Command.make("stop", config).pipe(
   Command.withDescription("Stop a managed local Supabase stack while preserving its data."),
