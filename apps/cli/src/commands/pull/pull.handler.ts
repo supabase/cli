@@ -179,13 +179,20 @@ function pullAppendSuggestion(result: PullStepResult, extra: string): PullStepRe
  * project instead of whatever this run actually resolved (a branch, an
  * explicit different ref, ...), a data-safety concern given the command
  * writes to the remote migration history table.
+ *
+ * `workdir` relativizes any `writtenSoFar` migration path the underlying
+ * `DbPullWriteError` may carry (populated when the migration file write
+ * succeeded but the subsequent remote-history update failed) — threaded
+ * through to `pullFailedStepResult` exactly like the `migration_history`
+ * step's own `workdir` argument below.
  */
 function pullDbStepFailureResult(
   cause: unknown,
   ref: string,
   remoteLabel: string | undefined,
+  workdir: string,
 ): PullStepResult {
-  const result = pullFailedStepResult("db", cause);
+  const result = pullFailedStepResult("db", cause, workdir);
   if (!(cause instanceof DbPullMigrationConflictError)) {
     return result;
   }
@@ -271,6 +278,18 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
       remoteLabel,
       source,
     });
+
+    // Every retry hint below (Phase 3's `pullWithRetryHint`/`pullDbStepFailureResult`)
+    // names the PLANNED remote destination's label, never the raw `remoteLabel` flag
+    // value above — for a branch-derived implicit target, `runPlan.context.destination`
+    // names the `[remotes.<branch>]` block the plan actually targets even though
+    // `--remote-label` was never passed. Feeding the raw flag value back into a retry
+    // hint would target the wrong (or no) block on a bare rerun when the config step's
+    // own TOCTOU guard (or any other config-step failure) trips before that block is
+    // ever created. `undefined` for a root destination, matching the raw flag's own
+    // `undefined` for that case.
+    const plannedRemoteLabel =
+      runPlan.context.destination.kind === "remote" ? runPlan.context.destination.label : undefined;
 
     // The config dirty check is scoped to whether the CONFIG step itself has
     // work to write — mirrors `config pull`'s own guard (CLI-2064 bug A): a
@@ -476,7 +495,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
         pullWithRetryHint(
           pullFailedStepResult("config", Cause.squash(configCapture.cause)),
           ref,
-          remoteLabel,
+          plannedRemoteLabel,
         ),
       );
       firstFailureCause = configCapture.cause;
@@ -501,7 +520,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
             cliSettings.workdir,
           ),
           ref,
-          remoteLabel,
+          plannedRemoteLabel,
         ),
       );
       firstFailureCause ??= migrationCapture.cause;
@@ -513,9 +532,14 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     } else {
       results.push(
         pullWithRetryHint(
-          pullDbStepFailureResult(Cause.squash(dbCapture.cause), ref, remoteLabel),
+          pullDbStepFailureResult(
+            Cause.squash(dbCapture.cause),
+            ref,
+            plannedRemoteLabel,
+            cliSettings.workdir,
+          ),
           ref,
-          remoteLabel,
+          plannedRemoteLabel,
         ),
       );
       firstFailureCause ??= dbCapture.cause;
@@ -527,9 +551,13 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     } else {
       results.push(
         pullWithRetryHint(
-          pullFailedStepResult("functions", Cause.squash(functionsCapture.cause)),
+          pullFailedStepResult(
+            "functions",
+            Cause.squash(functionsCapture.cause),
+            cliSettings.workdir,
+          ),
           ref,
-          remoteLabel,
+          plannedRemoteLabel,
         ),
       );
       firstFailureCause ??= functionsCapture.cause;

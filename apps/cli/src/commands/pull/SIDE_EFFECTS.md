@@ -40,15 +40,14 @@ target-resolution file reads are therefore skipped in practice (the ref is alrea
 
 ## Files Written
 
-| Path                                                    | Format    | When                                                                                                                                                                                                                                                                         |
-| ------------------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml` or `config.json`       | TOML/JSON | config step only, once the aggregated confirmation is accepted AND the plan has work (never on `--dry-run`, never on a declined confirmation) — same atomic surgical-edit write as standalone `config pull` (`config/pull/SIDE_EFFECTS.md`)                                  |
-| `<workdir>/supabase/migrations/<version>_<name>.sql`    | SQL       | migration-history step only, when it actually runs (bootstrap or `--with-migration-history`) and the confirmation is accepted — see `migration/fetch/SIDE_EFFECTS.md`                                                                                                        |
-| `<workdir>/supabase/migrations/<timestamp>_<name>.sql`  | SQL       | db step, migration mode, when it finds schema drift — see `db/pull/SIDE_EFFECTS.md`                                                                                                                                                                                          |
-| `<workdir>/supabase/schemas/**`, `.pgdelta-export.json` | SQL/JSON  | db step, deprecated `--experimental` structured-dump export only — `pull` never sets `--declarative`/`--use-pg-delta` itself, so this path is only reachable via the inherited global `--experimental`/`SUPABASE_EXPERIMENTAL` gate; see Notes and `db/pull/SIDE_EFFECTS.md` |
-| `<workdir>/supabase/functions/<slug>/...`               | bytes     | functions step, for each function the linked project has — see `functions/download/SIDE_EFFECTS.md`                                                                                                                                                                          |
-| `<workdir>/supabase/.temp/linked-project.json`          | JSON      | `Effect.ensuring` after `pull`'s own run (success and failure), once a target ref has resolved                                                                                                                                                                               |
-| `~/.supabase/telemetry.json`                            | JSON      | `Effect.ensuring` after `pull`'s own run (success and failure)                                                                                                                                                                                                               |
+| Path                                                   | Format    | When                                                                                                                                                                                                                                        |
+| ------------------------------------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml` or `config.json`      | TOML/JSON | config step only, once the aggregated confirmation is accepted AND the plan has work (never on `--dry-run`, never on a declined confirmation) — same atomic surgical-edit write as standalone `config pull` (`config/pull/SIDE_EFFECTS.md`) |
+| `<workdir>/supabase/migrations/<version>_<name>.sql`   | SQL       | migration-history step only, when it actually runs (bootstrap or `--with-migration-history`) and the confirmation is accepted — see `migration/fetch/SIDE_EFFECTS.md`                                                                       |
+| `<workdir>/supabase/migrations/<timestamp>_<name>.sql` | SQL       | db step, migration mode, when it finds schema drift — see `db/pull/SIDE_EFFECTS.md`                                                                                                                                                         |
+| `<workdir>/supabase/functions/<slug>/...`              | bytes     | functions step, for each function the linked project has — see `functions/download/SIDE_EFFECTS.md`                                                                                                                                         |
+| `<workdir>/supabase/.temp/linked-project.json`         | JSON      | `Effect.ensuring` after `pull`'s own run (success and failure), once a target ref has resolved                                                                                                                                              |
+| `~/.supabase/telemetry.json`                           | JSON      | `Effect.ensuring` after `pull`'s own run (success and failure)                                                                                                                                                                              |
 
 The two rows above are `pull`'s own top-level writes. Because the db and migration-history steps
 are invoked as plain library functions (their run-cores), not as wrapped standalone commands, each
@@ -222,7 +221,8 @@ Shape (`pull.format.ts`):
   "target": { "project_ref": "...", "branch": "..." }, // branch omitted if absent
   "dry_run": false,
   "confirmed": true,
-  "wrote": true, // true whenever ANY step's status is "changed"
+  "dirty_paths": [], // always present, even on a clean tree — populated when the git-dirty guard found uncommitted/untracked paths
+  "wrote": true, // true whenever ANY step's status is "changed", OR any step (including a failed one) has a non-empty "written" array
   "step_order": ["config", "migration_history", "db", "functions"],
   "steps": {
     "config": {
@@ -313,8 +313,11 @@ the -o/--output flag is not supported by pull; use --output-format json|stream-j
 pull`/`migration fetch`'s own internal resolution) — this doesn't matter in practice, since every
   reused step's own prompt is unconditionally bypassed (`assumeYes: true`) once `pull`'s own
   confirmation is accepted.
-- The db step runs in migration mode by default — `pull` never sets `--declarative`/`--use-pg-delta`/
-  `--diff-engine` on its own db-step invocation. The deprecated `--experimental`-without-
-  `--declarative` structured-dump export can still engage, since it is gated on the GLOBAL
-  `--experimental` flag or `SUPABASE_EXPERIMENTAL` (ambient shell or project dotenv), which `pull`
-  inherits rather than overriding — see `db/pull/SIDE_EFFECTS.md`'s own notes on that path.
+- **The db step always runs in migration mode when orchestrated by `pull`, never the declarative
+  path.** `pull` never sets `--declarative`/`--use-pg-delta`/`--diff-engine` on its own db-step
+  invocation, AND `pullDbStep` (`pull.steps.ts`) passes `forceMigrationMode: true` into `runDbPull`
+  (`command-internal/db-pull-run.ts`), which forces `experimental` to `false` unconditionally,
+  regardless of any ambient `--experimental` flag or `SUPABASE_EXPERIMENTAL` (shell or project
+  dotenv). The deprecated `--experimental`-without-`--declarative` structured-dump export therefore
+  can never engage when the db step runs through `pull` — see `db/pull/SIDE_EFFECTS.md`'s own notes
+  on that path, which still applies to the standalone `db pull` command.

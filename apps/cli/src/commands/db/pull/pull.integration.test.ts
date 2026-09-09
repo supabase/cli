@@ -41,6 +41,7 @@ import {
 } from "../../../config/project-ref.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { type DbSession, DbConnection } from "../../../command-internal/db-connection.service.ts";
+import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
 import { EdgeRuntimeScriptError } from "../../../command-internal/edge-runtime-script.errors.ts";
 import {
@@ -130,6 +131,12 @@ interface SetupOpts {
   // `stop`/`cp`/`start` really move bytes. Required by (and only by) the tests that
   // enable the shadow BASELINE CACHE — see `mockDockerDaemonCliSpawner`.
   readonly statefulDocker?: boolean;
+  // Fails the TARGET session's own history upsert (the real
+  // `supabase_migrations.schema_migrations` write `updateMigrationHistory` issues
+  // AFTER the migration file is already on disk) with this message — the shadow's
+  // own internal migration replay is unaffected. Exercises `DbPullWriteError`'s
+  // `writtenSoFar` (CLI-1272 review).
+  readonly historyUpdateFailWith?: string;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -330,7 +337,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       if (/SELECT version/u.test(sql)) {
         return Effect.succeed((opts.remoteVersions ?? []).map((v) => ({ version: v })));
       }
-      if (!isShadow && params !== undefined) historyUpserts.push(params);
+      if (!isShadow && params !== undefined) {
+        if (opts.historyUpdateFailWith !== undefined) {
+          return Effect.fail(new DbExecError({ message: opts.historyUpdateFailWith }));
+        }
+        historyUpserts.push(params);
+      }
       return Effect.succeed([] as ReadonlyArray<Record<string, unknown>>);
     };
     return {
@@ -1183,13 +1195,45 @@ describe("db pull", () => {
   );
 
   it.effect("an initial pull with an empty schema reports 'No schema changes found'", () => {
-    // An empty dump + empty diff leaves the file empty → in sync.
+    // An empty dump + empty diff leaves the file empty → in sync. The owned empty
+    // seed file must not be left behind (CLI-1272 review): a leftover zero-byte
+    // `<timestamp>_remote_schema.sql` is a phantom local migration with no remote
+    // counterpart that a later pull's history reconciliation trips over, and
+    // `--with-migration-history` can't clear it since fetching empty remote history
+    // never deletes local files.
     const s = setup(tmp.current, { remoteVersions: [], dumpStdout: "", edgeStdout: "" });
     return Effect.gen(function* () {
       const error = yield* dbPull(flags()).pipe(Effect.flip);
       expect(error.message).toBe("No schema changes found");
+      const dir = join(tmp.current, "supabase", "migrations");
+      expect(existsSync(dir) ? readdirSync(dir) : []).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "two consecutive initial pulls against an empty remote history both report 'No schema changes found' with no leftover seed file",
+    () => {
+      const s = setup(tmp.current, { remoteVersions: [], dumpStdout: "", edgeStdout: "" });
+      const dir = join(tmp.current, "supabase", "migrations");
+      return Effect.gen(function* () {
+        const first = yield* dbPull(flags()).pipe(Effect.flip);
+        expect(first.message).toBe("No schema changes found");
+        expect(existsSync(dir) ? readdirSync(dir) : []).toEqual([]);
+
+        // Without the cleanup, the first run's leftover empty seed file would
+        // desynchronize this second run's reconciliation: an empty remote history
+        // plus a local-only version is a `DbPullMigrationConflictError`, not a
+        // repeat "No schema changes found" — the exact regression the reviewer
+        // reproduced across two consecutive `db pull` invocations.
+        const second = yield* dbPull(flags()).pipe(Effect.flip);
+        expect(second).toMatchObject({
+          _tag: "DbPullInSyncError",
+          message: "No schema changes found",
+        });
+        expect(existsSync(dir) ? readdirSync(dir) : []).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect(
     "an initial-pull direct write that IPv6-fails then an empty pooler retry reports 'No schema changes found'",
@@ -1358,6 +1402,40 @@ describe("db pull", () => {
       expect(s.historyUpserts.length).toBe(0);
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "a remote-history update failure after a successful write reports the written migration path (CLI-1272)",
+    () => {
+      // The migration write itself succeeds and is already on disk; ONLY the
+      // subsequent "Update remote migration history table?" write fails. The
+      // resulting `DbPullWriteError` must still carry that already-written path
+      // via `writtenSoFar` (the shape `pull.aggregate.ts`'s `hasWrittenSoFar`
+      // duck-types), not report the write as if nothing happened.
+      const s = setup(tmp.current, {
+        remoteVersions: [],
+        dumpStdout: "",
+        edgeStdout: "create table remote ();\n",
+        yes: true,
+        historyUpdateFailWith: "connection reset by peer",
+      });
+      return Effect.gen(function* () {
+        const error = yield* dbPull(flags()).pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "DbPullWriteError" });
+        const dir = join(tmp.current, "supabase", "migrations");
+        const file = readdirSync(dir).find((f) => f.endsWith("_remote_schema.sql"));
+        expect(file).toBeDefined();
+        const writtenPath = join(dir, file ?? "");
+        // The file really is on disk — the failure happened strictly after the
+        // write, not instead of it.
+        expect(existsSync(writtenPath)).toBe(true);
+        expect((error as { writtenSoFar?: ReadonlyArray<string> }).writtenSoFar).toEqual([
+          writtenPath,
+        ]);
+        // No history row was recorded — the failure is real, not swallowed.
+        expect(s.historyUpserts.length).toBe(0);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("updates history on an empty non-interactive stdin (Go default)", () => {
     // Scans stdin and only falls back to the default (`true`) when the scan is

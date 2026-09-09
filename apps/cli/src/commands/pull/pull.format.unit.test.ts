@@ -221,6 +221,39 @@ describe("pullPayload", () => {
     });
   });
 
+  it("shapes a failed-with-partial-write aggregate: no step changed anything, but a failed step's own written is non-empty, wrote:true (Fix D, CLI-1272 review)", () => {
+    const results: ReadonlyArray<PullStepResult> = [
+      { step: "config", status: "unchanged", written: [], detail: {} },
+      {
+        step: "migration_history",
+        status: "failed",
+        written: ["supabase/migrations/20260101000000_good.sql"],
+        detail: {},
+        failure: { message: "boom" },
+      },
+      { step: "db", status: "unchanged", written: [], detail: {} },
+      { step: "functions", status: "unchanged", written: [], detail: {} },
+    ];
+    const aggregate: PullAggregate = {
+      ref: PROJECT_REF,
+      branch: undefined,
+      dryRun: false,
+      confirmed: true,
+      dirtyPaths: [],
+      results,
+    };
+
+    const payload = pullPayload(aggregate);
+    expect(payload["counts"]).toEqual({
+      changed: 0,
+      unchanged: 3,
+      skipped: 0,
+      planned: 0,
+      failed: 1,
+    });
+    expect(payload["wrote"]).toBe(true);
+  });
+
   it("always reports step_order as PULL_STEP_ORDER, verbatim and in order", () => {
     const aggregate: PullAggregate = {
       ref: PROJECT_REF,
@@ -479,7 +512,7 @@ describe("renderPullSummary", () => {
           suggestion:
             "Make sure your local git repo is up-to-date.\n" +
             "Alternatively, rerun `supabase pull --with-migration-history` to fetch and reconcile the remote migration history table automatically.\n" +
-            "To retry just this step, run: supabase db pull --project-ref abcdefghijklmnopqrst",
+            "To retry just this step, run: supabase db pull --project-ref abcdefghijklmnopqrst --experimental=false",
         },
       },
       { step: "functions", status: "unchanged", written: [], detail: {} },
@@ -499,7 +532,7 @@ describe("renderPullSummary", () => {
     expect(lines[dbRowIndex + 1]).toContain("Make sure your local git repo is up-to-date.");
     expect(lines[dbRowIndex + 2]).toContain("Alternatively, rerun");
     expect(lines[dbRowIndex + 3]).toContain(
-      "To retry just this step, run: supabase db pull --project-ref abcdefghijklmnopqrst",
+      "To retry just this step, run: supabase db pull --project-ref abcdefghijklmnopqrst --experimental=false",
     );
     // Continuation lines don't start with the step name, so a naive
     // step-row scanner (e.g. this suite's own `rowFor`/`stepLine` helpers)

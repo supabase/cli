@@ -778,8 +778,16 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           }
 
           // A dump that produced nothing followed by an empty diff leaves the file
-          // empty → in sync.
+          // empty → in sync. `runSchemaDump` above already truncated `migrationPath`
+          // to 0 bytes and the `!diffEmpty` append branch above was skipped (its
+          // guard is the same `diffEmpty`), so nothing else could have written
+          // content there — remove the empty file before reporting in-sync, or it
+          // sits on disk as a phantom local migration (with no remote counterpart)
+          // that a later pull's history reconciliation trips over, and that
+          // `--with-migration-history` cannot clear since fetching empty remote
+          // history never deletes local files.
           if (seededFromDump && !seedWroteBytes && diffEmpty) {
+            yield* fs.remove(migrationPath).pipe(Effect.ignore);
             return yield* Effect.fail(
               new DbPullInSyncError({
                 message: "No schema changes found",
@@ -814,7 +822,19 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             ? invoke.assumeYes
             : yield* promptYesNo(output, yes, updateHistoryTitle, true);
         if (shouldUpdate) {
-          yield* updateMigrationHistory(session, fs, path, writtenMigrations);
+          // The migration file(s) in `writtenMigrations` are already on disk at this
+          // point — a failure here must still report them as written (CLI-1272 review:
+          // `pull.aggregate.ts`'s `hasWrittenSoFar`), so re-raise the SAME
+          // `DbPullWriteError` `updateMigrationHistory` fails with, carrying their paths.
+          yield* updateMigrationHistory(session, fs, path, writtenMigrations).pipe(
+            Effect.mapError(
+              (cause) =>
+                new DbPullWriteError({
+                  message: cause.message,
+                  writtenSoFar: writtenMigrations.map((written) => written.path),
+                }),
+            ),
+          );
           remoteHistoryUpdated = true;
         }
 

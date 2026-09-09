@@ -44,7 +44,13 @@ export function pullPayload(aggregate: PullAggregate): Record<string, unknown> {
     // script driving `--dry-run --output-format json` has no other way to know an
     // equivalent real run would abort (or downgrade its prompt default) on this path.
     dirty_paths: aggregate.dirtyPaths,
-    wrote: aggregate.results.some((result) => result.status === "changed"),
+    // A `changed` status always implies a write, but a FAILED step can also carry a
+    // non-empty `written` array (the partial-write case `writtenSoFar` reports —
+    // `pull.aggregate.ts`'s `pullFailedStepResult`), so `wrote` is derived from every
+    // step's actual recorded writes, not just the `changed` statuses.
+    wrote: aggregate.results.some(
+      (result) => result.status === "changed" || result.written.length > 0,
+    ),
     step_order: PULL_STEP_ORDER,
     steps,
     counts: pullCounts(aggregate.results),

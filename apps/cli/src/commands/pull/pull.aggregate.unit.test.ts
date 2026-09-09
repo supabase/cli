@@ -470,9 +470,9 @@ describe("pullRetryHint", () => {
     );
   });
 
-  it("names 'supabase db pull --project-ref <ref>' for the db step", () => {
+  it("names 'supabase db pull --project-ref <ref> --experimental=false' for the db step, forcing migration mode", () => {
     expect(pullRetryHint("db", ref, undefined)).toBe(
-      "To retry just this step, run: supabase db pull --project-ref abcdefghijklmnopqrst",
+      "To retry just this step, run: supabase db pull --project-ref abcdefghijklmnopqrst --experimental=false",
     );
   });
 

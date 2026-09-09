@@ -1244,6 +1244,40 @@ const downloadSingle = Effect.fnUntraced(function* (
   return slug;
 });
 
+/**
+ * Attaches the on-disk directory of every function this loop had already
+ * fully downloaded before `error` — mutating `error` in place via
+ * `Object.assign` and returning that SAME object, so every existing caller's
+ * `_tag`/`instanceof` check on the heterogeneous error classes this loop can
+ * fail with (`InvalidFunctionSlugError`, `FunctionDownloadNotFoundError`,
+ * `InvalidFunctionDownloadResponseError`, `UnsafeFunctionDownloadPathError`,
+ * `FunctionsApiStatusError`/`FunctionsApiTransportError`, plus the ad-hoc
+ * `Object.assign(new Error(...), {suggestion})` values from the Docker path)
+ * stays unchanged — deliberately generic rather than adding a field to each
+ * of those ~8 classes individually. Field name/shape matches the established
+ * `MigrationFetchWriteError.writtenSoFar` precedent
+ * (`commands/migration/fetch/fetch.errors.ts`), read by `pull.aggregate.ts`'s
+ * `hasWrittenSoFar` duck-type so `supabase pull`'s `functions` step can report
+ * partial progress instead of always claiming `written: []` on a failed
+ * download. Each entry is an absolute path to the same "representative
+ * function directory" `pull.aggregate.ts`'s own `pullFunctionsStepResult`
+ * already uses for a SUCCESSFUL download (`supabase/functions/<slug>`) — the
+ * loop below never tracks individual downloaded file paths, and
+ * `DownloadFunctionsResult` doesn't enumerate them either. Omitted entirely
+ * (not an empty array) when nothing had downloaded yet, matching what
+ * `hasWrittenSoFar`'s duck-type actually needs: presence, not non-emptiness —
+ * an empty array would report the exact same `written: []` the caller already
+ * falls back to, so attaching one would add no information.
+ */
+function attachDownloadWrittenSoFar<E extends object>(
+  error: E,
+  downloadedSoFar: ReadonlyArray<string>,
+): E {
+  return downloadedSoFar.length === 0
+    ? error
+    : Object.assign(error, { writtenSoFar: [...downloadedSoFar] });
+}
+
 export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError, ProxyRequirements>(
   flags: DownloadFunctionsOptions,
   dependencies: DownloadFunctionsDependencies<
@@ -1399,23 +1433,37 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
           };
 
     const downloaded: string[] = [];
+    // Absolute directory path per fully-downloaded slug so far, for
+    // `attachDownloadWrittenSoFar` below — separate from `downloaded` (which
+    // feeds the returned `DownloadFunctionsResult.slugs`) since a caller
+    // three steps up (`pull.aggregate.ts`'s `hasWrittenSoFar`) needs an
+    // on-disk path, not a bare slug.
+    const downloadedPaths: string[] = [];
     for (const slug of slugs) {
-      // Go: CLI-1891, `downloadAll`'s per-item validation runs before any
-      // per-slug network/filesystem work (`download.go:182-188`). A
-      // user-supplied slug is already validated above (`validateSlug`); this
-      // covers slugs sourced from the Management API's function list, which
-      // this threat model treats as untrusted (a malicious/compromised
-      // response, or a MITM).
-      if (Option.isNone(flags.functionName)) {
-        yield* validateRemoteSlug(slug, styleAqua);
-      }
-      if (pulledEdgeRuntimeImage !== undefined) {
-        downloaded.push(
-          yield* downloadWithDockerUnbundle(dependencies, pulledEdgeRuntimeImage, projectRef, slug),
-        );
-      } else {
-        downloaded.push(yield* downloadSingle(dependencies, projectRef, slug));
-      }
+      yield* Effect.gen(function* () {
+        // Go: CLI-1891, `downloadAll`'s per-item validation runs before any
+        // per-slug network/filesystem work (`download.go:182-188`). A
+        // user-supplied slug is already validated above (`validateSlug`);
+        // this covers slugs sourced from the Management API's function
+        // list, which this threat model treats as untrusted (a
+        // malicious/compromised response, or a MITM).
+        if (Option.isNone(flags.functionName)) {
+          yield* validateRemoteSlug(slug, styleAqua);
+        }
+        if (pulledEdgeRuntimeImage !== undefined) {
+          downloaded.push(
+            yield* downloadWithDockerUnbundle(
+              dependencies,
+              pulledEdgeRuntimeImage,
+              projectRef,
+              slug,
+            ),
+          );
+        } else {
+          downloaded.push(yield* downloadSingle(dependencies, projectRef, slug));
+        }
+        downloadedPaths.push(resolve(dependencies.projectRoot, "supabase", "functions", slug));
+      }).pipe(Effect.mapError((error) => attachDownloadWrittenSoFar(error, downloadedPaths)));
     }
 
     // Final-summary emission for the completed download loop moved to the

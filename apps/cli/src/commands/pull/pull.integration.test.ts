@@ -275,6 +275,10 @@ function makeMigrationSession(
   remoteMigrations: ReadonlyArray<RemoteMigrationRow>,
   callOrder: Array<string>,
   tag: "target" | "shadow",
+  /** Fails the remote-history UPSERT (the db step's own "Update remote migration history
+   *  table?" write) — proves `steps.db.written` still reports the migration file already
+   *  on disk, via `DbPullWriteError.writtenSoFar` (CLI-1272 review, Fix A). */
+  historyUpdateFails = false,
 ): {
   readonly session: DbSession;
   readonly historyUpserts: ReadonlyArray<ReadonlyArray<unknown>>;
@@ -297,6 +301,9 @@ function makeMigrationSession(
       );
     }
     if (params !== undefined) {
+      if (historyUpdateFails) {
+        return Effect.fail(new Error("connection reset while updating migration history"));
+      }
       historyUpserts.push(params);
     }
     return Effect.succeed([] as ReadonlyArray<Record<string, unknown>>);
@@ -320,12 +327,13 @@ const TARGET_PORT = 5432;
 function makeDbConfigLayers(
   remoteMigrations: ReadonlyArray<RemoteMigrationRow>,
   callOrder: Array<string>,
+  historyUpdateFails = false,
 ): {
   readonly layer: Layer.Layer<DbConfigResolver | DbConnection>;
   readonly historyUpserts: ReadonlyArray<ReadonlyArray<unknown>>;
   readonly connectedPorts: ReadonlyArray<number>;
 } {
-  const target = makeMigrationSession(remoteMigrations, callOrder, "target");
+  const target = makeMigrationSession(remoteMigrations, callOrder, "target", historyUpdateFails);
   const shadow = makeMigrationSession([], callOrder, "shadow");
   const connectedPorts: Array<number> = [];
 
@@ -445,6 +453,10 @@ interface ApiOpts {
   readonly functionsListStatus?: number;
   /** A transport (not status-code) failure resolving a branch-name `--project-ref`. */
   readonly branchNetworkFails?: boolean;
+  /** Fails ONLY this slug's own `/body` download with a 500 — every other slug still
+   *  downloads normally (Fix A, CLI-1272 review: proves a partial functions-step
+   *  download reports the earlier, already-downloaded slug(s) as written). */
+  readonly functionBodyFailsForSlug?: string;
 }
 
 function makeApiMock(opts: ApiOpts) {
@@ -466,6 +478,12 @@ function makeApiMock(opts: ApiOpts) {
         return Effect.succeed(jsonResponse(request, 200, BRANCH_BY_NAME));
       }
       if (url.endsWith("/body")) {
+        if (
+          opts.functionBodyFailsForSlug !== undefined &&
+          url.includes(`/functions/${opts.functionBodyFailsForSlug}/body`)
+        ) {
+          return Effect.succeed(jsonResponse(request, 500, "download failed"));
+        }
         const { boundary, body } = multipartFixture("console.log('pull');\n");
         return Effect.succeed(
           HttpClientResponse.fromWeb(
@@ -565,6 +583,9 @@ interface SetupOpts {
   readonly api?: ApiOpts;
   readonly remoteMigrations?: ReadonlyArray<RemoteMigrationRow>;
   readonly diffOutcome?: () => DiffOutcome;
+  /** Fails the db step's own remote-history UPSERT after the migration file has
+   *  already been written to disk (Fix A, CLI-1272 review). */
+  readonly dbHistoryUpdateFails?: boolean;
   /** Runs as a side effect of the ORCHESTRATOR's own "Proceed with pull?"
    *  confirmation, before it resolves — simulates a concurrent edit landing
    *  on `supabase/config.toml` while that prompt is on screen (text-mode,
@@ -607,7 +628,11 @@ function setup(opts: SetupOpts = {}) {
     gitSpawnFails: opts.gitSpawnFails,
   });
   const callOrder: Array<string> = [];
-  const dbConfig = makeDbConfigLayers(opts.remoteMigrations ?? [], callOrder);
+  const dbConfig = makeDbConfigLayers(
+    opts.remoteMigrations ?? [],
+    callOrder,
+    opts.dbHistoryUpdateFails ?? false,
+  );
   const pgDelta = makePgDeltaEngine(opts.diffOutcome ?? (() => ({ changes: false })));
 
   const cliSettings = mockCommandSettings({
@@ -1713,6 +1738,48 @@ describe("pull integration", () => {
     );
 
     it.live(
+      "a branch-derived implicit remote-block target: the config step's retry hint names that SAME derived label, even though --remote-label was never passed",
+      () => {
+        writeConfig("[api]\nmax_rows = 500\n");
+        seedLocalMigration("20260101000000");
+        const { layer, out } = setup({
+          stdinIsTty: true,
+          confirm: [true],
+          // Concurrent edit during the confirmation prompt trips the config
+          // step's own TOCTOU guard BEFORE the planned `[remotes.staging]`
+          // block (a branch-derived implicit target — `--remote-label` was
+          // never passed) is ever written.
+          confirmSideEffect: () =>
+            writeFileSync(
+              configPath(),
+              'project_id = "changed-mid-flight"\n\n[experimental.pgdelta]\nenabled = true\n',
+            ),
+          api: { functionSlugs: [] },
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(
+            runPull(pullFlags({ projectRef: Option.some("staging") })),
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(stepLine(out!.stdoutText, "config")).toContain("failed");
+          expect(readFileSync(configPath(), "utf8")).not.toContain("[remotes.staging]");
+
+          // The plan targeted `[remotes.staging]` — the retry hint must name that
+          // SAME planned destination label, never the raw (absent) --remote-label
+          // flag value, or a standalone `config pull` rerun would see a ref-shaped
+          // target with no matching block and write into the config root instead.
+          expect(out!.stdoutText).toContain(
+            `To retry just this step, run: supabase config pull --project-ref ${BRANCH_REF} --remote-label 'staging'`,
+          );
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
       "a migration-history-step failure (a hostile remote history row) still runs config/functions, and re-fails with its OWN (first) cause even though db also fails downstream",
       () => {
         writeConfig();
@@ -1749,7 +1816,7 @@ describe("pull integration", () => {
             `To retry just this step, run: supabase migration fetch --project-ref ${VALID_REF}`,
           );
           expect(out!.stdoutText).toContain(
-            `To retry just this step, run: supabase db pull --project-ref ${VALID_REF}`,
+            `To retry just this step, run: supabase db pull --project-ref ${VALID_REF} --experimental=false`,
           );
         }).pipe(Effect.provide(layer));
       },
@@ -1788,6 +1855,12 @@ describe("pull integration", () => {
           expect(migrationHistory["written"]).toEqual([
             "supabase/migrations/20260101000000_good.sql",
           ]);
+
+          // Fix D (CLI-1272 review): the top-level `wrote` flag is derived from every
+          // step's actual recorded writes, not just a "changed" status — no OTHER step
+          // changed anything in this scenario, so before this fix `wrote` was `false`
+          // even though a file was genuinely written to disk.
+          expect(envelope["wrote"]).toBe(true);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1816,7 +1889,7 @@ describe("pull integration", () => {
           expect(stepLine(out!.stdoutText, "functions")).toContain("unchanged");
 
           expect(out!.stdoutText).toContain(
-            `To retry just this step, run: supabase db pull --project-ref ${VALID_REF}`,
+            `To retry just this step, run: supabase db pull --project-ref ${VALID_REF} --experimental=false`,
           );
         }).pipe(Effect.provide(layer));
       },
@@ -1896,6 +1969,75 @@ describe("pull integration", () => {
           expect(String(failure["suggestion"])).toContain(
             `Alternatively, rerun \`supabase pull --with-migration-history --project-ref ${VALID_REF} --remote-label 'staging remote'\``,
           );
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "a db-step failure AFTER the migration file already wrote, but the remote-history update failed, reports that file as written (a real partial-write case)",
+      () => {
+        writeConfig();
+        seedLocalMigration("20260101000000");
+        const { layer, capturingStdio } = setup({
+          format: "json",
+          yes: true,
+          api: { functionSlugs: [] },
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+          ],
+          // Real schema drift, so the db step actually writes a migration file
+          // before the remote-history UPSERT (mocked to fail below) ever runs.
+          diffOutcome: () => ({
+            changes: true,
+            files: [{ name: "pull", sql: "alter table foo add column bar text;" }],
+          }),
+          dbHistoryUpdateFails: true,
+        });
+        return Effect.gen(function* () {
+          yield* runPull(pullFlags());
+
+          const migrationFiles = readdirSync(migrationsDir());
+          expect(migrationFiles.some((file) => file.includes("_remote_schema.sql"))).toBe(true);
+
+          const envelope = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+          const steps = envelope["steps"] as Record<string, unknown>;
+          const db = steps["db"] as Record<string, unknown>;
+          expect(db["status"]).toBe("failed");
+          expect((db["written"] as ReadonlyArray<string>).length).toBeGreaterThan(0);
+          expect((db["written"] as ReadonlyArray<string>)[0]).toContain("supabase/migrations/");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "a functions-step failure AFTER an earlier slug already downloaded reports that slug's directory as written (a real partial-download case)",
+      () => {
+        writeConfig();
+        seedLocalMigration("20260101000000");
+        const { layer, capturingStdio } = setup({
+          format: "json",
+          yes: true,
+          api: { functionSlugs: ["hello", "world"], functionBodyFailsForSlug: "world" },
+          remoteMigrations: [
+            { version: "20260101000000", name: "init", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          yield* runPull(pullFlags());
+
+          // The first slug actually downloaded to disk...
+          expect(
+            existsSync(join(tempRoot.current, "supabase", "functions", "hello", "index.ts")),
+          ).toBe(true);
+
+          // ...and the failed step's own JSON payload reports its directory as
+          // written, instead of always claiming `written: []` on a failed step.
+          const envelope = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+          const steps = envelope["steps"] as Record<string, unknown>;
+          const functions = steps["functions"] as Record<string, unknown>;
+          expect(functions["status"]).toBe("failed");
+          expect(functions["written"]).toEqual(["supabase/functions/hello"]);
         }).pipe(Effect.provide(layer));
       },
     );

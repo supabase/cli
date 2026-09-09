@@ -308,7 +308,16 @@ export function pullRetryHint(
   const commandByStep: Record<PullStepId, string> = {
     config: `supabase config pull --project-ref ${ref}${remoteLabelFlag}`,
     migration_history: `supabase migration fetch --project-ref ${ref}`,
-    db: `supabase db pull --project-ref ${ref}`,
+    // `pull.steps.ts`'s own `pullDbStep` passes `forceMigrationMode: true` to
+    // `runDbPull`, overriding any ambient `--experimental`/`SUPABASE_EXPERIMENTAL`
+    // gate so the orchestrated invocation never takes the deprecated declarative
+    // export path. An explicit `--experimental=false` reproduces that same override
+    // on the standalone retry — `resolveExperimentalWithProjectEnv`
+    // (`command-internal/global-flags.ts`) gives an explicit flag value precedence
+    // over both the flag's own parsed value and the `SUPABASE_EXPERIMENTAL`/project
+    // `.env` fallback — so this suggested command performs the SAME operation the
+    // failed step did, not a different one.
+    db: `supabase db pull --project-ref ${ref} --experimental=false`,
     functions: `supabase functions download --project-ref ${ref}`,
   };
   return `To retry just this step, run: ${commandByStep[step]}`;
@@ -336,9 +345,13 @@ export function pullWithMigrationHistoryCommand(
  * `written` is populated from the cause's own `writtenSoFar` when it carries one (a
  * write-loop error whose earlier items had already written before a later one failed) —
  * relativized against `workdir` exactly like every other step's own `written` array,
- * when the caller has one; `workdir` is only ever passed for the `migration_history`
- * step today, the only one whose failure cause (`MigrationFetchWriteError`) can carry
- * `writtenSoFar`. Falls back to `[]` when the cause carries no such information.
+ * when the caller has one. Three of the four steps' failure causes can carry one today:
+ * `migration_history` (`MigrationFetchWriteError`), `db` (`DbPullWriteError`, populated
+ * when the migration file write succeeds but the subsequent remote-history update
+ * fails), and `functions` (the per-slug download loop's `attachDownloadWrittenSoFar`,
+ * `shared/functions/download.ts`, once at least one earlier slug has already
+ * downloaded) — `pull.handler.ts` passes `workdir` at every one of those three call
+ * sites. Falls back to `[]` when the cause carries no such information.
  */
 export function pullFailedStepResult(
   step: PullStepId,

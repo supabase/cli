@@ -28,10 +28,10 @@ implementations rather than assuming a thin composition layer would do:
    orchestrator would emit three separate JSON objects on `--output-format json`, corrupting the
    "one JSON object per invocation" contract every other command upholds.
 2. `db pull` reads `db.major_version` out of `config.toml` for shadow-container provisioning
-   (`commands/db/pull/pull.handler.ts`, via `readDbToml`/`toml.majorVersion`) — a value
+   (`command-internal/db-pull-run.ts`, via `readDbToml`/`toml.majorVersion`) — a value
    `config pull` can have just changed moments earlier in the same `pull` invocation.
 3. `db pull` reconciles `supabase/migrations` against the remote migration history table
-   (`reconcileMigrations`, `commands/db/pull/pull.handler.ts`) and hard-fails
+   (`reconcileMigrations`, `command-internal/db-pull-run.ts`) and hard-fails
    (`DbPullMigrationConflictError`) when the remote has history the local directory doesn't —
    exactly the state a fresh checkout starts in, which is one of the two cases this command exists
    for.
@@ -40,7 +40,7 @@ implementations rather than assuming a thin composition layer would do:
 
 ### 1. Resolve once; thread the ref, no target-resolution refactor
 
-`resolveConfigTarget` (`commands/config/config.target.ts`) is called exactly once, in
+`resolveConfigTarget` (`command-internal/project-target.ts`) is called exactly once, in
 `pull.handler.ts`, producing `{ ref, branch }`. That `ref` is passed directly into every sub-step's
 existing `--project-ref`-shaped input (each step already accepts one) rather than reusing the
 sub-step's own resolver end to end. This is safe because the resolved `ref` is always already the

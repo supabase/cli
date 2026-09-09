@@ -35,6 +35,18 @@ export class DbPullEngineConflictError extends Data.TaggedError("DbPullEngineCon
  */
 export class DbPullWriteError extends Data.TaggedError("DbPullWriteError")<{
   readonly message: string;
+  /**
+   * Absolute path(s) of migration file(s) `runDbPull` had already written to disk
+   * before THIS failure — populated when the remote migration-history update
+   * (`updateMigrationHistory`, the "Update remote migration history table?" step)
+   * fails AFTER the migration file write it's meant to record already succeeded.
+   * `undefined`/omitted for every other `DbPullWriteError` (a failed file write
+   * itself never reaches this field, since nothing new was written in that case).
+   * Read by `pull.aggregate.ts`'s `pullFailedStepResult` (via `hasWrittenSoFar`) so
+   * `supabase pull`'s `db` step can report the on-disk migration instead of always
+   * claiming `written: []` on a failed pull.
+   */
+  readonly writtenSoFar?: ReadonlyArray<string>;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.permission;
