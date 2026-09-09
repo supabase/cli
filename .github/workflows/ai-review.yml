@@ -344,7 +344,7 @@ jobs:
         # specifically to stop that from happening again. There is no
         # released fix above v1.12 as of 2026-09-09; re-verify both issues
         # are closed before ever re-bumping this pin.
-        uses: &codex-action-pin openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11
+        uses: &codex-action-pin openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.11
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .github/ai-review/codex-review-prompt.md
