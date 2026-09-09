@@ -28,15 +28,27 @@ if [[ "${1:-}" == "projects" && "${2:-}" == "create" ]]; then
     echo "sb: project prefix file ${PREFIX_FILE} is empty" >&2
     exit 1
   fi
-  # Name may be positional after flags (`--org-id … PREFIX-suffix`).
-  has_prefixed_name=0
+  # Positional name only — a flag value like --db-password must not satisfy this.
+  skip_next=0
+  name=""
   for arg in "${@:3}"; do
-    if [[ "${arg}" == "${prefix}"* ]]; then
-      has_prefixed_name=1
-      break
+    if [[ "${skip_next}" -eq 1 ]]; then
+      skip_next=0
+      continue
     fi
+    case "${arg}" in
+      --org-id|--db-password|--region|--size|--release-channel|--postgres-engine|--plan)
+        skip_next=1
+        continue
+        ;;
+      --*|-*|--)
+        continue
+        ;;
+    esac
+    name="${arg}"
+    break
   done
-  if [[ "${has_prefixed_name}" -ne 1 ]]; then
+  if [[ -z "${name}" || "${name}" != "${prefix}"* ]]; then
     echo "sb: projects create name must start with ${prefix}" >&2
     exit 1
   fi

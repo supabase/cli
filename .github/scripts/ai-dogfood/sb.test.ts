@@ -98,4 +98,19 @@ describe("sb.sh", () => {
     expect(status).toBe(0);
     expect(stdout).toContain("projects create --org-id org supabase-cli-dogfood-1-abc");
   });
+
+  test("does not treat a prefixed flag value as the project name", () => {
+    const { tokenFile, prefixFile, runnerTemp, dummyCli } = makeHarness();
+    const { status, stderr } = runSb(
+      ["projects", "create", "unrelated-name", "--db-password", "supabase-cli-dogfood-1-secret"],
+      {
+        DOGFOOD_CLI_MAIN: dummyCli,
+        RUNNER_TEMP: runnerTemp,
+        DOGFOOD_TOKEN_FILE: tokenFile,
+        DOGFOOD_PROJECT_PREFIX_FILE: prefixFile,
+      },
+    );
+    expect(status).toBe(1);
+    expect(stderr).toContain("must start with supabase-cli-dogfood-1-");
+  });
 });

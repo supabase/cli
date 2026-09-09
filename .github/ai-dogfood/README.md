@@ -84,8 +84,8 @@ never does. Containment, not proof of isolation:
   readable; keeping the token out of the scratch cwd is hygiene, not a
   security boundary.
 - `sb` refuses to run without a non-empty token file and rejects
-  `projects create` unless some argument starts with the run's project
-  prefix (so sweep can always find leftovers).
+  `projects create` unless the positional name starts with the run's
+  project prefix (so sweep can always find leftovers).
 - After Codex, the dogfood job deletes and checks out `trusted/` again before
   validate/redact, and uploads `report.json` only if that step succeeds.
   `post-report` re-redacts on a fresh runner before posting the comment.
