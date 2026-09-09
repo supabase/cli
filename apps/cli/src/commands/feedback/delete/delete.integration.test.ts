@@ -185,8 +185,8 @@ describe("feedback delete", () => {
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "Feedback deleted." }),
       );
-      // telemetry.json is refreshed on every invocation, like every other
-      // command's PersistentPostRun-shaped finalizer.
+      // telemetry.json is refreshed on every invocation by the telemetry-state
+      // finalizer every command runs.
       expect(telemetryState.flushCount).toBe(1);
     }).pipe(Effect.provide(layer));
   });
@@ -570,7 +570,7 @@ describe("feedback delete", () => {
 
       expect(error).toMatchObject({ _tag: "FeedbackBackendError", operation: "delete" });
       expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "success" }));
-      // The finalizer runs on failure too, matching Go's PersistentPostRun.
+      // The finalizer runs on failure too.
       expect(telemetryState.flushCount).toBe(1);
     }).pipe(Effect.provide(layer));
   });

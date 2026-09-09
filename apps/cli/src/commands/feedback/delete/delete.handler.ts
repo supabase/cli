@@ -4,6 +4,7 @@ import { NonInteractiveError } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { OutputFlag, resolveYes } from "../../../command-internal/global-flags.ts";
+import { BRANCH_UUID_PATTERN } from "../../../command-internal/ref-patterns.ts";
 import { stripControlChars } from "../../../command-internal/http-errors.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -23,8 +24,9 @@ import {
 
 // Checked client-side so a malformed token fails with a friendly message
 // instead of PostgREST's cryptic uuid-cast error (22P02) from the
-// `delete_token=eq.` filter.
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// `delete_token=eq.` filter. The shared permissive UUID pattern accepts the
+// same 8-4-4-4-12 hex shape the backend generates.
+const UUID_PATTERN = BRANCH_UUID_PATTERN;
 
 export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: FeedbackDeleteArgs) {
   const output = yield* Output;
@@ -37,8 +39,8 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
   const goFmt = Option.getOrUndefined(goOutputFlag);
 
   // Persist the telemetry state file (`~/.supabase/telemetry.json`) whether
-  // the delete succeeds or fails — the same PersistentPostRun-shaped
-  // finalizer every command runs.
+  // the delete succeeds or fails — the telemetry-state finalizer every
+  // command runs.
   yield* Effect.gen(function* () {
     if (!UUID_PATTERN.test(args.token)) {
       return yield* Effect.fail(

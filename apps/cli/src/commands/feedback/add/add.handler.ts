@@ -109,8 +109,8 @@ export const feedbackAdd = Effect.fn("feedback.add")(function* (args: FeedbackAd
   const telemetryState = yield* TelemetryState;
 
   // Persist the telemetry state file (`~/.supabase/telemetry.json`) whether
-  // the submission succeeds or fails — the same PersistentPostRun-shaped
-  // finalizer every command runs.
+  // the submission succeeds or fails — the telemetry-state finalizer every
+  // command runs.
   yield* Effect.gen(function* () {
     const message = yield* resolveFeedbackMessage(args);
     // The backend enforces the 1000-character limit; mirroring it client-side
