@@ -15,7 +15,7 @@ const config = {
     Argument.withDescription(
       "Freeform feedback. Bare words are joined with spaces. 1000 character limit.",
     ),
-    Argument.variadic,
+    Argument.variadic(),
   ),
 } as const;
 
