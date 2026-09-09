@@ -4,7 +4,6 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   Crypto,
-  Data,
   Deferred,
   Effect,
   Exit,
@@ -18,7 +17,7 @@ import {
   Scope,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess } from "effect/unstable/process";
 import {
   defaultRuntimeEnvironment,
   ensureSupervisor,
@@ -79,6 +78,7 @@ import {
   type ContainerCommandRunner,
 } from "../runtime/ContainerEngine.ts";
 import { ContainerEngineResolver } from "../runtime/ContainerEngineResolver.ts";
+import { runGit } from "../../tests/helpers/git.ts";
 
 const defaultDatabaseVersion = catalogEntryFor("database:database").defaultVersion;
 const defaultDatabaseMajor = defaultDatabaseVersion.split(".")[0];
@@ -164,23 +164,6 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
       return yield* effect(project).pipe(Effect.provideService(StackRuntimeEnvironment, runtime));
     }),
   ).pipe(Effect.provide(NodeServices.layer));
-
-class GitSetupError extends Data.TaggedError("GitSetupError")<{
-  readonly message: string;
-}> {}
-
-const runGit = (
-  cwd: string,
-  args: ReadonlyArray<string>,
-): Effect.Effect<void, GitSetupError, ChildProcessSpawner.ChildProcessSpawner> =>
-  Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const exitCode = yield* spawner
-      .exitCode(ChildProcess.make("git", [...args], { cwd }))
-      .pipe(Effect.mapError((error) => new GitSetupError({ message: error.message })));
-    if (exitCode !== 0)
-      return yield* new GitSetupError({ message: `git ${args.join(" ")} failed` });
-  });
 
 const lifecycleConfig = () => {
   return {

@@ -58,19 +58,20 @@ Managed stack documents and runtime artifacts are shared through the global CLI 
   managed/
     stacks/
       <stack-id>/
-        stack.json
+        state.json
         data/
         logs/
         runtime/
+        control.json
 ```
 
-`stack.json` is the single durable managed record. It contains the canonical project root, branch
+`state.json` is the single durable managed record. It contains the canonical project root, branch
 context, and stack name that make up stack identity, together with sticky port intents and
-assignments, lifecycle, runtime control endpoint, and launch metadata (mode, versions,
+assignments, lifecycle, and launch metadata (mode, versions,
 exclusions, and update-notification fingerprint). Runtime-only service ports are allocated for the
-supervisor run and are not persisted as sticky intents. The deterministic loopback control endpoint
-and ownership protocol are the liveness authority; a stale document is reclaimed by a subsequent
-managed lifecycle operation.
+supervisor run and are not persisted as sticky intents. `control.json` contains runtime owner
+metadata for the deterministic loopback control endpoint; the ownership protocol is the liveness
+authority, and a stale document is reclaimed by a subsequent managed lifecycle operation.
 
 There is no project-local `stacks/<name>` directory, `state.json`, daemon socket file, or second
 StateManager metadata format.

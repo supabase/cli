@@ -1,33 +1,13 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { Crypto, Data, Effect, Exit, FileSystem, Path, Schema } from "effect";
+import { Crypto, Effect, Exit, FileSystem, Path, Schema } from "effect";
 import { InvalidStackIdentityError } from "../public/Errors.ts";
 import { StackIdSchema, type StackId } from "../public/StackId.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
+import { GitSetupError, runGit } from "../../tests/helpers/git.ts";
 import { deriveStackId, resolveStackIdentity, type StackIdentity } from "./Identity.ts";
 
 const platformLayer = NodeServices.layer;
-
-class GitSetupError extends Data.TaggedError("GitSetupError")<{
-  readonly message: string;
-}> {}
-
-const runGit = (
-  cwd: string,
-  args: ReadonlyArray<string>,
-): Effect.Effect<void, GitSetupError, ChildProcessSpawner.ChildProcessSpawner> =>
-  Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const exitCode = yield* spawner
-      .exitCode(ChildProcess.make("git", [...args], { cwd }))
-      .pipe(Effect.mapError((error) => new GitSetupError({ message: error.message })));
-    if (exitCode !== 0) {
-      return yield* new GitSetupError({
-        message: `git ${args.join(" ")} exited with code ${exitCode}`,
-      });
-    }
-  });
 
 const makeGitWorkspace = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -173,6 +153,24 @@ describe("deterministic stack identity and state paths", () => {
 
         const result = yield* resolveStackIdentity({ projectRoot: repository }).pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("preserves Git exit diagnostics when setup fails", () =>
+    withScope(
+      Effect.gen(function* () {
+        const { repository } = yield* makeGitWorkspace;
+        const error = yield* runGit(repository, [
+          "rev-parse",
+          "--verify",
+          "refs/heads/missing",
+        ]).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(GitSetupError);
+        expect(error.exitCode).toBe(128);
+        expect(error.stderr).toContain("Needed a single revision");
+        expect(error.message).toContain("stderr:");
       }),
     ),
   );
