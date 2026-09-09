@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path, Predicate } from "effect";
 
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { pathHasUncommittedChanges } from "../../command-internal/git-status.ts";
@@ -40,6 +40,7 @@ import {
   pullFunctionsStepResult,
   pullMigrationHistoryStepResult,
   pullRetryHint,
+  pullWithMigrationHistoryCommand,
   type PullMigrationHistoryStepOutcome,
 } from "./pull.aggregate.ts";
 import {
@@ -170,15 +171,27 @@ function pullAppendSuggestion(result: PullStepResult, extra: string): PullStepRe
  * lives here rather than on the shared error class (still used by other
  * callers). Scoped to the `suggestion` field only; the underlying error class
  * and its own message/suggestion text are untouched.
+ *
+ * The suggested command names the exact target `pull` itself resolved
+ * (`ref`, and `remoteLabel` when one was passed) via `pullWithMigrationHistoryCommand`
+ * (`pull.aggregate.ts`) — omitting it would let a bare `supabase pull
+ * --with-migration-history` rerun silently target the checkout's linked
+ * project instead of whatever this run actually resolved (a branch, an
+ * explicit different ref, ...), a data-safety concern given the command
+ * writes to the remote migration history table.
  */
-function pullDbStepFailureResult(cause: unknown): PullStepResult {
+function pullDbStepFailureResult(
+  cause: unknown,
+  ref: string,
+  remoteLabel: string | undefined,
+): PullStepResult {
   const result = pullFailedStepResult("db", cause);
   if (!(cause instanceof DbPullMigrationConflictError)) {
     return result;
   }
   return pullAppendSuggestion(
     result,
-    "Alternatively, rerun `supabase pull --with-migration-history` to fetch and reconcile the remote migration history table automatically.",
+    `Alternatively, rerun \`${pullWithMigrationHistoryCommand(ref, remoteLabel)}\` to fetch and reconcile the remote migration history table automatically.`,
   );
 }
 
@@ -317,7 +330,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
       ? true
       : (yield* fs.readDirectory(migrationsDir).pipe(
           Effect.catchTag("PlatformError", (cause) =>
-            cause.reason._tag === "NotFound"
+            Predicate.isTagged(cause.reason, "NotFound")
               ? Effect.succeed<ReadonlyArray<string>>([])
               : Effect.fail(
                   new MigrationsReadError({
@@ -334,15 +347,24 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
 
     // Phase 2: one confirmation, asymmetric preview (a real diff for config,
     // a qualitative description for db/functions/migration-history).
-    const configDiffText = runPlan.hasWork
-      ? renderConfigPullText(
-          runPlan.changeSet,
-          runPlan.scope,
-          runPlan.plan,
-          ref,
-          runPlan.context.configPath,
-        )
-      : undefined;
+    //
+    // Rendered whenever the changeset has ANY change at all — not just when
+    // `runPlan.hasWork` (which can be `false` even with real changes present, when every
+    // one of them was skipped as an env-reference, an unpushable family, etc.). Gating on
+    // `hasWork` alone would silently fall back to "No config differences found." even
+    // though the diff found real (if unwritable) drift — mirrors standalone `config
+    // pull`'s own `!runPlan.hasWork` branch (`command-internal/config-pull-run.ts`'s
+    // `runConfigPull`), which renders `renderConfigPullText` regardless of `hasWork`.
+    const configDiffText =
+      runPlan.changeSet.changes.length > 0
+        ? renderConfigPullText(
+            runPlan.changeSet,
+            runPlan.scope,
+            runPlan.plan,
+            ref,
+            runPlan.context.configPath,
+          )
+        : undefined;
     const confirmBody = pullConfirmMessage({
       ref,
       branch,
@@ -384,6 +406,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
         branch,
         dryRun: true,
         confirmed: false,
+        dirtyPaths,
         results,
       });
       yield* pullEmit(output, aggregate);
@@ -423,6 +446,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
         branch,
         dryRun: false,
         confirmed: false,
+        dirtyPaths,
         results,
       });
       yield* pullEmit(output, aggregate);
@@ -471,7 +495,11 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     } else {
       results.push(
         pullWithRetryHint(
-          pullFailedStepResult("migration_history", Cause.squash(migrationCapture.cause)),
+          pullFailedStepResult(
+            "migration_history",
+            Cause.squash(migrationCapture.cause),
+            cliSettings.workdir,
+          ),
           ref,
           remoteLabel,
         ),
@@ -484,7 +512,11 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
       results.push(pullDbStepResult(dbCapture.value));
     } else {
       results.push(
-        pullWithRetryHint(pullDbStepFailureResult(Cause.squash(dbCapture.cause)), ref, remoteLabel),
+        pullWithRetryHint(
+          pullDbStepFailureResult(Cause.squash(dbCapture.cause), ref, remoteLabel),
+          ref,
+          remoteLabel,
+        ),
       );
       firstFailureCause ??= dbCapture.cause;
     }
@@ -504,7 +536,14 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     }
 
     // Phase 4: aggregate, emit, exit.
-    const aggregate = pullAggregate({ ref, branch, dryRun: false, confirmed: true, results });
+    const aggregate = pullAggregate({
+      ref,
+      branch,
+      dryRun: false,
+      confirmed: true,
+      dirtyPaths,
+      results,
+    });
     if (firstFailureCause === undefined) {
       yield* pullEmit(output, aggregate);
       return;

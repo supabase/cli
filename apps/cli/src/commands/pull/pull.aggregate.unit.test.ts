@@ -2,6 +2,7 @@ import { Cause } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { DbPullMigrationConflictError } from "../../command-internal/db-pull-run.errors.ts";
+import { MigrationFetchWriteError } from "../migration/fetch/fetch.errors.ts";
 import {
   pullAggregate,
   pullConfigStepResult,
@@ -11,6 +12,7 @@ import {
   pullFunctionsStepResult,
   pullMigrationHistoryStepResult,
   pullRetryHint,
+  pullWithMigrationHistoryCommand,
   type PullConfigStepOutcome,
   type PullDbStepOutcome,
   type PullFunctionsStepOutcome,
@@ -384,6 +386,49 @@ describe("pullFailedStepResult", () => {
       failure: { message: "boom" },
     });
   });
+
+  it("populates written from the cause's own writtenSoFar, relativized against workdir, when a write-loop error carries one (earlier rows already wrote before this one failed)", () => {
+    const error = new MigrationFetchWriteError({
+      message:
+        "failed to write migration: invalid version/name in history table: 20240102000000_../evil",
+      writtenSoFar: ["/home/user/project/supabase/migrations/20240101000000_first.sql"],
+    });
+    const squashed = Cause.squash(Cause.fail(error));
+    expect(pullFailedStepResult("migration_history", squashed, "/home/user/project")).toEqual({
+      step: "migration_history",
+      status: "failed",
+      written: ["supabase/migrations/20240101000000_first.sql"],
+      detail: {},
+      failure: {
+        message:
+          "failed to write migration: invalid version/name in history table: 20240102000000_../evil",
+        code: "MigrationFetchWriteError",
+      },
+    });
+  });
+
+  it("leaves writtenSoFar paths absolute when no workdir is given", () => {
+    const error = new MigrationFetchWriteError({
+      message: "boom",
+      writtenSoFar: ["/home/user/project/supabase/migrations/20240101000000_first.sql"],
+    });
+    expect(pullFailedStepResult("migration_history", error).written).toEqual([
+      "/home/user/project/supabase/migrations/20240101000000_first.sql",
+    ]);
+  });
+
+  it("falls back to an empty written array when the cause carries no writtenSoFar at all (the very first row failed)", () => {
+    const error = new MigrationFetchWriteError({ message: "boom" });
+    expect(pullFailedStepResult("migration_history", error, "/home/user/project").written).toEqual(
+      [],
+    );
+  });
+
+  it("falls back to an empty written array for a plain Error, which never carries writtenSoFar", () => {
+    expect(
+      pullFailedStepResult("functions", new Error("ECONNREFUSED"), "/home/user/project").written,
+    ).toEqual([]);
+  });
 });
 
 describe("pullRetryHint", () => {
@@ -395,9 +440,27 @@ describe("pullRetryHint", () => {
     );
   });
 
-  it("appends --remote-label to the config hint when one was passed", () => {
+  it("appends a shell-quoted --remote-label to the config hint when one was passed", () => {
     expect(pullRetryHint("config", ref, "staging-remote")).toBe(
-      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst --remote-label staging-remote",
+      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst --remote-label 'staging-remote'",
+    );
+  });
+
+  it("shell-quotes a --remote-label containing whitespace, so the suggested command stays copy-pasteable", () => {
+    expect(pullRetryHint("config", ref, "staging remote")).toBe(
+      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst --remote-label 'staging remote'",
+    );
+  });
+
+  it("escapes an embedded single quote in --remote-label using the POSIX '\"'\"' pattern", () => {
+    expect(pullRetryHint("config", ref, "o'brien")).toBe(
+      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst --remote-label 'o'\"'\"'brien'",
+    );
+  });
+
+  it("strips control characters from --remote-label before quoting it (CWE-117)", () => {
+    expect(pullRetryHint("config", ref, "staging\r\nFAKE")).toBe(
+      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst --remote-label 'staging FAKE'",
     );
   });
 
@@ -425,6 +488,22 @@ describe("pullRetryHint", () => {
     );
     expect(pullRetryHint("db", ref, "staging-remote")).not.toContain("--remote-label");
     expect(pullRetryHint("functions", ref, "staging-remote")).not.toContain("--remote-label");
+  });
+});
+
+describe("pullWithMigrationHistoryCommand", () => {
+  const ref = "abcdefghijklmnopqrst";
+
+  it("names the resolved --project-ref, so a blind rerun can never silently retarget the linked project", () => {
+    expect(pullWithMigrationHistoryCommand(ref, undefined)).toBe(
+      "supabase pull --with-migration-history --project-ref abcdefghijklmnopqrst",
+    );
+  });
+
+  it("appends a shell-quoted --remote-label when one was passed, matching pullRetryHint's own rendering", () => {
+    expect(pullWithMigrationHistoryCommand(ref, "staging remote")).toBe(
+      "supabase pull --with-migration-history --project-ref abcdefghijklmnopqrst --remote-label 'staging remote'",
+    );
   });
 });
 
@@ -487,6 +566,7 @@ describe("pullAggregate", () => {
         branch: "staging",
         dryRun: true,
         confirmed: false,
+        dirtyPaths: ["supabase/config.toml"],
         results,
       }),
     ).toEqual({
@@ -494,8 +574,22 @@ describe("pullAggregate", () => {
       branch: "staging",
       dryRun: true,
       confirmed: false,
+      dirtyPaths: ["supabase/config.toml"],
       results,
     });
+  });
+
+  it("defaults dirtyPaths to whatever is passed, including an empty array for a clean tree", () => {
+    expect(
+      pullAggregate({
+        ref: "abcdefghijklmnopqrst",
+        branch: undefined,
+        dryRun: false,
+        confirmed: true,
+        dirtyPaths: [],
+        results: [],
+      }).dirtyPaths,
+    ).toEqual([]);
   });
 
   it("does not mutate or reorder the input results array", () => {
@@ -517,6 +611,7 @@ describe("pullAggregate", () => {
       branch: undefined,
       dryRun: false,
       confirmed: true,
+      dirtyPaths: [],
       results: frozen,
     });
     expect(aggregate.results).toBe(frozen);

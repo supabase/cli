@@ -40,6 +40,10 @@ export function pullPayload(aggregate: PullAggregate): Record<string, unknown> {
     },
     dry_run: aggregate.dryRun,
     confirmed: aggregate.confirmed,
+    // Present (possibly empty) on every disposition, not just a dirty-tree abort — a
+    // script driving `--dry-run --output-format json` has no other way to know an
+    // equivalent real run would abort (or downgrade its prompt default) on this path.
+    dirty_paths: aggregate.dirtyPaths,
     wrote: aggregate.results.some((result) => result.status === "changed"),
     step_order: PULL_STEP_ORDER,
     steps,
@@ -204,10 +208,16 @@ export function pullDirtyWarningMessage(dirtyPaths: ReadonlyArray<string>): stri
  * migration_history → db → functions).
  */
 export function pullConfirmMessage(input: PullConfirmMessageInput): string {
+  // `ref`/`branch` are sanitized before interpolation (CWE-117): a branch name (or, for
+  // completeness, a ref) containing CR/LF could otherwise forge fake lines in this
+  // header — the same concern `pullSanitizeRowText` already guards against for
+  // rendered failure/suggestion text elsewhere in this file.
+  const ref = pullSanitizeRowText(input.ref);
+  const branch = input.branch === undefined ? undefined : pullSanitizeRowText(input.branch);
   const lines: Array<string> = [
-    input.branch === undefined
-      ? `Pulling from project ${input.ref}`
-      : `Pulling from project ${input.ref} (branch "${input.branch}")`,
+    branch === undefined
+      ? `Pulling from project ${ref}`
+      : `Pulling from project ${ref} (branch "${branch}")`,
     "",
   ];
   // config

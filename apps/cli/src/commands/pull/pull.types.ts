@@ -35,5 +35,8 @@ export interface PullAggregate {
   readonly branch: string | undefined;
   readonly dryRun: boolean;
   readonly confirmed: boolean;
+  /** Workdir-relative paths that had uncommitted or untracked changes at the start of this
+   *  run — present (possibly empty) on every disposition, not just a dirty-tree abort. */
+  readonly dirtyPaths: ReadonlyArray<string>;
   readonly results: ReadonlyArray<PullStepResult>;
 }

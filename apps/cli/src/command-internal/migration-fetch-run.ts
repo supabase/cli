@@ -171,6 +171,7 @@ export const runMigrationFetch = Effect.fnUntraced(function* (input: MigrationFe
         return yield* Effect.fail(
           new MigrationFetchWriteError({
             message: `failed to write migration: invalid version/name in history table: ${file.version}_${file.name}`,
+            writtenSoFar: [...written],
           }),
         );
       }
@@ -183,6 +184,7 @@ export const runMigrationFetch = Effect.fnUntraced(function* (input: MigrationFe
           (cause) =>
             new MigrationFetchWriteError({
               message: `failed to write migration: ${cause.message}`,
+              writtenSoFar: [...written],
             }),
         ),
       );

@@ -174,9 +174,6 @@ change to an existing array.
   migration mode; a user who wants a declarative pull from a linked project still runs `db pull
 --declarative` directly. Adding a passthrough flag is a small, independent follow-up, not part of
   this design.
-- **`--remote-label`.** `config pull`'s own `--remote-label` (writing into a specific
-  `[remotes.<label>]` block) has no equivalent on `pull` — `pull`'s target resolution always follows
-  the same block-reuse/branch-derived-label rules `config pull` uses with no override.
 - **Real db/functions dry-run previews.** Both steps get a qualitative confirmation line (Decision
   4), not a computed diff — neither has preview machinery of its own to build on, and building one
   is out of scope for this command.
@@ -242,7 +239,9 @@ and git history for the full list (the `--dry-run` preview being silently droppe
 work in, an undisclosed migration-file-overwrite path, and a `pull.layers.ts` `Layer.mergeAll` merge
 order the comment claimed decided the winning `ProjectRefResolver` but which Effect's actual
 concurrent-build memoization made a race — fixed by eliminating the duplicate binding outright rather
-than reordering).
+than reordering). The same pass also added a `--remote-label` flag to `pull` itself, mirroring
+`config pull`'s own flag of the same name — superseding the original "Non-Goals" section's
+`--remote-label` bullet above, which this addendum removes since it no longer reflects what shipped.
 
 Two follow-up decisions, made directly with the ticket owner rather than surfaced by an automated
 review, extend section 4 and 5 above:

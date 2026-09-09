@@ -31,6 +31,7 @@ describe("pullPayload", () => {
       branch: undefined,
       dryRun: true,
       confirmed: false,
+      dirtyPaths: [],
       results,
     };
 
@@ -39,6 +40,7 @@ describe("pullPayload", () => {
       target: { project_ref: PROJECT_REF },
       dry_run: true,
       confirmed: false,
+      dirty_paths: [],
       wrote: false,
       step_order: ["config", "migration_history", "db", "functions"],
       steps: {
@@ -83,6 +85,7 @@ describe("pullPayload", () => {
       branch: "staging",
       dryRun: false,
       confirmed: true,
+      dirtyPaths: [],
       results,
     };
 
@@ -91,6 +94,7 @@ describe("pullPayload", () => {
       target: { project_ref: PROJECT_REF, branch: "staging" },
       dry_run: false,
       confirmed: true,
+      dirty_paths: [],
       wrote: true,
       step_order: ["config", "migration_history", "db", "functions"],
       steps: {
@@ -137,6 +141,7 @@ describe("pullPayload", () => {
       branch: undefined,
       dryRun: false,
       confirmed: false,
+      dirtyPaths: ["supabase/config.toml"],
       results,
     };
 
@@ -144,6 +149,7 @@ describe("pullPayload", () => {
     expect(payload["wrote"]).toBe(false);
     expect(payload["confirmed"]).toBe(false);
     expect(payload["dry_run"]).toBe(false);
+    expect(payload["dirty_paths"]).toEqual(["supabase/config.toml"]);
     expect((payload["steps"] as Record<string, unknown>)["migration_history"]).toEqual({
       status: "skipped",
       written: [],
@@ -190,11 +196,13 @@ describe("pullPayload", () => {
       branch: undefined,
       dryRun: false,
       confirmed: true,
+      dirtyPaths: [],
       results,
     };
 
     const payload = pullPayload(aggregate);
     expect(payload["wrote"]).toBe(true);
+    expect(payload["dirty_paths"]).toEqual([]);
     expect((payload["steps"] as Record<string, unknown>)["migration_history"]).toEqual({
       status: "failed",
       written: [],
@@ -219,6 +227,7 @@ describe("pullPayload", () => {
       branch: undefined,
       dryRun: false,
       confirmed: true,
+      dirtyPaths: [],
       results: [],
     };
     expect(pullPayload(aggregate)["step_order"]).toEqual(PULL_STEP_ORDER);
@@ -233,6 +242,7 @@ describe("pullPayload", () => {
       branch: undefined,
       dryRun: false,
       confirmed: true,
+      dirtyPaths: [],
       results,
     };
     const payload = pullPayload(aggregate);
@@ -253,6 +263,7 @@ describe("pullSummaryMessage", () => {
       branch: undefined,
       dryRun: false,
       confirmed: false,
+      dirtyPaths: [],
       results,
     };
     const message = pullSummaryMessage(aggregate);
@@ -273,6 +284,7 @@ describe("pullSummaryMessage", () => {
       branch: undefined,
       dryRun: true,
       confirmed: false,
+      dirtyPaths: [],
       results,
     };
     expect(pullSummaryMessage(aggregate)).toBe(
@@ -298,6 +310,7 @@ describe("pullSummaryMessage", () => {
       branch: undefined,
       dryRun: false,
       confirmed: true,
+      dirtyPaths: [],
       results,
     };
     expect(pullSummaryMessage(aggregate)).toBe(
@@ -317,6 +330,7 @@ describe("pullSummaryMessage", () => {
       branch: undefined,
       dryRun: false,
       confirmed: true,
+      dirtyPaths: [],
       results,
     };
     expect(pullSummaryMessage(aggregate)).toBe(
@@ -359,6 +373,7 @@ describe("renderPullSummary", () => {
       branch: undefined,
       dryRun: false,
       confirmed: true,
+      dirtyPaths: [],
       results,
     };
 
@@ -393,6 +408,7 @@ describe("renderPullSummary", () => {
       branch: undefined,
       dryRun: false,
       confirmed: true,
+      dirtyPaths: [],
       results,
     };
     const dbRow = rowFor(renderPullSummary(aggregate), "db");
@@ -417,6 +433,7 @@ describe("renderPullSummary", () => {
       branch: undefined,
       dryRun: false,
       confirmed: true,
+      dirtyPaths: [],
       results,
     };
     const row = rowFor(renderPullSummary(aggregate), "migration_history");
@@ -440,6 +457,7 @@ describe("renderPullSummary", () => {
       branch: undefined,
       dryRun: false,
       confirmed: true,
+      dirtyPaths: [],
       results,
     };
     const row = rowFor(renderPullSummary(aggregate), "functions");
@@ -471,6 +489,7 @@ describe("renderPullSummary", () => {
       branch: undefined,
       dryRun: false,
       confirmed: true,
+      dirtyPaths: [],
       results,
     };
 
@@ -506,6 +525,7 @@ describe("renderPullSummary", () => {
       branch: undefined,
       dryRun: false,
       confirmed: true,
+      dirtyPaths: [],
       results,
     };
     const lines = renderPullSummary(aggregate).split("\n");
@@ -534,6 +554,19 @@ describe("pullConfirmMessage", () => {
     expect(message.startsWith(`Pulling from project ${PROJECT_REF} (branch "staging")\n\n`)).toBe(
       true,
     );
+  });
+
+  it("sanitizes control characters out of the branch name before interpolating it into the header (CWE-117)", () => {
+    const message = pullConfirmMessage({ ...BASE, branch: "staging\r\nFAKE LINE" });
+    expect(
+      message.startsWith(`Pulling from project ${PROJECT_REF} (branch "staging FAKE LINE")\n\n`),
+    ).toBe(true);
+    expect(message).not.toContain("\r");
+  });
+
+  it("sanitizes control characters out of the ref before interpolating it into the header (CWE-117)", () => {
+    const message = pullConfirmMessage({ ...BASE, ref: "abc\ndef" });
+    expect(message.startsWith("Pulling from project abc def\n\n")).toBe(true);
   });
 
   it("reports 'no config differences' when configDiffText is undefined", () => {

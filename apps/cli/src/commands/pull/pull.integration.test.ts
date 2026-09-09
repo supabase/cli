@@ -123,6 +123,14 @@ function seedLocalMigration(
   return path;
 }
 
+/** Writes `supabase/.env`, backing `env(VAR)` resolution — copied from
+ *  `config/pull/pull.integration.test.ts`'s own helper. */
+function writeProjectEnv(dotenv: string): void {
+  const dir = join(tempRoot.current, "supabase");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, ".env"), dotenv);
+}
+
 /** The rendered step row for `step` in `renderPullSummary`'s output, with
  *  internal padding collapsed to single spaces so assertions don't hardcode
  *  column widths. Empty string when the step has no row at all. */
@@ -770,6 +778,32 @@ describe("pull integration", () => {
   );
 
   // -------------------------------------------------------------------------
+  // 1b. Config diff body renders even when every change is skipped.
+  // -------------------------------------------------------------------------
+
+  it.live(
+    "renders the config diff body (not 'No config differences found.') when the only diff is skipped as an env() reference",
+    () => {
+      // Every OTHER managed field sits at its schema default (`v2ProjectConfigResponse()`'s
+      // own design — see `tests/helpers/config-fixtures.ts`), so `auth.site_url` is the
+      // ONLY change in the whole changeset — and, being declared as `env(SITE_URL)`, it is
+      // skipped rather than written, leaving `runPlan.hasWork` false even though a real
+      // (unwritable) diff exists.
+      writeConfig('[auth]\nsite_url = "env(SITE_URL)"\n');
+      writeProjectEnv("SITE_URL=https://local.example.com\n");
+      const { layer, out } = setup({ yes: true });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags());
+
+        expect(out!.stdoutText).not.toContain("No config differences found.");
+        expect(out!.stdoutText).toContain("auth.site_url [update, skip: env() reference]");
+        // The config step itself still reports unchanged — nothing was actually written.
+        expect(stepLine(out!.stdoutText, "config")).toContain("unchanged");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // 2. Target resolved once.
   // -------------------------------------------------------------------------
 
@@ -902,6 +936,40 @@ describe("pull integration", () => {
       expect(stepLine(out!.stdoutText, "functions")).toContain("planned");
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "a --dry-run --output-format json payload surfaces dirty_paths, even though the dry-run itself never runs the abort logic that would otherwise trip on them",
+    () => {
+      writeConfig("[api]\nmax_rows = 500\n");
+      const { layer, capturingStdio } = setup({ format: "json", yes: true, gitDirty: true });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(runPull(pullFlags({ dryRun: true })));
+        expect(Exit.isSuccess(exit)).toBe(true);
+
+        const payload = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+        expect(payload["dirty_paths"]).toEqual(["supabase/config.toml"]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "a clean-tree run reports an empty dirty_paths array in the JSON payload, present on every disposition",
+    () => {
+      writeConfig();
+      seedLocalMigration("20260101000000");
+      const { layer, capturingStdio } = setup({
+        format: "json",
+        yes: true,
+        remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
+        diffOutcome: () => ({ changes: false }),
+      });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags());
+        const payload = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+        expect(payload["dirty_paths"]).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   // -------------------------------------------------------------------------
   // 5. Declined confirmation.
@@ -1638,7 +1706,7 @@ describe("pull integration", () => {
           expect(stepLine(out!.stdoutText, "config")).toContain("failed");
 
           expect(out!.stdoutText).toContain(
-            `To retry just this step, run: supabase config pull --project-ref ${VALID_REF} --remote-label staging-remote`,
+            `To retry just this step, run: supabase config pull --project-ref ${VALID_REF} --remote-label 'staging-remote'`,
           );
         }).pipe(Effect.provide(layer));
       },
@@ -1683,6 +1751,43 @@ describe("pull integration", () => {
           expect(out!.stdoutText).toContain(
             `To retry just this step, run: supabase db pull --project-ref ${VALID_REF}`,
           );
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "a migration-history-step failure AFTER an earlier row already wrote reports that file as written, not written: [] (a real partial-write case)",
+      () => {
+        writeConfig();
+        const { layer, capturingStdio } = setup({
+          format: "json",
+          yes: true,
+          api: { functionSlugs: [] },
+          // The first row is well-formed and writes successfully; the SECOND
+          // row's path-traversal `name` trips the write loop's own injection
+          // guard (CWE-22) only once the first row is already on disk — a
+          // real, reachable partial-write case, not a synthetic one.
+          remoteMigrations: [
+            { version: "20260101000000", name: "good", statements: ["select 1;"] },
+            { version: "20260102000000", name: "../evil", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          yield* runPull(pullFlags());
+
+          // The first row's file was actually written to disk...
+          expect(existsSync(join(migrationsDir(), "20260101000000_good.sql"))).toBe(true);
+
+          // ...and the failed step's own JSON payload reports it as written, instead of
+          // always claiming `written: []` on a failed step.
+          const envelope = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+          const steps = envelope["steps"] as Record<string, unknown>;
+          const migrationHistory = steps["migration_history"] as Record<string, unknown>;
+          expect(migrationHistory["status"]).toBe("failed");
+          expect(migrationHistory["written"]).toEqual([
+            "supabase/migrations/20260101000000_good.sql",
+          ]);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1748,14 +1853,49 @@ describe("pull integration", () => {
           expect(String(failure["code"])).toBe("DbPullMigrationConflictError");
 
           const suggestion = String(failure["suggestion"]);
+          // The suggested `--with-migration-history` remedy names the exact
+          // RESOLVED target `pull` itself used — omitting `--project-ref` would let a
+          // blind rerun silently retarget the checkout's linked project instead
+          // (a data-safety concern: this remedy writes the remote migration history
+          // table).
           const migrationHistoryHintIndex = suggestion.indexOf(
-            "Alternatively, rerun `supabase pull --with-migration-history`",
+            `Alternatively, rerun \`supabase pull --with-migration-history --project-ref ${VALID_REF}\``,
           );
           const retryHintIndex = suggestion.indexOf(
             `To retry just this step, run: supabase db pull --project-ref ${VALID_REF}`,
           );
           expect(migrationHistoryHintIndex).toBeGreaterThan(-1);
           expect(retryHintIndex).toBeGreaterThan(migrationHistoryHintIndex);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "a db-step migration-conflict failure's --with-migration-history remedy also carries a shell-quoted --remote-label when one was passed",
+      () => {
+        writeConfig();
+        seedLocalMigration("20260101000000");
+        const { layer, capturingStdio } = setup({
+          format: "json",
+          yes: true,
+          api: { functionSlugs: [] },
+          remoteMigrations: [
+            { version: "20260103000000", name: "remote-only", statements: ["select 1;"] },
+          ],
+          diffOutcome: () => ({ changes: false }),
+        });
+        return Effect.gen(function* () {
+          yield* runPull(pullFlags({ remoteLabel: Option.some("staging remote") }));
+
+          const envelope = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+          const steps = envelope["steps"] as Record<string, unknown>;
+          const failure = (steps["db"] as Record<string, unknown>)["failure"] as Record<
+            string,
+            unknown
+          >;
+          expect(String(failure["suggestion"])).toContain(
+            `Alternatively, rerun \`supabase pull --with-migration-history --project-ref ${VALID_REF} --remote-label 'staging remote'\``,
+          );
         }).pipe(Effect.provide(layer));
       },
     );

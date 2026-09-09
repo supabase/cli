@@ -206,6 +206,24 @@ function hasStringTag(value: unknown): value is { readonly _tag: string } {
 }
 
 /**
+ * Duck-types a caught failure value carrying `writtenSoFar` — a write-loop error (e.g.
+ * `MigrationFetchWriteError`) that had already written some files before a LATER item in
+ * the same loop failed (a tampered/malformed remote row, a mid-loop write failure, ...).
+ * Absent for every other failure, including a write-loop error whose very first item
+ * failed (nothing written yet).
+ */
+function hasWrittenSoFar(
+  value: unknown,
+): value is { readonly writtenSoFar: ReadonlyArray<string> } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "writtenSoFar" in value &&
+    Array.isArray(value.writtenSoFar)
+  );
+}
+
+/**
  * Duck-types a caught failure value (a plain `Error`, a tagged domain error,
  * or anything else `pull.handler.ts` extracts from a step's `Exit`) into a
  * message string — kept structural, rather than importing Effect's `Cause`
@@ -233,6 +251,43 @@ function pullFailureCode(cause: unknown): string | undefined {
 }
 
 /**
+ * POSIX single-quote escaping for a value inserted into a suggested shell command —
+ * mirrors `commands/db/shared/pgdelta-next-diagnostics.ts`'s `shellQuote`. Kept as its
+ * own tiny copy rather than a shared import: this file is deliberately Effect-import-free
+ * (see `pull.handler.ts`'s own note on why `--remote-label` needs quoting — `config
+ * pull`'s own `--remote-label` accepts labels requiring TOML quoting, including
+ * whitespace, so an unquoted value here could render an invalid or dangerous
+ * copy-pasteable command).
+ */
+function pullShellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+/**
+ * Strips control characters (CR/LF/tab) from a value before it is inlined into a
+ * suggested shell command — the same CWE-117 concern `pull.format.ts`'s
+ * `pullSanitizeRowText` guards against for rendered summary text. Kept as its own copy
+ * here (rather than importing that sibling helper) since `pull.format.ts` already
+ * imports FROM this module (`pullCounts`) and this file is deliberately
+ * Effect-import-free.
+ */
+function pullSanitizeCommandToken(value: string): string {
+  return value.replace(/[\r\n\t]+/g, " ");
+}
+
+/**
+ * The ` --remote-label <value>` suffix for a suggested command — sanitized and
+ * shell-quoted, empty when no label was passed. Shared by `pullRetryHint`'s config-step
+ * command and `pullWithMigrationHistoryCommand` below, so every suggested command that
+ * carries a user-supplied `--remote-label` renders it identically.
+ */
+function pullRemoteLabelFlag(remoteLabel: string | undefined): string {
+  return remoteLabel === undefined
+    ? ""
+    : ` --remote-label ${pullShellQuote(pullSanitizeCommandToken(remoteLabel))}`;
+}
+
+/**
  * The exact standalone command to retry ONE failed step on its own —
  * `pull.handler.ts` appends this line to a failed step's own
  * `failure.suggestion` (Phase 3), on top of whatever the step's own
@@ -249,7 +304,7 @@ export function pullRetryHint(
   ref: string,
   remoteLabel: string | undefined,
 ): string {
-  const remoteLabelFlag = remoteLabel === undefined ? "" : ` --remote-label ${remoteLabel}`;
+  const remoteLabelFlag = pullRemoteLabelFlag(remoteLabel);
   const commandByStep: Record<PullStepId, string> = {
     config: `supabase config pull --project-ref ${ref}${remoteLabelFlag}`,
     migration_history: `supabase migration fetch --project-ref ${ref}`,
@@ -259,17 +314,51 @@ export function pullRetryHint(
   return `To retry just this step, run: ${commandByStep[step]}`;
 }
 
-/** Builds a `status: "failed"` result for `step` from an arbitrary caught value. */
-export function pullFailedStepResult(step: PullStepId, cause: unknown): PullStepResult {
+/**
+ * The exact `supabase pull --with-migration-history ...` command the db step's own
+ * migration-conflict remedy (`pull.handler.ts`'s `pullDbStepFailureResult`) suggests
+ * rerunning — named with the SAME resolved `ref`/`remoteLabel` `pull` itself targeted,
+ * so blindly rerunning the bare `--with-migration-history` command (with no target) can
+ * never silently retarget a different project than the one this run actually resolved
+ * (a branch, an explicit different ref, ...). Shares `pullRemoteLabelFlag` with
+ * `pullRetryHint` above so the two suggested commands render `--remote-label`
+ * identically.
+ */
+export function pullWithMigrationHistoryCommand(
+  ref: string,
+  remoteLabel: string | undefined,
+): string {
+  return `supabase pull --with-migration-history --project-ref ${ref}${pullRemoteLabelFlag(remoteLabel)}`;
+}
+
+/**
+ * Builds a `status: "failed"` result for `step` from an arbitrary caught value.
+ * `written` is populated from the cause's own `writtenSoFar` when it carries one (a
+ * write-loop error whose earlier items had already written before a later one failed) —
+ * relativized against `workdir` exactly like every other step's own `written` array,
+ * when the caller has one; `workdir` is only ever passed for the `migration_history`
+ * step today, the only one whose failure cause (`MigrationFetchWriteError`) can carry
+ * `writtenSoFar`. Falls back to `[]` when the cause carries no such information.
+ */
+export function pullFailedStepResult(
+  step: PullStepId,
+  cause: unknown,
+  workdir?: string,
+): PullStepResult {
   const message = pullFailureMessage(cause);
   const suggestion = pullFailureSuggestion(cause);
   const code = pullFailureCode(cause);
+  const writtenSoFar = hasWrittenSoFar(cause) ? cause.writtenSoFar : [];
+  const written =
+    workdir === undefined
+      ? writtenSoFar
+      : writtenSoFar.map((file) => pullRelativeToWorkdir(workdir, file));
   const failure: PullStepFailure = {
     message,
     ...(suggestion === undefined ? {} : { suggestion }),
     ...(code === undefined ? {} : { code }),
   };
-  return { step, status: "failed", written: [], detail: {}, failure };
+  return { step, status: "failed", written, detail: {}, failure };
 }
 
 export interface PullCounts {
@@ -300,6 +389,7 @@ export function pullAggregate(input: {
   readonly branch: string | undefined;
   readonly dryRun: boolean;
   readonly confirmed: boolean;
+  readonly dirtyPaths: ReadonlyArray<string>;
   readonly results: ReadonlyArray<PullStepResult>;
 }): PullAggregate {
   return {
@@ -307,6 +397,7 @@ export function pullAggregate(input: {
     branch: input.branch,
     dryRun: input.dryRun,
     confirmed: input.confirmed,
+    dirtyPaths: input.dirtyPaths,
     results: input.results,
   };
 }
