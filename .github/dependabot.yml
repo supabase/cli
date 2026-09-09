@@ -15,6 +15,13 @@ updates:
       - dependency-name: "supabase/setup-cli"
         update-types:
           - "version-update:semver-major"
+      - dependency-name: "openai/codex-action"
+        # Deliberately pinned to v1.11 in ai-review.yml — v1.12 has two
+        # confirmed, still-open upstream hangs (openai/codex-action#151,
+        # #160) that a grouped Dependabot bump already silently reintroduced
+        # once (PR #6484, 2026-09-07). Any future bump of this action needs a
+        # deliberate PR that checks the upstream changelog/issue tracker
+        # first, not an automated one bundled into the actions-major group.
     cooldown:
       default-days: 7
   - package-ecosystem: "gomod"
