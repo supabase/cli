@@ -1,5 +1,17 @@
 import { NodeServices } from "@effect/platform-node";
-import { Crypto, Effect, FileSystem, Layer, Option, Path, Redacted, Schema, Stream } from "effect";
+import {
+  Crypto,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   createStack as createEffectStack,
@@ -26,6 +38,11 @@ import type { StackId } from "./StackId.ts";
 import type { PreparedCapability, PrepareStackResult } from "./EffectStack.ts";
 import { InvalidStackConfigError } from "./Errors.ts";
 import { StackRuntimeEnvironment, type StackRuntimeEnvironmentValue } from "../state/Ownership.ts";
+import {
+  createEphemeralPostgres as createEffectEphemeralPostgres,
+  type CreateEphemeralPostgresOptions,
+} from "./EphemeralPostgres.ts";
+import type { StackRuntime } from "./Runtime.ts";
 
 // oxlint-disable effecttsgo/async-function -- Promise facade methods must expose Promise/AsyncIterable APIs.
 // oxlint-disable effecttsgo/any-unknown-in-error-context -- Promise callers receive native rejection values.
@@ -60,6 +77,27 @@ export interface PromiseStack {
   readonly followLogs: (query?: LogQuery) => AsyncIterable<StackLogEntry>;
 }
 
+export type PromiseCreateEphemeralPostgresOptions = Omit<
+  CreateEphemeralPostgresOptions,
+  "databasePassword" | "jwtSecret"
+> & {
+  readonly databasePassword: string;
+  readonly jwtSecret: string;
+};
+
+export interface PromiseEphemeralPostgres {
+  readonly host: string;
+  readonly port: number;
+  readonly version: string;
+  readonly runtime: StackRuntime;
+  readonly artifactIdentity: string;
+  readonly url: string;
+  readonly start: () => Promise<void>;
+  readonly stop: () => Promise<void>;
+  readonly exportPgData: (tarPath: string) => Promise<void>;
+  readonly destroy: () => Promise<void>;
+}
+
 interface PromiseStackApi {
   readonly createStack: (options: CreateStackOptions) => Promise<PromiseStack>;
   readonly openStack: (id: StackId) => Promise<PromiseStack>;
@@ -67,6 +105,9 @@ interface PromiseStackApi {
   readonly listStacks: (options?: ListStacksOptions) => Promise<ReadonlyArray<StackDescriptor>>;
   readonly discoverStacks: (options?: ListStacksOptions) => Promise<StackDiscoveryResult>;
   readonly inspectStack: (id: StackId) => Promise<StackInspection>;
+  readonly createEphemeralPostgres: (
+    options: PromiseCreateEphemeralPostgresOptions,
+  ) => Promise<PromiseEphemeralPostgres>;
 }
 
 type PlatformLayer = typeof NodeServices.layer;
@@ -180,6 +221,41 @@ export const makePromiseApi = (
     listStacks: (options) => run(listEffectStacks(options)),
     discoverStacks: (options) => run(discoverEffectStacks(options)),
     inspectStack: (id) => run(inspectEffectStack(id)),
+    createEphemeralPostgres: async (options) => {
+      const scope = await Effect.runPromise(Scope.make());
+      const close = () =>
+        Effect.runPromise(Scope.close(scope, Exit.void).pipe(Effect.provide(providedLayer)));
+      const invoke = <A>(
+        effect: Effect.Effect<A, unknown, RuntimeRequirements | Scope.Scope>,
+      ): Promise<A> =>
+        Effect.runPromise(
+          effect.pipe(Effect.provideService(Scope.Scope, scope), Effect.provide(providedLayer)),
+        );
+      try {
+        const handle = await invoke(
+          createEffectEphemeralPostgres({
+            ...options,
+            databasePassword: Redacted.make(options.databasePassword),
+            jwtSecret: Redacted.make(options.jwtSecret),
+          }),
+        );
+        return {
+          host: handle.host,
+          port: handle.port,
+          version: handle.version,
+          runtime: handle.runtime,
+          artifactIdentity: handle.artifactIdentity,
+          url: Redacted.value(handle.url),
+          start: () => invoke(handle.start()),
+          stop: () => invoke(handle.stop()),
+          exportPgData: (tarPath) => invoke(handle.exportPgData(tarPath)),
+          destroy: close,
+        };
+      } catch (cause) {
+        await close().catch(() => undefined);
+        throw cause;
+      }
+    },
   };
 };
 
@@ -190,6 +266,7 @@ export const findStack = defaultApi.findStack;
 export const listStacks = defaultApi.listStacks;
 export const discoverStacks = defaultApi.discoverStacks;
 export const inspectStack = defaultApi.inspectStack;
+export const createEphemeralPostgres = defaultApi.createEphemeralPostgres;
 
 export type {
   CreateStackOptions,

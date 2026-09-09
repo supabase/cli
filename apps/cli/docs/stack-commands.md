@@ -39,8 +39,17 @@ command.
 For temporary selection, set `SUPABASE_EXPERIMENTAL_STACK=1` to select the new backend or
 `SUPABASE_EXPERIMENTAL_STACK=0` to select the legacy backend. This environment variable takes
 precedence over `experimental.stack`; an unset or empty value falls back to the file setting.
-Other values are rejected. The override affects only the top-level lifecycle aliases and is
-applied before reading the project configuration.
+Other values are rejected. The override is applied before reading the project configuration.
+
+When the flag is on, `db` and `migration` commands use the project stack for `--local` and
+provision throwaway shadow Postgres through `@supabase/stack` (`EphemeralPostgres`). Linked
+and `--db-url` targets stay on the Management API. The stack backend requires the in-process
+pg-delta engine; `--use-migra`, `--use-pgadmin`, `--use-pg-schema`, and `--diff-engine migra`
+are rejected. The flag does not switch functions or storage command families, and does not
+change top-level `status`.
+
+`db reset` and declarative `--apply`/`--reset` still use the legacy Docker volume recreate
+path; stack data-dir wipe is a later follow-up.
 
 ## Data and configuration
 

@@ -1,5 +1,5 @@
 import { CliConfigSchema } from "@supabase/config/effect";
-import { Data, Effect, FileSystem, Option, Path, Schema } from "effect";
+import { Context, Data, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { resolveExperimentalFeature } from "../../../command-internal/experimental-feature.ts";
@@ -11,6 +11,9 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 export type StackBackend = "legacy" | "stack";
+
+/** Commands that consult experimental.stack for local database and shadow routing. */
+const STACK_BACKEND_COMMANDS = new Set(["start", "stop", "db", "migration"]);
 
 export class StackRoutingError extends Data.TaggedError("StackRoutingError")<{
   readonly message: string;
@@ -24,6 +27,21 @@ export class StackRoutingError extends Data.TaggedError("StackRoutingError")<{
     return actionability.invalidConfig;
   }
 }
+
+/** In-process backend selected before parse; handlers must not re-read argv. */
+export class StackBackendContext extends Context.Service<
+  StackBackendContext,
+  { readonly kind: StackBackend }
+>()("supabase/stack/Backend") {}
+
+export const stackBackendLayer = (kind: StackBackend) =>
+  Layer.succeed(StackBackendContext, { kind });
+
+/** Handlers default to legacy when tests omit the root-provided backend service. */
+export const currentStackBackend: Effect.Effect<{ readonly kind: StackBackend }, never, never> =
+  Effect.serviceOption(StackBackendContext).pipe(
+    Effect.map((value) => Option.getOrElse(value, () => ({ kind: "legacy" as const }))),
+  );
 
 const stackRoutingSchema = Schema.Struct({
   experimental: Schema.optionalKey(
@@ -92,7 +110,7 @@ export const resolveStackBackend = (input: {
     // The explicit namespace is always backed by the stack runtime and does
     // not need a project config or environment lookup to select it.
     if (command === "stack") return "stack";
-    if (command !== "start" && command !== "stop") return "legacy";
+    if (command === undefined || !STACK_BACKEND_COMMANDS.has(command)) return "legacy";
 
     const configValue = Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

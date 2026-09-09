@@ -1346,13 +1346,14 @@ describe("managed Supabase stack whole-stack E2E", () => {
             name: `stack-cli-consumer-${identity}`,
             runtime: mode.runtime,
           });
-          await ordinary.start();
+          const ordinaryStack = ordinary;
+          await ordinaryStack.start();
           helper = await createTestStack({
             name: `stack-helper-consumer-${identity}`,
             runtime: mode.runtime,
           });
 
-          const ordinaryStatus = await ordinary.status();
+          const ordinaryStatus = await ordinaryStack.status();
           const helperStatus = await helper.status();
           expect(ordinaryStatus.lifecycle).toBe("running");
           expect(helperStatus.lifecycle).toBe("running");
@@ -1360,7 +1361,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
           expect(endpoint(ordinaryStatus, "api").port).not.toBe(endpoint(helperStatus, "api").port);
 
           const scoped = await listStacks({ projectRoot: ordinaryRoot });
-          expect(scoped.map(({ id }) => id)).toContain(ordinary.id);
+          expect(scoped.map(({ id }) => id)).toContain(ordinaryStack.id);
           expect(scoped.map(({ id }) => id)).not.toContain(helper.id);
           const all = await listStacks();
           expect(all.map(({ id }) => id)).toEqual(expect.arrayContaining([ordinary.id, helper.id]));

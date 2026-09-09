@@ -11,6 +11,8 @@ import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { linkedDbResolverRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
 import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
+import { stackApiLayer } from "../experimental/stack/stack.shared.ts";
+import { ephemeralPostgresLayer } from "../experimental/stack/stack-shadow.ts";
 
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 
@@ -64,4 +66,6 @@ export const migrationSquashRuntimeLayer = Layer.mergeAll(
   dockerRunLayer,
   httpClient,
   debugLoggerLayer,
+  stackApiLayer,
+  ephemeralPostgresLayer,
 );

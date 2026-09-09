@@ -72,6 +72,7 @@ import {
   PortUnavailableError,
   GatewayActivationError,
   InvalidLogCursorError,
+  EphemeralPostgresError,
   type CreateStackError,
   type OpenStackError,
   type StackDiscoveryError,
@@ -252,6 +253,7 @@ const stackErrorFactories = {
   StackCleanupError: (message: string) => new StackCleanupError({ message }),
   ContainerEngineError: (message: string) => new ContainerEngineError({ message }),
   StackDestructionError: (message: string) => new StackDestructionError({ message }),
+  EphemeralPostgresError: (message: string) => new EphemeralPostgresError({ message }),
 } satisfies Record<StackErrorTag, (message: string) => StackError>;
 
 const isOwnerUnreachable = (error: unknown): boolean =>

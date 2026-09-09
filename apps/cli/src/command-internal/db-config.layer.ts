@@ -38,6 +38,8 @@ import type { DbConfigFlags } from "./db-config.types.ts";
 import { DebugLogger } from "./debug-logger.service.ts";
 import { getHostname } from "./hostname.ts";
 import { mapHttpError } from "./http-errors.ts";
+import { currentStackBackend } from "../commands/experimental/stack/stack-backend.ts";
+import { stackLocalDatabaseConn } from "../commands/experimental/stack/stack-local-database.ts";
 
 const DIRECT_PORT = 5432;
 const TCP_PROBE_TIMEOUT = Duration.seconds(5);
@@ -561,6 +563,13 @@ export const dbConfigLayer = Layer.effect(
         const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, undefined, {
           resolveVaultSecrets,
         });
+        const backend = yield* currentStackBackend;
+        if (backend.kind === "stack") {
+          const conn = yield* stackLocalDatabaseConn.pipe(
+            Effect.provideService(CommandSettings, cliSettings),
+          );
+          return { conn, isLocal: true };
+        }
         return {
           conn: {
             host: localHost,

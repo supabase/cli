@@ -136,6 +136,19 @@ export class ContainerEngineError extends Data.TaggedError("ContainerEngineError
   ErrorFields & { readonly engine?: ContainerEngineKind }
 > {}
 export class StackDestructionError extends Data.TaggedError("StackDestructionError")<ErrorFields> {}
+export class EphemeralPostgresError extends Data.TaggedError("EphemeralPostgresError")<
+  ErrorFields & {
+    readonly reason?:
+      | "not-stopped"
+      | "not-running"
+      | "snapshot"
+      | "restore-mismatch"
+      | "bootstrap"
+      | "destroy";
+    readonly path?: string;
+    readonly version?: string;
+  }
+> {}
 
 /** Stable wire tags for errors produced by the managed stack runtime. */
 export const STACK_ERROR_TAGS = [
@@ -165,6 +178,7 @@ export const STACK_ERROR_TAGS = [
   "StackCleanupError",
   "ContainerEngineError",
   "StackDestructionError",
+  "EphemeralPostgresError",
 ] as const;
 
 export type StackErrorTag = (typeof STACK_ERROR_TAGS)[number];
@@ -198,7 +212,8 @@ export type StackError =
   | StackRuntimeError
   | StackCleanupError
   | ContainerEngineError
-  | StackDestructionError;
+  | StackDestructionError
+  | EphemeralPostgresError;
 
 export const isStackError = (value: unknown): value is StackError =>
   Predicate.hasProperty(value, "_tag") &&
@@ -325,3 +340,16 @@ export const DESTROY_STACK_ERROR_TAGS = [
   "StackUpgradeRequiredError",
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type DestroyStackError = ErrorByTag<(typeof DESTROY_STACK_ERROR_TAGS)[number]>;
+
+export const EPHEMERAL_POSTGRES_ERROR_TAGS = [
+  "EphemeralPostgresError",
+  "StackVersionUnsupportedError",
+  "PortUnavailableError",
+  "StackPreparationError",
+  "ArtifactIntegrityError",
+  "ContainerPullError",
+  "ContainerEngineError",
+] as const satisfies ReadonlyArray<StackErrorTag>;
+export type EphemeralPostgresCreateError = ErrorByTag<
+  (typeof EPHEMERAL_POSTGRES_ERROR_TAGS)[number]
+>;

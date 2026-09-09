@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { basename, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Fiber, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Fiber, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -63,6 +63,8 @@ import {
 } from "../shared/pgdelta-engine.service.ts";
 import type { DbDiffFlags } from "./diff.command.ts";
 import { dbDiff } from "./diff.handler.ts";
+import { stackBackendLayer } from "../../experimental/stack/stack-backend.ts";
+import { StackNativeEngineError } from "../../experimental/stack/stack-local-database.ts";
 import { PGADMIN_DESKTOP_NOTE_PREFIX, PGADMIN_DIFF_HEADER } from "./pgadmin-diff.ts";
 
 interface SetupOpts {
@@ -1717,6 +1719,28 @@ describe("db diff", () => {
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("rejects --use-migra on the stack backend", () => {
+    const s = setup(tmp.current);
+    return Effect.gen(function* () {
+      const exit = yield* dbDiff(flags({ useMigra: Option.some(true) })).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) return;
+      const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+      expect(error).toBeInstanceOf(StackNativeEngineError);
+    }).pipe(Effect.provide(Layer.mergeAll(s.layer, stackBackendLayer("stack"))));
+  });
+
+  it.effect("rejects --use-migra=false on the stack backend", () => {
+    const s = setup(tmp.current);
+    return Effect.gen(function* () {
+      const exit = yield* dbDiff(flags({ useMigra: Option.some(false) })).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) return;
+      const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+      expect(error).toBeInstanceOf(StackNativeEngineError);
+    }).pipe(Effect.provide(Layer.mergeAll(s.layer, stackBackendLayer("stack"))));
   });
 
   it.effect("fails on target mutex (--linked with --local)", () => {

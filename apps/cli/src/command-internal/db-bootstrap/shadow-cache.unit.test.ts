@@ -412,4 +412,22 @@ describe("shadow baseline tar retention", () => {
       ),
     ).toEqual([]);
   });
+
+  it("never evicts retainFileName when using a custom published-tar matcher", () => {
+    const current = "stack-shadow-baseline-dddddddddddddddd.tar";
+    const aged = now - LEGACY_SHADOW_BASELINE_MAX_AGE_MS - 1;
+    const isStack = (fileName: string) =>
+      /^stack-shadow-baseline-[0-9a-f]{16}\.tar$/u.test(fileName);
+    const evicted = legacyShadowBaselineTarsToEvict(
+      [
+        { fileName: current, mtimeMs: aged },
+        { fileName: "stack-shadow-baseline-aaaaaaaaaaaaaaaa.tar", mtimeMs: now - 1_000 },
+        { fileName: "not-a-tar.json", mtimeMs: aged },
+      ],
+      now,
+      { retainFileName: current, isPublishedTar: isStack },
+    );
+    expect(evicted).not.toContain(current);
+    expect(evicted).not.toContain("not-a-tar.json");
+  });
 });
