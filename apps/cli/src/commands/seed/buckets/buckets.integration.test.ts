@@ -28,6 +28,7 @@ import { YesFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
+import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
 import { seedBucketsRun } from "../../../command-internal/seed-buckets.ts";
 import { seedBuckets } from "./buckets.handler.ts";
 import type { BucketsFlags } from "./buckets.command.ts";
@@ -213,32 +214,43 @@ const VECTOR_LIST = "/storage/v1/vector/ListVectorBuckets";
 const VECTOR_CREATE = "/storage/v1/vector/CreateVectorBucket";
 const VECTOR_DELETE = "/storage/v1/vector/DeleteVectorBucket";
 
+// A known-good dotenvx test vector: this ciphertext decrypts to "value" under the keypair below.
+const VAULT_PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
+const VAULT_ENCRYPTED =
+  "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
+
 describe("seed buckets", () => {
   const tmp = useTempWorkdir("supabase-seed-buckets-");
 
-  // Ambient `SUPABASE_API_*` values would shadow the dotenv fixtures below —
-  // the project-env walk skips keys already present in the shell env — so pin
-  // all six to unset for every test in this file (the ambient-override test
-  // sets its own value back through `withEnvVar`).
-  const API_OVERRIDE_ENV_KEYS = [
+  // Ambient `SUPABASE_API_*`/`SUPABASE_AUTH_*` values and the two canonical
+  // dotenvx private-key names (`DOTENV_PRIVATE_KEY`, `DOTENV_PRIVATE_KEY_LOCAL`)
+  // would shadow the dotenv fixtures below — the project-env walk skips keys
+  // already present in the shell env — so pin them to unset for every test in
+  // this file (the ambient-override test sets its own value back through
+  // `withEnvVar`).
+  const OVERRIDE_ENV_KEYS = [
     "SUPABASE_API_ENABLED",
     "SUPABASE_API_EXTERNAL_URL",
     "SUPABASE_API_PORT",
     "SUPABASE_API_TLS_ENABLED",
     "SUPABASE_API_TLS_CERT_PATH",
     "SUPABASE_API_TLS_KEY_PATH",
+    "SUPABASE_AUTH_JWT_SECRET",
+    "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+    "DOTENV_PRIVATE_KEY",
+    "DOTENV_PRIVATE_KEY_LOCAL",
   ] as const;
-  let savedApiOverrideEnv: Record<string, string | undefined> = {};
+  let savedOverrideEnv: Record<string, string | undefined> = {};
   beforeEach(() => {
-    savedApiOverrideEnv = {};
-    for (const key of API_OVERRIDE_ENV_KEYS) {
-      savedApiOverrideEnv[key] = process.env[key];
+    savedOverrideEnv = {};
+    for (const key of OVERRIDE_ENV_KEYS) {
+      savedOverrideEnv[key] = process.env[key];
       delete process.env[key];
     }
   });
   afterEach(() => {
-    for (const key of API_OVERRIDE_ENV_KEYS) {
-      const previous = savedApiOverrideEnv[key];
+    for (const key of OVERRIDE_ENV_KEYS) {
+      const previous = savedOverrideEnv[key];
       if (previous === undefined) delete process.env[key];
       else process.env[key] = previous;
     }
@@ -288,6 +300,23 @@ describe("seed buckets", () => {
         expect(JSON.stringify(exit)).toContain(
           "Missing required field in config: api.tls.key_path",
         );
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live(
+    "hard-fails an undecryptable encrypted: service_role_key even when nothing is configured to seed",
+    () => {
+      // The auth override/decrypt step is part of the same config-load
+      // validation as the `[api]` block above, so it runs on the no-op path too.
+      const { layer, requests } = setupSeedBuckets(tmp.current, {
+        toml: 'project_id = "test"\n[auth]\nservice_role_key = "encrypted:not-a-real-ciphertext"\n',
+      });
+      return Effect.gen(function* () {
+        const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("failed to parse config");
         expect(requests).toHaveLength(0);
       });
     },
@@ -1371,6 +1400,94 @@ describe("seed buckets", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("Invalid config for api.tls.enabled: cannot parse");
       expect(JSON.stringify(exit)).toContain("notabool");
+      expect(requests).toHaveLength(0);
+    });
+  });
+
+  it.live("sends a SUPABASE_AUTH_SERVICE_ROLE_KEY set only in supabase/.env as the api key", () => {
+    // The auth vars go through the same env/dotenv override composition as the
+    // `SUPABASE_API_*` family (#6467 follow-up).
+    const { layer, requests } = setupSeedBuckets(tmp.current, {
+      toml: "[storage.buckets.images]\npublic = true\n",
+      files: { "supabase/.env": "SUPABASE_AUTH_SERVICE_ROLE_KEY=sb_secret_dotenv_only_key\n" },
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.length).toBeGreaterThan(0);
+      expect(requests.every((r) => r.headers["apikey"] === "sb_secret_dotenv_only_key")).toBe(true);
+    });
+  });
+
+  it.live("derives the api key from a SUPABASE_AUTH_JWT_SECRET set only in supabase/.env", () => {
+    const secret = "a-dotenv-only-secret-at-least-16-chars";
+    const { layer, requests } = setupSeedBuckets(tmp.current, {
+      toml: "[storage.buckets.images]\npublic = true\n",
+      files: { "supabase/.env": `SUPABASE_AUTH_JWT_SECRET=${secret}\n` },
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.length).toBeGreaterThan(0);
+      // The exact token `status` prints for the same secret: signed with the
+      // dotenv secret through the same deterministic signer.
+      const apiKey = generateGoJwt(secret, "service_role");
+      expect(requests.every((r) => r.headers["apikey"] === apiKey)).toBe(true);
+    });
+  });
+
+  it.live("decrypts an encrypted: service_role_key with the private key from supabase/.env", () => {
+    // The config.toml ciphertext is decrypted with the `DOTENV_PRIVATE_KEY*`
+    // carried by the project dotenv, so the gateway sees the plaintext, not
+    // the ciphertext.
+    const { layer, requests } = setupSeedBuckets(tmp.current, {
+      toml: `[auth]\nservice_role_key = "${VAULT_ENCRYPTED}"\n[storage.buckets.images]\npublic = true\n`,
+      files: { "supabase/.env": `DOTENV_PRIVATE_KEY=${VAULT_PRIVATE_KEY}\n` },
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.length).toBeGreaterThan(0);
+      expect(requests.every((r) => r.headers["apikey"] === "value")).toBe(true);
+    });
+  });
+
+  it.live("hard-fails an undecryptable encrypted: service_role_key before any gateway call", () => {
+    // `encrypted:` values are decrypted like the status/stop resolver does;
+    // an undecryptable one aborts instead of being sent as literal key material.
+    const { layer, requests } = setupSeedBuckets(tmp.current, {
+      toml: '[auth]\nservice_role_key = "encrypted:not-a-real-ciphertext"\n[storage.buckets.images]\npublic = true\n',
+      routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("failed to parse config");
+      expect(requests).toHaveLength(0);
+    });
+  });
+
+  it.live("hard-fails an undecryptable encrypted: jwt_secret before any gateway call", () => {
+    const { layer, requests } = setupSeedBuckets(tmp.current, {
+      toml: '[auth]\njwt_secret = "encrypted:not-a-real-ciphertext"\n[storage.buckets.images]\npublic = true\n',
+      routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("failed to parse config");
       expect(requests).toHaveLength(0);
     });
   });
