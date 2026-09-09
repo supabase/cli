@@ -40,6 +40,7 @@ import {
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { DbConfigResolver } from "../../command-internal/db-config.service.ts";
 import { DbConnection, type DbSession } from "../../command-internal/db-connection.service.ts";
+import { DbExecError } from "../../command-internal/db-connection.errors.ts";
 import { DockerRun } from "../../command-internal/docker-run.service.ts";
 import { EdgeRuntimeScript } from "../../command-internal/edge-runtime-script.service.ts";
 import { PgDeltaSslProbe } from "../../command-internal/pgdelta-ssl-probe.service.ts";
@@ -302,7 +303,9 @@ function makeMigrationSession(
     }
     if (params !== undefined) {
       if (historyUpdateFails) {
-        return Effect.fail(new Error("connection reset while updating migration history"));
+        return Effect.fail(
+          new DbExecError({ message: "connection reset while updating migration history" }),
+        );
       }
       historyUpserts.push(params);
     }
