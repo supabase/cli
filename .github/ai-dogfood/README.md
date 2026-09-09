@@ -88,7 +88,8 @@ never does. Containment, not proof of isolation:
   project prefix (so sweep can always find leftovers).
 - After Codex, the dogfood job deletes and checks out `trusted/` again before
   validate/redact, and uploads `report.json` only if that step succeeds.
-  `post-report` re-redacts on a fresh runner before posting the comment.
+  That raises the bar on a rewritten redactor; bun on the same runner is
+  still residual. `post-report` re-redacts on a fresh runner before posting.
 - A malicious same-repo PR can still abuse the staging token once the CLI
   runs. The wrapper, fork ban, maintainer trigger, unique project prefix, and
   always-on sweep are the blast-radius limits. Treat artifacts and the posted
