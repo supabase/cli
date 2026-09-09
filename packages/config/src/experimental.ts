@@ -32,6 +32,12 @@ const inspectRule = Schema.Struct({
 }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({})));
 
 export const experimental = Schema.Struct({
+  stack: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description: "Use the new local stack backend for top-level start and stop commands.",
+      tags,
+    }),
+  ),
   orioledb_version: Schema.optionalKey(
     Schema.String.annotate({
       description: "Postgres storage engine version for OrioleDB.",

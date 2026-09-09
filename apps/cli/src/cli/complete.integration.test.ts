@@ -56,6 +56,7 @@ function makeDeps(argv: ReadonlyArray<string>, captureTelemetry: CompleteDeps["c
     stdoutWrite: (message) => {
       stdoutWrites.push(message);
     },
+    stderrWrite: () => {},
     exit: (code) => {
       exits.push(code);
     },
