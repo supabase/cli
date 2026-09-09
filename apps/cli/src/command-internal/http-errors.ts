@@ -97,6 +97,15 @@ export function stripControlChars(input: string): string {
   return out;
 }
 
+/**
+ * The generic status-message shape a `statusMessage` callback (passed to
+ * `mapHttpError`/`classifyProjectLookupError`) falls back to when it has no
+ * purpose-written message for the status it received.
+ */
+export function unexpectedStatusMessage(status: number, body: string): string {
+  return `unexpected status ${status}: ${body}`;
+}
+
 export type NetworkErrorFactory<E> = new (args: {
   readonly message: string;
   readonly decode?: boolean;

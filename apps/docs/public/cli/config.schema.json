@@ -651,6 +651,16 @@
               "description": "Controls the minimum amount of time that must pass before sending another sms otp.",
               "default": "5s"
             },
+            "otp_length": {
+              "type": "number",
+              "description": "Number of characters used in the SMS OTP.",
+              "default": 6
+            },
+            "otp_expiry": {
+              "type": "number",
+              "description": "Number of seconds before the SMS OTP expires.",
+              "default": 60
+            },
             "twilio": {
               "type": "object",
               "properties": {
@@ -668,6 +678,10 @@
                   "type": "string",
                   "description": "The message service SID for the Twilio API.",
                   "default": ""
+                },
+                "content_sid": {
+                  "type": "string",
+                  "description": "The content SID of a WhatsApp/Messaging Content Template for the Twilio API."
                 },
                 "auth_token": {
                   "type": "string",
@@ -964,6 +978,47 @@
                 "redirect_uri": {
                   "type": "string",
                   "description": "The URI the Facebook OAuth2 provider will redirect to with the code and state values.",
+                  "default": ""
+                },
+                "skip_nonce_check": {
+                  "type": "boolean",
+                  "description": "If true, the nonce check will be skipped.",
+                  "default": false
+                },
+                "email_optional": {
+                  "type": "boolean",
+                  "description": "If true, authentication succeeds when the provider does not return an email address.",
+                  "default": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "figma": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Use the Figma OAuth provider.",
+                  "default": false
+                },
+                "client_id": {
+                  "type": "string",
+                  "description": "Client ID for the Figma OAuth provider.",
+                  "default": ""
+                },
+                "secret": {
+                  "type": "string",
+                  "description": "Client secret for the Figma OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_FIGMA_SECRET)"]
+                },
+                "url": {
+                  "type": "string",
+                  "description": "The base URL used for constructing the URLs to request authorization and access tokens.",
+                  "default": ""
+                },
+                "redirect_uri": {
+                  "type": "string",
+                  "description": "The URI the Figma OAuth2 provider will redirect to with the code and state values.",
                   "default": ""
                 },
                 "skip_nonce_check": {
@@ -2345,6 +2400,10 @@
     "experimental": {
       "type": "object",
       "properties": {
+        "stack": {
+          "type": "boolean",
+          "description": "Use the new local stack backend for top-level start and stop commands."
+        },
         "orioledb_version": {
           "type": "string",
           "description": "Postgres storage engine version for OrioleDB."
@@ -3095,6 +3154,16 @@
                             "description": "Controls the minimum amount of time that must pass before sending another sms otp.",
                             "default": "5s"
                           },
+                          "otp_length": {
+                            "type": "number",
+                            "description": "Number of characters used in the SMS OTP.",
+                            "default": 6
+                          },
+                          "otp_expiry": {
+                            "type": "number",
+                            "description": "Number of seconds before the SMS OTP expires.",
+                            "default": 60
+                          },
                           "twilio": {
                             "type": "object",
                             "properties": {
@@ -3112,6 +3181,10 @@
                                 "type": "string",
                                 "description": "The message service SID for the Twilio API.",
                                 "default": ""
+                              },
+                              "content_sid": {
+                                "type": "string",
+                                "description": "The content SID of a WhatsApp/Messaging Content Template for the Twilio API."
                               },
                               "auth_token": {
                                 "type": "string",
@@ -3408,6 +3481,47 @@
                               "redirect_uri": {
                                 "type": "string",
                                 "description": "The URI the Facebook OAuth2 provider will redirect to with the code and state values.",
+                                "default": ""
+                              },
+                              "skip_nonce_check": {
+                                "type": "boolean",
+                                "description": "If true, the nonce check will be skipped.",
+                                "default": false
+                              },
+                              "email_optional": {
+                                "type": "boolean",
+                                "description": "If true, authentication succeeds when the provider does not return an email address.",
+                                "default": false
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "figma": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean",
+                                "description": "Use the Figma OAuth provider.",
+                                "default": false
+                              },
+                              "client_id": {
+                                "type": "string",
+                                "description": "Client ID for the Figma OAuth provider.",
+                                "default": ""
+                              },
+                              "secret": {
+                                "type": "string",
+                                "description": "Client secret for the Figma OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_FIGMA_SECRET)"]
+                              },
+                              "url": {
+                                "type": "string",
+                                "description": "The base URL used for constructing the URLs to request authorization and access tokens.",
+                                "default": ""
+                              },
+                              "redirect_uri": {
+                                "type": "string",
+                                "description": "The URI the Figma OAuth2 provider will redirect to with the code and state values.",
                                 "default": ""
                               },
                               "skip_nonce_check": {
@@ -4789,6 +4903,10 @@
                   "experimental": {
                     "type": "object",
                     "properties": {
+                      "stack": {
+                        "type": "boolean",
+                        "description": "Use the new local stack backend for top-level start and stop commands."
+                      },
                       "orioledb_version": {
                         "type": "string",
                         "description": "Postgres storage engine version for OrioleDB."

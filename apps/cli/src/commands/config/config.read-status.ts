@@ -1,15 +1,4 @@
-import { sanitizeInlineName } from "../../command-internal/http-errors.ts";
-
-/**
- * The generic status-message shape every Management API status check in the
- * `config` command family falls back to when it has no purpose-written
- * message for the status it received (including the six per-resource update
- * requests `config push` makes, and the branch-resolution lookup `config
- * diff`/`config pull` share).
- */
-export function unexpectedStatusMessage(status: number, body: string): string {
-  return `unexpected status ${status}: ${body}`;
-}
+import { sanitizeInlineName, unexpectedStatusMessage } from "../../command-internal/http-errors.ts";
 
 /**
  * Purpose-written messages for the status codes a wrong or inaccessible ref

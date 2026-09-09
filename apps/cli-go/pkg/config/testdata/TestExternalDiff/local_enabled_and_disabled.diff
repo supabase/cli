@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -84,7 +84,7 @@
+@@ -89,7 +89,7 @@
  
  [external]
  [external.apple]
@@ -10,9 +10,9 @@ diff remote[auth] local[auth]
  client_id = "test-client-1,test-client-2"
  secret = "hash:ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"
  url = ""
-@@ -91,9 +91,9 @@
- redirect_uri = ""
+@@ -97,9 +97,9 @@
  skip_nonce_check = false
+ email_optional = false
  [external.azure]
 -enabled = false
 -client_id = ""
@@ -23,9 +23,9 @@ diff remote[auth] local[auth]
  url = ""
  redirect_uri = ""
  skip_nonce_check = false
-@@ -140,7 +140,7 @@
- redirect_uri = ""
+@@ -153,7 +153,7 @@
  skip_nonce_check = false
+ email_optional = false
  [external.google]
 -enabled = true
 +enabled = false

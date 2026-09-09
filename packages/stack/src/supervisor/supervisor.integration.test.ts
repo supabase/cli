@@ -49,11 +49,7 @@ import type { SupervisorIngress } from "./Ingress.ts";
 
 const identity = {
   projectRoot: "/tmp/supabase-supervisor",
-  checkoutRoot: "/tmp/supabase-supervisor",
-  workspaceId: "/tmp/supabase-supervisor",
-  checkoutId: "/tmp/supabase-supervisor",
   branchContext: "ordinary-workspace",
-  localProjectKey: ".",
   stackName: "supervisor",
 } as const;
 

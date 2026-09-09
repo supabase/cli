@@ -56,6 +56,15 @@ describe("extractCommandPath", () => {
       "serve",
     ]);
   });
+
+  it("skips short-cluster and separated boolean values", () => {
+    expect(extractCommandPath(["-yo", "json", "--debug", "false", "start"])).toEqual(["start"]);
+    expect(extractCommandPath(["-ho", "json", "start"])).toEqual(["start"]);
+  });
+
+  it("stops at the positional argument boundary", () => {
+    expect(extractCommandPath(["--", "start"])).toEqual([]);
+  });
 });
 
 describe("local shorthand clusters", () => {

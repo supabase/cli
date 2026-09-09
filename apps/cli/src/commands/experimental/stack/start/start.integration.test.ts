@@ -32,7 +32,7 @@ import { experimentalStackStart } from "./start.handler.ts";
 import { ExperimentalStackStartError } from "./start.errors.ts";
 import { experimentalStackStartCommand } from "./start.command.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
-import { CommandRuntime } from "../../../../shared/runtime/command-runtime.service.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import {
   actionability,
@@ -123,6 +123,7 @@ function handlerLayer(opts: {
       ),
   });
   const apiLayer = Layer.succeed(ExperimentalStackApi, {
+    findStack: () => Effect.succeed(Option.none()),
     createStack: (options) => {
       opts.onCreate?.(options);
       return Effect.succeed(opts.stack);
@@ -197,6 +198,7 @@ describe("experimental stack start targeting", () => {
 
   it.effect("classifies an existing stack runtime mismatch as provided flags", () => {
     const api = Layer.succeed(ExperimentalStackApi, {
+      findStack: () => Effect.succeed(Option.none()),
       createStack: () => Effect.die("unused"),
       openStack: () => Effect.die("unused"),
       inspectStack: () =>
@@ -503,6 +505,7 @@ describe("experimental stack start targeting", () => {
         },
       }),
       Layer.succeed(ExperimentalStackApi, {
+        findStack: () => Effect.succeed(Option.none()),
         createStack: () => {
           created = true;
           return Effect.die("create should not run");
@@ -536,27 +539,21 @@ describe("experimental stack start parser", () => {
     const stack = fakeStack("e".repeat(64), () => Effect.succeed(status("e".repeat(64))));
     const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     const command = experimentalStackStartCommand.pipe(
+      Command.provide(commandRuntimeLayer(["stack", "start"])),
       Command.provide(
         Layer.mergeAll(setup.layer, output.layer, analytics.layer, processControl.layer),
       ),
     );
     const run = Command.runWith(command, { version: "0.0.0-test" })([]);
-    const runtime = Layer.mergeAll(
-      BunServices.layer,
-      CliOutput.layer(textCliOutputFormatter()),
-      Layer.succeed(
-        CommandRuntime,
-        CommandRuntime.of({ commandPath: ["root"], commandRunId: "root-command-run-id" }),
-      ),
-    );
+    const runtime = Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()));
 
     return Effect.gen(function* () {
       yield* run.pipe(Effect.provide(runtime));
       yield* run.pipe(Effect.provide(runtime));
       const events = analytics.captured.filter((event) => event.event === "cli_command_executed");
       expect(events).toHaveLength(2);
-      expect(events[0]?.properties.command).toBe("experimental stack start");
-      expect(events[1]?.properties.command).toBe("experimental stack start");
+      expect(events[0]?.properties.command).toBe("stack start");
+      expect(events[1]?.properties.command).toBe("stack start");
       expect(events[0]?.properties.command_run_id).toBeDefined();
       expect(events[1]?.properties.command_run_id).toBeDefined();
       expect(events[0]?.properties.command_run_id).not.toBe(events[1]?.properties.command_run_id);

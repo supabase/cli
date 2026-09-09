@@ -31,45 +31,22 @@ export class DbPullEngineConflictError extends Data.TaggedError("DbPullEngineCon
 }
 
 /**
- * The remote migration history does not match local files; message text is
- * an established output contract. The actionable `supabase migration repair`
- * suggestion is attached separately.
- */
-export class DbPullMigrationConflictError extends Data.TaggedError("DbPullMigrationConflictError")<{
-  readonly message: string;
-  readonly suggestion: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.migrationDrift;
-  }
-}
-
-/**
- * The diff produced no schema changes; message text is an established output
- * contract. This surfaces as a (non-zero exit) error rather than a success,
- * unlike `db diff` which prints it and exits 0.
- */
-export class DbPullInSyncError extends Data.TaggedError("DbPullInSyncError")<{
-  readonly message: string;
-  /**
-   * Explains the non-zero exit instead of letting `Output.fail` append the
-   * generic "Try rerunning the command with --debug" footer — an in-sync
-   * database is a finding, not a failure to troubleshoot. The message and exit
-   * code stay Go-identical; only the footer diverges (see
-   * `docs/go-cli-divergences.md`).
-   */
-  readonly suggestion: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dbFinding;
-  }
-}
-
-/**
  * Writing the migration file / updating the remote migration-history table failed.
  */
 export class DbPullWriteError extends Data.TaggedError("DbPullWriteError")<{
   readonly message: string;
+  /**
+   * Absolute path(s) of migration file(s) `runDbPull` had already written to disk
+   * before THIS failure — populated when the remote migration-history update
+   * (`updateMigrationHistory`, the "Update remote migration history table?" step)
+   * fails AFTER the migration file write it's meant to record already succeeded.
+   * `undefined`/omitted for every other `DbPullWriteError` (a failed file write
+   * itself never reaches this field, since nothing new was written in that case).
+   * Read by `pull.aggregate.ts`'s `pullFailedStepResult` (via `hasWrittenSoFar`) so
+   * `supabase pull`'s `db` step can report the on-disk migration instead of always
+   * claiming `written: []` on a failed pull.
+   */
+  readonly writtenSoFar?: ReadonlyArray<string>;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.permission;

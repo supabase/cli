@@ -1,7 +1,8 @@
-# pnpm 12 parses patch files with a Rust patch parser that rejects a carriage
-# return in the `---`/`+++` header lines. Git for Windows checks text files out
-# with CRLF by default, which broke `pnpm install` on the Windows release
-# smoke-test. Keep patch files LF everywhere.
+# pnpm 12 briefly had a bug (pnpm/pnpm#14557) where it parsed patch files with a 
+# Rust patch parser that rejects a carriage return in the `---`/`+++` header lines.
+# Git for Windows checks text files out with CRLF by default, which broke
+# `pnpm install` on the Windows release smoke-test.
+# This guarantees that we keep patch files LF everywhere.
 patches/*.patch text eol=lf
 
 # Generated artifacts. `linguist-generated` keeps these out of GitHub's language

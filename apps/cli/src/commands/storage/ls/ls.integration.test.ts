@@ -3,9 +3,8 @@ import { Effect, Exit, Option } from "effect";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { VALID_REF } from "../../../../tests/helpers/command-mocks.ts";
+import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { setupStorage } from "../../../../tests/helpers/storage.ts";
-import { useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import { storageLs } from "./ls.handler.ts";
 import type { StorageLsFlags } from "./ls.command.ts";
 
@@ -265,6 +264,30 @@ describe("storage ls", () => {
       expect(requests).toHaveLength(0);
       expect(linkedCache.cached).toBe(false);
     });
+  });
+
+  it.live("signs --local requests with a SUPABASE_AUTH_SERVICE_ROLE_KEY from supabase/.env", () => {
+    // The storage frame loads the project dotenv itself (no db reset / seed
+    // caller hands one in), so the auth override must reach the resolver from
+    // that walk too. Pin the ambient var away so only the dotenv value counts.
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      files: { "supabase/.env": "SUPABASE_AUTH_SERVICE_ROLE_KEY=sb_secret_dotenv_only_key\n" },
+      routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
+    });
+    return withEnvVar(
+      "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+      undefined,
+      Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(requests.length).toBeGreaterThan(0);
+        expect(requests.every((r) => r.headers["apikey"] === "sb_secret_dotenv_only_key")).toBe(
+          true,
+        );
+      }),
+    );
   });
 
   it.live("emits a { paths } result in json mode", () => {

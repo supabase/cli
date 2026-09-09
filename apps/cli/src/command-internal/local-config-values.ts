@@ -572,9 +572,11 @@ export function envOverrideMaxClientConn(
  * Applied AFTER {@link envOverride}: an env-sourced override lands on the
  * same field and goes through the same decrypt step as a TOML-sourced value,
  * so `SUPABASE_AUTH_JWT_SECRET=encrypted:...` is decrypted too, not just the
- * config.toml value.
+ * config.toml value. Exported for the storage-credentials resolver
+ * (`resolveLocalServiceRoleKey`), which applies the same composition to
+ * `auth.{jwt_secret,service_role_key}` for the local Storage gateway.
  */
-function decryptAuthSecret(
+export function decryptAuthSecret(
   value: string | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): string | undefined {
@@ -788,8 +790,14 @@ export function resolveAuthCaptcha(
     : undefined;
 }
 
-/** `(a *auth) generateAPIKeys`. */
-function resolveJwtSecret(configured: string | undefined): string {
+/**
+ * Resolve the signing secret from the (override-applied, decrypted)
+ * `auth.jwt_secret`: empty falls back to `defaultJwtSecret`, shorter than
+ * {@link MIN_JWT_SECRET_LENGTH} throws {@link InvalidJwtSecretError}.
+ * Exported for the storage-credentials resolver (`resolveLocalServiceRoleKey`),
+ * which derives the local Storage gateway's service-role key from it.
+ */
+export function resolveJwtSecret(configured: string | undefined): string {
   if (configured === undefined || configured.length === 0) return defaultJwtSecret;
   if (configured.length < MIN_JWT_SECRET_LENGTH) {
     throw new InvalidJwtSecretError();
