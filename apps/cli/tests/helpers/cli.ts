@@ -394,6 +394,11 @@ export function spawnSupabase(
   });
 
   if (options?.stdin !== undefined && proc.stdin) {
+    proc.stdin.on("error", (error) => {
+      if (!("code" in error && error.code === "EPIPE")) {
+        throw error;
+      }
+    });
     proc.stdin.write(options.stdin);
     proc.stdin.end();
   }
