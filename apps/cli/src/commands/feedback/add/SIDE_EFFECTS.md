@@ -107,7 +107,9 @@ event); the shared stream-json layer emits these for every `output.task`.
 - Message resolution order: positional args → piped stdin (non-TTY) →
   interactive prompt (TTY, text mode) → error.
 - Piped stdin is read in constant memory with a 64 KB cap; input past the cap
-  fails as over-limit (exit 1) without buffering the rest of the pipe.
+  fails as over-limit (exit 1) without buffering the rest of the pipe. A read
+  error mid-pipe discards whatever was buffered and falls through to the next
+  source (never submits a truncated prefix).
 - Submission context: CLI version, user agent (`SupabaseCLI/<version>` from
   `CommandSettings`), OS/arch, agent detection, and — when the workdir has a
   linked project — its project ref. The resolved access token is never sent.

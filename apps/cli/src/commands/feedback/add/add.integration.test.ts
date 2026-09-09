@@ -2,7 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer, Option, Stdio } from "effect";
+import { Effect, Layer, Option, Stdio, Stream } from "effect";
+import { systemError } from "effect/PlatformError";
 import type { FeedbackSubmission } from "../../../shared/feedback/feedback-client.service.ts";
 import {
   FeedbackBackendError,
@@ -10,6 +11,8 @@ import {
 } from "../../../shared/feedback/feedback-client.service.ts";
 import { AgentFlag, OutputFlag } from "../../../command-internal/global-flags.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { stdinLayerFrom } from "../../../shared/runtime/stdin.layer.ts";
+import type { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { AiTool } from "../../../shared/telemetry/ai-tool.service.ts";
 import {
   mockContextualAnalytics,
@@ -18,6 +21,7 @@ import {
   mockRuntimeInfo,
   mockStdin,
   mockTelemetryRuntime,
+  mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -88,6 +92,8 @@ function setupFeedback(
     output?: Parameters<typeof mockOutput>[0];
     stdinIsTTY?: boolean;
     pipedInput?: string;
+    /** Replaces the fixed `mockStdin` with a `Stdin` over a controlled byte stream. */
+    stdin?: Layer.Layer<Stdin>;
     agentName?: string;
     agentFlag?: "auto" | "yes" | "no";
     /** Simulates the Go-compat `-o`/`--output` global flag. */
@@ -109,7 +115,7 @@ function setupFeedback(
     out.layer,
     submitter.layer,
     telemetryState.layer,
-    mockStdin(opts.stdinIsTTY ?? true, opts.pipedInput),
+    opts.stdin ?? mockStdin(opts.stdinIsTTY ?? true, opts.pipedInput),
     mockRuntimeInfo({ platform: "darwin", arch: "arm64" }),
     mockTelemetryRuntime({
       cliVersion: "9.9.9",
@@ -341,6 +347,36 @@ describe("feedback add", () => {
       yield* feedbackAdd({ message: [] });
 
       expect(submitter.submissions[0]?.message).toBe("piped feedback");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("discards a partially read pipe when stdin fails mid-stream", () => {
+    // The pipe delivers a chunk and then the read fails. The buffered prefix
+    // must not be submitted as if it were the whole message — a truncated
+    // sentence is corrupted feedback, not the user's feedback. With no other
+    // source (non-interactive stdout), the command fails as empty instead.
+    const readError = systemError({
+      module: "Stdin",
+      method: "read",
+      _tag: "Unknown",
+      description: "read EIO",
+    });
+    const brokenPipe = Stream.concat(
+      Stream.make(new TextEncoder().encode("the first half of my feedb")),
+      Stream.fail(readError),
+    );
+    const { layer, submitter } = setupFeedback({
+      output: { interactive: false },
+      stdin: stdinLayerFrom(brokenPipe).pipe(Layer.provide(mockTty({ stdinIsTty: false }))),
+    });
+    return Effect.gen(function* () {
+      const error = yield* feedbackAdd({ message: [] }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "FeedbackEmptyMessageError",
+        message: FEEDBACK_EMPTY_MESSAGE,
+      });
+      expect(submitter.submissions).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 

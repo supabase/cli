@@ -27,11 +27,14 @@ import {
 // Collects piped stdin in constant memory, bailing out as over-limit once the
 // byte cap is crossed — the documented character limit makes anything past the
 // cap over-limit without buffering the rest of the pipe. Read errors degrade
-// to "no piped input", the same as `readPipedText`.
+// to "no piped input", the same as `readPipedText` — including errors that
+// arrive after some chunks were already buffered: the prefix is discarded
+// rather than submitted as if it were the whole message.
 const readCappedPipedText = (pipe: Stream.Stream<Uint8Array, PlatformError>) =>
   Effect.gen(function* () {
     const parts: Array<Uint8Array> = [];
     let total = 0;
+    let readFailed = false;
     yield* pipe.pipe(
       Stream.runForEachWhile((chunk) =>
         Effect.sync(() => {
@@ -40,8 +43,13 @@ const readCappedPipedText = (pipe: Stream.Stream<Uint8Array, PlatformError>) =>
           return total <= FEEDBACK_PIPE_CAP_BYTES;
         }),
       ),
-      Effect.catchTag("PlatformError", () => Effect.succeed(undefined)),
+      Effect.catchTag("PlatformError", () =>
+        Effect.sync(() => {
+          readFailed = true;
+        }),
+      ),
     );
+    if (readFailed) return Option.none<string>();
     if (total > FEEDBACK_PIPE_CAP_BYTES) {
       return yield* Effect.fail(
         new FeedbackMessageTooLongError({ message: FEEDBACK_PIPE_TOO_LONG_MESSAGE }),
