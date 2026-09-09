@@ -5,19 +5,6 @@ import { InvalidStackIdentityError } from "../public/Errors.ts";
 const FULL_REF_PATTERN = /^refs\/.+$/;
 const OBJECT_ID_PATTERN = /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/;
 
-export interface GitIdentityParts {
-  readonly workspaceId: string;
-  readonly checkoutId: string;
-  readonly branchContext: string;
-  readonly localProjectKey: string;
-  readonly checkoutRoot: string;
-}
-
-interface CheckoutMetadata {
-  readonly checkoutRoot: string;
-  readonly gitDirectory: string;
-}
-
 const invalidMetadata = (path: string, reason: string): InvalidStackIdentityError =>
   new InvalidStackIdentityError({ path, reason, message: reason });
 
@@ -55,20 +42,17 @@ const canonicalGitDirectory = (
     ),
   );
 
-const locateCheckout = (
+const locateGitDirectory = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   canonicalProjectRoot: string,
-): Effect.Effect<CheckoutMetadata | undefined, InvalidStackIdentityError, FileSystem.FileSystem> =>
+): Effect.Effect<string | undefined, InvalidStackIdentityError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     let directory = canonicalProjectRoot;
     while (true) {
       const gitEntry = path.join(directory, ".git");
       if (yield* fs.exists(gitEntry)) {
-        return {
-          checkoutRoot: directory,
-          gitDirectory: yield* canonicalGitDirectory(fs, path, directory, gitEntry),
-        };
+        return yield* canonicalGitDirectory(fs, path, directory, gitEntry);
       }
       const parent = path.dirname(directory);
       if (parent === directory) {
@@ -83,33 +67,6 @@ const locateCheckout = (
       ),
     ),
   );
-
-const resolveCommonDirectory = (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  gitDirectory: string,
-): Effect.Effect<string, InvalidStackIdentityError, FileSystem.FileSystem> => {
-  const commondir = path.join(gitDirectory, "commondir");
-  return Effect.gen(function* () {
-    if (!(yield* fs.exists(commondir))) {
-      return gitDirectory;
-    }
-    const target = (yield* fs.readFileString(commondir)).trim();
-    if (target.length === 0) {
-      return yield* invalidMetadata(commondir, "The commondir target is empty");
-    }
-    const commonDirectory = path.resolve(gitDirectory, target);
-    const info = yield* fs.stat(commonDirectory);
-    if (info.type !== "Directory") {
-      return yield* invalidMetadata(commondir, "The commondir target is not a directory");
-    }
-    return yield* fs.realPath(commonDirectory);
-  }).pipe(
-    Effect.catchTag("PlatformError", (error: PlatformError) =>
-      Effect.fail(invalidMetadata(commondir, `Unable to read commondir: ${error.message}`)),
-    ),
-  );
-};
 
 const resolveBranchContext = (
   fs: FileSystem.FileSystem,
@@ -144,45 +101,18 @@ const resolveBranchContext = (
     ),
   );
 
-const localProjectKey = (
-  path: Path.Path,
-  checkoutRoot: string,
-  canonicalProjectRoot: string,
-): Effect.Effect<string, InvalidStackIdentityError> => {
-  const relative = path.relative(checkoutRoot, canonicalProjectRoot);
-  if (relative === "") {
-    return Effect.succeed(".");
-  }
-  const normalized = relative.replaceAll("\\", "/");
-  if (normalized === ".." || normalized.startsWith("../") || path.isAbsolute(normalized)) {
-    return Effect.fail(
-      invalidMetadata(canonicalProjectRoot, "The project root is outside of the Git checkout"),
-    );
-  }
-  return Effect.succeed(normalized);
-};
-
 /** Resolves Git metadata without spawning Git or writing identity markers. */
-export const resolveGitIdentity = (
+export const resolveGitBranchContext = (
   canonicalProjectRoot: string,
 ): Effect.Effect<
-  GitIdentityParts | undefined,
+  string | undefined,
   InvalidStackIdentityError,
   FileSystem.FileSystem | Path.Path
 > =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const checkout = yield* locateCheckout(fs, path, canonicalProjectRoot);
-    if (checkout === undefined) {
-      return undefined;
-    }
-    const commonDirectory = yield* resolveCommonDirectory(fs, path, checkout.gitDirectory);
-    return {
-      workspaceId: commonDirectory,
-      checkoutId: checkout.gitDirectory,
-      branchContext: yield* resolveBranchContext(fs, path, checkout.gitDirectory),
-      localProjectKey: yield* localProjectKey(path, checkout.checkoutRoot, canonicalProjectRoot),
-      checkoutRoot: checkout.checkoutRoot,
-    };
+    const gitDirectory = yield* locateGitDirectory(fs, path, canonicalProjectRoot);
+    if (gitDirectory === undefined) return undefined;
+    return yield* resolveBranchContext(fs, path, gitDirectory);
   });

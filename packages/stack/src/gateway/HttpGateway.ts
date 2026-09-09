@@ -27,7 +27,7 @@ import type {
   HostListener,
   HostListenerHttpEvent,
   HostListenerHttpEvents,
-} from "../state/PortCoordinator.ts";
+} from "../supervisor/HostListener.ts";
 
 class GatewayBackendError extends Data.TaggedError("GatewayBackendError")<{
   readonly cause?: unknown;

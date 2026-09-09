@@ -5,33 +5,17 @@ import {
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
 
-export class ExperimentalStackStartError extends Data.TaggedError("ExperimentalStackStartError")<{
-  readonly reason:
-    | "invalid-config"
-    | "flags"
-    | "runtime"
-    | "registry"
-    | "port"
-    | "artifact"
-    | "lifecycle"
-    | "unknown";
+export class ExperimentalStackStopError extends Data.TaggedError("ExperimentalStackStopError")<{
+  readonly reason: "flags" | "invalid-config" | "lifecycle" | "unknown";
   readonly message: string;
-  readonly detail?: string;
   readonly suggestion?: string;
   readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
-      case "invalid-config":
-        return actionability.invalidConfig;
       case "flags":
         return actionability.provideFlags;
-      case "runtime":
-        return actionability.dockerNotRunning;
-      case "registry":
-      case "artifact":
-        return actionability.externalNetwork;
-      case "port":
+      case "invalid-config":
         return actionability.invalidConfig;
       case "lifecycle":
         return actionability.invalidConfig;
