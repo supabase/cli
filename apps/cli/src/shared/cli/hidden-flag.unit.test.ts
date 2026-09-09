@@ -12,7 +12,6 @@ import { legacyProjectsCommand } from "../../commands/projects/projects.command.
 import { legacyProjectsCreateCommand } from "../../commands/projects/create/create.command.ts";
 import { legacyStartCommand } from "../../commands/start/start.command.ts";
 import { legacyStopCommand } from "../../commands/stop/stop.command.ts";
-import { LEGACY_VALID_TOKEN } from "../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput, withEnv } from "../../../tests/helpers/mocks.ts";
 import { LEGACY_GLOBAL_FLAGS } from "../legacy/global-flags.ts";
 import { LegacyGoProxy } from "../legacy/go-proxy.service.ts";
@@ -52,17 +51,25 @@ const legacyTestRoot = Command.make("supabase").pipe(
   Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
+function parserCommand<Name extends string, Input, ContextInput, E, R>(
+  command: Command.Command<Name, Input, ContextInput, E, R>,
+  parsed: Array<unknown>,
+) {
+  return command.pipe(
+    Command.withHandler((flags) =>
+      Effect.sync(() => {
+        parsed.push(flags);
+      }),
+    ),
+  );
+}
+
 const silentCliOutputFormatter: CliOutput.Formatter = {
   formatCliError: () => "",
   formatError: () => "",
   formatErrors: () => "",
   formatHelpDoc: () => "",
   formatVersion: () => "",
-};
-
-const authenticatedEnv = {
-  SUPABASE_ACCESS_TOKEN: LEGACY_VALID_TOKEN,
-  ...(process.env["SystemRoot"] === undefined ? {} : { SystemRoot: process.env["SystemRoot"] }),
 };
 
 describe("native hidden flags", () => {
@@ -116,49 +123,48 @@ describe("native hidden flags", () => {
     ]);
   });
 
-  it("still parses and forwards every hidden flag by exact name", async () => {
-    const proxy = mockLegacyGoProxy();
+  it("passes hidden flag values to handlers by exact name", async () => {
+    const parsed: Array<unknown> = [];
+    const parserFunctionsCommand = Command.make("functions").pipe(
+      Command.withSubcommands([
+        parserCommand(legacyFunctionsDownloadCommand, parsed),
+        parserCommand(legacyFunctionsDeployCommand, parsed),
+        parserCommand(legacyFunctionsServeCommand, parsed),
+      ]),
+    );
+    const parserRoot = Command.make("supabase").pipe(
+      Command.withSubcommands([
+        parserCommand(legacyStartCommand, parsed),
+        parserCommand(legacyStopCommand, parsed),
+        parserFunctionsCommand,
+      ]),
+    );
+    const parserLayer = Layer.mergeAll(
+      withEnv({}),
+      mockOutput({ format: "text" }).layer,
+      CliOutput.layer(silentCliOutputFormatter),
+    );
+    const runParser = (args: ReadonlyArray<string>) =>
+      Command.runWith(parserRoot, { version: "0.0.0-test" })(args).pipe(
+        Effect.provide(parserLayer),
+      );
 
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          // `start` and `stop` are both natively ported (no longer `LegacyGoProxy` forwards),
-          // so they can fail for workdir/Docker-related reasons in this proxy-only test layer —
-          // the point here is only to prove the hidden `--preview`/`--backup` flags still parse
-          // by exact name, not that the commands succeed, matching the `functions deploy`/`serve`
-          // assertions below.
-          const startExit = yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
-            "start",
-            "--preview",
-          ]).pipe(Effect.exit);
-          expect(JSON.stringify(startExit)).not.toContain("UnrecognizedFlag");
-          const stopExit = yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
-            "stop",
-            "--backup=false",
-          ]).pipe(Effect.exit);
-          expect(JSON.stringify(stopExit)).not.toContain("UnrecognizedFlag");
-          // `functions download --use-docker` now runs the native Docker-unbundle
-          // path (CLI-1963) instead of forwarding to `LegacyGoProxy` — the
-          // deliberately-invalid slug makes it fail at `validateSlug`
-          // (`download.ts`, checked BEFORE `isDockerRunning`/any image pull),
-          // so the invocation stays fast and side-effect-free even on a CI
-          // runner with a live Docker daemon (a valid slug here triggered a
-          // real multi-second `docker pull` and timed this test out), while
-          // still proving the hidden flag parses by exact name.
-          // `--legacy-bundle` is the one remaining case that still forwards to the
-          // proxy, asserted below.
-          const downloadUseDockerExit = yield* Command.runWith(legacyTestRoot, {
-            version: "0.0.0-test",
-          })([
+          // Real commands use recorder handlers so assertions cover parser-to-handler values without runtime services.
+          yield* runParser(["start", "--preview"]);
+          yield* runParser(["stop", "--backup=false"]);
+          // All handlers are replaced with a recorder so this stays at the parser boundary.
+          yield* runParser([
             "functions",
             "download",
-            "Not_A_Valid-Slug!",
+            "hello",
             "--project-ref",
             "abcdefghijklmnopqrst",
             "--use-docker",
-          ]).pipe(Effect.exit);
-          expect(JSON.stringify(downloadUseDockerExit)).not.toContain("UnrecognizedFlag");
-          yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+          ]);
+          yield* runParser([
             "functions",
             "download",
             "hello",
@@ -166,45 +172,22 @@ describe("native hidden flags", () => {
             "abcdefghijklmnopqrst",
             "--legacy-bundle",
           ]);
-          const useDockerExit = yield* Command.runWith(legacyTestRoot, {
-            version: "0.0.0-test",
-          })(["functions", "deploy", "hello", "--use-docker"]).pipe(Effect.exit);
-          const legacyBundleExit = yield* Command.runWith(legacyTestRoot, {
-            version: "0.0.0-test",
-          })(["functions", "deploy", "hello", "--legacy-bundle"]).pipe(Effect.exit);
-          expect(JSON.stringify(useDockerExit)).not.toContain("UnrecognizedFlag");
-          expect(JSON.stringify(legacyBundleExit)).not.toContain("UnrecognizedFlag");
-          const serveExit = yield* Command.runWith(legacyTestRoot, {
-            version: "0.0.0-test",
-          })(["functions", "serve", "--all=false"]).pipe(Effect.exit);
-          expect(JSON.stringify(serveExit)).not.toContain("UnrecognizedFlag");
+          yield* runParser(["functions", "deploy", "hello", "--use-docker"]);
+          yield* runParser(["functions", "deploy", "hello", "--legacy-bundle"]);
+          yield* runParser(["functions", "serve", "--all=false"]);
         }),
-      ).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            withEnv(authenticatedEnv),
-            proxy.layer,
-            mockOutput({ format: "text" }).layer,
-            CliOutput.layer(textCliOutputFormatter()),
-          ),
-        ),
-      ) as Effect.Effect<void>,
+      ),
     );
-
-    expect(proxy.calls).toEqual([
-      [
-        "functions",
-        "download",
-        "hello",
-        "--project-ref",
-        "abcdefghijklmnopqrst",
-        "--legacy-bundle",
-      ],
+    expect(parsed).toEqual([
+      expect.objectContaining({ preview: true }),
+      expect.objectContaining({ backup: false }),
+      expect.objectContaining({ useDocker: true }),
+      expect.objectContaining({ legacyBundle: true }),
+      expect.objectContaining({ useDocker: true }),
+      expect.objectContaining({ legacyBundle: true }),
+      expect.objectContaining({ all: false }),
     ]);
-    // Guard, not a correctness assertion: this test drives 8 full command
-    // invocations through the real CLI tree, which can exceed the 5s default
-    // under CI file-level parallelism on a loaded runner.
-  }, 30_000);
+  });
 
   it("does not leak hidden flag names through unknown-flag suggestions", async () => {
     const proxy = mockLegacyGoProxy();
