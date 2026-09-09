@@ -39,13 +39,13 @@ appear in shareable debug output.
 
 ## Environment Variables
 
-| Variable                | Purpose                                                        | Required?                                                           |
-| ----------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                        | no (falls back to `~/.supabase/profile` → `supabase`)               |
-| `SUPABASE_WORKDIR`      | project directory override                                     | no (falls back to `--workdir` → cwd)                                |
-| `SUPABASE_ACCESS_TOKEN` | access token captured by `commandSettingsLayer`                | no (unused by this command)                                         |
-| `SUPABASE_PROJECT_ID`   | supplies the project-ref context when `--project-ref` is unset | no (falls back to `<workdir>/supabase/.temp/project-ref` → omitted) |
-| `SUPABASE_YES`          | auto-confirms the deletion prompt, same as `--yes`             | no                                                                  |
+| Variable                | Purpose                                                                                                      | Required?                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                                      | no (falls back to `~/.supabase/profile` → `supabase`)               |
+| `SUPABASE_WORKDIR`      | project directory override                                                                                   | no (falls back to `--workdir` → cwd)                                |
+| `SUPABASE_ACCESS_TOKEN` | access token captured by `commandSettingsLayer`                                                              | no (unused by this command)                                         |
+| `SUPABASE_PROJECT_ID`   | supplies the project-ref context when `--project-ref` is unset; must be a well-formed ref (exit 1 otherwise) | no (falls back to `<workdir>/supabase/.temp/project-ref` → omitted) |
+| `SUPABASE_YES`          | auto-confirms the deletion prompt, same as `--yes`                                                           | no                                                                  |
 
 Global telemetry consent env applies as with every command.
 
@@ -55,6 +55,7 @@ Global telemetry consent env applies as with every command.
 | ---- | ---------------------------------------------------------------------------------------------------------- |
 | `0`  | feedback deleted                                                                                           |
 | `1`  | token argument is not a UUID                                                                               |
+| `1`  | `--project-ref` or `SUPABASE_PROJECT_ID` is set but not a well-formed project ref (no request sent)        |
 | `1`  | no feedback matched (wrong token, already deleted, or project-ref/user-id context mismatch)                |
 | `1`  | confirmation declined, or prompt unavailable (non-interactive, `-o json`, or machine mode without `--yes`) |
 | `1`  | backend failure (PostgREST error, network failure, or 10 s timeout) on preview or delete                   |
@@ -121,12 +122,15 @@ every `output.task`.
   the token unlocks; machine modes return the deleted text in the result
   payload instead.
 - Deletion is a hard delete with no undo; tokens never expire.
-- Project-ref resolution order: `--project-ref` → `SUPABASE_PROJECT_ID` →
-  `<workdir>/supabase/.temp/project-ref` (written by `supabase link`) →
-  omitted. A row submitted from a linked project can only be previewed/deleted
-  with that same ref presented — rerun from the linked directory or pass
-  `--project-ref`. This mirrors `feedback add`'s resolution and works
-  logged-out (no auth dependency).
+- Project-ref resolution order: `--project-ref` (an empty value counts as
+  unset) → `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/project-ref`
+  (written by `supabase link`) → omitted. The flag and env values are validated
+  like every other command's explicit ref (a malformed value fails with the
+  shared invalid-ref error before any request); a missing, unreadable, or
+  malformed ref file degrades to "omitted". A row submitted from a linked
+  project can only be previewed/deleted with that same ref presented — rerun
+  from the linked directory or pass `--project-ref`. This mirrors
+  `feedback add`'s resolution and works logged-out (no auth dependency).
 - A row submitted while logged in (with telemetry consent) carries a `user_id`
   and can only be previewed/deleted while logged in as that same user — the
   persisted `distinct_id` is presented automatically as `x-feedback-user-id`.

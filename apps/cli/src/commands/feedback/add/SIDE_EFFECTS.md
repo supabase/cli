@@ -31,12 +31,12 @@ request times out after 10 s.
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                            | Required?                                                          |
-| ----------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                            | no (falls back to `~/.supabase/profile` → `supabase`)              |
-| `SUPABASE_WORKDIR`      | project directory override                                                         | no (falls back to `--workdir` → cwd)                               |
-| `SUPABASE_ACCESS_TOKEN` | access token captured by `commandSettingsLayer`                                    | no (unused by this command)                                        |
-| `SUPABASE_PROJECT_ID`   | overrides the submission's `project_ref`, taking priority over the linked-ref file | no (falls back to `<workdir>/supabase/.temp/project-ref` → `null`) |
+| Variable                | Purpose                                                                                                                          | Required?                                                          |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                                                          | no (falls back to `~/.supabase/profile` → `supabase`)              |
+| `SUPABASE_WORKDIR`      | project directory override                                                                                                       | no (falls back to `--workdir` → cwd)                               |
+| `SUPABASE_ACCESS_TOKEN` | access token captured by `commandSettingsLayer`                                                                                  | no (unused by this command)                                        |
+| `SUPABASE_PROJECT_ID`   | overrides the submission's `project_ref`, taking priority over the linked-ref file; must be a well-formed ref (exit 1 otherwise) | no (falls back to `<workdir>/supabase/.temp/project-ref` → `null`) |
 
 Agent-detection env vars (e.g. `CLAUDECODE`) are read indirectly by
 `@vercel/detect-agent` via `aiToolLayer` to set the submission's
@@ -50,6 +50,7 @@ every command.
 | `0`  | success                                                                               |
 | `1`  | no message from args, piped stdin, or an interactive prompt (`-o json` never prompts) |
 | `1`  | message over the 1000-character limit (checked client-side, no request sent)          |
+| `1`  | `SUPABASE_PROJECT_ID` is set but not a well-formed project ref (no request sent)      |
 | `1`  | submit failure (PostgREST error, network failure, or 10s timeout)                     |
 | `1`  | `-o`/`--output` value outside the command's `pretty\|json` enum (validated pre-run)   |
 
@@ -123,10 +124,13 @@ event); the shared stream-json layer emits these for every `output.task`.
   preview/delete it later (`feedback delete` sends it automatically).
 - Project-ref resolution order: `SUPABASE_PROJECT_ID` →
   `<workdir>/supabase/.temp/project-ref` (written by `supabase link`) → `null`.
-  This mirrors the soft-load half of `ProjectRefResolver.resolveOptional`
-  but reads the file directly, so the command has no auth dependency and works
-  when the user is not logged in. Note `CommandSettings.projectId` alone is only
-  the env var — it is NOT linked-project-aware.
+  The env value is validated like every other command's explicit ref (a
+  malformed value fails with the shared invalid-ref error); the file is the
+  soft half of `ProjectRefResolver.resolveOptional`, read directly so the
+  command has no auth dependency and works when the user is not logged in — a
+  missing, unreadable, or malformed file degrades to `null`. Note
+  `CommandSettings.projectId` alone is only the env var — it is NOT
+  linked-project-aware.
 - Submission goes through the SECURITY DEFINER `submit_interfaces_feedback`
   RPC (the table has no insert grant), which returns a server-generated
   `delete_token` exactly once. The token is the only way to delete the

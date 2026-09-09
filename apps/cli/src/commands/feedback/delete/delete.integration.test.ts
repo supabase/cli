@@ -25,6 +25,7 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import type { FeedbackDeleteArgs } from "./delete.command.ts";
 import { feedbackDeleteHandler } from "./delete.command.ts";
+import { INVALID_PROJECT_REF_MESSAGE } from "../../../config/project-ref.service.ts";
 import { FEEDBACK_INVALID_TOKEN_MESSAGE, FEEDBACK_NOT_FOUND_MESSAGE } from "./delete.errors.ts";
 import { feedbackDelete } from "./delete.handler.ts";
 
@@ -357,6 +358,50 @@ describe("feedback delete", () => {
       yield* feedbackDelete(deleteArgs({ projectRef: Option.some("flagflagflagflagflag") }));
 
       expect(client.previewCalls).toEqual([{ token: TOKEN, projectRef: "flagflagflagflagflag" }]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a malformed --project-ref instead of falling through", () => {
+    // The user typed the ref: report the typo (the same InvalidProjectRefError
+    // every other command raises) rather than silently sending the linked
+    // checkout's context and reporting a misleading "not found".
+    const { layer, client } = setupFeedbackDelete({ yes: true });
+    writeLinkedProjectRef(tempRoot.current, VALID_REF);
+    return Effect.gen(function* () {
+      const error = yield* feedbackDelete(
+        deleteArgs({ projectRef: Option.some("Not-A-Ref") }),
+      ).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "InvalidProjectRefError",
+        ref: "Not-A-Ref",
+        message: INVALID_PROJECT_REF_MESSAGE,
+      });
+      expect(client.previewCalls).toHaveLength(0);
+      expect(client.deleteCalls).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a malformed SUPABASE_PROJECT_ID instead of falling through", () => {
+    const { layer, client } = setupFeedbackDelete({ yes: true, projectIdEnv: "not-a-valid-ref!" });
+    writeLinkedProjectRef(tempRoot.current, VALID_REF);
+    return Effect.gen(function* () {
+      const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "InvalidProjectRefError", ref: "not-a-valid-ref!" });
+      expect(client.previewCalls).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("treats an empty --project-ref as unset, like ProjectRefResolver", () => {
+    const { layer, client } = setupFeedbackDelete({
+      yes: true,
+      projectIdEnv: "envenvenvenvenvenvre",
+    });
+    return Effect.gen(function* () {
+      yield* feedbackDelete(deleteArgs({ projectRef: Option.some("") }));
+
+      expect(client.previewCalls).toEqual([{ token: TOKEN, projectRef: "envenvenvenvenvenvre" }]);
     }).pipe(Effect.provide(layer));
   });
 

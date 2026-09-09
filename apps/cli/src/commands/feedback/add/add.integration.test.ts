@@ -30,6 +30,7 @@ import {
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { invalidOutputFormatMessage } from "../../../command-internal/go-output-flag.ts";
+import { INVALID_PROJECT_REF_MESSAGE } from "../../../config/project-ref.service.ts";
 import { FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import { feedbackAddHandler } from "./add.command.ts";
 import {
@@ -326,15 +327,20 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("discards an invalid SUPABASE_PROJECT_ID and falls through to the linked ref", () => {
-    // Same validation boundary as the file: a malformed env override is dropped
-    // (matching `resolveSoftLinkedRef`) and resolution continues.
+  it.live("rejects a malformed SUPABASE_PROJECT_ID instead of submitting unlinked", () => {
+    // A value the user supplied is validated the way `ProjectRefResolver` does
+    // for every command: a typo fails as invalid input rather than silently
+    // falling through to the linked ref file (or to "unlinked").
     const { layer, submitter } = setupFeedback({ projectIdEnv: "not-a-valid-ref!" });
     writeLinkedProjectRef(tempRoot.current, VALID_REF);
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: ["invalid env ref feedback"] });
+      const error = yield* feedbackAdd({ message: ["invalid env ref feedback"] }).pipe(Effect.flip);
 
-      expect(submitter.submissions[0]?.projectRef).toBe(VALID_REF);
+      expect(error).toMatchObject({
+        _tag: "InvalidProjectRefError",
+        message: INVALID_PROJECT_REF_MESSAGE,
+      });
+      expect(submitter.submissions).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 

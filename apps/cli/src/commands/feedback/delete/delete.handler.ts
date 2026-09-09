@@ -51,10 +51,15 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
     // Project-ref context gate: rows submitted with a project ref only match
     // when the same ref is presented. Flag → SUPABASE_PROJECT_ID → the linked
     // ref file; extra context against a context-free row is ignored server-side,
-    // so sending whatever resolves is always safe.
+    // so sending whatever resolves is always safe. An empty `--project-ref ""`
+    // counts as unset, as in `ProjectRefResolver`; a malformed flag or env value
+    // fails as invalid input instead of falling through.
     const projectRef = yield* resolveFeedbackProjectRef(
       cliSettings.workdir,
-      Option.orElse(args.projectRef, () => cliSettings.projectId),
+      Option.orElse(
+        Option.filter(args.projectRef, (ref) => ref.length > 0),
+        () => cliSettings.projectId,
+      ),
     ).pipe(Effect.map(Option.getOrUndefined));
 
     // User-id context gate, same shape as the project-ref one: rows submitted
