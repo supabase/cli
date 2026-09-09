@@ -107,7 +107,7 @@ export interface ClassifyCompletionInput {
 }
 
 export interface CompleteDeps {
-  readonly root: Command.Command.Any;
+  readonly root: Command.Command.Any | undefined;
   readonly argv: ReadonlyArray<string>;
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly stdoutWrite: (message: string) => void;
@@ -1525,10 +1525,11 @@ export function classifyCompletion(input: ClassifyCompletionInput): CompletionRe
  * (see the module doc comment for why that case isn't otherwise reproduced).
  */
 export function respondToComplete(
-  root: Command.Command.Any,
+  root: Command.Command.Any | undefined,
   argv: ReadonlyArray<string>,
 ): CompletionResult | undefined {
   if (argv[0] !== "__complete" && argv[0] !== "__completeNoDesc") return undefined;
+  if (root === undefined) return undefined;
 
   const args = argv.slice(1);
   if (args.length === 0) return undefined;
@@ -1745,7 +1746,7 @@ export async function tryComplete(deps: CompleteDeps): Promise<boolean> {
   return true;
 }
 
-export function defaultCompleteDeps(root: Command.Command.Any): CompleteDeps {
+export function defaultCompleteDeps(root?: Command.Command.Any): CompleteDeps {
   return {
     root,
     argv: process.argv.slice(2),

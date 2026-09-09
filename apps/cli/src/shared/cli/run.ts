@@ -69,7 +69,7 @@ import {
  * makes an accidentally unprovided service fail at the shell boundary instead
  * of becoming a runtime missing-service defect.
  */
-type AllowedRunCliServices =
+export type AllowedRunCliServices =
   | Analytics
   | ChildProcessSpawner.ChildProcessSpawner
   | CliArgs
@@ -90,6 +90,8 @@ type AllowedRunCliServices =
   | Stdin
   | "effect/unstable/cli/GlobalFlag/linked"
   | "effect/unstable/cli/GlobalFlag/local";
+
+export type CliRootCommand = Command.Command<"supabase", {}, {}, unknown, AllowedRunCliServices>;
 
 // Global flags that consume the following argv token as their value — a value
 // flag missing here would make `extractCommandPath` mistake its value for a
@@ -727,6 +729,8 @@ function cliProjectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
 type AnyAnalyticsLayer = Layer.Layer<Analytics, never, any>;
 
 export interface RunCliOptions {
+  /** Runs after runtime services are installed and before command parsing. */
+  readonly beforeParse?: Effect.Effect<void, unknown, FileSystem.FileSystem | Path.Path>;
   readonly analyticsLayer: AnyAnalyticsLayer;
   /**
    * Runs just before the process exits on any invocation that exits 0 — the
@@ -783,10 +787,16 @@ function cliProgramFor<
       }),
     ),
   );
-  return withoutParseErrorHelpDump(Command.runWith(rootCommand, { version: CLI_VERSION })(args), {
-    rootCommand,
-    args,
-  }).pipe(
+  const commandProgram = options.beforeParse ?? Effect.void;
+  return withoutParseErrorHelpDump(
+    commandProgram.pipe(
+      Effect.andThen(Command.runWith(rootCommand, { version: CLI_VERSION })(args)),
+    ),
+    {
+      rootCommand,
+      args,
+    },
+  ).pipe(
     Effect.provide(formatterLayerFor(rootCommand, args, outputFormat)),
     Effect.provide(options.analyticsLayer),
     Effect.provide(tracingLayer),
