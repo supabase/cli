@@ -146,6 +146,25 @@ describe("dohFetch", () => {
     expect(headers.get("host")).toBe("api.supabase.com");
   });
 
+  it("cancels an in-flight DoH resolution when the request signal aborts", async () => {
+    // Ctrl-C or a caller timeout during the DNS lookup must not leave the
+    // resolver running (holding the process open) until the DoH server
+    // answers: the request signal has to reach the resolver fiber.
+    const captured: CapturedCall[] = [];
+    const fetchFn = dohFetch({
+      dnsResolver: "https",
+      resolver: () => Effect.never,
+      innerFetch: makeFakeFetch(captured),
+    });
+    const controller = new AbortController();
+
+    const pending = fetchFn("https://api.supabase.com/v1/projects", { signal: controller.signal });
+    controller.abort();
+
+    await expect(pending).rejects.toBeDefined();
+    expect(captured).toHaveLength(0);
+  });
+
   it("passes through without DoH when dnsResolver is 'native'", async () => {
     const captured: CapturedCall[] = [];
     const resolverCalls: string[] = [];

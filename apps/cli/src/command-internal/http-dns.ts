@@ -125,8 +125,12 @@ export function dohFetch(opts: DohFetchOptions): typeof globalThis.fetch {
       return innerFetch(input, init);
     }
 
-    // DoH-resolve and take the first IP (Go's ip[0]).
-    const ips = await Effect.runPromise(resolver(host));
+    // DoH-resolve and take the first IP (Go's ip[0]). The request's abort
+    // signal is threaded into the resolution so Ctrl-C or a caller timeout
+    // during the DNS lookup cancels the resolver fiber too, instead of leaving
+    // it running until the DoH server answers.
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const ips = await Effect.runPromise(resolver(host), { signal: signal ?? undefined });
     const firstIp = ips[0];
     if (firstIp === undefined) {
       // resolver guarantees non-empty; this is a safety net.
