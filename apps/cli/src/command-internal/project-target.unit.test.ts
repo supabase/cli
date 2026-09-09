@@ -1,5 +1,5 @@
 /**
- * Unit tests for config.target.ts's `mintConfigTargetErrors` factory and
+ * Unit tests for project-target.ts's `mintConfigTargetErrors` factory and
  * `configTargetErrorsFor` builder — independent of any family's own
  * `*.errors.ts` file, so this test keeps verifying the minting mechanism even
  * if diff/pull/push's error files change shape entirely (see
@@ -8,8 +8,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { actionability, ErrorActionabilityId } from "../../shared/telemetry/error-actionability.ts";
-import { configTargetErrorsFor, mintConfigTargetErrors } from "./config.target.ts";
+import { actionability, ErrorActionabilityId } from "../shared/telemetry/error-actionability.ts";
+import { configTargetErrorsFor, mintConfigTargetErrors } from "./project-target.ts";
 
 const PREFIX = "ConfigTestMint";
 

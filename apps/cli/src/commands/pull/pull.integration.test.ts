@@ -564,6 +564,8 @@ interface SetupOpts {
   readonly confirmSideEffect?: () => void;
   /** Overrides `cliSettings.workdir` — defaults to the temp project root. */
   readonly workdir?: string;
+  /** Overrides the ambient `--experimental`/`SUPABASE_EXPERIMENTAL` gate — defaults to `false`. */
+  readonly experimental?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -640,7 +642,7 @@ function setup(opts: SetupOpts = {}) {
       requireSslForHost: () => Effect.succeed(false),
     }),
     Layer.succeed(YesFlag, opts.yes ?? false),
-    Layer.succeed(ExperimentalFlag, false),
+    Layer.succeed(ExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(DebugFlag, false),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(NetworkIdFlag, Option.none()),
@@ -1347,6 +1349,43 @@ describe("pull integration", () => {
         const createArgs = createCalls.flatMap((call) => call.args);
         expect(createArgs.some((arg) => /supabase\/postgres:15\./.test(arg))).toBe(true);
         expect(createArgs.some((arg) => /supabase\/postgres:14\./.test(arg))).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // 10b. forceMigrationMode: the db step stays in migration mode even when
+  // the ambient --experimental gate is on (CLI-1272 gap-close).
+  // -------------------------------------------------------------------------
+
+  it.live(
+    "the db step stays in migration mode with the ambient --experimental gate on, never taking the declarative export path",
+    () => {
+      writeConfig();
+      seedLocalMigration("20260101000000");
+      const { layer, out } = setup({
+        yes: true,
+        experimental: true,
+        remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
+        // A real diff, so the db step actually writes — if `pullDbStep` didn't
+        // pass `forceMigrationMode: true` through to `runDbPull`, this ambient
+        // `--experimental` gate would route it to the declarative export path
+        // instead, which the mocked `PgDeltaEngine.exportDeclarativeSchema`
+        // (`makePgDeltaEngine`, above) dies on — "pull never declares
+        // --declarative" — turning a silent mode switch into a hard failure
+        // here rather than a quiet behavior change.
+        diffOutcome: () => ({
+          changes: true,
+          files: [{ name: "pull", sql: "alter table foo add column bar text;" }],
+        }),
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(runPull(pullFlags()));
+        expect(Exit.isSuccess(exit)).toBe(true);
+
+        expect(readdirSync(migrationsDir()).length).toBeGreaterThan(1);
+        expect(existsSync(join(tempRoot.current, "supabase", "schemas"))).toBe(false);
+        expect(stepLine(out!.stdoutText, "db")).toContain("changed");
       }).pipe(Effect.provide(layer));
     },
   );

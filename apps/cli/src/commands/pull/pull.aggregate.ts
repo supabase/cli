@@ -1,6 +1,6 @@
 import type { DownloadFunctionsResult } from "../../shared/functions/download.ts";
-import type { DbPullOutcome } from "../db/pull/pull.handler.ts";
-import type { MigrationFetchOutcome } from "../migration/fetch/fetch.handler.ts";
+import type { MigrationFetchOutcome } from "../../command-internal/migration-fetch-run.ts";
+import type { DbPullOutcome } from "../../command-internal/db-pull-run.ts";
 import type {
   PullAggregate,
   PullStepFailure,

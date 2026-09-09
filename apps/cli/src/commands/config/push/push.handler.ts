@@ -23,7 +23,12 @@ import {
   sanitizeInlineName,
   mapHttpError,
   sanitizeErrorBody,
+  unexpectedStatusMessage,
 } from "../../../command-internal/http-errors.ts";
+import {
+  configTargetErrorsFor,
+  resolveConfigTarget,
+} from "../../../command-internal/project-target.ts";
 import { requireExplicitWorkdirProject } from "../../../command-internal/workdir-project.ts";
 import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
@@ -32,8 +37,7 @@ import { collectDotenvPrivateKeys } from "../../../command-internal/vault-decryp
 import { configApiScope, configScopeLine } from "../config.format.ts";
 import { loadLocalConfig } from "../config.load.ts";
 import { configProjectConfigTry } from "../config.project-config.ts";
-import { configReadStatusMessage, unexpectedStatusMessage } from "../config.read-status.ts";
-import { configTargetErrorsFor, resolveConfigTarget } from "../config.target.ts";
+import { configReadStatusMessage } from "../config.read-status.ts";
 import { loadAuthEmailContent } from "./push.auth-email-content.ts";
 import { type ConfigPushKnownBranch, resolveConfigPushTarget } from "./push.branch-target.ts";
 import { getCostMatrix } from "./push.cost-matrix.ts";
@@ -137,7 +141,7 @@ const mapPushBranchResolveError = mapHttpError({
   statusMessage: unexpectedStatusMessage,
 });
 
-/** Error construction for `resolveConfigTarget` (`../config.target.ts`, shared with
+/** Error construction for `resolveConfigTarget` (`command-internal/project-target.ts`, shared with
  *  `config diff`/`config pull`), keeping `config push`'s own tagged error classes; the
  *  message wording is shared there. */
 const configTargetErrors = configTargetErrorsFor({
@@ -235,7 +239,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
 
     // 1. Resolve the push target. `--project-ref` accepts a project ref, or
     // the name (or UUID) of a branch of the linked project (CLI-2167/CLI-2289) —
-    // `resolveConfigTarget` (`../config.target.ts`, Hoist Before You
+    // `resolveConfigTarget` (`command-internal/project-target.ts`, Hoist Before You
     // Duplicate, shared with `config diff`/`config pull`). This is ALSO
     // where `resolvedRef` is set, so every one of the shared resolver's
     // failure paths (not linked, invalid parent, not found, not ready,

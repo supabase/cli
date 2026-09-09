@@ -14,11 +14,12 @@ import {
   applyConfigPullRun,
   type ConfigPullRunPlan,
   type ConfigPullSource,
-} from "../config/pull/pull.handler.ts";
-import { runDbPull } from "../db/pull/pull.handler.ts";
-import type { DbPullFlags } from "../db/pull/pull.command.ts";
-import { runMigrationFetch } from "../migration/fetch/fetch.handler.ts";
-import type { MigrationFetchFlags } from "../migration/fetch/fetch.command.ts";
+} from "../../command-internal/config-pull-run.ts";
+import { runDbPull, type DbPullFlags } from "../../command-internal/db-pull-run.ts";
+import {
+  runMigrationFetch,
+  type MigrationFetchFlags,
+} from "../../command-internal/migration-fetch-run.ts";
 import type {
   PullConfigStepOutcome,
   PullDbStepOutcome,
@@ -99,10 +100,15 @@ export const pullMigrationHistoryStep = Effect.fnUntraced(function* (context: Pu
  * `db` step: pulls the linked project's schema in migration mode (no
  * `--declarative`/diff-engine override), targeting `context.ref` directly and
  * suppressing `db pull`'s own remote-history-update prompt with `assumeYes`.
- * `DbPullInSyncError` — the remote already matches local migrations —
- * is caught here and reported as `in_sync` (a finding, not a failure, at the
- * `pull` level per ADR 0024) rather than propagating to `pull.handler.ts`'s
- * failure-capture path.
+ * `forceMigrationMode: true` closes the gap the constructed flags alone
+ * cannot: without it, an ambient `--experimental`/`SUPABASE_EXPERIMENTAL` gate
+ * would silently switch `runDbPull` to the declarative export path — writing
+ * `supabase/schemas/**` and potentially `config.toml`'s `schema_paths` — none
+ * of which `pull`'s own dirty-check/confirmation guards against (see
+ * `DbPullInvoke.forceMigrationMode`'s doc comment). `DbPullInSyncError` — the
+ * remote already matches local migrations — is caught here and reported as
+ * `in_sync` (a finding, not a failure, at the `pull` level per ADR 0024)
+ * rather than propagating to `pull.handler.ts`'s failure-capture path.
  */
 export const pullDbStep = Effect.fnUntraced(function* (context: PullStepContext) {
   const cliSettings = yield* CommandSettings;
@@ -121,7 +127,7 @@ export const pullDbStep = Effect.fnUntraced(function* (context: PullStepContext)
   };
   return yield* runDbPull(flags, {
     assumeYes: context.assumeYes,
-    skipFinishedLine: true,
+    forceMigrationMode: true,
   }).pipe(
     Effect.map((outcome): PullDbStepOutcome => ({
       kind: "applied",

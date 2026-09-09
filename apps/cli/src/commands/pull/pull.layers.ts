@@ -22,7 +22,7 @@ import {
   migraRuntimeLayer,
   pgDeltaCommandRuntimeLayer,
   pgDeltaDbConfigRuntimeLayer,
-} from "../db/shared/pgdelta-engine.layer.ts";
+} from "../../command-internal/pgdelta-engine-runtime.layer.ts";
 
 /**
  * Runtime layer for `supabase pull`. Composes only the db-specific pieces of

@@ -4,7 +4,7 @@ import { Data, Effect } from "effect";
 import * as HttpBody from "effect/unstable/http/HttpBody";
 import { classifyCliErrorActionability } from "../shared/telemetry/error-actionability.ts";
 
-import { sanitizeInlineName, mapHttpError } from "./http-errors.ts";
+import { sanitizeInlineName, mapHttpError, unexpectedStatusMessage } from "./http-errors.ts";
 
 class TestNetworkError extends Data.TaggedError("TestNetworkError")<{
   readonly message: string;
@@ -58,6 +58,14 @@ describe("mapHttpError", () => {
       });
     }),
   );
+});
+
+describe("unexpectedStatusMessage", () => {
+  it("shapes the generic unexpected-status message", () => {
+    expect(unexpectedStatusMessage(500, '{"message":"boom"}')).toBe(
+      'unexpected status 500: {"message":"boom"}',
+    );
+  });
 });
 
 describe("sanitizeInlineName", () => {

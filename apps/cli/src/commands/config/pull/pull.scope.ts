@@ -11,8 +11,8 @@ import { sanitizeInlineName } from "../../../command-internal/http-errors.ts";
  * `[remotes.<label>]` when the target project ref is already tracked by an
  * existing block (or the target was named as a branch, or `--remote-label`
  * forces one), the config ROOT otherwise. Pure and synchronous (CLI-2064) —
- * no Effect, no services, matching `../config.target.ts`'s target resolution
- * it composes with.
+ * no Effect, no services, matching `command-internal/project-target.ts`'s target
+ * resolution it composes with.
  *
  * Precedence, evaluated in this order:
  * 1. `--remote-label` forces a destination — even for a ref-shaped target —

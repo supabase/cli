@@ -12,19 +12,20 @@ import { Output } from "../../shared/output/output.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
-import { configTargetErrorsFor, resolveConfigTarget } from "../config/config.target.ts";
-import { unexpectedStatusMessage } from "../config/config.read-status.ts";
+import {
+  configTargetErrorsFor,
+  resolveConfigTarget,
+} from "../../command-internal/project-target.ts";
+import { unexpectedStatusMessage } from "../../command-internal/http-errors.ts";
 import {
   configPullPayload,
-  renderConfigPullText,
-  type ConfigPullOutcome,
-} from "../config/pull/pull.format.ts";
-import {
   openConfigPullSource,
   planConfigPullRun,
+  renderConfigPullText,
+  type ConfigPullOutcome,
   type ConfigPullRunPlan,
-} from "../config/pull/pull.handler.ts";
-import { DbPullMigrationConflictError } from "../db/pull/pull.errors.ts";
+} from "../../command-internal/config-pull-run.ts";
+import { DbPullMigrationConflictError } from "../../command-internal/db-pull-run.errors.ts";
 import {
   pullConfigStep,
   pullDbStep,
@@ -62,7 +63,7 @@ import {
 } from "./pull.errors.ts";
 import type { PullFlags } from "./pull.command.ts";
 
-/** Error construction for `resolveConfigTarget` (`../config/config.target.ts`),
+/** Error construction for `resolveConfigTarget` (`../../command-internal/project-target.ts`),
  *  keeping `pull`'s own minted tagged error classes (`pull.errors.ts`). */
 const pullTargetErrors = configTargetErrorsFor({
   notLinked: PullBranchNotLinkedError,

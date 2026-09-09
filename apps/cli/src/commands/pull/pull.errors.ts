@@ -1,6 +1,6 @@
 import { Data } from "effect";
 
-import { mintConfigTargetErrors } from "../config/config.target.ts";
+import { mintConfigTargetErrors } from "../../command-internal/project-target.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,

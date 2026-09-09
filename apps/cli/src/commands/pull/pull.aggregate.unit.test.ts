@@ -1,7 +1,7 @@
 import { Cause } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { DbPullMigrationConflictError } from "../db/pull/pull.errors.ts";
+import { DbPullMigrationConflictError } from "../../command-internal/db-pull-run.errors.ts";
 import {
   pullAggregate,
   pullConfigStepResult,

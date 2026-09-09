@@ -53,6 +53,7 @@ import { dbRemoteCommit } from "../remote/commit/commit.handler.ts";
 import type { DbRemoteCommitFlags } from "../remote/commit/commit.command.ts";
 import type { DbPullFlags } from "./pull.command.ts";
 import { dbPull } from "./pull.handler.ts";
+import { runDbPull } from "../../../command-internal/db-pull-run.ts";
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
   HttpClient.HttpClient,
@@ -1646,6 +1647,49 @@ describe("db pull", () => {
         );
         expect(streamText(s.out, "stderr")).toContain("Preparing declarative schema export");
       }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "forceMigrationMode overrides SUPABASE_EXPERIMENTAL to keep runDbPull in migration mode; unset preserves the existing declarative-export resolution",
+    () => {
+      seedMigration(tmp.current, "20240101000000");
+      const forced = setup(tmp.current, {
+        remoteVersions: ["20240101000000"],
+        edgeStdout: pgDeltaDiffEnvelope([
+          { name: "schema_changes", sql: "create table remote ();" },
+        ]),
+      });
+      const unforced = setup(tmp.current, { edgeStdout: EXPORT_JSON });
+      return Effect.gen(function* () {
+        const prev = process.env["SUPABASE_EXPERIMENTAL"];
+        process.env["SUPABASE_EXPERIMENTAL"] = "true";
+        try {
+          // `forceMigrationMode: true` — the CLI-1272 fix — keeps an in-process
+          // caller (`pull`) in migration mode even though the ambient
+          // `SUPABASE_EXPERIMENTAL` gate would otherwise select the deprecated
+          // declarative export.
+          yield* runDbPull(flags({ diffEngine: Option.some("pg-delta") }), {
+            forceMigrationMode: true,
+          }).pipe(Effect.provide(forced.layer));
+          expect(forced.engineCalls[0]?.operation).toBe("diff");
+          expect(streamText(forced.out, "stderr")).not.toContain(
+            "Preparing declarative schema export",
+          );
+
+          // Unset — the resolution `dbPull`/`dbRemoteCommit` still use — keeps
+          // the exact original behavior: the ambient gate still switches to the
+          // in-process declarative export.
+          yield* runDbPull(flags()).pipe(Effect.provide(unforced.layer));
+          expect(unforced.engineCalls[0]?.operation).toBe("export");
+          expect(streamText(unforced.out, "stderr")).toContain(
+            "Preparing declarative schema export",
+          );
+        } finally {
+          if (prev === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
+          else process.env["SUPABASE_EXPERIMENTAL"] = prev;
+        }
+      });
     },
   );
 
