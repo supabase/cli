@@ -1,0 +1,79 @@
+name: Live E2E Notifications
+
+on:
+  workflow_run:
+    workflows: [Live E2E, Release]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  notify:
+    if: github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Notify Slack
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
+        run: |
+          set -euo pipefail
+
+          # A reusable suite job is named "Live e2e" or ends with "/ Live e2e".
+          # A reused gate has no such job and is intentionally ignored.
+          suite_conclusion() {
+            jq -r '([.jobs[]? | select(.name == "Live e2e" or (.name | endswith("/ Live e2e"))) | .conclusion] | if any(.[]; . == "failure") then "failure" elif any(.[]; . == "success") then "success" else "none" end)'
+          }
+
+          current_jobs="$(gh api --paginate "/repos/${REPOSITORY}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}/jobs?per_page=100")"
+          current_suite="$(printf '%s\n' "$current_jobs" | jq -s '{jobs: map(.jobs[])}' | suite_conclusion)"
+          if [[ "$current_suite" == none ]]; then
+            exit 0
+          fi
+
+          if [[ "$current_suite" == success ]]; then
+            prior_conclusion=""
+            if (( RUN_ATTEMPT > 1 )); then
+              prior_jobs="$(gh api --paginate "/repos/${REPOSITORY}/actions/runs/${RUN_ID}/attempts/$((RUN_ATTEMPT - 1))/jobs?per_page=100")"
+              prior_conclusion="$(printf '%s\n' "$prior_jobs" | jq -s '{jobs: map(.jobs[])}' | suite_conclusion)"
+            fi
+            if [[ "$prior_conclusion" != failure && "$prior_conclusion" != success ]]; then
+              previous_runs="$(gh api --paginate "/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_ID}/runs?per_page=100" | jq -s -r --arg branch "$BRANCH" --argjson current_number "$RUN_NUMBER" 'map(.workflow_runs[]) | map(select(.run_number < $current_number and .head_branch == $branch and .status == "completed" and (.conclusion == "failure" or .conclusion == "success"))) | sort_by(.run_number) | reverse | .[] | [.id, (.run_attempt // 1)] | @tsv')"
+            else
+              previous_runs=""
+            fi
+            while IFS=$'\t' read -r prior_id prior_attempt; do
+              [[ -z "$prior_id" ]] && continue
+              prior_jobs="$(gh api --paginate "/repos/${REPOSITORY}/actions/runs/${prior_id}/attempts/${prior_attempt}/jobs?per_page=100")"
+              prior_suite="$(printf '%s\n' "$prior_jobs" | jq -s '{jobs: map(.jobs[])}' | suite_conclusion)"
+              if [[ "$prior_suite" == failure || "$prior_suite" == success ]]; then
+                prior_conclusion="$prior_suite"
+                break
+              fi
+            done <<< "$previous_runs"
+            [[ "$prior_conclusion" == failure ]] || exit 0
+            header="✅ Live E2E recovered"
+            text="Live E2E recovered"
+            detail="The previous relevant staging run failed; this run passed."
+          else
+            header="❌ Live E2E failed"
+            text="Live E2E failed"
+            detail="The staging suite failed."
+          fi
+
+          run_url="https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}"
+          commit_url="https://github.com/${REPOSITORY}/commit/${SHA}"
+          payload="$(jq -n --arg text "$text" --arg header "$header" --arg detail "$detail" --arg run_url "$run_url" --arg commit_url "$commit_url" --arg branch "$BRANCH" --arg sha "${SHA:0:7}" '{text:$text,blocks:[{type:"header",text:{type:"plain_text",text:$header,emoji:true}},{type:"section",text:{type:"mrkdwn",text:($detail + "\n*Branch:* `" + $branch + "`\n*Commit:* <" + $commit_url + "|" + $sha + ">\n*Workflow run:* <" + $run_url + "|view logs and failed tests>")}}]}')"
+          curl -fsSL -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK"
