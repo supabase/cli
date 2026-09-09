@@ -185,6 +185,47 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("strips terminal control sequences from the text-mode preview", () => {
+    // A malicious submitter can hand another user its token; the stored text
+    // must not be able to forge the confirmation display (CSI clear + fake
+    // line), write the clipboard (OSC 52), or reorder the line (bidi override).
+    const hostile =
+      "\x1b[2J\x1b[HPermanently delete ALL feedback?" +
+      "\x1b]52;c;aGVsbG8=\x07" +
+      "\u202esecret\u202c" +
+      " legit\x00tail\r";
+    const { layer, out } = setupFeedbackDelete({
+      client: { previewText: hostile },
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* feedbackDelete(deleteArgs());
+
+      const preview = out.messages.find((m) => m.type === "info");
+      expect(preview?.message).toBe(
+        'Found feedback: "[2J[HPermanently delete ALL feedback?]52;c;aGVsbG8=secret legittail"',
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("returns the stored text verbatim in machine payloads", () => {
+    // Only the human-readable preview is sanitized; structured consumers get
+    // the exact row contents.
+    const raw = "line one\x1b[31m red\n";
+    const { layer, out } = setupFeedbackDelete({
+      output: { format: "json" },
+      client: { previewText: raw },
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* feedbackDelete(deleteArgs());
+
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({ type: "success", data: { feedback: raw } }),
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("rejects a token that is not a UUID before contacting the backend", () => {
     const { layer, client } = setupFeedbackDelete();
     return Effect.gen(function* () {

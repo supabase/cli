@@ -58,7 +58,12 @@ export function formatNamedRef(name: string | undefined, ref: string): string {
 // message. The Management API is trusted, but defence-in-depth: a body containing `\r\n`
 // could fracture a structured log line, and `\x00` could truncate output in shells that
 // treat NUL as EOS. Tab is preserved so JSON whitespace round-trips visually intact.
-function stripControlChars(input: string): string {
+//
+// Exported for callers that render backend-controlled text outside an error
+// envelope and must not cap it (e.g. the `feedback delete` preview, where the
+// submitter of the row is untrusted and the text must stay whole so the user
+// sees exactly what they are about to delete).
+export function stripControlChars(input: string): string {
   // Strip ASCII control chars except \t (0x09), \n (0x0a), \r (0x0d) and DEL (0x7f).
   // Then also strip CR — we keep \n and \t because they appear in legitimate JSON
   // pretty-printing and shouldn't visually corrupt single-line stderr output.

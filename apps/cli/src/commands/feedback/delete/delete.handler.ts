@@ -4,6 +4,7 @@ import { NonInteractiveError } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { OutputFlag, resolveYes } from "../../../command-internal/global-flags.ts";
+import { stripControlChars } from "../../../command-internal/http-errors.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
@@ -75,9 +76,14 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
     const feedbackText = preview.value;
 
     // Suppressed under `-o json` as well: stdout must stay payload-only, and
-    // the payload already carries the feedback text.
+    // the payload already carries the feedback text. The text is
+    // backend-stored input from whoever submitted the row — anyone holding a
+    // token can be handed one — so control characters (ESC/CSI/OSC, C1, bidi
+    // overrides) are stripped before the terminal interprets them; a forged
+    // confirmation display or a clipboard write must not be possible from a
+    // preview. The structured payloads carry the text verbatim.
     if (goFmt !== "json" && output.format === "text") {
-      yield* output.info(`Found feedback: "${feedbackText}"`);
+      yield* output.info(`Found feedback: "${stripControlChars(feedbackText)}"`);
     }
 
     // `--yes`/`SUPABASE_YES` auto-confirms; otherwise prompt. Non-interactive
