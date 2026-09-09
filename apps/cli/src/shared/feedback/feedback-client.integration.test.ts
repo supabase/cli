@@ -3,6 +3,7 @@ import { Effect, Fiber, Option } from "effect";
 import { feedbackClientLayer } from "./feedback-client.layer.ts";
 import type { FeedbackSubmission } from "./feedback-client.service.ts";
 import { FeedbackClient } from "./feedback-client.service.ts";
+import { actionability, ErrorActionabilityId } from "../telemetry/error-actionability.ts";
 
 // The layer only needs a url/key shape — no request leaves the test, so the
 // values are arbitrary.
@@ -141,6 +142,12 @@ describe("feedbackClientLayer", () => {
         expect(error._tag).toBe("FeedbackBackendError");
         expect(error.operation).toBe("submit");
         expect(error.message).toContain("permission denied");
+        // The backend answered: an API-status failure, not a network outage.
+        expect(error.reason).toBe("response");
+        expect(error[ErrorActionabilityId]).toMatchObject({
+          ...actionability.apiStatus,
+          fingerprint_suffix: "api_response",
+        });
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
@@ -154,6 +161,9 @@ describe("feedbackClientLayer", () => {
 
         expect(error._tag).toBe("FeedbackBackendError");
         expect(error.operation).toBe("submit");
+        // The fetch threw: a transport failure, classified as network.
+        expect(error.reason).toBe("transport");
+        expect(error[ErrorActionabilityId]).toEqual(actionability.externalNetwork);
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
@@ -254,6 +264,7 @@ describe("feedbackClientLayer", () => {
 
         expect(error._tag).toBe("FeedbackBackendError");
         expect(error.operation).toBe("preview");
+        expect(error.reason).toBe("response");
       }).pipe(Effect.provide(layerWith(transport)));
     });
   });

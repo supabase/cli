@@ -85,8 +85,12 @@ export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer
       global: options.fetch === undefined ? {} : { fetch: options.fetch },
     });
 
-    // PostgREST reports failures as a returned `error`, not a rejection; a
-    // thrown/timed-out/aborted fetch rejects. Both map to `FeedbackBackendError`.
+    // postgrest-js reports every failure as a returned `error`, never a
+    // rejection: a PostgREST error envelope keeps the HTTP status, while a
+    // thrown/timed-out/aborted fetch is converted to an envelope with
+    // `status: 0`. That status is the typed discriminator between a backend
+    // response and a transport failure. (`tryPromise`'s catch is only a safety
+    // net for a genuinely thrown builder error and is treated as transport.)
     // Each request aborts on whichever fires first: fiber interruption (the
     // signal `Effect.tryPromise` hands us — Ctrl-C must not let an in-flight
     // submit commit after the command is cancelled) or the 10s timeout.
@@ -96,6 +100,7 @@ export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer
         data: A;
         error: { message: string } | null;
         count?: number | null;
+        status: number;
       }>,
     ) =>
       Effect.tryPromise({
@@ -105,12 +110,19 @@ export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer
           new FeedbackBackendError({
             message: cause instanceof Error ? cause.message : String(cause),
             operation,
+            reason: "transport",
           }),
       }).pipe(
         Effect.flatMap((response) =>
           response.error === null
             ? Effect.succeed(response)
-            : Effect.fail(new FeedbackBackendError({ message: response.error.message, operation })),
+            : Effect.fail(
+                new FeedbackBackendError({
+                  message: response.error.message,
+                  operation,
+                  reason: response.status === 0 ? "transport" : "response",
+                }),
+              ),
         ),
       );
 
@@ -126,6 +138,7 @@ export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer
                   new FeedbackBackendError({
                     message: "feedback backend returned no delete token",
                     operation: "submit",
+                    reason: "response",
                   }),
                 ),
           ),

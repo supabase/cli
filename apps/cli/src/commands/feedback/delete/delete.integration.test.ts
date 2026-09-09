@@ -82,6 +82,7 @@ function mockFeedbackClient(opts: MockClientOpts = {}) {
                   new FeedbackBackendError({
                     message: opts.previewFailWith,
                     operation: "preview",
+                    reason: "transport",
                   }),
                 )
               : Effect.succeed(Option.fromNullishOr(opts.previewText));
@@ -91,7 +92,11 @@ function mockFeedbackClient(opts: MockClientOpts = {}) {
             deleteCalls.push({ token, projectRef: context?.projectRef, userId: context?.userId });
             return opts.deleteFailWith !== undefined
               ? Effect.fail(
-                  new FeedbackBackendError({ message: opts.deleteFailWith, operation: "delete" }),
+                  new FeedbackBackendError({
+                    message: opts.deleteFailWith,
+                    operation: "delete",
+                    reason: "transport",
+                  }),
                 )
               : Effect.succeed({ deleted: opts.deleteMatches ?? true });
           }),

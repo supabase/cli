@@ -67,7 +67,13 @@ function mockFeedbackClient(opts: { failWith?: string } = {}) {
       FeedbackClient.of({
         submit: (submission) =>
           opts.failWith !== undefined
-            ? Effect.fail(new FeedbackBackendError({ message: opts.failWith, operation: "submit" }))
+            ? Effect.fail(
+                new FeedbackBackendError({
+                  message: opts.failWith,
+                  operation: "submit",
+                  reason: "transport",
+                }),
+              )
             : Effect.sync(() => {
                 submissions.push(submission);
                 return { deleteToken: MOCK_DELETE_TOKEN };

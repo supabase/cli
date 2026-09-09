@@ -47,15 +47,26 @@ interface FeedbackSubmitReceipt {
   readonly deleteToken: string;
 }
 
-/** A rejected request (PostgREST error) or a failed/timed-out network call. */
+/**
+ * A rejected request (PostgREST error response) or a failed/timed-out network
+ * call. `reason` records which: the client sets `"response"` when the backend
+ * answered with an error envelope (an HTTP status) and `"transport"` when the
+ * fetch itself threw, timed out, or was aborted before any response arrived.
+ */
 export class FeedbackBackendError extends Data.TaggedError("FeedbackBackendError")<{
   readonly message: string;
   readonly operation: "submit" | "preview" | "delete";
+  readonly reason: "response" | "transport";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // Both branches (PostgREST rejection, network failure/timeout) are
-    // failures of the external feedback backend, not user mistakes.
-    return actionability.externalNetwork;
+    // Both are failures of the external feedback backend, not user mistakes,
+    // but they are different failures: an error the backend returned is an
+    // API-status problem (a permission or validation rejection), while a
+    // thrown/timed-out fetch is a network one. Same split every Management
+    // API error class makes via its `decode`/`status` fields.
+    return this.reason === "response"
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
