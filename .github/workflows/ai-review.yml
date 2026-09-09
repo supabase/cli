@@ -344,7 +344,7 @@ jobs:
         # specifically to stop that from happening again. There is no
         # released fix above v1.12 as of 2026-09-09; re-verify both issues
         # are closed before ever re-bumping this pin.
-        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11
+        uses: &codex-action-pin openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .github/ai-review/codex-review-prompt.md
@@ -506,24 +506,11 @@ jobs:
       # untrusted AGENTS.md/config; it reads the PR from `pr/` and executes
       # nothing from it.
       - name: Run Codex adjudication
-        # Pinned to v1.11 (52fe01ec…), NOT v1.12 (86365089…): v1.12 has two
-        # confirmed, still-open upstream regressions that hang or kill the job
-        # on exactly this workflow's config (safety-strategy: drop-sudo,
-        # sandbox: read-only, output-schema-file) — openai/codex-action#151
-        # (the wrapper waits on the child process's `close` event with
-        # inherited stdio, so a lingering descendant keeps the step alive
-        # forever after Codex has already written its output) and
-        # openai/codex-action#160 (drop-sudo's v1.12 rewrite chmods
-        # root-owned /run service sockets, breaking systemd-resolved on the
-        # GitHub-hosted runner itself, which kills the job ~52-65 minutes in
-        # regardless of job timeout-minutes). Both are independent of the
-        # pinned Codex CLI version. This pin was silently regressed to v1.12
-        # once already by a grouped Dependabot bump (#6484) — see the
-        # dependabot.yml ignore entry for openai/codex-action, which exists
-        # specifically to stop that from happening again. There is no
-        # released fix above v1.12 as of 2026-09-09; re-verify both issues
-        # are closed before ever re-bumping this pin.
-        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11
+        # Same v1.11 pin as codex-review's "Run Codex independent review"
+        # step above — see that step's comment for the full v1.11-vs-v1.12
+        # rationale (openai/codex-action#151, #160). YAML-aliased so the SHA
+        # only needs to change in one place.
+        uses: *codex-action-pin
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: trusted/.github/ai-review/adjudicate-prompt.md

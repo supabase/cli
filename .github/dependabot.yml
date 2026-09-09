@@ -11,17 +11,24 @@ updates:
       actions-major:
         patterns:
           - "*"
+        exclude-patterns:
+          - "openai/codex-action"
     ignore:
       - dependency-name: "supabase/setup-cli"
         update-types:
           - "version-update:semver-major"
       - dependency-name: "openai/codex-action"
+        versions:
+          - "1.12.x"
         # Deliberately pinned to v1.11 in ai-review.yml — v1.12 has two
-        # confirmed, still-open upstream hangs (openai/codex-action#151,
-        # #160) that a grouped Dependabot bump already silently reintroduced
-        # once (PR #6484, 2026-09-07). Any future bump of this action needs a
-        # deliberate PR that checks the upstream changelog/issue tracker
-        # first, not an automated one bundled into the actions-major group.
+        # confirmed, still-open upstream regressions: a wrapper-level hang
+        # (openai/codex-action#151) and a runner-killing failure
+        # (openai/codex-action#160). A grouped Dependabot bump already
+        # silently reintroduced v1.12 once (PR #6484, 2026-09-07). Scoped to
+        # 1.12.x (not a blanket ignore) so Dependabot still proposes v1.13+
+        # once a fix ships; evaluate any such proposal in its own deliberate
+        # PR, checking the upstream changelog/issue tracker first — never
+        # bundle it into the actions-major group.
     cooldown:
       default-days: 7
   - package-ecosystem: "gomod"
