@@ -3,9 +3,11 @@
 This command creates or resumes the managed stack identified by the current
 project and optional `--stack`, or opens an existing stack with `--stack-id`.
 It loads `supabase/config.toml` for the target project and resolves explicit
-`env(NAME)` references from the project environment. Automatic `SUPABASE_*`
-overrides for config sections are not applied: set those fields in
-`supabase/config.toml` or use an explicit `env(NAME)` reference instead.
+`env(NAME)` references plus supported automatic `SUPABASE_*` overrides. Shell
+values take precedence over values from `supabase/` dotenv files, which take
+precedence over project-root dotenv files. Empty automatic overrides are
+ignored. Explicit `env(NAME)` references remain available for values that are
+not directly overridden.
 The `@supabase/stack` Effect API owns persistent state, the detached
 Supervisor, runtime resources, readiness, and cleanup. The CLI only resolves
 the project configuration and renders the resulting status.
@@ -21,8 +23,12 @@ resolution, including the shared `supabase/.env` and `supabase/.env.local`
 files when applicable. Function environment settings additionally read the
 shared `supabase/functions/.env` and each enabled function's
 `supabase/functions/<name>/.env`; per-function values override shared values.
-Encrypted values are rejected with a targeted configuration error. The CLI does
-not perform dotenvx decryption.
+Encrypted values use dotenvx decryption with keys from `DOTENV_PRIVATE_KEY`
+and `DOTENV_PRIVATE_KEY_*`; each variable may contain comma-separated keys.
+Failed decryption returns a typed configuration error without logging the
+plaintext, ciphertext, or private key. Listener port numbers remain dynamically
+allocated unless explicitly configured or supplied through a supported
+`SUPABASE_*_PORT` override.
 
 Text output includes the stack id, lifecycle, endpoints, and dormant
 capabilities. Structured output includes the same status fields. The command reads configured
