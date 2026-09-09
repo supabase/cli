@@ -107,8 +107,14 @@ export async function filterCommitsToPackage<T extends { hash: string }>(
   // is one runtime port away — don't rely on the buffering behavior.
   const stdoutText = new Response(proc.stdout).text();
   const stderrText = new Response(proc.stderr).text();
-  await proc.stdin.write(`${hashes.join("\n")}\n`);
-  await proc.stdin.end();
+  try {
+    await proc.stdin.write(`${hashes.join("\n")}\n`);
+    await proc.stdin.end();
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EPIPE")) {
+      throw error;
+    }
+  }
 
   const [exitCode, stdout, stderr] = await Promise.all([proc.exited, stdoutText, stderrText]);
   if (exitCode !== 0) {

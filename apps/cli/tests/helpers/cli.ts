@@ -393,10 +393,33 @@ export function spawnSupabase(
     closeWaiters.clear();
   });
 
+  let stdinError: unknown;
   if (options?.stdin !== undefined && proc.stdin) {
+    proc.stdin.on("error", (error) => {
+      if (!("code" in error && error.code === "EPIPE")) {
+        stdinError = error;
+      }
+    });
     proc.stdin.write(options.stdin);
     proc.stdin.end();
   }
+
+  const stdinFailure = (result: RunResult) =>
+    new Error(
+      [
+        `stdin write to the CLI failed`,
+        `Command: supabase ${args.join(" ")}`,
+        `PID: ${proc.pid ?? "<unknown>"}`,
+        `exit code: ${result.exitCode}${
+          result.timedOutAfterMs === undefined
+            ? ""
+            : ` (no exit within ${result.timedOutAfterMs}ms, SIGKILLed by the harness)`
+        }`,
+        outputTail("stdout tail", result.stdout),
+        outputTail("stderr tail", result.stderr),
+      ].join("\n\n"),
+      { cause: stdinError },
+    );
 
   const waitForExit = async (
     timeoutMs = options?.exitTimeoutMs ?? DEFAULT_EXIT_TIMEOUT_MS,
@@ -404,6 +427,9 @@ export function spawnSupabase(
     if (closeResult) {
       cleanupProcessGroupOnClose();
       disposeOwnHome();
+      if (stdinError !== undefined) {
+        throw stdinFailure(closeResult);
+      }
       return closeResult;
     }
 
@@ -429,6 +455,9 @@ export function spawnSupabase(
     });
 
     disposeOwnHome();
+    if (stdinError !== undefined) {
+      throw stdinFailure(timedOut ? { ...result, timedOutAfterMs: timeoutMs } : result);
+    }
     return timedOut ? { ...result, timedOutAfterMs: timeoutMs } : result;
   };
 
