@@ -13,11 +13,7 @@ const stateFrom = (definition: PersistedStackState["definition"]): PersistedStac
   identity: {
     stackId,
     projectRoot: "/tmp/project",
-    checkoutRoot: "/tmp/project",
-    workspaceId: "/tmp/project",
-    checkoutId: "/tmp/project",
     branchContext: "ordinary-workspace",
-    localProjectKey: ".",
     stackName: "default",
   },
   runtime: { kind: "native" },

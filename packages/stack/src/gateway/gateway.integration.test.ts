@@ -21,7 +21,7 @@ import {
 } from "./Gateway.ts";
 import { makeHttpGateway } from "./HttpGateway.ts";
 import { makeTcpGateway } from "./TcpGateway.ts";
-import type { HostListener } from "../state/PortCoordinator.ts";
+import type { HostListener } from "../supervisor/HostListener.ts";
 import { bindHostListener } from "../supervisor/HostListener.ts";
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>

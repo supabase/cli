@@ -71,8 +71,14 @@ async function renderJsonSchema(outputPath: string, json: Record<string, unknown
     stdout: "pipe",
     stderr: "pipe",
   });
-  await formatter.stdin.write(schema);
-  await formatter.stdin.end();
+  try {
+    await formatter.stdin.write(schema);
+    await formatter.stdin.end();
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EPIPE")) {
+      throw error;
+    }
+  }
 
   const [exitCode, formatted, stderr] = await Promise.all([
     formatter.exited,

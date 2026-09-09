@@ -1,32 +1,30 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
 import { Data, Effect, Option } from "effect";
 
-import { ProjectRefResolver } from "../../config/project-ref.service.ts";
+import { ProjectRefResolver } from "../config/project-ref.service.ts";
 import {
   parentNotLinkedMessage,
   parentRefInvalidMessage,
   parentRefTypoHint,
   resolveLinkedParentRef,
   resolveParentScopedProjectRef,
-} from "../../command-internal/parent-project-ref.ts";
-import { Output } from "../../shared/output/output.service.ts";
-import { resolveBranchProjectRef } from "../../command-internal/branch-ref.resolver.ts";
-import { sanitizeInlineName } from "../../command-internal/http-errors.ts";
-import {
-  BRANCH_PROJECT_REF_PATTERN,
-  BRANCH_UUID_PATTERN,
-} from "../../command-internal/ref-patterns.ts";
+} from "./parent-project-ref.ts";
+import { Output } from "../shared/output/output.service.ts";
+import { resolveBranchProjectRef } from "./branch-ref.resolver.ts";
+import { sanitizeInlineName } from "./http-errors.ts";
+import { BRANCH_PROJECT_REF_PATTERN, BRANCH_UUID_PATTERN } from "./ref-patterns.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-} from "../../shared/telemetry/error-actionability.ts";
+} from "../shared/telemetry/error-actionability.ts";
 
 /**
- * The resolved comparison/pull target for the `config` command family
- * (`diff`, `pull`, `push`): a project ref, plus the branch name/UUID
- * `--project-ref` carried when it named one — `undefined` for a ref-shaped or
- * linked-fallback target.
+ * The resolved comparison/pull target for a command that accepts
+ * `--project-ref` (currently `config diff`, `config pull`, `config push`, and
+ * the top-level `pull` orchestrator): a project ref, plus the branch
+ * name/UUID `--project-ref` carried when it named one — `undefined` for a
+ * ref-shaped or linked-fallback target.
  */
 export interface ConfigTarget {
   readonly ref: string;
@@ -62,8 +60,8 @@ export interface ConfigTargetErrors<TError> {
 type ConfigTargetErrorClass<E> = new (args: { readonly message: string }) => E;
 
 /**
- * Mints one `config` command family's four target-resolution error classes from its name
- * prefix (`"ConfigDiff"`, `"ConfigPull"`, `"ConfigPush"`). The classes
+ * Mints one calling command family's four target-resolution error classes from its
+ * name prefix (`"ConfigDiff"`, `"ConfigPull"`, `"ConfigPush"`, `"Pull"`). The classes
  * stay per-family so `_tag`, telemetry fingerprint, and actionability remain family-owned
  * and distinct; only their (identical) definitions live here.
  *

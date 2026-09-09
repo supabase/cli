@@ -64,11 +64,7 @@ const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 const testIdentity: StackIdentity = {
   projectRoot: "/tmp/project",
-  checkoutRoot: "/tmp/project",
-  workspaceId: "/tmp/project",
-  checkoutId: "/tmp/project",
   branchContext: "ordinary-workspace",
-  localProjectKey: ".",
   stackName: "default",
 };
 

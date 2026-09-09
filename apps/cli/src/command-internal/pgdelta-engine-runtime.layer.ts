@@ -1,18 +1,18 @@
 import { Layer } from "effect";
 
-import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
-import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
-import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
-import { dbConnectionLayer } from "../../../command-internal/db-connection.layer.ts";
-import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
-import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
-import { edgeRuntimeScriptLayer } from "../../../command-internal/edge-runtime-script.layer.ts";
-import { identityStitchLayer } from "../../../command-internal/identity-stitch.ts";
-import { pgDeltaSslProbeLayer } from "../../../command-internal/pgdelta-ssl-probe.layer.ts";
-import { pgDeltaNextEngineLayer } from "./pgdelta-engine.next.layer.ts";
-import { pgDeltaNextAdapterLayer } from "./pgdelta-next-adapter.layer.ts";
-import { pgDeltaNextShadowLayer } from "./pgdelta-next-shadow.layer.ts";
-import { declarativeSeamLayer } from "./pgdelta.seam.layer.ts";
+import { httpClientLayer } from "../auth/http-debug.layer.ts";
+import { commandSettingsLayer } from "../config/command-settings.layer.ts";
+import { dbConfigLayer } from "./db-config.layer.ts";
+import { dbConnectionLayer } from "./db-connection.layer.ts";
+import { debugLoggerLayer } from "./debug-logger.layer.ts";
+import { dockerRunLayer } from "./docker-run.layer.ts";
+import { edgeRuntimeScriptLayer } from "./edge-runtime-script.layer.ts";
+import { identityStitchLayer } from "./identity-stitch.ts";
+import { pgDeltaSslProbeLayer } from "./pgdelta-ssl-probe.layer.ts";
+import { pgDeltaNextEngineLayer } from "../commands/db/shared/pgdelta-engine.next.layer.ts";
+import { pgDeltaNextAdapterLayer } from "../commands/db/shared/pgdelta-next-adapter.layer.ts";
+import { pgDeltaNextShadowLayer } from "../commands/db/shared/pgdelta-next-shadow.layer.ts";
+import { declarativeSeamLayer } from "../commands/db/shared/pgdelta.seam.layer.ts";
 
 /** The in-process pg-delta engine — the only implementation. */
 const pgDeltaEngineLayer = pgDeltaNextEngineLayer;

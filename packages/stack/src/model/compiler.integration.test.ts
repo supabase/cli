@@ -669,6 +669,27 @@ describe("closed capability compiler", () => {
     }),
   );
 
+  it.live("prefers a compatible previous database release for a major selector", () =>
+    Effect.gen(function* () {
+      const previous = yield* compile({
+        capabilities: { database: { version: "15.14.1.168" } },
+      });
+      const selected = yield* compile(
+        { capabilities: { database: { version: "15" } } },
+        { kind: "native" },
+        previous,
+      );
+      expect(selected.definition.capabilities.database.version).toBe("15.14.1.168");
+    }),
+  );
+
+  it.live("uses the default release when a supported major matches it", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({ capabilities: { database: { version: "17" } } });
+      expect(result.definition.capabilities.database.version).toBe("17.6.1.168");
+    }),
+  );
+
   it.live("rejects an unknown non-database release", () =>
     Effect.gen(function* () {
       const result = yield* compile({ capabilities: { rest: { version: "not-real" } } }).pipe(
