@@ -21,5 +21,7 @@ globalconfig="${RUNNER_TEMP:-/tmp}/dogfood-npmrc-global"
 export NPM_CONFIG_USERCONFIG="$userconfig"
 export NPM_CONFIG_GLOBALCONFIG="$globalconfig"
 
-# Lifecycle scripts are untrusted PR code sitting next to the trusted tree.
-pnpm install --frozen-lockfile --ignore-scripts --ignore-pnpmfile --registry=https://registry.npmjs.org/
+# Lifecycle scripts and pnpmfiles are untrusted PR code. --pm-on-fail=ignore
+# keeps the mise-pinned pnpm binary; default pmOnFail=download would fetch the
+# version declared in the PR's package.json / lockfile.
+pnpm install --frozen-lockfile --ignore-scripts --ignore-pnpmfile --pm-on-fail=ignore --registry=https://registry.npmjs.org/

@@ -9,7 +9,7 @@
  *   - `post` — post one issue comment (never a review).
  *   - `fetch` — write the latest dogfood comment body to `DOGFOOD_REPORT_PATH`
  *     (empty file if none) and `verdict` to `$GITHUB_OUTPUT` when present.
- *     When `HEAD_SHA` is set, skip reports whose CLI HEAD does not match.
+ *     When `HEAD_SHA` is set, skip reports whose harness head marker does not match.
  *
  * Run in CI as: `bun .github/scripts/ai-dogfood/post-report.ts <command>`.
  */
@@ -19,6 +19,8 @@ import { appendFileSync } from "node:fs";
 import { redactSecretsDeep, sanitizeModelText } from "../ai-review/post-review.ts";
 
 export const AI_DOGFOOD_MARKER = "<!-- supabase-ai-dogfood -->";
+const DOGFOOD_HEAD_MARKER = /<!-- dogfood-head:([0-9a-f]+) -->/;
+const GITHUB_ISSUE_COMMENT_MAX = 65536;
 
 const WORKFLOW_BOT_LOGIN = "github-actions[bot]";
 
@@ -149,7 +151,6 @@ export function makeCrashStub(headSha: string, reason: string): DogfoodReport {
 }
 
 const VERDICT_HEADING = /^## Functional dogfood: `(go|conditional|no-go)`/m;
-const CLI_HEAD_LINE = /^CLI HEAD: `([^`]+)`/m;
 
 export function extractDogfoodVerdict(body: string): DogfoodVerdict | undefined {
   if (!body.includes(AI_DOGFOOD_MARKER)) {
@@ -167,8 +168,19 @@ export function extractDogfoodVerdict(body: string): DogfoodVerdict | undefined 
 }
 
 export function extractDogfoodHeadSha(body: string): string | undefined {
-  const match = CLI_HEAD_LINE.exec(body);
+  const match = DOGFOOD_HEAD_MARKER.exec(body);
   return match?.[1];
+}
+
+export function truncateDogfoodComment(body: string): string {
+  if (body.length <= GITHUB_ISSUE_COMMENT_MAX) {
+    return body;
+  }
+  const notice = "\n\n… (truncated)\n\n";
+  const markerAt = body.lastIndexOf(AI_DOGFOOD_MARKER);
+  const suffix = markerAt >= 0 ? body.slice(markerAt) : `${AI_DOGFOOD_MARKER}\n`;
+  const keepEnd = GITHUB_ISSUE_COMMENT_MAX - notice.length - suffix.length;
+  return `${body.slice(0, Math.max(0, keepEnd))}${notice}${suffix}`;
 }
 
 function sanitizeTableCell(text: string): string {
@@ -208,9 +220,9 @@ export function renderDogfoodComment(report: DogfoodReport, footer: DogfoodComme
   return [
     `## Functional dogfood: \`${report.verdict}\``,
     "",
-    sanitizeModelText(report.summary),
-    "",
     `CLI HEAD: \`${sanitizeCodeSpan(report.head_sha)}\``,
+    "",
+    sanitizeModelText(report.summary),
     "",
     "### Journeys",
     "",
@@ -230,6 +242,7 @@ export function renderDogfoodComment(report: DogfoodReport, footer: DogfoodComme
     "This report is advisory. A maintainer can request another with `/ai-dogfood-and-review`.",
     "",
     AI_DOGFOOD_MARKER,
+    `<!-- dogfood-head:${report.head_sha.toLowerCase().replace(/[^0-9a-f]/g, "")} -->`,
     "",
   ].join("\n");
 }
@@ -246,7 +259,7 @@ export interface ReportIo {
 }
 
 /** Latest bot-authored dogfood comment wins. When `expectedHeadSha` is set,
- * skip reports whose `CLI HEAD` line does not match the current PR head. */
+ * skip reports whose harness `dogfood-head` marker does not match. */
 export function pickLatestDogfoodComment(
   comments: IssueComment[],
   expectedHeadSha?: string,
@@ -260,7 +273,10 @@ export function pickLatestDogfoodComment(
     ) {
       continue;
     }
-    if (expectedHeadSha !== undefined && extractDogfoodHeadSha(comment.body) !== expectedHeadSha) {
+    if (
+      expectedHeadSha !== undefined &&
+      extractDogfoodHeadSha(comment.body) !== expectedHeadSha.toLowerCase()
+    ) {
       continue;
     }
     return comment;
@@ -301,7 +317,7 @@ export async function postDogfoodComment(
   report: DogfoodReport,
   footer: DogfoodCommentFooter,
 ): Promise<void> {
-  await io.postIssueComment(prNumber, renderDogfoodComment(report, footer));
+  await io.postIssueComment(prNumber, truncateDogfoodComment(renderDogfoodComment(report, footer)));
 }
 
 function requireEnv(name: string): string {

@@ -531,6 +531,13 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   // `sbp_oauth_…` shapes). Dogfood runs hold a staging token; scrub it if a
   // model echoes it into a report.
   /sbp_[A-Za-z0-9_]{20,}/g,
+  // Project API keys returned by `projects api-keys` / `link`.
+  /sb_secret_[A-Za-z0-9_]+/g,
+  /sb_publishable_[A-Za-z0-9_]+/g,
+  // JWT-shaped values (anon / service_role keys, GoTrue tokens).
+  /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
+  // Connection strings that embed a password.
+  /postgres(?:ql)?:\/\/[^:\s/]+:[^@\s/]+@[^\s]+/gi,
 ];
 
 /**

@@ -974,6 +974,16 @@ describe("redactSecrets", () => {
     ["a Supabase personal access token", `sbp_${"a".repeat(40)}`],
     ["a versioned Supabase access token", `sbp_v0_${"a".repeat(40)}`],
     ["an OAuth-shaped Supabase access token", `sbp_oauth_${"a".repeat(40)}`],
+    ["a Supabase secret API key", `sb_secret_${"a".repeat(40)}`],
+    ["a Supabase publishable API key", `sb_publishable_${"a".repeat(40)}`],
+    [
+      "a JWT-shaped key",
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ.signaturepayloadxx",
+    ],
+    [
+      "a credentialed postgres URL",
+      "postgresql://postgres:s3cret@db.project.supabase.co:5432/postgres",
+    ],
   ])("redacts %s", (_label, secret) => {
     const redacted = redactSecrets(`before ${secret} after`);
     expect(redacted).not.toContain(secret);

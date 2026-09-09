@@ -47,8 +47,11 @@ CI also sweeps that prefix; still delete what you created.
    staging, record a `skip` journey explaining why, and verdict `go`.
 5. Otherwise copy one sample into scratch and exercise a **minimum path**:
    `./bin/sb orgs list`, `./bin/sb projects create` (prefix + short unique suffix),
-   `./bin/sb link --project-ref … --password … --yes`, then **one command family the
-   diff actually touches**. Prefer `--yes` on prompts. Then delete the project.
+   wait until the project is ACTIVE and `./bin/sb projects api-keys` lists keys,
+   then `./bin/sb link --project-ref … --password … --yes`, then **one command
+   family the diff actually touches**. Prefer `--yes` on prompts. Then delete
+   the project. A bounded provisioning wait that never becomes ready is
+   `skip`/`conditional`, not a CLI regression.
 6. Do not try to cover every playbook loop. Depth on the changed surface beats
    breadth. If `db start` is required for that surface, wait for it; do not
    invent a sleep-based workaround if the CLI already blocks on ready.

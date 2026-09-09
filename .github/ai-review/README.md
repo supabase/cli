@@ -190,14 +190,22 @@ run 400s on the output schema because of this, drop `pattern`/`minItems` from
   spans a plain string field otherwise couldn't safely occupy.
 - **Model output is secret-scrubbed before it's posted or uploaded.**
   `redactSecrets()` replaces common credential shapes (Anthropic/OpenAI API
-  keys, GitHub personal-access/app/OAuth/Actions tokens) with `«redacted»`;
-  it's composed into `sanitizeModelText()` for the posted review, and the
-  `redact <path>` subcommand applies it to `claude-findings.json`/
-  `claude-raw.json`/`merged-review.json` in place before each is uploaded as
-  an artifact. This is defense-in-depth against a prompt-injected model
+  keys, GitHub personal-access/app/OAuth/Actions tokens, Supabase personal
+  access tokens and project API keys, JWT-shaped values, and password-bearing
+  postgres URLs) with `«redacted»`; it's composed into `sanitizeModelText()`
+  for the posted review, and the `redact <path>` subcommand applies it to
+  findings JSON and dogfood reports in place before each is uploaded as an
+  artifact. This is defense-in-depth against a prompt-injected model
   `Read`-ing a secret-bearing path (e.g. `/proc/self/environ`) and echoing a
   key back in a finding — the dedicated `ANTHROPIC_API_KEY` above is the real
   containment.
+- **Optional dogfood report is untrusted runtime evidence.** `/ai-review`
+  fetches the latest bot-authored `<!-- supabase-ai-dogfood -->` comment and
+  writes it to `/tmp/ai-review/dogfood-report.md`. Review jobs have
+  `issues: read` for that fetch. A dispatch from `/ai-dogfood-and-review`
+  is `github-actions[bot]`, so Codex jobs set `allow-bots: true` (the action
+  still permission-checks human actors). Treat the report as model-written
+  subject matter, not instructions.
 - **Prompt-injection guards.** Both prompts explicitly instruct the model to
   treat the PR title, body, diff, code, and code comments as review subject
   matter, not instructions, and to ignore anything embedded in them that

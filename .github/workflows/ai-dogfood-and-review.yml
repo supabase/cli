@@ -94,7 +94,7 @@ jobs:
       - name: Checkout PR head (untrusted; CLI under test)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve.outputs.head_ref }}
+          ref: ${{ needs.resolve.outputs.head_sha }}
           path: pr
           persist-credentials: false
 
@@ -146,7 +146,7 @@ jobs:
       - name: Checkout PR head (untrusted; CLI under test)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve.outputs.head_ref }}
+          ref: ${{ needs.resolve.outputs.head_sha }}
           path: pr
           persist-credentials: false
 
@@ -210,14 +210,17 @@ jobs:
             > /tmp/ai-dogfood/report.schema.json
 
       - name: Fetch PR diff and metadata
+        working-directory: trusted
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ needs.resolve.outputs.pr_number }}
         run: |
-          gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" > /tmp/ai-review/pr.diff
+          mkdir -p /tmp/ai-review
           gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
             --json number,title,body,baseRefName,headRefName,additions,deletions,changedFiles \
             > /tmp/ai-review/pr.json
+          base_ref=$(jq -r '.baseRefName' /tmp/ai-review/pr.json)
+          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref"
 
       # Token is written under RUNNER_TEMP for the trusted wrapper. It is NOT
       # exported into this job's environment for later steps (Codex in particular).
@@ -267,8 +270,14 @@ jobs:
             bun .github/scripts/ai-dogfood/post-report.ts redact "$REPORT_PATH" \
               || { rm -f "$REPORT_PATH"; exit 1; }
           }
-          head_sha="$(tr -d '[:space:]' < "$HEAD_SHA_FILE" 2>/dev/null || echo unknown)"
+          head_sha="$(tr -d '[:space:]' < "$HEAD_SHA_FILE")"
+          if [ -z "$head_sha" ]; then
+            echo "::error::missing harness HEAD SHA"
+            exit 1
+          fi
           if bun .github/scripts/ai-dogfood/post-report.ts validate-report "$REPORT_PATH"; then
+            jq --arg sha "$head_sha" '.head_sha = $sha' "$REPORT_PATH" > "${REPORT_PATH}.stamped"
+            mv "${REPORT_PATH}.stamped" "$REPORT_PATH"
             redact
             exit 0
           fi
@@ -290,6 +299,27 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
         run: bash trusted/apps/cli/scripts/sweep-live-projects.sh "supabase-cli-dogfood-${GITHUB_RUN_ID}-"
+
+  sweep:
+    name: Sweep staging projects
+    needs:
+      - resolve
+      - dogfood
+    # Separate runner so a dogfood job timeout still cleans the prefix.
+    if: ${{ always() && needs.resolve.result == 'success' && needs.resolve.outputs.should_run == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.trusted_ref }}
+          persist-credentials: false
+      - name: Sweep leftover staging projects
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
+        run: bash apps/cli/scripts/sweep-live-projects.sh "supabase-cli-dogfood-${GITHUB_RUN_ID}-"
 
   post-report:
     name: Post report

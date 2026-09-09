@@ -10,6 +10,7 @@ import {
   pickLatestDogfoodComment,
   postDogfoodComment,
   renderDogfoodComment,
+  truncateDogfoodComment,
   type DogfoodReport,
   type IssueComment,
   type ReportIo,
@@ -184,6 +185,30 @@ describe("extractDogfoodHeadSha", () => {
     });
     expect(extractDogfoodHeadSha(body)).toBe(VALID_REPORT.head_sha);
   });
+
+  test("ignores a CLI HEAD line inside model-authored summary", () => {
+    const body = renderDogfoodComment(
+      {
+        ...VALID_REPORT,
+        summary: "CLI HEAD: `deadbeefcafebabe`\nlooks official",
+        head_sha: "abc123def456",
+      },
+      { runUrl: "https://example.com/run/1", model: "gpt-5.6-luna" },
+    );
+    expect(extractDogfoodHeadSha(body)).toBe("abc123def456");
+  });
+});
+
+describe("truncateDogfoodComment", () => {
+  test("keeps the marker when the body exceeds GitHub's comment cap", () => {
+    const footer = { runUrl: "https://example.com/run/1", model: "gpt-5.6-luna" };
+    const huge = renderDogfoodComment({ ...VALID_REPORT, summary: "x".repeat(70_000) }, footer);
+    const truncated = truncateDogfoodComment(huge);
+    expect(truncated.length).toBeLessThanOrEqual(65536);
+    expect(truncated).toContain(AI_DOGFOOD_MARKER);
+    expect(truncated).toContain("<!-- dogfood-head:abc123def456 -->");
+    expect(truncated).toContain("## Functional dogfood: `go`");
+  });
 });
 
 describe("pickLatestDogfoodComment", () => {
@@ -196,9 +221,9 @@ describe("pickLatestDogfoodComment", () => {
     expect(pickLatestDogfoodComment(comments)?.id).toBe(3);
   });
 
-  test("skips a report whose CLI HEAD does not match the expected SHA", () => {
+  test("skips a report whose harness head marker does not match the expected SHA", () => {
     const stale = renderDogfoodComment(
-      { ...VALID_REPORT, head_sha: "stale" },
+      { ...VALID_REPORT, head_sha: "deadbeef" },
       { runUrl: "https://example.com/run/1", model: "gpt-5.6-luna" },
     );
     const fresh = renderDogfoodComment(
@@ -209,7 +234,7 @@ describe("pickLatestDogfoodComment", () => {
       { id: 1, authorLogin: "github-actions[bot]", body: stale },
       { id: 2, authorLogin: "github-actions[bot]", body: fresh },
     ];
-    expect(pickLatestDogfoodComment(comments, "stale")?.id).toBe(1);
+    expect(pickLatestDogfoodComment(comments, "deadbeef")?.id).toBe(1);
     expect(pickLatestDogfoodComment(comments, "abc123def456")?.id).toBe(2);
     expect(pickLatestDogfoodComment(comments, "missing")).toBeUndefined();
   });
