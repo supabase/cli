@@ -1,4 +1,4 @@
-import { Argument, Command } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -17,6 +17,12 @@ const config = {
     ),
     Argument.variadic(),
   ),
+  projectRef: Flag.string("project-ref").pipe(
+    Flag.withDescription(
+      "Project ref to attribute the feedback to (defaults to SUPABASE_PROJECT_ID, then the linked project).",
+    ),
+    Flag.optional,
+  ),
 } as const;
 
 export type FeedbackAddArgs = CliCommand.Command.Config.Infer<typeof config>;
@@ -25,9 +31,11 @@ export type FeedbackAddArgs = CliCommand.Command.Config.Infer<typeof config>;
 // uses below, instead of re-asserting the generic instrumentation mechanism.
 export const feedbackAddHandler = (args: FeedbackAddArgs) =>
   feedbackAdd(args).pipe(
-    // Feedback's own `-o` enum is `pretty|json`, not the resource-command set
-    // (see feedback-output.ts).
-    withCommandTelemetry({ outputFormats: FEEDBACK_OUTPUT_FORMATS }),
+    // The message is a positional (structurally excluded from telemetry) and
+    // `--project-ref` is a plain string flag, so its value is redacted — the
+    // same treatment as `feedback delete`. Feedback's own `-o` enum is
+    // `pretty|json` (see feedback-output.ts).
+    withCommandTelemetry({ flags: args, outputFormats: FEEDBACK_OUTPUT_FORMATS }),
     withJsonErrorHandling,
   );
 
@@ -43,6 +51,10 @@ export const feedbackAddCommand = Command.make("add", config).pipe(
     {
       command: 'supabase feedback add -- "--yes should be the default in CI"',
       description: "Use -- when the message starts with a dash",
+    },
+    {
+      command: 'supabase feedback add --project-ref abcdefghijklmnopqrst "branching is slow here"',
+      description: "Attribute the feedback to a project from an unlinked directory",
     },
   ]),
   Command.withHandler(feedbackAddHandler),

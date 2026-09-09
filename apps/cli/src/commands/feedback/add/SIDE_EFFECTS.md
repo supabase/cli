@@ -1,4 +1,4 @@
-# `supabase feedback add [message...]`
+# `supabase feedback add [message...] [--project-ref <ref>]`
 
 ## Files Read
 
@@ -6,7 +6,7 @@
 | ----------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `~/.supabase/profile`                           | plain text (profile name)           | when `--profile` and `SUPABASE_PROFILE` are unset (profile resolution via `commandSettingsLayer`)                                                                                                                            |
 | `$SUPABASE_PROFILE`                             | YAML (`api_url:` / `gotrue_url:` …) | when `SUPABASE_PROFILE` is set to a file path instead of a built-in profile name                                                                                                                                             |
-| `<workdir>/supabase/.temp/project-ref`          | plain text (project ref)            | when `SUPABASE_PROJECT_ID` is unset — supplies the submission's `project_ref`. Absent, blank, or unreadable → `null` (never fails the submission)                                                                            |
+| `<workdir>/supabase/.temp/project-ref`          | plain text (project ref)            | when `--project-ref` and `SUPABASE_PROJECT_ID` are unset — supplies the submission's `project_ref`. Absent, blank, unreadable, or malformed → `null` (never fails the submission)                                            |
 | `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON (telemetry state)              | read at startup by the shared telemetry runtime — its `distinct_id` (gotrue user id stamped at login) supplies the submission's `user_id` when telemetry consent is granted. Absent, logged-out, or consent-denied → omitted |
 
 ## Files Written
@@ -31,12 +31,12 @@ request times out after 10 s.
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                                          | Required?                                                          |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                                                          | no (falls back to `~/.supabase/profile` → `supabase`)              |
-| `SUPABASE_WORKDIR`      | project directory override                                                                                                       | no (falls back to `--workdir` → cwd)                               |
-| `SUPABASE_ACCESS_TOKEN` | access token captured by `commandSettingsLayer`                                                                                  | no (unused by this command)                                        |
-| `SUPABASE_PROJECT_ID`   | overrides the submission's `project_ref`, taking priority over the linked-ref file; must be a well-formed ref (exit 1 otherwise) | no (falls back to `<workdir>/supabase/.temp/project-ref` → `null`) |
+| Variable                | Purpose                                                                                                                                                       | Required?                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                                                                                       | no (falls back to `~/.supabase/profile` → `supabase`)              |
+| `SUPABASE_WORKDIR`      | project directory override                                                                                                                                    | no (falls back to `--workdir` → cwd)                               |
+| `SUPABASE_ACCESS_TOKEN` | access token captured by `commandSettingsLayer`                                                                                                               | no (unused by this command)                                        |
+| `SUPABASE_PROJECT_ID`   | supplies the submission's `project_ref` when `--project-ref` is unset, taking priority over the linked-ref file; must be a well-formed ref (exit 1 otherwise) | no (falls back to `<workdir>/supabase/.temp/project-ref` → `null`) |
 
 Agent-detection env vars (e.g. `CLAUDECODE`) are read indirectly by
 `@vercel/detect-agent` via `aiToolLayer` to set the submission's
@@ -45,14 +45,14 @@ every command.
 
 ## Exit Codes
 
-| Code | Condition                                                                             |
-| ---- | ------------------------------------------------------------------------------------- |
-| `0`  | success                                                                               |
-| `1`  | no message from args, piped stdin, or an interactive prompt (`-o json` never prompts) |
-| `1`  | message over the 1000-character limit (checked client-side, no request sent)          |
-| `1`  | `SUPABASE_PROJECT_ID` is set but not a well-formed project ref (no request sent)      |
-| `1`  | submit failure (PostgREST error, network failure, or 10s timeout)                     |
-| `1`  | `-o`/`--output` value outside the command's `pretty\|json` enum (validated pre-run)   |
+| Code | Condition                                                                                           |
+| ---- | --------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                             |
+| `1`  | no message from args, piped stdin, or an interactive prompt (`-o json` never prompts)               |
+| `1`  | message over the 1000-character limit (checked client-side, no request sent)                        |
+| `1`  | `--project-ref` or `SUPABASE_PROJECT_ID` is set but not a well-formed project ref (no request sent) |
+| `1`  | submit failure (PostgREST error, network failure, or 10s timeout)                                   |
+| `1`  | `-o`/`--output` value outside the command's `pretty\|json` enum (validated pre-run)                 |
 
 ## Telemetry Events Fired
 
@@ -63,8 +63,10 @@ every command.
 The feedback message content is NEVER included in any telemetry event: the
 message is a positional argument, which `extractChangedFlagNames` structurally
 excludes from the `flags` property (it only scans `-`-prefixed argv tokens).
-Regression-tested in `add.integration.test.ts`. The message goes only to
-the `interfaces_feedback` table via the API route above.
+`--project-ref` is recorded by name only; its value is redacted (no
+telemetry-safe marking, same as `feedback delete`). Regression-tested in
+`add.integration.test.ts`. The message goes only to the `interfaces_feedback`
+table via the API route above.
 
 ## Output
 
@@ -122,18 +124,20 @@ event); the shared stream-json layer emits these for every `output.task`.
   error mid-pipe discards whatever was buffered and falls through to the next
   source (never submits a truncated prefix).
 - Submission context: CLI version, user agent (`SupabaseCLI/<version>` from
-  `CommandSettings`), OS/arch, agent detection, and — when the workdir has a
-  linked project — its project ref. The resolved access token is never sent.
+  `CommandSettings`), OS/arch, agent detection, and — when `--project-ref`,
+  `SUPABASE_PROJECT_ID`, or a linked project supplies one — the project ref.
+  The resolved access token is never sent.
 - The persisted gotrue user id from `<SUPABASE_HOME or ~/.supabase>/telemetry.json` (`distinct_id`,
   stamped at login) is sent as `user_id` when present **and** telemetry consent
   is granted; opted-out or logged-out runs omit it. The lookup is a synchronous
   in-memory read — no auth or network dependency is added. A row submitted with
   a `user_id` additionally requires the matching `x-feedback-user-id` header to
   preview/delete it later (`feedback delete` sends it automatically).
-- Project-ref resolution order: `SUPABASE_PROJECT_ID` →
-  `<workdir>/supabase/.temp/project-ref` (written by `supabase link`) → `null`.
-  The env value is validated like every other command's explicit ref (a
-  malformed value fails with the shared invalid-ref error); the file is the
+- Project-ref resolution order: `--project-ref` (an empty value counts as
+  unset) → `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/project-ref`
+  (written by `supabase link`) → `null`, the same order as `feedback delete`.
+  The flag and env values are validated like every other command's explicit
+  ref (a malformed value fails with the shared invalid-ref error); the file is the
   soft half of `ProjectRefResolver.resolveOptional`, read directly so the
   command has no auth dependency and works when the user is not logged in — a
   missing, unreadable, or malformed file degrades to `null`. Note

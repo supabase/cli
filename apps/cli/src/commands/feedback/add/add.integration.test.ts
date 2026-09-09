@@ -32,6 +32,7 @@ import {
 import { invalidOutputFormatMessage } from "../../../command-internal/go-output-flag.ts";
 import { INVALID_PROJECT_REF_MESSAGE } from "../../../config/project-ref.service.ts";
 import { FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
+import type { FeedbackAddArgs } from "./add.command.ts";
 import { feedbackAddHandler } from "./add.command.ts";
 import {
   FEEDBACK_EMPTY_MESSAGE,
@@ -58,6 +59,13 @@ function writeLinkedProjectRef(workdir: string, ref: string, opts: { asDirectory
 }
 
 const MOCK_DELETE_TOKEN = "123e4567-e89b-12d3-a456-426614174000";
+
+function addArgs(
+  message: ReadonlyArray<string>,
+  overrides: Partial<FeedbackAddArgs> = {},
+): FeedbackAddArgs {
+  return { message, projectRef: Option.none(), ...overrides };
+}
 
 function mockFeedbackClient(opts: { failWith?: string } = {}) {
   const submissions: FeedbackSubmission[] = [];
@@ -166,7 +174,7 @@ describe("feedback add", () => {
   it.live("submits a quoted message with CLI version, os, and arch attached", () => {
     const { layer, out, submitter, telemetryState } = setupFeedback();
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: ["port conflicts when running two stacks"] });
+      yield* feedbackAdd(addArgs(["port conflicts when running two stacks"]));
 
       expect(submitter.submissions).toEqual([
         {
@@ -200,7 +208,7 @@ describe("feedback add", () => {
   it.live("joins bare words into a single message", () => {
     const { layer, submitter } = setupFeedback();
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: ["ports", "conflict", "a", "lot"] });
+      yield* feedbackAdd(addArgs(["ports", "conflict", "a", "lot"]));
 
       expect(submitter.submissions[0]?.message).toBe("ports conflict a lot");
     }).pipe(Effect.provide(layer));
@@ -209,7 +217,7 @@ describe("feedback add", () => {
   it.live("marks the submission as agent feedback when an AI tool is detected", () => {
     const { layer, submitter } = setupFeedback({ agentName: "claude_code" });
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: ["agents need --yes everywhere"] });
+      yield* feedbackAdd(addArgs(["agents need --yes everywhere"]));
 
       expect(submitter.submissions[0]?.context.isAgent).toBe(true);
       expect(submitter.submissions[0]?.context.agentName).toBe("claude_code");
@@ -222,7 +230,7 @@ describe("feedback add", () => {
       agentFlag: "no",
     });
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: ["human at the keyboard"] });
+      yield* feedbackAdd(addArgs(["human at the keyboard"]));
 
       expect(submitter.submissions[0]?.context.isAgent).toBe(false);
       // The name is suppressed too — an `is_agent: false` payload must not
@@ -234,7 +242,7 @@ describe("feedback add", () => {
   it.live("marks the submission as agent feedback when --agent yes forces it", () => {
     const { layer, submitter } = setupFeedback({ agentFlag: "yes" });
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: ["undetected agent"] });
+      yield* feedbackAdd(addArgs(["undetected agent"]));
 
       expect(submitter.submissions[0]?.context.isAgent).toBe(true);
       expect(submitter.submissions[0]?.context.agentName).toBeUndefined();
@@ -245,7 +253,7 @@ describe("feedback add", () => {
     const { layer, out, submitter } = setupFeedback();
     writeLinkedProjectRef(tempRoot.current, VALID_REF);
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: ["linked project feedback"] });
+      yield* feedbackAdd(addArgs(["linked project feedback"]));
 
       expect(submitter.submissions[0]?.projectRef).toBe(VALID_REF);
       // The row now requires the same ref to delete, so the receipt must be
@@ -263,7 +271,52 @@ describe("feedback add", () => {
     const { layer, submitter } = setupFeedback({ projectIdEnv: "envenvenvenvenvenvre" });
     writeLinkedProjectRef(tempRoot.current, VALID_REF);
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: ["env override feedback"] });
+      yield* feedbackAdd(addArgs(["env override feedback"]));
+
+      expect(submitter.submissions[0]?.projectRef).toBe("envenvenvenvenvenvre");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("prefers --project-ref over SUPABASE_PROJECT_ID and the linked ref file", () => {
+    // Attribution from an unlinked (or differently linked) checkout, the same
+    // way `feedback delete` and every other command accept the flag.
+    const { layer, out, submitter } = setupFeedback({ projectIdEnv: "envenvenvenvenvenvre" });
+    writeLinkedProjectRef(tempRoot.current, VALID_REF);
+    return Effect.gen(function* () {
+      yield* feedbackAdd(
+        addArgs(["flag override feedback"], { projectRef: Option.some("flagflagflagflagflag") }),
+      );
+
+      expect(submitter.submissions[0]?.projectRef).toBe("flagflagflagflagflag");
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "info",
+          message: `To delete this feedback later, run: supabase feedback delete ${MOCK_DELETE_TOKEN} --project-ref flagflagflagflagflag`,
+        }),
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a malformed --project-ref before any request", () => {
+    const { layer, submitter } = setupFeedback();
+    return Effect.gen(function* () {
+      const error = yield* feedbackAdd(
+        addArgs(["typo feedback"], { projectRef: Option.some("Not-A-Ref") }),
+      ).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "InvalidProjectRefError",
+        ref: "Not-A-Ref",
+        message: INVALID_PROJECT_REF_MESSAGE,
+      });
+      expect(submitter.submissions).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("treats an empty --project-ref as unset, like ProjectRefResolver", () => {
+    const { layer, submitter } = setupFeedback({ projectIdEnv: "envenvenvenvenvenvre" });
+    return Effect.gen(function* () {
+      yield* feedbackAdd(addArgs(["empty flag feedback"], { projectRef: Option.some("") }));
 
       expect(submitter.submissions[0]?.projectRef).toBe("envenvenvenvenvenvre");
     }).pipe(Effect.provide(layer));
@@ -274,7 +327,7 @@ describe("feedback add", () => {
       distinctId: "11111111-2222-3333-4444-555555555555",
     });
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: ["logged in feedback"] });
+      yield* feedbackAdd(addArgs(["logged in feedback"]));
 
       expect(submitter.submissions[0]?.userId).toBe("11111111-2222-3333-4444-555555555555");
     }).pipe(Effect.provide(layer));
@@ -283,7 +336,7 @@ describe("feedback add", () => {
   it.live("sends no user id when not logged in", () => {
     const { layer, submitter } = setupFeedback();
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: ["logged out feedback"] });
+      yield* feedbackAdd(addArgs(["logged out feedback"]));
 
       expect(submitter.submissions[0]?.userId).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -297,7 +350,7 @@ describe("feedback add", () => {
       consent: "denied",
     });
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: ["opted out feedback"] });
+      yield* feedbackAdd(addArgs(["opted out feedback"]));
 
       expect(submitter.submissions[0]?.userId).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -306,7 +359,7 @@ describe("feedback add", () => {
   it.live("sends no project ref when the workdir is not linked", () => {
     const { layer, submitter } = setupFeedback();
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: ["unlinked feedback"] });
+      yield* feedbackAdd(addArgs(["unlinked feedback"]));
 
       expect(submitter.submissions[0]?.projectRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -317,7 +370,7 @@ describe("feedback add", () => {
     const { layer, out, submitter } = setupFeedback();
     writeLinkedProjectRef(tempRoot.current, VALID_REF, { asDirectory: true });
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: ["broken ref file feedback"] });
+      yield* feedbackAdd(addArgs(["broken ref file feedback"]));
 
       expect(submitter.submissions[0]?.projectRef).toBeUndefined();
       expect(out.messages).toContainEqual(
@@ -335,7 +388,7 @@ describe("feedback add", () => {
     const { layer, submitter } = setupFeedback();
     writeLinkedProjectRef(tempRoot.current, "fake-access-token-0102030405060708");
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: ["symlinked secret feedback"] });
+      yield* feedbackAdd(addArgs(["symlinked secret feedback"]));
 
       expect(submitter.submissions[0]?.projectRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -348,7 +401,7 @@ describe("feedback add", () => {
     const { layer, submitter } = setupFeedback({ projectIdEnv: "not-a-valid-ref!" });
     writeLinkedProjectRef(tempRoot.current, VALID_REF);
     return Effect.gen(function* () {
-      const error = yield* feedbackAdd({ message: ["invalid env ref feedback"] }).pipe(Effect.flip);
+      const error = yield* feedbackAdd(addArgs(["invalid env ref feedback"])).pipe(Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "InvalidProjectRefError",
@@ -364,7 +417,7 @@ describe("feedback add", () => {
       pipedInput: "piped feedback\n",
     });
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: [] });
+      yield* feedbackAdd(addArgs([]));
 
       expect(submitter.submissions[0]?.message).toBe("piped feedback");
     }).pipe(Effect.provide(layer));
@@ -390,7 +443,7 @@ describe("feedback add", () => {
       stdin: stdinLayerFrom(brokenPipe).pipe(Layer.provide(mockTty({ stdinIsTty: false }))),
     });
     return Effect.gen(function* () {
-      const error = yield* feedbackAdd({ message: [] }).pipe(Effect.flip);
+      const error = yield* feedbackAdd(addArgs([])).pipe(Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "FeedbackEmptyMessageError",
@@ -405,7 +458,7 @@ describe("feedback add", () => {
       output: { interactive: true, promptTextResponses: ["typed feedback"] },
     });
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: [] });
+      yield* feedbackAdd(addArgs([]));
 
       expect(submitter.submissions[0]?.message).toBe("typed feedback");
     }).pipe(Effect.provide(layer));
@@ -422,7 +475,7 @@ describe("feedback add", () => {
       pipedInput: "   \n",
     });
     return Effect.gen(function* () {
-      const error = yield* feedbackAdd({ message: [] }).pipe(Effect.flip);
+      const error = yield* feedbackAdd(addArgs([])).pipe(Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "FeedbackEmptyMessageError",
@@ -438,7 +491,7 @@ describe("feedback add", () => {
     // there is nowhere to render a prompt.
     const { layer, submitter } = setupFeedback({ output: { interactive: false } });
     return Effect.gen(function* () {
-      const error = yield* feedbackAdd({ message: [] }).pipe(Effect.flip);
+      const error = yield* feedbackAdd(addArgs([])).pipe(Effect.flip);
 
       expect(error).toMatchObject({ _tag: "FeedbackEmptyMessageError" });
       expect(submitter.submissions).toHaveLength(0);
@@ -454,7 +507,7 @@ describe("feedback add", () => {
       pipedInput: "   \n",
     });
     return Effect.gen(function* () {
-      const error = yield* feedbackAdd({ message: [" ", ""] }).pipe(Effect.flip);
+      const error = yield* feedbackAdd(addArgs([" ", ""])).pipe(Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "FeedbackEmptyMessageError",
@@ -467,7 +520,7 @@ describe("feedback add", () => {
   it.live("rejects a message over the 1000 character limit before any request", () => {
     const { layer, submitter } = setupFeedback();
     return Effect.gen(function* () {
-      const error = yield* feedbackAdd({ message: ["x".repeat(1001)] }).pipe(Effect.flip);
+      const error = yield* feedbackAdd(addArgs(["x".repeat(1001)])).pipe(Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "FeedbackMessageTooLongError",
@@ -485,7 +538,7 @@ describe("feedback add", () => {
       pipedInput: "x".repeat(FEEDBACK_PIPE_CAP_BYTES + 1),
     });
     return Effect.gen(function* () {
-      const error = yield* feedbackAdd({ message: [] }).pipe(Effect.flip);
+      const error = yield* feedbackAdd(addArgs([])).pipe(Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "FeedbackMessageTooLongError",
@@ -501,7 +554,7 @@ describe("feedback add", () => {
       pipedInput: `${"x".repeat(1001)}\n`,
     });
     return Effect.gen(function* () {
-      const error = yield* feedbackAdd({ message: [] }).pipe(Effect.flip);
+      const error = yield* feedbackAdd(addArgs([])).pipe(Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "FeedbackMessageTooLongError",
@@ -518,7 +571,7 @@ describe("feedback add", () => {
     const message = "🦆".repeat(1000);
     const { layer, submitter } = setupFeedback();
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: [message] });
+      yield* feedbackAdd(addArgs([message]));
 
       expect(submitter.submissions).toHaveLength(1);
       expect(submitter.submissions[0]?.message).toBe(message);
@@ -528,7 +581,7 @@ describe("feedback add", () => {
   it.live("emits the delete token in the json acknowledgement", () => {
     const { layer, out, submitter } = setupFeedback({ output: { format: "json" } });
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: ["json mode feedback"] });
+      yield* feedbackAdd(addArgs(["json mode feedback"]));
 
       expect(submitter.submissions).toHaveLength(1);
       expect(out.messages).toContainEqual(
@@ -544,7 +597,7 @@ describe("feedback add", () => {
   it.live("emits only the machine payload on stdout with -o json", () => {
     const { layer, out, submitter } = setupFeedback({ goOutput: "json" });
     return Effect.gen(function* () {
-      yield* feedbackAdd({ message: ["go machine format feedback"] });
+      yield* feedbackAdd(addArgs(["go machine format feedback"]));
 
       expect(submitter.submissions).toHaveLength(1);
       expect(out.rawChunks).toHaveLength(1);
@@ -565,7 +618,7 @@ describe("feedback add", () => {
       output: { interactive: true, promptTextResponses: ["never read"] },
     });
     return Effect.gen(function* () {
-      const error = yield* feedbackAdd({ message: [] }).pipe(Effect.flip);
+      const error = yield* feedbackAdd(addArgs([])).pipe(Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "FeedbackEmptyMessageError",
@@ -582,7 +635,7 @@ describe("feedback add", () => {
       args: ["feedback", "add", "doomed", "--output", "yaml"],
     });
     return Effect.gen(function* () {
-      const error = yield* feedbackAddHandler({ message: ["doomed"] }).pipe(Effect.flip);
+      const error = yield* feedbackAddHandler(addArgs(["doomed"])).pipe(Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "InvalidOutputFormatError",
@@ -598,7 +651,7 @@ describe("feedback add", () => {
       stdinIsTTY: false,
     });
     return Effect.gen(function* () {
-      yield* feedbackAddHandler({ message: [] });
+      yield* feedbackAddHandler(addArgs([]));
 
       expect(submitter.submissions).toHaveLength(0);
       expect(out.messages).toContainEqual(
@@ -613,7 +666,7 @@ describe("feedback add", () => {
       submitFailWith: "backend unavailable",
     });
     return Effect.gen(function* () {
-      const error = yield* feedbackAdd({ message: ["doomed message"] }).pipe(Effect.flip);
+      const error = yield* feedbackAdd(addArgs(["doomed message"])).pipe(Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "FeedbackBackendError",
@@ -625,12 +678,31 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("records --project-ref by name only, never its value, in PostHog", () => {
+    const { layer, analytics, submitter } = setupFeedbackHandler({
+      args: ["feedback", "add", "attributed", "--project-ref", "abcdefghijklmnopqrst"],
+    });
+    return Effect.gen(function* () {
+      yield* feedbackAddHandler(
+        addArgs(["attributed"], { projectRef: Option.some("abcdefghijklmnopqrst") }),
+      );
+
+      expect(submitter.submissions[0]?.projectRef).toBe("abcdefghijklmnopqrst");
+      const events = analytics.captured.filter((c) => c.event === "cli_command_executed");
+      expect(events).toHaveLength(1);
+      // Same treatment as `feedback delete`: the flag has no telemetry-safe
+      // marking, so its value redacts and only the name survives.
+      expect(JSON.stringify(events[0])).not.toContain("abcdefghijklmnopqrst");
+      expect(Object.keys(events[0]?.properties.flags ?? {})).toEqual(["project-ref"]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("never sends the feedback message content to PostHog", () => {
     const { layer, analytics, submitter } = setupFeedbackHandler({
       args: ["feedback", "add", "my", "secret", "papercut", "--debug"],
     });
     return Effect.gen(function* () {
-      yield* feedbackAddHandler({ message: ["my", "secret", "papercut"] });
+      yield* feedbackAddHandler(addArgs(["my", "secret", "papercut"]));
 
       expect(submitter.submissions[0]?.message).toBe("my secret papercut");
       const events = analytics.captured.filter((c) => c.event === "cli_command_executed");

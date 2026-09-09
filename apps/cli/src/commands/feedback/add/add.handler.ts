@@ -134,7 +134,16 @@ export const feedbackAdd = Effect.fn("feedback.add")(function* (args: FeedbackAd
     const agentFlag = yield* AgentFlag;
     const isAgent = resolveAgentMode(agentFlag, aiTool.name);
     const agentName = isAgent ? Option.getOrUndefined(aiTool.name) : undefined;
-    const projectRef = yield* resolveFeedbackProjectRef(cliSettings.workdir, cliSettings.projectId);
+    // Flag → SUPABASE_PROJECT_ID → the linked ref file, the same order as
+    // `feedback delete` and `ProjectRefResolver`. An empty `--project-ref ""`
+    // counts as unset; a malformed flag or env value fails as invalid input.
+    const projectRef = yield* resolveFeedbackProjectRef(
+      cliSettings.workdir,
+      Option.orElse(
+        Option.filter(args.projectRef, (ref) => ref.length > 0),
+        () => cliSettings.projectId,
+      ),
+    );
 
     const sending = yield* output.task("Sending feedback...");
 
