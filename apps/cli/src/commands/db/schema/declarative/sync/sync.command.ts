@@ -49,7 +49,7 @@ const config = {
   ),
   transient: Flag.boolean("transient").pipe(
     Flag.withDescription(
-      "Apply declarative schema changes directly to the running local database without writing migration files or migration history.",
+      "Apply declarative schema changes directly to the already-running local database without writing migration files or migration history. Does not start a stopped local database.",
     ),
     Flag.optional,
   ),
@@ -64,7 +64,7 @@ export type DbSchemaDeclarativeSyncFlags = CliCommand.Command.Config.Infer<typeo
 
 export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
   Command.withDescription(
-    "Compares the local database or supabase/migrations baseline with the complete declarative schema tree. By default it writes migration files; --transient applies directly to the running local database without writing migrations or history and requires confirmation or --yes. When a legacy export omits known implicit extensions, interactive sync can add declarations and re-plan before applying or writing.",
+    "Compares the local database or supabase/migrations baseline with the complete declarative schema tree. By default it writes migration files; --transient applies directly to the already-running local database without writing migrations or history and requires confirmation or --yes. When a legacy export omits known implicit extensions, interactive sync can add declarations and re-plan before applying or writing.",
   ),
   Command.withShortDescription("Plan and apply declarative schema changes"),
   Command.withHandler((flags) =>

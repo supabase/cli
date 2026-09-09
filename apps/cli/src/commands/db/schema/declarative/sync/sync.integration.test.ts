@@ -56,6 +56,7 @@ import {
 } from "../../../shared/pgdelta-engine.service.ts";
 import { DeclarativeShadowDbError } from "../../../shared/pgdelta.errors.ts";
 import { DeclarativeSeam } from "../../../shared/pgdelta.seam.service.ts";
+import { DeclarativeLocalDbNotRunningError } from "../declarative.errors.ts";
 import type { DbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
 
@@ -83,6 +84,7 @@ interface SetupOpts {
   networkId?: string;
   projectId?: Option.Option<string>;
   staleLocalImage?: boolean;
+  localDatabaseNotRunning?: boolean;
   renderedFiles?: ReadonlyArray<PgDeltaRenderedFile>;
   removals?: PgDeltaRemovalSummary;
   planErrors?: ReadonlyArray<PgDeltaEngineError>;
@@ -146,6 +148,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const cache = mockLinkedProjectCacheTracked();
   const localPostgresImageChecks: Array<true> = [];
   const localDatabaseStarts: Array<true> = [];
+  const localDatabaseRunningChecks: Array<boolean> = [];
   const platformApi = mockCommandPlatformApiService({});
   // Backs `resetLocalDatabase`'s real, native container-recreate — reached
   // when the recovery-reset offer is accepted (CLI-2062: it now runs in-process
@@ -157,6 +160,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     ensureLocalDatabaseStarted: () =>
       Effect.sync(() => {
         localDatabaseStarts.push(true);
+      }),
+    isLocalDatabaseRunning: () =>
+      Effect.sync(() => {
+        const running = opts.localDatabaseNotRunning !== true;
+        localDatabaseRunningChecks.push(running);
+        return running;
       }),
     ensureLocalPostgresImageCurrent: () =>
       Effect.sync(() => {
@@ -367,6 +376,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     telemetry,
     localPostgresImageChecks,
     localDatabaseStarts,
+    localDatabaseRunningChecks,
     planSources,
     declarativeExportCalls,
     get planCalls() {
@@ -1467,6 +1477,7 @@ describe("db schema declarative sync integration", () => {
         });
         expect(s.localPostgresImageChecks).toEqual([]);
         expect(s.localDatabaseStarts).toEqual([]);
+        expect(s.localDatabaseRunningChecks).toEqual([]);
         expect(s.planCalls).toBe(0);
       }
     });
@@ -1485,6 +1496,7 @@ describe("db schema declarative sync integration", () => {
       expect(s.planCalls).toBe(0);
       expect(s.localPostgresImageChecks).toEqual([]);
       expect(s.localDatabaseStarts).toEqual([]);
+      expect(s.localDatabaseRunningChecks).toEqual([]);
       expect(s.declarativeExportCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
@@ -1515,6 +1527,7 @@ describe("db schema declarative sync integration", () => {
       expect(s.planCalls).toBe(0);
       expect(s.localPostgresImageChecks).toEqual([]);
       expect(s.localDatabaseStarts).toEqual([]);
+      expect(s.localDatabaseRunningChecks).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1532,7 +1545,33 @@ describe("db schema declarative sync integration", () => {
       expect(s.planCalls).toBe(0);
       expect(s.localPostgresImageChecks).toEqual([]);
       expect(s.localDatabaseStarts).toEqual([]);
+      expect(s.localDatabaseRunningChecks).toEqual([]);
       expect(s.declarativeExportCalls).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("transient refuses when the local database is not running", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      yes: true,
+      localDatabaseNotRunning: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbSchemaDeclarativeSync(flags({ transient: Option.some(true) })).pipe(
+        Effect.exit,
+      );
+      const error = failError(exit);
+      expect(error).toBeInstanceOf(DeclarativeLocalDbNotRunningError);
+      expect(error).toMatchObject({
+        suggestion: "Start the local database, then rerun sync --transient.",
+      });
+      expect(s.localDatabaseRunningChecks).toEqual([false]);
+      expect(s.localPostgresImageChecks).toEqual([]);
+      expect(s.localDatabaseStarts).toEqual([]);
+      expect(s.planCalls).toBe(0);
+      expect(s.dbExec).toEqual([]);
+      expect(migrationEntries(tmp.current)).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1566,8 +1605,9 @@ describe("db schema declarative sync integration", () => {
         yield* dbSchemaDeclarativeSync(
           flags({ transient: Option.some(true), apply: Option.some(true) }),
         );
+        expect(s.localDatabaseRunningChecks).toEqual([true]);
         expect(s.localPostgresImageChecks).toHaveLength(1);
-        expect(s.localDatabaseStarts).toHaveLength(1);
+        expect(s.localDatabaseStarts).toEqual([]);
         expect(s.planSources).toHaveLength(1);
         expect(s.planSources[0]).toContain("127.0.0.1");
         expect(s.dbExec).toEqual(renderedFiles.map((file) => file.sql.replace(/;$/u, "")));
@@ -1597,6 +1637,8 @@ describe("db schema declarative sync integration", () => {
       );
       expect(s.out.stdoutText).toBe(`${sql}\n`);
       expect(s.dbExec).toEqual([]);
+      expect(s.localDatabaseStarts).toEqual([]);
+      expect(s.localDatabaseRunningChecks).toEqual([true]);
       expect(migrationEntries(tmp.current)).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
@@ -1680,6 +1722,7 @@ describe("db schema declarative sync integration", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
+      expect(s.localDatabaseRunningChecks).toEqual([true]);
       expect(s.localPostgresImageChecks).toHaveLength(1);
       expect(s.localDatabaseStarts).toEqual([]);
       expect(s.planCalls).toBe(0);

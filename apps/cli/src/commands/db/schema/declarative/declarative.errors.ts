@@ -95,6 +95,22 @@ export class DeclarativeTransientConfirmationRequiredError extends Data.TaggedEr
 }
 
 /**
+ * `--transient` plans against the already-running local database and must not
+ * `db start` as a side effect (fresh-volume start would migrate, seed, and
+ * record history before the user confirms the planned SQL).
+ */
+export class DeclarativeLocalDbNotRunningError extends Data.TaggedError(
+  "DeclarativeLocalDbNotRunningError",
+)<{
+  readonly message: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.startStack;
+  }
+}
+
+/**
  * `db schema declarative generate` ran but produced no declarative files (sync's
  * post-generate guard). Byte-matches Go's
  * `"declarative schema generation did not produce any files"` (`:326`).
@@ -184,10 +200,3 @@ export function readErrorSuggestion(error: unknown): string | undefined {
   const { suggestion } = error as { suggestion: unknown };
   return typeof suggestion === "string" ? suggestion : undefined;
 }
-
-/**
- * Materializing the declarative export on disk failed. Byte-matches Go's
- * `WriteDeclarativeSchemas` errors (`declarative.go:239`):
- * `"failed to clean declarative schema directory: " + err` and
- * `"unsafe declarative export path: " + path`.
- */

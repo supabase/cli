@@ -11,7 +11,7 @@ import { Output } from "../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
 import { resetLocalDatabase } from "../../../../../command-internal/db-bootstrap/reset-local-database.ts";
-import { bold, red, yellow } from "../../../../../command-internal/colors.ts";
+import { aqua, bold, red, yellow } from "../../../../../command-internal/colors.ts";
 import { DbConnectError } from "../../../../../command-internal/db-connection.errors.ts";
 import { DbConnection } from "../../../../../command-internal/db-connection.service.ts";
 import { getHostname } from "../../../../../command-internal/hostname.ts";
@@ -50,6 +50,7 @@ import {
   DeclarativeCompatibilityError,
   DeclarativeDiffError,
   DeclarativeInvalidMigrationStemError,
+  DeclarativeLocalDbNotRunningError,
   DeclarativeMutuallyExclusiveFlagsError,
   DeclarativeNoFilesGeneratedError,
   DeclarativeNonInteractiveError,
@@ -347,8 +348,15 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
 
     const transientSource = transient
       ? yield* Effect.gen(function* () {
+          if (!(yield* seam.isLocalDatabaseRunning())) {
+            return yield* Effect.fail(
+              new DeclarativeLocalDbNotRunningError({
+                message: `${aqua("supabase start")} is not running.`,
+                suggestion: "Start the local database, then rerun sync --transient.",
+              }),
+            );
+          }
           yield* ensureLocalPostgresImageCurrent;
-          yield* seam.ensureLocalDatabaseStarted();
           return localEndpoint({ port: toml.port, password: toml.password }, dnsResolver);
         })
       : undefined;

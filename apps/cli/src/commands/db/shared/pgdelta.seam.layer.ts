@@ -59,8 +59,8 @@ export const toShadowDbError = (cause: {
 
 /**
  * Real `DeclarativeSeam`: fully native. `ensureLocalDatabaseStarted` shares the same
- * `startLocalDatabase` bring-up `db start` uses; `ensureLocalPostgresImageCurrent` was
- * already native (CLI-1956) and is unchanged here.
+ * `startLocalDatabase` bring-up `db start` uses; `isLocalDatabaseRunning` is that
+ * inspect without starting, for `--transient`.
  */
 export const declarativeSeamLayer = Layer.effect(
   DeclarativeSeam,
@@ -78,28 +78,32 @@ export const declarativeSeamLayer = Layer.effect(
     // capture-and-provide shape.
     const context = yield* Effect.context<StartLocalDatabaseDeps>();
 
+    const isLocalDatabaseRunning = () =>
+      isLocalDbRunning(
+        spawner,
+        fs,
+        path,
+        cliSettings.workdir,
+        Option.getOrUndefined(cliSettings.projectId),
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DeclarativeShadowDbError({
+              message: cause.message,
+              ...(cause.daemonDown === true ? { docker: "daemon" as const } : {}),
+              // Same propagation as the start-failure catch below: the inspect error's
+              // Docker-install recovery text (Go's `utils.CmdSuggestion`) must survive the
+              // seam, or the normalizer falls back to its generic debug hint.
+              ...(cause.suggestion !== undefined ? { suggestion: cause.suggestion } : {}),
+            }),
+        ),
+      );
+
     return DeclarativeSeam.of({
+      isLocalDatabaseRunning,
       ensureLocalDatabaseStarted: () =>
         Effect.gen(function* () {
-          const running = yield* isLocalDbRunning(
-            spawner,
-            fs,
-            path,
-            cliSettings.workdir,
-            Option.getOrUndefined(cliSettings.projectId),
-          ).pipe(
-            Effect.mapError(
-              (cause) =>
-                new DeclarativeShadowDbError({
-                  message: cause.message,
-                  ...(cause.daemonDown === true ? { docker: "daemon" as const } : {}),
-                  // Same propagation as the start-failure catch below: the inspect error's
-                  // Docker-install recovery text (Go's `utils.CmdSuggestion`) must survive the
-                  // seam, or the normalizer falls back to its generic debug hint.
-                  ...(cause.suggestion !== undefined ? { suggestion: cause.suggestion } : {}),
-                }),
-            ),
-          );
+          const running = yield* isLocalDatabaseRunning();
           if (running) return; // already running — the seam never prints anything here.
           yield* startLocalDatabase().pipe(
             Effect.provideContext(context),
@@ -263,11 +267,19 @@ export function resolvePostgresImageMajor(image: string): number | undefined {
   return Number.isSafeInteger(major) && major > 0 ? major : undefined;
 }
 
+function isOrioleDbImage(image: string): boolean {
+  const tag = dockerImageTag(image);
+  return /^orioledb-/i.test(tag) || /-orioledb$/i.test(tag);
+}
+
 export function postgresImageRemediation(actual: string, expected: string): string {
   const actualMajor = resolvePostgresImageMajor(actual);
   const expectedMajor = resolvePostgresImageMajor(expected);
   if (actualMajor !== undefined && expectedMajor !== undefined && actualMajor !== expectedMajor) {
     return `Postgres major version changed from ${actualMajor} to ${expectedMajor}. Run supabase stop --all --no-backup, then supabase start before syncing declarative schemas. This deletes all local database data.`;
+  }
+  if (isOrioleDbImage(actual) !== isOrioleDbImage(expected)) {
+    return "The Postgres storage engine changed (standard vs OrioleDB). Run supabase stop --all --no-backup, then supabase start before syncing declarative schemas. This deletes all local database data.";
   }
   if (isSlimImageRef(expected) !== isSlimImageRef(actual)) {
     return "The image family changed (slim vs docker.io). Run supabase stop, then supabase start with the same SUPABASE_USE_SLIM_IMAGES setting before syncing declarative schemas.";

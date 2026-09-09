@@ -40,11 +40,11 @@ disabling safe compaction.
 
 ## Subprocesses / Containers
 
-| What                                                                                                                                                                                                           | When                                                              |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Natively-provisioned shadows via `acquireShadowDatabase` — migrated source + declarative target for durable sync, declarative target only for `--transient`; ephemeral host ports, settings-keyed cache        | always                                                            |
-| Direct SQL execution on the running local database, preserving each rendered unit's transaction mode and omitting migration-history/reset SQL                                                                  | `--transient`, after confirmation or `--yes`                      |
-| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase` — only on the failed-apply recovery path | TTY only, apply failed, and the user confirms "reset and reapply" |
+| What                                                                                                                                                                                                           | When                                                                                                                                  |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Natively-provisioned shadows via `acquireShadowDatabase` — migrated source + declarative target for durable sync, declarative target only for `--transient`; ephemeral host ports, settings-keyed cache        | always                                                                                                                                |
+| Direct SQL execution on the running local database, preserving each rendered unit's transaction mode and omitting migration-history/reset SQL                                                                  | `--transient`, after confirmation or `--yes`; the local `db` container must already be running — `--transient` never calls `db start` |
+| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase` — only on the failed-apply recovery path | TTY only, apply failed, and the user confirms "reset and reapply"                                                                     |
 
 ## Environment Variables
 
@@ -64,6 +64,7 @@ disabling safe compaction.
 | `0`  | success (migration created, applied, or "No schema changes found")                                   |
 | `1`  | pg-delta not enabled                                                                                 |
 | `1`  | conflicting flags, including `--transient` with `--no-apply`, `--file`, `--name`, or `--apply=false` |
+| `1`  | `--transient` when the local database container is not already running                               |
 | `1`  | `--transient` without `--yes` when no TTY is available or machine output is selected                 |
 | `1`  | no declarative schema files found                                                                    |
 | `1`  | shadow-database / selected pg-delta engine / diff failure                                            |
@@ -90,9 +91,9 @@ stderr after generating and writing — on both interactive and `--yes` paths.
 `--no-apply` writes the migration only (never prompts/applies); `--apply` applies
 without prompting; both override the global `--yes`. `--no-apply` and `--apply`
 are mutually exclusive.
-`--transient` is local-only, requires a text-mode TTY confirmation or `--yes`, and never
+`--transient` is local-only, requires an already-running local database, a text-mode TTY confirmation or `--yes`, and never
 bootstraps a missing declarative tree. Redundant `--apply=true` is accepted but
-does not provide consent.
+does not provide consent. A stopped local database is refused (`supabase start is not running`) rather than auto-started.
 
 A manifest-less CLI tree is refused by two compatibility gates — one when the
 tree fails to load on the bundled engine's shadow, one when the plan drops an
@@ -156,10 +157,11 @@ existing SQL or creates an export manifest.
   for transient sync.
 - **Stale local-container guard.** Before diffing against the running local `db`
   target, the running container's actual image is inspected and compared
-  against the currently-configured/resolved one. Same-major and image-family
-  changes use data-preserving `supabase stop` then `supabase start`. A proven
-  Postgres-major upgrade uses `supabase stop --all --no-backup` then
-  `supabase start` and explicitly warns that local data will be deleted.
+  against the currently-configured/resolved one. Same-major tag and slim/docker.io
+  family changes use data-preserving `supabase stop` then `supabase start`. A proven
+  Postgres-major upgrade **or** a standard↔OrioleDB storage-engine change uses
+  `supabase stop --all --no-backup` then `supabase start` and explicitly warns that
+  local data will be deleted.
 
 ### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 
