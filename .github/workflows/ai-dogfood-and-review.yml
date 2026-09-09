@@ -152,7 +152,9 @@ jobs:
       - resolve
       - build-cli
     if: needs.resolve.outputs.should_run == 'true'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # GitHub-hosted: openai/codex-action drop-sudo fails verification on
+    # Blacksmith (`sudo -n` still succeeds), so Codex never starts.
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: read
