@@ -80,10 +80,14 @@ const resolveFeedbackMessage = Effect.fnUntraced(function* (args: FeedbackAddArg
   }
 
   const output = yield* Output;
+  const goFmt = Option.getOrUndefined(yield* OutputFlag);
   // `output.interactive` is stdout-derived; the prompt reads stdin. Both must
   // be TTYs — whitespace-only piped stdin with a TTY stdout would otherwise
   // open a prompt against exhausted non-TTY stdin instead of failing below.
-  if (stdin.isTTY && output.interactive) {
+  // `-o json` leaves `output.format === "text"` (it is independent of
+  // `--output-format`), so it is gated explicitly: the clack prompt would
+  // write ANSI and prompt text to stdout ahead of the machine payload.
+  if (stdin.isTTY && output.interactive && goFmt !== "json") {
     const typed = yield* output.promptText("What's on your mind?", {
       validate: (value) =>
         value.trim().length === 0 ? "Feedback message cannot be empty." : undefined,

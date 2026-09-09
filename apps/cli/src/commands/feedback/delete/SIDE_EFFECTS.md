@@ -51,14 +51,14 @@ Global telemetry consent env applies as with every command.
 
 ## Exit Codes
 
-| Code | Condition                                                                                     |
-| ---- | --------------------------------------------------------------------------------------------- |
-| `0`  | feedback deleted                                                                              |
-| `1`  | token argument is not a UUID                                                                  |
-| `1`  | no feedback matched (wrong token, already deleted, or project-ref/user-id context mismatch)   |
-| `1`  | confirmation declined, or prompt unavailable (non-interactive / machine mode without `--yes`) |
-| `1`  | backend failure (PostgREST error, network failure, or 10 s timeout) on preview or delete      |
-| `1`  | `-o`/`--output` value outside the command's `pretty\|json` enum (validated pre-run)           |
+| Code | Condition                                                                                                  |
+| ---- | ---------------------------------------------------------------------------------------------------------- |
+| `0`  | feedback deleted                                                                                           |
+| `1`  | token argument is not a UUID                                                                               |
+| `1`  | no feedback matched (wrong token, already deleted, or project-ref/user-id context mismatch)                |
+| `1`  | confirmation declined, or prompt unavailable (non-interactive, `-o json`, or machine mode without `--yes`) |
+| `1`  | backend failure (PostgREST error, network failure, or 10 s timeout) on preview or delete                   |
+| `1`  | `-o`/`--output` value outside the command's `pretty\|json` enum (validated pre-run)                        |
 
 ## Telemetry Events Fired
 
@@ -84,7 +84,9 @@ Feedback deleted.
 
 The preview renders as an info line after a "Looking up feedback..." spinner;
 the delete runs behind a "Deleting feedback..." spinner. `--yes` /
-`SUPABASE_YES` skips the confirmation prompt.
+`SUPABASE_YES` skips the confirmation prompt. `-o json` requires `--yes` like
+the machine output formats do: it never prompts, even on a TTY, so stdout
+stays payload-only.
 
 ### `--output-format json`
 

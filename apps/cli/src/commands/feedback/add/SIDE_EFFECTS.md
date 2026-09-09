@@ -45,13 +45,13 @@ every command.
 
 ## Exit Codes
 
-| Code | Condition                                                                           |
-| ---- | ----------------------------------------------------------------------------------- |
-| `0`  | success                                                                             |
-| `1`  | no message from args, piped stdin, or an interactive prompt                         |
-| `1`  | message over the 1000-character limit (checked client-side, no request sent)        |
-| `1`  | submit failure (PostgREST error, network failure, or 10s timeout)                   |
-| `1`  | `-o`/`--output` value outside the command's `pretty\|json` enum (validated pre-run) |
+| Code | Condition                                                                             |
+| ---- | ------------------------------------------------------------------------------------- |
+| `0`  | success                                                                               |
+| `1`  | no message from args, piped stdin, or an interactive prompt (`-o json` never prompts) |
+| `1`  | message over the 1000-character limit (checked client-side, no request sent)          |
+| `1`  | submit failure (PostgREST error, network failure, or 10s timeout)                     |
+| `1`  | `-o`/`--output` value outside the command's `pretty\|json` enum (validated pre-run)   |
 
 ## Telemetry Events Fired
 
@@ -77,7 +77,9 @@ To delete this feedback later, run: supabase feedback delete <delete-token>
 Rendered as a clack success line plus an info line after a "Sending
 feedback..." spinner. The delete token is shown exactly once — it is not
 persisted anywhere by the CLI. When no message is passed on an interactive
-terminal, a "What's on your mind?" text prompt collects it first.
+terminal, a "What's on your mind?" text prompt collects it first — except
+under `-o json`, which never prompts (stdout must stay payload-only) and
+fails as empty instead.
 
 ### `--output-format json`
 

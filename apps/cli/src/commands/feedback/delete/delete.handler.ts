@@ -92,9 +92,20 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
     // clack's confirm answers on a single y/n keypress from any stdin, so both
     // streams must be TTYs — otherwise `printf 'y' | feedback delete` could
     // confirm a permanent delete without --yes (same gate as the add prompt).
+    // `-o json` is gated explicitly too: it leaves `output.format === "text"`,
+    // so the clack prompt would write ANSI and prompt text to stdout ahead of
+    // the machine payload.
     const yes = yield* resolveYes;
     if (!yes) {
       const stdin = yield* Stdin;
+      if (goFmt === "json") {
+        return yield* Effect.fail(
+          new NonInteractiveError({
+            detail: "Cannot prompt for confirmation with -o json",
+            suggestion: "Pass --yes to delete without confirmation",
+          }),
+        );
+      }
       if (!stdin.isTTY || !output.interactive) {
         return yield* Effect.fail(
           new NonInteractiveError({

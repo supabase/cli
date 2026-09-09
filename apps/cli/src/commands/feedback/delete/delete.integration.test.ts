@@ -468,6 +468,22 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("refuses to prompt under -o json without --yes, even on a TTY", () => {
+    // `-o json` leaves output.format === "text", so the interactive text layer
+    // would render the clack confirm onto stdout ahead of the raw JSON payload.
+    // Machine mode must fail loudly instead — the same contract as
+    // --output-format json.
+    const { layer, out, client } = setupFeedbackDelete({ goOutput: "json" });
+    return Effect.gen(function* () {
+      const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "NonInteractiveError" });
+      expect(out.promptConfirmCalls).toHaveLength(0);
+      expect(client.deleteCalls).toHaveLength(0);
+      expect(out.rawChunks).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("fails loudly in json mode without --yes instead of silently deleting", () => {
     const { layer, out, client, processControl } = setupFeedbackDeleteHandler({
       output: { format: "json", promptConfirmFail: true },

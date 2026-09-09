@@ -536,6 +536,26 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("does not prompt under -o json even on an interactive terminal", () => {
+    // `-o json` leaves output.format === "text", so the interactive text layer
+    // would happily render the clack prompt — onto stdout, ahead of the raw
+    // JSON payload. Machine mode must fail as empty instead.
+    const { layer, out, submitter } = setupFeedback({
+      goOutput: "json",
+      output: { interactive: true, promptTextResponses: ["never read"] },
+    });
+    return Effect.gen(function* () {
+      const error = yield* feedbackAdd({ message: [] }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "FeedbackEmptyMessageError",
+        message: FEEDBACK_EMPTY_MESSAGE,
+      });
+      expect(out.promptTextCalls).toHaveLength(0);
+      expect(submitter.submissions).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("rejects an -o value outside feedback's pretty|json enum", () => {
     const { layer, submitter } = setupFeedbackHandler({
       goOutput: "yaml",
