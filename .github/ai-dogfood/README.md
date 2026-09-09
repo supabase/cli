@@ -69,8 +69,8 @@ never does. Containment, not proof of isolation:
 - `build-cli` and the dogfood install step hold no staging token. The token is
   written to `${RUNNER_TEMP}/dogfood.token` for the trusted `sb` wrapper, then
   passed only to the CLI child. Untrusted `bunfig.toml` / `.npmrc` / `.env` /
-  `.pnpmfile.*` in the PR checkout are renamed aside before `pnpm install
-  --ignore-pnpmfile`.
+  `.pnpmfile.*` in the PR checkout are renamed aside. Install uses
+  `--ignore-scripts` and `--ignore-pnpmfile`.
 - Codex uses `safety-strategy: drop-sudo` (same as review) but **cannot** use
   review's `sandbox: read-only`: it must write scratch files, talk to
   `api.supabase.green`, and drive Docker. Legacy `workspace-write` blocks
