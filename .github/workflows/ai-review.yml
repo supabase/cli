@@ -136,7 +136,7 @@ jobs:
       - name: Checkout PR head (untrusted; review subject matter only)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve.outputs.head_ref }}
+          ref: ${{ needs.resolve.outputs.head_sha }}
           path: pr
           fetch-depth: 1
           persist-credentials: false
@@ -163,13 +163,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ needs.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
         run: |
           mkdir -p /tmp/ai-review
           gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
             --json number,title,body,baseRefName,headRefName,additions,deletions,changedFiles \
             > /tmp/ai-review/pr.json
           base_ref=$(jq -r '.baseRefName' /tmp/ai-review/pr.json)
-          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref"
+          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref" "$HEAD_SHA"
 
       - name: Fetch dogfood report
         working-directory: trusted
@@ -330,10 +331,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ needs.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
         run: |
           mkdir -p /tmp/ai-review
           base_ref=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq '.baseRefName')
-          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref"
+          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref" "$HEAD_SHA"
 
       - name: Fetch dogfood report
         env:
@@ -451,7 +453,7 @@ jobs:
       - name: Checkout PR head (untrusted; read-only, for verify-by-reading)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve.outputs.head_ref }}
+          ref: ${{ needs.resolve.outputs.head_sha }}
           path: pr
           fetch-depth: 1
           persist-credentials: false
@@ -512,10 +514,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ needs.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
         run: |
           mkdir -p /tmp/ai-review
           base_ref=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq '.baseRefName')
-          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref"
+          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref" "$HEAD_SHA"
 
       - name: Fetch dogfood report
         working-directory: trusted

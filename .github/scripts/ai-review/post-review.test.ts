@@ -975,7 +975,12 @@ describe("redactSecrets", () => {
     ["a versioned Supabase access token", `sbp_v0_${"a".repeat(40)}`],
     ["an OAuth-shaped Supabase access token", `sbp_oauth_${"a".repeat(40)}`],
     ["a Supabase secret API key", `sb_secret_${"a".repeat(40)}`],
+    ["a hyphenated Supabase secret API key", "sb_secret_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"],
     ["a Supabase publishable API key", `sb_publishable_${"a".repeat(40)}`],
+    [
+      "a hyphenated Supabase publishable API key",
+      "sb_publishable_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    ],
     [
       "a JWT-shaped key",
       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ.signaturepayloadxx",

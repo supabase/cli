@@ -214,13 +214,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ needs.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
         run: |
           mkdir -p /tmp/ai-review
           gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
             --json number,title,body,baseRefName,headRefName,additions,deletions,changedFiles \
             > /tmp/ai-review/pr.json
           base_ref=$(jq -r '.baseRefName' /tmp/ai-review/pr.json)
-          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref"
+          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref" "$HEAD_SHA"
 
       # Token is written under RUNNER_TEMP for the trusted wrapper. It is NOT
       # exported into this job's environment for later steps (Codex in particular).
@@ -258,8 +259,24 @@ jobs:
           safety-strategy: drop-sudo
           sandbox: danger-full-access
 
-      - name: Validate report or write crash stub
+      # Full-access agent could rewrite trusted/; drop that tree and clone
+      # again before validate/redact so upload cannot use a no-op redactor.
+      - name: Remove agent-writable trusted tree
         if: always()
+        run: rm -rf trusted
+
+      - name: Restore trusted tree after Codex
+        id: restore-trusted
+        if: always()
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.trusted_ref }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Validate report or write crash stub
+        id: redact
+        if: ${{ always() && steps.restore-trusted.outcome == 'success' }}
         working-directory: trusted
         env:
           REPORT_PATH: /tmp/ai-dogfood/report.json
@@ -287,7 +304,7 @@ jobs:
           redact
 
       - name: Upload dogfood report
-        if: always()
+        if: ${{ always() && steps.redact.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dogfood-report
@@ -360,6 +377,11 @@ jobs:
             fi
             bun .github/scripts/ai-dogfood/post-report.ts stub
           fi
+
+      - name: Redact report
+        env:
+          REPORT_PATH: /tmp/ai-dogfood/report.json
+        run: bun .github/scripts/ai-dogfood/post-report.ts redact "$REPORT_PATH"
 
       - name: Post dogfood comment
         env:

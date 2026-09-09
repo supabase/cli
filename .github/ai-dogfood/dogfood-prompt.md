@@ -42,7 +42,9 @@ CI also sweeps that prefix; still delete what you created.
 1. Read `/tmp/ai-review/pr.json`, then `/tmp/ai-review/pr.diff`.
 2. Decide which CLI surface this PR actually touches (schema, migrations, db,
    auth, functions, config, login/orgs/projects, or none).
-3. Run `./bin/sb --version`.
+3. Run `./bin/sb --version`. This harness does not build `supabase-go`. If a
+   command fails because the Go sidecar is missing, record `skip` — that is a
+   harness limit, not a CLI regression.
 4. If the diff is docs/CI/comments with no user-facing CLI behavior, skip
    staging, record a `skip` journey explaining why, and verdict `go`.
 5. Otherwise copy one sample into scratch and exercise a **minimum path**:

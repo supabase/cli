@@ -37,9 +37,11 @@ resolve  ──────>┤                 ├──> adjudicate ──> po
   models review agentically — reading the diff and the changed files via
   their own tools over many turns, like the local CLI — so PRs of any size
   are reviewed (very large diffs best-effort, within the model's context/turn
-  budget). Each model job fetches the PR head and exact base branch into its
-  full-history trusted checkout, then generates the diff locally with
-  triple-dot merge-base semantics. This avoids GitHub's API diff-size limits.
+  budget). Each model job checks out and diffs the immutable `head_sha`
+  captured at resolve time (never live `refs/pull/*/head`), against the exact
+  base branch, using local triple-dot merge-base semantics. This avoids
+  GitHub's API diff-size limits and keeps dogfood evidence aligned with the
+  code under review.
 - **`claude-review`** and **`codex-review`** run **in parallel** — each gives
   its model an independent, exhaustive pass and produces structured JSON
   findings validated against `findings.schema.json`. Claude reads the PR's

@@ -14,7 +14,7 @@ deliberate, documented convention as an issue.
 
 This pass reviews the unified diff alone — the PR's code is NOT checked out
 here. Read every hunk's own context lines carefully and cite concrete
-`file:line` evidence from the diff itself. One input, an absolute path:
+`file:line` evidence from the diff itself. Inputs, at absolute paths:
 
 - `/tmp/ai-review/pr.diff` — the full unified diff for this PR.
 - `/tmp/ai-review/dogfood-report.md` — optional functional dogfood report from

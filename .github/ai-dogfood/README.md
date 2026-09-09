@@ -38,14 +38,19 @@ resolve ──> build-cli ──> dogfood ──> post-report ──> workflow_d
   command match, 👀 on the comment. Forks are refused even on manual dispatch
   (this job executes PR code with a staging token).
 - **`build-cli`** — installs the PR workspace with the trusted toolchain pin.
-  No staging token. Fail-fast if the PR does not install.
+  No staging token. Fail-fast if the PR does not install; that skip means no
+  dogfood report and no chained `/ai-review` (use `/ai-review` directly).
 - **`dogfood`** — copies pinned corpus samples, runs Codex (`gpt-5.6-luna`)
   with `sb` as the only CLI entrypoint, then sweeps leftover staging projects.
-- **`post-report`** — trusted checkout; validates + redacts + posts one issue
-  comment tagged `<!-- supabase-ai-dogfood -->`. On agent crash, posts a
-  `no-go` stub so review still has context.
+  Does not build `supabase-go`; a missing sidecar is a harness `skip`, not a
+  product `no-go`.
+- **`post-report`** — trusted checkout; re-redacts and posts one issue
+  comment tagged `<!-- supabase-ai-dogfood -->`. On agent crash (dogfood ran
+  but produced no valid report), posts a `no-go` stub so review still has
+  context.
 - **`dispatch-review`** — `gh workflow run ai-review.yml` against the default
-  branch. Always dispatched, including on `no-go`.
+  branch after a report is posted, including on `no-go`. Not dispatched when
+  `build-cli` fails.
 
 ## Required secrets
 
@@ -78,6 +83,12 @@ never does. Containment, not proof of isolation:
   Never silently reuse `read-only`. Under that sandbox, `RUNNER_TEMP` is still
   readable; keeping the token out of the scratch cwd is hygiene, not a
   security boundary.
+- `sb` refuses to run without a non-empty token file and rejects
+  `projects create` unless some argument starts with the run's project
+  prefix (so sweep can always find leftovers).
+- After Codex, the dogfood job deletes and checks out `trusted/` again before
+  validate/redact, and uploads `report.json` only if that step succeeds.
+  `post-report` re-redacts on a fresh runner before posting the comment.
 - A malicious same-repo PR can still abuse the staging token once the CLI
   runs. The wrapper, fork ban, maintainer trigger, unique project prefix, and
   always-on sweep are the blast-radius limits. Treat artifacts and the posted

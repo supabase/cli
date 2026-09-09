@@ -36,8 +36,9 @@ function setupRepository(): { seed: string; checkout: string } {
   return { seed, checkout };
 }
 
-function publishPullRequest(seed: string, prNumber: number): void {
+function publishPullRequest(seed: string, prNumber: number): string {
   git(seed, "push", "--force", "origin", `HEAD:refs/pull/${prNumber}/head`);
+  return git(seed, "rev-parse", "HEAD");
 }
 
 afterEach(() => {
@@ -54,10 +55,16 @@ describe("generatePrDiff", () => {
     writeFileSync(join(seed, "large.txt"), `${lines.join("\n")}\n`);
     git(seed, "add", "large.txt");
     git(seed, "commit", "-m", "large change");
-    publishPullRequest(seed, 42);
+    const headSha = publishPullRequest(seed, 42);
 
     const outputPath = join(checkout, "pr.diff");
-    generatePrDiff({ repositoryPath: checkout, prNumber: 42, baseRef: "develop", outputPath });
+    generatePrDiff({
+      repositoryPath: checkout,
+      prNumber: 42,
+      baseRef: "develop",
+      headSha,
+      outputPath,
+    });
 
     const diff = readFileSync(outputPath, "utf8");
     expect(diff).toContain("+added line 1\n");
@@ -71,7 +78,7 @@ describe("generatePrDiff", () => {
     writeFileSync(join(seed, "shared.txt"), "feature\n");
     git(seed, "add", "shared.txt");
     git(seed, "commit", "-m", "feature change");
-    publishPullRequest(seed, 77);
+    const headSha = publishPullRequest(seed, 77);
 
     git(seed, "switch", "develop");
     writeFileSync(join(seed, "base-only.txt"), "base progressed\n");
@@ -80,11 +87,57 @@ describe("generatePrDiff", () => {
     git(seed, "push", "origin", "develop");
 
     const outputPath = join(checkout, "pr.diff");
-    generatePrDiff({ repositoryPath: checkout, prNumber: 77, baseRef: "develop", outputPath });
+    generatePrDiff({
+      repositoryPath: checkout,
+      prNumber: 77,
+      baseRef: "develop",
+      headSha,
+      outputPath,
+    });
 
     const diff = readFileSync(outputPath, "utf8");
     expect(diff).toContain("diff --git a/shared.txt b/shared.txt");
     expect(diff).toContain("+feature");
     expect(diff).not.toContain("base-only.txt");
+  });
+
+  test("diffs the pinned SHA even after pull/head moves", () => {
+    const { seed, checkout } = setupRepository();
+    git(seed, "switch", "-c", "feature");
+    writeFileSync(join(seed, "pinned.txt"), "pinned\n");
+    git(seed, "add", "pinned.txt");
+    git(seed, "commit", "-m", "pinned head");
+    const headSha = publishPullRequest(seed, 9);
+
+    writeFileSync(join(seed, "later.txt"), "later\n");
+    git(seed, "add", "later.txt");
+    git(seed, "commit", "-m", "later head");
+    git(seed, "push", "--force", "origin", "HEAD:refs/pull/9/head");
+
+    const outputPath = join(checkout, "pr.diff");
+    generatePrDiff({
+      repositoryPath: checkout,
+      prNumber: 9,
+      baseRef: "develop",
+      headSha,
+      outputPath,
+    });
+
+    const diff = readFileSync(outputPath, "utf8");
+    expect(diff).toContain("+pinned");
+    expect(diff).not.toContain("later.txt");
+  });
+
+  test("rejects a non-SHA head", () => {
+    const { checkout } = setupRepository();
+    expect(() =>
+      generatePrDiff({
+        repositoryPath: checkout,
+        prNumber: 1,
+        baseRef: "develop",
+        headSha: "refs/pull/1/head",
+        outputPath: join(checkout, "pr.diff"),
+      }),
+    ).toThrow(/Invalid head SHA/);
   });
 });

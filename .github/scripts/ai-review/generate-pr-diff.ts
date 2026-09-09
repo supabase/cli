@@ -6,6 +6,8 @@ export interface GeneratePrDiffOptions {
   repositoryPath: string;
   prNumber: number;
   baseRef: string;
+  /** Immutable commit to diff; never a moving pull-request head ref. */
+  headSha: string;
   outputPath: string;
 }
 
@@ -22,19 +24,22 @@ function runGit(repositoryPath: string, args: string[]): void {
   }
 }
 
-function validateInputs(prNumber: number, baseRef: string): void {
+function validateInputs(prNumber: number, baseRef: string, headSha: string): void {
   if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
     throw new Error(`Invalid PR number: ${prNumber}`);
   }
   if (baseRef.length === 0) {
     throw new Error("Base ref must not be empty");
   }
+  if (!/^[0-9a-f]{40}$/i.test(headSha)) {
+    throw new Error(`Invalid head SHA: ${headSha}`);
+  }
 }
 
 export function generatePrDiff(options: GeneratePrDiffOptions): void {
   const repositoryPath = resolve(options.repositoryPath);
   const outputPath = resolve(options.outputPath);
-  validateInputs(options.prNumber, options.baseRef);
+  validateInputs(options.prNumber, options.baseRef, options.headSha);
   runGit(repositoryPath, ["check-ref-format", `refs/heads/${options.baseRef}`]);
 
   const baseRef = "refs/ai-review/base";
@@ -45,7 +50,7 @@ export function generatePrDiff(options: GeneratePrDiffOptions): void {
     "--no-tags",
     "origin",
     `+refs/heads/${options.baseRef}:${baseRef}`,
-    `+refs/pull/${options.prNumber}/head:${headRef}`,
+    `+${options.headSha}:${headRef}`,
   ]);
 
   mkdirSync(dirname(outputPath), { recursive: true });
@@ -78,13 +83,14 @@ export function generatePrDiff(options: GeneratePrDiffOptions): void {
 }
 
 function parseArguments(args: string[]): GeneratePrDiffOptions {
-  if (args.length !== 2) {
-    throw new Error("Usage: generate-pr-diff.ts <pr-number> <base-ref>");
+  if (args.length !== 3) {
+    throw new Error("Usage: generate-pr-diff.ts <pr-number> <base-ref> <head-sha>");
   }
   return {
     repositoryPath: process.cwd(),
     prNumber: Number(args[0]),
     baseRef: args[1] ?? "",
+    headSha: args[2] ?? "",
     outputPath: "/tmp/ai-review/pr.diff",
   };
 }
