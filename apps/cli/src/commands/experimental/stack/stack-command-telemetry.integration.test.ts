@@ -23,7 +23,7 @@ import {
   PropCommandRunId,
 } from "../../../shared/telemetry/event-catalog.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
-import { stackCommand } from "../../../commands/experimental/stack/stack.command.ts";
+import { stackCommand } from "./stack.command.ts";
 import { stackStopAliasCommand } from "../../../cli/root.ts";
 
 function setup() {

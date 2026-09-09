@@ -18,6 +18,10 @@ export class StackRoutingError extends Data.TaggedError("StackRoutingError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {
+  get suggestion(): string {
+    return "Set SUPABASE_EXPERIMENTAL_STACK=0 to use legacy start/stop, or use `supabase stack`.";
+  }
+
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
   }
@@ -71,7 +75,7 @@ const parseConfig = (path: string, content: string): Effect.Effect<unknown, Stac
     try: () => SmolToml.parse(content),
     catch: (cause) =>
       new StackRoutingError({
-        message: `Unable to read ${path}: ${String(cause)}`,
+        message: `Unable to parse ${path}: ${String(cause)}`,
         cause,
       }),
   });
@@ -97,9 +101,16 @@ export const resolveStackBackend = (input: {
   readonly env: Readonly<Record<string, string | undefined>>;
 }): Effect.Effect<StackBackend, StackRoutingError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
-    if (hasRootVersionFlag(input.args)) return "legacy";
+    // Completion passes the final token as the cursor word, even when it is a
+    // command-shaped token such as `start`. It must not select a backend or
+    // trigger config I/O until the user has supplied a complete command path.
+    const routingArgs =
+      input.args[0] === "__complete" || input.args[0] === "__completeNoDesc"
+        ? input.args.slice(0, -1)
+        : input.args;
+    if (hasRootVersionFlag(routingArgs)) return "legacy";
 
-    const commandPath = extractRoutingCommandPath(input.args);
+    const commandPath = extractRoutingCommandPath(routingArgs);
     const completePath =
       commandPath[0] === "__complete" || commandPath[0] === "__completeNoDesc"
         ? commandPath.slice(1)
@@ -114,7 +125,7 @@ export const resolveStackBackend = (input: {
     const configValue = Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const explicitWorkdir = firstExplicitLongFlagValue(input.args, "workdir");
+      const explicitWorkdir = firstExplicitLongFlagValue(routingArgs, "workdir");
       const resolvedWorkdir = yield* resolveWorkdir(
         explicitWorkdir === undefined ? Option.none() : Option.some(explicitWorkdir),
         input.env["SUPABASE_WORKDIR"],

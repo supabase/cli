@@ -20,12 +20,20 @@ const backendExit = await Effect.runPromiseExit(
     Effect.provide(BunServices.layer),
   ),
 );
-const selectedRoot = Exit.isSuccess(backendExit)
-  ? rootCommandForBackend(backendExit.value)
-  : rootCommand;
+const selectedRoot =
+  Exit.isSuccess(backendExit) && backendExit.value === "stack"
+    ? rootCommandForBackend("stack")
+    : rootCommand;
 const completionRoot = Exit.isSuccess(backendExit) ? selectedRoot : undefined;
 
-if (!(await tryComplete(defaultCompleteDeps(completionRoot)))) {
+if (
+  !(await tryComplete(
+    defaultCompleteDeps(
+      completionRoot,
+      Exit.isFailure(backendExit) ? backendExit.cause : undefined,
+    ),
+  ))
+) {
   await runCli(selectedRoot, {
     analyticsLayer: analyticsLayer,
     afterSuccess: upgradeNoticeHook,

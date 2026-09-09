@@ -41,6 +41,22 @@ describe("resolveStackBackend", () => {
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
   });
 
+  it.effect("routes command-specific start completion through the selected backend", () => {
+    const root = project("[experimental]\nstack = true\n");
+    return Effect.gen(function* () {
+      const backend = yield* resolve({
+        args: ["__complete", "start", "--"],
+        cwd: root,
+        env: {},
+      });
+      expect(backend).toBe("stack");
+      expect(completionFlags(backend, "start")).toEqual(
+        expect.arrayContaining(["--stack", "--runtime"]),
+      );
+      expect(completionFlags(backend, "start")).not.toContain("--ignore-health-check");
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+  });
+
   it.effect("uses the environment override before reading config", () => {
     const root = project("[experimental]\nstack = true\n");
     return Effect.gen(function* () {
@@ -134,7 +150,44 @@ describe("resolveStackBackend", () => {
       if (Exit.isFailure(exit)) {
         const error = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(error)).toBe(true);
-        if (Option.isSome(error)) expect(error.value).toBeInstanceOf(StackRoutingError);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(StackRoutingError);
+        }
+      }
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+  });
+
+  it.effect("ignores the completion cursor until a command path is complete", () => {
+    const root = project("[experimental\nstack = true\n");
+    return Effect.gen(function* () {
+      expect(
+        yield* resolve({
+          args: ["__complete", "sta"],
+          cwd: root,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "invalid" },
+        }),
+      ).toBe("legacy");
+      expect(
+        yield* resolve({
+          args: ["__completeNoDesc", "start"],
+          cwd: root,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "invalid" },
+        }),
+      ).toBe("legacy");
+
+      const invalid = yield* resolve({
+        args: ["__complete", "start", "--"],
+        cwd: root,
+        env: {},
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(invalid)).toBe(true);
+      if (Exit.isFailure(invalid)) {
+        const error = Cause.findErrorOption(invalid.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(StackRoutingError);
+          expect(String(error.value)).toContain("Unable to parse");
+        }
       }
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
   });

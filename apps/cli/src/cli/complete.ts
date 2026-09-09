@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer, Option } from "effect";
+import { Cause, Effect, Layer, Option } from "effect";
 import { GlobalFlag } from "effect/unstable/cli";
 import type { Command, Param, Primitive } from "effect/unstable/cli";
 import process from "node:process";
@@ -20,6 +20,7 @@ import {
 } from "../shared/telemetry/event-catalog.ts";
 import { standaloneAnalyticsConfigLayer } from "../shared/telemetry/standalone-analytics-config.layer.ts";
 import { analyticsLayer } from "../telemetry/analytics.layer.ts";
+import { formatCliError, normalizeCliError } from "../shared/output/normalize-error.ts";
 
 /**
  * Native TypeScript reimplementation of cobra's dynamic-completion protocol
@@ -108,9 +109,12 @@ export interface ClassifyCompletionInput {
 
 export interface CompleteDeps {
   readonly root: Command.Command.Any | undefined;
+  /** The routing failure that prevented selecting a command tree, if any. */
+  readonly routingFailure?: Cause.Cause<unknown>;
   readonly argv: ReadonlyArray<string>;
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly stdoutWrite: (message: string) => void;
+  readonly stderrWrite: (message: string) => void;
   readonly exit: (code: number) => void;
   /**
    * Fires the `cli_command_executed` telemetry capture for this request —
@@ -1734,6 +1738,13 @@ export async function tryComplete(deps: CompleteDeps): Promise<boolean> {
   const startedAt = Date.now();
   const response = respondToComplete(deps.root, deps.argv);
   if (response === undefined) {
+    if (deps.routingFailure !== undefined) {
+      const error = Cause.findErrorOption(deps.routingFailure);
+      const message = Option.isSome(error)
+        ? formatCliError(normalizeCliError(error.value))
+        : Cause.pretty(deps.routingFailure);
+      deps.stderrWrite(`${message}\n`);
+    }
     await deps.captureTelemetry(1, Date.now() - startedAt);
     deps.exit(1);
     return true;
@@ -1746,13 +1757,20 @@ export async function tryComplete(deps: CompleteDeps): Promise<boolean> {
   return true;
 }
 
-export function defaultCompleteDeps(root?: Command.Command.Any): CompleteDeps {
+export function defaultCompleteDeps(
+  root?: Command.Command.Any,
+  routingFailure?: Cause.Cause<unknown>,
+): CompleteDeps {
   return {
     root,
+    routingFailure,
     argv: process.argv.slice(2),
     env: process.env,
     stdoutWrite: (message) => {
       process.stdout.write(message);
+    },
+    stderrWrite: (message) => {
+      process.stderr.write(message);
     },
     exit: (code) => {
       process.exit(code);
