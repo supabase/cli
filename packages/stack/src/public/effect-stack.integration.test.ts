@@ -167,6 +167,33 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 
+const lifecycleConfig = () => {
+  return {
+    capabilities: {
+      database: {},
+      rest: {},
+      auth: { enabled: false },
+      realtime: { enabled: false },
+      storage: { enabled: false },
+      functions: { enabled: false },
+      studio: { enabled: false },
+      mail: { enabled: false },
+      analytics: { enabled: false },
+      pooler: { enabled: false },
+    },
+    listeners: {
+      api: { enabled: false },
+      database: { enabled: false },
+      pooler: { enabled: false },
+      studio: { enabled: false },
+      mailUi: { enabled: false },
+      smtp: { enabled: false },
+      pop3: { enabled: false },
+      functionsInspector: { enabled: false },
+    },
+  } as const;
+};
+
 describe("Effect stack lifecycle handoff", () => {
   it.live("reclaims a stale owner after a failed maintenance connection", () =>
     Effect.scoped(
@@ -1674,7 +1701,7 @@ describe("Effect stack lifecycle handoff", () => {
           const restarted = yield* openStack(stack.id);
           yield* Effect.addFinalizer(() => restarted.destroy().pipe(Effect.ignore));
           const directStart = yield* restarted
-            .start({ config: { capabilities: {} } })
+            .start({ config: lifecycleConfig() })
             .pipe(Effect.exit);
           expect(Exit.isFailure(directStart)).toBe(true);
           if (Exit.isFailure(directStart)) {
@@ -1684,7 +1711,7 @@ describe("Effect stack lifecycle handoff", () => {
               expect(failure.value).toBeInstanceOf(StackUpgradeRequiredError);
           }
           yield* restarted.stop();
-          const status = yield* restarted.start({ config: { capabilities: {} } });
+          const status = yield* restarted.start({ config: lifecycleConfig() });
           const currentOwner = yield* readOwnerMetadata(env.stateRoot, stack.id, env);
           expect(currentOwner?.rpcRelease).toBe(STACK_RPC_RELEASE);
           expect(currentOwner?.ownerSessionId).not.toBe(owner.ownerSessionId);
@@ -1694,7 +1721,7 @@ describe("Effect stack lifecycle handoff", () => {
           yield* restarted.stop();
           expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
           expect(yield* ownerLockExists(env.stateRoot, stack.id)).toBe(false);
-          const startedAgain = yield* restarted.start({ config: { capabilities: {} } });
+          const startedAgain = yield* restarted.start({ config: lifecycleConfig() });
           expect(startedAgain.lifecycle).toBe("running");
           yield* restarted.destroy();
         }),
@@ -1725,7 +1752,7 @@ describe("Effect stack lifecycle handoff", () => {
                       const compiled = yield* compileStack({
                         projectRoot,
                         runtime: { kind: "native" },
-                        config: { capabilities: {} },
+                        config: lifecycleConfig(),
                       });
                       const resolved = yield* resolveSecrets(
                         {

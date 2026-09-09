@@ -271,6 +271,9 @@ importers:
       '@supabase/pg-topo':
         specifier: 1.0.0-alpha.6
         version: 1.0.0-alpha.6(supports-color@7.2.0)
+      '@supabase/stack':
+        specifier: workspace:*
+        version: link:../../packages/stack
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.11
