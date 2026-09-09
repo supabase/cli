@@ -58,6 +58,11 @@ const PrivatePortAssignmentSchema = Schema.Struct({
 });
 export type PrivatePortAssignment = Schema.Schema.Type<typeof PrivatePortAssignmentSchema>;
 
+/** Stable identity for one durable private workload binding. */
+export const privateBindingKey = (
+  assignment: Pick<PrivatePortAssignment, "workloadId" | "binding">,
+): string => `${assignment.workloadId}\u0000${assignment.binding}`;
+
 const PersistedSecretEntrySchema = Schema.Struct({
   policy: Schema.Literals(["managed", "passthrough"] as const),
   value: Schema.String,
@@ -293,8 +298,7 @@ const PrivatePortAssignmentsSchema = Schema.Array(PrivatePortAssignmentSchema).p
   Schema.decode({
     decode: SchemaGetter.checkEffect((assignments) =>
       Effect.succeed(
-        new Set(assignments.map(({ workloadId, binding }) => `${workloadId}\u0000${binding}`))
-          .size === assignments.length &&
+        new Set(assignments.map(privateBindingKey)).size === assignments.length &&
           new Set(assignments.map(({ port }) => port)).size === assignments.length
           ? undefined
           : "Duplicate persisted private binding or port",

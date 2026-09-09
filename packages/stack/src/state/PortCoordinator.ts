@@ -12,6 +12,7 @@ import type {
   PersistedStackState,
   PrivatePortAssignment,
 } from "./StackState.ts";
+import { privateBindingKey } from "./StackState.ts";
 import {
   isMissingStateRemnantError,
   type StackStateStore,
@@ -79,8 +80,6 @@ const idPattern = /^[0-9a-f]{64}$/;
 
 const assignmentMap = (assignments: ReadonlyArray<HostPortAssignment>) =>
   new Map(assignments.map((assignment) => [assignment.field, assignment]));
-const bindingKey = (assignment: Pick<PrivatePortAssignment, "workloadId" | "binding">): string =>
-  `${assignment.workloadId}\u0000${assignment.binding}`;
 const validPort = (port: number): boolean => Schema.is(NetworkPortSchema)(port);
 const unavailable = (
   port: number,
@@ -192,7 +191,7 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
 
         const existingPublic = assignmentMap(current.ports);
         const existingPrivate = new Map(
-          current.privatePorts.map((entry) => [bindingKey(entry), entry]),
+          current.privatePorts.map((entry) => [privateBindingKey(entry), entry]),
         );
         const retainedPublic = new Map<PortField, HostPortAssignment>();
         const retainedPrivate = new Map<string, PrivatePortAssignment>();
@@ -242,7 +241,7 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
         }
         const requestedPrivate = new Map<string, PrivatePortIntent>();
         for (const intent of privateBindings) {
-          const key = bindingKey(intent);
+          const key = privateBindingKey(intent);
           if (intent.workloadId.length === 0 || intent.binding.length === 0)
             return yield* allocation(
               `${intent.workloadId}:${intent.binding}`,
@@ -326,82 +325,92 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
         const result = yield* Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             const attemptScope = yield* Scope.fork(parentScope, "sequential");
-            const acquired = yield* restore(
-              Effect.gen(function* () {
-                const privateScope = yield* Scope.fork(attemptScope, "sequential");
-                const assignments: HostPortAssignment[] = [];
-                const byField: Partial<Record<PortField, HostPortAssignment>> = {};
-                const listeners: HostListener[] = [];
-                for (const field of fields) {
-                  const intent = listenerIntents[field];
-                  if (!intent.enabled) continue;
-                  const retained = retainedPublic.get(field);
-                  const exact = exactAssignments.get(field);
-                  const assignment = retained ?? exact;
-                  if (assignment !== undefined) {
-                    const listener = yield* options
-                      .bindHost(intent.address, assignment.port, field)
-                      .pipe(Effect.provideService(Scope.Scope, attemptScope));
-                    assignments.push(assignment);
-                    byField[field] = assignment;
-                    listeners.push(listener);
-                    occupied.add(assignment.port);
-                    continue;
+            return yield* Effect.gen(function* () {
+              const acquired = yield* restore(
+                Effect.gen(function* () {
+                  const privateScope = yield* Scope.fork(attemptScope, "sequential");
+                  const assignments: HostPortAssignment[] = [];
+                  const byField: Partial<Record<PortField, HostPortAssignment>> = {};
+                  const listeners: HostListener[] = [];
+                  for (const field of fields) {
+                    const intent = listenerIntents[field];
+                    if (!intent.enabled) continue;
+                    const retained = retainedPublic.get(field);
+                    const exact = exactAssignments.get(field);
+                    const assignment = retained ?? exact;
+                    if (assignment !== undefined) {
+                      const listener = yield* options
+                        .bindHost(intent.address, assignment.port, field)
+                        .pipe(Effect.provideService(Scope.Scope, attemptScope));
+                      assignments.push(assignment);
+                      byField[field] = assignment;
+                      listeners.push(listener);
+                      occupied.add(assignment.port);
+                      continue;
+                    }
+                    const fresh = yield* allocateFresh(field, (port) =>
+                      options
+                        .bindHost(intent.address, port, field)
+                        .pipe(Effect.provideService(Scope.Scope, attemptScope)),
+                    );
+                    const assignmentFresh: HostPortAssignment = {
+                      field,
+                      port: fresh.port,
+                      intent: "automatic",
+                    };
+                    assignments.push(assignmentFresh);
+                    byField[field] = assignmentFresh;
+                    listeners.push(fresh.value);
                   }
-                  const fresh = yield* allocateFresh(field, (port) =>
-                    options
-                      .bindHost(intent.address, port, field)
-                      .pipe(Effect.provideService(Scope.Scope, attemptScope)),
-                  );
-                  const assignmentFresh: HostPortAssignment = {
-                    field,
-                    port: fresh.port,
-                    intent: "automatic",
-                  };
-                  assignments.push(assignmentFresh);
-                  byField[field] = assignmentFresh;
-                  listeners.push(fresh.value);
-                }
 
-                const privateAssignments: PrivatePortAssignment[] = [];
-                for (const intent of requestedPrivate.values()) {
-                  const key = bindingKey(intent);
-                  const label = `${intent.workloadId}:${intent.binding}`;
-                  const retained = retainedPrivate.get(key);
-                  if (retained !== undefined) {
-                    const held = yield* options
-                      .bindPrivate("127.0.0.1", retained.port, label)
-                      .pipe(Effect.provideService(Scope.Scope, privateScope));
-                    privateAssignments.push({ ...retained, port: held.port });
-                    occupied.add(retained.port);
-                    continue;
+                  const privateAssignments: PrivatePortAssignment[] = [];
+                  for (const intent of requestedPrivate.values()) {
+                    const key = privateBindingKey(intent);
+                    const label = `${intent.workloadId}:${intent.binding}`;
+                    const retained = retainedPrivate.get(key);
+                    if (retained !== undefined) {
+                      const held = yield* options
+                        .bindPrivate("127.0.0.1", retained.port, label)
+                        .pipe(Effect.provideService(Scope.Scope, privateScope));
+                      privateAssignments.push({ ...retained, port: held.port });
+                      occupied.add(retained.port);
+                      continue;
+                    }
+                    const fresh = yield* allocateFresh(label, (port) =>
+                      options
+                        .bindPrivate("127.0.0.1", port, label)
+                        .pipe(Effect.provideService(Scope.Scope, privateScope)),
+                    );
+                    privateAssignments.push({
+                      workloadId: intent.workloadId,
+                      binding: intent.binding,
+                      port: fresh.port,
+                    });
                   }
-                  const fresh = yield* allocateFresh(label, (port) =>
-                    options
-                      .bindPrivate("127.0.0.1", port, label)
-                      .pipe(Effect.provideService(Scope.Scope, privateScope)),
-                  );
-                  privateAssignments.push({
-                    workloadId: intent.workloadId,
-                    binding: intent.binding,
-                    port: fresh.port,
-                  });
-                }
-                const next: PersistedStackState = {
-                  ...current,
-                  ports: assignments,
-                  privatePorts: privateAssignments,
-                };
-                yield* options.store.replaceUnlocked(stackId, next);
-                yield* Scope.close(privateScope, Exit.void);
-                return { assignments: byField, privateAssignments, hostListeners: listeners };
-              }).pipe(
-                Effect.onExit((exit) =>
-                  Exit.isSuccess(exit) ? Effect.void : Scope.close(attemptScope, exit),
-                ),
+                  const next: PersistedStackState = {
+                    ...current,
+                    ports: assignments,
+                    privatePorts: privateAssignments,
+                  };
+                  return {
+                    privateScope,
+                    next,
+                    reservation: {
+                      assignments: byField,
+                      privateAssignments,
+                      hostListeners: listeners,
+                    },
+                  };
+                }),
+              );
+              yield* options.store.replaceUnlocked(stackId, acquired.next);
+              yield* Scope.close(acquired.privateScope, Exit.void);
+              return acquired.reservation;
+            }).pipe(
+              Effect.onExit((exit) =>
+                Exit.isSuccess(exit) ? Effect.void : Scope.close(attemptScope, exit),
               ),
             );
-            return acquired;
           }),
         );
         return result;

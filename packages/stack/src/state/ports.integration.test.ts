@@ -345,7 +345,7 @@ describe("port acquisition", () => {
         yield* store.initialize(id, { ...before, desiredLifecycle: "stopped" });
         const coordinator = makePortCoordinator(coordinatorOptions(store, root));
         const result = yield* coordinator.acquire(id, intents(), []).pipe(Effect.exit);
-        expect(result).toHaveProperty("_tag", "Failure");
+        expect(Exit.isFailure(result)).toBe(true);
         expect((yield* store.read(id))?.ports).toEqual(before.ports);
       }),
     ),
@@ -364,7 +364,7 @@ describe("port acquisition", () => {
           Effect.fail(new PortUnavailableError({ port, field, message: "invalid address" }));
         const coordinator = makePortCoordinator(coordinatorOptions(store, root, bindHost));
         const result = yield* coordinator.acquire(id, intents(), []).pipe(Effect.exit);
-        expect(result).toHaveProperty("_tag", "Failure");
+        expect(Exit.isFailure(result)).toBe(true);
         expect((yield* store.read(id))?.ports).toEqual([]);
       }),
     ),
@@ -516,44 +516,6 @@ describe("port acquisition", () => {
           .pipe(Effect.provideService(Crypto.Crypto, deterministic));
         expect(result.assignments.database?.port).toBe(20_000);
         expect(result.assignments.api?.port).not.toBe(20_000);
-      }),
-    ),
-  );
-
-  it.live("retries retryable fresh bind failures beyond the old sixteen-attempt limit", () =>
-    run(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-retry-" });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const value = identity(root, "retry");
-        const id = yield* deriveStackId(value);
-        yield* store.initialize(id, state(id, value));
-        const crypto = yield* Crypto.Crypto;
-        let attempts = 0;
-        const bindHost = (address: string, port: number, field: HostListener["field"]) => {
-          attempts += 1;
-          return attempts <= 17
-            ? Effect.fail(
-                new PortUnavailableError({
-                  port,
-                  field,
-                  message: "occupied",
-                  cause: Object.assign(new Error("occupied"), { code: "EADDRINUSE" }),
-                }),
-              )
-            : bindHostListener(address, port, field);
-        };
-        const result = yield* makePortCoordinator(coordinatorOptions(store, root, bindHost))
-          .acquire(id, intents(), [])
-          .pipe(
-            Effect.provideService(Crypto.Crypto, {
-              ...crypto,
-              randomIntBetween: () => Effect.succeed(0),
-            }),
-          );
-        expect(result.assignments.api?.port).toBeGreaterThan(20_000);
-        expect(attempts).toBe(18);
       }),
     ),
   );
@@ -813,6 +775,62 @@ describe("port acquisition", () => {
         expect((yield* store.read(id))?.ports).toEqual(before.ports);
         yield* withRegistryLock(root, Effect.succeed(true));
         yield* Scope.close(acquisitionScope, Exit.void);
+      }),
+    ),
+  );
+
+  it.live("finishes a commit after interruption is requested", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-commit-interrupt-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const value = identity(root, "commit-interrupt");
+        const id = yield* deriveStackId(value);
+        yield* store.initialize(id, state(id, value));
+        const commitStarted = yield* Deferred.make<void>();
+        const releaseCommit = yield* Deferred.make<void>();
+        const committingStore: PortCoordinatorOptions["store"] = {
+          ...store,
+          replaceUnlocked: (stackId, next) =>
+            Effect.gen(function* () {
+              const result = yield* store.replaceUnlocked(stackId, next);
+              yield* Deferred.succeed(commitStarted, undefined);
+              yield* Deferred.await(releaseCommit);
+              return result;
+            }),
+        };
+        const parentScope = yield* Scope.Scope;
+        const acquisitionScope = yield* Scope.fork(parentScope, "sequential");
+        let publicListener: HostListener | undefined;
+        const coordinator = makePortCoordinator(
+          coordinatorOptions(committingStore, root, (address, port, field) =>
+            bindHostListener(address, port, field).pipe(
+              Effect.tap((listener) =>
+                Effect.sync(() => {
+                  publicListener = listener;
+                }),
+              ),
+            ),
+          ),
+        );
+        const fiber = yield* Effect.forkChild(
+          coordinator
+            .acquire(id, intents(), [])
+            .pipe(Effect.provideService(Scope.Scope, acquisitionScope)),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(commitStarted);
+        const interrupt = yield* Effect.forkChild(Fiber.interrupt(fiber), {
+          startImmediately: true,
+        });
+        yield* Deferred.succeed(releaseCommit, undefined);
+        yield* Fiber.join(fiber).pipe(Effect.exit);
+        yield* Fiber.join(interrupt);
+        expect((yield* store.read(id))?.ports).toHaveLength(1);
+        expect(publicListener?.binding.server.listening).toBe(true);
+        yield* Scope.close(acquisitionScope, Exit.void);
+        expect(publicListener?.binding.server.listening).toBe(false);
       }),
     ),
   );

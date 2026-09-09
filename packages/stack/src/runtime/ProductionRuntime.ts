@@ -24,7 +24,7 @@ import {
 import type { StackStateStore } from "../state/StackStateStore.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
 import { redactKnownSecrets } from "../state/SecretStore.ts";
-import type { PersistedStackState } from "../state/StackState.ts";
+import { privateBindingKey, type PersistedStackState } from "../state/StackState.ts";
 import type { PersistedSecretValues } from "../state/StackState.ts";
 import type { StackId } from "../public/StackId.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
@@ -809,13 +809,10 @@ export const makeProductionRuntime = (
             );
           }
           const requestedPrivate = new Set(
-            privateBindingIntentsFor(input.plan).map(
-              (binding) => `${binding.workloadId}\u0000${binding.binding}`,
-            ),
+            privateBindingIntentsFor(input.plan).map(privateBindingKey),
           );
           for (const assignment of input.state.privatePorts) {
-            if (!requestedPrivate.has(`${assignment.workloadId}\u0000${assignment.binding}`))
-              continue;
+            if (!requestedPrivate.has(privateBindingKey(assignment))) continue;
             yield* checkHostPort(
               "127.0.0.1",
               assignment.port,
