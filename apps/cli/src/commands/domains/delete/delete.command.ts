@@ -2,9 +2,9 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyDomainsDelete } from "./delete.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { domainsDelete } from "./delete.handler.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -17,9 +17,9 @@ const config = {
   ),
 } as const;
 
-export type LegacyDomainsDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DomainsDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDomainsDeleteCommand = Command.make("delete", config).pipe(
+export const domainsDeleteCommand = Command.make("delete", config).pipe(
   Command.withDescription("Deletes the custom hostname config for your project."),
   Command.withShortDescription("Delete the custom hostname config"),
   Command.withExamples([
@@ -29,10 +29,7 @@ export const legacyDomainsDeleteCommand = Command.make("delete", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyDomainsDelete(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
-      withJsonErrorHandling,
-    ),
+    domainsDelete(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["domains", "delete"])),
+  Command.provide(managementApiRuntimeLayer(["domains", "delete"])),
 );

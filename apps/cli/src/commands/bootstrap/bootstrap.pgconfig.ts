@@ -2,12 +2,12 @@
  * Pure Postgres connection-string helpers. Used only to build the `.env` file's
  * `POSTGRES_URL`/derived keys (`bootstrap.dotenv.ts`) — no live DB connection here.
  * The push step's actual connection is resolved separately, by
- * `legacyResolveLinkedConn` (`legacy-db-config.layer.ts`), which reproduces the
+ * `resolveLinkedConn` (`db-config.layer.ts`), which reproduces the
  * *rest* of `NewDbConfigWithPassword` this module doesn't: the direct-host
  * reachability probe and the IPv4 pooler fallback for IPv6-only projects.
  */
 
-export interface LegacyDbConfig {
+export interface DbConfig {
   readonly host: string;
   readonly port: number;
   readonly user: string;
@@ -49,7 +49,7 @@ function percentEscape(value: string, allowed: ReadonlySet<string>): string {
  * square brackets. Bootstrap passes no `RuntimeParams`, so the only query
  * parameter is the default `connect_timeout=10`.
  */
-export function toPostgresUrl(config: LegacyDbConfig): string {
+export function toPostgresUrl(config: DbConfig): string {
   const userinfo = `${percentEscape(config.user, USERINFO_UNESCAPED)}:${percentEscape(
     config.password,
     USERINFO_UNESCAPED,
@@ -68,9 +68,9 @@ export function toPostgresUrl(config: LegacyDbConfig): string {
  * (and derived keys) point at a host the user's own machine may not be able to
  * reach directly — a pre-existing, narrow divergence tracked as out-of-scope
  * for CLI-1953 (which fixed this same gap for the actual push connection;
- * see `legacyResolveLinkedConn`).
+ * see `resolveLinkedConn`).
  */
-export function deriveDbConfig(ref: string, password: string, projectHost: string): LegacyDbConfig {
+export function deriveDbConfig(ref: string, password: string, projectHost: string): DbConfig {
   return {
     host: `db.${ref}.${projectHost}`,
     port: 5432,

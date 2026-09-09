@@ -1,17 +1,11 @@
 import { Command } from "effect/unstable/cli";
-import { legacyInspectDbTableStats } from "./table-stats.handler.ts";
-import {
-  LEGACY_INSPECT_DB_FLAGS,
-  legacyInspectDbCommandHandler,
-} from "../legacy-inspect-db-command.ts";
-import { legacyInspectDbRuntimeLayer } from "../db.layers.ts";
+import { inspectDbTableStats } from "./table-stats.handler.ts";
+import { INSPECT_DB_FLAGS, inspectDbCommandHandler } from "../inspect-db-command.ts";
+import { inspectDbRuntimeLayer } from "../db.layers.ts";
 
-export const legacyInspectDbTableStatsCommand = Command.make(
-  "table-stats",
-  LEGACY_INSPECT_DB_FLAGS,
-).pipe(
+export const inspectDbTableStatsCommand = Command.make("table-stats", INSPECT_DB_FLAGS).pipe(
   Command.withDescription("Show combined table size, index size, and estimated row count."),
   Command.withShortDescription("Show table stats"),
-  Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbTableStats)),
-  Command.provide(legacyInspectDbRuntimeLayer("table-stats")),
+  Command.withHandler(inspectDbCommandHandler(inspectDbTableStats)),
+  Command.provide(inspectDbRuntimeLayer("table-stats")),
 );

@@ -7,10 +7,10 @@ model (see the CLI-1324 plan's "Critical architectural finding" for why).
 
 ## Files Read
 
-| Path                                                                                               | Format                                                                                | When                                                                                                                                                                                                                                                                                                                                                  |
-| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                                                                   | TOML                                                                                  | default path only — skipped entirely when `--project-id` or `--all` is set                                                                                                                                                                                                                                                                            |
-| `auth.email.template.*` / `auth.email.notification.*` `content_path` (config-relative or absolute) | text (existence/readability only — bytes discarded, used only to validate the config) | default path only, only when `auth.enabled`, for every configured template and every notification with `enabled = true`, as part of `legacyResolveLocalConfigValues`'s own `Config.Validate` pass; the resolved path is CONFINED to the project root (symlinks dereferenced with `realpathSync`) — a path resolving outside it aborts before the read |
+| Path                                                                                               | Format                                                                                | When                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                                                                   | TOML                                                                                  | default path only — skipped entirely when `--project-id` or `--all` is set                                                                                                                                                                                                                                                                      |
+| `auth.email.template.*` / `auth.email.notification.*` `content_path` (config-relative or absolute) | text (existence/readability only — bytes discarded, used only to validate the config) | default path only, only when `auth.enabled`, for every configured template and every notification with `enabled = true`, as part of `resolveLocalConfigValues`'s own `Config.Validate` pass; the resolved path is CONFINED to the project root (symlinks dereferenced with `realpathSync`) — a path resolving outside it aborts before the read |
 
 ## Files Written
 
@@ -19,8 +19,8 @@ model (see the CLI-1324 plan's "Critical architectural finding" for why).
 | `~/.supabase/telemetry.json`                                        | JSON                | always (in `Effect.ensuring`) at end of command                                         |
 | `<workdir>/supabase/.temp/start-secrets/<container-name>` (removed) | plaintext, per-file | after teardown succeeds, for every container name torn down that had a staged directory |
 
-The `start-secrets` removal is a TS-port-only hygiene step (`legacyCleanupStartSecrets`,
-`command-internal/legacy-start-secrets-cleanup.ts`) — the old Go CLI never staged secrets on
+The `start-secrets` removal is a TS-port-only hygiene step (`cleanupStartSecrets`,
+`command-internal/start-secrets-cleanup.ts`) — the old Go CLI never staged secrets on
 host disk in the first place, so it has nothing to clean up here. Only Edge Runtime's own
 JWT/service-role-key/secret env artifacts (`shared/functions/serve.ts`'s
 `writeDockerEnvFile`/`writeDockerMultilineEnvScript`) still
@@ -30,13 +30,13 @@ directory would survive `stop` indefinitely. (Kong's TLS/`kong.yml`, Postgres's 
 root key, and Supavisor's pooler tenant-script content are delivered via `docker cp`
 straight into the created container instead — as of supabase/cli#6022 they never touch
 host disk at all, see `start`'s own `SIDE_EFFECTS.md` — so this sweep is now a no-op for
-those three.) The containers to clean are captured via `legacyDockerRemoveAll`'s own
+those three.) The containers to clean are captured via `dockerRemoveAll`'s own
 `onContainersRemoved` hook, which fires only once `docker container prune` has CONFIRMED
 they're actually gone — not at the initial `docker ps` listing, and not before the
 stop/prune stages have even run — so a container the stop stage itself failed on (meaning
 `container prune` never ran and nothing was actually removed) keeps its secrets, and a
 container still running after a later, unrelated failure (volume/network prune) is never
-touched. The hook is fed by `legacyDockerRemoveAll`'s single internal `docker ps` listing
+touched. The hook is fed by `dockerRemoveAll`'s single internal `docker ps` listing
 (no separate, second `docker ps` call — see that function's doc comment for the parity
 rationale), so cleanup targets exactly the containers this run actually tore down — never
 a blanket delete of the whole `start-secrets/` parent (unsafe if a workdir's project id
@@ -68,7 +68,7 @@ No Management API calls. Everything is local Docker + local `config.toml`.
 | Variable              | Purpose                                                                                            | Required?                                                         |
 | --------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | `SUPABASE_PROJECT_ID` | overrides the resolved local project id on the default path (env → config.toml → workdir basename) | no                                                                |
-| `SUPABASE_WORKDIR`    | resolves `LegacyCliSettings.workdir`, which locates `config.toml` on the default path              | no (falls back to walking up from cwd for `supabase/config.toml`) |
+| `SUPABASE_WORKDIR`    | resolves `CommandSettings.workdir`, which locates `config.toml` on the default path                | no (falls back to walking up from cwd for `supabase/config.toml`) |
 
 `docker`/`podman` must be resolvable on `PATH` (or reachable via the configured Docker
 context) — `spawnContainerCli` tries `docker` first and falls back to `podman`. When
@@ -78,17 +78,17 @@ and ensure it is on PATH") rather than a generic "failed to ..." string.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                |
-| ---- | -------------------------------------------------------------------------------------------------------- |
-| `0`  | success — containers/volumes/networks pruned                                                             |
-| `1`  | `--project-id` and `--all` both set (`LegacyStopMutuallyExclusiveError`)                                 |
-| `1`  | `config.toml` present but malformed (`LegacyStopConfigLoadError`) — an **absent** file is not an error   |
-| `1`  | listing containers failed (`LegacyStopListError`)                                                        |
-| `1`  | stopping one or more containers failed (`LegacyStopContainerError`)                                      |
-| `1`  | `docker container prune` failed (`LegacyStopContainerPruneError`)                                        |
-| `1`  | `docker volume prune` failed, only reached when volumes are being deleted (`LegacyStopVolumePruneError`) |
-| `1`  | `docker network prune` failed (`LegacyStopNetworkPruneError`)                                            |
-| `1`  | `docker`/`podman` both absent from `PATH` (surfaces as one of the errors above)                          |
+| Code | Condition                                                                                          |
+| ---- | -------------------------------------------------------------------------------------------------- |
+| `0`  | success — containers/volumes/networks pruned                                                       |
+| `1`  | `--project-id` and `--all` both set (`StopMutuallyExclusiveError`)                                 |
+| `1`  | `config.toml` present but malformed (`StopConfigLoadError`) — an **absent** file is not an error   |
+| `1`  | listing containers failed (`StopListError`)                                                        |
+| `1`  | stopping one or more containers failed (`StopContainerError`)                                      |
+| `1`  | `docker container prune` failed (`StopContainerPruneError`)                                        |
+| `1`  | `docker volume prune` failed, only reached when volumes are being deleted (`StopVolumePruneError`) |
+| `1`  | `docker network prune` failed (`StopNetworkPruneError`)                                            |
+| `1`  | `docker`/`podman` both absent from `PATH` (surfaces as one of the errors above)                    |
 
 ## Telemetry Events Fired
 
@@ -100,8 +100,8 @@ and ensure it is on PATH") rather than a generic "failed to ..." string.
 
 The `-o`/`--output` flag is never read by this command's own handler logic, but it is
 still validated: `stop.command.ts` wraps the handler with
-`withLegacyCommandInstrumentation`, whose default `outputFormats`
-(`LEGACY_RESOURCE_OUTPUT_FORMATS`, the `env|pretty|json|toml|yaml` set) validates and
+`withCommandTelemetry`, whose default `outputFormats`
+(`RESOURCE_OUTPUT_FORMATS`, the `env|pretty|json|toml|yaml` set) validates and
 rejects an unsupported `-o` value (e.g. `csv`/`table`) before the handler runs. Only
 the TS-native `--output-format` is consulted by this handler's own logic below.
 
@@ -132,11 +132,11 @@ Same payload as `json`, delivered as a `result` NDJSON event.
 - `--project-id` and `--all` are **directory-independent** pure Docker-label filters —
   neither reads `config.toml`, so neither is subject to the `content_path` containment
   check below; only the no-flags default path resolves the project id
-  from `LegacyCliSettings.workdir` (env → config.toml `project_id` → workdir basename).
+  from `CommandSettings.workdir` (env → config.toml `project_id` → workdir basename).
 - **The default path VALIDATES config, including the `content_path` containment check
   above, BEFORE any Docker teardown call.** `resolveSearchProjectIdFilter`
-  (`stop.handler.ts`) loads and validates config (`legacyResolveLocalConfigValues`) to
-  resolve the project id filter, and this runs before `legacyDockerRemoveAll` is ever
+  (`stop.handler.ts`) loads and validates config (`resolveLocalConfigValues`) to
+  resolve the project id filter, and this runs before `dockerRemoveAll` is ever
   invoked — so a config-validation failure here (a malformed config, or an
   `auth.email.*.content_path` that resolves outside the project root) fails the command
   and the running stack is **not** torn down. `--all`/`--project-id` bypass config
@@ -147,8 +147,8 @@ Same payload as `json`, delivered as a `result` NDJSON event.
   matches this exactly: `deleteVolumes =
 flags.noBackup`. `--backup=false` alone does **not** delete volumes; only
   `--no-backup` does.
-- Volume prune gates `--all` on the Docker daemon's API version (`legacy-container-cli.ts`'s
-  `legacyDockerSupportsVolumePruneAllFlag`, checked via `docker version --format
+- Volume prune gates `--all` on the Docker daemon's API version (`container-cli.ts`'s
+  `dockerSupportsVolumePruneAllFlag`, checked via `docker version --format
 '{{.Server.APIVersion}}'`) — Docker requires server API version >= 1.42. This isn't
   cosmetic: Docker CLI's own `--all` flag on `volume prune` is annotated `version: "1.42"`
   and enforced before pruning runs, so sending it unconditionally on a pre-1.42 daemon

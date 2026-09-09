@@ -10,13 +10,13 @@ import {
  * Tagged errors for `db lint`, one per failure path. Message text is an
  * established output contract.
  *
- * Connection failures are surfaced by the shared `LegacyDbConnectError` from the
+ * Connection failures are surfaced by the shared `DbConnectError` from the
  * connection layer — not re-wrapped here.
  */
 
 /** Conflicting `db-url`/`linked`/`local` flags; message text is an established output contract. */
-export class LegacyDbLintMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "LegacyDbLintMutuallyExclusiveFlagsError",
+export class DbLintMutuallyExclusiveFlagsError extends Data.TaggedError(
+  "DbLintMutuallyExclusiveFlagsError",
 )<{ readonly message: string }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
@@ -24,7 +24,7 @@ export class LegacyDbLintMutuallyExclusiveFlagsError extends Data.TaggedError(
 }
 
 /** `failed to begin transaction: %w`; message text is an established output contract. */
-export class LegacyDbLintBeginTxError extends Data.TaggedError("LegacyDbLintBeginTxError")<{
+export class DbLintBeginTxError extends Data.TaggedError("DbLintBeginTxError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -33,7 +33,7 @@ export class LegacyDbLintBeginTxError extends Data.TaggedError("LegacyDbLintBegi
 }
 
 /** `failed to list schemas: %w`; message text is an established output contract. */
-export class LegacyDbLintListSchemasError extends Data.TaggedError("LegacyDbLintListSchemasError")<{
+export class DbLintListSchemasError extends Data.TaggedError("DbLintListSchemasError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -42,7 +42,7 @@ export class LegacyDbLintListSchemasError extends Data.TaggedError("LegacyDbLint
 }
 
 /** `failed to enable pgsql_check: %w`; message text is an established output contract. */
-export class LegacyDbLintEnableCheckError extends Data.TaggedError("LegacyDbLintEnableCheckError")<{
+export class DbLintEnableCheckError extends Data.TaggedError("DbLintEnableCheckError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -51,7 +51,7 @@ export class LegacyDbLintEnableCheckError extends Data.TaggedError("LegacyDbLint
 }
 
 /** `failed to query rows: %w`; message text is an established output contract. */
-export class LegacyDbLintQueryError extends Data.TaggedError("LegacyDbLintQueryError")<{
+export class DbLintQueryError extends Data.TaggedError("DbLintQueryError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -60,16 +60,16 @@ export class LegacyDbLintQueryError extends Data.TaggedError("LegacyDbLintQueryE
 }
 
 /** `failed to marshal json: %w`; message text is an established output contract. */
-export class LegacyDbLintMalformedJsonError extends Data.TaggedError(
-  "LegacyDbLintMalformedJsonError",
-)<{ readonly message: string }> {
+export class DbLintMalformedJsonError extends Data.TaggedError("DbLintMalformedJsonError")<{
+  readonly message: string;
+}> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbFinding;
   }
 }
 
 /** `fail-on is set to %s, non-zero exit`; message text is an established output contract. */
-export class LegacyDbLintFailOnError extends Data.TaggedError("LegacyDbLintFailOnError")<{
+export class DbLintFailOnError extends Data.TaggedError("DbLintFailOnError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

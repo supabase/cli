@@ -2,12 +2,12 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit } from "effect";
 import { describe, expect, test } from "vitest";
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
-import { legacyStartExcludeFlag } from "./start.command.ts";
+import { startExcludeFlag } from "./start.command.ts";
 
-describe("legacy start --exclude flag (pflag StringSlice parity)", () => {
+describe("start --exclude flag (pflag StringSlice parity)", () => {
   test("splits a comma-separated value into multiple exclusions", async () => {
     const [, exclude] = await Effect.runPromise(
-      legacyStartExcludeFlag
+      startExcludeFlag
         .parse({ flags: { exclude: ["gotrue,realtime"] }, arguments: [] })
         .pipe(Effect.provide(BunServices.layer)),
     );
@@ -17,7 +17,7 @@ describe("legacy start --exclude flag (pflag StringSlice parity)", () => {
 
   test("accumulates repeated occurrences, each CSV-split", async () => {
     const [, exclude] = await Effect.runPromise(
-      legacyStartExcludeFlag
+      startExcludeFlag
         .parse({ flags: { exclude: ["gotrue,realtime", "studio"] }, arguments: [] })
         .pipe(Effect.provide(BunServices.layer)),
     );
@@ -27,9 +27,7 @@ describe("legacy start --exclude flag (pflag StringSlice parity)", () => {
 
   test("defaults to an empty array when unset", async () => {
     const [, exclude] = await Effect.runPromise(
-      legacyStartExcludeFlag
-        .parse({ flags: {}, arguments: [] })
-        .pipe(Effect.provide(BunServices.layer)),
+      startExcludeFlag.parse({ flags: {}, arguments: [] }).pipe(Effect.provide(BunServices.layer)),
     );
 
     expect(exclude).toEqual([]);
@@ -40,7 +38,7 @@ describe("legacy start --exclude flag (pflag StringSlice parity)", () => {
     // raises no parse error and excludes only `a` — pflag calls
     // `csv.Reader.Read()` once, so the malformed second line is silently dropped.
     const [, exclude] = await Effect.runPromise(
-      legacyStartExcludeFlag
+      startExcludeFlag
         .parse({ flags: { exclude: ['a\nb"c'] }, arguments: [] })
         .pipe(Effect.provide(BunServices.layer)),
     );
@@ -50,7 +48,7 @@ describe("legacy start --exclude flag (pflag StringSlice parity)", () => {
 
   test("rejects malformed CSV with pflag's shorthand-framed diagnostic", async () => {
     const exit = await Effect.runPromise(
-      legacyStartExcludeFlag
+      startExcludeFlag
         .parse({ flags: { exclude: ['a"b'] }, arguments: [] })
         .pipe(Effect.provide(BunServices.layer))
         .pipe(Effect.exit),
@@ -71,7 +69,7 @@ describe("legacy start --exclude flag (pflag StringSlice parity)", () => {
     // Verified against pflag's actual output (CLI-2005): `start -x $'\n'` →
     // `invalid argument "\n" for "-x, --exclude" flag: EOF`.
     const exit = await Effect.runPromise(
-      legacyStartExcludeFlag
+      startExcludeFlag
         .parse({ flags: { exclude: ["\n"] }, arguments: [] })
         .pipe(Effect.provide(BunServices.layer))
         .pipe(Effect.exit),

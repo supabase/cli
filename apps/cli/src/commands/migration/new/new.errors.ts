@@ -9,7 +9,7 @@ import {
  * Creating the migrations directory or writing the new migration file failed.
  * Wraps the established `failed to open migration file` / mkdir errors.
  */
-export class LegacyMigrationNewWriteError extends Data.TaggedError("LegacyMigrationNewWriteError")<{
+export class MigrationNewWriteError extends Data.TaggedError("MigrationNewWriteError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

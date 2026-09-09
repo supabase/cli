@@ -9,7 +9,7 @@
  * immediately with a newline, so the exact bytes carry a LEADING `\n`, not just the
  * trailing blank line one might expect from the source layout.
  */
-export const LEGACY_SQUASH_SEPARATOR_COMMENT =
+export const SQUASH_SEPARATOR_COMMENT =
   "\n--\n-- Dumped schema changes for auth and storage\n--\n\n";
 
 /**
@@ -26,7 +26,7 @@ export const LEGACY_SQUASH_SEPARATOR_COMMENT =
  * port worse for users for no observable benefit on any realistic `auth`/`storage`
  * dump line.
  */
-export function legacySquashScanLines(text: string): ReadonlyArray<string> {
+export function squashScanLines(text: string): ReadonlyArray<string> {
   if (text.length === 0) return [];
   const lines = text.split("\n");
   if (text.endsWith("\n")) lines.pop();
@@ -46,9 +46,9 @@ export function legacySquashScanLines(text: string): ReadonlyArray<string> {
  * so every subsequent blank line in `after` is silently swallowed rather than
  * emitted.
  */
-export function legacySquashLineByLineDiff(before: string, after: string): string {
-  const beforeTokens = legacySquashScanLines(before);
-  const afterTokens = legacySquashScanLines(after);
+export function squashLineByLineDiff(before: string, after: string): string {
+  const beforeTokens = squashScanLines(before);
+  const afterTokens = squashScanLines(after);
   let anchorIndex = 0;
   let out = "";
   for (const line of afterTokens) {

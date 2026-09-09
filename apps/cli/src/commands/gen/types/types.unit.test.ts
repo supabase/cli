@@ -2,12 +2,12 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
 import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
 import { toSlimImage } from "../../../shared/services/slim-images.ts";
-import { legacyGetHostname } from "../../../command-internal/legacy-hostname.ts";
-import { legacyParseSchemaFlags } from "../../../command-internal/legacy-schema-flags.ts";
+import { getHostname } from "../../../command-internal/hostname.ts";
+import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
 import {
   buildPostgresUrl,
   defaultSchemas,
-  legacyRootCaBundle,
+  rootCaBundle,
   localDbContainerId,
   localDbPassword,
   localNetworkId,
@@ -208,7 +208,7 @@ describe("schema and id helpers", () => {
     // pflag's StringSlice parses each value via encoding/csv with NO
     // trimming, and an empty value yields no field. Whitespace is preserved
     // verbatim.
-    expect(legacyParseSchemaFlags(["public, auth", " storage ", ""])).toEqual([
+    expect(parseSchemaFlags(["public, auth", " storage ", ""])).toEqual([
       "public",
       " auth",
       " storage ",
@@ -233,10 +233,10 @@ describe("schema and id helpers", () => {
   it("reads the services hostname and db password from the environment", () => {
     expect(
       withEnv("DOCKER_HOST", undefined, () =>
-        withEnv("SUPABASE_SERVICES_HOSTNAME", undefined, () => legacyGetHostname()),
+        withEnv("SUPABASE_SERVICES_HOSTNAME", undefined, () => getHostname()),
       ),
     ).toBe("127.0.0.1");
-    expect(withEnv("SUPABASE_SERVICES_HOSTNAME", "db.internal", () => legacyGetHostname())).toBe(
+    expect(withEnv("SUPABASE_SERVICES_HOSTNAME", "db.internal", () => getHostname())).toBe(
       "db.internal",
     );
     expect(withEnv("SUPABASE_DB_PASSWORD", undefined, () => localDbPassword())).toBe("postgres");
@@ -255,6 +255,6 @@ describe("schema and id helpers", () => {
   });
 
   it("bundles the staging and production CA certificates", () => {
-    expect(legacyRootCaBundle().length).toBeGreaterThan(0);
+    expect(rootCaBundle().length).toBeGreaterThan(0);
   });
 });

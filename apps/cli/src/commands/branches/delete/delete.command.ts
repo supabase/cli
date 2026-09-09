@@ -2,9 +2,9 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyBranchesDelete } from "./delete.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { branchesDelete } from "./delete.handler.ts";
 
 const config = {
   name: Argument.string("name").pipe(
@@ -16,16 +16,16 @@ const config = {
     Flag.optional,
   ),
 } as const;
-export type LegacyBranchesDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type BranchesDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyBranchesDeleteCommand = Command.make("delete", config).pipe(
+export const branchesDeleteCommand = Command.make("delete", config).pipe(
   Command.withDescription("Delete a preview branch by its name or ID."),
   Command.withShortDescription("Delete a preview branch"),
   Command.withHandler((flags) =>
-    legacyBranchesDelete(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+    branchesDelete(flags).pipe(
+      withCommandTelemetry({ flags, safeFlags: ["project-ref"] }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["branches", "delete"])),
+  Command.provide(managementApiRuntimeLayer(["branches", "delete"])),
 );

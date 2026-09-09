@@ -2,15 +2,12 @@ import { join, relative, sep } from "node:path";
 import { Effect, FileSystem, Option } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
-import { legacyAqua, legacyBold } from "../../../../command-internal/legacy-colors.ts";
-import { legacyValidateWorkdirIsDirectory } from "../../../../command-internal/legacy-workdir-validation.ts";
-import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
-import { legacyRenderWorkerDetails } from "../workers.format.ts";
-import {
-  legacyEmitWorkersMachineOutput,
-  legacyWorkersMachineOutputRequested,
-} from "../workers.output.ts";
-import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
+import { aqua, bold } from "../../../../command-internal/colors.ts";
+import { validateWorkdirIsDirectory } from "../../../../command-internal/workdir-validation.ts";
+import { CommandSettings } from "../../../../config/command-settings.service.ts";
+import { renderWorkerDetails } from "../workers.format.ts";
+import { emitWorkersMachineOutput, workersMachineOutputRequested } from "../workers.output.ts";
+import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import {
@@ -48,13 +45,13 @@ import {
   WorkerDirectoryExistsError,
 } from "../../../../shared/workers/workers.errors.ts";
 import {
-  legacyLoadWorkersProject,
-  legacyLoadWorkersProjectForEntryWrite,
-  legacyValidateWorkerName,
-  type LegacyWorkersProject,
+  loadWorkersProject,
+  loadWorkersProjectForEntryWrite,
+  validateWorkerName,
+  type WorkersProject,
 } from "../workers.shared.ts";
-import type { LegacyWorkersNewFlags } from "./new.command.ts";
-import { LegacyWorkersNewWorkdirError } from "./new.errors.ts";
+import type { WorkersNewFlags } from "./new.command.ts";
+import { WorkersNewWorkdirError } from "./new.errors.ts";
 
 /**
  * `supabase experimental workers new [name]` — scaffold `supabase/workers/<name>/` from the
@@ -106,7 +103,7 @@ const resolveName = Effect.fnUntraced(function* (options: {
   readonly explicit: Option.Option<string>;
   /** Whether there is a terminal to ask on — see `canPromptFor`. */
   readonly canPrompt: boolean;
-  readonly project: LegacyWorkersProject;
+  readonly project: WorkersProject;
 }) {
   if (Option.isSome(options.explicit)) {
     return options.explicit.value;
@@ -253,30 +250,28 @@ const destinationIsFree = Effect.fnUntraced(function* (target: string) {
   return entries.length === 0;
 });
 
-export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(function* (
-  flags: LegacyWorkersNewFlags,
-) {
+export const workersNew = Effect.fn("experimental.workers.new")(function* (flags: WorkersNewFlags) {
   const fs = yield* FileSystem.FileSystem;
   const output = yield* Output;
-  const telemetryState = yield* LegacyTelemetryState;
+  const telemetryState = yield* TelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
-  const cliSettings = yield* LegacyCliSettings;
+  const cliSettings = yield* CommandSettings;
 
   // The telemetry state file is written on every invocation, success or failure.
   yield* Effect.gen(function* () {
-    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
-      Effect.mapError((error) => new LegacyWorkersNewWorkdirError({ message: error.message })),
+    yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
+      Effect.mapError((error) => new WorkersNewWorkdirError({ message: error.message })),
     );
 
-    const project = yield* legacyLoadWorkersProjectForEntryWrite();
+    const project = yield* loadWorkersProjectForEntryWrite();
 
     // Decided once, before the first prompt rather than beside the last, since
     // the name is now asked for too — every prompt below shares the answer.
-    const machineOutput = yield* legacyWorkersMachineOutputRequested();
+    const machineOutput = yield* workersMachineOutputRequested();
     const canPrompt = yield* canPromptFor(machineOutput);
 
     const name = yield* resolveName({ explicit: flags.name, canPrompt, project });
-    yield* legacyValidateWorkerName(name);
+    yield* validateWorkerName(name);
 
     // Refused before anything is asked or written. `new` creates a worker;
     // changing one that already exists is a `config.toml` edit, and the file is
@@ -293,7 +288,7 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
     }
 
     // A DEFAULTED workdir's reader (`workers list`/`push`/`status`, used
-    // via `legacyLoadWorkersProject`) can discover a config.json-only
+    // via `loadWorkersProject`) can discover a config.json-only
     // ancestor project by climbing (CLI-2285); this command's own writer
     // above is TOML-only and never climbs, so the two can disagree about
     // which project is "the" project. When they do, and that ancestor
@@ -305,7 +300,7 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
     // this only runs for a defaulted workdir, and only costs an extra read
     // when it is.
     if (!cliSettings.explicitWorkdir) {
-      const discovered = yield* legacyLoadWorkersProject().pipe(Effect.option);
+      const discovered = yield* loadWorkersProject().pipe(Effect.option);
       if (
         Option.isSome(discovered) &&
         discovered.value.projectRoot !== project.projectRoot &&
@@ -432,7 +427,7 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
 
     // `-o` asks for a machine-readable stdout, so nothing human may be written
     // to it — `output.success` logs to stdout in text mode.
-    if (yield* legacyEmitWorkersMachineOutput(payload)) {
+    if (yield* emitWorkersMachineOutput(payload)) {
       return;
     }
 
@@ -446,9 +441,9 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
     // then the details. Guidance goes in a closing sentence rather than a
     // pseudo-row, since no other command puts a next step inside its output
     // table.
-    yield* output.raw(`Created new Worker at ${legacyBold(sourceDisplay, process.stdout)}\n`);
+    yield* output.raw(`Created new Worker at ${bold(sourceDisplay, process.stdout)}\n`);
     yield* output.raw(
-      legacyRenderWorkerDetails([
+      renderWorkerDetails([
         ["Runtime", runtime],
         ["Size", `${size} (${vcpuForSize(size)} vCPU)`],
         ["Access", exposure],
@@ -461,7 +456,7 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
     // "start your app" line: the shell prints trailers once at the end of the
     // run, so the next step is the last thing on screen.
     yield* emitSuccessTrailer(
-      `Deploy it with ${legacyAqua(`supabase experimental workers push ${name}`)}.\n`,
+      `Deploy it with ${aqua(`supabase experimental workers push ${name}`)}.\n`,
     );
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

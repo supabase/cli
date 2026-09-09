@@ -1,79 +1,74 @@
 import { operationDefinitions } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../../command-internal/legacy-go-output.encoders.ts";
-import { legacyResolveLinkedParentRef } from "../../../command-internal/legacy-parent-project-ref.ts";
+import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { resolveLinkedParentRef } from "../../../command-internal/parent-project-ref.ts";
 import {
-  type LegacyGoType,
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-  legacyGoBool,
-  legacyGoSlice,
-  legacyGoString,
-  legacyGoStruct,
-  legacyGoTomlListWrapper,
-} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
-import { sanitizeLegacyErrorBody } from "../../../command-internal/legacy-http-errors.ts";
+  type GoType,
+  encodeGoToml,
+  encodeGoYaml,
+  goBool,
+  goSlice,
+  goString,
+  goStruct,
+  goTomlListWrapper,
+} from "../../../command-internal/go-struct-output.encoders.ts";
+import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
 import {
-  LegacyProjectsEnvNotSupportedError,
-  LegacyProjectsListNetworkError,
-  LegacyProjectsListUnexpectedStatusError,
+  ProjectsEnvNotSupportedError,
+  ProjectsListNetworkError,
+  ProjectsListUnexpectedStatusError,
 } from "../projects.errors.ts";
 import {
-  type LegacyLinkedProject,
+  type LinkedProject,
   readProjectField,
   renderProjectsListTable,
 } from "../projects.format.ts";
-import type { LegacyProjectsListFlags } from "./list.command.ts";
+import type { ProjectsListFlags } from "./list.command.ts";
 
 /**
  * Struct spec for the linked-project projection: an embedded project
  * response (fields inlined first, in declaration order) plus the
  * CLI-added `Linked bool`.
  */
-const LEGACY_GO_LINKED_PROJECT: LegacyGoType = legacyGoStruct([
-  ["created_at", legacyGoString],
+const GO_LINKED_PROJECT: GoType = goStruct([
+  ["created_at", goString],
   [
     "database",
-    legacyGoStruct([
-      ["host", legacyGoString],
-      ["postgres_engine", legacyGoString],
-      ["release_channel", legacyGoString],
-      ["version", legacyGoString],
+    goStruct([
+      ["host", goString],
+      ["postgres_engine", goString],
+      ["release_channel", goString],
+      ["version", goString],
     ]),
   ],
-  ["id", legacyGoString],
-  ["name", legacyGoString],
-  ["organization_id", legacyGoString],
-  ["organization_slug", legacyGoString],
-  ["ref", legacyGoString],
-  ["region", legacyGoString],
-  ["status", legacyGoString],
-  ["linked", legacyGoBool],
+  ["id", goString],
+  ["name", goString],
+  ["organization_id", goString],
+  ["organization_slug", goString],
+  ["ref", goString],
+  ["region", goString],
+  ["status", goString],
+  ["linked", goBool],
 ]);
 
-const LEGACY_GO_PROJECTS_LIST = legacyGoSlice(LEGACY_GO_LINKED_PROJECT);
+const GO_PROJECTS_LIST = goSlice(GO_LINKED_PROJECT);
 
-const LEGACY_GO_PROJECTS_TOML_WRAPPER = legacyGoTomlListWrapper(
-  "projects",
-  LEGACY_GO_LINKED_PROJECT,
-);
+const GO_PROJECTS_TOML_WRAPPER = goTomlListWrapper("projects", GO_LINKED_PROJECT);
 
-export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
-  _flags: LegacyProjectsListFlags,
-) {
+export const projectsList = Effect.fn("projects.list")(function* (_flags: ProjectsListFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   // The linked ref is loaded purely as a marker — a not-linked error is
   // ignored, no prompt fires. `resolveOptional` never fails or prompts.
@@ -90,17 +85,14 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
     const response = yield* api.executeRaw(operationDefinitions.v1ListAllProjects, {}).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.mapError(
-        (cause) =>
-          new LegacyProjectsListNetworkError({ message: `failed to list projects: ${cause}` }),
+        (cause) => new ProjectsListNetworkError({ message: `failed to list projects: ${cause}` }),
       ),
     );
 
     if (response.status !== 200) {
-      const body = sanitizeLegacyErrorBody(
-        yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-      );
+      const body = sanitizeErrorBody(yield* response.text.pipe(Effect.orElseSucceed(() => "")));
       yield* fetching?.fail() ?? Effect.void;
-      return yield* new LegacyProjectsListUnexpectedStatusError({
+      return yield* new ProjectsListUnexpectedStatusError({
         status: response.status,
         body,
         message: `Unexpected error retrieving projects: ${body}`,
@@ -111,7 +103,7 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.mapError(
         (cause) =>
-          new LegacyProjectsListUnexpectedStatusError({
+          new ProjectsListUnexpectedStatusError({
             status: response.status,
             body: "",
             message: `Unexpected error retrieving projects: ${cause}`,
@@ -121,7 +113,7 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
     );
     if (!Array.isArray(parsed)) {
       yield* fetching?.fail() ?? Effect.void;
-      return yield* new LegacyProjectsListUnexpectedStatusError({
+      return yield* new ProjectsListUnexpectedStatusError({
         status: response.status,
         body: "",
         message: "Unexpected error retrieving projects: response was not an array",
@@ -152,12 +144,12 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
         (project) => readProjectField(project, "id") === linkedRef.value,
       );
       if (!hasExactMatch) {
-        const parent = yield* legacyResolveLinkedParentRef();
+        const parent = yield* resolveLinkedParentRef();
         markerRef = parent.kind === "resolved" ? Option.some(parent.ref) : Option.none();
       }
     }
 
-    const projects: ReadonlyArray<LegacyLinkedProject> = parsed.map((project) => ({
+    const projects: ReadonlyArray<LinkedProject> = parsed.map((project) => ({
       ...(typeof project === "object" && project !== null ? project : {}),
       linked: Option.isSome(markerRef) && readProjectField(project, "id") === markerRef.value,
     }));
@@ -165,7 +157,7 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
     if (goFmt === "env") {
-      return yield* new LegacyProjectsEnvNotSupportedError({
+      return yield* new ProjectsEnvNotSupportedError({
         message: "--output env flag is not supported",
       });
     }
@@ -174,16 +166,16 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
       return;
     }
     if (goFmt === "yaml") {
-      yield* output.raw(encodeLegacyGoYaml(projects, LEGACY_GO_PROJECTS_LIST));
+      yield* output.raw(encodeGoYaml(projects, GO_PROJECTS_LIST));
       return;
     }
     if (goFmt === "toml") {
       // The list is built with `append`, so an empty list stays a nil slice
       // and BurntSushi emits nothing for the wrapper.
       yield* output.raw(
-        encodeLegacyGoToml(
+        encodeGoToml(
           { projects: projects.length > 0 ? projects : undefined },
-          LEGACY_GO_PROJECTS_TOML_WRAPPER,
+          GO_PROJECTS_TOML_WRAPPER,
         ),
       );
       return;

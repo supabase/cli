@@ -1,29 +1,29 @@
 import { Effect, Option } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
-import { legacyAqua } from "../../../../command-internal/legacy-colors.ts";
-import { legacyRenderWorkerDetails } from "../workers.format.ts";
+import { aqua } from "../../../../command-internal/colors.ts";
+import { renderWorkerDetails } from "../workers.format.ts";
 import {
-  legacyEmitWorkersMachineOutput,
-  legacyRejectWorkersEnvOutput,
-  legacyWorkersProjectRefSuffix,
+  emitWorkersMachineOutput,
+  rejectWorkersEnvOutput,
+  workersProjectRefSuffix,
 } from "../workers.output.ts";
-import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
+import { CommandPlatformApi } from "../../../../auth/command-platform-api.service.ts";
+import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { displayPath } from "../../../../shared/workers/worker-paths.ts";
 import { formatApiSize } from "../../../../shared/workers/worker-runtimes.ts";
 import { workerUrl } from "../../../../shared/workers/worker-url.ts";
 import { getWorker } from "../../../../shared/workers/workers-api.ts";
 import { WorkerNotDeployedError } from "../../../../shared/workers/workers.errors.ts";
-import { LegacyProjectRefResolver } from "../../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
+import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
-  legacyDescribeWorkerForReporting,
-  legacyLoadWorkersProjectForReporting,
-  legacyValidateWorkerName,
+  describeWorkerForReporting,
+  loadWorkersProjectForReporting,
+  validateWorkerName,
 } from "../workers.shared.ts";
-import type { LegacyWorkersStatusFlags } from "./status.command.ts";
+import type { WorkersStatusFlags } from "./status.command.ts";
 
 /**
  * `supabase experimental workers status [name]` — everything known about one worker.
@@ -32,31 +32,31 @@ import type { LegacyWorkersStatusFlags } from "./status.command.ts";
  * scrolled away, plus the live instance tally, which is the only place it is
  * available — the list endpoint stays free of per-worker backend calls.
  */
-export const legacyWorkersStatus = Effect.fn("legacy.experimental.workers.status")(function* (
-  flags: LegacyWorkersStatusFlags,
+export const workersStatus = Effect.fn("experimental.workers.status")(function* (
+  flags: WorkersStatusFlags,
 ) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
-  const settings = yield* LegacyCliSettings;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
+  const settings = yield* CommandSettings;
 
   // The ref is resolved outside the finalizers because caching it is one of
   // them; everything that can fail on its own — loading `config.toml`,
   // validating the name, resolving the worker — belongs inside, so those
   // failures still flush telemetry. Same shape as `config/push`.
   const projectRef = yield* resolver.resolve(flags.projectRef);
-  const refSuffix = legacyWorkersProjectRefSuffix(flags.projectRef);
+  const refSuffix = workersProjectRefSuffix(flags.projectRef);
 
   yield* Effect.gen(function* () {
-    const project = yield* legacyLoadWorkersProjectForReporting();
-    const name = yield* legacyValidateWorkerName(flags.name);
-    const worker = yield* legacyDescribeWorkerForReporting(project, name);
+    const project = yield* loadWorkersProjectForReporting();
+    const name = yield* validateWorkerName(flags.name);
+    const worker = yield* describeWorkerForReporting(project, name);
 
     // Up front, like the rest of the family: discovering an unencodable format
     // at emit time means failing after the fetch has already been paid for.
-    yield* legacyRejectWorkersEnvOutput();
+    yield* rejectWorkersEnvOutput();
 
     const fetching = yield* output.task("Fetching worker...");
     const found = yield* getWorker(api, projectRef, name).pipe(
@@ -109,7 +109,7 @@ export const legacyWorkersStatus = Effect.fn("legacy.experimental.workers.status
 
     // `-o` asks for a machine-readable stdout, so nothing human may be written
     // to it — `output.success` logs to stdout in text mode.
-    if (yield* legacyEmitWorkersMachineOutput(payload)) {
+    if (yield* emitWorkersMachineOutput(payload)) {
       return;
     }
 
@@ -140,12 +140,12 @@ export const legacyWorkersStatus = Effect.fn("legacy.experimental.workers.status
       ],
       ["URL", url ?? ""],
       ["Project", projectRef],
-      // `legacyRenderWorkerDetails` drops empty-valued rows, so an unknown
+      // `renderWorkerDetails` drops empty-valued rows, so an unknown
       // source omits the row rather than printing a guess.
       ["Source", sourceDisplay ?? ""],
     ];
 
-    yield* output.raw(legacyRenderWorkerDetails(details));
+    yield* output.raw(renderWorkerDetails(details));
 
     if (record.instances === undefined && record.instancesError !== undefined) {
       yield* output.raw(`Instance counts could not be read: ${record.instancesError}\n`, "stderr");
@@ -156,7 +156,7 @@ export const legacyWorkersStatus = Effect.fn("legacy.experimental.workers.status
       // Trailer, like every other "what to run next" line in this shell: the
       // command reports a failed build but exits 0, so the trailer flushes.
       yield* emitSuccessTrailer(
-        `Fix the issue, then re-run ${legacyAqua(`supabase experimental workers push ${name}${refSuffix}`)}.\n`,
+        `Fix the issue, then re-run ${aqua(`supabase experimental workers push ${name}${refSuffix}`)}.\n`,
       );
     }
   }).pipe(

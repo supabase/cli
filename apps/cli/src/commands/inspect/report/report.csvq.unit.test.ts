@@ -2,42 +2,42 @@ import { Option } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
-  type LegacyCsvTableProvider,
-  LegacyInspectCsvqError,
-  legacyEvalCsvqScalar,
-  legacyParseReportCsv,
+  type CsvTableProvider,
+  InspectCsvqError,
+  evalCsvqScalar,
+  parseReportCsv,
 } from "./report.csvq.ts";
-import { LEGACY_DEFAULT_INSPECT_RULES } from "./report.rules.ts";
+import { DEFAULT_INSPECT_RULES } from "./report.rules.ts";
 
-function provider(tables: Record<string, string>): LegacyCsvTableProvider {
-  return (name) => (name in tables ? legacyParseReportCsv(tables[name]!) : undefined);
+function provider(tables: Record<string, string>): CsvTableProvider {
+  return (name) => (name in tables ? parseReportCsv(tables[name]!) : undefined);
 }
 
 const rule = (name: string): string => {
-  const found = LEGACY_DEFAULT_INSPECT_RULES.find((r) => r.name === name);
+  const found = DEFAULT_INSPECT_RULES.find((r) => r.name === name);
   if (found === undefined) throw new Error(`no rule named ${name}`);
   return found.query;
 };
 
 function evalScalar(query: string, tables: Record<string, string>): Option.Option<string> {
-  return legacyEvalCsvqScalar(query, provider(tables));
+  return evalCsvqScalar(query, provider(tables));
 }
 
-describe("legacyParseReportCsv", () => {
+describe("parseReportCsv", () => {
   it("indexes headers case-insensitively and parses RFC4180 quoted fields", () => {
-    const table = legacyParseReportCsv('name,stmt\npublic.t,"SELECT a, b\nFROM t"\n');
+    const table = parseReportCsv('name,stmt\npublic.t,"SELECT a, b\nFROM t"\n');
     expect(table.columns.get("name")).toBe(0);
     expect(table.columns.get("stmt")).toBe(1);
     expect(table.rows).toEqual([["public.t", "SELECT a, b\nFROM t"]]);
   });
 
   it("reads a quoted empty field and an unquoted empty field both as empty strings", () => {
-    const table = legacyParseReportCsv('a,b,c\n"",,x\n');
+    const table = parseReportCsv('a,b,c\n"",,x\n');
     expect(table.rows).toEqual([["", "", "x"]]);
   });
 
   it("returns an empty table for header-only input", () => {
-    const table = legacyParseReportCsv("a,b\n");
+    const table = parseReportCsv("a,b\n");
     expect(table.rows).toEqual([]);
   });
 });
@@ -332,20 +332,18 @@ describe("plain column select", () => {
 
 describe("errors", () => {
   it("throws for an unknown table", () => {
-    expect(() => evalScalar("SELECT COUNT(*) FROM `missing.csv`", {})).toThrow(
-      LegacyInspectCsvqError,
-    );
+    expect(() => evalScalar("SELECT COUNT(*) FROM `missing.csv`", {})).toThrow(InspectCsvqError);
   });
 
   it("throws for an unknown column", () => {
     expect(() =>
       evalScalar("SELECT LISTAGG(nope, ',') FROM `locks.csv`", { "locks.csv": "stmt\nA\n" }),
-    ).toThrow(LegacyInspectCsvqError);
+    ).toThrow(InspectCsvqError);
   });
 
   it("throws for unsupported grammar", () => {
     expect(() =>
       evalScalar("UPDATE `locks.csv` SET stmt = 'x'", { "locks.csv": "stmt\nA\n" }),
-    ).toThrow(LegacyInspectCsvqError);
+    ).toThrow(InspectCsvqError);
   });
 });

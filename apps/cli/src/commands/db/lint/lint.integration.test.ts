@@ -3,36 +3,29 @@ import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
 import {
-  LEGACY_VALID_REF,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyTelemetryStateTracked,
-  legacySequentialExecBatch,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  VALID_REF,
+  mockLinkedProjectCacheTracked,
+  mockTelemetryStateTracked,
+  sequentialExecBatch,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { LegacyDnsResolverFlag } from "../../../shared/legacy/global-flags.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import type {
-  LegacyDbConfigFlags,
-  LegacyResolvedDbConfig,
-} from "../../../command-internal/legacy-db-config.types.ts";
-import { LegacyDbExecError } from "../../../command-internal/legacy-db-connection.errors.ts";
+import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
-  LegacyDbConnection,
-  type LegacyPgConnInput,
-  type LegacyDbSession,
-} from "../../../command-internal/legacy-db-connection.service.ts";
-import { LegacyDbLintFailOnError } from "./lint.errors.ts";
-import { encodeLegacyLintResults, parseLegacyLintResult } from "./lint.format.ts";
-import { legacyDbLint } from "./lint.handler.ts";
-import {
-  LEGACY_CHECK_SCHEMA_SCRIPT,
-  LEGACY_ENABLE_PGSQL_CHECK,
-  LEGACY_LIST_SCHEMAS_SQL,
-} from "./lint.lint-sql.ts";
-import type { LegacyDbLintFlags } from "./lint.command.ts";
+  DbConnection,
+  type PgConnInput,
+  type DbSession,
+} from "../../../command-internal/db-connection.service.ts";
+import { DbLintFailOnError } from "./lint.errors.ts";
+import { encodeLintResults, parseLintResult } from "./lint.format.ts";
+import { dbLint } from "./lint.handler.ts";
+import { CHECK_SCHEMA_SCRIPT, ENABLE_PGSQL_CHECK, LIST_SCHEMAS_SQL } from "./lint.lint-sql.ts";
+import type { DbLintFlags } from "./lint.command.ts";
 
-const LOCAL_CONN: LegacyPgConnInput = {
+const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
   port: 54322,
   user: "postgres",
@@ -52,14 +45,14 @@ function checkRow(proname: string, issues: ReadonlyArray<Record<string, unknown>
 }
 
 function mockResolver(opts: { isLocal?: boolean } = {}) {
-  let resolveInput: LegacyDbConfigFlags | undefined;
-  const layer = Layer.succeed(LegacyDbConfigResolver, {
-    resolve: (flags: LegacyDbConfigFlags) => {
+  let resolveInput: DbConfigFlags | undefined;
+  const layer = Layer.succeed(DbConfigResolver, {
+    resolve: (flags: DbConfigFlags) => {
       resolveInput = flags;
       return Effect.succeed({
         conn: LOCAL_CONN,
         isLocal: opts.isLocal ?? true,
-      } satisfies LegacyResolvedDbConfig);
+      } satisfies ResolvedDbConfig);
     },
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
@@ -82,9 +75,9 @@ function mockConnection(opts: {
   const execs: Array<string> = [];
   const linted: Array<string> = [];
   let listParams: ReadonlyArray<unknown> | undefined;
-  const layer = Layer.succeed(LegacyDbConnection, {
+  const layer = Layer.succeed(DbConnection, {
     connect: () => {
-      const session: LegacyDbSession = {
+      const session: DbSession = {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
@@ -93,9 +86,9 @@ function mockConnection(opts: {
         exec: (sql: string) =>
           Effect.suspend(() => {
             execs.push(sql);
-            if (sql === LEGACY_ENABLE_PGSQL_CHECK && opts.enableFails === true) {
+            if (sql === ENABLE_PGSQL_CHECK && opts.enableFails === true) {
               return Effect.fail(
-                new LegacyDbExecError({
+                new DbExecError({
                   message: `ERROR: could not open extension control file (SQLSTATE 58P01)`,
                 }),
               );
@@ -104,18 +97,18 @@ function mockConnection(opts: {
           }),
         query: (sql: string, params?: ReadonlyArray<unknown>) =>
           Effect.suspend(() => {
-            if (sql === LEGACY_LIST_SCHEMAS_SQL) {
+            if (sql === LIST_SCHEMAS_SQL) {
               listParams = params;
               if (opts.listFails === true) {
-                return Effect.fail(new LegacyDbExecError({ message: "permission denied" }));
+                return Effect.fail(new DbExecError({ message: "permission denied" }));
               }
               return Effect.succeed((opts.schemas ?? []).map((nspname) => ({ nspname })));
             }
-            if (sql === LEGACY_CHECK_SCHEMA_SCRIPT) {
+            if (sql === CHECK_SCHEMA_SCRIPT) {
               const schema = String(params?.[0]);
               linted.push(schema);
               if (opts.queryFails === true) {
-                return Effect.fail(new LegacyDbExecError({ message: "syntax error" }));
+                return Effect.fail(new DbExecError({ message: "syntax error" }));
               }
               if (opts.malformed === true) {
                 return Effect.succeed([{ proname: "f1", plpgsql_check_function: "malformed" }]);
@@ -126,7 +119,7 @@ function mockConnection(opts: {
           }),
         // A migration file's statements arrive as one batch; replay them through
         // `exec`/`query` so this suite's recordings and failure injection still apply.
-        execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+        execBatch: (statements) => sequentialExecBatch(session)(statements),
       };
       return Effect.succeed(session);
     },
@@ -150,21 +143,19 @@ function mockConnection(opts: {
  *  other methods are unused by lint. */
 function mockProjectRef() {
   const calls: Array<string> = [];
-  const layer = Layer.succeed(LegacyProjectRefResolver, {
-    resolve: () => Effect.succeed(LEGACY_VALID_REF),
-    resolveForLink: () => Effect.succeed(LEGACY_VALID_REF),
-    resolveOptional: () => Effect.succeed(Option.some(LEGACY_VALID_REF)),
+  const layer = Layer.succeed(ProjectRefResolver, {
+    resolve: () => Effect.succeed(VALID_REF),
+    resolveForLink: () => Effect.succeed(VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
     // Gives an explicit `--project-ref` flag top precedence, same as Go's
     // `flags.LoadProjectRef` — mirrors the real resolver so a test can prove the
     // flag (not just the hardcoded fallback) drives the linked ref.
     loadProjectRef: (flagValue: Option.Option<string>) =>
       Effect.sync(() => {
         calls.push("loadProjectRef");
-        return Option.isSome(flagValue) && flagValue.value.length > 0
-          ? flagValue.value
-          : LEGACY_VALID_REF;
+        return Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : VALID_REF;
       }),
-    promptProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
+    promptProjectRef: () => Effect.succeed(VALID_REF),
   });
   return {
     layer,
@@ -198,10 +189,10 @@ function setup(opts: SetupOpts = {}) {
     queryFails: opts.queryFails,
     listFails: opts.listFails,
   });
-  const telemetry = mockLegacyTelemetryStateTracked();
+  const telemetry = mockTelemetryStateTracked();
   const processControl = mockProcessControl();
   const projectRef = mockProjectRef();
-  const cache = mockLegacyLinkedProjectCacheTracked();
+  const cache = mockLinkedProjectCacheTracked();
   const layer = Layer.mergeAll(
     out.layer,
     resolver.layer,
@@ -210,13 +201,13 @@ function setup(opts: SetupOpts = {}) {
     processControl.layer,
     projectRef.layer,
     cache.layer,
-    Layer.succeed(LegacyDnsResolverFlag, "native"),
+    Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
   );
   return { layer, out, resolver, connection, telemetry, processControl, projectRef, cache };
 }
 
-const flags = (over: Partial<LegacyDbLintFlags> = {}): LegacyDbLintFlags => ({
+const flags = (over: Partial<DbLintFlags> = {}): DbLintFlags => ({
   dbUrl: over.dbUrl ?? Option.none<string>(),
   linked: over.linked ?? false,
   local: over.local ?? false,
@@ -226,22 +217,22 @@ const flags = (over: Partial<LegacyDbLintFlags> = {}): LegacyDbLintFlags => ({
   failOn: over.failOn ?? Option.none<"none" | "warning" | "error">(),
 });
 
-describe("legacy db lint", () => {
+describe("db lint", () => {
   it.live("lints the named schema and prints parsed issues to stdout", () => {
     const { layer, out, connection } = setup({
       schemas: [],
       checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] },
     });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public"] }));
-      const expected = encodeLegacyLintResults([
-        parseLegacyLintResult(JSON.stringify({ issues: [ERROR_ISSUE] }), "public.f1"),
+      yield* dbLint(flags({ schema: ["public"] }));
+      const expected = encodeLintResults([
+        parseLintResult(JSON.stringify({ issues: [ERROR_ISSUE] }), "public.f1"),
       ]);
       expect(out.stdoutText).toBe(expected);
       expect(out.stderrText).toContain("Connecting to local database...");
       expect(out.stderrText).toContain("Linting schema: public");
       // Begin / enable extension / rollback all ran on the session.
-      expect(connection.execs).toEqual(["begin", LEGACY_ENABLE_PGSQL_CHECK, "rollback"]);
+      expect(connection.execs).toEqual(["begin", ENABLE_PGSQL_CHECK, "rollback"]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -251,7 +242,7 @@ describe("legacy db lint", () => {
       checkRows: { public: [checkRow("f1", [ERROR_ISSUE])], private: [] },
     });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags());
+      yield* dbLint(flags());
       // ListUserSchemas ran with the managed-schemas array bound as $1.
       expect(Array.isArray(connection.listParams?.[0])).toBe(true);
       expect(connection.linted).toEqual(["public", "private"]);
@@ -262,7 +253,7 @@ describe("legacy db lint", () => {
   it.live("fails when the plpgsql_check extension cannot be enabled", () => {
     const { layer } = setup({ schemas: [], enableFails: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbLint(flags({ schema: ["public"] })));
+      const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("failed to enable pgsql_check");
@@ -273,7 +264,7 @@ describe("legacy db lint", () => {
   it.live("fails on malformed plpgsql_check json", () => {
     const { layer } = setup({ malformed: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbLint(flags({ schema: ["public"] })));
+      const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("failed to marshal json");
@@ -284,7 +275,7 @@ describe("legacy db lint", () => {
   it.live("surfaces a query failure from plpgsql_check", () => {
     const { layer } = setup({ queryFails: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbLint(flags({ schema: ["public"] })));
+      const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("failed to query rows");
@@ -295,7 +286,7 @@ describe("legacy db lint", () => {
   it.live("surfaces a list-schemas failure", () => {
     const { layer } = setup({ listFails: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbLint(flags()));
+      const exit = yield* Effect.exit(dbLint(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("failed to list schemas");
@@ -306,7 +297,7 @@ describe("legacy db lint", () => {
   it.live("prints 'No schema errors found' to stderr and nothing to stdout when clean", () => {
     const { layer, out } = setup({ checkRows: { public: [] } });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public"] }));
+      yield* dbLint(flags({ schema: ["public"] }));
       expect(out.stdoutText).toBe("");
       expect(out.stderrText).toContain("\nNo schema errors found");
     }).pipe(Effect.provide(layer));
@@ -315,7 +306,7 @@ describe("legacy db lint", () => {
   it.live("emits nothing on stdout when all issues are below --level (no clean message)", () => {
     const { layer, out } = setup({ checkRows: { public: [checkRow("f1", [WARNING_ISSUE])] } });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public"], level: Option.some("error") }));
+      yield* dbLint(flags({ schema: ["public"], level: Option.some("error") }));
       expect(out.stdoutText).toBe("");
       expect(out.stderrText).not.toContain("No schema errors found");
     }).pipe(Effect.provide(layer));
@@ -325,15 +316,15 @@ describe("legacy db lint", () => {
     const { layer, out } = setup({ checkRows: { public: [checkRow("f1", [WARNING_ISSUE])] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyDbLint(flags({ schema: ["public"], failOn: Option.some("warning") })),
+        dbLint(flags({ schema: ["public"], failOn: Option.some("warning") })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure)).toBe(true);
         if (Option.isSome(failure)) {
-          expect(failure.value).toBeInstanceOf(LegacyDbLintFailOnError);
-          expect((failure.value as LegacyDbLintFailOnError).message).toBe(
+          expect(failure.value).toBeInstanceOf(DbLintFailOnError);
+          expect((failure.value as DbLintFailOnError).message).toBe(
             "fail-on is set to warning, non-zero exit",
           );
         }
@@ -347,7 +338,7 @@ describe("legacy db lint", () => {
     const { layer } = setup({ checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyDbLint(flags({ schema: ["public"], failOn: Option.some("error") })),
+        dbLint(flags({ schema: ["public"], failOn: Option.some("error") })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -359,7 +350,7 @@ describe("legacy db lint", () => {
   it.live("does not exit non-zero when --fail-on is none", () => {
     const { layer } = setup({ checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] } });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbLint(flags({ schema: ["public"] })));
+      const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
       expect(Exit.isSuccess(exit)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -370,7 +361,7 @@ describe("legacy db lint", () => {
     const { layer, out } = setup({ checkRows: { public: [checkRow("f1", [WARNING_ISSUE])] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyDbLint(
+        dbLint(
           flags({
             schema: ["public"],
             level: Option.some("error"),
@@ -387,7 +378,7 @@ describe("legacy db lint", () => {
     // Both flags present in args → mutual exclusion error (sorted set [db-url linked]).
     const { layer } = setup({ args: ["--db-url=postgres://x", "--linked"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbLint(flags({ dbUrl: Option.some("postgres://x") })));
+      const exit = yield* Effect.exit(dbLint(flags({ dbUrl: Option.some("postgres://x") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain(
@@ -403,7 +394,7 @@ describe("legacy db lint", () => {
       checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] },
     });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public"] }));
+      yield* dbLint(flags({ schema: ["public"] }));
       expect(out.messages).toContainEqual(
         expect.objectContaining({
           type: "success",
@@ -418,7 +409,7 @@ describe("legacy db lint", () => {
   it.live("emits an empty result envelope in json mode when clean", () => {
     const { layer, out } = setup({ format: "json", checkRows: { public: [] } });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public"] }));
+      yield* dbLint(flags({ schema: ["public"] }));
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "db lint", data: { results: [] } }),
       );
@@ -431,7 +422,7 @@ describe("legacy db lint", () => {
       checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] },
     });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public"] }));
+      yield* dbLint(flags({ schema: ["public"] }));
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "db lint" }),
       );
@@ -445,7 +436,7 @@ describe("legacy db lint", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyDbLint(flags({ schema: ["public"], failOn: Option.some("error") })),
+        dbLint(flags({ schema: ["public"], failOn: Option.some("error") })),
       );
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(processControl.exitCode).toBe(1);
@@ -459,7 +450,7 @@ describe("legacy db lint", () => {
       args: ["--db-url=postgres://x"],
     });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public"], dbUrl: Option.some("postgres://x") }));
+      yield* dbLint(flags({ schema: ["public"], dbUrl: Option.some("postgres://x") }));
       expect(out.stderrText).toContain("Connecting to remote database...");
     }).pipe(Effect.provide(layer));
   });
@@ -472,7 +463,7 @@ describe("legacy db lint", () => {
       checkRows: { public: [], private: [] },
     });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public", "private"] }));
+      yield* dbLint(flags({ schema: ["public", "private"] }));
       // Both schemas linted — the handler no longer does CSV splitting itself.
       expect(connection.linted).toEqual(["public", "private"]);
     }).pipe(Effect.provide(layer));
@@ -487,7 +478,7 @@ describe("legacy db lint", () => {
       args: ["--linked"],
     });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public"] }));
+      yield* dbLint(flags({ schema: ["public"] }));
       // Resolved via the non-prompting load and cached for telemetry grouping.
       expect(projectRef.calls).toContain("loadProjectRef");
       expect(cache.cached).toBe(true);
@@ -495,7 +486,7 @@ describe("legacy db lint", () => {
   });
 
   it.live("lints the project given via --project-ref, overriding the workdir's own ref", () => {
-    // The fake resolver's own fallback (LEGACY_VALID_REF) represents whatever
+    // The fake resolver's own fallback (VALID_REF) represents whatever
     // the workdir would resolve to absent the flag (e.g. .temp/project-ref) —
     // the flag must win over it and drive the cached ref.
     const FLAG_REF = "flagflagflagflagflag";
@@ -505,17 +496,17 @@ describe("legacy db lint", () => {
       args: ["--linked"],
     });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public"], projectRef: Option.some(FLAG_REF) }));
+      yield* dbLint(flags({ schema: ["public"], projectRef: Option.some(FLAG_REF) }));
       expect(cache.cached).toBe(true);
       expect(cache.cachedRef).toBe(FLAG_REF);
-      expect(cache.cachedRef).not.toBe(LEGACY_VALID_REF);
+      expect(cache.cachedRef).not.toBe(VALID_REF);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("does not write the linked-project cache for a local run", () => {
     const { layer, cache } = setup({ checkRows: { public: [] } });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public"] }));
+      yield* dbLint(flags({ schema: ["public"] }));
       // The cache is only written when a ref is known.
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -528,7 +519,7 @@ describe("legacy db lint", () => {
     const { layer, connection, cache } = setup({ checkRows: { public: [] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyDbLint(flags({ schema: ["public"], projectRef: Option.some(FLAG_REF) })),
+        dbLint(flags({ schema: ["public"], projectRef: Option.some(FLAG_REF) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -545,11 +536,9 @@ describe("legacy db lint", () => {
     const success = setup({ checkRows: { public: [] } });
     const failure = setup({ enableFails: true });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public"] })).pipe(Effect.provide(success.layer));
+      yield* dbLint(flags({ schema: ["public"] })).pipe(Effect.provide(success.layer));
       expect(success.telemetry.flushed).toBe(true);
-      yield* Effect.exit(
-        legacyDbLint(flags({ schema: ["public"] })).pipe(Effect.provide(failure.layer)),
-      );
+      yield* Effect.exit(dbLint(flags({ schema: ["public"] })).pipe(Effect.provide(failure.layer)));
       expect(failure.telemetry.flushed).toBe(true);
     });
   });
@@ -565,7 +554,7 @@ describe("legacy db lint", () => {
       args: ["db", "lint", "--linked=false"],
     });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public"] }));
+      yield* dbLint(flags({ schema: ["public"] }));
       expect(projectRef.calls).toContain("loadProjectRef");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -578,7 +567,7 @@ describe("legacy db lint", () => {
       args: ["--no-linked"],
     });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public"] }));
+      yield* dbLint(flags({ schema: ["public"] }));
       expect(projectRef.calls).toContain("loadProjectRef");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -588,7 +577,7 @@ describe("legacy db lint", () => {
     // Both flags are explicitly set → mutual exclusion fires with the sorted set.
     const { layer } = setup({ args: ["--local=false", "--linked"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbLint(flags({ schema: ["public"] })));
+      const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain(
@@ -602,7 +591,7 @@ describe("legacy db lint", () => {
     // `--local=false` is Changed for `local` → connType="local" (Changed-first: local).
     const { layer, out, cache } = setup({ checkRows: { public: [] }, args: ["--local=false"] });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public"] }));
+      yield* dbLint(flags({ schema: ["public"] }));
       expect(out.stderrText).toContain("Connecting to local database...");
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));

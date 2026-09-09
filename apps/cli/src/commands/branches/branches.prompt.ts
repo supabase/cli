@@ -2,21 +2,21 @@ import { styleText } from "node:util";
 
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../auth/legacy-platform-api.service.ts";
-import { mapLegacyHttpError } from "../../command-internal/legacy-http-errors.ts";
+import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
+import { mapHttpError } from "../../command-internal/http-errors.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { detectGitBranch } from "../../shared/git/git-branch.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import {
-  LegacyBranchesBranchNameEmptyError,
-  LegacyBranchesBranchingDisabledError,
-  LegacyBranchesListNetworkError,
-  LegacyBranchesListUnexpectedStatusError,
+  BranchesBranchNameEmptyError,
+  BranchesBranchingDisabledError,
+  BranchesListNetworkError,
+  BranchesListUnexpectedStatusError,
 } from "./branches.errors.ts";
 
-const mapListError = mapLegacyHttpError({
-  networkError: LegacyBranchesListNetworkError,
-  statusError: LegacyBranchesListUnexpectedStatusError,
+const mapListError = mapHttpError({
+  networkError: BranchesListNetworkError,
+  statusError: BranchesListUnexpectedStatusError,
   networkMessage: (cause) => `failed to list branch: ${cause}`,
   statusMessage: (status, body) => `unexpected list branch status ${status}: ${body}`,
 });
@@ -36,7 +36,7 @@ const mapListError = mapLegacyHttpError({
  * Used by `get`, `update`, `pause`, `unpause`, `delete` whenever the positional
  * `[name]` argument is omitted.
  */
-export const legacyPromptBranchId = Effect.fnUntraced(function* (
+export const promptBranchId = Effect.fnUntraced(function* (
   input: Option.Option<string>,
   projectRef: string,
 ) {
@@ -62,7 +62,7 @@ export const legacyPromptBranchId = Effect.fnUntraced(function* (
       .pipe(Effect.orElseSucceed(() => ""));
     const resolved = entered.length > 0 ? entered : defaultBranch;
     if (resolved.length === 0) {
-      return yield* new LegacyBranchesBranchNameEmptyError({
+      return yield* new BranchesBranchNameEmptyError({
         message: "branch name cannot be empty",
       });
     }
@@ -71,12 +71,12 @@ export const legacyPromptBranchId = Effect.fnUntraced(function* (
 
   // TTY path: list branches via the same endpoint as `branches list`, then
   // present a select prompt keyed by branch ref.
-  const api = yield* LegacyPlatformApi;
+  const api = yield* CommandPlatformApi;
   const branches = yield* api.v1
     .listAllBranches({ ref: projectRef })
     .pipe(Effect.catch(mapListError));
   if (branches.length === 0) {
-    return yield* new LegacyBranchesBranchingDisabledError({
+    return yield* new BranchesBranchingDisabledError({
       message: "branching is disabled",
       // The command name is wrapped in lipgloss color "14" (ANSI cyan).
       suggestion: `Create your first branch with: ${styleText("cyan", "supabase branches create")}`,

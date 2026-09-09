@@ -6,7 +6,7 @@ import {
   type CLIResult,
   type TempDir,
 } from "@supabase/cli-test-helpers";
-import { ACCESS_TOKEN, TARGET } from "./env.ts";
+import { ACCESS_TOKEN } from "./env.ts";
 
 function slugify(name: string): string {
   return name
@@ -39,7 +39,7 @@ interface BehaviourFixtures {
  *  - `projectRef` — a real project ref (record mode) or the replay default
  *  - `orgId` — a real org slug (record mode) or the replay default
  *  - `workspace` — fresh temp dir, auto-disposed after the test
- *  - `run` — pre-configured `exec()` for the current TARGET (optional second
+ *  - `run` — pre-configured `exec()` for the compiled CLI (optional second
  *    argument forwarded as `exec` options, e.g. extra `env` entries)
  *  - `apiUrl` — the replay server base URL (for setting up error overrides)
  *
@@ -86,7 +86,7 @@ export const testBehaviour = test.extend<BehaviourFixtures>({
 
   run: async ({ workspace }, use) => {
     const serverUrl = inject("replayServerUrl");
-    const harness = createHarness(TARGET, {
+    const harness = createHarness({
       apiUrl: serverUrl,
       accessToken: ACCESS_TOKEN,
       cwd: workspace.path,
@@ -97,7 +97,7 @@ export const testBehaviour = test.extend<BehaviourFixtures>({
 
   runNoProjectId: async ({ workspace }, use) => {
     const serverUrl = inject("replayServerUrl");
-    const harness = createHarness(TARGET, {
+    const harness = createHarness({
       apiUrl: serverUrl,
       accessToken: ACCESS_TOKEN,
       cwd: workspace.path,

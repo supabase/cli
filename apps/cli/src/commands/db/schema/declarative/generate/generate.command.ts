@@ -4,12 +4,12 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
-import { legacyAqua } from "../../../../../command-internal/legacy-colors.ts";
-import { legacyParseSchemaFlags } from "../../../../../command-internal/legacy-schema-flags.ts";
-import { withLegacyCommandInstrumentation } from "../../../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyDbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
-import { legacyDbSchemaDeclarativeGenerate } from "./generate.handler.ts";
-import { legacyDbSchemaDeclarativeGenerateRuntimeLayer } from "./generate.layers.ts";
+import { aqua } from "../../../../../command-internal/colors.ts";
+import { parseSchemaFlags } from "../../../../../command-internal/schema-flags.ts";
+import { withCommandTelemetry } from "../../../../../telemetry/command-telemetry.ts";
+import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
+import { dbSchemaDeclarativeGenerate } from "./generate.handler.ts";
+import { dbSchemaDeclarativeGenerateRuntimeLayer } from "./generate.layers.ts";
 
 const config = {
   overwrite: Flag.boolean("overwrite").pipe(
@@ -17,7 +17,7 @@ const config = {
     Flag.withDefault(false),
   ),
   // Deliberately NOT named `--output`/`-o`: the legacy root reserves those for
-  // the global machine-format flag (`LegacyOutputFlag`, `json|yaml|toml|env|…`),
+  // the global machine-format flag (`OutputFlag`, `json|yaml|toml|env|…`),
   // and a leaf string flag would shadow it — `generate -o json` would write a
   // directory named `json` instead of being a (Go-ignored) format request.
   // `db diff`'s local `--output`/`-o` shadowing is different: Go itself
@@ -43,7 +43,7 @@ const config = {
     // occurrence so `-s public,auth` includes the two schemas separately. Mirror
     // the `gen types` / `db lint` parsing so quoted commas are handled the same way.
     Flag.mapTryCatch(
-      (rawValues) => legacyParseSchemaFlags(rawValues),
+      (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
@@ -76,11 +76,12 @@ const config = {
 
 // `--no-cache` is a shared flag on the `declarative` group (read from the parent),
 // so the handler input merges it in alongside the leaf's own flags.
-export type LegacyDbSchemaDeclarativeGenerateFlags = CliCommand.Command.Config.Infer<
-  typeof config
-> & { readonly noCache: boolean; readonly strictCoverage: boolean };
+export type DbSchemaDeclarativeGenerateFlags = CliCommand.Command.Config.Infer<typeof config> & {
+  readonly noCache: boolean;
+  readonly strictCoverage: boolean;
+};
 
-export const legacyDbSchemaDeclarativeGenerateCommand = Command.make("generate", config).pipe(
+export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", config).pipe(
   Command.withDescription(
     "Exports a live database into the complete declarative schema tree. This replaces declarative files only; it does not create migration files or update migration history. Use --output-dir to stage an export without changing the configured declarative path. In non-interactive use, pass --local, --linked, or --db-url explicitly.",
   ),
@@ -88,13 +89,13 @@ export const legacyDbSchemaDeclarativeGenerateCommand = Command.make("generate",
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // `--no-cache` is shared on the parent group; read the resolved value there.
-      const shared = yield* legacyDbSchemaDeclarativeSharedBase;
-      const merged: LegacyDbSchemaDeclarativeGenerateFlags = {
+      const shared = yield* dbSchemaDeclarativeSharedBase;
+      const merged: DbSchemaDeclarativeGenerateFlags = {
         ...flags,
         noCache: shared.noCache,
         strictCoverage: shared.strictCoverage,
       };
-      return yield* legacyDbSchemaDeclarativeGenerate(merged).pipe(
+      return yield* dbSchemaDeclarativeGenerate(merged).pipe(
         // Go's PostRun prints this on success via `fmt.Println` → stdout
         // (`cmd/db_schema_declarative.go:93`), so keep it on stdout in text mode. In
         // json / stream-json the bare human line would corrupt the payload, so emit a
@@ -103,15 +104,13 @@ export const legacyDbSchemaDeclarativeGenerateCommand = Command.make("generate",
           Effect.gen(function* () {
             const output = yield* Output;
             if (output.format === "text") {
-              yield* output.raw(
-                `Finished ${legacyAqua("supabase db schema declarative generate")}.\n`,
-              );
+              yield* output.raw(`Finished ${aqua("supabase db schema declarative generate")}.\n`);
               return;
             }
             yield* output.success("Finished supabase db schema declarative generate.");
           }),
         ),
-        withLegacyCommandInstrumentation({
+        withCommandTelemetry({
           flags: {
             "no-cache": merged.noCache,
             "strict-coverage": merged.strictCoverage,
@@ -137,5 +136,5 @@ export const legacyDbSchemaDeclarativeGenerateCommand = Command.make("generate",
       );
     }),
   ),
-  Command.provide(legacyDbSchemaDeclarativeGenerateRuntimeLayer),
+  Command.provide(dbSchemaDeclarativeGenerateRuntimeLayer),
 );

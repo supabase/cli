@@ -4,7 +4,7 @@
 
 | Path                                           | Format                    | When                                                                                                    |
 | ---------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------- |
-| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliSettings.profile`         |
+| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile`           |
 | keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                                |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON (`ref` field)        | when `--project-ref` is unset, as the 2nd PARENT-ref candidate (CLI-2167 follow-up, TS-only, see below) |
 | `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset, as the 3rd (last) PARENT-ref candidate   |
@@ -13,8 +13,8 @@
 > `branches` is PARENT-scoped: after `supabase link <branch>`, the on-disk `project-ref` file
 > holds the BRANCH's own ref, and the Management API returns 403 for a branch ref on every
 > branches-management endpoint. Every `branches` subcommand therefore resolves the project ref
-> via `legacyResolveParentScopedProjectRef` (`command-internal/legacy-parent-project-ref.ts`) instead
-> of calling `LegacyProjectRefResolver.resolve` directly: an explicit `--project-ref` still wins
+> via `resolveParentScopedProjectRef` (`command-internal/parent-project-ref.ts`) instead
+> of calling `ProjectRefResolver.resolve` directly: an explicit `--project-ref` still wins
 > outright; otherwise the PARENT is resolved as env `SUPABASE_PROJECT_ID` → `linked-project.json`'s
 > `ref` → the `project-ref` file, first ref-shaped candidate wins, falling through to
 > `resolver.resolve(None)`'s ordinary env/prompt/not-linked behavior when no candidate is
@@ -22,7 +22,7 @@
 > `project-ref` file then hold the same ref (CLI-2167 follow-up, TS-only divergence).
 
 > Pretty-table rendering ALSO makes its own independent, soft read of `<workdir>/supabase/.temp/project-ref`
-> (`LegacyProjectRefResolver.resolveOptional`: env → file, never a prompt, never a failure) to find
+> (`ProjectRefResolver.resolveOptional`: env → file, never a prompt, never a failure) to find
 > the CURRENTLY linked ref (which may be a branch ref) for the `(active)` marker below — separate
 > from, and unconditional on, the PARENT-scoped `ref` resolution above. Missing/unreadable → no
 > marker, never an error (CLI-2167 follow-up, TS-only).
@@ -51,15 +51,15 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                       |
-| ---- | ------------------------------------------------------------------------------- |
-| `0`  | success — branches printed to stdout                                            |
-| `1`  | `LegacyPlatformAuthRequiredError` — no token in env/keyring/file                |
-| `1`  | `LegacyProjectNotLinkedError` — `--project-ref` unset, env/file empty, non-TTY  |
-| `1`  | `LegacyInvalidProjectRefError` — resolved ref violates `^[a-z]{20}$`            |
-| `1`  | `LegacyBranchesListUnexpectedStatusError` — non-2xx response from list endpoint |
-| `1`  | `LegacyBranchesListNetworkError` — transport-level network failure              |
-| `1`  | `LegacyBranchesEnvNotSupportedError` — `--output env` flag is rejected          |
+| Code | Condition                                                                   |
+| ---- | --------------------------------------------------------------------------- |
+| `0`  | success — branches printed to stdout                                        |
+| `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                   |
+| `1`  | `ProjectRefNotLinkedError` — `--project-ref` unset, env/file empty, non-TTY |
+| `1`  | `InvalidProjectRefError` — resolved ref violates `^[a-z]{20}$`              |
+| `1`  | `BranchesListUnexpectedStatusError` — non-2xx response from list endpoint   |
+| `1`  | `BranchesListNetworkError` — transport-level network failure                |
+| `1`  | `BranchesEnvNotSupportedError` — `--output env` flag is rejected            |
 
 ## Telemetry Events Fired
 
@@ -76,10 +76,8 @@ The `--output {pretty,json,yaml,toml,env}` flag and the `--output-format {text,j
 Prints a Glamour-styled markdown table with columns `ID`, `NAME`, `DEFAULT`, `GIT BRANCH`, `WITH DATA`, `STATUS`, `CREATED AT (UTC)`, `UPDATED AT (UTC)`.
 
 TS-only QoL (CLI-2167 follow-up, no Go counterpart): the row whose `project_ref` matches the
-CURRENTLY linked ref renders its NAME cell as `<name> (active)` — mirrors `next/`'s
-`branches list` convention. Pretty-table only; never applies to `--output json|yaml|toml` or
-`--output-format json|stream-json`, which stay byte-identical (no `active` field is added there,
-unlike `next/`'s JSON payload).
+CURRENTLY linked ref renders its NAME cell as `<name> (active)`. Pretty-table only; never applies to `--output json|yaml|toml` or
+`--output-format json|stream-json`, which stay byte-identical (no `active` field is added there).
 
 ### `--output json`
 
@@ -95,7 +93,7 @@ TOML document wrapping the array as `[[branches]]`.
 
 ### `--output env`
 
-Fails with `LegacyBranchesEnvNotSupportedError("--output env flag is not supported")`.
+Fails with `BranchesEnvNotSupportedError("--output env flag is not supported")`.
 
 ### `--output-format json`
 

@@ -6,20 +6,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Cause, Effect, Exit, Layer, Option, Stdio } from "effect";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
-import {
-  LegacyExperimentalFlag,
-  LegacyWorkdirFlag,
-  LegacyYesFlag,
-} from "../../shared/legacy/global-flags.ts";
+import { ExperimentalFlag, WorkdirFlag, YesFlag } from "../../command-internal/global-flags.ts";
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { textOutputLayer } from "../../shared/output/output.layer.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput, mockRuntimeInfo, mockStdin, mockTty } from "../../../tests/helpers/mocks.ts";
-import { legacyInit } from "./init.handler.ts";
+import { init } from "./init.handler.ts";
 
 function makeTempDir(): string {
-  return mkdtempSync(join(tmpdir(), "supabase-legacy-init-"));
+  return mkdtempSync(join(tmpdir(), "supabase-init-"));
 }
 
 function setup(
@@ -47,9 +43,9 @@ function setup(
         stdoutIsTty: opts.interactive ?? false,
       }),
       mockStdin(opts.stdinIsTty ?? false, opts.stdinInput),
-      Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
-      Layer.succeed(LegacyWorkdirFlag, opts.workdir ?? Option.none()),
-      Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+      Layer.succeed(ExperimentalFlag, opts.experimental ?? false),
+      Layer.succeed(WorkdirFlag, opts.workdir ?? Option.none()),
+      Layer.succeed(YesFlag, opts.yes ?? false),
       Layer.succeed(CliArgs, { args: [] }),
     ),
   };
@@ -104,14 +100,14 @@ function renderFailureToStderr(exit: Exit.Exit<unknown, unknown>) {
   });
 }
 
-describe("legacy init", () => {
+describe("init", () => {
   it.live("creates config.toml natively without the Go proxy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
       const { layer, out } = setup(tempDir);
 
-      yield* legacyInit({
+      yield* init({
         interactive: false,
         useOrioledb: false,
         force: false,
@@ -136,7 +132,7 @@ describe("legacy init", () => {
     return Effect.gen(function* () {
       const { layer } = setup(tempDir, { experimental: false });
 
-      const exit = yield* legacyInit({
+      const exit = yield* init({
         interactive: false,
         useOrioledb: true,
         force: false,
@@ -149,7 +145,7 @@ describe("legacy init", () => {
       // cobra's standard message. No suggestion — the text output layer
       // appends the generic `--debug` troubleshooting hint instead.
       const error = findFailure(exit);
-      expect(error["_tag"]).toBe("LegacyInitExperimentalRequiredError");
+      expect(error["_tag"]).toBe("InitExperimentalRequiredError");
       expect(error["message"]).toBe(`required flag(s) "experimental" not set`);
       expect(error["suggestion"]).toBeUndefined();
 
@@ -178,13 +174,13 @@ describe("legacy init", () => {
     return Effect.gen(function* () {
       const { layer } = setup(tempDir);
 
-      yield* legacyInit(initFlags).pipe(Effect.provide(layer));
-      const exit = yield* legacyInit(initFlags).pipe(Effect.provide(layer), Effect.exit);
+      yield* init(initFlags).pipe(Effect.provide(layer));
+      const exit = yield* init(initFlags).pipe(Effect.provide(layer), Effect.exit);
 
       // Byte-matches the wrapped `O_EXCL` `*os.PathError` from
       // `utils.InitConfig` (`config.go:243-246`) plus its CmdSuggestion.
       const error = findFailure(exit);
-      expect(error["_tag"]).toBe("LegacyInitConfigExistsError");
+      expect(error["_tag"]).toBe("InitConfigExistsError");
       expect(error["message"]).toBe(
         "failed to create config file: open supabase/config.toml: file exists",
       );
@@ -217,8 +213,8 @@ describe("legacy init", () => {
     return Effect.gen(function* () {
       const { layer } = setup(tempDir, { platform: "win32" });
 
-      yield* legacyInit(initFlags).pipe(Effect.provide(layer));
-      const exit = yield* legacyInit(initFlags).pipe(Effect.provide(layer), Effect.exit);
+      yield* init(initFlags).pipe(Effect.provide(layer));
+      const exit = yield* init(initFlags).pipe(Effect.provide(layer), Effect.exit);
 
       // On Windows, `utils.ConfigPath` is built with `filepath.Join`
       // (`utils/misc.go:82`) — backslash separator — and the `O_EXCL` open
@@ -226,7 +222,7 @@ describe("legacy init", () => {
       // `The file exists.`. The suggestion is unchanged because
       // `errors.Is(err, os.ErrExist)` matches on Windows too.
       const error = findFailure(exit);
-      expect(error["_tag"]).toBe("LegacyInitConfigExistsError");
+      expect(error["_tag"]).toBe("InitConfigExistsError");
       expect(error["message"]).toBe(
         "failed to create config file: open supabase\\config.toml: The file exists.",
       );
@@ -250,7 +246,7 @@ describe("legacy init", () => {
     return Effect.gen(function* () {
       const { layer, out } = setup(tempDir);
 
-      yield* legacyInit({
+      yield* init({
         interactive: false,
         useOrioledb: false,
         force: false,
@@ -284,7 +280,7 @@ describe("legacy init", () => {
     return Effect.gen(function* () {
       const { layer } = setup(tempDir, { workdir: Option.some("nested") });
 
-      yield* legacyInit({
+      yield* init({
         interactive: false,
         useOrioledb: false,
         force: false,
@@ -322,7 +318,7 @@ describe("legacy init", () => {
     return Effect.gen(function* () {
       const { layer, out } = setup(tempDir, { interactive: true, stdinIsTty: true, yes: true });
 
-      yield* legacyInit({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
+      yield* init({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
 
       expect(out.promptConfirmCalls).toHaveLength(0);
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
@@ -344,7 +340,7 @@ describe("legacy init", () => {
     return Effect.gen(function* () {
       const { layer, out } = setup(tempDir, { interactive: true, stdinIsTty: true });
 
-      yield* legacyInit({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
+      yield* init({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
 
       expect(out.promptConfirmCalls).toHaveLength(0);
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
@@ -370,7 +366,7 @@ describe("legacy init", () => {
     return Effect.gen(function* () {
       const { layer, out } = setup(tempDir, { interactive: false, stdinIsTty: true, yes: true });
 
-      yield* legacyInit({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
+      yield* init({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
 
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
       expect(

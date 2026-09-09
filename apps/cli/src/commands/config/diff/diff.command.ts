@@ -2,12 +2,12 @@ import { Option } from "effect";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { Command, Flag } from "effect/unstable/cli";
 
-import { PROJECT_REF_PATTERN } from "../../../config/legacy-project-ref.service.ts";
+import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { LEGACY_GLOBAL_OUTPUT_FORMATS } from "../../../shared/legacy/global-flags.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyConfigDiff } from "./diff.handler.ts";
+import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { configDiff } from "./diff.handler.ts";
 
 const config = {
   // `link`'s settled vocabulary (CLI-2167): one flag that accepts either a
@@ -30,17 +30,17 @@ const config = {
   ),
 } as const;
 
-export type LegacyConfigDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type ConfigDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 // Exported so integration tests can drive the exact wiring
-// `Command.withHandler` uses below (same precedent as `legacyConfigPushHandler`).
-export const legacyConfigDiffHandler = (flags: LegacyConfigDiffFlags) =>
-  legacyConfigDiff(flags).pipe(
+// `Command.withHandler` uses below (same precedent as `configPushHandler`).
+export const configDiffHandler = (flags: ConfigDiffFlags) =>
+  configDiff(flags).pipe(
     // `--project-ref` accepts branch names here (CLI-2167 vocabulary), so
     // its value is only safe to log verbatim when it is actually ref-shaped
     // — a user-created branch name must never reach PostHog. Same guard as
     // `link`.
-    withLegacyCommandInstrumentation({
+    withCommandTelemetry({
       flags,
       safeFlags:
         Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
@@ -53,12 +53,12 @@ export const legacyConfigDiffHandler = (flags: LegacyConfigDiffFlags) =>
       // Otherwise the wrapper's own per-command enum check would reject an
       // out-of-set value (e.g. `-o table`) with its generic pflag-style
       // message before the handler ever gets a chance to run.
-      outputFormats: LEGACY_GLOBAL_OUTPUT_FORMATS,
+      outputFormats: GLOBAL_OUTPUT_FORMATS,
     }),
     withJsonErrorHandling,
   );
 
-export const legacyConfigDiffCommand = Command.make("diff", config).pipe(
+export const configDiffCommand = Command.make("diff", config).pipe(
   Command.withDescription(
     "Shows configuration differences between supabase/config.toml and a remote project or branch. Read-only: never modifies local or remote configuration.",
   ),
@@ -73,6 +73,6 @@ export const legacyConfigDiffCommand = Command.make("diff", config).pipe(
       description: "Diff against the 'staging' branch, exiting 2 on drift",
     },
   ]),
-  Command.withHandler(legacyConfigDiffHandler),
-  Command.provide(legacyManagementApiRuntimeLayer(["config", "diff"])),
+  Command.withHandler(configDiffHandler),
+  Command.provide(managementApiRuntimeLayer(["config", "diff"])),
 );

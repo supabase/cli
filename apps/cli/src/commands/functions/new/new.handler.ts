@@ -7,29 +7,29 @@ import {
   validateFunctionSlugMessage,
 } from "../../../shared/functions/functions.shared.ts";
 import { writeIntelliJConfig, writeVscodeConfig } from "../../../shared/init/project-init.ts";
-import { legacyResolveYes } from "../../../shared/legacy/global-flags.ts";
-import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
+import { resolveYes } from "../../../command-internal/global-flags.ts";
+import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { legacyBold } from "../../../command-internal/legacy-colors.ts";
-import { legacyShouldSearchAncestors } from "../../../command-internal/legacy-workdir-search.ts";
-import { legacyValidateWorkdirIsDirectory } from "../../../command-internal/legacy-workdir-validation.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import type { LegacyFunctionsNewFlags } from "./new.command.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { bold } from "../../../command-internal/colors.ts";
+import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
+import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import type { FunctionsNewFlags } from "./new.command.ts";
 import {
-  LegacyFunctionsNewFileExistsError,
-  LegacyFunctionsNewInvalidSlugError,
-  LegacyFunctionsNewWorkdirError,
-  LegacyFunctionsNewWriteError,
-  mapLegacyFunctionsNewWriteError,
+  FunctionsNewFileExistsError,
+  FunctionsNewInvalidSlugError,
+  FunctionsNewWorkdirError,
+  FunctionsNewWriteError,
+  mapFunctionsNewWriteError,
 } from "./new.errors.ts";
 import {
-  LEGACY_FUNCTIONS_NEW_DENO_JSON,
-  LEGACY_FUNCTIONS_NEW_NPMRC,
-  type LegacyFunctionsNewAuthMode,
-  renderLegacyFunctionsNewConfig,
-  renderLegacyFunctionsNewEntrypoint,
+  FUNCTIONS_NEW_DENO_JSON,
+  FUNCTIONS_NEW_NPMRC,
+  type FunctionsNewAuthMode,
+  renderFunctionsNewConfig,
+  renderFunctionsNewEntrypoint,
 } from "./new.templates.ts";
 
 const DEFAULT_LOCAL_API_PORT = 54321;
@@ -99,7 +99,7 @@ const resolveTemplateInputs = Effect.fnUntraced(function* (
 ) {
   const loaded = yield* loadCliConfig(cliSettings.workdir, {
     goViperCompat: true,
-    search: legacyShouldSearchAncestors(cliSettings),
+    search: shouldSearchAncestors(cliSettings),
   }).pipe(Effect.orElseSucceed(() => null));
   const port = loaded?.config.api.port ?? DEFAULT_LOCAL_API_PORT;
   const publishableKey = loaded?.config.auth.publishable_key ?? defaultPublishableKey;
@@ -115,23 +115,21 @@ const resolveTemplateInputs = Effect.fnUntraced(function* (
 const promptForIdeSettings = Effect.fnUntraced(function* (workdir: string) {
   const output = yield* Output;
   // `--yes` OR `SUPABASE_YES`.
-  const yes = yield* legacyResolveYes;
+  const yes = yield* resolveYes;
 
-  // Both questions route through `legacyPromptYesNo`: `--yes`/
+  // Both questions route through `promptYesNo`: `--yes`/
   // `SUPABASE_YES` auto-accepts VS Code with the `[Y/n] y` stderr echo; a
   // non-TTY stdin prints the label and scans one piped line (100ms), so
   // `echo n | supabase functions new` declines VS Code and falls through to
   // the IntelliJ question instead of hardcoding the default.
-  if (yield* legacyPromptYesNo(output, yes, "Generate VS Code settings for Deno?", true)) {
-    yield* writeVscodeConfig(workdir).pipe(
-      Effect.mapError(mapLegacyFunctionsNewWriteError(".vscode")),
-    );
+  if (yield* promptYesNo(output, yes, "Generate VS Code settings for Deno?", true)) {
+    yield* writeVscodeConfig(workdir).pipe(Effect.mapError(mapFunctionsNewWriteError(".vscode")));
     return;
   }
 
-  if (yield* legacyPromptYesNo(output, yes, "Generate IntelliJ IDEA settings for Deno?", false)) {
+  if (yield* promptYesNo(output, yes, "Generate IntelliJ IDEA settings for Deno?", false)) {
     yield* writeIntelliJConfig(workdir).pipe(
-      Effect.mapError(mapLegacyFunctionsNewWriteError(".idea/deno.xml")),
+      Effect.mapError(mapFunctionsNewWriteError(".idea/deno.xml")),
     );
   }
 });
@@ -149,10 +147,7 @@ const appendFunctionConfig = Effect.fnUntraced(function* (
   const existing = yield* fs.readFileString(configPath).pipe(Effect.option);
 
   if (Option.isSome(existing) && hasFunctionConfigDeclaration(existing.value, slug)) {
-    yield* output.raw(
-      `[functions.${slug}] is already declared in ${legacyBold(relPath)}\n`,
-      "stderr",
-    );
+    yield* output.raw(`[functions.${slug}] is already declared in ${bold(relPath)}\n`, "stderr");
     return;
   }
 
@@ -161,11 +156,11 @@ const appendFunctionConfig = Effect.fnUntraced(function* (
   // byte-for-byte untouched and a partial write can never truncate it. The template begins
   // with a newline, so it attaches cleanly whether or not the file ends with one.
   yield* fs
-    .writeFileString(configPath, renderLegacyFunctionsNewConfig(slug, verifyJwt), { flag: "a" })
+    .writeFileString(configPath, renderFunctionsNewConfig(slug, verifyJwt), { flag: "a" })
     .pipe(
       Effect.mapError(
         (cause) =>
-          new LegacyFunctionsNewWriteError({
+          new FunctionsNewWriteError({
             path: relPath,
             message: `failed to append config: ${String(cause)}`,
           }),
@@ -173,25 +168,23 @@ const appendFunctionConfig = Effect.fnUntraced(function* (
     );
 });
 
-export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
-  flags: LegacyFunctionsNewFlags,
-) {
+export const functionsNew = Effect.fn("functions.new")(function* (flags: FunctionsNewFlags) {
   const output = yield* Output;
-  const cliSettings = yield* LegacyCliSettings;
-  const telemetryState = yield* LegacyTelemetryState;
+  const cliSettings = yield* CommandSettings;
+  const telemetryState = yield* TelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const tty = yield* Tty;
 
   yield* Effect.gen(function* () {
-    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
-      Effect.mapError((error) => new LegacyFunctionsNewWorkdirError({ message: error.message })),
+    yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
+      Effect.mapError((error) => new FunctionsNewWorkdirError({ message: error.message })),
     );
 
     const invalidSlugMessage = validateFunctionSlugMessage(flags.functionName);
     if (invalidSlugMessage !== undefined) {
       return yield* Effect.fail(
-        new LegacyFunctionsNewInvalidSlugError({
+        new FunctionsNewInvalidSlugError({
           message: invalidSlugMessage,
           detail: invalidFunctionSlugDetail,
         }),
@@ -200,7 +193,7 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
 
     const existingSlugs = yield* listExistingFunctionSlugs(cliSettings.workdir);
     const isFirstFunction = existingSlugs.size === 0;
-    const authMode: LegacyFunctionsNewAuthMode = flags.auth;
+    const authMode: FunctionsNewAuthMode = flags.auth;
 
     const relFunctionDir = path.join("supabase", "functions", flags.functionName);
     const relEntrypoint = path.join(relFunctionDir, "index.ts");
@@ -210,7 +203,7 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
     yield* fs.makeDirectory(functionDir, { recursive: true }).pipe(
       Effect.mapError(
         (cause) =>
-          new LegacyFunctionsNewWriteError({
+          new FunctionsNewWriteError({
             path: relFunctionDir,
             message: String(cause),
           }),
@@ -222,7 +215,7 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
       .pipe(Effect.orElseSucceed(() => false));
     if (entrypointExists) {
       return yield* Effect.fail(
-        new LegacyFunctionsNewFileExistsError({
+        new FunctionsNewFileExistsError({
           path: relEntrypoint,
           message: "failed to create entrypoint: file already exists",
           suggestion: `Remove ${relEntrypoint} or use a different Function name.`,
@@ -232,11 +225,11 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
 
     const templateInputs = yield* resolveTemplateInputs(cliSettings, flags.functionName);
     yield* fs
-      .writeFileString(entrypointPath, renderLegacyFunctionsNewEntrypoint(authMode, templateInputs))
+      .writeFileString(entrypointPath, renderFunctionsNewEntrypoint(authMode, templateInputs))
       .pipe(
         Effect.mapError(
           (cause) =>
-            new LegacyFunctionsNewWriteError({
+            new FunctionsNewWriteError({
               path: relEntrypoint,
               message: `failed to write entrypoint: ${String(cause)}`,
             }),
@@ -245,21 +238,19 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
 
     yield* appendFunctionConfig(cliSettings.workdir, flags.functionName, authMode === "user");
 
-    yield* fs
-      .writeFileString(path.join(functionDir, "deno.json"), LEGACY_FUNCTIONS_NEW_DENO_JSON)
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new LegacyFunctionsNewWriteError({
-              path: path.join(relFunctionDir, "deno.json"),
-              message: `failed to create deno.json config: ${String(cause)}`,
-            }),
-        ),
-      );
-    yield* fs.writeFileString(path.join(functionDir, ".npmrc"), LEGACY_FUNCTIONS_NEW_NPMRC).pipe(
+    yield* fs.writeFileString(path.join(functionDir, "deno.json"), FUNCTIONS_NEW_DENO_JSON).pipe(
       Effect.mapError(
         (cause) =>
-          new LegacyFunctionsNewWriteError({
+          new FunctionsNewWriteError({
+            path: path.join(relFunctionDir, "deno.json"),
+            message: `failed to create deno.json config: ${String(cause)}`,
+          }),
+      ),
+    );
+    yield* fs.writeFileString(path.join(functionDir, ".npmrc"), FUNCTIONS_NEW_NPMRC).pipe(
+      Effect.mapError(
+        (cause) =>
+          new FunctionsNewWriteError({
             path: path.join(relFunctionDir, ".npmrc"),
             message: `failed to create .npmrc config: ${String(cause)}`,
           }),
@@ -268,7 +259,7 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
 
     if (output.format === "text") {
       yield* output.raw(
-        `Created new Function at ${tty.stdoutIsTty ? legacyBold(relFunctionDir) : relFunctionDir}\n`,
+        `Created new Function at ${tty.stdoutIsTty ? bold(relFunctionDir) : relFunctionDir}\n`,
       );
     }
 

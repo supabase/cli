@@ -2,7 +2,7 @@ import type { ApiKeyResponse } from "@supabase/api/effect";
 import { describe, expect, it } from "vitest";
 
 import { buildDotEnv, marshalDotEnv } from "./bootstrap.dotenv.ts";
-import type { LegacyDbConfig } from "./bootstrap.pgconfig.ts";
+import type { DbConfig } from "./bootstrap.pgconfig.ts";
 
 type ApiKey = typeof ApiKeyResponse.Type;
 
@@ -12,7 +12,7 @@ const API_KEYS: ReadonlyArray<ApiKey> = [
   { name: "service_role", api_key: "servicekey" },
 ];
 
-const DB_CONFIG: LegacyDbConfig = {
+const DB_CONFIG: DbConfig = {
   host: "db.supabase.co",
   port: 5432,
   user: "admin",

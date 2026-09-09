@@ -1,11 +1,9 @@
 import { Effect } from "effect";
-import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
-import type { LegacyDbBranchDeleteFlags } from "./delete.command.ts";
+import { GoProxy } from "../../../../command-internal/go-proxy.service.ts";
+import type { DbBranchDeleteFlags } from "./delete.command.ts";
 
-export const legacyDbBranchDelete = Effect.fn("legacy.db.branch.delete")(function* (
-  flags: LegacyDbBranchDeleteFlags,
-) {
-  const proxy = yield* LegacyGoProxy;
+export const dbBranchDelete = Effect.fn("db.branch.delete")(function* (flags: DbBranchDeleteFlags) {
+  const proxy = yield* GoProxy;
   const args: string[] = ["db", "branch", "delete", flags.branchName];
   yield* proxy.exec(args);
 });

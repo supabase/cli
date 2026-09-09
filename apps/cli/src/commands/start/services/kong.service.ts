@@ -2,7 +2,7 @@
  * Kong container spec builder, gated on
  * `!isContainerExcluded(config.api.kong_image, excluded)` (Kong has no
  * `enabled` flag of its own — it is the stack's mandatory gateway) — see
- * `legacy-service-catalog.ts`'s `kong` entry (`excludeKey: "kong"`). Gating and
+ * `service-catalog.ts`'s `kong` entry (`excludeKey: "kong"`). Gating and
  * image resolution/pre-pull are the caller's job (a future `start.handler.ts`);
  * this module only assembles the container spec once the caller has already
  * decided to start it, matching `docker-create-args.ts`'s "image already
@@ -18,11 +18,11 @@
  * subprocess's own argv and leak via `ps aux`/`/proc/<pid>/cmdline`
  * (CWE-214/522), so it deliberately diverges here: `kong.yml` (the
  * service-role key) and the TLS cert/key (the highest-value secret — a
- * private key) travel via {@link LegacyStartContainerSpec.secretFiles}
+ * private key) travel via {@link StartContainerSpec.secretFiles}
  * instead — an in-memory tar entry, mode `0644` (world-readable —
  * Kong's image runs its process as uid 100 `kong`, a non-root user, and
  * `0600` would make it unreadable in-container; see
- * `legacyCopyStartSecretFilesIntoContainer`'s doc comment), streamed via
+ * `copyStartSecretFilesIntoContainer`'s doc comment), streamed via
  * `docker cp - <id>:/` into the container at the exact fixed paths
  * `KONG_DECLARATIVE_CONFIG`/`KONG_SSL_CERT`/`KONG_SSL_CERT_KEY` already
  * reference — and never appear in this process's own argv. Only
@@ -35,37 +35,37 @@
  * either: the default config seeds `Api.Tls.{CertContent,KeyContent}` with
  * the embedded default localhost cert/key, and only overwrites them from
  * disk when TLS is enabled AND both `cert_path`/`key_path` are configured —
- * see {@link LegacyKongContainerSpecInput.tlsCertContent}'s doc comment.
- * {@link legacyBuildKongEntrypointScript} reproduces the remaining
+ * see {@link KongContainerSpecInput.tlsCertContent}'s doc comment.
+ * {@link buildKongEntrypointScript} reproduces the remaining
  * `custom_nginx.template` heredoc; the final command is `exec`'d so Kong
  * is PID 1 and `docker stop` reaches it directly.
  *
  * Kong mints no JWTs of its own: `BearerToken`/`QueryToken` are Kong
  * `request-transformer`/lua expression STRINGS built from the four
  * already-generated API keys (`secretKey`/`serviceRoleKey`/`publishableKey`/
- * `anonKey` — see `legacy-local-config-values.ts`'s `LegacyLocalConfigValues`,
- * which already resolves all four). {@link legacyBuildKongBearerToken}/
- * {@link legacyBuildKongQueryToken} build those two strings; nothing in this
- * module calls `legacyGenerateGoJwt` itself.
+ * `anonKey` — see `local-config-values.ts`'s `LocalConfigValues`,
+ * which already resolves all four). {@link buildKongBearerToken}/
+ * {@link buildKongQueryToken} build those two strings; nothing in this
+ * module calls `generateGoJwt` itself.
  */
 
 import * as nodePath from "node:path";
 
-import type { LegacyStartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
-import { legacyEnvOrDefault } from "../lib/legacy-env-or-default.ts";
-import { legacyRenderStartKongYml } from "../lib/template-render.ts";
-import { LEGACY_START_CUSTOM_NGINX_TEMPLATE } from "../templates/custom_nginx.template.ts";
+import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
+import { envOrDefault } from "../lib/env-or-default.ts";
+import { renderStartKongYml } from "../lib/template-render.ts";
+import { START_CUSTOM_NGINX_TEMPLATE } from "../templates/custom_nginx.template.ts";
 
 /** The Kong network aliases — a fixed, non-configurable constant. */
-const LEGACY_KONG_NETWORK_ALIASES = ["kong", "api.supabase.internal"];
+const KONG_NETWORK_ALIASES = ["kong", "api.supabase.internal"];
 
 /** The fixed in-container directory email template mounts land in. */
-const LEGACY_KONG_NGINX_EMAIL_TEMPLATE_DIR = "/home/kong/templates/email";
+const KONG_NGINX_EMAIL_TEMPLATE_DIR = "/home/kong/templates/email";
 
 /** The fixed port `custom_nginx.template`'s `email_templates` server listens on. */
-const LEGACY_KONG_NGINX_TEMPLATE_SERVER_PORT = 8088;
+const KONG_NGINX_TEMPLATE_SERVER_PORT = 8088;
 
-export interface LegacyKongApiKeys {
+export interface KongApiKeys {
   /** `Config.Auth.SecretKey.Value`. */
   readonly secretKey: string;
   /** `Config.Auth.ServiceRoleKey.Value`. */
@@ -82,7 +82,7 @@ export interface LegacyKongApiKeys {
  * verbatim, otherwise maps a matching `apikey` header to the corresponding
  * `Bearer <key>` value, falling back to echoing `apikey` as-is.
  */
-export function legacyBuildKongBearerToken(apiKeys: LegacyKongApiKeys): string {
+export function buildKongBearerToken(apiKeys: KongApiKeys): string {
   return (
     `$((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) ` +
     `or (headers.apikey == '${apiKeys.secretKey}' and 'Bearer ${apiKeys.serviceRoleKey}') ` +
@@ -92,12 +92,12 @@ export function legacyBuildKongBearerToken(apiKeys: LegacyKongApiKeys): string {
 }
 
 /**
- * The Kong query token: the same mapping as {@link legacyBuildKongBearerToken},
+ * The Kong query token: the same mapping as {@link buildKongBearerToken},
  * applied to the `apikey` query parameter instead of a header, and without
  * the `Bearer sb_...` passthrough branch (there is no equivalent "already a
  * query-string bearer" case).
  */
-export function legacyBuildKongQueryToken(apiKeys: LegacyKongApiKeys): string {
+export function buildKongQueryToken(apiKeys: KongApiKeys): string {
   return (
     `$((query_params.apikey == '${apiKeys.secretKey}' and '${apiKeys.serviceRoleKey}') ` +
     `or (query_params.apikey == '${apiKeys.publishableKey}' and '${apiKeys.anonKey}') ` +
@@ -114,18 +114,18 @@ export function legacyBuildKongQueryToken(apiKeys: LegacyKongApiKeys): string {
  * `KONG_NGINX_WORKER_PROCESSES` set only in a project dotenv file (not the
  * ambient shell) is honored too, matching Storage's identical `VECTOR_*`-env
  * handling (`storage.service.ts`). Kept separate from
- * {@link legacyBuildKongContainerSpec} (which stays a pure function of
+ * {@link buildKongContainerSpec} (which stays a pure function of
  * already-resolved values, matching every other `start`-service builder) so
  * this one ambient-env read is independently testable and the builder itself
  * never touches `process.env`.
  */
-export function legacyResolveKongNginxWorkerProcesses(
+export function resolveKongNginxWorkerProcesses(
   projectEnvValues?: Readonly<Record<string, string>>,
 ): string {
-  return legacyEnvOrDefault("KONG_NGINX_WORKER_PROCESSES", "1", projectEnvValues);
+  return envOrDefault("KONG_NGINX_WORKER_PROCESSES", "1", projectEnvValues);
 }
 
-export interface LegacyKongEmailTemplateMount {
+export interface KongEmailTemplateMount {
   /**
    * The raw `config.auth.email.template` key for a template mount, or
    * `<key>_notification` for an enabled `config.auth.email.notification`
@@ -137,7 +137,7 @@ export interface LegacyKongEmailTemplateMount {
   /**
    * Absolute HOST path, already resolved, containment-checked, AND
    * read-verified by the caller (`start.handler.ts`'s
-   * `resolveKongEmailTemplateMounts`, via `legacyResolveEmailTemplateContentPath`
+   * `resolveKongEmailTemplateMounts`, via `resolveEmailTemplateContentPath`
    * plus a discarded `readFileSync`) — never a raw, unresolved
    * `content_path`. There is no "not configured" sentinel here: the caller
    * omits an entry entirely instead of including one with an empty path.
@@ -164,37 +164,37 @@ export interface LegacyKongEmailTemplateMount {
  * or existence claims of its own. `start.handler.ts` resolves, confines to
  * the project root, and read-verifies every mount's `resolvedPath` exactly
  * once, before any Docker work runs (see
- * `LegacyKongEmailTemplateMount.resolvedPath`'s doc comment).
+ * `KongEmailTemplateMount.resolvedPath`'s doc comment).
  */
-export function legacyBuildKongEmailTemplateBind(mount: LegacyKongEmailTemplateMount): string {
+export function buildKongEmailTemplateBind(mount: KongEmailTemplateMount): string {
   const dockerPath = nodePath.posix.join(
-    LEGACY_KONG_NGINX_EMAIL_TEMPLATE_DIR,
+    KONG_NGINX_EMAIL_TEMPLATE_DIR,
     `${mount.id}${nodePath.extname(mount.resolvedPath)}`,
   );
   return `${mount.resolvedPath}:${dockerPath}:rw`;
 }
 
-const LEGACY_KONG_ENTRYPOINT_HEAD =
+const KONG_ENTRYPOINT_HEAD =
   "cat <<'EOF' > /home/kong/custom_nginx.template && \\\n" +
   "exec ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template\n";
 
 /**
  * Builds the surviving (non-secret) half of the Kong entrypoint: only the
  * `custom_nginx.template` heredoc and the final `docker-entrypoint.sh` exec
- * line — `LEGACY_KONG_ENTRYPOINT_HEAD + nginxTemplate + "\nEOF\n"`. The
+ * line — `KONG_ENTRYPOINT_HEAD + nginxTemplate + "\nEOF\n"`. The
  * other three heredocs that could otherwise chain ahead of this one
  * (`kong.yml`, the TLS cert, the TLS key) don't travel through this script
  * at all — see this module's header comment for why (`secretFiles`,
  * CWE-214/522).
  */
-export function legacyBuildKongEntrypointScript(nginxTemplate: string): string {
-  return LEGACY_KONG_ENTRYPOINT_HEAD + nginxTemplate + "\nEOF\n";
+export function buildKongEntrypointScript(nginxTemplate: string): string {
+  return KONG_ENTRYPOINT_HEAD + nginxTemplate + "\nEOF\n";
 }
 
-export interface LegacyKongContainerSpecInput {
+export interface KongContainerSpecInput {
   /** `config.api.kong_image`, already resolved/pulled by the caller. */
   readonly image: string;
-  /** `legacyServiceContainerName("kong", projectId)`. */
+  /** `serviceContainerName("kong", projectId)`. */
   readonly containerName: string;
   /** The shared Docker network every `start` container joins. */
   readonly networkId: string;
@@ -210,7 +210,7 @@ export interface LegacyKongContainerSpecInput {
   readonly apiTlsEnabled: boolean;
   /**
    * The resolved TLS cert content. NOT empty-by-default: the default config
-   * seeds this with the embedded default cert (`LEGACY_KONG_LOCAL_TLS_CERT`)
+   * seeds this with the embedded default cert (`KONG_LOCAL_TLS_CERT`)
    * and only config validation overwrites it from `api.tls.cert_path` when
    * TLS is enabled AND both `cert_path`/`key_path` are configured — the
    * caller must pass the embedded default here otherwise, since this field
@@ -219,8 +219,8 @@ export interface LegacyKongContainerSpecInput {
   readonly tlsCertContent: string;
   /** The resolved TLS key content — see {@link tlsCertContent} for the same embedded-default requirement. */
   readonly tlsKeyContent: string;
-  /** The four already-generated API keys `BearerToken`/`QueryToken` are built from — see {@link legacyBuildKongBearerToken}/{@link legacyBuildKongQueryToken}. */
-  readonly apiKeys: LegacyKongApiKeys;
+  /** The four already-generated API keys `BearerToken`/`QueryToken` are built from — see {@link buildKongBearerToken}/{@link buildKongQueryToken}. */
+  readonly apiKeys: KongApiKeys;
   /** GoTrue's own container name. */
   readonly gotrueId: string;
   /** PostgREST's own container name. */
@@ -230,7 +230,7 @@ export interface LegacyKongContainerSpecInput {
    * Realtime is reachable under this same value because it is ALSO
    * Realtime's own network alias (`["realtime", tenantId]`), so
    * `kong.yml`'s `url: http://{{ .RealtimeId }}:4000/...` resolves via that
-   * alias, not via `legacyServiceContainerName("realtime", projectId)`.
+   * alias, not via `serviceContainerName("realtime", projectId)`.
    */
   readonly realtimeTenantId: string;
   /** Storage's own container name. */
@@ -247,29 +247,27 @@ export interface LegacyKongContainerSpecInput {
   readonly poolerId: string;
   /**
    * `envOrDefault("KONG_NGINX_WORKER_PROCESSES", "1")` — already resolved by
-   * the caller via {@link legacyResolveKongNginxWorkerProcesses}, keeping
+   * the caller via {@link resolveKongNginxWorkerProcesses}, keeping
    * this builder a pure function of its `input`.
    */
   readonly nginxWorkerProcesses: string;
   /**
    * Every `config.auth.email.template.*`/enabled
    * `config.auth.email.notification.*` entry the caller has already
-   * gathered — see {@link LegacyKongEmailTemplateMount}'s doc comment for
+   * gathered — see {@link KongEmailTemplateMount}'s doc comment for
    * the notification `id` suffixing/filtering the caller owns. Defaults to
    * `[]` (no email template mounts).
    */
-  readonly emailTemplateMounts?: ReadonlyArray<LegacyKongEmailTemplateMount>;
+  readonly emailTemplateMounts?: ReadonlyArray<KongEmailTemplateMount>;
 }
 
 /**
- * Assembles Kong's {@link LegacyStartContainerSpec}. Pure — no Effect or
+ * Assembles Kong's {@link StartContainerSpec}. Pure — no Effect or
  * ambient I/O — matching every other `start`-service builder in this
  * directory.
  */
-export function legacyBuildKongContainerSpec(
-  input: LegacyKongContainerSpecInput,
-): LegacyStartContainerSpec {
-  const kongYml = legacyRenderStartKongYml({
+export function buildKongContainerSpec(input: KongContainerSpecInput): StartContainerSpec {
+  const kongYml = renderStartKongYml({
     gotrueId: input.gotrueId,
     restId: input.restId,
     realtimeId: input.realtimeTenantId,
@@ -281,13 +279,11 @@ export function legacyBuildKongContainerSpec(
     poolerId: input.poolerId,
     apiHost: input.apiHost,
     apiPort: input.apiPort,
-    bearerToken: legacyBuildKongBearerToken(input.apiKeys),
-    queryToken: legacyBuildKongQueryToken(input.apiKeys),
+    bearerToken: buildKongBearerToken(input.apiKeys),
+    queryToken: buildKongQueryToken(input.apiKeys),
   });
 
-  const binds = (input.emailTemplateMounts ?? []).map((mount) =>
-    legacyBuildKongEmailTemplateBind(mount),
-  );
+  const binds = (input.emailTemplateMounts ?? []).map((mount) => buildKongEmailTemplateBind(mount));
 
   const dockerPort = input.apiTlsEnabled ? 8443 : 8000;
 
@@ -312,7 +308,7 @@ export function legacyBuildKongContainerSpec(
       KONG_SSL_CERT_KEY: "/home/kong/localhost.key",
     },
     entrypoint: "sh",
-    cmd: ["-c", legacyBuildKongEntrypointScript(LEGACY_START_CUSTOM_NGINX_TEMPLATE)],
+    cmd: ["-c", buildKongEntrypointScript(START_CUSTOM_NGINX_TEMPLATE)],
     secretFiles: [
       { containerPath: "/home/kong/kong.yml", content: kongYml },
       { containerPath: "/home/kong/localhost.crt", content: input.tlsCertContent },
@@ -323,11 +319,11 @@ export function legacyBuildKongContainerSpec(
     exposedPorts: [
       { containerPort: "8000" },
       { containerPort: "8443" },
-      { containerPort: String(LEGACY_KONG_NGINX_TEMPLATE_SERVER_PORT) },
+      { containerPort: String(KONG_NGINX_TEMPLATE_SERVER_PORT) },
     ],
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
-    networkAliases: LEGACY_KONG_NETWORK_ALIASES,
+    networkAliases: KONG_NETWORK_ALIASES,
     labels: {},
   };
 }

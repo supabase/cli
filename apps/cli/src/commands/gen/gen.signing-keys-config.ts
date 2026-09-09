@@ -1,9 +1,9 @@
 import { loadCliProjectEnvironment } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
 import { Effect, FileSystem, Option, Path } from "effect";
-import { legacyAssertDecodableJwkAlgorithm } from "../../command-internal/legacy-go-jwt.ts";
-import { legacyGoJsonKindName } from "../../command-internal/legacy-go-json.ts";
-import { legacyResolveProjectEnvironmentValues } from "../../command-internal/legacy-project-environment.ts";
+import { assertDecodableJwkAlgorithm } from "../../command-internal/go-jwt.ts";
+import { goJsonKindName } from "../../command-internal/go-json.ts";
+import { resolveProjectEnvironmentValues } from "../../command-internal/project-environment.ts";
 
 /**
  * Shared `[auth].signing_keys_path` config-loading logic for the `gen` command
@@ -20,9 +20,9 @@ import { legacyResolveProjectEnvironmentValues } from "../../command-internal/le
  * hierarchies while sharing the actual file-resolution/read/decode logic.
  */
 
-export type LegacyStoredSigningKeyJwk = Readonly<Record<string, unknown>>;
+export type StoredSigningKeyJwk = Readonly<Record<string, unknown>>;
 
-interface LegacyGenSigningKeysConfigPaths {
+interface GenSigningKeysConfigPaths {
   /** CWD-relative `supabase/config.toml` (or the resolved config file's own display path). */
   readonly configDisplayPath: string;
   /**
@@ -34,8 +34,8 @@ interface LegacyGenSigningKeysConfigPaths {
    * reads that file's real content at all — it appends to (and a
    * subsequent write clobbers) the default single-key array instead,
    * discarding whatever was actually on disk. Both `gen bearer-jwt`'s
-   * `getSigningKey` ({@link legacyResolveBearerJwtSigningKey}) and `gen
-   * signing-key` ({@link legacyGenSigningKey}) branch on this field for
+   * `getSigningKey` ({@link resolveBearerJwtSigningKey}) and `gen
+   * signing-key` ({@link genSigningKey}) branch on this field for
    * exactly that reason.
    */
   readonly authEnabled: boolean;
@@ -60,7 +60,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * `legacyGoJsonKindName` (`legacy-go-json.ts`) is deliberately scoped to
+ * `goJsonKindName` (`go-json.ts`) is deliberately scoped to
  * scalars only — every one of its existing call sites already excludes null/array/
  * object before reaching it. This file's per-field JWK checks below DO need to name a
  * bare JSON object (`key_ops`'s elements, or a nested value under any field, can be an
@@ -72,7 +72,7 @@ function jwkFieldKindName(value: unknown): string {
   if (value !== null && typeof value === "object" && !Array.isArray(value)) {
     return "object";
   }
-  return legacyGoJsonKindName(value);
+  return goJsonKindName(value);
 }
 
 /**
@@ -142,7 +142,7 @@ export function resolveJwkFieldValue(record: Record<string, unknown>, field: str
  * field must never let a caller mint a token as if the field had simply
  * been omitted. Hoisted here (rather than living only in
  * `bearer-jwt.signing-key.ts`) because {@link assertNoMalformedDuplicateJwkField} — used
- * by BOTH `gen signing-key` and `gen bearer-jwt` via {@link legacyReadSigningKeysFile} —
+ * by BOTH `gen signing-key` and `gen bearer-jwt` via {@link readSigningKeysFile} —
  * needs the exact same per-field check. Looks the field up case-insensitively
  * via {@link resolveJwkFieldValue} to match the established case-insensitive
  * struct-field matching.
@@ -307,7 +307,7 @@ function skipJsonValue(text: string, start: number): number {
  * substrings — respecting nested strings/objects/arrays so a comma or bracket inside a
  * nested value never splits an element early — WITHOUT ever re-serializing them through
  * `JSON.stringify` (which could reorder/reformat, and can't reproduce a source-only
- * artifact like a duplicate key at all). {@link legacyReadSigningKeysFile} uses this to
+ * artifact like a duplicate key at all). {@link readSigningKeysFile} uses this to
  * recover each `signing_keys_path` entry's OWN untouched text for
  * {@link assertNoMalformedDuplicateJwkField} — `JSON.parse`, which the array as a WHOLE
  * already went through for the ordinary shape checks in that function, has by that
@@ -419,7 +419,7 @@ function findTopLevelObjectFieldOccurrences(
  *   type check runs BEFORE `UnmarshalText` is ever reached, and does not block later
  *   occurrences the way `UnmarshalText`'s OWN error does. So `alg` needs both checks, in
  *   order, per occurrence: {@link readOptionalString} (type) then
- *   {@link legacyAssertDecodableJwkAlgorithm} (allowlist) — first thrown wins, matching
+ *   {@link assertDecodableJwkAlgorithm} (allowlist) — first thrown wins, matching
  *   the established first-saved-error behavior exactly for this field too.
  *
  * Checks known fields in a fixed order (not the object's own source order) — an accepted
@@ -440,7 +440,7 @@ export function assertNoMalformedDuplicateJwkField(objectText: string): void {
   if (alg !== undefined && alg.length >= 2) {
     for (const rawValue of alg) {
       const checked = readOptionalString({ alg: JSON.parse(rawValue) }, "alg");
-      legacyAssertDecodableJwkAlgorithm(checked);
+      assertDecodableJwkAlgorithm(checked);
     }
   }
 
@@ -470,9 +470,9 @@ export function assertNoMalformedDuplicateJwkField(objectText: string): void {
 /**
  * Resolves `supabase/config.toml`'s display path and `[auth].signing_keys_path`'s
  * actual/display path — no file I/O on the keys path itself (see
- * {@link legacyReadSigningKeysFile} for that).
+ * {@link readSigningKeysFile} for that).
  */
-export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
+export const resolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
   cwd: string,
   onConfigParseError: (message: string) => E,
 ) {
@@ -487,8 +487,8 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
   // "env(KEYS_PATH)"` with `KEYS_PATH` set only in
   // `.env.development`/`<workdir>/.env` would otherwise stay literally
   // unexpanded here even though the established behavior resolves and signs
-  // with it fine. Fills the exact same gap `legacy-local-project-context.ts`'s
-  // `legacyLoadLocalProjectContext` already fills for `stop`/`status`, via the
+  // with it fine. Fills the exact same gap `local-project-context.ts`'s
+  // `loadLocalProjectContext` already fills for `stop`/`status`, via the
   // same two-step resolution.
   const projectEnv = yield* loadCliProjectEnvironment({
     cwd,
@@ -499,15 +499,15 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
     Effect.mapError((cause) => onConfigParseError(`failed to read config: ${String(cause)}`)),
   );
   const projectEnvValues = yield* Effect.try({
-    try: () => legacyResolveProjectEnvironmentValues(projectEnv, cwd),
+    try: () => resolveProjectEnvironmentValues(projectEnv, cwd),
     catch: (cause) => onConfigParseError(`failed to read config: ${String(cause)}`),
   });
   const loaded = yield* loadCliConfig(cwd, {
     cliProjectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
     goViperCompat: true,
-    // `cwd` here is the ALREADY-resolved `LegacyCliSettings.workdir` (the
+    // `cwd` here is the ALREADY-resolved `CommandSettings.workdir` (the
     // ancestor climb already ran once to produce it — see
-    // `legacy-cli-settings.layer.ts`'s `resolveWorkdir`). Without `search: false`, this
+    // `command-settings.layer.ts`'s `resolveWorkdir`). Without `search: false`, this
     // call would climb AGAIN from `cwd`, which diverges from the established
     // behavior whenever an explicit `--workdir` points at a subdirectory
     // below another project's root: the established behavior changes
@@ -518,7 +518,7 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
     // `signing_keys_path` leaking into the picker prompt.
     // `tomlOnly: true`: there is no concept of a JSON project config file, so
     // a stray `supabase/config.json` must never win over `config.toml` here
-    // either (`legacy-local-project-context.ts` establishes this exact pair
+    // either (`local-project-context.ts` establishes this exact pair
     // of options for the same underlying reason).
     search: false,
     tomlOnly: true,
@@ -532,7 +532,7 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
       configDisplayPath: path.join("supabase", "config.toml"),
       authEnabled: true,
       signingKeysPath: Option.none(),
-    } satisfies LegacyGenSigningKeysConfigPaths;
+    } satisfies GenSigningKeysConfigPaths;
   }
 
   // The CWD-relative `supabase/config.toml` is displayed, never an absolute
@@ -548,7 +548,7 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
       configDisplayPath,
       authEnabled,
       signingKeysPath: Option.none(),
-    } satisfies LegacyGenSigningKeysConfigPaths;
+    } satisfies GenSigningKeysConfigPaths;
   }
 
   const resolvedPath = path.isAbsolute(configuredPath)
@@ -561,7 +561,7 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
     configDisplayPath,
     authEnabled,
     signingKeysPath: Option.some({ actualPath: resolvedPath, displayPath }),
-  } satisfies LegacyGenSigningKeysConfigPaths;
+  } satisfies GenSigningKeysConfigPaths;
 });
 
 /**
@@ -584,7 +584,7 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
  * earlier occurrence `JSON.parse` alone would have discarded before either
  * check ever saw it.
  */
-export const legacyReadSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
+export const readSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
   actualPath: string,
   onReadError: (message: string) => E1,
   onDecodeError: (message: string) => E2,
@@ -650,7 +650,7 @@ export const legacyReadSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
       // JSON-decode time regardless of the key's casing; see that
       // function's doc comment.
       const alg = resolveJwkFieldValue(record, "alg");
-      legacyAssertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
+      assertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
       if (elementText !== undefined) {
         assertNoMalformedDuplicateJwkField(elementText);
       }
@@ -663,5 +663,5 @@ export const legacyReadSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
     }
     normalized.push(record);
   }
-  return normalized as ReadonlyArray<LegacyStoredSigningKeyJwk>;
+  return normalized as ReadonlyArray<StoredSigningKeyJwk>;
 });

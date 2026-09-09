@@ -10,7 +10,7 @@ import {
  * Conflicting database-target flags (`db-url`/`linked`/`local`); message text
  * is an established output contract.
  */
-export class LegacyDbPullTargetFlagsError extends Data.TaggedError("LegacyDbPullTargetFlagsError")<{
+export class DbPullTargetFlagsError extends Data.TaggedError("DbPullTargetFlagsError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -22,9 +22,7 @@ export class LegacyDbPullTargetFlagsError extends Data.TaggedError("LegacyDbPull
  * `--declarative` / `--use-pg-delta` combined with `--diff-engine`; message
  * text is an established output contract.
  */
-export class LegacyDbPullEngineConflictError extends Data.TaggedError(
-  "LegacyDbPullEngineConflictError",
-)<{
+export class DbPullEngineConflictError extends Data.TaggedError("DbPullEngineConflictError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -37,9 +35,7 @@ export class LegacyDbPullEngineConflictError extends Data.TaggedError(
  * an established output contract. The actionable `supabase migration repair`
  * suggestion is attached separately.
  */
-export class LegacyDbPullMigrationConflictError extends Data.TaggedError(
-  "LegacyDbPullMigrationConflictError",
-)<{
+export class DbPullMigrationConflictError extends Data.TaggedError("DbPullMigrationConflictError")<{
   readonly message: string;
   readonly suggestion: string;
 }> {
@@ -53,7 +49,7 @@ export class LegacyDbPullMigrationConflictError extends Data.TaggedError(
  * contract. This surfaces as a (non-zero exit) error rather than a success,
  * unlike `db diff` which prints it and exits 0.
  */
-export class LegacyDbPullInSyncError extends Data.TaggedError("LegacyDbPullInSyncError")<{
+export class DbPullInSyncError extends Data.TaggedError("DbPullInSyncError")<{
   readonly message: string;
   /**
    * Explains the non-zero exit instead of letting `Output.fail` append the
@@ -72,7 +68,7 @@ export class LegacyDbPullInSyncError extends Data.TaggedError("LegacyDbPullInSyn
 /**
  * Writing the migration file / updating the remote migration-history table failed.
  */
-export class LegacyDbPullWriteError extends Data.TaggedError("LegacyDbPullWriteError")<{
+export class DbPullWriteError extends Data.TaggedError("DbPullWriteError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -86,7 +82,7 @@ export class LegacyDbPullWriteError extends Data.TaggedError("LegacyDbPullWriteE
  * Carries the same optional IPv6 transaction-pooler hint the dump path
  * attaches, which `Output.fail` prints bare on stderr after the message.
  */
-export class LegacyDbPullDumpError extends Data.TaggedError("LegacyDbPullDumpError")<{
+export class DbPullDumpError extends Data.TaggedError("DbPullDumpError")<{
   readonly message: string;
   readonly suggestion?: string;
   /**

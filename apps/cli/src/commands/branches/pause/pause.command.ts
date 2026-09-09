@@ -2,9 +2,9 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyBranchesPause } from "./pause.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { branchesPause } from "./pause.handler.ts";
 
 const config = {
   name: Argument.string("name").pipe(
@@ -17,16 +17,16 @@ const config = {
   ),
 } as const;
 
-export type LegacyBranchesPauseFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type BranchesPauseFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyBranchesPauseCommand = Command.make("pause", config).pipe(
+export const branchesPauseCommand = Command.make("pause", config).pipe(
   Command.withDescription("Pause a preview branch."),
   Command.withShortDescription("Pause a preview branch"),
   Command.withHandler((flags) =>
-    legacyBranchesPause(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+    branchesPause(flags).pipe(
+      withCommandTelemetry({ flags, safeFlags: ["project-ref"] }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["branches", "pause"])),
+  Command.provide(managementApiRuntimeLayer(["branches", "pause"])),
 );

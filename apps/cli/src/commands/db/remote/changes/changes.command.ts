@@ -1,6 +1,6 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { legacyDbRemoteChanges } from "./changes.handler.ts";
+import { dbRemoteChanges } from "./changes.handler.ts";
 
 const config = {
   schema: Flag.string("schema").pipe(
@@ -23,10 +23,10 @@ const config = {
   ),
 } as const;
 
-export type LegacyDbRemoteChangesFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DbRemoteChangesFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDbRemoteChangesCommand = Command.make("changes", config).pipe(
+export const dbRemoteChangesCommand = Command.make("changes", config).pipe(
   Command.withDescription("Show changes on the remote database since last migration."),
   Command.withShortDescription("Show changes on the remote database"),
-  Command.withHandler((flags) => legacyDbRemoteChanges(flags)),
+  Command.withHandler((flags) => dbRemoteChanges(flags)),
 );

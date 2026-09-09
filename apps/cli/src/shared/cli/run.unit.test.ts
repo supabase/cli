@@ -2,10 +2,10 @@ import { Cause } from "effect";
 import { CliError, Command } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 
-import { legacyBranchesCommand } from "../../commands/branches/branches.command.ts";
-import { legacyMigrationCommand } from "../../commands/migration/migration.command.ts";
-import { legacySsoCommand } from "../../commands/sso/sso.command.ts";
-import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
+import { branchesCommand } from "../../commands/branches/branches.command.ts";
+import { migrationCommand } from "../../commands/migration/migration.command.ts";
+import { ssoCommand } from "../../commands/sso/sso.command.ts";
+import { GoChildExitError } from "../../command-internal/go-child-exit.error.ts";
 import {
   classifyParseErrorConsoleOutput,
   exitCodeForFailure,
@@ -21,7 +21,7 @@ import {
 // alias resolution (`flagAliasesFor`, via `context.rootCommand`) has real `Flag.withAlias`
 // declarations to walk — e.g. `sso add`'s `type` flag aliases to `-t` (`add.command.ts`).
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyBranchesCommand, legacyMigrationCommand, legacySsoCommand]),
+  Command.withSubcommands([branchesCommand, migrationCommand, ssoCommand]),
 );
 
 describe("extractCommandPath", () => {
@@ -139,11 +139,11 @@ describe("exitCodeForFailure", () => {
   });
 
   // CLI-1879: a delegated Go child's exact exit code (not just a generic 1)
-  // must reach the user, via the `LegacyGoChildExitError`'s
+  // must reach the user, via the `GoChildExitError`'s
   // `[Runtime.errorExitCode]` marker.
-  it("exits with a LegacyGoChildExitError's exact exit code", () => {
+  it("exits with a GoChildExitError's exact exit code", () => {
     const cause = Cause.fail(
-      new LegacyGoChildExitError({ exitCode: 130, message: "supabase-go exited with code 130" }),
+      new GoChildExitError({ exitCode: 130, message: "supabase-go exited with code 130" }),
     );
     expect(exitCodeForFailure(cause)).toBe(130);
   });
@@ -161,9 +161,9 @@ describe("shouldReportFailure", () => {
   // CLI-1879: the child already wrote its own detailed failure to the
   // inherited stderr, so `runCli`'s generic line would be a duplicate Go
   // itself never prints.
-  it("does not report a LegacyGoChildExitError", () => {
+  it("does not report a GoChildExitError", () => {
     const cause = Cause.fail(
-      new LegacyGoChildExitError({ exitCode: 1, message: "supabase-go exited with code 1" }),
+      new GoChildExitError({ exitCode: 1, message: "supabase-go exited with code 1" }),
     );
     expect(shouldReportFailure(cause, 1)).toBe(false);
   });

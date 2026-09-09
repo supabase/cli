@@ -231,7 +231,7 @@ export const createWorkerUpload = Effect.fnUntraced(function* (
  * the Management API, so this goes out with no Supabase credentials attached —
  * the signature in the URL is the authorization.
  *
- * That signature is why `legacyHttpClientLayer` redacts query strings before
+ * That signature is why `httpClientLayer` redacts query strings before
  * logging them — under `--debug` this URL is a write-capable credential. Done
  * there rather than here, so the client stays injectable and every presigned URL
  * is covered rather than this one call site.
