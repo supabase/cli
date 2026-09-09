@@ -78,11 +78,7 @@ const stateFor = (
   identity: {
     stackId,
     projectRoot: "/tmp/production-runtime",
-    checkoutRoot: "/tmp/production-runtime",
-    workspaceId: "/tmp/production-runtime",
-    checkoutId: "/tmp/production-runtime",
     branchContext: "ordinary-workspace",
-    localProjectKey: ".",
     stackName: "production-runtime",
   },
   runtime,
@@ -400,9 +396,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             definition: previous.definition,
             secrets: previousSecrets.persisted,
@@ -468,9 +461,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
           },
         } satisfies { value: PersistedStackState | undefined };
@@ -552,9 +542,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -657,9 +644,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -800,9 +784,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -936,9 +917,6 @@ describe("production runtime", () => {
               identity: {
                 ...stateFor({}).identity,
                 projectRoot: root,
-                checkoutRoot: root,
-                workspaceId: root,
-                checkoutId: root,
               },
               desiredLifecycle: "running" as const,
               definition: compiled.definition,
@@ -1039,9 +1017,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             definition: compiled.definition,
             secrets: resolved.persisted,
@@ -1172,9 +1147,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -1273,9 +1245,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -1360,9 +1329,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -1437,9 +1403,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -1527,9 +1490,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -1610,9 +1570,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -1693,9 +1650,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -1978,9 +1932,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             definition: compiled.definition,
             secrets,
@@ -2067,9 +2018,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             definition: compiled.definition,
             ports: [{ field: "database", port, intent: "automatic" }],
@@ -2181,9 +2129,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             definition: previous.definition,
             privatePorts: [{ workloadId: "mail:mail", binding: "smtp", port }],
@@ -2253,9 +2198,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             definition: compiled.definition,
             secrets,
@@ -2495,9 +2437,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -2731,9 +2670,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,

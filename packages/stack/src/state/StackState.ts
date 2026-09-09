@@ -34,11 +34,7 @@ export const STACK_STATE_FORMAT = "supabase-stack-state-v1" as const;
 const PersistedStackIdentitySchema = Schema.Struct({
   stackId: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
   projectRoot: Schema.String,
-  checkoutRoot: Schema.String,
-  workspaceId: Schema.String,
-  checkoutId: Schema.String,
   branchContext: Schema.String,
-  localProjectKey: Schema.String,
   stackName: Schema.String,
 });
 export type PersistedStackIdentity = Schema.Schema.Type<typeof PersistedStackIdentitySchema>;
@@ -340,10 +336,6 @@ export const toPersistedIdentity = (
 ): PersistedStackIdentity => ({
   stackId,
   projectRoot: identity.projectRoot,
-  checkoutRoot: identity.checkoutRoot,
-  workspaceId: identity.workspaceId,
-  checkoutId: identity.checkoutId,
   branchContext: identity.branchContext,
-  localProjectKey: identity.localProjectKey,
   stackName: identity.stackName,
 });

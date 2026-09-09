@@ -27,11 +27,7 @@ import { privateBindingIntentsFor } from "../runtime/WorkloadRuntimeSpec.ts";
 
 const identity: StackIdentity = {
   projectRoot: "/tmp/supabase-ingress",
-  checkoutRoot: "/tmp/supabase-ingress",
-  workspaceId: "/tmp/supabase-ingress",
-  checkoutId: "/tmp/supabase-ingress",
   branchContext: "ordinary-workspace",
-  localProjectKey: ".",
   stackName: "ingress",
 };
 
@@ -92,9 +88,6 @@ describe("Supervisor ingress", () => {
         const stackIdentity = {
           ...identity,
           projectRoot,
-          checkoutRoot: projectRoot,
-          workspaceId: projectRoot,
-          checkoutId: projectRoot,
         };
         const stackId = yield* deriveStackId(stackIdentity);
         const databasePort = 50_000 + (Number.parseInt(stackId.slice(0, 4), 16) % 10_000);
@@ -192,9 +185,6 @@ describe("Supervisor ingress", () => {
         const stackIdentity = {
           ...identity,
           projectRoot: root,
-          checkoutRoot: root,
-          workspaceId: root,
-          checkoutId: root,
         };
         const stackId = yield* deriveStackId(stackIdentity);
         const compiled = yield* compileStack({
@@ -338,9 +328,6 @@ describe("Supervisor ingress", () => {
         const stackIdentity = {
           ...identity,
           projectRoot: root,
-          checkoutRoot: root,
-          workspaceId: root,
-          checkoutId: root,
         };
         const stackId = yield* deriveStackId(stackIdentity);
         const compiled = yield* compileStack({
@@ -460,9 +447,6 @@ describe("Supervisor ingress", () => {
         const stackId = yield* deriveStackId({
           ...identity,
           projectRoot: root,
-          checkoutRoot: root,
-          workspaceId: root,
-          checkoutId: root,
         });
         const compiled = yield* compileStack({
           projectRoot: root,
@@ -475,9 +459,6 @@ describe("Supervisor ingress", () => {
           identity: {
             ...identity,
             projectRoot: root,
-            checkoutRoot: root,
-            workspaceId: root,
-            checkoutId: root,
             stackId,
           },
           runtime: { kind: "native" },
@@ -537,9 +518,6 @@ describe("Supervisor ingress", () => {
         const stackIdentity = {
           ...identity,
           projectRoot: root,
-          checkoutRoot: root,
-          workspaceId: root,
-          checkoutId: root,
         };
         const stackId = yield* deriveStackId(stackIdentity);
         const compiled = yield* compileStack({
@@ -631,9 +609,6 @@ describe("Supervisor ingress", () => {
         const stackIdentity = {
           ...identity,
           projectRoot: root,
-          checkoutRoot: root,
-          workspaceId: root,
-          checkoutId: root,
         };
         const stackId = yield* deriveStackId(stackIdentity);
         const templatePath = path.join(root, "templates", "confirmation.html");
