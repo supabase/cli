@@ -41,8 +41,9 @@ interface FeedbackClientOptions {
 }
 
 // Profile → feedback environment, mirroring how the Management API url follows
-// the resolved profile: staging profiles post to the staging project, with a
-// production fallback for unknown and YAML-file profiles (`profile-file.ts`).
+// the resolved profile: staging profiles post to the persistent staging branch
+// of the production feedback project, with a production fallback for unknown
+// and YAML-file profiles (`profile-file.ts`).
 export function feedbackEnvironment(profile: string): FeedbackEnvironment {
   switch (profile) {
     case "supabase-staging":

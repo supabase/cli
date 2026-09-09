@@ -22,12 +22,11 @@
 | `POST` | `<feedback-env-url>/rest/v1/rpc/submit_interfaces_feedback` | `apikey` = committed publishable key | `{ feedback, user_agent, project_ref (omitted when unlinked), user_id (omitted when logged out or consent-denied), metadata: { cli_version, source: "cli", os, arch, is_agent, agent_name? } }` | uuid delete token (issued exactly once, shown to the user) |
 
 `<feedback-env-url>` follows the resolved profile (`feedback.layers.ts`):
-`supabase-staging` / `supabase-local` → the staging feedback project;
-every other profile (incl. YAML-file profiles) → production. Production
-currently reuses the staging project until a dedicated one is provisioned
-(CLI-1946); connection constants live in
+`supabase-staging` / `supabase-local` → the persistent staging branch of the
+production feedback project; every other profile (incl. YAML-file profiles)
+→ the production feedback project. Connection constants live in
 `src/shared/feedback/feedback-client.layer.ts` and are safe to commit
-(publishable key; the SECURITY DEFINER RPC is the only insert path). The
+(publishable keys; the SECURITY DEFINER RPC is the only insert path). The
 request times out after 10 s.
 
 ## Environment Variables
