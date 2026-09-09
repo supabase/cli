@@ -285,17 +285,25 @@ describe("experimental stack stop", () => {
     }).pipe(Effect.provide(setupResult.layer));
   });
 
-  it.effect("classifies an ownership conflict as a lifecycle failure", () => {
+  it.effect("classifies an ownership conflict as unknown with retry guidance", () => {
     const root = "/tmp/supabase-stack-stop-conflict";
+    const ownershipConflict = new StackOwnershipConflictError({ message: "stack is owned" });
     const setupResult = setup({
       root,
       found: { id: "7".repeat(64) },
-      stop: () => Effect.fail(new StackOwnershipConflictError({ message: "stack is owned" })),
+      stop: () => Effect.fail(ownershipConflict),
     });
     return Effect.gen(function* () {
       const failure = yield* experimentalStackStop(flags()).pipe(Effect.flip);
-      expect(failure.reason).toBe("lifecycle");
-      expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
+      expect(failure.reason).toBe("unknown");
+      expect(failure[ErrorActionabilityId]).toEqual(actionability.unknown);
+      expect(failure.suggestion).toBe(
+        "Retry the stack stop; if it remains owned, rerun with --debug and inspect cleanup diagnostics.",
+      );
+      expect(failure.message).toBe(ownershipConflict.message);
+      expect(failure.cause).toBe(ownershipConflict);
+      expect(setupResult.state.destroyCalled).toBe(false);
+      expect(setupResult.out.messages.some((message) => message.type === "success")).toBe(false);
     }).pipe(Effect.provide(setupResult.layer));
   });
 

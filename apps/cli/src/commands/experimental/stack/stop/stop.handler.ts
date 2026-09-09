@@ -32,12 +32,14 @@ const stopError = (error: StackDiscoveryError | OpenStackError | StackStopError)
     Match.tag("StackNotFoundError", "InvalidStackIdentityError", () => ({
       reason: "flags" as const,
     })),
-    Match.tag(
-      "StackOwnershipConflictError",
-      "StackLifecycleConflictError",
-      "StackUpgradeRequiredError",
-      () => ({ reason: "lifecycle" as const }),
-    ),
+    Match.tag("StackOwnershipConflictError", () => ({
+      reason: "unknown" as const,
+      suggestion:
+        "Retry the stack stop; if it remains owned, rerun with --debug and inspect cleanup diagnostics.",
+    })),
+    Match.tag("StackLifecycleConflictError", "StackUpgradeRequiredError", () => ({
+      reason: "lifecycle" as const,
+    })),
     Match.tag(
       "StackStateFormatUnsupportedError",
       "InvalidProjectRootError",
