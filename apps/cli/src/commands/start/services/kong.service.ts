@@ -158,7 +158,12 @@ export interface KongEmailTemplateMount {
  * fixed in-container email-template directory as `<id><ext-of-resolvedPath>`
  * (POSIX — the container is always Linux regardless of the host OS, hence
  * `nodePath.posix.join`, not the platform-dependent `nodePath.join`), and
- * formats the `rw,z` bind.
+ * formats the `rw,z` bind. `z` is the shared SELinux relabel that lets Kong
+ * read the template under enforcement; these are user-owned project files
+ * remounted across `start`/`db reset`, so the private `Z` relabel used for
+ * `functions serve`'s CLI-staged dir would be wrong here. The relabel
+ * persistently rewrites the host file's security label and is a no-op where
+ * SELinux is not enabled.
  *
  * A pure formatter over an already-validated path — it makes no containment
  * or existence claims of its own. `start.handler.ts` resolves, confines to
