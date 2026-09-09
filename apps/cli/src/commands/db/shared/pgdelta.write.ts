@@ -1,5 +1,6 @@
 import { Effect, type FileSystem, type Path } from "effect";
 import { classifySqlFiles } from "@supabase/pg-delta/frontends";
+import { applyConfigEdits } from "@supabase/config/internal";
 
 import { Output } from "../../../shared/output/output.service.ts";
 import { bold, yellow } from "../../../command-internal/colors.ts";
@@ -259,16 +260,10 @@ export const warnPreservedUnmanagedDeclarativeFiles = Effect.fnUntraced(function
 const SCHEMA_PATHS_PATTERN = /\nschema_paths = \[[\s\S]*?\]\n/g;
 
 /**
- * Ports Go's `updateDeclarativeSchemaPathsConfig` (`declarative.go:276-304`): a
- * raw-text replace-or-append of `[db.migrations] schema_paths` in
- * `supabase/config.toml`, pointing it at the `supabase/`-relative declarative dir.
- * This is a literal byte-edit (NOT a TOML re-serialize), so it preserves comments
- * and formatting exactly like Go — reproduce the regex and the literal block
- * rather than "doing the right TOML thing".
- *
- * `resolvedDeclarativeDir` is the resolved declarative dir (Go's
- * `GetDeclarativeDir()`, e.g. `supabase/schemas`); the leading `supabase/` is
- * trimmed for the written value (Go's `strings.TrimPrefix`).
+ * Points db.migrations.schema_paths at the exported declarative directory.
+ * Updates config.json when present; TOML keeps its established literal
+ * replace-or-append behavior to preserve comments and formatting.
+ * The stored path is relative to supabase/.
  */
 export const updateDeclarativeSchemaPathsConfig = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -280,6 +275,20 @@ export const updateDeclarativeSchemaPathsConfig = Effect.fnUntraced(function* (
   const relative = normalized.startsWith("supabase/")
     ? normalized.slice("supabase/".length)
     : normalized;
+  const jsonPath = path.join(workdir, "supabase", "config.json");
+  if (yield* fs.exists(jsonPath)) {
+    const text = yield* fs.readFileString(jsonPath);
+    const edited = applyConfigEdits(text, "json", [
+      { path: ["db", "migrations", "schema_paths"], value: [relative] },
+    ]);
+    if (edited.kind === "refused") {
+      return yield* new DeclarativeWriteError({
+        message: `failed to update config.json schema paths: ${edited.refusal.detail}`,
+      });
+    }
+    yield* fs.writeFileString(jsonPath, edited.text);
+    return;
+  }
   // Go's literal replacement block (`declarative.go:278-284`): leading newline,
   // two-space indent, trailing comma inside the array, trailing newline.
   const block = `\nschema_paths = [\n  "${relative}",\n]\n`;

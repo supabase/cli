@@ -36,11 +36,11 @@ import {
 import { GLOBAL_OUTPUT_FORMATS, YesFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
-  configPull,
   openConfigPullSource,
   runConfigPull,
   type ConfigPullSource,
-} from "./pull.handler.ts";
+} from "../../../command-internal/config-pull.ts";
+import { configPull } from "./pull.handler.ts";
 import type { ConfigPullFlags } from "./pull.command.ts";
 
 /**

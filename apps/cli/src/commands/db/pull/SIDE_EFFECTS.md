@@ -21,6 +21,9 @@ file splits; applicable, convergent SQL is the contract. Its formatter
 defaults to lowercase SQL at width 180; config overrides it, and JSON `null`
 disables formatting without disabling safe compaction.
 
+JSON-configured projects update `supabase/config.json` when declarative export
+needs to set `db.migrations.schema_paths`; no parallel TOML config is created.
+
 ## Files Read
 
 | Path                                                                                      | Format     | When                                                                                                                                                                                                                                                                                                                                               |

@@ -1,7 +1,5 @@
-import type { V1ListAllSecretsOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
-import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -17,27 +15,10 @@ import {
   goStruct,
   goTomlListWrapper,
 } from "../../../command-internal/go-struct-output.encoders.ts";
-import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import {
-  SecretsEnvNotSupportedError,
-  SecretsListNetworkError,
-  SecretsListUnexpectedStatusError,
-} from "../secrets.errors.ts";
+import { listProjectSecrets } from "../../../command-internal/list-project-secrets.ts";
+import { SecretsEnvNotSupportedError } from "../secrets.errors.ts";
 import { renderSecretsListTable } from "../secrets.format.ts";
 import type { SecretsListFlags } from "./list.command.ts";
-
-type Secrets = typeof V1ListAllSecretsOutput.Type;
-
-const mapListError = mapHttpError({
-  networkError: SecretsListNetworkError,
-  statusError: SecretsListUnexpectedStatusError,
-  networkMessage: (cause) => `failed to list secrets: ${cause}`,
-  statusMessage: (status, body) => `unexpected list secrets status ${status}: ${body}`,
-});
-
-function sortSecrets(secrets: Secrets): Secrets {
-  return [...secrets].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-}
 
 /** Type shape for the secrets response, used to drive `-o yaml|toml` key casing (see `apps/cli-go/pkg/api/types.gen.go`). */
 const GO_SECRET_RESPONSE = goStruct([
@@ -53,7 +34,6 @@ const GO_SECRETS_TOML_WRAPPER = goTomlListWrapper("secrets", GO_SECRET_RESPONSE)
 export const secretsList = Effect.fn("secrets.list")(function* (flags: SecretsListFlags) {
   const output = yield* Output;
   const goOutputFlag = yield* OutputFlag;
-  const api = yield* CommandPlatformApi;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
@@ -63,15 +43,7 @@ export const secretsList = Effect.fn("secrets.list")(function* (flags: SecretsLi
   // Write the linked-project cache and persist the telemetry state file
   // whether the main API call succeeds or fails.
   yield* Effect.gen(function* () {
-    const fetching =
-      output.format === "text" ? yield* output.task("Fetching secrets...") : undefined;
-    const response = yield* api.v1.listAllSecrets({ ref }).pipe(
-      Effect.tapError(() => fetching?.fail() ?? Effect.void),
-      Effect.catch(mapListError),
-    );
-    yield* fetching?.clear() ?? Effect.void;
-
-    const sorted = sortSecrets(response);
+    const sorted = yield* listProjectSecrets(ref);
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
     if (goFmt === "env") {
