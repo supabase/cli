@@ -19,11 +19,7 @@ const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 const identityFor = (projectRoot: string): PersistedStackState["identity"] => ({
   stackId,
   projectRoot,
-  checkoutRoot: projectRoot,
-  workspaceId: projectRoot,
-  checkoutId: projectRoot,
   branchContext: "ordinary-workspace",
-  localProjectKey: ".",
   stackName: "runtime-input-owner",
 });
 

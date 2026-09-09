@@ -134,7 +134,6 @@ describe("experimental stack start (compiled e2e)", () => {
       const result = await runSupabase(
         ["experimental", "stack", "start", "--runtime", "native", "--eager"],
         {
-          entrypoint: "legacy",
           cwd: projectDir,
           home: home.dir,
           exitTimeoutMs: START_TIMEOUT_MS,

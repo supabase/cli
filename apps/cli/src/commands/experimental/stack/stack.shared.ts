@@ -17,16 +17,14 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 /** The target selected by the CLI adapter for one experimental stack command. */
-interface LegacyExperimentalStackTarget {
+interface ExperimentalStackTarget {
   readonly projectRoot: string;
   readonly id?: StackId;
   readonly name?: string;
   readonly runtime?: StackRuntimePreference;
 }
 
-export class LegacyExperimentalStackTargetError extends Data.TaggedError(
-  "LegacyExperimentalStackTargetError",
-)<{
+export class ExperimentalStackTargetError extends Data.TaggedError("ExperimentalStackTargetError")<{
   readonly message: string;
   readonly reason: "flags" | "invalid-config";
   readonly cause?: unknown;
@@ -41,38 +39,34 @@ export class LegacyExperimentalStackTargetError extends Data.TaggedError(
  * Keeping this boundary independent of command handlers lets the later stack
  * commands reuse exactly the same project, name, id, and environment rules.
  */
-interface LegacyExperimentalStackTargetResolverShape {
+interface ExperimentalStackTargetResolverShape {
   readonly resolve: (input: {
     readonly projectRoot: string;
     readonly name?: string;
     readonly id?: string;
     readonly runtime: "auto" | "docker" | "native";
-  }) => Effect.Effect<
-    LegacyExperimentalStackTarget,
-    LegacyExperimentalStackTargetError,
-    LegacyExperimentalStackApi
-  >;
+  }) => Effect.Effect<ExperimentalStackTarget, ExperimentalStackTargetError, ExperimentalStackApi>;
 }
 
-export class LegacyExperimentalStackTargetResolver extends Context.Service<
-  LegacyExperimentalStackTargetResolver,
-  LegacyExperimentalStackTargetResolverShape
+export class ExperimentalStackTargetResolver extends Context.Service<
+  ExperimentalStackTargetResolver,
+  ExperimentalStackTargetResolverShape
 >()("supabase/experimental-stack/TargetResolver") {}
 
-export class LegacyExperimentalStackApi extends Context.Service<
-  LegacyExperimentalStackApi,
+export class ExperimentalStackApi extends Context.Service<
+  ExperimentalStackApi,
   {
-    readonly createStack: (
-      ...args: Parameters<typeof createStack>
-    ) => Effect.Effect<
-      Effect.Success<ReturnType<typeof createStack>>,
-      Effect.Error<ReturnType<typeof createStack>>
-    >;
     readonly findStack: (
       ...args: Parameters<typeof findStack>
     ) => Effect.Effect<
       Effect.Success<ReturnType<typeof findStack>>,
       Effect.Error<ReturnType<typeof findStack>>
+    >;
+    readonly createStack: (
+      ...args: Parameters<typeof createStack>
+    ) => Effect.Effect<
+      Effect.Success<ReturnType<typeof createStack>>,
+      Effect.Error<ReturnType<typeof createStack>>
     >;
     readonly openStack: (
       ...args: Parameters<typeof openStack>
@@ -89,8 +83,8 @@ export class LegacyExperimentalStackApi extends Context.Service<
   }
 >()("supabase/experimental-stack/StackApi") {}
 
-export const legacyExperimentalStackApiLayer = Layer.effect(
-  LegacyExperimentalStackApi,
+export const experimentalStackApiLayer = Layer.effect(
+  ExperimentalStackApi,
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -104,9 +98,9 @@ export const legacyExperimentalStackApiLayer = Layer.effect(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcess),
       );
     return {
+      findStack: (...args: Parameters<typeof findStack>) => provideServices(findStack(...args)),
       createStack: (...args: Parameters<typeof createStack>) =>
         provideServices(createStack(...args)),
-      findStack: (...args: Parameters<typeof findStack>) => provideServices(findStack(...args)),
       openStack: (...args: Parameters<typeof openStack>) => provideServices(openStack(...args)),
       inspectStack: (...args: Parameters<typeof inspectStack>) =>
         provideServices(inspectStack(...args)),
@@ -115,60 +109,57 @@ export const legacyExperimentalStackApiLayer = Layer.effect(
 );
 
 /** Runtime configuration for the first stack command. Later commands reuse this layer. */
-export const legacyExperimentalStackTargetResolverLayer = Layer.succeed(
-  LegacyExperimentalStackTargetResolver,
-  {
-    resolve: (input) =>
-      Effect.gen(function* () {
-        if (input.id !== undefined && !isStackId(input.id)) {
-          return yield* new LegacyExperimentalStackTargetError({
-            message: "--stack-id must be a lowercase SHA-256 stack id",
-            reason: "flags",
-          });
-        }
-        const id = input.id;
-        const stackApi = yield* LegacyExperimentalStackApi;
-        const inspection =
-          id === undefined
-            ? undefined
-            : yield* stackApi.inspectStack(id).pipe(
-                Effect.mapError(
-                  (error) =>
-                    new LegacyExperimentalStackTargetError({
-                      message: `Unable to inspect stack ${id}: ${error.message}`,
-                      reason: error instanceof StackNotFoundError ? "flags" : "invalid-config",
-                      cause: error,
-                    }),
-                ),
-              );
-        const projectRoot = inspection?.descriptor.projectRoot ?? input.projectRoot;
-        const requestedRuntime =
-          input.runtime === "auto"
-            ? undefined
-            : input.runtime === "native"
-              ? { kind: "native" as const }
-              : { kind: "container" as const, engine: "docker" as const };
-        if (
-          inspection !== undefined &&
-          requestedRuntime !== undefined &&
-          (inspection.descriptor.runtime.kind !== requestedRuntime.kind ||
-            (requestedRuntime.kind === "container" &&
-              inspection.descriptor.runtime.kind === "container" &&
-              inspection.descriptor.runtime.engine !== requestedRuntime.engine))
-        ) {
-          return yield* new LegacyExperimentalStackTargetError({
-            message: "The requested runtime does not match the existing stack",
-            reason: "flags",
-          });
-        }
-        return {
-          projectRoot,
-          ...(id === undefined ? {} : { id }),
-          ...(input.name === undefined ? {} : { name: input.name }),
-          ...(id === undefined && requestedRuntime !== undefined
-            ? { runtime: requestedRuntime }
-            : {}),
-        };
-      }),
-  },
-);
+export const experimentalStackTargetResolverLayer = Layer.succeed(ExperimentalStackTargetResolver, {
+  resolve: (input) =>
+    Effect.gen(function* () {
+      if (input.id !== undefined && !isStackId(input.id)) {
+        return yield* new ExperimentalStackTargetError({
+          message: "--stack-id must be a lowercase SHA-256 stack id",
+          reason: "flags",
+        });
+      }
+      const id = input.id;
+      const stackApi = yield* ExperimentalStackApi;
+      const inspection =
+        id === undefined
+          ? undefined
+          : yield* stackApi.inspectStack(id).pipe(
+              Effect.mapError(
+                (error) =>
+                  new ExperimentalStackTargetError({
+                    message: `Unable to inspect stack ${id}: ${error.message}`,
+                    reason: error instanceof StackNotFoundError ? "flags" : "invalid-config",
+                    cause: error,
+                  }),
+              ),
+            );
+      const projectRoot = inspection?.descriptor.projectRoot ?? input.projectRoot;
+      const requestedRuntime =
+        input.runtime === "auto"
+          ? undefined
+          : input.runtime === "native"
+            ? { kind: "native" as const }
+            : { kind: "container" as const, engine: "docker" as const };
+      if (
+        inspection !== undefined &&
+        requestedRuntime !== undefined &&
+        (inspection.descriptor.runtime.kind !== requestedRuntime.kind ||
+          (requestedRuntime.kind === "container" &&
+            inspection.descriptor.runtime.kind === "container" &&
+            inspection.descriptor.runtime.engine !== requestedRuntime.engine))
+      ) {
+        return yield* new ExperimentalStackTargetError({
+          message: "The requested runtime does not match the existing stack",
+          reason: "flags",
+        });
+      }
+      return {
+        projectRoot,
+        ...(id === undefined ? {} : { id }),
+        ...(input.name === undefined ? {} : { name: input.name }),
+        ...(id === undefined && requestedRuntime !== undefined
+          ? { runtime: requestedRuntime }
+          : {}),
+      };
+    }),
+});

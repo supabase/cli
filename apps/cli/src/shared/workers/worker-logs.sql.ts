@@ -138,7 +138,7 @@ export function followWindow(
  * Single-quoted SQL string literal.
  *
  * Every value this module interpolates is either an internal constant or a name
- * `legacyValidateWorkerName` has already reduced to a DNS label, so this is a
+ * `validateWorkerName` has already reduced to a DNS label, so this is a
  * backstop rather than the guard. It exists so the guarantee does not rest on a
  * caller remembering to validate first.
  */

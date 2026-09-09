@@ -5,14 +5,11 @@ import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Data, Effect, Exit, FileSystem, PlatformError } from "effect";
 
-import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
+import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { classifyCliErrorActionability } from "../../shared/telemetry/error-actionability.ts";
+import { SsoAddMetadataFileError, SsoUpdateAttributeMappingFileError } from "./sso.errors.ts";
 import {
-  LegacySsoAddMetadataFileError,
-  LegacySsoUpdateAttributeMappingFileError,
-} from "./sso.errors.ts";
-import {
-  type LegacySsoFileErrorReason,
+  type SsoFileErrorReason,
   readAttributeMappingFile,
   readMetadataFile,
   validateMetadataXmlBytes,
@@ -20,7 +17,7 @@ import {
 
 class TestOpenError extends Data.TaggedError("TestOpenError")<{
   readonly message: string;
-  readonly reason: LegacySsoFileErrorReason;
+  readonly reason: SsoFileErrorReason;
 }> {}
 class TestNonUtf8Error extends Data.TaggedError("TestNonUtf8Error")<{
   readonly source: string;
@@ -45,7 +42,7 @@ function permissionDenied(method: "readFile" | "readFileString") {
   });
 }
 
-const tempRoot = useLegacyTempWorkdir("sso-saml-unit-");
+const tempRoot = useTempWorkdir("sso-saml-unit-");
 
 describe("readMetadataFile", () => {
   it.live("returns the file content on UTF-8 XML", () => {
@@ -70,9 +67,9 @@ describe("readMetadataFile", () => {
 
   it.effect("preserves a metadata file permission failure", () => {
     const read = readMetadataFile({
-      openError: (args) => new LegacySsoAddMetadataFileError(args),
+      openError: (args) => new SsoAddMetadataFileError(args),
       nonUtf8Error: (args) =>
-        new LegacySsoAddMetadataFileError({ message: args.message, reason: "invalid_content" }),
+        new SsoAddMetadataFileError({ message: args.message, reason: "invalid_content" }),
     });
     return Effect.gen(function* () {
       const error = yield* read("/private/metadata.xml").pipe(Effect.flip);
@@ -80,7 +77,7 @@ describe("readMetadataFile", () => {
         error_kind: "user_actionable",
         error_category: "permission",
         suggestion_type: "none",
-        error_fingerprint: "tag:LegacySsoAddMetadataFileError:filesystem",
+        error_fingerprint: "tag:SsoAddMetadataFileError:filesystem",
       });
     }).pipe(
       Effect.provide(
@@ -141,7 +138,7 @@ describe("readAttributeMappingFile", () => {
 
   it.effect("preserves an attribute mapping permission failure", () => {
     const read = readAttributeMappingFile({
-      openError: (args) => new LegacySsoUpdateAttributeMappingFileError(args),
+      openError: (args) => new SsoUpdateAttributeMappingFileError(args),
     });
     return Effect.gen(function* () {
       const error = yield* read("/private/mapping.json").pipe(Effect.flip);
@@ -149,7 +146,7 @@ describe("readAttributeMappingFile", () => {
         error_kind: "user_actionable",
         error_category: "permission",
         suggestion_type: "none",
-        error_fingerprint: "tag:LegacySsoUpdateAttributeMappingFileError:filesystem",
+        error_fingerprint: "tag:SsoUpdateAttributeMappingFileError:filesystem",
       });
     }).pipe(
       Effect.provide(

@@ -2,9 +2,9 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { FUNCTIONS_PROJECT_REF_SAFE_FLAGS } from "../../../shared/functions/functions.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyFunctionsList } from "./list.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { functionsList } from "./list.handler.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -13,9 +13,9 @@ const config = {
   ),
 } as const;
 
-export type LegacyFunctionsListFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type FunctionsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyFunctionsListCommand = Command.make("list", config).pipe(
+export const functionsListCommand = Command.make("list", config).pipe(
   Command.withDescription("List all Functions in the linked Supabase project."),
   Command.withShortDescription("List all Functions in Supabase"),
   Command.withExamples([
@@ -29,10 +29,10 @@ export const legacyFunctionsListCommand = Command.make("list", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyFunctionsList(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: FUNCTIONS_PROJECT_REF_SAFE_FLAGS }),
+    functionsList(flags).pipe(
+      withCommandTelemetry({ flags, safeFlags: FUNCTIONS_PROJECT_REF_SAFE_FLAGS }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["functions", "list"])),
+  Command.provide(managementApiRuntimeLayer(["functions", "list"])),
 );

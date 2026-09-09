@@ -1,31 +1,39 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Scope } from "effect";
-import { createServer, type Server } from "node:net";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
+import {
+  Cause,
+  Crypto,
+  Deferred,
+  Effect,
+  Exit,
+  FileSystem,
+  Fiber,
+  Option,
+  Path,
+  Schema,
+  Scope,
+} from "effect";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- native server is the listener fixture.
 import { createServer as createHttpServer } from "node:http";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
-import { StackIdSchema } from "../public/StackId.ts";
-import { PortAllocationError, PortUnavailableError } from "../public/Errors.ts";
-import { makePortCoordinator, type HostListener, type ListenerIntents } from "./PortCoordinator.ts";
+import {
+  PortAllocationError,
+  PortUnavailableError,
+  StackStateFormatUnsupportedError,
+  StackStateInvalidError,
+} from "../public/Errors.ts";
+import {
+  makePortCoordinator,
+  type ListenerIntents,
+  type PortCoordinatorOptions,
+} from "./PortCoordinator.ts";
+import type { HostListener } from "../supervisor/HostListener.ts";
 import { makeStackStateStore, type PersistedStackState } from "./StackStateStore.ts";
-import { resolveStackPaths } from "./Paths.ts";
-import { bindHostListener } from "../supervisor/HostListener.ts";
+import { bindHeldPort, bindHostListener, checkHostPort } from "../supervisor/HostListener.ts";
+import { withRegistryLock } from "./StackStateStore.ts";
 
-const layer = NodeServices.layer;
-const successfulHostPortCheck = (_address: string, _port: number, _field: string) => Effect.void;
-const intents = (port: "automatic" | number): ListenerIntents => ({
-  api: { enabled: true, address: "127.0.0.1", port },
-  database: { enabled: true, address: "127.0.0.1", port: "automatic" },
-  pooler: { enabled: false, address: "127.0.0.1", port: "automatic" },
-  studio: { enabled: false, address: "127.0.0.1", port: "automatic" },
-  mailUi: { enabled: false, address: "127.0.0.1", port: "automatic" },
-  smtp: { enabled: false, address: "127.0.0.1", port: "automatic" },
-  pop3: { enabled: false, address: "127.0.0.1", port: "automatic" },
-  functionsInspector: { enabled: false, address: "127.0.0.1", port: "automatic" },
-});
-const disabledIntents = (): ListenerIntents => ({
-  api: { enabled: false, address: "127.0.0.1", port: "automatic" },
+const intents = (api: "automatic" | number = "automatic"): ListenerIntents => ({
+  api: { enabled: true, address: "127.0.0.1", port: api },
   database: { enabled: false, address: "127.0.0.1", port: "automatic" },
   pooler: { enabled: false, address: "127.0.0.1", port: "automatic" },
   studio: { enabled: false, address: "127.0.0.1", port: "automatic" },
@@ -34,910 +42,791 @@ const disabledIntents = (): ListenerIntents => ({
   pop3: { enabled: false, address: "127.0.0.1", port: "automatic" },
   functionsInspector: { enabled: false, address: "127.0.0.1", port: "automatic" },
 });
-const baseState = (
-  stackId: string,
-  identity: StackIdentity,
-  desiredLifecycle: "stopped" | "running" = "stopped",
+
+const identity = (root: string, stackName: string): StackIdentity => ({
+  projectRoot: root,
+  branchContext: "ordinary-workspace",
+  stackName,
+});
+
+const state = (
+  id: string,
+  value: StackIdentity,
+  ports: PersistedStackState["ports"] = [],
+  privatePorts: PersistedStackState["privatePorts"] = [],
 ): PersistedStackState => ({
   format: "supabase-stack-state-v1",
-  identity: {
-    ...identity,
-    stackId,
-  },
+  identity: { ...value, stackId: id },
   runtime: { kind: "native" },
-  desiredLifecycle,
-  ports: [],
-  privatePorts: [],
+  desiredLifecycle: "running",
+  ports,
+  privatePorts,
   secrets: {},
 });
-const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
-  Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
-const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(layer));
 
-const makeIdentity = (root: string, name: string): StackIdentity => ({
-  projectRoot: root,
-  checkoutRoot: root,
-  workspaceId: root,
-  checkoutId: root,
-  branchContext: "ordinary-workspace",
-  localProjectKey: ".",
-  stackName: name,
-});
-
-const holdHostPort = (port: number): Effect.Effect<Server, Error, Scope.Scope> =>
-  Effect.acquireRelease(
-    Effect.callback<Server, Error>((resume) => {
-      const server = createServer({ allowHalfOpen: true });
-      const onError = (error: Error) => {
-        server.removeListener("error", onError);
-        resume(Effect.fail(error));
-      };
-      server.once("error", onError);
-      server.listen({ host: "127.0.0.1", port }, () => {
-        server.removeListener("error", onError);
-        resume(Effect.succeed(server));
-      });
-      return Effect.sync(() => {
-        server.removeListener("error", onError);
-        server.close();
-      });
-    }),
-    (server) =>
-      Effect.callback<void, never>((resume) => {
-        if (!server.listening) {
-          resume(Effect.void);
-          return;
-        }
-        server.close(() => resume(Effect.void));
-      }),
-  );
-
-const makeTestHostListener = (
+const fakeListener = (
   address: string,
   port: number,
   field: HostListener["field"],
-  hooks: { readonly onClose?: () => void } = {},
-): Effect.Effect<HostListener, PortUnavailableError, Scope.Scope> => {
-  const isHttp =
-    field === "api" || field === "studio" || field === "mailUi" || field === "functionsInspector";
-  if (isHttp)
-    return Effect.acquireRelease(
-      Effect.gen(function* () {
-        const server = createHttpServer();
-        const close = yield* Effect.cached(
-          Effect.sync(() => {
-            if (server.listening) server.close();
-            hooks.onClose?.();
-          }),
-        );
-        return {
-          address,
-          port,
-          field,
-          binding: { kind: "http", server },
-          connections: { sockets: new Set() },
-          close,
-        } satisfies HostListener;
-      }),
-      (listener) => listener.close,
-    );
-  return Effect.acquireRelease(
-    Effect.gen(function* () {
-      const server = createServer({ allowHalfOpen: true });
-      const close = yield* Effect.cached(
-        Effect.sync(() => {
-          if (server.listening) server.close();
-          hooks.onClose?.();
-        }),
-      );
-      return {
-        address,
-        port,
-        field,
-        binding: { kind: "tcp", server, allowHalfOpen: true },
-        connections: { sockets: new Set() },
-        close,
-      } satisfies HostListener;
-    }),
+): Effect.Effect<HostListener, PortUnavailableError, Scope.Scope> =>
+  Effect.acquireRelease(
+    Effect.succeed({
+      address,
+      port,
+      field,
+      binding: { kind: "http", server: createHttpServer() },
+      connections: { sockets: new Set() },
+      close: Effect.void,
+    } satisfies HostListener),
     (listener) => listener.close,
   );
-};
 
-describe("sticky port coordination", () => {
-  it.live("keeps automatic assignments sticky and exclusive", () =>
-    withPlatform(
+const coordinatorOptions = (
+  store: PortCoordinatorOptions["store"],
+  root: string,
+  bindHost = fakeListener,
+): PortCoordinatorOptions => ({
+  stateRoot: root,
+  store,
+  bindHost,
+  bindPrivate: (_address, port) => Effect.succeed({ port, close: Effect.void }),
+});
+
+const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
+
+describe("port acquisition", () => {
+  it.live("requires running state and fails closed on an unreadable sibling", () =>
+    run(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-port-" });
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-state-" });
         const store = yield* makeStackStateStore({ stateRoot: root });
-        const aIdentity = makeIdentity(root, "a");
-        const bIdentity = makeIdentity(root, "b");
+        const value = identity(root, "guard");
+        const id = yield* deriveStackId(value);
+        yield* store.initialize(id, { ...state(id, value), desiredLifecycle: "stopped" });
+        const coordinator = makePortCoordinator(coordinatorOptions(store, root));
+        const stopped = yield* coordinator.acquire(id, intents(), []).pipe(Effect.exit);
+        expect(Exit.isFailure(stopped)).toBe(true);
+        expect((yield* store.read(id))?.ports).toEqual([]);
+        const sibling = yield* deriveStackId(identity(root, "broken"));
+        const siblingRoot = path.join(root, sibling);
+        yield* fs.makeDirectory(siblingRoot, { recursive: true });
+        yield* fs.writeFileString(path.join(siblingRoot, "state.json"), "not-json");
+        yield* store.replaceUnlocked(id, { ...state(id, value), desiredLifecycle: "running" });
+        const result = yield* coordinator.acquire(id, intents(), []).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result))
+          expect(Option.getOrUndefined(Cause.findErrorOption(result.cause))).toBeInstanceOf(
+            StackStateInvalidError,
+          );
+      }),
+    ),
+  );
+
+  it.live("ignores an empty runtime-only sibling remnant", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-remnant-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const mainIdentity = identity(root, "main");
+        const mainId = yield* deriveStackId(mainIdentity);
+        const siblingId = yield* deriveStackId(identity(root, "runtime-remnant"));
+        yield* store.initialize(mainId, state(mainId, mainIdentity));
+        yield* fs.makeDirectory(path.join(root, siblingId, "runtime"), { recursive: true });
+        const result = yield* makePortCoordinator(coordinatorOptions(store, root)).acquire(
+          mainId,
+          intents(),
+          [],
+        );
+        expect(result.assignments.api?.port).toBeGreaterThan(0);
+        expect(yield* fs.exists(path.join(root, siblingId, "runtime"))).toBe(true);
+        expect(yield* fs.exists(path.join(root, siblingId, "state.json"))).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("preserves unsupported sibling format errors with sibling context", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-format-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const ownIdentity = identity(root, "format-owner");
+        const ownId = yield* deriveStackId(ownIdentity);
+        const siblingId = yield* deriveStackId(identity(root, "unsupported-sibling"));
+        yield* store.initialize(ownId, state(ownId, ownIdentity));
+        const siblingState = {
+          ...state(siblingId, identity(root, "unsupported-sibling")),
+          format: "supabase-stack-state-v2",
+        };
+        yield* fs.makeDirectory(path.join(root, siblingId), { recursive: true });
+        const encodedSiblingState = yield* Schema.encodeEffect(
+          Schema.fromJsonString(Schema.Unknown),
+        )(siblingState);
+        yield* fs.writeFileString(path.join(root, siblingId, "state.json"), encodedSiblingState);
+        const result = yield* makePortCoordinator(coordinatorOptions(store, root))
+          .acquire(ownId, intents(), [])
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (!Exit.isFailure(result)) return;
+        const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+        expect(error).toBeInstanceOf(StackStateFormatUnsupportedError);
+        if (!(error instanceof StackStateFormatUnsupportedError)) return;
+        expect(error.format).toBe("supabase-stack-state-v2");
+        expect(error.message).toContain(siblingId);
+      }),
+    ),
+  );
+
+  it.live("excludes durable sibling claims while allowing stopped exact sharing", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-siblings-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const aIdentity = identity(root, "a");
+        const bIdentity = identity(root, "b");
         const a = yield* deriveStackId(aIdentity);
         const b = yield* deriveStackId(bIdentity);
-        yield* store.initialize(a, baseState(a, aIdentity));
-        yield* store.initialize(b, baseState(b, bIdentity));
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: makeTestHostListener,
+        yield* store.initialize(a, state(a, aIdentity));
+        yield* store.initialize(b, {
+          ...state(b, bIdentity, [{ field: "api", port: 20_000, intent: "automatic" }]),
+          desiredLifecycle: "stopped",
         });
-        const first = yield* coordinator.planAndReserve(a, intents("automatic"));
-        const repeat = yield* coordinator.planAndReserve(a, intents("automatic"));
+        const coordinator = makePortCoordinator(coordinatorOptions(store, root));
+        const automatic = yield* coordinator.acquire(a, intents(), []);
+        expect(automatic.assignments.api?.port).not.toBe(20_000);
+        yield* store.replaceUnlocked(b, {
+          ...state(b, bIdentity, [{ field: "api", port: 20_000, intent: "exact" }]),
+          desiredLifecycle: "stopped",
+        });
+        const exact = yield* coordinator.acquire(a, intents(20_000), []);
+        expect(exact.assignments.api).toEqual({ field: "api", port: 20_000, intent: "exact" });
+        yield* store.replaceUnlocked(b, {
+          ...state(b, bIdentity, [{ field: "api", port: 20_000, intent: "exact" }]),
+          desiredLifecycle: "running",
+        });
+        const conflict = yield* coordinator.acquire(a, intents(20_000), []).pipe(Effect.exit);
+        expect(Exit.isFailure(conflict)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("rolls back every bound listener when a later public bind fails", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-rollback-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const value = identity(root, "rollback");
+        const id = yield* deriveStackId(value);
+        yield* store.initialize(id, state(id, value));
+        const listeners: HostListener[] = [];
+        const bindHost = (address: string, port: number, field: HostListener["field"]) =>
+          field === "database"
+            ? Effect.fail(
+                new PortUnavailableError({ port, field, message: "injected later bind failure" }),
+              )
+            : bindHostListener(address, port, field).pipe(
+                Effect.tap((listener) => Effect.sync(() => listeners.push(listener))),
+              );
+        const coordinator = makePortCoordinator(coordinatorOptions(store, root, bindHost));
+        const result = yield* coordinator
+          .acquire(
+            id,
+            {
+              ...intents(),
+              database: { enabled: true, address: "127.0.0.1", port: "automatic" },
+            },
+            [],
+          )
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        expect(listeners.every((listener) => listener.binding.server.listening === false)).toBe(
+          true,
+        );
+        expect((yield* store.read(id))?.ports).toEqual([]);
+      }),
+    ),
+  );
+  it.live("retains own automatic ports and excludes every sibling reservation", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const aIdentity = identity(root, "a");
+        const bIdentity = identity(root, "b");
+        const a = yield* deriveStackId(aIdentity);
+        const b = yield* deriveStackId(bIdentity);
+        yield* store.initialize(a, state(a, aIdentity));
+        yield* store.initialize(
+          b,
+          state(b, bIdentity, [{ field: "api", port: 20_000, intent: "automatic" }]),
+        );
+        const coordinator = makePortCoordinator(coordinatorOptions(store, root));
+        const first = yield* coordinator.acquire(a, intents(), []);
+        const repeat = yield* coordinator.acquire(a, intents(), []);
         expect(repeat.assignments).toEqual(first.assignments);
-        const second = yield* coordinator.planAndReserve(b, intents("automatic"));
-        expect(second.assignments.api?.port).not.toBe(first.assignments.api?.port);
+        expect(first.assignments.api?.port).not.toBe(20_000);
       }),
     ),
   );
 
-  it.live("plans ports despite a runtime-only missing-state sibling", () =>
-    withPlatform(
+  it.live("preseeds retained ports before allocating a newly enabled earlier field", () =>
+    run(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-port-remnant-" });
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-order-" });
         const store = yield* makeStackStateStore({ stateRoot: root });
-        const validIdentity = makeIdentity(root, "valid");
-        const validId = yield* deriveStackId(validIdentity);
-        yield* store.initialize(validId, baseState(validId, validIdentity));
-        const orphanId = StackIdSchema.make("a".repeat(64));
-        const orphanPaths = yield* resolveStackPaths({
-          stateRoot: root,
-          stackId: orphanId,
-        });
-        yield* fs.makeDirectory(orphanPaths.runtime, { recursive: true });
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: makeTestHostListener,
-        });
-
-        const reservation = yield* coordinator.planAndReserve(validId, intents("automatic"));
-
-        expect(reservation.assignments.api?.port).toBeTypeOf("number");
-      }),
-    ),
-  );
-
-  it.live("skips foreign listeners while selecting fresh automatic ports", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-port-probe-" });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const identity = makeIdentity(root, "probe");
-        const id = yield* deriveStackId(identity);
-        yield* store.initialize(id, baseState(id, identity));
-        const checkHostPort = (address: string, port: number, field: string) =>
-          port === 40000 || port === 30000
-            ? Effect.fail(new PortUnavailableError({ address, port, field, message: "occupied" }))
-            : Effect.void;
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort,
-          bindHost: makeTestHostListener,
-        });
-        const reservation = yield* coordinator.planAndReserve(id, intents("automatic"), {
-          privateBindings: [{ workloadId: "db", binding: "postgres" }],
-        });
-        expect(reservation.assignments.api?.port).toBe(40001);
-        expect(reservation.privateAssignments[0]?.port).toBe(30001);
-      }),
-    ),
-  );
-
-  it.live("reports public probe-budget exhaustion distinctly", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-port-probe-limit-",
-        });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const identity = makeIdentity(root, "public-probe-limit");
-        const id = yield* deriveStackId(identity);
-        yield* store.initialize(id, baseState(id, identity));
-        const checkHostPort = (address: string, port: number, field: string) =>
-          Effect.fail(new PortUnavailableError({ address, port, field, message: "occupied" }));
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort,
-          bindHost: makeTestHostListener,
-        });
-        const result = yield* coordinator
-          .planAndReserve(id, {
-            ...disabledIntents(),
-            api: { enabled: true, address: "127.0.0.1", port: "automatic" },
-          })
-          .pipe(Effect.exit);
-        const error = errorOf(result);
-        expect(error).toBeInstanceOf(PortAllocationError);
-        expect(error?.message).toContain("public");
-        expect(error?.message).toContain("16");
-      }),
-    ),
-  );
-
-  it.live("reports private probe-budget exhaustion distinctly", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-private-probe-limit-",
-        });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const identity = makeIdentity(root, "private-probe-limit");
-        const id = yield* deriveStackId(identity);
-        yield* store.initialize(id, baseState(id, identity));
-        const checkHostPort = (address: string, port: number, field: string) =>
-          Effect.fail(new PortUnavailableError({ address, port, field, message: "occupied" }));
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort,
-          bindHost: makeTestHostListener,
-        });
-        const result = yield* coordinator
-          .planAndReserve(id, disabledIntents(), {
-            privateBindings: [{ workloadId: "db", binding: "postgres" }],
-          })
-          .pipe(Effect.exit);
-        const error = errorOf(result);
-        expect(error).toBeInstanceOf(PortAllocationError);
-        expect(error?.message).toContain("private");
-        expect(error?.message).toContain("16");
-      }),
-    ),
-  );
-
-  it.live("rejects an exact request for another stack's automatic assignment", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-port-auto-exact-",
-        });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const aIdentity = makeIdentity(root, "automatic-owner");
-        const bIdentity = makeIdentity(root, "exact-requester");
-        const a = yield* deriveStackId(aIdentity);
-        const b = yield* deriveStackId(bIdentity);
-        yield* store.initialize(a, baseState(a, aIdentity));
-        yield* store.initialize(b, baseState(b, bIdentity));
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: makeTestHostListener,
-        });
-        const automatic = yield* coordinator.planAndReserve(a, intents("automatic"));
-        const occupied = automatic.assignments.api?.port;
-        expect(occupied).toBeTypeOf("number");
-        if (occupied === undefined) return;
-        const exit = yield* coordinator
-          .planAndReserve(b, {
-            ...disabledIntents(),
-            api: { enabled: true, address: "127.0.0.1", port: occupied },
-          })
-          .pipe(Effect.exit);
-        expect(errorOf(exit)).toBeInstanceOf(PortAllocationError);
-        expect((yield* store.read(b))?.ports).toEqual([]);
-      }),
-    ),
-  );
-
-  it.live("applies listener changes already accepted by the lifecycle", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-port-running-" });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const exactIdentity = makeIdentity(root, "running-exact");
-        const automaticIdentity = makeIdentity(root, "running-automatic");
-        const exactId = yield* deriveStackId(exactIdentity);
-        const automaticId = yield* deriveStackId(automaticIdentity);
-        yield* store.initialize(exactId, {
-          ...baseState(exactId, exactIdentity, "running"),
-          ports: [{ field: "api", port: 55435, intent: "exact" }],
-          privatePorts: [],
-        });
-        yield* store.initialize(automaticId, {
-          ...baseState(automaticId, automaticIdentity, "running"),
-          ports: [{ field: "api", port: 55436, intent: "automatic" }],
-          privatePorts: [],
-        });
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: makeTestHostListener,
-        });
-        const exactToDifferent = yield* coordinator.planAndReserve(exactId, {
-          ...disabledIntents(),
-          api: { enabled: true, address: "127.0.0.1", port: 55437 },
-        });
-        expect(exactToDifferent.assignments.api?.port).toBe(55437);
-
-        const automaticToExact = yield* coordinator.planAndReserve(automaticId, {
-          ...disabledIntents(),
-          api: { enabled: true, address: "127.0.0.1", port: 55438 },
-        });
-        expect(automaticToExact.assignments.api?.port).toBe(55438);
-      }),
-    ),
-  );
-
-  it.live("keeps an unchanged running assignment", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-port-running-repeat-",
-        });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const identity = makeIdentity(root, "running-repeat");
-        const stackId = yield* deriveStackId(identity);
-        yield* store.initialize(stackId, {
-          ...baseState(stackId, identity, "running"),
-          ports: [{ field: "api", port: 55439, intent: "exact" }],
-          privatePorts: [],
-        });
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: makeTestHostListener,
-        });
-        const result = yield* coordinator.planAndReserve(stackId, {
-          ...disabledIntents(),
-          api: { enabled: true, address: "127.0.0.1", port: 55439 },
-        });
-        expect(result.assignments.api?.port).toBe(55439);
-      }),
-    ),
-  );
-
-  it.live("materializes ports for a newly accepted running stack", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-port-running-initial-",
-        });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const identity = makeIdentity(root, "running-initial");
-        const stackId = yield* deriveStackId(identity);
-        yield* store.initialize(stackId, {
-          ...baseState(stackId, identity, "running"),
-          ports: [
-            { field: "api", port: 55440, intent: "exact" },
-            { field: "database", port: 55441, intent: "automatic" },
-          ],
-          privatePorts: [],
-        });
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: makeTestHostListener,
-        });
-        const result = yield* coordinator.planAndReserve(
-          stackId,
+        const value = identity(root, "order");
+        const id = yield* deriveStackId(value);
+        yield* store.initialize(
+          id,
+          state(id, value, [{ field: "database", port: 20_321, intent: "automatic" }]),
+        );
+        const coordinator = makePortCoordinator(coordinatorOptions(store, root));
+        const result = yield* coordinator.acquire(
+          id,
           {
-            ...disabledIntents(),
-            api: { enabled: true, address: "127.0.0.1", port: 55440 },
+            ...intents(),
             database: { enabled: true, address: "127.0.0.1", port: "automatic" },
           },
-          {},
+          [],
         );
-        expect(result.assignments.api?.port).toBe(55440);
-        expect((yield* store.read(stackId))?.desiredLifecycle).toBe("running");
+        expect(result.assignments.database?.port).toBe(20_321);
+        expect(result.assignments.api?.port).not.toBe(20_321);
       }),
     ),
   );
 
-  it.live("materializes a newly accepted running stack with no listeners", () =>
-    withPlatform(
+  it.live("lets a stopped exact sibling share only an explicitly requested exact port", () =>
+    run(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-port-running-empty-",
-        });
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-exact-" });
         const store = yield* makeStackStateStore({ stateRoot: root });
-        const identity = makeIdentity(root, "running-empty");
-        const stackId = yield* deriveStackId(identity);
-        yield* store.initialize(stackId, {
-          ...baseState(stackId, identity, "running"),
-        });
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: makeTestHostListener,
-        });
-        const result = yield* coordinator.planAndReserve(stackId, disabledIntents(), {});
-        expect(result.hostListeners).toHaveLength(0);
-      }),
-    ),
-  );
-
-  it.live("allows exact assignments to coexist while stopped but rejects live conflicts", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-port-exact-" });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const cIdentity = makeIdentity(root, "c");
-        const dIdentity = makeIdentity(root, "d");
-        const c = yield* deriveStackId(cIdentity);
-        const d = yield* deriveStackId(dIdentity);
-        yield* store.initialize(c, {
-          ...baseState(c, cIdentity, "running"),
-          ports: [{ field: "api", port: 55432, intent: "exact" }],
-          privatePorts: [],
-        });
-        yield* store.initialize(d, baseState(d, dIdentity));
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: makeTestHostListener,
-        });
-        yield* coordinator.planAndReserve(d, intents(55432));
-        const stopped = yield* store.read(d);
-        if (stopped === undefined) return;
-        yield* store.replace(d, { ...stopped, desiredLifecycle: "running" });
-        const conflict = yield* coordinator.planAndReserve(d, intents(55432)).pipe(Effect.exit);
-        expect(errorOf(conflict)).toBeInstanceOf(PortUnavailableError);
-      }),
-    ),
-  );
-
-  it.live("rejects duplicate exact ports within one stack", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-port-duplicate-",
-        });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const identity = makeIdentity(root, "duplicate");
-        const stackId = yield* deriveStackId(identity);
-        yield* store.initialize(stackId, baseState(stackId, identity));
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: makeTestHostListener,
-        });
-        const exit = yield* coordinator
-          .planAndReserve(stackId, {
-            ...disabledIntents(),
-            api: { enabled: true, address: "127.0.0.1", port: 55434 },
-            database: { enabled: true, address: "127.0.0.1", port: 55434 },
-          })
-          .pipe(Effect.exit);
-        expect(errorOf(exit)).toBeInstanceOf(PortUnavailableError);
-      }),
-    ),
-  );
-
-  it.live("rejects an exact port occupied by an owned host listener", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-          prefix: "supabase-stack-port-host-",
-        });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const identity = makeIdentity(root, "host-conflict");
-        const stackId = yield* deriveStackId(identity);
-        yield* store.initialize(stackId, baseState(stackId, identity));
-        const host = yield* holdHostPort(0);
-        const hostAddress = host.address();
-        expect(hostAddress).toBeTypeOf("object");
-        if (typeof hostAddress !== "object" || hostAddress === null) return;
-        const occupiedPort = hostAddress.port;
-        const running = {
-          ...baseState(stackId, identity, "running"),
-          ports: [{ field: "api", port: occupiedPort, intent: "exact" as const }] as const,
-        };
-        yield* store.replace(stackId, running);
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: bindHostListener,
-        });
-        const exit = yield* coordinator
-          .planAndReserve(stackId, {
-            ...disabledIntents(),
-            api: { enabled: true, address: "127.0.0.1", port: occupiedPort },
-          })
-          .pipe(Effect.exit);
-        expect(errorOf(exit)).toBeInstanceOf(PortUnavailableError);
-        expect(
-          ((yield* store.read(stackId))?.ports ?? []).some(
-            (assignment) => assignment.port === occupiedPort,
-          ),
-        ).toBe(true);
-      }),
-    ),
-  );
-
-  it.live("retains coordinated listener ownership through the enclosing scope", () =>
-    Effect.gen(function* () {
-      const bound = new Set<number>();
-      let closed = 0;
-      yield* withPlatform(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-port-native-" });
-          const store = yield* makeStackStateStore({ stateRoot: root });
-          const eIdentity = makeIdentity(root, "e");
-          const e = yield* deriveStackId(eIdentity);
-          yield* store.initialize(e, {
-            ...baseState(e, eIdentity, "running"),
-            ports: [
-              { field: "api", port: 55450, intent: "automatic" },
-              { field: "database", port: 55451, intent: "automatic" },
-            ],
-          });
-          const coordinator = makePortCoordinator({
-            stateRoot: root,
-            store,
-            checkHostPort: successfulHostPortCheck,
-            bindHost: (address, port, field) =>
-              bound.has(port)
-                ? Effect.fail(new PortUnavailableError({ port, field, message: "already bound" }))
-                : makeTestHostListener(address, port, field, {
-                    onClose: () => {
-                      bound.delete(port);
-                      closed += 1;
-                    },
-                  }).pipe(Effect.tap(() => Effect.sync(() => bound.add(port)))),
-          });
-          const result = yield* coordinator.planAndReserve(e, intents("automatic"), {});
-          expect(result.hostListeners).toHaveLength(2);
-          expect(closed).toBe(0);
-          expect(bound.size).toBe(2);
-        }),
-      );
-      expect(closed).toBe(2);
-      expect(bound.size).toBe(0);
-    }),
-  );
-
-  it.live("releases earlier native listeners when a later bind fails", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-port-native-failure-",
-        });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const identity = makeIdentity(root, "native-failure");
-        const stackId = yield* deriveStackId(identity);
-        yield* store.initialize(stackId, {
-          ...baseState(stackId, identity, "running"),
-          ports: [
-            { field: "api", port: 55452, intent: "automatic" },
-            { field: "database", port: 55453, intent: "automatic" },
-          ],
-        });
-        const bound = new Set<number>();
-        let attempts = 0;
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: (address, port, field) => {
-            attempts += 1;
-            if (attempts === 2)
-              return Effect.fail(
-                new PortUnavailableError({ port, field, message: "simulated second bind failure" }),
-              );
-            return makeTestHostListener(address, port, field, {
-              onClose: () => bound.delete(port),
-            }).pipe(Effect.tap(() => Effect.sync(() => bound.add(port))));
-          },
-        });
-        const exit = yield* coordinator
-          .planAndReserve(stackId, intents("automatic"), {})
-          .pipe(Effect.exit);
-        expect(errorOf(exit)).toBeInstanceOf(PortUnavailableError);
-        expect(bound).toHaveLength(0);
-        const retry = yield* coordinator.planAndReserve(stackId, intents("automatic"), {});
-        expect(retry.hostListeners).toHaveLength(2);
-      }),
-    ),
-  );
-
-  it.live("retries a fresh automatic bind failure with the next candidate", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-port-bind-retry-",
-        });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const identity = makeIdentity(root, "bind-retry");
-        const stackId = yield* deriveStackId(identity);
-        yield* store.initialize(stackId, baseState(stackId, identity, "running"));
-        const attempts: number[] = [];
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: (address, port, field) => {
-            attempts.push(port);
-            return port === 40_000
-              ? Effect.fail(
-                  new PortUnavailableError({ port, field, message: "simulated bind race" }),
-                )
-              : makeTestHostListener(address, port, field);
-          },
-        });
-        const reservation = yield* coordinator.planAndReserve(stackId, {
-          ...disabledIntents(),
-          api: { enabled: true, address: "127.0.0.1", port: "automatic" },
-        });
-        expect(attempts).toEqual([40_000, 40_001]);
-        expect(reservation.assignments.api?.port).toBe(40_001);
-        expect((yield* store.read(stackId))?.ports).toEqual([
-          { field: "api", port: 40_001, intent: "automatic" },
-        ]);
-      }),
-    ),
-  );
-
-  it.live("keeps exact and sticky automatic assignments after bind failure", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-port-bind-sticky-",
-        });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const exactIdentity = makeIdentity(root, "bind-exact");
-        const stickyIdentity = makeIdentity(root, "bind-sticky");
-        const exactId = yield* deriveStackId(exactIdentity);
-        const stickyId = yield* deriveStackId(stickyIdentity);
-        yield* store.initialize(exactId, baseState(exactId, exactIdentity, "running"));
-        yield* store.initialize(stickyId, {
-          ...baseState(stickyId, stickyIdentity, "running"),
-          ports: [{ field: "api", port: 45_500, intent: "automatic" }],
-        });
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: (_address, port, field) =>
-            Effect.fail(new PortUnavailableError({ port, field, message: "simulated bind race" })),
-        });
-        const exact = yield* coordinator
-          .planAndReserve(exactId, {
-            ...disabledIntents(),
-            api: { enabled: true, address: "127.0.0.1", port: 45_501 },
-          })
-          .pipe(Effect.exit);
-        expect(errorOf(exact)).toBeInstanceOf(PortUnavailableError);
-        expect((yield* store.read(exactId))?.ports).toEqual([
-          { field: "api", port: 45_501, intent: "exact" },
-        ]);
-        const sticky = yield* coordinator
-          .planAndReserve(stickyId, {
-            ...disabledIntents(),
-            api: { enabled: true, address: "127.0.0.1", port: "automatic" },
-          })
-          .pipe(Effect.exit);
-        expect(errorOf(sticky)).toBeInstanceOf(PortUnavailableError);
-        expect((yield* store.read(stickyId))?.ports).toEqual([
-          { field: "api", port: 45_500, intent: "automatic" },
-        ]);
-      }),
-    ),
-  );
-
-  it.live("closes listeners acquired before a fresh bind retry", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-port-bind-retry-close-",
-        });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const identity = makeIdentity(root, "bind-retry-close");
-        const stackId = yield* deriveStackId(identity);
-        yield* store.initialize(stackId, baseState(stackId, identity, "running"));
-        const bound = new Set<number>();
-        const closeEvents: number[] = [];
-        let failed = false;
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: (address, port, field) => {
-            if (port === 40_001 && !failed) {
-              failed = true;
-              return Effect.fail(
-                new PortUnavailableError({ port, field, message: "simulated bind race" }),
-              );
-            }
-            return makeTestHostListener(address, port, field, {
-              onClose: () => {
-                bound.delete(port);
-                closeEvents.push(port);
-              },
-            }).pipe(Effect.tap(() => Effect.sync(() => bound.add(port))));
-          },
-        });
-        const reservation = yield* coordinator.planAndReserve(stackId, intents("automatic"));
-        expect(reservation.hostListeners).toHaveLength(2);
-        expect(bound.size).toBe(2);
-        expect(closeEvents).toEqual([40_000]);
-        expect(reservation.assignments.api?.port).toBe(40_000);
-        expect(reservation.assignments.database?.port).toBe(40_002);
-      }),
-    ),
-  );
-
-  it.live("bounds fresh automatic bind retries and rolls back the reservation", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-port-bind-limit-",
-        });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const identity = makeIdentity(root, "bind-limit");
-        const stackId = yield* deriveStackId(identity);
-        yield* store.initialize(stackId, baseState(stackId, identity, "running"));
-        const attempts: number[] = [];
-        const bindCause = new Error("simulated host bind cause");
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: (_address, port, field) => {
-            attempts.push(port);
-            return Effect.fail(
-              new PortUnavailableError({
-                port,
-                field,
-                message: "always occupied",
-                cause: bindCause,
-              }),
-            );
-          },
-        });
-        const result = yield* coordinator
-          .planAndReserve(stackId, {
-            ...disabledIntents(),
-            api: { enabled: true, address: "127.0.0.1", port: "automatic" },
-          })
-          .pipe(Effect.exit);
-        const error = errorOf(result);
-        expect(error).toBeInstanceOf(PortUnavailableError);
-        if (!(error instanceof PortUnavailableError)) throw new Error("Expected port error");
-        expect(error?.message).toContain(
-          "Could not bind an automatic public host port for api after 17 candidates",
-        );
-        expect(error?.field).toBe("api");
-        expect(error?.port).toBe(40_016);
-        expect(error?.cause).toMatchObject({ cause: bindCause });
-        expect(attempts).toHaveLength(17);
-        expect(attempts.at(-1)).toBe(40_016);
-        expect((yield* store.read(stackId))?.ports).toEqual([]);
-      }),
-    ),
-  );
-
-  it.live("retains a chosen assignment when container publication races", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-port-race-" });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const fIdentity = makeIdentity(root, "f");
-        const f = yield* deriveStackId(fIdentity);
-        yield* store.initialize(f, {
-          ...baseState(f, fIdentity, "running"),
-          ports: [
-            { field: "api", port: 55433, intent: "exact" },
-            { field: "database", port: 55434, intent: "automatic" },
-          ],
-        });
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: (address, port, field) =>
-            Effect.fail(new PortUnavailableError({ port, field, message: `race at ${address}` })),
-        });
-        const exit = yield* coordinator.planAndReserve(f, intents(55433), {}).pipe(Effect.exit);
-        expect(errorOf(exit)).toBeInstanceOf(PortUnavailableError);
-        const reserved = (yield* store.read(f))?.ports ?? [];
-        expect(reserved.some((assignment) => assignment.port === 55433)).toBe(true);
-      }),
-    ),
-  );
-
-  it.live("allocates distinct durable private bindings and retains them across stop", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-private-" });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const identity = makeIdentity(root, "private");
-        const stackId = yield* deriveStackId(identity);
-        yield* store.initialize(stackId, baseState(stackId, identity));
-        const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: makeTestHostListener,
-        });
-        const bindings = [
-          { workloadId: "mail:mail", binding: "ui" },
-          { workloadId: "mail:mail", binding: "smtp" },
-          { workloadId: "mail:mail", binding: "pop3" },
-          { workloadId: "database:database", binding: "primary" },
-        ];
-        const first = yield* coordinator.planAndReserve(stackId, disabledIntents(), {
-          privateBindings: bindings,
-        });
-        expect(first.privateAssignments).toHaveLength(bindings.length);
-        expect(new Set(first.privateAssignments.map((entry) => entry.port)).size).toBe(
-          bindings.length,
-        );
-        expect(first.privateAssignments.every((entry) => entry.port >= 30_000)).toBe(true);
-        const stopped = yield* coordinator.planAndReserve(stackId, disabledIntents(), {
-          privateBindings: bindings,
-        });
-        expect(stopped.privateAssignments).toEqual(first.privateAssignments);
-      }),
-    ),
-  );
-
-  it.live("keeps private ports exclusive across stacks and rejects public overlap", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-private-conflict-",
-        });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const aIdentity = makeIdentity(root, "private-a");
-        const bIdentity = makeIdentity(root, "private-b");
+        const aIdentity = identity(root, "a");
+        const bIdentity = identity(root, "b");
         const a = yield* deriveStackId(aIdentity);
         const b = yield* deriveStackId(bIdentity);
-        yield* store.initialize(a, baseState(a, aIdentity));
-        yield* store.initialize(b, baseState(b, bIdentity));
+        yield* store.initialize(a, state(a, aIdentity));
+        yield* store.initialize(b, {
+          ...state(b, bIdentity, [{ field: "api", port: 24_000, intent: "exact" }]),
+          desiredLifecycle: "stopped",
+        });
+        const coordinator = makePortCoordinator(coordinatorOptions(store, root));
+        const result = yield* coordinator.acquire(a, intents(24_000), []);
+        expect(result.assignments.api).toEqual({ field: "api", port: 24_000, intent: "exact" });
+        const automatic = yield* coordinator.acquire(a, intents(), []);
+        expect(automatic.assignments.api?.port).not.toBe(24_000);
+      }),
+    ),
+  );
+
+  it.live("rejects acquisition for a stopped state without changing assignments", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-stopped-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const value = identity(root, "stopped");
+        const id = yield* deriveStackId(value);
+        const before = state(id, value, [{ field: "api", port: 24_001, intent: "automatic" }]);
+        yield* store.initialize(id, { ...before, desiredLifecycle: "stopped" });
+        const coordinator = makePortCoordinator(coordinatorOptions(store, root));
+        const result = yield* coordinator.acquire(id, intents(), []).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        expect((yield* store.read(id))?.ports).toEqual(before.ports);
+      }),
+    ),
+  );
+
+  it.live("keeps durable state unchanged when a public bind fails", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-failure-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const value = identity(root, "failure");
+        const id = yield* deriveStackId(value);
+        yield* store.initialize(id, state(id, value));
+        const bindHost = (_address: string, port: number, field: HostListener["field"]) =>
+          Effect.fail(new PortUnavailableError({ port, field, message: "invalid address" }));
+        const coordinator = makePortCoordinator(coordinatorOptions(store, root, bindHost));
+        const result = yield* coordinator.acquire(id, intents(), []).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        expect((yield* store.read(id))?.ports).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("allocates and retains explicit private binding intents in the shared pool", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-private-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const value = identity(root, "private");
+        const id = yield* deriveStackId(value);
+        yield* store.initialize(id, state(id, value));
+        const coordinator = makePortCoordinator(coordinatorOptions(store, root));
+        const bindings = [{ workloadId: "database:database", binding: "primary" }];
+        const disabledApi = {
+          ...intents(),
+          api: { enabled: false, address: "127.0.0.1", port: "automatic" as const },
+        };
+        const first = yield* coordinator.acquire(id, disabledApi, bindings);
+        const second = yield* coordinator.acquire(id, disabledApi, bindings);
+        expect(second.privateAssignments).toEqual(first.privateAssignments);
+        expect(first.privateAssignments[0]?.port).toBeGreaterThanOrEqual(20_000);
+        expect(first.privateAssignments[0]?.port).toBeLessThanOrEqual(32_767);
+      }),
+    ),
+  );
+
+  it.live("persists distinct private bindings and retains them on reacquisition", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-private-state-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const value = identity(root, "private-state");
+        const id = yield* deriveStackId(value);
+        yield* store.initialize(id, state(id, value));
+        const bindings = [
+          { workloadId: "database:database", binding: "primary" },
+          { workloadId: "rest:rest", binding: "primary" },
+        ];
+        const disabled = {
+          ...intents(),
+          api: { enabled: false, address: "127.0.0.1", port: "automatic" as const },
+        };
         const coordinator = makePortCoordinator({
-          stateRoot: root,
-          store,
-          checkHostPort: successfulHostPortCheck,
-          bindHost: makeTestHostListener,
+          ...coordinatorOptions(store, root, bindHostListener),
+          bindPrivate: (address, port, _binding) =>
+            bindHostListener(address, port, "database").pipe(
+              Effect.map((listener) => ({ port: listener.port, close: listener.close })),
+            ),
         });
-        const first = yield* coordinator.planAndReserve(a, disabledIntents(), {
-          privateBindings: [{ workloadId: "database:database", binding: "primary" }],
+        const first = yield* coordinator.acquire(id, disabled, bindings);
+        expect(first.privateAssignments).toHaveLength(2);
+        expect(first.privateAssignments[0]?.port).not.toBe(first.privateAssignments[1]?.port);
+        expect((yield* store.read(id))?.privatePorts).toEqual(first.privateAssignments);
+        const second = yield* coordinator.acquire(id, disabled, bindings);
+        expect(second.privateAssignments).toEqual(first.privateAssignments);
+      }),
+    ),
+  );
+
+  it.live("rejects a retained private claim already reserved by another stack", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-private-conflict-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const aIdentity = identity(root, "a");
+        const bIdentity = identity(root, "b");
+        const a = yield* deriveStackId(aIdentity);
+        const b = yield* deriveStackId(bIdentity);
+        const assignment = {
+          workloadId: "database:database",
+          binding: "primary",
+          port: 20_101,
+        } as const;
+        yield* store.initialize(a, { ...state(a, aIdentity), privatePorts: [assignment] });
+        yield* store.initialize(b, {
+          ...state(b, bIdentity),
+          privatePorts: [{ ...assignment, workloadId: "rest:rest" }],
         });
-        const second = yield* coordinator.planAndReserve(b, disabledIntents(), {
-          privateBindings: [{ workloadId: "database:database", binding: "primary" }],
-        });
-        expect(second.privateAssignments[0]?.port).not.toBe(first.privateAssignments[0]?.port);
-        const overlapping = yield* store
-          .replace(a, {
-            ...baseState(a, aIdentity),
-            ports: [{ field: "api", port: 30_000, intent: "exact" }],
-            privatePorts: [{ workloadId: "database:database", binding: "primary", port: 30_000 }],
-          })
+        const coordinator = makePortCoordinator(coordinatorOptions(store, root));
+        const result = yield* coordinator
+          .acquire(
+            a,
+            {
+              ...intents(),
+              api: { enabled: false, address: "127.0.0.1", port: "automatic" },
+            },
+            [{ workloadId: assignment.workloadId, binding: assignment.binding }],
+          )
           .pipe(Effect.exit);
-        expect(errorOf(overlapping)).toBeDefined();
+        expect(Exit.isFailure(result)).toBe(true);
+        expect((yield* store.read(a))?.privatePorts).toEqual([assignment]);
+      }),
+    ),
+  );
+
+  it.live("drops a removed private binding after successful acquisition", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-private-remove-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const value = identity(root, "remove");
+        const id = yield* deriveStackId(value);
+        const previous = {
+          workloadId: "database:database",
+          binding: "primary",
+          port: 20_102,
+        } as const;
+        yield* store.initialize(id, { ...state(id, value), privatePorts: [previous] });
+        const coordinator = makePortCoordinator(coordinatorOptions(store, root));
+        yield* coordinator.acquire(
+          id,
+          {
+            ...intents(),
+            api: { enabled: false, address: "127.0.0.1", port: "automatic" },
+          },
+          [],
+        );
+        expect((yield* store.read(id))?.privatePorts).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("preseeds exact claims before deterministic fresh allocation", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-preseed-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const value = identity(root, "preseed");
+        const id = yield* deriveStackId(value);
+        yield* store.initialize(id, state(id, value));
+        const crypto = yield* Crypto.Crypto;
+        const deterministic = { ...crypto, randomIntBetween: () => Effect.succeed(0) };
+        const result = yield* makePortCoordinator(coordinatorOptions(store, root))
+          .acquire(
+            id,
+            {
+              ...intents(),
+              database: { enabled: true, address: "127.0.0.1", port: 20_000 },
+            },
+            [],
+          )
+          .pipe(Effect.provideService(Crypto.Crypto, deterministic));
+        expect(result.assignments.database?.port).toBe(20_000);
+        expect(result.assignments.api?.port).not.toBe(20_000);
+      }),
+    ),
+  );
+
+  it.live("fails honestly after exactly 64 retryable fresh bind failures", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-bound-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const value = identity(root, "bound");
+        const id = yield* deriveStackId(value);
+        yield* store.initialize(id, state(id, value));
+        let attempts = 0;
+        const bindHost = (_address: string, port: number, field: HostListener["field"]) => {
+          attempts += 1;
+          return Effect.fail(
+            new PortUnavailableError({
+              port,
+              field,
+              message: "occupied",
+              cause: Object.assign(new Error("occupied"), { code: "EADDRINUSE" }),
+            }),
+          );
+        };
+        const crypto = yield* Crypto.Crypto;
+        const result = yield* makePortCoordinator(coordinatorOptions(store, root, bindHost))
+          .acquire(id, intents(), [])
+          .pipe(
+            Effect.exit,
+            Effect.provideService(Crypto.Crypto, {
+              ...crypto,
+              randomIntBetween: () => Effect.succeed(0),
+            }),
+          );
+        expect(attempts).toBe(64);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result))
+          expect(Option.getOrUndefined(Cause.findErrorOption(result.cause))).toBeInstanceOf(
+            PortAllocationError,
+          );
+        expect((yield* store.read(id))?.ports).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("preserves a nonretryable bind failure without writing state", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-nonretry-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const value = identity(root, "nonretry");
+        const id = yield* deriveStackId(value);
+        yield* store.initialize(id, state(id, value));
+        let attempts = 0;
+        const bindHost = (_address: string, port: number, field: HostListener["field"]) => {
+          attempts += 1;
+          return Effect.fail(
+            new PortUnavailableError({
+              port,
+              field,
+              message: "address unavailable",
+              cause: Object.assign(new Error("address unavailable"), { code: "EADDRNOTAVAIL" }),
+            }),
+          );
+        };
+        const result = yield* makePortCoordinator(coordinatorOptions(store, root, bindHost))
+          .acquire(id, intents(), [])
+          .pipe(Effect.exit);
+        expect(attempts).toBe(1);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result))
+          expect(Option.getOrUndefined(Cause.findErrorOption(result.cause))).toBeInstanceOf(
+            PortUnavailableError,
+          );
+        expect((yield* store.read(id))?.ports).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("keeps an earlier successful listener through a later fresh retry", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-later-retry-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const value = identity(root, "later-retry");
+        const id = yield* deriveStackId(value);
+        yield* store.initialize(id, state(id, value));
+        const resources: Array<{ readonly field: string; readonly port: number; closed: boolean }> =
+          [];
+        let databaseAttempts = 0;
+        let apiAttempts = 0;
+        const bindHost = (address: string, port: number, field: HostListener["field"]) => {
+          if (field === "api") apiAttempts += 1;
+          if (field === "database") {
+            databaseAttempts += 1;
+            if (databaseAttempts === 1)
+              return Effect.fail(
+                new PortUnavailableError({
+                  port,
+                  field,
+                  message: "occupied",
+                  cause: Object.assign(new Error("occupied"), { code: "EACCES" }),
+                }),
+              );
+          }
+          const resource = { field, port, closed: false };
+          resources.push(resource);
+          return Effect.acquireRelease(
+            Effect.succeed({
+              address,
+              port,
+              field,
+              binding: { kind: "http", server: createHttpServer() },
+              connections: { sockets: new Set() },
+              close: Effect.sync(() => {
+                resource.closed = true;
+              }),
+            } satisfies HostListener),
+            (listener) => listener.close,
+          );
+        };
+        const crypto = yield* Crypto.Crypto;
+        const result = yield* makePortCoordinator(coordinatorOptions(store, root, bindHost))
+          .acquire(
+            id,
+            {
+              ...intents(),
+              database: { enabled: true, address: "127.0.0.1", port: "automatic" },
+            },
+            [],
+          )
+          .pipe(
+            Effect.provideService(Crypto.Crypto, {
+              ...crypto,
+              randomIntBetween: () => Effect.succeed(0),
+            }),
+          );
+        expect(result.assignments.api?.port).toBeGreaterThan(0);
+        expect(apiAttempts).toBe(1);
+        expect(databaseAttempts).toBe(2);
+        expect(resources.filter(({ field }) => field === "api")).toHaveLength(1);
+        expect(resources.every(({ closed }) => closed === false)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("binds resources before one failing state write and rolls them all back", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-write-failure-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const value = identity(root, "write-failure");
+        const id = yield* deriveStackId(value);
+        yield* store.initialize(id, state(id, value));
+        let replaceCalls = 0;
+        let publicListener: HostListener | undefined;
+        let privatePort: number | undefined;
+        const failingStore: PortCoordinatorOptions["store"] = {
+          ...store,
+          replaceUnlocked: (_stackId, next) =>
+            Effect.gen(function* () {
+              replaceCalls += 1;
+              expect(publicListener?.binding.server.listening).toBe(true);
+              const assignment = next.privatePorts[0];
+              if (assignment === undefined) return yield* Effect.die("missing private assignment");
+              privatePort = assignment.port;
+              const probe = yield* checkHostPort("127.0.0.1", assignment.port, "database").pipe(
+                Effect.exit,
+              );
+              expect(Exit.isFailure(probe)).toBe(true);
+              return yield* new StackStateInvalidError({ message: "injected state write failure" });
+            }),
+        };
+        const coordinator = makePortCoordinator({
+          ...coordinatorOptions(failingStore, root, (address, port, field) =>
+            bindHostListener(address, port, field).pipe(
+              Effect.tap((listener) =>
+                Effect.sync(() => {
+                  publicListener = listener;
+                }),
+              ),
+            ),
+          ),
+          bindPrivate: (address, port, binding) => bindHeldPort(address, port, binding),
+        });
+        const result = yield* coordinator
+          .acquire(
+            id,
+            {
+              ...intents(),
+              database: { enabled: true, address: "127.0.0.1", port: "automatic" },
+            },
+            [{ workloadId: "database:database", binding: "primary" }],
+          )
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        expect(replaceCalls).toBe(1);
+        expect(publicListener?.binding.server.listening).toBe(false);
+        expect(privatePort).toBeDefined();
+        expect((yield* store.read(id))?.ports).toEqual([]);
+        expect((yield* store.read(id))?.privatePorts).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("interrupts a waiting transaction and releases its first bound socket", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-interrupt-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const value = identity(root, "interrupt");
+        const id = yield* deriveStackId(value);
+        const before = state(id, value, [{ field: "studio", port: 20_103, intent: "automatic" }]);
+        yield* store.initialize(id, before);
+        const parentScope = yield* Scope.Scope;
+        const acquisitionScope = yield* Scope.fork(parentScope, "sequential");
+        const waiting = yield* Deferred.make<void>();
+        let publicListener: HostListener | undefined;
+        const coordinator = makePortCoordinator({
+          ...coordinatorOptions(store, root, (address, port, field) =>
+            field === "api"
+              ? bindHostListener(address, port, field).pipe(
+                  Effect.tap((listener) =>
+                    Effect.sync(() => {
+                      publicListener = listener;
+                    }),
+                  ),
+                )
+              : Effect.gen(function* () {
+                  yield* Deferred.succeed(waiting, undefined);
+                  return yield* Effect.never;
+                }),
+          ),
+          bindPrivate: (_address, _port, _binding) => Effect.never,
+        });
+        const fiber = yield* Effect.forkChild(
+          coordinator
+            .acquire(
+              id,
+              {
+                ...intents(),
+                database: { enabled: true, address: "127.0.0.1", port: "automatic" },
+              },
+              [],
+            )
+            .pipe(Effect.provideService(Scope.Scope, acquisitionScope)),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(waiting);
+        yield* Fiber.interrupt(fiber);
+        expect(publicListener?.binding.server.listening).toBe(false);
+        expect((yield* store.read(id))?.ports).toEqual(before.ports);
+        yield* withRegistryLock(root, Effect.succeed(true));
+        yield* Scope.close(acquisitionScope, Exit.void);
+      }),
+    ),
+  );
+
+  it.live("finishes a commit after interruption is requested", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-commit-interrupt-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const value = identity(root, "commit-interrupt");
+        const id = yield* deriveStackId(value);
+        yield* store.initialize(id, state(id, value));
+        const commitStarted = yield* Deferred.make<void>();
+        const releaseCommit = yield* Deferred.make<void>();
+        const committingStore: PortCoordinatorOptions["store"] = {
+          ...store,
+          replaceUnlocked: (stackId, next) =>
+            Effect.gen(function* () {
+              const result = yield* store.replaceUnlocked(stackId, next);
+              yield* Deferred.succeed(commitStarted, undefined);
+              yield* Deferred.await(releaseCommit);
+              return result;
+            }),
+        };
+        const parentScope = yield* Scope.Scope;
+        const acquisitionScope = yield* Scope.fork(parentScope, "sequential");
+        let publicListener: HostListener | undefined;
+        const coordinator = makePortCoordinator(
+          coordinatorOptions(committingStore, root, (address, port, field) =>
+            bindHostListener(address, port, field).pipe(
+              Effect.tap((listener) =>
+                Effect.sync(() => {
+                  publicListener = listener;
+                }),
+              ),
+            ),
+          ),
+        );
+        const fiber = yield* Effect.forkChild(
+          coordinator
+            .acquire(id, intents(), [])
+            .pipe(Effect.provideService(Scope.Scope, acquisitionScope)),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(commitStarted);
+        const interrupt = yield* Effect.forkChild(Fiber.interrupt(fiber), {
+          startImmediately: true,
+        });
+        yield* Deferred.succeed(releaseCommit, undefined);
+        yield* Fiber.join(fiber).pipe(Effect.exit);
+        yield* Fiber.join(interrupt);
+        expect((yield* store.read(id))?.ports).toHaveLength(1);
+        expect(publicListener?.binding.server.listening).toBe(true);
+        yield* Scope.close(acquisitionScope, Exit.void);
+        expect(publicListener?.binding.server.listening).toBe(false);
       }),
     ),
   );

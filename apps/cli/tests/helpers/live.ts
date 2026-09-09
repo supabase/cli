@@ -53,7 +53,6 @@ const base = vitestTest.extend<LiveFixtures>({
     const directory = mkdtempSync(path.join(tmpdir(), `supabase-live-${suffix || "test"}-`));
     try {
       const initialized = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: directory,
         home: home.dir,
         env: { SUPABASE_PROFILE: inject("liveProfilePath") },
@@ -72,7 +71,6 @@ const base = vitestTest.extend<LiveFixtures>({
   cli: async ({ workspace, home }, use) => {
     await use((args, options) =>
       runSupabase(args, {
-        entrypoint: "legacy",
         ...options,
         cwd: options?.cwd ?? workspace.path,
         home: home.dir,
@@ -114,6 +112,21 @@ const base = vitestTest.extend<LiveFixtures>({
 export const test = base;
 
 export { requireCliSuccess as requireLiveSuccess };
+
+/** Parse a command's stdout as JSON, failing with both streams when it is not. */
+export function requireLiveJson(
+  result: { readonly stdout: string; readonly stderr: string },
+  command: string,
+): unknown {
+  try {
+    return JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(
+      `${command} did not print JSON\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      { cause: error },
+    );
+  }
+}
 
 /** Flags every storage live test passes: the suite links the shared project
  * and the storage command family is experimental-gated. */
@@ -218,12 +231,7 @@ export async function expectPostgresConfigLiveOverride(
       { exitTimeoutMs: 20_000 },
     );
     requireCliSuccess(proof, label);
-    let config: unknown;
-    try {
-      config = JSON.parse(proof.stdout);
-    } catch {
-      config = undefined;
-    }
+    const config = requireLiveJson(proof, label);
     if (!Predicate.isObject(config)) {
       throw new Error(
         `${label}: unexpected postgres-config get payload\nstdout:\n${proof.stdout}\nstderr:\n${proof.stderr}`,

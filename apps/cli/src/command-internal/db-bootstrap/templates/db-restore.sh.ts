@@ -10,7 +10,7 @@
  * Not a Go `text/template`. Do not hand-edit — re-transcribe from the Go source if it
  * changes.
  */
-export const LEGACY_START_DB_RESTORE_SH = `#!/bin/sh
+export const START_DB_RESTORE_SH = `#!/bin/sh
 set -eu
 
 #######################################

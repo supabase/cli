@@ -2,15 +2,15 @@ import type { ECDH } from "node:crypto";
 import type { Effect } from "effect";
 import { Context } from "effect";
 
-import type { LegacyLoginCryptoError, LegacyLoginDecryptError } from "./login.errors.ts";
+import type { LoginCryptoError, LoginDecryptError } from "./login.errors.ts";
 
-export type LegacyEncryptedPayload = {
+export type LoginEncryptedPayload = {
   readonly ciphertext: string;
   readonly publicKey: string;
   readonly nonce: string;
 };
 
-interface LegacyLoginCryptoShape {
+interface LoginCryptoShape {
   /**
    * Generates a P-256 (prime256v1) ECDH keypair and the uncompressed,
    * hex-encoded public key sent to the dashboard. Mirrors Go's
@@ -18,7 +18,7 @@ interface LegacyLoginCryptoShape {
    */
   readonly generateKeyPair: Effect.Effect<
     { readonly ecdh: ECDH; readonly publicKeyHex: string },
-    LegacyLoginCryptoError
+    LoginCryptoError
   >;
   /** Fresh login session UUID (`uuid.New().String()`, `login.go:187`). */
   readonly generateSessionId: Effect.Effect<string>;
@@ -33,10 +33,10 @@ interface LegacyLoginCryptoShape {
    */
   readonly decryptToken: (
     ecdh: ECDH,
-    payload: LegacyEncryptedPayload,
-  ) => Effect.Effect<string, LegacyLoginDecryptError>;
+    payload: LoginEncryptedPayload,
+  ) => Effect.Effect<string, LoginDecryptError>;
 }
 
-export class LegacyLoginCrypto extends Context.Service<LegacyLoginCrypto, LegacyLoginCryptoShape>()(
-  "supabase/legacy/LoginCrypto",
+export class LoginCrypto extends Context.Service<LoginCrypto, LoginCryptoShape>()(
+  "supabase/cli/LoginCrypto",
 ) {}

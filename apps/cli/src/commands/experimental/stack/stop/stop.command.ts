@@ -1,7 +1,8 @@
 import { Command, Flag } from "effect/unstable/cli";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyExperimentalStackStop } from "./stop.handler.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { experimentalStackStop } from "./stop.handler.ts";
 
 const config = {
   stack: Flag.string("stack").pipe(
@@ -14,7 +15,7 @@ const config = {
   ),
 } as const;
 
-export const legacyExperimentalStackStopCommand = Command.make("stop", config).pipe(
+export const experimentalStackStopCommand = Command.make("stop", config).pipe(
   Command.withDescription("Stop a managed local Supabase stack while preserving its data."),
   Command.withShortDescription("Stop a managed local stack"),
   Command.withExamples([
@@ -24,9 +25,10 @@ export const legacyExperimentalStackStopCommand = Command.make("stop", config).p
     },
   ]),
   Command.withHandler((flags) =>
-    legacyExperimentalStackStop(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, config }),
+    experimentalStackStop(flags).pipe(
+      withCommandTelemetry({ flags, config }),
       withJsonErrorHandling,
     ),
   ),
+  Command.provide(commandRuntimeLayer(["experimental", "stack", "stop"])),
 );

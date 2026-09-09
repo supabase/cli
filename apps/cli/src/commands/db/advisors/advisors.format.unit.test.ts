@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  apiResponseToLegacyAdvisorLints,
-  encodeLegacyAdvisorLints,
-  filterLegacyAdvisorLints,
-  LEGACY_ADVISORS_LEVEL_ENUM,
-  type LegacyAdvisorLint,
-  matchesLegacyAdvisorType,
-  scanLegacyAdvisorLintRow,
+  apiResponseToAdvisorLints,
+  encodeAdvisorLints,
+  filterAdvisorLints,
+  ADVISORS_LEVEL_ENUM,
+  type AdvisorLint,
+  matchesAdvisorType,
+  scanAdvisorLintRow,
 } from "./advisors.format.ts";
-import { splitLegacyLintsSql } from "./advisors.lints-sql.ts";
+import { splitLintsSql } from "./advisors.lints-sql.ts";
 
-const lint = (over: Partial<LegacyAdvisorLint>): LegacyAdvisorLint => ({
+const lint = (over: Partial<AdvisorLint>): AdvisorLint => ({
   name: over.name ?? "",
   title: over.title ?? "",
   level: over.level ?? "INFO",
@@ -24,66 +24,66 @@ const lint = (over: Partial<LegacyAdvisorLint>): LegacyAdvisorLint => ({
   cacheKey: over.cacheKey ?? "",
 });
 
-describe("LEGACY_ADVISORS_LEVEL_ENUM (Go toEnum, exact case-insensitive)", () => {
+describe("ADVISORS_LEVEL_ENUM (Go toEnum, exact case-insensitive)", () => {
   it("maps info/warn/error in both cases", () => {
-    expect(LEGACY_ADVISORS_LEVEL_ENUM.toEnum("info")).toBe(0);
-    expect(LEGACY_ADVISORS_LEVEL_ENUM.toEnum("INFO")).toBe(0);
-    expect(LEGACY_ADVISORS_LEVEL_ENUM.toEnum("warn")).toBe(1);
-    expect(LEGACY_ADVISORS_LEVEL_ENUM.toEnum("ERROR")).toBe(2);
-    expect(LEGACY_ADVISORS_LEVEL_ENUM.toEnum("nope")).toBe(-1);
+    expect(ADVISORS_LEVEL_ENUM.toEnum("info")).toBe(0);
+    expect(ADVISORS_LEVEL_ENUM.toEnum("INFO")).toBe(0);
+    expect(ADVISORS_LEVEL_ENUM.toEnum("warn")).toBe(1);
+    expect(ADVISORS_LEVEL_ENUM.toEnum("ERROR")).toBe(2);
+    expect(ADVISORS_LEVEL_ENUM.toEnum("nope")).toBe(-1);
   });
 });
 
-describe("matchesLegacyAdvisorType", () => {
+describe("matchesAdvisorType", () => {
   it("matches all, and SECURITY/PERFORMANCE categories", () => {
     const security = lint({ categories: ["SECURITY"] });
     const performance = lint({ categories: ["PERFORMANCE"] });
-    expect(matchesLegacyAdvisorType(security, "all")).toBe(true);
-    expect(matchesLegacyAdvisorType(security, "security")).toBe(true);
-    expect(matchesLegacyAdvisorType(security, "performance")).toBe(false);
-    expect(matchesLegacyAdvisorType(performance, "performance")).toBe(true);
-    expect(matchesLegacyAdvisorType(performance, "security")).toBe(false);
+    expect(matchesAdvisorType(security, "all")).toBe(true);
+    expect(matchesAdvisorType(security, "security")).toBe(true);
+    expect(matchesAdvisorType(security, "performance")).toBe(false);
+    expect(matchesAdvisorType(performance, "performance")).toBe(true);
+    expect(matchesAdvisorType(performance, "security")).toBe(false);
   });
 });
 
-describe("filterLegacyAdvisorLints (maps Go TestFilterLints)", () => {
-  const lints: ReadonlyArray<LegacyAdvisorLint> = [
+describe("filterAdvisorLints (maps Go TestFilterLints)", () => {
+  const lints: ReadonlyArray<AdvisorLint> = [
     lint({ name: "rls_disabled", level: "ERROR", categories: ["SECURITY"] }),
     lint({ name: "unindexed_fk", level: "INFO", categories: ["PERFORMANCE"] }),
     lint({ name: "auth_exposed", level: "WARN", categories: ["SECURITY"] }),
     lint({ name: "no_primary_key", level: "WARN", categories: ["PERFORMANCE"] }),
   ];
-  const names = (xs: ReadonlyArray<LegacyAdvisorLint>) => xs.map((x) => x.name);
+  const names = (xs: ReadonlyArray<AdvisorLint>) => xs.map((x) => x.name);
 
   it("filters by type security", () => {
-    expect(names(filterLegacyAdvisorLints(lints, "security", "info"))).toEqual([
+    expect(names(filterAdvisorLints(lints, "security", "info"))).toEqual([
       "rls_disabled",
       "auth_exposed",
     ]);
   });
   it("filters by type performance", () => {
-    expect(names(filterLegacyAdvisorLints(lints, "performance", "info"))).toEqual([
+    expect(names(filterAdvisorLints(lints, "performance", "info"))).toEqual([
       "unindexed_fk",
       "no_primary_key",
     ]);
   });
   it("filters by type all", () => {
-    expect(filterLegacyAdvisorLints(lints, "all", "info")).toHaveLength(4);
+    expect(filterAdvisorLints(lints, "all", "info")).toHaveLength(4);
   });
   it("filters by level warn", () => {
-    expect(filterLegacyAdvisorLints(lints, "all", "warn")).toHaveLength(3);
+    expect(filterAdvisorLints(lints, "all", "warn")).toHaveLength(3);
   });
   it("filters by level error", () => {
-    expect(names(filterLegacyAdvisorLints(lints, "all", "error"))).toEqual(["rls_disabled"]);
+    expect(names(filterAdvisorLints(lints, "all", "error"))).toEqual(["rls_disabled"]);
   });
   it("combines type and level filters", () => {
-    expect(names(filterLegacyAdvisorLints(lints, "security", "error"))).toEqual(["rls_disabled"]);
+    expect(names(filterAdvisorLints(lints, "security", "error"))).toEqual(["rls_disabled"]);
   });
 });
 
-describe("scanLegacyAdvisorLintRow", () => {
+describe("scanAdvisorLintRow", () => {
   it("scans a local-database row keyed by column name, parsing jsonb metadata", () => {
-    const result = scanLegacyAdvisorLintRow({
+    const result = scanAdvisorLintRow({
       name: "rls_disabled_in_public",
       title: "RLS disabled in public",
       level: "ERROR",
@@ -102,14 +102,14 @@ describe("scanLegacyAdvisorLintRow", () => {
   });
 
   it("omits metadata when the column is null", () => {
-    const result = scanLegacyAdvisorLintRow({ name: "x", categories: [], metadata: null });
+    const result = scanAdvisorLintRow({ name: "x", categories: [], metadata: null });
     expect("metadata" in result).toBe(false);
   });
 });
 
-describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () => {
+describe("apiResponseToAdvisorLints (maps Go TestApiResponseToLints)", () => {
   it("coerces API fields to strings and projects metadata to the known fields", () => {
-    const lints = apiResponseToLegacyAdvisorLints({
+    const lints = apiResponseToAdvisorLints({
       lints: [
         {
           name: "rls_disabled_in_public",
@@ -138,7 +138,7 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
   });
 
   it("accepts an unknown advisor name (closed-enum divergence guard)", () => {
-    const lints = apiResponseToLegacyAdvisorLints({
+    const lints = apiResponseToAdvisorLints({
       lints: [{ name: "some_brand_new_advisor", level: "WARN", categories: ["SECURITY"] }],
     });
     expect(lints[0]?.name).toBe("some_brand_new_advisor");
@@ -147,15 +147,15 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
   it("returns an empty array for Go zero-value shapes (null, missing/null lints)", () => {
     // A top-level null or an absent/null `lints` decodes to the zero value,
     // yielding no lints (No issues found).
-    expect(apiResponseToLegacyAdvisorLints(null)).toEqual([]);
-    expect(apiResponseToLegacyAdvisorLints({})).toEqual([]);
-    expect(apiResponseToLegacyAdvisorLints({ lints: null })).toEqual([]);
+    expect(apiResponseToAdvisorLints(null)).toEqual([]);
+    expect(apiResponseToAdvisorLints({})).toEqual([]);
+    expect(apiResponseToAdvisorLints({ lints: null })).toEqual([]);
   });
 
   it("null lints element becomes zero-value lint (Go encoding/json nil-slice decode parity)", () => {
     // A null slice element decodes to the zero-value struct, not a throw. The
     // zero lint has empty strings and null categories.
-    const result = apiResponseToLegacyAdvisorLints({
+    const result = apiResponseToAdvisorLints({
       lints: [
         null,
         {
@@ -188,7 +188,7 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
   it("null categories element becomes empty string (Go encoding/json []string null-element parity)", () => {
     // A null element inside a string array decodes to the zero string "", not
     // a throw.
-    const result = apiResponseToLegacyAdvisorLints({
+    const result = apiResponseToAdvisorLints({
       lints: [{ name: "x", categories: [null, "SECURITY"] }],
     });
     expect(result[0]?.categories).toEqual(["", "SECURITY"]);
@@ -199,18 +199,16 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
     // issues found"). The previous tolerant parser wrongly coerced these to
     // []. Keep the string-enum tolerance (above), but reject wrong-typed
     // containers.
-    expect(() => apiResponseToLegacyAdvisorLints("nope")).toThrow();
-    expect(() => apiResponseToLegacyAdvisorLints([])).toThrow();
-    expect(() => apiResponseToLegacyAdvisorLints({ lints: "nope" })).toThrow();
-    expect(() => apiResponseToLegacyAdvisorLints({ lints: ["not-an-object"] })).toThrow();
+    expect(() => apiResponseToAdvisorLints("nope")).toThrow();
+    expect(() => apiResponseToAdvisorLints([])).toThrow();
+    expect(() => apiResponseToAdvisorLints({ lints: "nope" })).toThrow();
+    expect(() => apiResponseToAdvisorLints({ lints: ["not-an-object"] })).toThrow();
     expect(() =>
-      apiResponseToLegacyAdvisorLints({ lints: [{ name: "x", categories: "SECURITY" }] }),
+      apiResponseToAdvisorLints({ lints: [{ name: "x", categories: "SECURITY" }] }),
     ).toThrow();
+    expect(() => apiResponseToAdvisorLints({ lints: [{ name: "x", metadata: "nope" }] })).toThrow();
     expect(() =>
-      apiResponseToLegacyAdvisorLints({ lints: [{ name: "x", metadata: "nope" }] }),
-    ).toThrow();
-    expect(() =>
-      apiResponseToLegacyAdvisorLints({
+      apiResponseToAdvisorLints({
         lints: [{ name: "x", metadata: { fkey_columns: "nope" } }],
       }),
     ).toThrow();
@@ -220,22 +218,18 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
     // The typed decode rejects a non-string for a string field and a
     // non-string array element — even though it tolerates any string VALUE.
     // The previous parser coerced 123 -> "123" via String().
-    expect(() => apiResponseToLegacyAdvisorLints({ lints: [{ name: 123 }] })).toThrow();
+    expect(() => apiResponseToAdvisorLints({ lints: [{ name: 123 }] })).toThrow();
+    expect(() => apiResponseToAdvisorLints({ lints: [{ name: "x", level: true }] })).toThrow();
+    expect(() => apiResponseToAdvisorLints({ lints: [{ name: "x", categories: [1] }] })).toThrow();
     expect(() =>
-      apiResponseToLegacyAdvisorLints({ lints: [{ name: "x", level: true }] }),
-    ).toThrow();
-    expect(() =>
-      apiResponseToLegacyAdvisorLints({ lints: [{ name: "x", categories: [1] }] }),
-    ).toThrow();
-    expect(() =>
-      apiResponseToLegacyAdvisorLints({ lints: [{ name: "x", metadata: { schema: 5 } }] }),
+      apiResponseToAdvisorLints({ lints: [{ name: "x", metadata: { schema: 5 } }] }),
     ).toThrow();
   });
 
   it("treats absent scalar fields as the empty-string zero value (Go json)", () => {
     // A missing field decodes to "" with no error; only present-but-wrong-type fails.
     // `categories` absent → encoded as `null` (no omitempty on the field).
-    const lints = apiResponseToLegacyAdvisorLints({ lints: [{ name: "only_name" }] });
+    const lints = apiResponseToAdvisorLints({ lints: [{ name: "only_name" }] });
     expect(lints[0]).toEqual({
       name: "only_name",
       title: "",
@@ -251,17 +245,17 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
 
   it("collapses null and empty categories to null (Go nil-slice parity)", () => {
     // null categories → "categories": null
-    const fromNull = apiResponseToLegacyAdvisorLints({
+    const fromNull = apiResponseToAdvisorLints({
       lints: [{ name: "x", categories: null }],
     });
     expect(fromNull[0]?.categories).toBeNull();
     // empty [] → "categories": null
-    const fromEmpty = apiResponseToLegacyAdvisorLints({
+    const fromEmpty = apiResponseToAdvisorLints({
       lints: [{ name: "x", categories: [] }],
     });
     expect(fromEmpty[0]?.categories).toBeNull();
     // populated → array preserved
-    const fromPopulated = apiResponseToLegacyAdvisorLints({
+    const fromPopulated = apiResponseToAdvisorLints({
       lints: [{ name: "x", categories: ["SECURITY"] }],
     });
     expect(fromPopulated[0]?.categories).toEqual(["SECURITY"]);
@@ -269,7 +263,7 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
 
   it("normalizes null fkey_columns elements to 0 (Go encoding/json float32 zero value)", () => {
     // A null array element decodes to the zero value (0), not a throw.
-    const result = apiResponseToLegacyAdvisorLints({
+    const result = apiResponseToAdvisorLints({
       lints: [{ name: "x", metadata: { fkey_columns: [null, 2] } }],
     });
     const meta = result[0]?.metadata as Record<string, unknown>;
@@ -277,7 +271,7 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
   });
 
   it("normalizes a fully-null fkey_columns array to all zeros", () => {
-    const result = apiResponseToLegacyAdvisorLints({
+    const result = apiResponseToAdvisorLints({
       lints: [{ name: "x", metadata: { fkey_columns: [null, null] } }],
     });
     const meta = result[0]?.metadata as Record<string, unknown>;
@@ -286,13 +280,13 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
 
   it("still throws on non-number, non-null fkey_columns elements (Go UnmarshalTypeError)", () => {
     expect(() =>
-      apiResponseToLegacyAdvisorLints({
+      apiResponseToAdvisorLints({
         lints: [{ name: "x", metadata: { fkey_columns: [1, "x"] } }],
       }),
     ).toThrow("cannot unmarshal advisor metadata.fkey_columns element into float32");
 
     expect(() =>
-      apiResponseToLegacyAdvisorLints({
+      apiResponseToAdvisorLints({
         lints: [{ name: "x", metadata: { fkey_columns: [1, true] } }],
       }),
     ).toThrow();
@@ -300,16 +294,16 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
 
   it("still throws on a non-array fkey_columns (Go UnmarshalTypeError)", () => {
     expect(() =>
-      apiResponseToLegacyAdvisorLints({
+      apiResponseToAdvisorLints({
         lints: [{ name: "x", metadata: { fkey_columns: "nope" } }],
       }),
     ).toThrow("cannot unmarshal advisor metadata.fkey_columns into []float32");
   });
 });
 
-describe("encodeLegacyAdvisorLints (Go outputAndCheck byte parity)", () => {
+describe("encodeAdvisorLints (Go outputAndCheck byte parity)", () => {
   it("emits struct-order keys, jsonb metadata, cache_key last, trailing newline", () => {
-    const lints: ReadonlyArray<LegacyAdvisorLint> = [
+    const lints: ReadonlyArray<AdvisorLint> = [
       lint({
         name: "rls_disabled_in_public",
         title: "RLS disabled in public",
@@ -323,7 +317,7 @@ describe("encodeLegacyAdvisorLints (Go outputAndCheck byte parity)", () => {
         cacheKey: "ck",
       }),
     ];
-    expect(encodeLegacyAdvisorLints(lints)).toBe(
+    expect(encodeAdvisorLints(lints)).toBe(
       [
         "[",
         "  {",
@@ -351,7 +345,7 @@ describe("encodeLegacyAdvisorLints (Go outputAndCheck byte parity)", () => {
   });
 
   it("omits metadata when absent", () => {
-    const out = encodeLegacyAdvisorLints([lint({ name: "n", categories: ["SECURITY"] })]);
+    const out = encodeAdvisorLints([lint({ name: "n", categories: ["SECURITY"] })]);
     expect(out).not.toContain("metadata");
     expect(out).toContain('"cache_key": ""');
   });
@@ -360,7 +354,7 @@ describe("encodeLegacyAdvisorLints (Go outputAndCheck byte parity)", () => {
     // No omitempty on `categories`; a null value encodes as
     // `"categories": null`, not omitted. Verify the key is present AND the
     // value is the literal `null` (not `[]` or absent).
-    const lintWithNullCategories: LegacyAdvisorLint = {
+    const lintWithNullCategories: AdvisorLint = {
       name: "n",
       title: "",
       level: "",
@@ -371,21 +365,21 @@ describe("encodeLegacyAdvisorLints (Go outputAndCheck byte parity)", () => {
       remediation: "",
       cacheKey: "",
     };
-    const out = encodeLegacyAdvisorLints([lintWithNullCategories]);
+    const out = encodeAdvisorLints([lintWithNullCategories]);
     expect(out).toContain('"categories": null');
     expect(out).not.toContain('"categories": []');
   });
 });
 
-describe("splitLegacyLintsSql", () => {
+describe("splitLintsSql", () => {
   it("splits on the first ';\\n\\n' into setup + query", () => {
-    const [setup, query] = splitLegacyLintsSql();
+    const [setup, query] = splitLintsSql();
     expect(setup).toBe("set local search_path = ''");
     expect(query.startsWith("(")).toBe(true);
   });
 
   it("defaults API-exposure lints to public when pgrst.db_schemas is unset", () => {
-    const [, query] = splitLegacyLintsSql();
+    const [, query] = splitLintsSql();
     expect(query).not.toContain("string_to_array(current_setting('pgrst.db_schemas', 't'), ',')");
     expect(query).toContain(
       "string_to_array(coalesce(current_setting('pgrst.db_schemas', 't'), 'public'), ',')",

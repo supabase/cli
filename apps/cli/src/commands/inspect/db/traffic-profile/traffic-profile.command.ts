@@ -1,19 +1,16 @@
 import { Command } from "effect/unstable/cli";
-import { legacyInspectDbTrafficProfile } from "./traffic-profile.handler.ts";
-import {
-  LEGACY_INSPECT_DB_FLAGS,
-  legacyInspectDbCommandHandler,
-} from "../legacy-inspect-db-command.ts";
-import { legacyInspectDbRuntimeLayer } from "../db.layers.ts";
+import { inspectDbTrafficProfile } from "./traffic-profile.handler.ts";
+import { INSPECT_DB_FLAGS, inspectDbCommandHandler } from "../inspect-db-command.ts";
+import { inspectDbRuntimeLayer } from "../db.layers.ts";
 
-export const legacyInspectDbTrafficProfileCommand = Command.make(
+export const inspectDbTrafficProfileCommand = Command.make(
   "traffic-profile",
-  LEGACY_INSPECT_DB_FLAGS,
+  INSPECT_DB_FLAGS,
 ).pipe(
   Command.withDescription(
     "Show read/write activity ratio for tables based on block I/O operations.",
   ),
   Command.withShortDescription("Show traffic profile"),
-  Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbTrafficProfile)),
-  Command.provide(legacyInspectDbRuntimeLayer("traffic-profile")),
+  Command.withHandler(inspectDbCommandHandler(inspectDbTrafficProfile)),
+  Command.provide(inspectDbRuntimeLayer("traffic-profile")),
 );

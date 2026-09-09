@@ -25,20 +25,20 @@ import type {
   StackStopError,
 } from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
-import { mockLegacyCliSettings } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
+import {
+  mockCommandSettings,
+  mockTelemetryStateTracked,
+} from "../../../../../tests/helpers/command-mocks.ts";
+import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import {
   actionability,
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
-import { LegacyExperimentalStackApi } from "../stack.shared.ts";
+import { ExperimentalStackApi } from "../stack.shared.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
-import {
-  legacyExperimentalStackStop,
-  legacyValidateExperimentalStackStopTarget,
-} from "./stop.handler.ts";
-import { LegacyExperimentalStackStopError } from "./stop.errors.ts";
-import { legacyExperimentalStackStopCommand } from "./stop.command.ts";
+import { experimentalStackStop, validateExperimentalStackStopTarget } from "./stop.handler.ts";
+import { ExperimentalStackStopError } from "./stop.errors.ts";
+import { experimentalStackStopCommand } from "./stop.command.ts";
 
 const status = (id: string): StackStatus => ({
   id: StackIdSchema.make(id),
@@ -51,7 +51,7 @@ const status = (id: string): StackStatus => ({
   artifacts: [],
 });
 
-const flags = (overrides: Partial<Parameters<typeof legacyExperimentalStackStop>[0]> = {}) => ({
+const flags = (overrides: Partial<Parameters<typeof experimentalStackStop>[0]> = {}) => ({
   stack: Option.none<string>(),
   stackId: Option.none<string>(),
   ...overrides,
@@ -65,6 +65,7 @@ function setup(opts: {
   findFailure?: StackDiscoveryError;
 }) {
   const out = mockOutput();
+  const telemetry = mockTelemetryStateTracked();
   const state = {
     findInputs: [] as Array<{ projectRoot: string; name?: string }>,
     openedIds: [] as string[],
@@ -103,8 +104,9 @@ function setup(opts: {
     : undefined;
   const layer = Layer.mergeAll(
     out.layer,
-    mockLegacyCliSettings({ workdir: opts.root }),
-    Layer.succeed(LegacyExperimentalStackApi, {
+    telemetry.layer,
+    mockCommandSettings({ workdir: opts.root }),
+    Layer.succeed(ExperimentalStackApi, {
       createStack: () => Effect.die("must not create"),
       findStack: (input) =>
         Effect.sync(() => {
@@ -126,7 +128,7 @@ function setup(opts: {
     }),
     BunServices.layer,
   );
-  return { layer, out, state };
+  return { layer, out, state, telemetry };
 }
 
 describe("experimental stack stop", () => {
@@ -137,11 +139,12 @@ describe("experimental stack stop", () => {
       found: { id: "a".repeat(64), name: "feature-a" },
     });
     return Effect.gen(function* () {
-      yield* legacyExperimentalStackStop(flags({ stack: Option.some("feature-a") }));
+      yield* experimentalStackStop(flags({ stack: Option.some("feature-a") }));
       expect(setupResult.state.findInputs).toEqual([{ projectRoot: root, name: "feature-a" }]);
       expect(setupResult.state.openedIds).toEqual(["a".repeat(64)]);
       expect(setupResult.state.stopCalls).toBe(1);
       expect(setupResult.out.stdoutText).toContain("stopped");
+      expect(setupResult.telemetry.flushed).toBe(true);
     }).pipe(
       Effect.provide(setupResult.layer),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
@@ -154,7 +157,7 @@ describe("experimental stack stop", () => {
     const id = "c".repeat(64);
     const setupResult = setup({ root, found: { id } });
     return Effect.gen(function* () {
-      yield* legacyExperimentalStackStop(flags({ stackId: Option.some(id) }));
+      yield* experimentalStackStop(flags({ stackId: Option.some(id) }));
       expect(setupResult.state.findInputs).toEqual([]);
       expect(setupResult.state.openedIds).toEqual([id]);
       expect(setupResult.state.stopCalls).toBe(1);
@@ -165,8 +168,8 @@ describe("experimental stack stop", () => {
     const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-repeat-"));
     const setupResult = setup({ root, found: { id: "d".repeat(64) } });
     return Effect.gen(function* () {
-      yield* legacyExperimentalStackStop(flags());
-      yield* legacyExperimentalStackStop(flags());
+      yield* experimentalStackStop(flags());
+      yield* experimentalStackStop(flags());
       expect(setupResult.state.stopCalls).toBe(2);
       expect(setupResult.state.destroyCalled).toBe(false);
     }).pipe(
@@ -183,7 +186,7 @@ describe("experimental stack stop", () => {
       openFailure: new StackNotFoundError({ message: "Stack state was not found" }),
     });
     return Effect.gen(function* () {
-      const failure = yield* legacyExperimentalStackStop(
+      const failure = yield* experimentalStackStop(
         flags({ stackId: Option.some("e".repeat(64)) }),
       ).pipe(Effect.flip);
       expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
@@ -199,7 +202,7 @@ describe("experimental stack stop", () => {
     const setupResult = setup({ root, found: { id: "f".repeat(64) } });
     const output = mockOutput({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacyExperimentalStackStop(flags());
+      yield* experimentalStackStop(flags());
       expect(output.messages.find((message) => message.type === "success")?.data).toEqual({
         found: true,
         id: "f".repeat(64),
@@ -215,9 +218,9 @@ describe("experimental stack stop", () => {
     const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-named-missing-"));
     const setupResult = setup({ root });
     return Effect.gen(function* () {
-      const failure = yield* legacyExperimentalStackStop(
-        flags({ stack: Option.some("missing") }),
-      ).pipe(Effect.flip);
+      const failure = yield* experimentalStackStop(flags({ stack: Option.some("missing") })).pipe(
+        Effect.flip,
+      );
       expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
       expect(setupResult.state.findInputs).toEqual([{ projectRoot: root, name: "missing" }]);
       expect(setupResult.state.openedIds).toEqual([]);
@@ -235,7 +238,7 @@ describe("experimental stack stop", () => {
       findFailure: new InvalidStackIdentityError({ message: "The stack name must not be blank" }),
     });
     return Effect.gen(function* () {
-      const failure = yield* legacyExperimentalStackStop(flags({ stack: Option.some("") })).pipe(
+      const failure = yield* experimentalStackStop(flags({ stack: Option.some("") })).pipe(
         Effect.flip,
       );
       expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
@@ -251,9 +254,9 @@ describe("experimental stack stop", () => {
     const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-malformed-"));
     const setupResult = setup({ root });
     return Effect.gen(function* () {
-      const failure = yield* legacyExperimentalStackStop(
-        flags({ stackId: Option.some("invalid") }),
-      ).pipe(Effect.flip);
+      const failure = yield* experimentalStackStop(flags({ stackId: Option.some("invalid") })).pipe(
+        Effect.flip,
+      );
       expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
       expect(setupResult.state.findInputs).toEqual([]);
       expect(setupResult.state.openedIds).toEqual([]);
@@ -269,7 +272,7 @@ describe("experimental stack stop", () => {
     const root = join(tmpdir(), `supabase-stack-stop-missing-${Date.now()}`);
     const setupResult = setup({ root });
     return Effect.gen(function* () {
-      yield* legacyExperimentalStackStop(flags());
+      yield* experimentalStackStop(flags());
       expect(
         setupResult.out.messages.some((message) =>
           message.message.includes("No managed stack found"),
@@ -278,9 +281,9 @@ describe("experimental stack stop", () => {
     }).pipe(Effect.provide(setupResult.layer));
   });
 
-  it.effect("rejects explicit legacy output and mutually exclusive targets", () =>
+  it.effect("rejects explicit output and mutually exclusive targets", () =>
     Effect.gen(function* () {
-      const targetFailure = yield* legacyValidateExperimentalStackStopTarget({
+      const targetFailure = yield* validateExperimentalStackStopTarget({
         stack: Option.some("feature-a"),
         stackId: Option.some("a".repeat(64)),
       }).pipe(Effect.flip);
@@ -297,9 +300,10 @@ describe("experimental stack stop", () => {
       stop: () => Effect.fail(new StackStateInvalidError({ message: "stop failed" })),
     });
     return Effect.gen(function* () {
-      const failure = yield* legacyExperimentalStackStop(flags()).pipe(Effect.flip);
-      expect(failure).toBeInstanceOf(LegacyExperimentalStackStopError);
+      const failure = yield* experimentalStackStop(flags()).pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(ExperimentalStackStopError);
       expect(setupResult.out.messages.some((message) => message.type === "success")).toBe(false);
+      expect(setupResult.telemetry.flushed).toBe(true);
     }).pipe(
       Effect.provide(setupResult.layer),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
@@ -314,7 +318,7 @@ describe("experimental stack stop", () => {
       stop: () => Effect.fail(new StackOwnershipConflictError({ message: "stack is owned" })),
     });
     return Effect.gen(function* () {
-      const failure = yield* legacyExperimentalStackStop(flags()).pipe(Effect.flip);
+      const failure = yield* experimentalStackStop(flags()).pipe(Effect.flip);
       expect(failure.reason).toBe("lifecycle");
       expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
     }).pipe(
@@ -334,7 +338,7 @@ describe("experimental stack stop", () => {
       }),
     });
     return Effect.gen(function* () {
-      const failure = yield* legacyExperimentalStackStop(flags()).pipe(Effect.flip);
+      const failure = yield* experimentalStackStop(flags()).pipe(Effect.flip);
       expect(failure.reason).toBe("invalid-config");
       expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
       expect(setupResult.state.stopCalls).toBe(0);
@@ -357,7 +361,7 @@ describe("experimental stack stop", () => {
       }),
     });
     return Effect.gen(function* () {
-      const failure = yield* legacyExperimentalStackStop(flags()).pipe(Effect.flip);
+      const failure = yield* experimentalStackStop(flags()).pipe(Effect.flip);
       expect(failure.reason).toBe("lifecycle");
       expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
       expect(setupResult.state.stopCalls).toBe(0);
@@ -376,7 +380,7 @@ describe("experimental stack stop", () => {
       openFailure: new StackRuntimeMismatchError({ message: "Runtime mismatch" }),
     });
     return Effect.gen(function* () {
-      const failure = yield* legacyExperimentalStackStop(flags()).pipe(Effect.flip);
+      const failure = yield* experimentalStackStop(flags()).pipe(Effect.flip);
       expect(failure.reason).toBe("unknown");
       expect(failure[ErrorActionabilityId]).toEqual(actionability.unknown);
       expect(setupResult.state.stopCalls).toBe(0);
@@ -387,16 +391,16 @@ describe("experimental stack stop", () => {
     );
   });
 
-  it.effect("rejects the legacy output flag with actionable guidance", () => {
+  it.effect("rejects the output flag with actionable guidance", () => {
     const root = mkdtempSync(join(tmpdir(), "supabase-stack-stop-output-"));
     const setupResult = setup({ root });
     return Effect.gen(function* () {
-      const failure = yield* legacyExperimentalStackStop(flags()).pipe(Effect.flip);
-      expect(failure).toBeInstanceOf(LegacyExperimentalStackStopError);
+      const failure = yield* experimentalStackStop(flags()).pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(ExperimentalStackStopError);
       expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(setupResult.layer, Layer.succeed(LegacyOutputFlag, Option.some("json"))),
+        Layer.mergeAll(setupResult.layer, Layer.succeed(OutputFlag, Option.some("json"))),
       ),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
@@ -406,7 +410,7 @@ describe("experimental stack stop", () => {
 describe("experimental stack stop parser", () => {
   it.live("parses a named existing stack", () => {
     let parsed: Option.Option<string> | undefined;
-    const command = legacyExperimentalStackStopCommand.pipe(
+    const command = experimentalStackStopCommand.pipe(
       Command.withHandler((flags) => Effect.sync(() => (parsed = flags.stack))),
     );
     return Effect.gen(function* () {

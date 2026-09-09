@@ -11,7 +11,6 @@ interface ErrorFields {
 export interface IdentityErrorFields extends ErrorFields {
   readonly path?: string;
   readonly reason?: string;
-  readonly projectRoot?: string;
   readonly stackId?: StackId;
   readonly name?: string;
 }

@@ -17,7 +17,7 @@ const DEAD_DB_URL = "postgres://postgres:postgres@127.0.0.1:1/postgres";
 const TEXT_MODE = "--agent";
 const TEXT_MODE_VALUE = "no";
 
-describe("supabase inspect db (legacy)", () => {
+describe("supabase inspect db", () => {
   test(
     "inspect db locks fails gracefully when the database is unreachable",
     { timeout: E2E_TIMEOUT_MS },
@@ -25,7 +25,7 @@ describe("supabase inspect db (legacy)", () => {
       using home = makeTempHome();
       const { exitCode, stderr } = await runSupabase(
         ["inspect", "db", "locks", TEXT_MODE, TEXT_MODE_VALUE, "--db-url", DEAD_DB_URL],
-        { entrypoint: "legacy", home: home.dir, env: { HOME: home.dir } },
+        { home: home.dir, env: { HOME: home.dir } },
       );
       expect(exitCode).toBe(1);
       // The native handler writes the connection diagnostic to stderr
@@ -42,7 +42,7 @@ describe("supabase inspect db (legacy)", () => {
       using home = makeTempHome();
       const { exitCode, stderr } = await runSupabase(
         ["inspect", "db", "cache-hit", TEXT_MODE, TEXT_MODE_VALUE, "--db-url", DEAD_DB_URL],
-        { entrypoint: "legacy", home: home.dir, env: { HOME: home.dir } },
+        { home: home.dir, env: { HOME: home.dir } },
       );
       expect(exitCode).toBe(1);
       expect(stderr).toContain('Command "cache-hit" is deprecated, use "db-stats" instead.');

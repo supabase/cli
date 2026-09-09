@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 import { runCli } from "../shared/cli/run.ts";
-import { legacyUpgradeNoticeHook } from "../command-internal/legacy-upgrade-notice.ts";
-import { legacyAnalyticsLayer } from "../telemetry/legacy-analytics.layer.ts";
-import { legacyDefaultCompleteDeps, legacyTryComplete } from "./legacy-complete.ts";
-import { legacyRoot } from "./root.ts";
+import { upgradeNoticeHook } from "../command-internal/upgrade-notice.ts";
+import { analyticsLayer } from "../telemetry/analytics.layer.ts";
+import { defaultCompleteDeps, tryComplete } from "./complete.ts";
+import { rootCommand } from "./root.ts";
 
-if (!(await legacyTryComplete(legacyDefaultCompleteDeps(legacyRoot)))) {
-  await runCli(legacyRoot, {
-    analyticsLayer: legacyAnalyticsLayer,
-    afterSuccess: legacyUpgradeNoticeHook,
+if (!(await tryComplete(defaultCompleteDeps(rootCommand)))) {
+  await runCli(rootCommand, {
+    analyticsLayer: analyticsLayer,
+    afterSuccess: upgradeNoticeHook,
   });
 }

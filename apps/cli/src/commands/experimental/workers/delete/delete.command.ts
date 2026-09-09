@@ -1,12 +1,12 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyWorkersDelete } from "./delete.handler.ts";
+import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { workersDelete } from "./delete.handler.ts";
 
 // No local `--yes`: it is a root persistent flag every other confirming command
-// reads through `legacyResolveYes`, so redeclaring it here would shadow the
+// reads through `resolveYes`, so redeclaring it here would shadow the
 // global, list `--yes` twice in `--help`, and quietly ignore `SUPABASE_YES`.
 const config = {
   name: Argument.string("name").pipe(Argument.withDescription("Worker to delete.")),
@@ -16,9 +16,9 @@ const config = {
   ),
 } as const;
 
-export type LegacyWorkersDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type WorkersDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyWorkersDeleteCommand = Command.make("delete", config).pipe(
+export const workersDeleteCommand = Command.make("delete", config).pipe(
   Command.withDescription(
     "Delete a worker from the linked Supabase project. Irreversible; its local directory and supabase/config.toml entry are kept.",
   ),
@@ -34,10 +34,7 @@ export const legacyWorkersDeleteCommand = Command.make("delete", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyWorkersDelete(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
-      withJsonErrorHandling,
-    ),
+    workersDelete(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["experimental", "workers", "delete"])),
+  Command.provide(managementApiRuntimeLayer(["experimental", "workers", "delete"])),
 );

@@ -1,19 +1,16 @@
 import { Command } from "effect/unstable/cli";
-import { legacyInspectDbRoleConnections } from "./role-connections.handler.ts";
-import {
-  LEGACY_INSPECT_DB_FLAGS,
-  legacyInspectDbCommandHandler,
-} from "../legacy-inspect-db-command.ts";
-import { legacyInspectDbRuntimeLayer } from "../db.layers.ts";
+import { inspectDbRoleConnections } from "./role-connections.handler.ts";
+import { INSPECT_DB_FLAGS, inspectDbCommandHandler } from "../inspect-db-command.ts";
+import { inspectDbRuntimeLayer } from "../db.layers.ts";
 
-export const legacyInspectDbRoleConnectionsCommand = Command.make(
+export const inspectDbRoleConnectionsCommand = Command.make(
   "role-connections",
-  LEGACY_INSPECT_DB_FLAGS,
+  INSPECT_DB_FLAGS,
 ).pipe(
   Command.withDescription(
     'Show number of active connections for all database roles. Deprecated: use "role-stats" instead.',
   ),
   Command.withShortDescription("Show role connections (deprecated)"),
-  Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbRoleConnections)),
-  Command.provide(legacyInspectDbRuntimeLayer("role-connections")),
+  Command.withHandler(inspectDbCommandHandler(inspectDbRoleConnections)),
+  Command.provide(inspectDbRuntimeLayer("role-connections")),
 );

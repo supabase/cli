@@ -6,20 +6,17 @@
  * byte-for-byte. The only `omitempty` field is `metadata`.
  */
 
-import { encodeGoJsonIndented } from "../../../command-internal/legacy-go-json.ts";
-import { makeLegacyLevelEnum } from "../../../command-internal/legacy-fail-on.ts";
+import { encodeGoJsonIndented } from "../../../command-internal/go-json.ts";
+import { makeLevelEnum } from "../../../command-internal/fail-on.ts";
 
 /** Lowest severity first. */
-const LEGACY_ADVISORS_ALLOWED_LEVELS = ["info", "warn", "error"] as const;
+const ADVISORS_ALLOWED_LEVELS = ["info", "warn", "error"] as const;
 
 /** Exact, case-insensitive level switch. */
-export const LEGACY_ADVISORS_LEVEL_ENUM = makeLegacyLevelEnum(
-  LEGACY_ADVISORS_ALLOWED_LEVELS,
-  "exact-ci",
-);
+export const ADVISORS_LEVEL_ENUM = makeLevelEnum(ADVISORS_ALLOWED_LEVELS, "exact-ci");
 
 /** A single advisor lint — fields in the established output-contract order. */
-export interface LegacyAdvisorLint {
+export interface AdvisorLint {
   readonly name: string;
   readonly title: string;
   readonly level: string;
@@ -110,7 +107,7 @@ function normalizeLocalMetadata(value: unknown): unknown {
  * keys rows by column name; the `lints.sql` query aliases the ten columns
  * exactly as referenced here.
  */
-export function scanLegacyAdvisorLintRow(row: Record<string, unknown>): LegacyAdvisorLint {
+export function scanAdvisorLintRow(row: Record<string, unknown>): AdvisorLint {
   const metadata = normalizeLocalMetadata(row["metadata"]);
   return {
     name: asString(row["name"]),
@@ -194,7 +191,7 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
  * `failed to fetch … advisors` error. A top-level `null` decodes to the zero
  * value (no lints).
  */
-export function apiResponseToLegacyAdvisorLints(parsed: unknown): ReadonlyArray<LegacyAdvisorLint> {
+export function apiResponseToAdvisorLints(parsed: unknown): ReadonlyArray<AdvisorLint> {
   if (parsed === null) return [];
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new TypeError("cannot unmarshal advisors response");
@@ -204,7 +201,7 @@ export function apiResponseToLegacyAdvisorLints(parsed: unknown): ReadonlyArray<
   if (!Array.isArray(lintsRaw)) {
     throw new TypeError("cannot unmarshal lints into []Lint");
   }
-  const lints: Array<LegacyAdvisorLint> = [];
+  const lints: Array<AdvisorLint> = [];
   for (const entry of lintsRaw) {
     // A null slice element decodes to the zero-value struct (all fields at
     // their zero values), not a throw. Normalise null/undefined to an empty
@@ -245,7 +242,7 @@ export function apiResponseToLegacyAdvisorLints(parsed: unknown): ReadonlyArray<
 }
 
 /** Advisor-type match: `all` matches every lint, otherwise checks categories. */
-export function matchesLegacyAdvisorType(lint: LegacyAdvisorLint, advisorType: string): boolean {
+export function matchesAdvisorType(lint: AdvisorLint, advisorType: string): boolean {
   if (advisorType === "all") return true;
   for (const category of lint.categories ?? []) {
     if (advisorType === "security" && category === "SECURITY") return true;
@@ -255,21 +252,20 @@ export function matchesLegacyAdvisorType(lint: LegacyAdvisorLint, advisorType: s
 }
 
 /** Type + minimum-level filter. */
-export function filterLegacyAdvisorLints(
-  lints: ReadonlyArray<LegacyAdvisorLint>,
+export function filterAdvisorLints(
+  lints: ReadonlyArray<AdvisorLint>,
   advisorType: string,
   level: string,
-): ReadonlyArray<LegacyAdvisorLint> {
-  const minLevel = LEGACY_ADVISORS_LEVEL_ENUM.toEnum(level);
+): ReadonlyArray<AdvisorLint> {
+  const minLevel = ADVISORS_LEVEL_ENUM.toEnum(level);
   return lints.filter(
     (lint) =>
-      matchesLegacyAdvisorType(lint, advisorType) &&
-      LEGACY_ADVISORS_LEVEL_ENUM.toEnum(lint.level) >= minLevel,
+      matchesAdvisorType(lint, advisorType) && ADVISORS_LEVEL_ENUM.toEnum(lint.level) >= minLevel,
   );
 }
 
 /** Re-materialises a lint as a plain object with keys in output-contract order. */
-function toEncodableLint(lint: LegacyAdvisorLint): Record<string, unknown> {
+function toEncodableLint(lint: AdvisorLint): Record<string, unknown> {
   const out: Record<string, unknown> = {
     name: lint.name,
     title: lint.title,
@@ -291,6 +287,6 @@ function toEncodableLint(lint: LegacyAdvisorLint): Record<string, unknown> {
  * produces no output (a stderr message is written instead), so the caller
  * skips emission.
  */
-export function encodeLegacyAdvisorLints(lints: ReadonlyArray<LegacyAdvisorLint>): string {
+export function encodeAdvisorLints(lints: ReadonlyArray<AdvisorLint>): string {
   return encodeGoJsonIndented(lints.map(toEncodableLint));
 }

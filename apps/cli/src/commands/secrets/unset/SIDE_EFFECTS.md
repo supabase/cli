@@ -2,13 +2,13 @@
 
 ## Files Read
 
-| Path                                      | Format                    | When                                                                                            |
-| ----------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------- |
-| `/proc/sys/kernel/osrelease` (Linux)      | plain text                | once on layer init — disables keyring on WSL (`WSL` / `Microsoft` substring match)              |
-| keyring `"Supabase CLI"` / `<profile>`    | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliSettings.profile` |
-| keyring `"Supabase CLI"` / `access-token` | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                        |
-| `~/.supabase/access-token`                | plain text (token string) | last-resort fallback after env + keyring miss                                                   |
-| `<workdir>/supabase/.temp/project-ref`    | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                   |
+| Path                                      | Format                    | When                                                                                          |
+| ----------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| `/proc/sys/kernel/osrelease` (Linux)      | plain text                | once on layer init — disables keyring on WSL (`WSL` / `Microsoft` substring match)            |
+| keyring `"Supabase CLI"` / `<profile>`    | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile` |
+| keyring `"Supabase CLI"` / `access-token` | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
+| `~/.supabase/access-token`                | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
+| `<workdir>/supabase/.temp/project-ref`    | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                 |
 
 ## Files Written
 
@@ -36,19 +36,19 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                  |
-| ---- | ------------------------------------------------------------------------------------------ |
-| `0`  | success — secrets unset from the linked project                                            |
-| `0`  | empty-args path resolved to zero non-`SUPABASE_` secrets (stderr no-op, no DELETE call)    |
-| `1`  | `LegacyPlatformAuthRequiredError` — no token in env/keyring/file                           |
-| `1`  | `LegacyInvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`        |
-| `1`  | `LegacyProjectNotLinkedError` — `--project-ref` unset, env/file empty, and stdin not a TTY |
-| `1`  | `LegacyInvalidProjectRefError` — resolved ref violates `^[a-z]{20}$`                       |
-| `1`  | `LegacySecretsListUnexpectedStatusError` — non-2xx response from GET (empty-args path)     |
-| `1`  | `LegacySecretsListNetworkError` — GET transport failure (empty-args path)                  |
-| `1`  | `LegacySecretsUnsetCancelledError` — user declined the confirmation prompt                 |
-| `1`  | `LegacySecretsUnsetUnexpectedStatusError` — non-2xx response from DELETE                   |
-| `1`  | `LegacySecretsUnsetNetworkError` — DELETE transport failure                                |
+| Code | Condition                                                                               |
+| ---- | --------------------------------------------------------------------------------------- |
+| `0`  | success — secrets unset from the linked project                                         |
+| `0`  | empty-args path resolved to zero non-`SUPABASE_` secrets (stderr no-op, no DELETE call) |
+| `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                               |
+| `1`  | `InvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`           |
+| `1`  | `ProjectRefNotLinkedError` — `--project-ref` unset, env/file empty, and stdin not a TTY |
+| `1`  | `InvalidProjectRefError` — resolved ref violates `^[a-z]{20}$`                          |
+| `1`  | `SecretsListUnexpectedStatusError` — non-2xx response from GET (empty-args path)        |
+| `1`  | `SecretsListNetworkError` — GET transport failure (empty-args path)                     |
+| `1`  | `SecretsUnsetCancelledError` — user declined the confirmation prompt                    |
+| `1`  | `SecretsUnsetUnexpectedStatusError` — non-2xx response from DELETE                      |
+| `1`  | `SecretsUnsetNetworkError` — DELETE transport failure                                   |
 
 ## Telemetry Events Fired
 

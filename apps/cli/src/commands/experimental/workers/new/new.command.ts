@@ -8,11 +8,11 @@ import {
   WORKER_RUNTIMES,
   WORKER_SIZES,
 } from "../../../../shared/workers/worker-runtimes.ts";
-import { legacyCliSettingsLayer } from "../../../../config/legacy-cli-settings.layer.ts";
-import { legacyDebugLoggerLayer } from "../../../../command-internal/legacy-debug-logger.layer.ts";
-import { legacyTelemetryStateLayer } from "../../../../telemetry/legacy-telemetry-state.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyWorkersNew } from "./new.handler.ts";
+import { commandSettingsLayer } from "../../../../config/command-settings.layer.ts";
+import { debugLoggerLayer } from "../../../../command-internal/debug-logger.layer.ts";
+import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer.ts";
+import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { workersNew } from "./new.handler.ts";
 
 const config = {
   name: Argument.string("name").pipe(
@@ -59,18 +59,18 @@ const config = {
   ),
 } as const;
 
-export type LegacyWorkersNewFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type WorkersNewFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 
 /** Local-disk only: no Management API, so no platform stack is built. */
-const legacyWorkersNewRuntimeLayer = Layer.mergeAll(
+const workersNewRuntimeLayer = Layer.mergeAll(
   cliSettings,
-  legacyTelemetryStateLayer,
+  telemetryStateLayer,
   commandRuntimeLayer(["experimental", "workers", "new"]),
 );
 
-export const legacyWorkersNewCommand = Command.make("new", config).pipe(
+export const workersNewCommand = Command.make("new", config).pipe(
   Command.withDescription(
     "Scaffold a worker directory from a runtime's starter files and record the choices in supabase/config.toml. Nothing is deployed.",
   ),
@@ -102,10 +102,7 @@ export const legacyWorkersNewCommand = Command.make("new", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyWorkersNew(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, config }),
-      withJsonErrorHandling,
-    ),
+    workersNew(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
-  Command.provide(legacyWorkersNewRuntimeLayer),
+  Command.provide(workersNewRuntimeLayer),
 );

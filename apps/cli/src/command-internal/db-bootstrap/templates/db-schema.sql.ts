@@ -5,7 +5,7 @@
  * container's entrypoint heredoc (`NewContainerConfig`, `start.go:63-116`) for
  * PG >= 15. Do not hand-edit — re-transcribe from the Go source if it changes.
  */
-export const LEGACY_START_DB_SCHEMA_SQL = `\\set pgpass \`echo "$PGPASSWORD"\`
+export const START_DB_SCHEMA_SQL = `\\set pgpass \`echo "$PGPASSWORD"\`
 \\set jwt_secret \`echo "$JWT_SECRET"\`
 \\set jwt_exp \`echo "$JWT_EXP"\`
 

@@ -2,90 +2,90 @@ import { Clock, Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
-  LegacyDebugFlag,
-  LegacyDnsResolverFlag,
-  LegacyNetworkIdFlag,
-} from "../../../shared/legacy/global-flags.ts";
-import { LegacyGoProxy } from "../../../shared/legacy/go-proxy.service.ts";
+  DebugFlag,
+  DnsResolverFlag,
+  NetworkIdFlag,
+} from "../../../command-internal/global-flags.ts";
+import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
 import { detectGitBranch } from "../../../shared/git/git-branch.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { legacyAqua, legacyYellow } from "../../../command-internal/legacy-colors.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { aqua, yellow } from "../../../command-internal/colors.ts";
 import {
-  legacyApplyProjectEnv,
-  legacyReadDbToml,
-  legacyResolveDeclarativeDir,
-  type LegacyDbTomlValues,
-} from "../../../command-internal/legacy-db-config.toml-read.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import type { LegacyDbConnType } from "../../../command-internal/legacy-db-target-flags.ts";
-import { legacyGetHostname } from "../../../command-internal/legacy-hostname.ts";
-import { legacyMakeDir } from "../../../command-internal/legacy-make-dir.ts";
-import type { LegacyPgConnInput } from "../../../command-internal/legacy-db-connection.service.ts";
-import { legacyToPostgresURL } from "../../../command-internal/legacy-postgres-url.ts";
-import { legacySchemaToCsvField } from "../../../command-internal/legacy-schema-flags.ts";
-import { legacyFindDropStatements } from "../../../command-internal/legacy-sql-split.ts";
-import { legacyBuildLocalDbContainerInputs } from "../../../command-internal/db-bootstrap/local-container-inputs.ts";
-import { legacyIsLocalDbRunning } from "../../../command-internal/db-bootstrap/local-db-running.ts";
-import { legacyWaitForHealthyServices } from "../../../command-internal/db-bootstrap/health-check.ts";
-import { legacyWithShadowDatabase } from "../../../command-internal/db-bootstrap/shadow-cache.ts";
+  applyProjectEnv,
+  readDbToml,
+  resolveDeclarativeDir,
+  type DbTomlValues,
+} from "../../../command-internal/db-config.toml-read.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
+import { getHostname } from "../../../command-internal/hostname.ts";
+import { makeDir } from "../../../command-internal/make-dir.ts";
+import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
+import { schemaToCsvField } from "../../../command-internal/schema-flags.ts";
+import { findDropStatements } from "../../../command-internal/sql-split.ts";
+import { buildLocalDbContainerInputs } from "../../../command-internal/db-bootstrap/local-container-inputs.ts";
+import { isLocalDbRunning } from "../../../command-internal/db-bootstrap/local-db-running.ts";
+import { waitForHealthyServices } from "../../../command-internal/db-bootstrap/health-check.ts";
+import { withShadowDatabase } from "../../../command-internal/db-bootstrap/shadow-cache.ts";
 import {
-  legacyCreateShadowDatabase,
-  legacyMigrateShadowDatabase,
-  legacyRemoveShadowDatabase,
-  legacyShadowRunInputFromLocalContainerInputs,
+  createShadowDatabase,
+  migrateShadowDatabase,
+  removeShadowDatabase,
+  shadowRunInputFromLocalContainerInputs,
 } from "../../../command-internal/db-bootstrap/shadow-database.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
-  legacyParseBoolEnv,
-  legacyResolveDiffEngine,
-  legacySchemaPathsTransitionWarning,
-  legacyShouldUsePgDelta,
-} from "../../../command-internal/legacy-diff-engine.ts";
+  parseBoolEnv,
+  resolveDiffEngine,
+  schemaPathsTransitionWarning,
+  shouldUsePgDelta,
+} from "../../../command-internal/diff-engine.ts";
 import {
-  legacyFormatMigrationTimestamp,
-  legacyGetMigrationPath,
-} from "../../../command-internal/legacy-migration-file.ts";
-import { legacyDiffMigra } from "../shared/legacy-migra.ts";
+  formatMigrationTimestamp,
+  getMigrationPath,
+} from "../../../command-internal/migration-file.ts";
+import { diffMigra } from "../shared/migra.ts";
 import {
-  LegacyPgDeltaEngine,
-  type LegacyPgDeltaDatabaseEndpoint,
-  type LegacyPgDeltaDiffResult,
-  type LegacyPgDeltaEndpoint,
-  type LegacyPgDeltaRenderedFile,
-} from "../shared/legacy-pgdelta-engine.service.ts";
-import { LegacyLoadPgDeltaSqlFiles } from "../shared/legacy-pgdelta-files.ts";
-import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
+  PgDeltaEngine,
+  type PgDeltaDatabaseEndpoint,
+  type PgDeltaDiffResult,
+  type PgDeltaEndpoint,
+  type PgDeltaRenderedFile,
+} from "../shared/pgdelta-engine.service.ts";
+import { LoadPgDeltaSqlFiles } from "../shared/pgdelta-files.ts";
+import { writePgDeltaMigrations } from "../shared/pgdelta-migrations.write.ts";
 import {
-  type LegacyPgDeltaContext,
-  legacyIsPgDeltaDebugEnabled,
-  legacyResolvePgDeltaProjectId,
-} from "../../../command-internal/legacy-pgdelta.ts";
-import { legacyPrepareShadowSource } from "../shared/legacy-shadow-source.ts";
-import type { LegacyDbDiffFlags } from "./diff.command.ts";
-import { legacyClassifyExplicitRef, legacyUnknownTargetMessage } from "./diff.explicit.ts";
+  type PgDeltaContext,
+  isPgDeltaDebugEnabled,
+  resolvePgDeltaProjectId,
+} from "../../../command-internal/pgdelta.ts";
+import { prepareShadowSource } from "../shared/shadow-source.ts";
+import type { DbDiffFlags } from "./diff.command.ts";
+import { classifyExplicitRef, unknownTargetMessage } from "./diff.explicit.ts";
 import {
-  LegacyDbDiffDbNotRunningError,
-  LegacyDbDiffEngineConflictError,
-  LegacyDbDiffExplicitFlagsError,
-  LegacyDbDiffTargetFlagsError,
-  LegacyDbDiffUnknownTargetError,
-  LegacyDbDiffWriteError,
+  DbDiffDbNotRunningError,
+  DbDiffEngineConflictError,
+  DbDiffExplicitFlagsError,
+  DbDiffTargetFlagsError,
+  DbDiffUnknownTargetError,
+  DbDiffWriteError,
 } from "./diff.errors.ts";
-import { legacyDiffSchemaPgAdmin } from "./legacy-pgadmin-diff.ts";
+import { diffSchemaPgAdmin } from "./pgadmin-diff.ts";
 
 const warnDiff = `WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
-Run ${legacyAqua("supabase db reset")} to verify that the new migration does not generate errors.`;
+Run ${aqua("supabase db reset")} to verify that the new migration does not generate errors.`;
 
 // `--use-pg-schema` delegates to the bundled Go binary's in-process
 // `stripe/pg-schema-diff` library, which has no TS/container equivalent (see
 // SIDE_EFFECTS.md). The flag is deprecated in favor of the pg-delta engine.
 // This warning is additive to (and prints before) the delegated child's own
 // "experimental" warning, which it still prints unchanged.
-const warnPgSchemaDeprecated = `${legacyYellow("WARNING:")} "--use-pg-schema" is deprecated. Use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.`;
+const warnPgSchemaDeprecated = `${yellow("WARNING:")} "--use-pg-schema" is deprecated. Use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.`;
 
 const declarativeBaselineAdvisory = (declarativePath: string | null) => ({
   code: "DeclarativeSchemaNotUsedAsDiffBaseline",
@@ -111,7 +111,7 @@ const declarativeBaselineNote = (displayPath: string) =>
  * whenever this is reached, so it just forwards `--use-pg-schema` plus the
  * target / schema / file flags the user passed.
  */
-const rebuildPgSchemaDelegateArgs = (flags: LegacyDbDiffFlags): Array<string> => {
+const rebuildPgSchemaDelegateArgs = (flags: DbDiffFlags): Array<string> => {
   const args = ["db", "diff", "--use-pg-schema"];
   const pushTarget = (name: string, value: Option.Option<boolean>) => {
     // Target flags (linked/local) are *selectors*: Go's ParseDatabaseConfig keys
@@ -129,22 +129,22 @@ const rebuildPgSchemaDelegateArgs = (flags: LegacyDbDiffFlags): Array<string> =>
   if (Option.isSome(flags.output)) args.push("--output", flags.output.value);
   // Re-encode each parsed schema as a CSV field so the Go child's pflag StringSlice
   // CSV parse doesn't re-split a comma-containing schema (e.g. `"tenant,one"`).
-  for (const s of flags.schema) args.push("--schema", legacySchemaToCsvField(s));
+  for (const s of flags.schema) args.push("--schema", schemaToCsvField(s));
   return args;
 };
 
-export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: LegacyDbDiffFlags) {
+export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   const output = yield* Output;
-  const resolver = yield* LegacyDbConfigResolver;
-  const pgDelta = yield* LegacyPgDeltaEngine;
-  const proxy = yield* LegacyGoProxy;
-  const cliSettings = yield* LegacyCliSettings;
-  const telemetryState = yield* LegacyTelemetryState;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
+  const resolver = yield* DbConfigResolver;
+  const pgDelta = yield* PgDeltaEngine;
+  const proxy = yield* GoProxy;
+  const cliSettings = yield* CommandSettings;
+  const telemetryState = yield* TelemetryState;
+  const linkedProjectCache = yield* LinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const dnsResolver = yield* LegacyDnsResolverFlag;
-  const debug = yield* LegacyDebugFlag;
+  const dnsResolver = yield* DnsResolverFlag;
+  const debug = yield* DebugFlag;
 
   // Resolved linked ref, captured so the post-run finalizer caches the project
   // (GET /v1/projects/{ref}).
@@ -161,7 +161,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     if (Option.isSome(flags.usePgDelta)) engineSet.push("use-pg-delta");
     if (engineSet.length > 1) {
       return yield* Effect.fail(
-        new LegacyDbDiffEngineConflictError({
+        new DbDiffEngineConflictError({
           message: `if any flags in the group [use-migra use-pgadmin use-pg-schema use-pg-delta] are set none of the others can be; [${[...engineSet].sort().join(" ")}] were all set`,
         }),
       );
@@ -172,7 +172,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     if (Option.isSome(flags.local)) targetSet.push("local");
     if (targetSet.length > 1) {
       return yield* Effect.fail(
-        new LegacyDbDiffTargetFlagsError({
+        new DbDiffTargetFlagsError({
           message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
         }),
       );
@@ -194,7 +194,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     if (fromSet || toSet) {
       if (!fromSet || !toSet) {
         return yield* Effect.fail(
-          new LegacyDbDiffExplicitFlagsError({
+          new DbDiffExplicitFlagsError({
             message: "must set both --from and --to when using explicit diff mode",
           }),
         );
@@ -214,11 +214,11 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       if (
         Option.isSome(flags.projectRef) &&
         Option.isNone(flags.linked) &&
-        legacyClassifyExplicitRef(from) !== "linked" &&
-        legacyClassifyExplicitRef(to) !== "linked"
+        classifyExplicitRef(from) !== "linked" &&
+        classifyExplicitRef(to) !== "linked"
       ) {
         return yield* Effect.fail(
-          new LegacyDbDiffTargetFlagsError({
+          new DbDiffTargetFlagsError({
             message:
               "--project-ref only applies when targeting the linked project; use it with --linked, or --from/--to linked, in explicit mode",
           }),
@@ -232,14 +232,14 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // The FIRST migrations endpoint resolved wins: the engine provisions a single
       // migrations shadow/catalog, and resolution-order (like `mergedLinkedRef` above)
       // says only refs resolved before that point should influence it.
-      let migrationsToml: LegacyDbTomlValues | undefined;
+      let migrationsToml: DbTomlValues | undefined;
       // The preflight target resolve below validates a changed target flag
       // (`--db-url bad` fails parsing) and is STATEFUL: a changed `--linked`
       // resolves the project ref and merges `[remotes.<ref>]`, so the explicit
       // `local`/`migrations` refs and `pgDeltaFormatOptions()` below see that
       // override. `--local`/`--db-url` load base config (no merge).
       if (Option.isSome(flags.dbUrl) || Option.isSome(flags.linked) || Option.isSome(flags.local)) {
-        const preflightConnType: LegacyDbConnType = Option.isSome(flags.dbUrl)
+        const preflightConnType: DbConnType = Option.isSome(flags.dbUrl)
           ? "db-url"
           : Option.isSome(flags.linked)
             ? "linked"
@@ -264,17 +264,17 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // before the merge), else the base config.
       let cfg =
         mergedLinkedRef !== undefined
-          ? yield* legacyReadDbToml(fs, path, cliSettings.workdir, mergedLinkedRef)
-          : yield* legacyReadDbToml(fs, path, cliSettings.workdir);
+          ? yield* readDbToml(fs, path, cliSettings.workdir, mergedLinkedRef)
+          : yield* readDbToml(fs, path, cliSettings.workdir);
       // Each ref resolves in order; the `linked` branch re-merges the matching
       // `[remotes.<ref>]` block so a later `local` ref read and the trailing
       // `pgDeltaFormatOptions()` see the override. Thread the merged config through.
-      const resolveRef = (ref: string): Effect.Effect<LegacyPgDeltaEndpoint, unknown> =>
+      const resolveRef = (ref: string): Effect.Effect<PgDeltaEndpoint, unknown> =>
         Effect.gen(function* () {
-          switch (legacyClassifyExplicitRef(ref)) {
+          switch (classifyExplicitRef(ref)) {
             case "local": {
               const connection = {
-                host: legacyGetHostname(),
+                host: getHostname(),
                 port: cfg.port,
                 user: "postgres",
                 password: cfg.password,
@@ -282,10 +282,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
               };
               return {
                 kind: "database",
-                ref: legacyToPostgresURL(connection),
+                ref: toPostgresURL(connection),
                 connection,
                 connectOptions: { isLocal: true, dnsResolver },
-              } satisfies LegacyPgDeltaDatabaseEndpoint;
+              } satisfies PgDeltaDatabaseEndpoint;
             }
             case "linked": {
               const resolved = yield* resolver.resolve({
@@ -299,14 +299,14 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
               if (ref2 !== undefined) {
                 linkedRefForCache = ref2;
                 mergedLinkedRef = ref2;
-                cfg = yield* legacyReadDbToml(fs, path, cliSettings.workdir, ref2);
+                cfg = yield* readDbToml(fs, path, cliSettings.workdir, ref2);
               }
               return {
                 kind: "database",
-                ref: legacyToPostgresURL(resolved.conn),
+                ref: toPostgresURL(resolved.conn),
                 connection: resolved.conn,
                 connectOptions: { isLocal: resolved.isLocal, dnsResolver },
-              } satisfies LegacyPgDeltaDatabaseEndpoint;
+              } satisfies PgDeltaDatabaseEndpoint;
             }
             case "migrations":
               // Preserve resolution order: the migrations shadow/catalog config must
@@ -318,7 +318,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
                 // Preserve resolution order: only refs resolved before this endpoint
                 // influence the migrations shadow/catalog.
                 ...(mergedLinkedRef !== undefined ? { projectRef: mergedLinkedRef } : {}),
-              } satisfies LegacyPgDeltaEndpoint;
+              } satisfies PgDeltaEndpoint;
             case "url":
               return {
                 kind: "database",
@@ -326,17 +326,17 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
                 // The next engine parses arbitrary explicit URLs itself. They are
                 // remote by default, matching Go's TLS-safe connection path.
                 connectOptions: { isLocal: false, dnsResolver },
-              } satisfies LegacyPgDeltaDatabaseEndpoint;
+              } satisfies PgDeltaDatabaseEndpoint;
             default:
               return yield* Effect.fail(
-                new LegacyDbDiffUnknownTargetError({ message: legacyUnknownTargetMessage(ref) }),
+                new DbDiffUnknownTargetError({ message: unknownTargetMessage(ref) }),
               );
           }
         });
       const source = yield* resolveRef(from);
       const desired = yield* resolveRef(to);
-      const explicitCtx: LegacyPgDeltaContext = {
-        projectId: legacyResolvePgDeltaProjectId(cliSettings.projectId, cfg, cliSettings.workdir),
+      const explicitCtx: PgDeltaContext = {
+        projectId: resolvePgDeltaProjectId(cliSettings.projectId, cfg, cliSettings.workdir),
         cwd: cliSettings.workdir,
         denoVersion: cfg.denoVersion,
         projectEnv: cfg.projectEnv,
@@ -348,7 +348,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         desired,
         schema: flags.schema,
         formatOptions: Option.getOrElse(cfg.pgDelta.formatOptions, () => ""),
-        debug: legacyIsPgDeltaDebugEnabled(),
+        debug: isPgDeltaDebugEnabled(),
         strictCoverage: flags.strictCoverage,
       });
       // Explicit-mode output: `--output` file, or stdout with no trailing newline
@@ -359,12 +359,12 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         const target = path.resolve(cliSettings.workdir, flags.output.value);
         // Create parent dirs first, so a nested `--output tmp/diff.sql` doesn't
         // fail when `tmp/` doesn't exist yet.
-        yield* legacyMakeDir(fs, path.dirname(target)).pipe(
-          Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })),
+        yield* makeDir(fs, path.dirname(target)).pipe(
+          Effect.mapError((cause) => new DbDiffWriteError({ message: cause.message })),
         );
         yield* fs
           .writeFileString(target, result.sql)
-          .pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));
+          .pipe(Effect.mapError((cause) => new DbDiffWriteError({ message: cause.message })));
         if (output.format !== "text") {
           yield* output.success("Diff written.", {
             diff: result.sql,
@@ -408,7 +408,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     // target resolve, like every other native engine.)
     if (usePgSchema && Option.isSome(flags.projectRef)) {
       return yield* Effect.fail(
-        new LegacyDbDiffTargetFlagsError({
+        new DbDiffTargetFlagsError({
           message: "--project-ref is not supported with --use-pg-schema",
         }),
       );
@@ -443,7 +443,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     }
 
     // Native path: resolve the target, provision a live shadow source, then diff.
-    const connType: LegacyDbConnType = Option.isSome(flags.dbUrl)
+    const connType: DbConnType = Option.isSome(flags.dbUrl)
       ? "db-url"
       : Option.isSome(flags.linked)
         ? "linked"
@@ -456,7 +456,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     // never reaches here when explicit mode ran.)
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
       return yield* Effect.fail(
-        new LegacyDbDiffTargetFlagsError({
+        new DbDiffTargetFlagsError({
           message:
             "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         }),
@@ -477,7 +477,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     // remote block, so only the linked path pre-resolves a ref.
     let linkedRef: string | undefined;
     if (connType === "linked") {
-      const projectRefResolver = yield* LegacyProjectRefResolver;
+      const projectRefResolver = yield* ProjectRefResolver;
       linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
       // Cache the ref the moment it's known, not after `cfg`/`localInputs` below (both
       // fallible) resolve: the project cache should still be written even when a LATER
@@ -486,18 +486,18 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // `cfg`/`localInputs`/`resolver.resolve()` all succeed.
       linkedRefForCache = linkedRef;
     }
-    const cfg = yield* legacyReadDbToml(fs, path, cliSettings.workdir, linkedRef);
+    const cfg = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
     // Make an allowlisted `supabase/.env` registry override visible to the
     // synchronous `process.env` reader the pgAdmin differ's (and the migra/pg-delta
     // shadow's) own image resolver falls back to, reverted when this scope closes.
-    yield* legacyApplyProjectEnv(cfg.projectEnv);
+    yield* applyProjectEnv(cfg.projectEnv);
     if (cfg.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${cfg.appliedRemote}]\n`, "stderr");
     }
 
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeInfo = yield* RuntimeInfo;
-    const networkIdFlag = yield* LegacyNetworkIdFlag;
+    const networkIdFlag = yield* NetworkIdFlag;
     // Built BEFORE `resolver.resolve()` below, not just before the "Creating shadow
     // database..." banner: this call performs a SECOND config load (distinct from `cfg`
     // above) and its own validation (e.g. enabled API TLS's cert/key files, read here —
@@ -509,7 +509,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     // instead of before it. Only the actual Docker-image resolution below
     // (`resolvePostgresImage`, lazy until this point) is the provisioning work the
     // banner itself announces.
-    const localInputs = yield* legacyBuildLocalDbContainerInputs(
+    const localInputs = yield* buildLocalDbContainerInputs(
       spawner,
       cliSettings.workdir,
       networkIdFlag,
@@ -517,7 +517,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       debug,
       // So the shadow's own container spec (image/JWT secret/root key/db.settings/service
       // enabled-for-setup flags) reflects the matching `[remotes.<ref>]` override too, same
-      // as `cfg` above (`legacyReadDbToml(..., linkedRef)`).
+      // as `cfg` above (`readDbToml(..., linkedRef)`).
       connType === "linked" ? linkedRef : undefined,
       // `cfg`'s OWN remote-override-key tracking (same matched block) — so a remote-set
       // bootstrap field (e.g. `db.major_version`) isn't re-overridden by a conflicting
@@ -536,14 +536,14 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
     }
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
-    const targetUrl = legacyToPostgresURL(resolved.conn);
-    const ctx: LegacyPgDeltaContext = {
+    const targetUrl = toPostgresURL(resolved.conn);
+    const ctx: PgDeltaContext = {
       // `SUPABASE_PROJECT_ID` env override wins, then config.toml's `project_id`, then
       // the workdir basename fallback, with the matched `[remotes.<ref>]` block's own
       // `project_id` (`cfg.projectId`, already gated on `remoteOverrideKeys` by
-      // `legacyReadDbToml`) suppressing the raw env argument on the linked path — see
+      // `readDbToml`) suppressing the raw env argument on the linked path — see
       // that helper's own doc comment.
-      projectId: legacyResolvePgDeltaProjectId(cliSettings.projectId, cfg, cliSettings.workdir),
+      projectId: resolvePgDeltaProjectId(cliSettings.projectId, cfg, cliSettings.workdir),
       cwd: cliSettings.workdir,
       denoVersion: cfg.denoVersion,
       projectEnv: cfg.projectEnv,
@@ -552,12 +552,12 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
 
     // Engine resolution: the pg-delta env/config/flag gate, read from the
     // (possibly remote-merged) config.
-    const pgDeltaDefault = legacyShouldUsePgDelta({
+    const pgDeltaDefault = shouldUsePgDelta({
       configEnabled: cfg.pgDelta.enabled,
       usePgDeltaFlag: Option.getOrElse(flags.usePgDelta, () => false),
-      envEnabled: legacyParseBoolEnv(cfg.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
+      envEnabled: parseBoolEnv(cfg.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
     });
-    const useDelta = legacyResolveDiffEngine({
+    const useDelta = resolveDiffEngine({
       useMigraChanged: Option.isSome(flags.useMigra),
       usePgAdmin,
       usePgSchema,
@@ -565,7 +565,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     });
     // pg-delta ignores schema_paths when building its migrations baseline.
     if (useDelta && cfg.schemaPaths !== undefined && cfg.schemaPaths.length > 0) {
-      yield* output.raw(legacySchemaPathsTransitionWarning, "stderr");
+      yield* output.raw(schemaPathsTransitionWarning, "stderr");
     }
 
     // pgAdmin's own text-mode status lines go to STDOUT, not stderr — unlike the migra/
@@ -583,7 +583,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     // emits its banner FIRST and only then invokes this.
     const resolveShadowRunInput = Effect.fnUntraced(function* () {
       const resolvedShadowImage = yield* localInputs.resolvePostgresImage;
-      return legacyShadowRunInputFromLocalContainerInputs(
+      return shadowRunInputFromLocalContainerInputs(
         localInputs,
         resolvedShadowImage,
         cfg,
@@ -594,8 +594,8 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
 
     let diffResult: {
       readonly sql: string;
-      readonly files: ReadonlyArray<LegacyPgDeltaRenderedFile> | undefined;
-      readonly hazards?: LegacyPgDeltaDiffResult["hazards"];
+      readonly files: ReadonlyArray<PgDeltaRenderedFile> | undefined;
+      readonly hazards?: PgDeltaDiffResult["hazards"];
     };
     if (usePgAdmin) {
       // The running-db check runs AFTER the config load + target resolve above, and —
@@ -604,7 +604,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // see its own doc comment above), not the raw `cliSettings.projectId` env reader, so
       // the check reflects a resolved remote merge rather than an ungated
       // `SUPABASE_PROJECT_ID` env var.
-      const running = yield* legacyIsLocalDbRunning(
+      const running = yield* isLocalDbRunning(
         spawner,
         fs,
         path,
@@ -613,7 +613,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       ).pipe(
         Effect.mapError(
           (cause) =>
-            new LegacyDbDiffDbNotRunningError({
+            new DbDiffDbNotRunningError({
               message: cause.message,
               daemonDown: cause.daemonDown,
               suggestion: cause.suggestion,
@@ -622,14 +622,14 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       );
       if (!running) {
         return yield* Effect.fail(
-          new LegacyDbDiffDbNotRunningError({
-            message: `${legacyAqua("supabase start")} is not running.`,
+          new DbDiffDbNotRunningError({
+            message: `${aqua("supabase start")} is not running.`,
           }),
         );
       }
       yield* emitStatus("Creating shadow database...");
       const shadowBase = yield* resolveShadowRunInput();
-      const shadowConnConfig: LegacyPgConnInput = {
+      const shadowConnConfig: PgConnInput = {
         host: shadowBase.hostname,
         port: shadowBase.shadowPort,
         user: "postgres",
@@ -638,13 +638,13 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       };
       // Register cleanup atomically with shadow creation; preparation stays interruptible.
       const sql = yield* Effect.acquireUseRelease(
-        legacyCreateShadowDatabase(spawner, shadowBase),
+        createShadowDatabase(spawner, shadowBase),
         (handle) =>
           Effect.gen(function* () {
-            yield* legacyWaitForHealthyServices(spawner, [handle.containerId], {
+            yield* waitForHealthyServices(spawner, [handle.containerId], {
               timeoutSeconds: shadowBase.healthTimeoutSeconds,
             });
-            yield* legacyMigrateShadowDatabase(spawner, {
+            yield* migrateShadowDatabase(spawner, {
               fs,
               path,
               workdir: cliSettings.workdir,
@@ -655,11 +655,11 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
               setup: shadowBase.setup,
             });
             yield* emitStatus("Diffing local database with current migrations...");
-            return yield* legacyDiffSchemaPgAdmin({
+            return yield* diffSchemaPgAdmin({
               // `source`/`target` are INVERTED relative to the migra/pg-delta path below:
               // `source` is the USER'S db, `target` is the SHADOW.
               source: targetUrl,
-              // Deliberately hardcoded, not built via `legacyToPostgresURL`: this ignores
+              // Deliberately hardcoded, not built via `toPostgresURL`: this ignores
               // `SUPABASE_SERVICES_HOSTNAME`/`[db] password` by design — not a bug to fix.
               target: `postgresql://postgres:postgres@127.0.0.1:${shadowBase.shadowPort}/postgres`,
               schema: flags.schema,
@@ -669,7 +669,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
               emitStatus,
             });
           }),
-        (handle) => legacyRemoveShadowDatabase(spawner, handle.containerId),
+        (handle) => removeShadowDatabase(spawner, handle.containerId),
       );
       diffResult = { sql, files: undefined };
     } else {
@@ -681,22 +681,22 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         migrationMode,
         // `cfg.schemaPathPatterns`, NOT `localInputs.context.config.db.migrations.schema_paths`:
         // the latter is the raw `@supabase/config` field, which never applies
-        // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` — `cfg` above (`legacyReadDbToml`) already
+        // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` — `cfg` above (`readDbToml`) already
         // resolves that env override.
         schemaPaths: cfg.schemaPathPatterns,
         pgDelta: cfg.pgDelta,
       };
-      // `legacyWithShadowDatabase` (`shadow-cache.ts`) owns the interrupt-safe lifecycle and the
+      // `withShadowDatabase` (`shadow-cache.ts`) owns the interrupt-safe lifecycle and the
       // cache seam — a plain create/remove pair when `SUPABASE_SHADOW_CACHE` is explicitly
       // disabled (the cache is on by default). The key's webhooks policy must mirror what
-      // `legacyPrepareShadowSource` selects for this mode (legacy migrate forces `pg_net` on,
+      // `prepareShadowSource` selects for this mode (legacy migrate forces `pg_net` on,
       // next follows config), or the two engines could restore each other's tars.
-      diffResult = yield* legacyWithShadowDatabase(
+      diffResult = yield* withShadowDatabase(
         spawner,
         shadowInput,
         (handle) =>
           Effect.gen(function* () {
-            const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
+            const shadow = yield* prepareShadowSource(spawner, handle, shadowInput);
             const target = shadow.targetUrlOverride ?? targetUrl;
             yield* output.raw(
               flags.schema.length > 0
@@ -723,7 +723,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
                 },
                 schema: flags.schema,
                 formatOptions,
-                debug: legacyIsPgDeltaDebugEnabled(),
+                debug: isPgDeltaDebugEnabled(),
                 strictCoverage: flags.strictCoverage,
               });
               // Keep the per-unit plan files so a multi-unit plan can be written as one
@@ -731,7 +731,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
               // machine payloads.
               return { sql: result.sql, files: result.files, hazards: result.hazards };
             }
-            const sql = yield* legacyDiffMigra(ctx, {
+            const sql = yield* diffMigra(ctx, {
               source: shadow.sourceUrl,
               target,
               schema: flags.schema,
@@ -753,7 +753,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // directory the command was invoked from.
       const branch = Option.getOrElse(yield* detectGitBranch(cliSettings.workdir), () => "main");
       yield* output.raw(
-        `Finished ${legacyAqua("supabase db diff")} on branch ${legacyAqua(branch)}.\n\n`,
+        `Finished ${aqua("supabase db diff")} on branch ${aqua(branch)}.\n\n`,
         "stderr",
       );
     }
@@ -764,18 +764,18 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       ? []
       : diffResult.hazards !== undefined
         ? diffResult.hazards.dataLoss.map((action) => action.sql)
-        : legacyFindDropStatements(out);
+        : findDropStatements(out);
     const writtenFiles: Array<string> = [];
     let ignoredDeclarativeAdvisory: ReturnType<typeof declarativeBaselineAdvisory> | undefined;
     if (out.length >= 2 && useDelta && Option.isSome(flags.file) && flags.file.value.length > 0) {
       // This is an informational, best-effort probe only. Declarative files are
       // intentionally not inputs to normal db diff, so an unreadable or changing
       // directory must never turn a previously successful diff into a failure.
-      const declarativeDir = legacyResolveDeclarativeDir(path, cfg.pgDelta);
+      const declarativeDir = resolveDeclarativeDir(path, cfg.pgDelta);
       const declarativeDirAbsolute = path.resolve(cliSettings.workdir, declarativeDir);
       const hasDeclarativeSql = yield* Effect.gen(function* () {
         if (!(yield* fs.exists(declarativeDirAbsolute))) return false;
-        return (yield* LegacyLoadPgDeltaSqlFiles(fs, path, declarativeDirAbsolute)).length > 0;
+        return (yield* LoadPgDeltaSqlFiles(fs, path, declarativeDirAbsolute)).length > 0;
       }).pipe(Effect.orElseSucceed(() => false));
       if (hasDeclarativeSql) {
         const isAbsolute = path.isAbsolute(declarativeDir);
@@ -796,7 +796,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // Plans spanning transaction boundaries need one migration per ordered unit.
       const planFiles = diffResult.files ?? [];
       if (planFiles.length > 1) {
-        const writtenUnits = yield* legacyWritePgDeltaMigrations(fs, path, {
+        const writtenUnits = yield* writePgDeltaMigrations(fs, path, {
           workdir: cliSettings.workdir,
           baseMillis: yield* Clock.currentTimeMillis,
           name: fileName,
@@ -808,24 +808,19 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
             sql: file.sql,
             transactionMode: file.transactionMode,
           })),
-        }).pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));
+        }).pipe(Effect.mapError((cause) => new DbDiffWriteError({ message: cause.message })));
         for (const unit of writtenUnits) writtenFiles.push(unit.path);
       } else {
-        const timestamp = legacyFormatMigrationTimestamp(yield* Clock.currentTimeMillis);
-        const migrationPath = legacyGetMigrationPath(
-          path,
-          cliSettings.workdir,
-          timestamp,
-          fileName,
-        );
+        const timestamp = formatMigrationTimestamp(yield* Clock.currentTimeMillis);
+        const migrationPath = getMigrationPath(path, cliSettings.workdir, timestamp, fileName);
         // Create parent dirs per written path, so a nested `--file snapshots/remote`
         // name creates `<ts>_snapshots/` first.
-        yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(
-          Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })),
+        yield* makeDir(fs, path.dirname(migrationPath)).pipe(
+          Effect.mapError((cause) => new DbDiffWriteError({ message: cause.message })),
         );
         yield* fs
           .writeFileString(migrationPath, out)
-          .pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));
+          .pipe(Effect.mapError((cause) => new DbDiffWriteError({ message: cause.message })));
         writtenFiles.push(migrationPath);
       }
       yield* output.raw(`${warnDiff}\n`, "stderr");
@@ -839,7 +834,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
           : "Found destructive changes in schema diff. Please double check if these are expected:\n",
         "stderr",
       );
-      yield* output.raw(`${legacyYellow(drops.join("\n"))}\n`, "stderr");
+      yield* output.raw(`${yellow(drops.join("\n"))}\n`, "stderr");
     }
     if (output.format !== "text") {
       yield* output.success("Diff complete.", {
@@ -866,7 +861,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     ),
     Effect.ensuring(telemetryState.flush),
     // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply above to this
-    // command run: `legacyApplyProjectEnv` registers a finalizer that reverts it.
+    // command run: `applyProjectEnv` registers a finalizer that reverts it.
     Effect.scoped,
   );
 });

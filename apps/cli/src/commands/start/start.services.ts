@@ -1,16 +1,16 @@
 import {
-  LEGACY_SERVICE_CATALOG,
-  type LegacyServiceCatalogEntry,
-} from "../../command-internal/legacy-service-catalog.ts";
+  SERVICE_CATALOG,
+  type ServiceCatalogEntry,
+} from "../../command-internal/service-catalog.ts";
 
 /**
  * Per-service orchestration metadata `start.handler.ts` (a later task) reads
- * ON TOP OF `LEGACY_SERVICE_CATALOG`'s identity fields (`containerSuffix`,
+ * ON TOP OF `SERVICE_CATALOG`'s identity fields (`containerSuffix`,
  * `excludeKey`, `startOrder`). Deliberately descriptive, not executable: the
  * real config-boolean gating and image resolution live in the handler and
  * each service's own module.
  */
-export interface LegacyStartServiceMeta {
+export interface StartServiceMeta {
   /**
    * Which `config.toml`-resolved image field feeds this service's container.
    * A string identifier only — actual resolution happens in the service's
@@ -33,14 +33,13 @@ export interface LegacyStartServiceMeta {
   readonly dependsOn?: ReadonlyArray<string>;
 }
 
-export interface LegacyStartServiceEntry
-  extends LegacyServiceCatalogEntry, LegacyStartServiceMeta {}
+export interface StartServiceEntry extends ServiceCatalogEntry, StartServiceMeta {}
 
 /**
  * Per-service enabled-gate expression and image config field, keyed by
- * `LEGACY_SERVICE_CATALOG`'s `service` field.
+ * `SERVICE_CATALOG`'s `service` field.
  */
-const START_SERVICE_META_BY_SERVICE: ReadonlyMap<string, LegacyStartServiceMeta> = new Map([
+const START_SERVICE_META_BY_SERVICE: ReadonlyMap<string, StartServiceMeta> = new Map([
   ["postgres", { imageConfigField: "db.image", enabledGate: "always" }],
   ["logflare", { imageConfigField: "analytics.image", enabledGate: "analytics.enabled" }],
   [
@@ -79,23 +78,22 @@ const START_SERVICE_META_BY_SERVICE: ReadonlyMap<string, LegacyStartServiceMeta>
 ]);
 
 /** Looks up a single service's start orchestration metadata by its catalog `service` key. */
-export function legacyStartServiceMeta(service: string): LegacyStartServiceMeta | undefined {
+export function startServiceMeta(service: string): StartServiceMeta | undefined {
   return START_SERVICE_META_BY_SERVICE.get(service);
 }
 
 /**
- * `LEGACY_SERVICE_CATALOG`, augmented with this file's orchestration metadata.
+ * `SERVICE_CATALOG`, augmented with this file's orchestration metadata.
  * Preserves the catalog's `startOrder` ordering — `start.handler.ts` can
  * iterate this array directly to bring services up in the real
  * container-start sequence.
  */
-export const LEGACY_START_SERVICES: ReadonlyArray<LegacyStartServiceEntry> =
-  LEGACY_SERVICE_CATALOG.map((entry) => {
-    const meta = START_SERVICE_META_BY_SERVICE.get(entry.service);
-    return {
-      ...entry,
-      imageConfigField: meta?.imageConfigField ?? "",
-      enabledGate: meta?.enabledGate ?? "",
-      dependsOn: meta?.dependsOn,
-    };
-  });
+export const START_SERVICES: ReadonlyArray<StartServiceEntry> = SERVICE_CATALOG.map((entry) => {
+  const meta = START_SERVICE_META_BY_SERVICE.get(entry.service);
+  return {
+    ...entry,
+    imageConfigField: meta?.imageConfigField ?? "",
+    enabledGate: meta?.enabledGate ?? "",
+    dependsOn: meta?.dependsOn,
+  };
+});

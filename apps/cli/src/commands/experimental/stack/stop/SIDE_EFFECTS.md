@@ -25,3 +25,6 @@ no-stack result. Exit status is `0` for a successful stop or no current stack, `
 missing named stack or any typed stop failure, and `130` if the command is interrupted before
 the stop completes. Standard command instrumentation records command
 metadata; stack data and credentials are not emitted as telemetry properties.
+
+Telemetry state is flushed to `<SUPABASE_HOME or ~/.supabase>/telemetry.json`
+after both successful and failed command runs.

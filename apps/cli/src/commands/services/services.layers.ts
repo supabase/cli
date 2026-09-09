@@ -2,21 +2,18 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { Layer } from "effect";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 
-import { legacyCredentialsLayer } from "../../auth/legacy-credentials.layer.ts";
-import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
-import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.ts";
-import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
-import { legacyDebugLoggerLayer } from "../../command-internal/legacy-debug-logger.layer.ts";
-import { LegacyDebugLogger } from "../../command-internal/legacy-debug-logger.service.ts";
-import {
-  LegacyIdentityStitch,
-  legacyIdentityStitchLayer,
-} from "../../command-internal/legacy-identity-stitch.ts";
-import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
-import { legacyLinkedProjectCacheLayer } from "../../telemetry/legacy-linked-project-cache.layer.ts";
-import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
-import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
-import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
+import { commandCredentialsLayer } from "../../auth/command-credentials.layer.ts";
+import { CommandCredentials } from "../../auth/command-credentials.service.ts";
+import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
+import { CommandSettings } from "../../config/command-settings.service.ts";
+import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
+import { DebugLogger } from "../../command-internal/debug-logger.service.ts";
+import { IdentityStitch, identityStitchLayer } from "../../command-internal/identity-stitch.ts";
+import { httpClientLayer } from "../../auth/http-debug.layer.ts";
+import { linkedProjectCacheLayer } from "../../telemetry/linked-project-cache.layer.ts";
+import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
+import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
+import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { CommandRuntime } from "../../shared/runtime/command-runtime.service.ts";
 
@@ -26,52 +23,52 @@ import { CommandRuntime } from "../../shared/runtime/command-runtime.service.ts"
  * Keep this runtime lean so a tokenless local invocation does not fail before
  * the handler can choose the local-only path.
  */
-export const legacyServicesRuntimeLayer = (() => {
-  const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
-  const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
-  const credentials = legacyCredentialsLayer.pipe(
+export const servicesRuntimeLayer = (() => {
+  const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
+  const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
+  const credentials = commandCredentialsLayer.pipe(
     Layer.provide(cliSettings),
-    Layer.provide(legacyDebugLoggerLayer),
+    Layer.provide(debugLoggerLayer),
   );
 
   const built = Layer.mergeAll(
     httpClient,
     credentials,
     cliSettings,
-    legacyDebugLoggerLayer,
-    legacyLinkedProjectCacheLayer.pipe(
+    debugLoggerLayer,
+    linkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
       Layer.provide(cliSettings),
       Layer.provide(httpClient),
       // The cache GET stitches session identity via the one per-command
-      // `LegacyIdentityStitch` (a single per-command `sync.Once`).
-      Layer.provide(legacyIdentityStitchLayer),
+      // `IdentityStitch` (a single per-command `sync.Once`).
+      Layer.provide(identityStitchLayer),
     ),
-    legacyTelemetryStateLayer,
+    telemetryStateLayer,
     // The one per-command identity stitcher (a single per-command `sync.Once`),
-    // exposed at top level so `withLegacyCommandInstrumentation` can read
+    // exposed at top level so `withCommandTelemetry` can read
     // `stitchedDistinctId()` and attribute the cli_command_executed event to the
     // gotrue id. The SAME reference is provided to linkedProjectCache above, so
     // memoisation gives the cache GET and the instrumentation hook one
     // `stitchAttempted` guard — aliasing/persisting at most once. Its
     // Analytics / TelemetryRuntime / FileSystem / Path deps are ambient (root
     // runtime). Mirrors advisors.layers.ts / lint.layers.ts.
-    legacyIdentityStitchLayer,
+    identityStitchLayer,
     commandRuntimeLayer(["services"]),
   ).pipe(Layer.provide(FetchHttpClient.layer));
 
-  const _serviceCoverageCheck: Layer.Layer<LegacyServicesServices, unknown, unknown> = built;
+  const _serviceCoverageCheck: Layer.Layer<ServicesServices, unknown, unknown> = built;
   void _serviceCoverageCheck;
 
   return built;
 })();
 
-type LegacyServicesServices =
+type ServicesServices =
   | HttpClient.HttpClient
-  | LegacyCredentials
-  | LegacyCliSettings
-  | LegacyDebugLogger
-  | LegacyLinkedProjectCache
-  | LegacyTelemetryState
-  | LegacyIdentityStitch
+  | CommandCredentials
+  | CommandSettings
+  | DebugLogger
+  | LinkedProjectCache
+  | TelemetryState
+  | IdentityStitch
   | CommandRuntime;

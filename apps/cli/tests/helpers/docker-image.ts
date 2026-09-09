@@ -4,7 +4,7 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerTag } from "effect/unstable/process/ChildProcessSpawner";
 
-import { legacyMakeDockerImageResolver } from "../../src/command-internal/legacy-docker-image-resolve.ts";
+import { makeDockerImageResolver } from "../../src/command-internal/docker-image-resolve.ts";
 
 type Spawner = ChildProcessSpawnerTag["Service"];
 
@@ -27,7 +27,7 @@ let resolveQueue: Promise<unknown> = Promise.resolve();
 
 /**
  * Resolves an image for a raw e2e `docker run`/`docker pull` by running the
- * PRODUCTION resolver (`legacyMakeDockerImageResolver`) against a real
+ * PRODUCTION resolver (`makeDockerImageResolver`) against a real
  * subprocess spawner — same candidate order, same local-cache-first check, same
  * retry ladder the CLI itself uses, so this can never drift from it. A raw
  * `docker run` of an uncached image implicit-pulls from a single registry,
@@ -121,7 +121,7 @@ export function resolveImage(
     // backstop for the paths the resolver does not bound (a wedged daemon
     // hanging `docker image inspect`); its 1s grace keeps the resolver's own
     // richer per-candidate error winning every race it can.
-    Effect.andThen(() => legacyMakeDockerImageResolver(spawner)(image, deadline)),
+    Effect.andThen(() => makeDockerImageResolver(spawner)(image, deadline)),
     Effect.timeout(Duration.millis(remainingMs + 1_000)),
     Effect.mapError((cause) => {
       if (Cause.isTimeoutError(cause)) {
