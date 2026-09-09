@@ -13,6 +13,8 @@ import { startLocalDatabase } from "../../../command-internal/db-bootstrap/start
 import { resolveLocalProjectId, localDbContainerId } from "../../../command-internal/docker-ids.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
+import { currentStackBackend } from "../../experimental/stack/stack-backend.ts";
+import { stackEnsureLocalDatabaseStarted } from "../../experimental/stack/stack-local-database.ts";
 
 const shadowDockerCause = (stderr: string): { readonly docker: "daemon" } | Record<never, never> =>
   isDockerDaemonUnreachable(stderr) ? { docker: "daemon" } : {};
@@ -74,6 +76,14 @@ export const declarativeSeamLayer = Layer.effect(
     return DeclarativeSeam.of({
       ensureLocalDatabaseStarted: () =>
         Effect.gen(function* () {
+          const backend = yield* currentStackBackend;
+          if (backend.kind === "stack") {
+            return yield* stackEnsureLocalDatabaseStarted.pipe(
+              Effect.provideService(CommandSettings, cliSettings),
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(Path.Path, path),
+            );
+          }
           const running = yield* isLocalDbRunning(
             spawner,
             fs,

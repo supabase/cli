@@ -3,6 +3,7 @@ import { Context, Duration, Effect, Layer, Predicate, Redacted, Schema, Scope } 
 import { isSqlError, type SqlError } from "effect/unstable/sql/SqlError";
 import {
   DatabaseBootstrapError,
+  type DatabaseBootstrapOptions,
   type DatabaseSession,
   type DatabaseSqlValue,
   type DatabaseTransaction,
@@ -214,3 +215,30 @@ export const bootstrapDatabaseAt = (
       }),
     );
   });
+
+/** Reconciles roles, JWT settings, and `_supabase` against an already-ready Postgres. */
+export const bootstrapManagedPostgres = (
+  options: DatabaseBootstrapOptions & {
+    readonly host: string;
+    readonly port: number;
+  },
+): Effect.Effect<void, DatabaseBootstrapError> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const session = yield* makePostgresDatabaseSession({
+        host: options.host,
+        port: options.port,
+        password: options.databasePassword,
+      });
+      yield* ensureInternalDatabase(
+        session,
+        makePostgresDatabaseSession({
+          host: options.host,
+          port: options.port,
+          database: INTERNAL_DATABASE,
+          password: options.databasePassword,
+        }),
+      );
+      yield* runDatabaseBootstrap(session, options);
+    }),
+  );

@@ -43,6 +43,9 @@ import { DbConnection, type PgConnInput } from "../../../command-internal/db-con
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { errorMessage, relativizeErrorMessage } from "../../../command-internal/error-message.ts";
+import { viperEnvStringWithProjectFallback } from "../../../command-internal/viper-env.ts";
+import { currentStackBackend } from "../../experimental/stack/stack-backend.ts";
+import { stackWithShadowDatabase } from "../../experimental/stack/stack-shadow.ts";
 import { applyMigrations, MigrationApplyError } from "../../../command-internal/migration-apply.ts";
 import {
   INSERT_MIGRATION_VERSION,
@@ -89,7 +92,10 @@ const squashMigrations = Effect.fnUntraced(function* (
   localInputs: LocalDbContainerInputs,
   toml: DbTomlValues,
 ) {
-  const resolvedShadowImage = yield* localInputs.resolvePostgresImage;
+  const stackBackend = (yield* currentStackBackend).kind === "stack";
+  const resolvedShadowImage = stackBackend
+    ? "stack-ephemeral"
+    : yield* localInputs.resolvePostgresImage;
   const shadowInput = shadowRunInputFromLocalContainerInputs(
     localInputs,
     resolvedShadowImage,
@@ -107,6 +113,97 @@ const squashMigrations = Effect.fnUntraced(function* (
   // The pin-resolved (not yet registry-mapped) image every
   // `pg_dump` container below uses; `squashDumpSchema` applies the registry mirror itself.
   const image = localInputs.bootstrapConfig.postgresImage;
+
+  if (stackBackend) {
+    return yield* stackWithShadowDatabase(shadowInput, (handle) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const stackConn: PgConnInput = {
+            host: handle.host,
+            port: handle.port,
+            user: "postgres",
+            password: toml.password,
+            database: "postgres",
+          };
+          const runtimeInfo = yield* RuntimeInfo;
+          const networkIdFlag = yield* NetworkIdFlag;
+          const networkId = Option.getOrUndefined(networkIdFlag);
+          const envNetworkId = viperEnvStringWithProjectFallback(
+            "SUPABASE_NETWORK_ID",
+            localInputs.context.projectEnvValues ?? {},
+          );
+          const dumpUsesHostNetwork =
+            (networkId === undefined || networkId.length === 0) && envNetworkId.length === 0;
+          const dumpConn: PgConnInput = {
+            ...stackConn,
+            host:
+              (handle.host === "127.0.0.1" || handle.host === "localhost") &&
+              (runtimeInfo.platform !== "linux" || !dumpUsesHostNetwork)
+                ? "host.docker.internal"
+                : handle.host,
+          };
+          const session = yield* connectShadowDatabase(stackConn);
+          const before = yield* squashDumpSchemaToString({
+            image,
+            conn: dumpConn,
+            schema: ["auth", "storage"],
+            projectEnvValues: localInputs.context.projectEnvValues,
+          });
+          yield* applyMigrations(
+            session,
+            fs,
+            path,
+            migrations,
+            (message) => new MigrationApplyError({ message }),
+          );
+          const after = yield* squashDumpSchemaToString({
+            image,
+            conn: dumpConn,
+            schema: ["auth", "storage"],
+            projectEnvValues: localInputs.context.projectEnvValues,
+          });
+          const targetPath = migrations[migrations.length - 1]!;
+          const targetRel = path.relative(workdir, targetPath);
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const file = yield* fs.open(targetPath, { flag: "w", mode: 0o644 }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new MigrationSquashWriteError({
+                      message: `failed to open migration file: ${relativizeErrorMessage(errorMessage(cause), targetPath, targetRel)}`,
+                    }),
+                ),
+              );
+              yield* squashDumpSchema({
+                image,
+                conn: dumpConn,
+                schema: [],
+                projectEnvValues: localInputs.context.projectEnvValues,
+                onStdout: (chunk) =>
+                  file.writeAll(chunk).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new MigrationSquashWriteError({
+                          message: `failed to copy docker logs: ${errorMessage(cause)}`,
+                        }),
+                    ),
+                  ),
+              });
+              const tail = SQUASH_SEPARATOR_COMMENT + squashLineByLineDiff(before, after);
+              yield* file.writeAll(new TextEncoder().encode(tail)).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new MigrationSquashWriteError({
+                      message: `failed to write line: ${relativizeErrorMessage(errorMessage(cause), targetPath, targetRel)}`,
+                    }),
+                ),
+              );
+            }),
+          );
+        }),
+      ),
+    );
+  }
 
   yield* Effect.acquireUseRelease(
     createShadowDatabase(spawner, shadowInput),

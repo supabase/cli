@@ -116,3 +116,10 @@ Database reset is intentionally outside the current API. Applying migrations, de
 and seeds remains the caller's responsibility. The runtime bootstrap only reconciles the `_realtime`
 schema owner, closed database role passwords, and JWT settings in one transaction; the slim database
 artifact owns its initialization and migrations.
+
+`createEphemeralPostgres` is a scoped, Supervisor-free Postgres cluster for schema tooling. It uses
+the same catalog artifact and bootstrap as a stack database, is not registered in `listStacks` /
+`discoverStacks`, and destroys its data directory or volume when the Effect scope closes. The
+Promise facade returns a handle with explicit `destroy()`. Callers own migrations and PGDATA
+cache keys. `exportPgData` is valid only while the cluster is stopped; native and container snapshots
+are not interchangeable.

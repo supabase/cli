@@ -30,3 +30,11 @@ export type {
   PreparedCapability,
   PrepareStackResult,
 } from "./EffectStack.ts";
+export { createEphemeralPostgres, resolveEphemeralPostgresRelease } from "./EphemeralPostgres.ts";
+export type {
+  CreateEphemeralPostgresOptions,
+  EffectEphemeralPostgres,
+  EphemeralPostgresRelease,
+  EphemeralPostgresServices,
+  EphemeralPostgresSettings,
+} from "./EphemeralPostgres.ts";

@@ -13,6 +13,7 @@ import { stackStartCommand } from "../commands/experimental/stack/start/start.co
 import { stackStopCommand } from "../commands/experimental/stack/stop/stop.command.ts";
 import { stackStatusCommand } from "../commands/experimental/stack/status/status.command.ts";
 import type { StackBackend } from "../commands/experimental/stack/stack-backend.ts";
+import { stackBackendLayer } from "../commands/experimental/stack/stack-backend.ts";
 import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
@@ -186,6 +187,7 @@ export const rootCommandForFeatures = (
             : outputLayerFor(outputFormat);
 
           return Layer.mergeAll(
+            stackBackendLayer(options.stackBackend ?? "legacy"),
             outputLayer,
             makeGoProxyLayer({ globalArgs, parentOwnsCapturedSuccessTail: true }),
           );

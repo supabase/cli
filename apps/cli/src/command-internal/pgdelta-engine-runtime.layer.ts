@@ -14,6 +14,8 @@ import { pgDeltaNextAdapterLayer } from "../commands/db/shared/pgdelta-next-adap
 import { pgDeltaNextShadowLayer } from "../commands/db/shared/pgdelta-next-shadow.layer.ts";
 import { declarativeSeamLayer } from "../commands/db/shared/pgdelta.seam.layer.ts";
 import { localDockerEngineLayer } from "./db-bootstrap/local-db-running.ts";
+import { stackApiLayer } from "../commands/experimental/stack/stack.shared.ts";
+import { ephemeralPostgresLayer } from "../commands/experimental/stack/stack-shadow.ts";
 
 /** The in-process pg-delta engine — the only implementation. */
 const pgDeltaEngineLayer = pgDeltaNextEngineLayer;
@@ -57,6 +59,7 @@ const nextShadow = pgDeltaNextShadowLayer.pipe(
   Layer.provide(dockerRunLayer),
   Layer.provide(dbConnectionLayer),
   Layer.provide(httpClient),
+  Layer.provide(pgDeltaCommandSettingsRuntimeLayer),
 );
 const engine = pgDeltaEngineLayer.pipe(
   Layer.provide(pgDeltaCommandSettingsRuntimeLayer),
@@ -77,4 +80,6 @@ export const pgDeltaCommandRuntimeLayer = Layer.mergeAll(
   pgDeltaCommandSettingsRuntimeLayer,
   // Exposed for handlers' own direct `isLocalDbRunning` calls (`db diff --use-pgadmin`).
   localDockerEngine,
+  stackApiLayer,
+  ephemeralPostgresLayer,
 );

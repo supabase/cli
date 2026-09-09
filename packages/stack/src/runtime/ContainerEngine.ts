@@ -732,7 +732,10 @@ export const makeContainerEngineCore = (options: ContainerEngineOptions): Contai
           : Effect.fail(
               new ContainerCommandError({
                 operation,
-                message: `Container engine command failed (${result.exitCode})`,
+                message:
+                  result.stderr.trim().length > 0
+                    ? `Container engine command failed (${result.exitCode}): ${result.stderr.trim()}`
+                    : `Container engine command failed (${result.exitCode})`,
               }),
             ),
       ),
