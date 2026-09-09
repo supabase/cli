@@ -21,6 +21,7 @@ import {
   type ReviewPayload,
   sanitizeFilePath,
   sanitizeModelText,
+  parseDogfoodVerdict,
   supersededBody,
   truncateReviewBody,
 } from "./post-review.ts";
@@ -971,6 +972,8 @@ describe("redactSecrets", () => {
     ["a GitHub fine-grained PAT", `github_pat_${"a".repeat(30)}`],
     ["a GitHub Actions server-to-server token", `ghs_${"a".repeat(36)}`],
     ["a Supabase personal access token", `sbp_${"a".repeat(40)}`],
+    ["a versioned Supabase access token", `sbp_v0_${"a".repeat(40)}`],
+    ["an OAuth-shaped Supabase access token", `sbp_oauth_${"a".repeat(40)}`],
   ])("redacts %s", (_label, secret) => {
     const redacted = redactSecrets(`before ${secret} after`);
     expect(redacted).not.toContain(secret);
@@ -984,6 +987,18 @@ describe("redactSecrets", () => {
   test("redacts every occurrence, not just the first", () => {
     const secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345";
     expect(redactSecrets(`${secret} and again ${secret}`)).toBe("«redacted» and again «redacted»");
+  });
+});
+
+describe("parseDogfoodVerdict", () => {
+  test("accepts only go, conditional, or no-go", () => {
+    expect(parseDogfoodVerdict("go")).toBe("go");
+    expect(parseDogfoodVerdict(" conditional ")).toBe("conditional");
+    expect(parseDogfoodVerdict("no-go")).toBe("no-go");
+    expect(parseDogfoodVerdict("ship-it")).toBeUndefined();
+    expect(parseDogfoodVerdict("go\ninjected")).toBeUndefined();
+    expect(parseDogfoodVerdict("")).toBeUndefined();
+    expect(parseDogfoodVerdict(undefined)).toBeUndefined();
   });
 });
 

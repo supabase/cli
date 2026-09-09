@@ -18,7 +18,7 @@
  * `resolveDecision` is the pure orchestration function (I/O injected, like
  * `evaluateAllOpenPrs` in `contribution-gate.ts`) that a test can drive
  * without the network; `main()` wires up the real GitHub I/O, writes the
- * step outputs `should_run`, `pr_number`, `head_ref`, and `trigger` to
+ * step outputs `should_run`, `pr_number`, `head_ref`, `head_sha`, and `trigger` to
  * `$GITHUB_OUTPUT`, and surfaces the skip reason (if any) in
  * `$GITHUB_STEP_SUMMARY`.
  *
@@ -78,6 +78,8 @@ export interface PrDetails {
   headRepoFullName: string;
   /** `owner/name` of the repository the PR targets. */
   baseRepoFullName: string;
+  /** PR head commit SHA from the REST payload. */
+  headSha: string;
 }
 
 /** A prior review or issue comment, checked for the dedup marker. */
@@ -293,7 +295,7 @@ interface RestPullRequest {
   state: "open" | "closed";
   draft: boolean;
   user: { login: string; type: string } | null;
-  head: { repo: { full_name: string } | null };
+  head: { sha: string; repo: { full_name: string } | null };
   base: { repo: { full_name: string } };
 }
 
@@ -328,6 +330,8 @@ function assertRestPullRequest(value: unknown): asserts value is RestPullRequest
         typeof value.user.type === "string")
     ) ||
     !isRecordEntry(value.head) ||
+    typeof value.head.sha !== "string" ||
+    value.head.sha.trim() === "" ||
     !(
       value.head.repo === null ||
       (isRecordEntry(value.head.repo) && typeof value.head.repo.full_name === "string")
@@ -368,6 +372,7 @@ async function fetchPullRequest(token: string, base: string, prNumber: number): 
     authorLogin: pr.user?.login ?? "",
     headRepoFullName: pr.head.repo?.full_name ?? "",
     baseRepoFullName: pr.base.repo.full_name,
+    headSha: pr.head.sha,
   };
 }
 
@@ -419,13 +424,18 @@ async function reactToComment(token: string, base: string, commentId: number): P
  * a random delimiter per line) rather than `name=value`, defensively — none
  * of today's values can contain a newline, but a future value shouldn't be
  * able to inject extra output lines either. */
-function writeOutputs(result: ResolveResult, prNumber: number): void {
+function writeOutputs(result: ResolveResult, prNumber: number, headSha: string): void {
+  const trimmedSha = headSha.trim();
+  if (!trimmedSha) {
+    throw new Error(`Missing PR head SHA for PR #${prNumber}.`);
+  }
   const outputFile = requireEnv("GITHUB_OUTPUT");
   const entries: Record<string, string> = {
     should_run: String(result.shouldRun),
     pr_number: String(prNumber),
     head_ref: `refs/pull/${prNumber}/head`,
     trigger: result.trigger,
+    head_sha: trimmedSha,
   };
   const lines = Object.entries(entries).map(([name, value]) => {
     const delimiter = `ghadelim_${crypto.randomUUID()}`;
@@ -478,8 +488,13 @@ async function main(): Promise<void> {
     };
   }
 
+  let headSha = "";
   const io: ResolveIo = {
-    fetchPr: (n) => fetchPullRequest(token, base, n),
+    fetchPr: async (n) => {
+      const pr = await fetchPullRequest(token, base, n);
+      headSha = pr.headSha;
+      return pr;
+    },
     listReviews: (n) => listReviews(token, base, n),
     listIssueComments: (n) => listIssueComments(token, base, n),
     fetchPermission: (login) => fetchAuthorPermission(token, owner!, repo!, login),
@@ -499,7 +514,7 @@ async function main(): Promise<void> {
       `trigger=${result.trigger}${result.skipReason ? ` (${result.skipReason})` : ""}`,
   );
 
-  writeOutputs(result, prNumber);
+  writeOutputs(result, prNumber, headSha);
   writeStepSummary(result);
 }
 

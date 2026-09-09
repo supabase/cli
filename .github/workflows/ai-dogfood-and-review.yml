@@ -4,22 +4,11 @@ name: AI Dogfood and Review
 # AI review pipeline with the report as runtime evidence. See
 # .github/ai-dogfood/README.md for the design and security model.
 #
-# Two ways to trigger a run (safe flow, restore before merge):
+# Two ways to trigger a run (shadow mode — no pull_request auto trigger):
 #   - workflow_dispatch, with a same-repo PR number.
 #   - an internal maintainer commenting `/ai-dogfood-and-review` on a PR.
-# No pull_request auto trigger (shadow mode). Forks are always refused.
-#
-# TEMPORARY pre-merge: this workflow file is not on the default branch yet, so
-# dispatch/comments cannot start it. `pull_request` on #6495 is the only way
-# to exercise the pipeline against itself. Revert the pull_request trigger,
-# trusted-ref override, EVENT_NAME override, and review dispatch ref before
-# merge.
+# Forks are always refused.
 on:
-  pull_request:
-    types:
-      - opened
-      - synchronize
-      - reopened
   workflow_dispatch:
     inputs:
       pr:
@@ -38,11 +27,12 @@ env:
 
 # Ordinary issue_comment events fire this workflow for EVERY comment; give
 # non-command comments their own per-run group so they cannot cancel an
-# in-flight dogfood. Exact equality on the comment body, mirroring resolve.ts.
+# in-flight dogfood. Share the dogfood group for an exact command or that
+# command plus a trailing body (`fromJSON` so the newline is a real LF).
 concurrency:
   group: >-
-    ai-dogfood-and-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}-${{
-      (github.event_name == 'issue_comment' && github.event.comment.body != '/ai-dogfood-and-review')
+    ai-dogfood-and-review-${{ github.event.issue.number || inputs.pr }}-${{
+      (github.event_name == 'issue_comment' && github.event.comment.body != '/ai-dogfood-and-review' && !startsWith(github.event.comment.body, fromJSON('"/ai-dogfood-and-review\n"')) && !startsWith(github.event.comment.body, fromJSON('"/ai-dogfood-and-review\r\n"')))
         && github.run_id || 'dogfood' }}
   cancel-in-progress: true
 
@@ -52,7 +42,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: >
-      (github.event_name == 'pull_request' && github.event.pull_request.number == 6495) ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request != null &&
@@ -66,16 +55,13 @@ jobs:
       pr_number: ${{ steps.resolve.outputs.pr_number }}
       head_ref: ${{ steps.resolve.outputs.head_ref }}
       trigger: ${{ steps.resolve.outputs.trigger }}
-      # TEMPORARY: pull_request uses the PR head (scripts are not on develop yet).
-      # Safe flow: dispatch → github.ref; comments → default branch.
-      trusted_ref: ${{ (github.event_name == 'issue_comment' && github.event.repository.default_branch) || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.ref }}
-      review_dispatch_ref: ${{ (github.event_name == 'issue_comment' && github.event.repository.default_branch) || (github.event_name == 'pull_request' && github.head_ref) || github.ref }}
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      # Dispatch uses the selected branch; comments always run default-branch code.
+      trusted_ref: ${{ github.event_name == 'issue_comment' && github.event.repository.default_branch || github.ref }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # TEMPORARY: pull_request checks out the PR head. Safe flow: dispatch
-          # uses the selected branch; comments always run default-branch code.
-          ref: ${{ (github.event_name == 'issue_comment' && github.event.repository.default_branch) || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.ref }}
+          ref: ${{ github.event_name == 'issue_comment' && github.event.repository.default_branch || github.ref }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -85,11 +71,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          # TEMPORARY: treat the #6495 pull_request as a manual dispatch so an
-          # existing AI review marker cannot skip this debug run. Safe flow
-          # has no pull_request trigger, so this override goes away with it.
-          EVENT_NAME: ${{ github.event_name == 'pull_request' && 'workflow_dispatch' || github.event_name }}
-          PR_NUMBER: ${{ inputs.pr || github.event.issue.number || github.event.pull_request.number }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ inputs.pr || github.event.issue.number }}
           COMMENT_ID: ${{ github.event.comment.id }}
           COMMENT_AUTHOR_LOGIN: ${{ github.event.comment.user.login }}
           COMMENT_AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association }}
@@ -222,7 +205,7 @@ jobs:
           install -m 0755 trusted/.github/ai-dogfood/sb.sh scratch/bin/sb
           echo "$GITHUB_WORKSPACE/scratch/bin" >> "$GITHUB_PATH"
           git -C pr rev-parse HEAD > /tmp/ai-dogfood/head_sha.txt
-          echo "supabase-cli-dogfood-${GITHUB_RUN_ID}-" > /tmp/ai-dogfood/project-prefix.txt
+          printf '%s' "supabase-cli-dogfood-${GITHUB_RUN_ID}-" > /tmp/ai-dogfood/project-prefix.txt
           jq 'del(.["$schema"])' trusted/.github/ai-dogfood/report.schema.json \
             > /tmp/ai-dogfood/report.schema.json
 
@@ -236,15 +219,20 @@ jobs:
             --json number,title,body,baseRefName,headRefName,additions,deletions,changedFiles \
             > /tmp/ai-review/pr.json
 
-      # Token is written to a file the trusted wrapper reads. It is NOT exported
-      # into this job's environment for later steps (Codex in particular).
+      # Token is written under RUNNER_TEMP for the trusted wrapper. It is NOT
+      # exported into this job's environment for later steps (Codex in particular).
+      # danger-full-access can still read RUNNER_TEMP; this is hygiene, not isolation.
       - name: Write staging token for sb wrapper
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
+          if [ -z "${SUPABASE_ACCESS_TOKEN}" ]; then
+            echo "::error::SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN is empty"
+            exit 1
+          fi
           umask 077
-          printf '%s' "$SUPABASE_ACCESS_TOKEN" > scratch/.token
+          printf '%s' "$SUPABASE_ACCESS_TOKEN" > "${RUNNER_TEMP}/dogfood.token"
 
       - name: Run Codex dogfood
         # Pinned to v1.11, NOT v1.12: same hang regression as ai-review.yml
@@ -255,7 +243,6 @@ jobs:
         uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11
         env:
           DOGFOOD_CLI_MAIN: ${{ github.workspace }}/pr/apps/cli/src/main.ts
-          DOGFOOD_TOKEN_FILE: ${{ github.workspace }}/scratch/.token
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: ${{ github.workspace }}/trusted/.github/ai-dogfood/dogfood-prompt.md
@@ -333,10 +320,14 @@ jobs:
       - name: Ensure report exists
         env:
           REPORT_PATH: /tmp/ai-dogfood/report.json
-          HEAD_SHA: unknown
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
         run: |
           set -euo pipefail
           if [ ! -f "$REPORT_PATH" ]; then
+            if [ -z "${HEAD_SHA}" ]; then
+              echo "::error::missing dogfood report and PR head SHA"
+              exit 1
+            fi
             bun .github/scripts/ai-dogfood/post-report.ts stub
           fi
 
@@ -367,9 +358,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ needs.resolve.outputs.pr_number }}
         run: |
-          # TEMPORARY: review_dispatch_ref is the PR branch so fetch-report
-          # scripts exist. Safe flow: --ref default_branch.
           gh workflow run ai-review.yml \
             --repo "$GITHUB_REPOSITORY" \
-            --ref "${{ needs.resolve.outputs.review_dispatch_ref }}" \
+            --ref "${{ github.event.repository.default_branch }}" \
             -f "pr=$PR"

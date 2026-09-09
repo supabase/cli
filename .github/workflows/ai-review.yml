@@ -89,6 +89,7 @@ jobs:
       pr_number: ${{ steps.resolve.outputs.pr_number }}
       head_ref: ${{ steps.resolve.outputs.head_ref }}
       trigger: ${{ steps.resolve.outputs.trigger }}
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
     steps:
       # Base repo, default ref, pinned explicitly — this job runs trusted
       # repository code exclusively, and must keep doing so even though the
@@ -176,6 +177,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
           DOGFOOD_REPORT_PATH: /tmp/ai-review/dogfood-report.md
         run: |
           mkdir -p /tmp/ai-review
@@ -338,6 +340,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
           DOGFOOD_REPORT_PATH: /tmp/ai-review/dogfood-report.md
         run: |
           mkdir -p /tmp/ai-review
@@ -520,6 +523,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
           DOGFOOD_REPORT_PATH: /tmp/ai-review/dogfood-report.md
         run: |
           mkdir -p /tmp/ai-review
@@ -640,6 +644,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
           DOGFOOD_REPORT_PATH: /tmp/ai-review/dogfood-report.md
         run: |
           mkdir -p /tmp/ai-review

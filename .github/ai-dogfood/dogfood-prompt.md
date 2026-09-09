@@ -24,7 +24,8 @@ run `bun` against the `pr/` checkout, do not `cd` into `pr/`, and do not pass
 `--token` on the command line. `./bin/sb` already targets staging
 (`--profile supabase-staging`) and injects credentials.
 
-Never read, print, or include the contents of `.token` or `DOGFOOD_TOKEN_FILE`.
+Never read, print, or include the contents of `${RUNNER_TEMP}/dogfood.token`
+or `DOGFOOD_TOKEN_FILE`.
 
 Your working directory is an empty scratch tree. Real-world samples (read-only)
 are under `../samples/` relative to this directory, including

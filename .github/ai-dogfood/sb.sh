@@ -5,8 +5,9 @@ set -euo pipefail
 
 : "${DOGFOOD_CLI_MAIN:?DOGFOOD_CLI_MAIN is required}"
 
-if [[ -n "${DOGFOOD_TOKEN_FILE:-}" && -f "${DOGFOOD_TOKEN_FILE}" ]]; then
-  SUPABASE_ACCESS_TOKEN="$(tr -d '[:space:]' < "${DOGFOOD_TOKEN_FILE}")"
+TOKEN_FILE="${DOGFOOD_TOKEN_FILE:-${RUNNER_TEMP:?}/dogfood.token}"
+if [[ -f "${TOKEN_FILE}" ]]; then
+  SUPABASE_ACCESS_TOKEN="$(tr -d '[:space:]' < "${TOKEN_FILE}")"
   export SUPABASE_ACCESS_TOKEN
 fi
 

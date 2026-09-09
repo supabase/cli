@@ -13,15 +13,9 @@ Two maintainer comments:
 | `/ai-review`             | Code review only. No CLI execution, no staging token.             |
 | `/ai-dogfood-and-review` | GPT 5.6-luna dogfood, then `/ai-review` with the report attached. |
 
-Shadow mode (safe flow): `workflow_dispatch` or an exact `/ai-dogfood-and-review`
-comment. No `pull_request` auto trigger.
-
-**Pre-merge debug (temporary):** this workflow file is not on the default branch
-yet, so dispatch and comments cannot start it. PR **#6495** currently triggers
-on `pull_request` so we can exercise the pipeline against itself: trusted
-scripts come from the PR head, and the chained `ai-review.yml` dispatch targets
-this branch. Remove the `pull_request` trigger and restore default-branch trust
-before merge.
+Shadow mode: `workflow_dispatch` or an exact `/ai-dogfood-and-review`
+comment (a trailing body after a newline is still that command). No
+`pull_request` auto trigger.
 
 ## Why
 
@@ -73,14 +67,17 @@ never does. Containment, not proof of isolation:
   the PR tree is the CLI under test. Codex `working-directory` is the scratch
   corpus copy, so a PR-authored `AGENTS.md` is not auto-loaded.
 - `build-cli` and the dogfood install step hold no staging token. The token is
-  written to a file the trusted `sb` wrapper reads, then passed only to the
-  CLI child. Untrusted `bunfig.toml` / `.npmrc` / `.env` in the PR checkout
-  are renamed aside before `pnpm install`.
+  written to `${RUNNER_TEMP}/dogfood.token` for the trusted `sb` wrapper, then
+  passed only to the CLI child. Untrusted `bunfig.toml` / `.npmrc` / `.env` /
+  `.pnpmfile.*` in the PR checkout are renamed aside before `pnpm install
+  --ignore-pnpmfile`.
 - Codex uses `safety-strategy: drop-sudo` (same as review) but **cannot** use
   review's `sandbox: read-only`: it must write scratch files, talk to
   `api.supabase.green`, and drive Docker. Legacy `workspace-write` blocks
   outbound network and the Docker socket, so v1 uses `danger-full-access`.
-  Never silently reuse `read-only`.
+  Never silently reuse `read-only`. Under that sandbox, `RUNNER_TEMP` is still
+  readable; keeping the token out of the scratch cwd is hygiene, not a
+  security boundary.
 - A malicious same-repo PR can still abuse the staging token once the CLI
   runs. The wrapper, fork ban, maintainer trigger, unique project prefix, and
   always-on sweep are the blast-radius limits. Treat artifacts and the posted
@@ -107,5 +104,4 @@ Prompts, schemas, and scripts come from a **trusted ref**: the default
 branch on `/ai-dogfood-and-review` comments, or the branch selected in the
 Actions UI on `workflow_dispatch` (same-repo only, matching live-e2e).
 Comment-triggered runs therefore only pick up this pipeline after it lands
-on `develop`. Until then, the #6495 `pull_request` debug trigger (see above)
-is the way to iterate; revert it before merge.
+on `develop`.

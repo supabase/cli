@@ -9,6 +9,7 @@
  *   - `post` — post one issue comment (never a review).
  *   - `fetch` — write the latest dogfood comment body to `DOGFOOD_REPORT_PATH`
  *     (empty file if none) and `verdict` to `$GITHUB_OUTPUT` when present.
+ *     When `HEAD_SHA` is set, skip reports whose CLI HEAD does not match.
  *
  * Run in CI as: `bun .github/scripts/ai-dogfood/post-report.ts <command>`.
  */
@@ -148,6 +149,7 @@ export function makeCrashStub(headSha: string, reason: string): DogfoodReport {
 }
 
 const VERDICT_HEADING = /^## Functional dogfood: `(go|conditional|no-go)`/m;
+const CLI_HEAD_LINE = /^CLI HEAD: `([^`]+)`/m;
 
 export function extractDogfoodVerdict(body: string): DogfoodVerdict | undefined {
   if (!body.includes(AI_DOGFOOD_MARKER)) {
@@ -164,6 +166,21 @@ export function extractDogfoodVerdict(body: string): DogfoodVerdict | undefined 
   return verdict;
 }
 
+export function extractDogfoodHeadSha(body: string): string | undefined {
+  const match = CLI_HEAD_LINE.exec(body);
+  return match?.[1];
+}
+
+function sanitizeTableCell(text: string): string {
+  return sanitizeModelText(text)
+    .replaceAll("|", "\\|")
+    .replace(/[\r\n]+/g, " ");
+}
+
+function sanitizeCodeSpan(text: string): string {
+  return sanitizeModelText(text).replaceAll("`", "");
+}
+
 export function renderDogfoodComment(report: DogfoodReport, footer: DogfoodCommentFooter): string {
   const journeyRows =
     report.journeys.length === 0
@@ -173,8 +190,8 @@ export function renderDogfoodComment(report: DogfoodReport, footer: DogfoodComme
           "| --- | --- | --- | --- |",
           ...report.journeys.map(
             (journey) =>
-              `| ${sanitizeModelText(journey.id)} | \`${journey.result}\` | ` +
-              `${sanitizeModelText(journey.commands.join(" · "))} | ${sanitizeModelText(journey.notes)} |`,
+              `| ${sanitizeTableCell(journey.id)} | \`${journey.result}\` | ` +
+              `${sanitizeTableCell(journey.commands.join(" · "))} | ${sanitizeTableCell(journey.notes)} |`,
           ),
         ].join("\n");
 
@@ -186,14 +203,14 @@ export function renderDogfoodComment(report: DogfoodReport, footer: DogfoodComme
   const deleted =
     report.cleanup.projects_deleted.length === 0
       ? "_None recorded._"
-      : report.cleanup.projects_deleted.map((ref) => `- \`${sanitizeModelText(ref)}\``).join("\n");
+      : report.cleanup.projects_deleted.map((ref) => `- \`${sanitizeCodeSpan(ref)}\``).join("\n");
 
   return [
     `## Functional dogfood: \`${report.verdict}\``,
     "",
     sanitizeModelText(report.summary),
     "",
-    `CLI HEAD: \`${sanitizeModelText(report.head_sha)}\``,
+    `CLI HEAD: \`${sanitizeCodeSpan(report.head_sha)}\``,
     "",
     "### Journeys",
     "",
@@ -228,17 +245,25 @@ export interface ReportIo {
   postIssueComment: (prNumber: number, body: string) => Promise<void>;
 }
 
-/** Latest bot-authored dogfood comment wins; earlier ones are ignored. */
-export function pickLatestDogfoodComment(comments: IssueComment[]): IssueComment | undefined {
+/** Latest bot-authored dogfood comment wins. When `expectedHeadSha` is set,
+ * skip reports whose `CLI HEAD` line does not match the current PR head. */
+export function pickLatestDogfoodComment(
+  comments: IssueComment[],
+  expectedHeadSha?: string,
+): IssueComment | undefined {
   for (let index = comments.length - 1; index >= 0; index--) {
     const comment = comments[index];
     if (
-      comment &&
-      comment.authorLogin === WORKFLOW_BOT_LOGIN &&
-      comment.body.includes(AI_DOGFOOD_MARKER)
+      !comment ||
+      comment.authorLogin !== WORKFLOW_BOT_LOGIN ||
+      !comment.body.includes(AI_DOGFOOD_MARKER)
     ) {
-      return comment;
+      continue;
     }
+    if (expectedHeadSha !== undefined && extractDogfoodHeadSha(comment.body) !== expectedHeadSha) {
+      continue;
+    }
+    return comment;
   }
   return undefined;
 }
@@ -246,9 +271,10 @@ export function pickLatestDogfoodComment(comments: IssueComment[]): IssueComment
 export async function fetchDogfoodReport(
   io: ReportIo,
   prNumber: number,
+  expectedHeadSha?: string,
 ): Promise<{ body: string; verdict: DogfoodVerdict | undefined }> {
   const comments = await io.listIssueComments(prNumber);
-  const latest = pickLatestDogfoodComment(comments);
+  const latest = pickLatestDogfoodComment(comments, expectedHeadSha);
   if (!latest) {
     return { body: "", verdict: undefined };
   }
@@ -259,9 +285,10 @@ export async function fetchDogfoodReport(
 export async function fetchDogfoodReportOrEmpty(
   io: ReportIo,
   prNumber: number,
+  expectedHeadSha?: string,
 ): Promise<{ body: string; verdict: DogfoodVerdict | undefined }> {
   try {
-    return await fetchDogfoodReport(io, prNumber);
+    return await fetchDogfoodReport(io, prNumber, expectedHeadSha);
   } catch (error) {
     console.warn(`Could not fetch dogfood report: ${String(error)}`);
     return { body: "", verdict: undefined };
@@ -431,7 +458,18 @@ async function runFetch(): Promise<void> {
     const base = `https://api.github.com/repos/${owner}/${repo}`;
     const io = makeGithubReportIo(token, base);
     const prNumber = Number(requireEnv("PR_NUMBER"));
-    const { body, verdict } = await fetchDogfoodReportOrEmpty(io, prNumber);
+    const rawHeadSha = process.env["HEAD_SHA"];
+    let expectedHeadSha: string | undefined;
+    if (rawHeadSha !== undefined) {
+      expectedHeadSha = rawHeadSha.trim();
+      if (expectedHeadSha === "") {
+        console.warn("HEAD_SHA is empty; not using a dogfood report.");
+        await Bun.write(outPath, "");
+        writeGithubOutput({ verdict: "" });
+        return;
+      }
+    }
+    const { body, verdict } = await fetchDogfoodReportOrEmpty(io, prNumber, expectedHeadSha);
     await Bun.write(outPath, body);
     writeGithubOutput({ verdict: verdict ?? "" });
     console.log(

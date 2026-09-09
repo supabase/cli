@@ -24,6 +24,7 @@ function makePr(overrides: Partial<PrDetails> = {}): PrDetails {
     authorLogin: PR_AUTHOR,
     headRepoFullName: REPO,
     baseRepoFullName: REPO,
+    headSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
     ...overrides,
   };
 }

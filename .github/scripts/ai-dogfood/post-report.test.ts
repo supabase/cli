@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   AI_DOGFOOD_MARKER,
   assertDogfoodReport,
+  extractDogfoodHeadSha,
   extractDogfoodVerdict,
   fetchDogfoodReport,
   fetchDogfoodReportOrEmpty,
@@ -125,6 +126,40 @@ describe("renderDogfoodComment", () => {
     expect(body).not.toContain("@maintainer");
     expect(body).toContain("@<!---->maintainer");
   });
+
+  test("escapes pipes and newlines in table cells", () => {
+    const body = renderDogfoodComment(
+      {
+        ...VALID_REPORT,
+        journeys: [
+          {
+            id: "a|b",
+            commands: ["projects create"],
+            result: "fail",
+            notes: "first line\nsecond | pipe",
+          },
+        ],
+      },
+      footer,
+    );
+    expect(body).toContain("| a\\|b |");
+    expect(body).not.toMatch(/\| a\|b \|/);
+    expect(body).toContain("first line second \\| pipe");
+    expect(body).not.toContain("first line\nsecond");
+  });
+
+  test("strips backticks from values rendered in code spans", () => {
+    const body = renderDogfoodComment(
+      {
+        ...VALID_REPORT,
+        head_sha: "abc`def",
+        cleanup: { projects_deleted: ["ref`with`ticks"] },
+      },
+      footer,
+    );
+    expect(body).toContain("CLI HEAD: `abcdef`");
+    expect(body).toContain("- `refwithticks`");
+  });
 });
 
 describe("extractDogfoodVerdict", () => {
@@ -141,6 +176,16 @@ describe("extractDogfoodVerdict", () => {
   });
 });
 
+describe("extractDogfoodHeadSha", () => {
+  test("reads the SHA from a rendered comment", () => {
+    const body = renderDogfoodComment(VALID_REPORT, {
+      runUrl: "https://example.com/run/1",
+      model: "gpt-5.6-luna",
+    });
+    expect(extractDogfoodHeadSha(body)).toBe(VALID_REPORT.head_sha);
+  });
+});
+
 describe("pickLatestDogfoodComment", () => {
   test("returns the last bot-authored marker comment", () => {
     const comments: IssueComment[] = [
@@ -149,6 +194,24 @@ describe("pickLatestDogfoodComment", () => {
       { id: 3, authorLogin: "github-actions[bot]", body: `new\n${AI_DOGFOOD_MARKER}` },
     ];
     expect(pickLatestDogfoodComment(comments)?.id).toBe(3);
+  });
+
+  test("skips a report whose CLI HEAD does not match the expected SHA", () => {
+    const stale = renderDogfoodComment(
+      { ...VALID_REPORT, head_sha: "stale" },
+      { runUrl: "https://example.com/run/1", model: "gpt-5.6-luna" },
+    );
+    const fresh = renderDogfoodComment(
+      { ...VALID_REPORT, head_sha: "abc123def456" },
+      { runUrl: "https://example.com/run/2", model: "gpt-5.6-luna" },
+    );
+    const comments: IssueComment[] = [
+      { id: 1, authorLogin: "github-actions[bot]", body: stale },
+      { id: 2, authorLogin: "github-actions[bot]", body: fresh },
+    ];
+    expect(pickLatestDogfoodComment(comments, "stale")?.id).toBe(1);
+    expect(pickLatestDogfoodComment(comments, "abc123def456")?.id).toBe(2);
+    expect(pickLatestDogfoodComment(comments, "missing")).toBeUndefined();
   });
 
   test("ignores a marker pasted by a non-bot", () => {
@@ -182,6 +245,20 @@ describe("fetchDogfoodReport / postDogfoodComment", () => {
     const result = await fetchDogfoodReport(io, 42);
     expect(result.verdict).toBe("no-go");
     expect(result.body).toContain(AI_DOGFOOD_MARKER);
+  });
+
+  test("fetch returns empty when the latest report SHA does not match", async () => {
+    const body = renderDogfoodComment(VALID_REPORT, {
+      runUrl: "https://example.com/run/1",
+      model: "gpt-5.6-luna",
+    });
+    const io: ReportIo = {
+      listIssueComments: () =>
+        Promise.resolve([{ id: 9, authorLogin: "github-actions[bot]", body }]),
+      postIssueComment: () => Promise.resolve(),
+    };
+    const result = await fetchDogfoodReport(io, 42, "other-sha");
+    expect(result).toEqual({ body: "", verdict: undefined });
   });
 
   test("fetchDogfoodReportOrEmpty returns empty on list failure instead of throwing", async () => {

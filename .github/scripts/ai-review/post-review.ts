@@ -527,9 +527,10 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   // GitHub App/OAuth/Actions tokens (gho_, ghu_, ghs_, ghr_) share this
   // prefix+length shape with `ghp_` personal access tokens.
   /gh[oprsu]_[A-Za-z0-9]{36,}/g,
-  // Staging/prod personal access tokens (`sbp_` + payload). Dogfood runs
-  // hold a staging token; scrub it if a model echoes it into a report.
-  /sbp_[A-Za-z0-9]{20,}/g,
+  // Staging/prod personal access tokens (`sbp_`, including `sbp_v0_…` /
+  // `sbp_oauth_…` shapes). Dogfood runs hold a staging token; scrub it if a
+  // model echoes it into a report.
+  /sbp_[A-Za-z0-9_]{20,}/g,
 ];
 
 /**
@@ -638,6 +639,17 @@ export interface ReviewFooterInfo {
   modelsFooter: string;
   /** Present when a functional dogfood report comment was found on the PR. */
   dogfoodVerdict?: string;
+}
+
+const DOGFOOD_VERDICTS = new Set(["go", "conditional", "no-go"]);
+
+/** Footer-only: drop anything that is not an exact dogfood verdict. */
+export function parseDogfoodVerdict(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (trimmed && DOGFOOD_VERDICTS.has(trimmed)) {
+    return trimmed;
+  }
+  return undefined;
 }
 
 /** Renders the full review body: summary, findings table, out-of-diff section, refuted details, stats, and footer. */
@@ -1186,7 +1198,7 @@ async function runPost(): Promise<void> {
   // model names have one source of truth.
   const claudeModel = requireEnv("CLAUDE_MODEL");
   const codexModel = requireEnv("CODEX_MODEL");
-  const dogfoodVerdict = process.env["DOGFOOD_VERDICT"]?.trim();
+  const dogfoodVerdict = parseDogfoodVerdict(process.env["DOGFOOD_VERDICT"]);
 
   const raw: unknown = JSON.parse(await Bun.file(mergedReviewPath).text());
   assertMergedReview(raw);
