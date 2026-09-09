@@ -37,7 +37,7 @@ describe("supabase __complete", () => {
   });
 
   test(
-    "routes complete command paths before reading config and reports routing errors on stderr",
+    "routes complete command paths and keeps malformed config on the legacy tree",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const project = await makeTempCliProject("supabase-completion-routing-e2e-");
@@ -58,7 +58,7 @@ describe("supabase __complete", () => {
         expect(prefix.stdout).toContain("start");
         expect(prefix.stderr).toBe("");
 
-        const failure = await runSupabase(["__complete", "--output-format=json", "start", "--"], {
+        const fallback = await runSupabase(["__complete", "--output-format=json", "start", "--"], {
           cwd: project.dir,
           home: home.dir,
           env: {
@@ -66,11 +66,11 @@ describe("supabase __complete", () => {
             SUPABASE_WORKDIR: undefined,
           },
         });
-        expect(failure.exitCode).toBe(1);
-        expect(failure.stdout).toBe("");
-        expect(failure.stderr).toContain("Unable to parse");
+        expect(fallback.exitCode).toBe(0);
+        expect(fallback.stdout).toContain("--ignore-health-check");
+        expect(fallback.stderr).toBe("");
 
-        const malformedConfig = await runSupabase(["start", "--output-format=json"], {
+        const help = await runSupabase(["start", "--help"], {
           cwd: project.dir,
           home: home.dir,
           env: {
@@ -78,12 +78,24 @@ describe("supabase __complete", () => {
             SUPABASE_WORKDIR: undefined,
           },
         });
-        expect(malformedConfig.exitCode).toBe(1);
-        expect(malformedConfig.stderr).toBe("");
-        expect(JSON.parse(malformedConfig.stdout)).toMatchObject({
-          _tag: "Error",
-          error: { code: "StackRoutingError" },
-        });
+        expect(help.exitCode).toBe(0);
+        expect(help.stdout).toContain("--ignore-health-check");
+        expect(help.stderr).toBe("");
+
+        const completionFailure = await runSupabase(
+          ["__complete", "--output-format=json", "start", "--"],
+          {
+            cwd: project.dir,
+            home: home.dir,
+            env: {
+              SUPABASE_EXPERIMENTAL_STACK: "invalid",
+              SUPABASE_WORKDIR: undefined,
+            },
+          },
+        );
+        expect(completionFailure.exitCode).toBe(1);
+        expect(completionFailure.stdout).toBe("");
+        expect(completionFailure.stderr).toContain("must be 0 or 1");
 
         const invalidEnv = await runSupabase(["start", "--output-format=json"], {
           cwd: project.dir,

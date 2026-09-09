@@ -54,7 +54,11 @@ import type { TelemetryRuntime } from "../telemetry/runtime.service.ts";
 import { tracingLayer } from "../telemetry/tracing.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { GLOBAL_VALUE_FLAG_TOKENS } from "./cobra-flag-groups.ts";
-import { resolveAgentOutputFormatFromArgs } from "./agent-output.ts";
+import {
+  BOOLEAN_FLAG_VALUES,
+  resolveAgentOutputFormatFromArgs,
+  ROOT_BOOLEAN_FLAGS,
+} from "./agent-output.ts";
 import { SuccessTrailer, successTrailerLayer } from "./success-trailer.ts";
 import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
 import {
@@ -102,15 +106,13 @@ export type CliRootCommand = Command.Command<"supabase", {}, {}, unknown, Allowe
 // `GLOBAL_VALUE_FLAG_TOKENS`) so the registries cannot drift apart again
 // (issue #6482).
 //
-// DELIBERATE MODEL SPLIT: the scanners below keep pflag-style semantics for
-// BOOLEAN globals — a bare `--debug` never consumes a following token here —
-// while the shipped parser also consumes a space-separated boolean literal
-// (`--debug false`), which `agent-output.ts`'s format walk mirrors. The
-// residual divergence only steers the upgrade-notice base-dir/force-fetch
-// choice and the signal-wrapper selection for spellings like
-// `--debug false --version`, predates the issue #6482 fixes, and is
-// deliberately left with the walk-consolidation follow-up rather than
-// widened into this scanner family piecemeal.
+// DELIBERATE MODEL SPLIT: `extractCommandPath` consumes a recognized
+// space-separated boolean literal (`--debug false`) because it selects the
+// command tree and signal-wrapper behavior. `rootFlagTokens` and
+// `firstPositionalIndex` retain pflag-style semantics for their version and
+// flag-walk checks: a bare boolean never consumes a following token there.
+// The residual divergence predates the issue #6482 fixes and is deliberately
+// left with the walk-consolidation follow-up rather than widened further.
 const globalFlagsWithValues: ReadonlySet<string> = GLOBAL_VALUE_FLAG_TOKENS;
 
 // Commands that run their own foreground signal loop (serve/start daemons) and must
@@ -156,9 +158,19 @@ export function extractCommandPath(args: ReadonlyArray<string>): ReadonlyArray<s
   const commandArgs: Array<string> = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
+    if (arg === "--") return commandArgs;
     if (arg.startsWith("-")) {
       const [flag] = arg.split("=", 1);
       if (!arg.includes("=") && flag !== undefined && globalFlagsWithValues.has(flag)) {
+        index += 1;
+      } else if (shortClusterConsumesNextToken(arg, isGlobalValueFlagToken)) {
+        index += 1;
+      } else if (
+        !arg.includes("=") &&
+        flag !== undefined &&
+        ROOT_BOOLEAN_FLAGS.includes(flag) &&
+        BOOLEAN_FLAG_VALUES.has(args[index + 1] ?? "")
+      ) {
         index += 1;
       }
       continue;

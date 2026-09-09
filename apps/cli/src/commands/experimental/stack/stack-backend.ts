@@ -3,9 +3,7 @@ import { Data, Effect, FileSystem, Option, Path, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { resolveExperimentalFeature } from "../../../command-internal/experimental-feature.ts";
-import { BOOLEAN_FLAG_VALUES, ROOT_BOOLEAN_FLAGS } from "../../../shared/cli/agent-output.ts";
-import { GLOBAL_VALUE_FLAG_TOKENS } from "../../../shared/cli/cobra-flag-groups.ts";
-import { hasRootVersionFlag, rootFlagTokens } from "../../../shared/cli/run.ts";
+import { extractCommandPath, hasRootVersionFlag, rootFlagTokens } from "../../../shared/cli/run.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -42,32 +40,6 @@ const firstExplicitLongFlagValue = (
     if (token.startsWith(`--${flagName}=`)) return token.slice(flagName.length + 3);
   }
   return undefined;
-};
-
-/** Extracts command path tokens while honoring optional separated boolean values. */
-const extractRoutingCommandPath = (args: ReadonlyArray<string>): ReadonlyArray<string> => {
-  const commandPath: Array<string> = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === undefined || arg === "--") break;
-    if (!arg.startsWith("-")) {
-      commandPath.push(arg);
-      continue;
-    }
-    const [flag] = arg.split("=", 1);
-    if (!arg.includes("=") && flag !== undefined && GLOBAL_VALUE_FLAG_TOKENS.has(flag)) {
-      index += 1;
-      continue;
-    }
-    if (
-      !arg.includes("=") &&
-      flag !== undefined &&
-      ROOT_BOOLEAN_FLAGS.includes(flag) &&
-      BOOLEAN_FLAG_VALUES.has(args[index + 1] ?? "")
-    )
-      index += 1;
-  }
-  return commandPath;
 };
 
 const parseConfig = (path: string, content: string): Effect.Effect<unknown, StackRoutingError> =>
@@ -110,7 +82,7 @@ export const resolveStackBackend = (input: {
         : input.args;
     if (hasRootVersionFlag(routingArgs)) return "legacy";
 
-    const commandPath = extractRoutingCommandPath(routingArgs);
+    const commandPath = extractCommandPath(routingArgs);
     const completePath =
       commandPath[0] === "__complete" || commandPath[0] === "__completeNoDesc"
         ? commandPath.slice(1)
@@ -148,17 +120,13 @@ export const resolveStackBackend = (input: {
       return yield* parseConfig(configPath, content).pipe(
         Effect.flatMap((document) => stackSettingFrom(configPath, document)),
       );
-    });
+    }).pipe(Effect.catchTag("StackRoutingError", () => Effect.succeed(false)));
     const enabled = yield* resolveExperimentalFeature({
       feature: "stack",
       configValue,
       env: input.env,
     }).pipe(
-      Effect.mapError((error) =>
-        error instanceof StackRoutingError
-          ? error
-          : new StackRoutingError({ message: error.message, cause: error }),
-      ),
+      Effect.mapError((error) => new StackRoutingError({ message: error.message, cause: error })),
     );
     return enabled ? "stack" : "legacy";
   });

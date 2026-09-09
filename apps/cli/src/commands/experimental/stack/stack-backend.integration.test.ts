@@ -33,7 +33,18 @@ describe("resolveStackBackend", () => {
   );
 
   it.effect("selects the configured backend for top-level start and stop", () => {
-    const root = project("[experimental]\nstack = true\n");
+    const root = project(`project_id = "stack-routing-test"
+[api]
+port = 55421
+[db]
+port = 55422
+[auth]
+enabled = true
+[experimental.webhooks]
+enabled = true
+[experimental]
+stack = true
+`);
     return Effect.gen(function* () {
       expect(yield* resolve({ args: ["start"], cwd: join(root, "nested"), env: {} })).toBe("stack");
       expect(yield* resolve({ args: ["stop"], cwd: root, env: {} })).toBe("stack");
@@ -132,6 +143,12 @@ describe("resolveStackBackend", () => {
       expect(yield* resolve({ args: ["--debug", "false", "start"], cwd: stackRoot, env: {} })).toBe(
         "stack",
       );
+      expect(yield* resolve({ args: ["-yo", "json", "start"], cwd: stackRoot, env: {} })).toBe(
+        "stack",
+      );
+      expect(yield* resolve({ args: ["-ho", "json", "start"], cwd: stackRoot, env: {} })).toBe(
+        "stack",
+      );
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
@@ -142,19 +159,21 @@ describe("resolveStackBackend", () => {
     );
   });
 
-  it.effect("reports malformed routing config as a typed error", () => {
+  it.effect("falls back to legacy routing when the config cannot be read or decoded", () => {
     const root = project('[experimental]\nstack = "yes"\n');
+    const unreadableRoot = mkdtempSync(join(tmpdir(), "supabase-stack-routing-unreadable-"));
+    mkdirSync(join(unreadableRoot, "supabase", "config.toml"), { recursive: true });
     return Effect.gen(function* () {
-      const exit = yield* resolve({ args: ["start"], cwd: root, env: {} }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const error = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(error)).toBe(true);
-        if (Option.isSome(error)) {
-          expect(error.value).toBeInstanceOf(StackRoutingError);
-        }
-      }
-    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+      expect(yield* resolve({ args: ["start"], cwd: root, env: {} })).toBe("legacy");
+      expect(yield* resolve({ args: ["start"], cwd: unreadableRoot, env: {} })).toBe("legacy");
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(root, { recursive: true, force: true });
+          rmSync(unreadableRoot, { recursive: true, force: true });
+        }),
+      ),
+    );
   });
 
   it.effect("ignores the completion cursor until a command path is complete", () => {
@@ -175,20 +194,12 @@ describe("resolveStackBackend", () => {
         }),
       ).toBe("legacy");
 
-      const invalid = yield* resolve({
+      const backend = yield* resolve({
         args: ["__complete", "start", "--"],
         cwd: root,
         env: {},
-      }).pipe(Effect.exit);
-      expect(Exit.isFailure(invalid)).toBe(true);
-      if (Exit.isFailure(invalid)) {
-        const error = Cause.findErrorOption(invalid.cause);
-        expect(Option.isSome(error)).toBe(true);
-        if (Option.isSome(error)) {
-          expect(error.value).toBeInstanceOf(StackRoutingError);
-          expect(String(error.value)).toContain("Unable to parse");
-        }
-      }
+      });
+      expect(backend).toBe("legacy");
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
   });
 

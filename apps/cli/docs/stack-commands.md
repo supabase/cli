@@ -1,15 +1,15 @@
 # Local stack commands
 
-`supabase stack` manages local stacks with the new runtime. It is available regardless of the
-project's backend setting and supports both Docker and native runtimes.
+`supabase stack` manages local stacks with the new experimental runtime. It is unstable, its
+command interface may change, and it is excluded from the CLI compatibility promise. It is
+available regardless of the project's backend setting and supports both Docker and native runtimes.
 
 | Command                | Purpose                                |
 | ---------------------- | -------------------------------------- |
 | `supabase stack start` | Create or resume the project's stack.  |
 | `supabase stack stop`  | Stop a stack while retaining its data. |
 
-The previous `supabase experimental stack` command path has been removed. Use each command's
-`--help` for its available targeting and runtime options.
+Use each command's `--help` for its available targeting and runtime options.
 
 ## Selecting the top-level commands
 
@@ -29,9 +29,11 @@ command implementation and is unaffected by this flag.
 
 Root help and root completion do not read project configuration, so they remain available without
 a project directory. Help and completion for `start` and `stop` resolve the same backend as the
-command itself. An invalid configuration produces a routing error instead of silently selecting a
-backend; set `SUPABASE_EXPERIMENTAL_STACK=0` to select the legacy top-level command explicitly, or
-use the explicit `supabase stack start` or `supabase stack stop` command.
+command itself. If the project configuration cannot be read or parsed, or if
+`experimental.stack` has an invalid value, routing falls back to the legacy backend. An invalid
+`SUPABASE_EXPERIMENTAL_STACK` value is still an error; set it to `0` to select the legacy
+top-level command explicitly, or use the explicit `supabase stack start` or `supabase stack stop`
+command.
 
 For temporary selection, set `SUPABASE_EXPERIMENTAL_STACK=1` to select the new backend or
 `SUPABASE_EXPERIMENTAL_STACK=0` to select the legacy backend. This environment variable takes

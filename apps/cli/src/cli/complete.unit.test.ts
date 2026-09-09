@@ -1533,15 +1533,19 @@ describe("tryComplete", () => {
     expect(exits).toEqual([1]);
   });
 
-  it("writes routing failures to stderr without emitting completion stdout", async () => {
+  it("writes invalid environment routing failures to stderr without emitting completion stdout", async () => {
     const { deps, stdoutWrites, stderrWrites, exits } = makeDeps({
       root: undefined,
-      routingFailure: Cause.fail(new StackRoutingError({ message: "Unable to parse config.toml" })),
+      routingFailure: Cause.fail(
+        new StackRoutingError({
+          message: "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set",
+        }),
+      ),
     });
     expect(await tryComplete(deps)).toBe(true);
     expect(stdoutWrites).toEqual([]);
     expect(stderrWrites).toHaveLength(1);
-    expect(stderrWrites[0]).toContain("Unable to parse config.toml");
+    expect(stderrWrites[0]).toContain("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set");
     expect(stderrWrites[0]).toContain(
       "Suggestion: Set SUPABASE_EXPERIMENTAL_STACK=0 to use legacy start/stop, or use `supabase stack`.",
     );

@@ -23,8 +23,10 @@ const stackStopCommand = experimentalStackStopCommand.pipe(
 );
 
 export const stackCommand = Command.make("stack").pipe(
-  Command.withDescription("Manage a local Supabase stack with the new backend."),
-  Command.withShortDescription("Manage local stacks"),
+  Command.withDescription(
+    "Manage an experimental, unstable local Supabase stack with the new backend. This command is excluded from the CLI compatibility promise.",
+  ),
+  Command.withShortDescription("Manage experimental local stacks"),
   Command.withSubcommands([stackStartCommand, stackStopCommand]),
   Command.provide(experimentalStackRuntimeLayer),
 );
