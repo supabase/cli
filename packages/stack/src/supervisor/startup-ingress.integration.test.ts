@@ -21,15 +21,14 @@ import {
   // oxlint-disable-next-line effecttsgo/node-builtin-import -- native loopback HTTP server is the integration protocol boundary under test.
 } from "node:http";
 import { deriveStackId } from "../identity/Identity.ts";
+import type { StackError } from "../public/Errors.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
-import { bindHostListener } from "./HostListener.ts";
+import { bindHostListener, type HostListener } from "./HostListener.ts";
 import { makeSupervisorIngress } from "./Ingress.ts";
 import { makeSupervisor, type SupervisorRuntime } from "./Supervisor.ts";
 import type { RuntimeDriver } from "../runtime/RuntimeDriver.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { StackLogEntry } from "../public/Logs.ts";
-import type { StackError } from "../public/Errors.ts";
-import type { HostListener } from "../state/PortCoordinator.ts";
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
@@ -113,13 +112,6 @@ describe("startup ingress", () => {
           Context.add(Crypto.Crypto, crypto),
         );
         const listenerBound = yield* Deferred.make<HostListener, StackError>();
-        const apiListener = yield* bindHostListener("127.0.0.1", 0, "api");
-        if (apiListener.binding.kind !== "http")
-          return yield* Effect.die("API listener is not HTTP");
-        const apiAddress = apiListener.binding.server.address();
-        if (typeof apiAddress !== "object" || apiAddress === null)
-          return yield* Effect.die("API listener did not expose an address");
-        const apiPort = apiAddress.port;
         const startEntered = yield* Deferred.make<void>();
         const releaseStart = yield* Deferred.make<void>();
         const activationCalls = yield* Ref.make(0);
@@ -133,11 +125,11 @@ describe("startup ingress", () => {
           port: number,
           field: import("../public/Status.ts").PortField,
         ) =>
-          field === "api"
-            ? Effect.succeed({ ...apiListener, port: apiPort }).pipe(
-                Effect.tap((listener) => Deferred.succeed(listenerBound, listener)),
-              )
-            : bindHostListener(host, port, field);
+          bindHostListener(host, port, field).pipe(
+            Effect.tap((listener) =>
+              field === "api" ? Deferred.succeed(listenerBound, listener) : Effect.void,
+            ),
+          );
         const ingress = yield* makeSupervisorIngress({
           stackId,
           stateRoot: root,
@@ -207,7 +199,7 @@ describe("startup ingress", () => {
             .start({
               config: {
                 listeners: {
-                  api: { port: apiPort },
+                  api: { enabled: true },
                   database: { enabled: false },
                   pooler: { enabled: false },
                   studio: { enabled: false },

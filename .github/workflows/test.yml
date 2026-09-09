@@ -122,6 +122,40 @@ jobs:
       - name: Run integration tests
         run: pnpm run test:integration --coverage.enabled
 
+  test-stack-ports:
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      (github.event_name == 'merge_group' ||
+        inputs.force ||
+        github.event.pull_request.draft == false)
+    name: Run stack port tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [blacksmith-8vcpu-ubuntu-2404, macos-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Run stack integration tests
+        working-directory: packages/stack
+        run: >-
+          pnpm test:integration
+          src/state/ports.integration.test.ts
+          src/state/registry-lease.integration.test.ts
+          src/state/state-store.integration.test.ts
+          src/supervisor/host-listener.integration.test.ts
+          src/supervisor/ingress.integration.test.ts
+          src/gateway/startup-transports.integration.test.ts
+
   test-summary:
     if: |
       always() &&
@@ -130,17 +164,21 @@ jobs:
         inputs.force ||
         github.event.pull_request.draft == false)
     name: Run unit and integration tests
-    needs: [test-unit, test-integration]
+    needs: [test-unit, test-integration, test-stack-ports]
     runs-on: ubuntu-latest
     steps:
       - name: Verify unit and integration tests succeeded
         run: |
           if [ "${{ needs.test-unit.result }}" = "failure" ] || [ "${{ needs.test-unit.result }}" = "cancelled" ] || \
             [ "${{ needs.test-integration.result }}" = "failure" ] || [ "${{ needs.test-integration.result }}" = "cancelled" ]; then
-            echo "::error ::Unit or integration tests failed: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}"
+            echo "::error ::Unit or integration tests failed: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}, stack-ports=${{ needs.test-stack-ports.result }}"
             exit 1
           fi
-          echo "Unit and integration tests reported: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}"
+          if [ "${{ needs.test-stack-ports.result }}" = "failure" ] || [ "${{ needs.test-stack-ports.result }}" = "cancelled" ]; then
+            echo "::error ::Stack port tests failed: stack-ports=${{ needs.test-stack-ports.result }}"
+            exit 1
+          fi
+          echo "Unit and integration tests reported: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}, stack-ports=${{ needs.test-stack-ports.result }}"
 
   test-e2e:
     if: |

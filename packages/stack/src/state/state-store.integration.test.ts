@@ -317,6 +317,37 @@ describe("atomic stack state", () => {
     ),
   );
 
+  it.live("rejects overlapping public and private ports at the persistence boundary", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-state-overlap-" });
+        const value = {
+          ...identity,
+          projectRoot: root,
+          checkoutRoot: root,
+          workspaceId: root,
+          checkoutId: root,
+        };
+        const stackId = yield* deriveStackId(value);
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const before = { ...state(stackId), identity: { ...value, stackId } };
+        yield* store.initialize(stackId, before);
+        const candidate = {
+          ...before,
+          ports: [{ field: "api" as const, port: 23_100, intent: "exact" as const }],
+          privatePorts: [{ workloadId: "database:database", binding: "primary", port: 23_100 }],
+        };
+        const result = yield* store.replace(stackId, candidate).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        const error = errorOf(result);
+        expect(error).toBeInstanceOf(StackStateInvalidError);
+        expect(error?.message).toContain("overlap");
+        expect(yield* store.read(stackId)).toEqual(before);
+      }),
+    ),
+  );
+
   it.live("fails closed when identity remnants exist without state and cleans exact identity", () =>
     withPlatform(
       Effect.gen(function* () {

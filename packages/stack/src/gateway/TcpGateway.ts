@@ -10,7 +10,7 @@ import type {
   GatewayProxyRoute,
   GatewayRouteRequest,
 } from "./Gateway.ts";
-import type { HostListener } from "../state/PortCoordinator.ts";
+import type { HostListener } from "../supervisor/HostListener.ts";
 
 export interface TcpGatewayOptions {
   readonly address?: string;

@@ -2,17 +2,61 @@ import { Effect, Queue, Scope } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
-import { createServer as createNetServer, type Server as NetServer } from "node:net";
+import { createServer as createNetServer, isIP, type Server as NetServer } from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import type { Duplex } from "node:stream";
 import { PortUnavailableError } from "../public/Errors.ts";
-import {
-  type HostListener,
-  type HostListenerConnections,
-  type HostListenerHttpEvent,
-  type HostListenerHttpEvents,
-} from "../state/PortCoordinator.ts";
 import { PORT_FIELD_PROTOCOL, type PortField } from "../public/Status.ts";
+
+export interface HostListener {
+  readonly field: PortField;
+  readonly address: string;
+  readonly port: number;
+  readonly close: Effect.Effect<void>;
+  /** The exact bound listener may be adopted by a gateway without rebind. */
+  readonly binding: HostListenerBinding;
+  /** Sockets accepted since bind, shared with an adopting gateway for teardown. */
+  readonly connections: HostListenerConnections;
+}
+
+interface HostListenerConnections {
+  readonly sockets: Set<Duplex>;
+  /** Release the pre-adoption connection capture without resuming socket reads. */
+  readonly release?: () => void;
+}
+
+export type HostListenerHttpEvent =
+  | {
+      readonly _tag: "request";
+      readonly request: import("node:http").IncomingMessage;
+      readonly response: import("node:http").ServerResponse;
+    }
+  | {
+      readonly _tag: "upgrade";
+      readonly request: import("node:http").IncomingMessage;
+      readonly socket: Duplex;
+      readonly head: Buffer;
+    };
+
+export interface HostListenerHttpEvents {
+  readonly queue: Queue.Queue<HostListenerHttpEvent>;
+  /** Stop capturing events; queued events remain available for gateway adoption. */
+  readonly detach: () => void;
+}
+
+type HostListenerBinding =
+  | {
+      readonly kind: "http";
+      readonly server: HttpServer;
+      readonly pendingEvents?: HostListenerHttpEvents;
+    }
+  | { readonly kind: "tcp"; readonly server: NetServer; readonly allowHalfOpen: true };
+
+/** A scoped TCP reservation used while selecting a durable workload port. */
+export interface HeldPort {
+  readonly port: number;
+  readonly close: Effect.Effect<void>;
+}
 
 export interface HostListenerBindOptions {
   readonly createHttpServer?: () => HttpServer;
@@ -147,7 +191,10 @@ const bind = <T extends HttpServer | NetServer>(
   port: number,
   field: string,
   listen: HostListenerBindOptions["listen"] = (value, host, number, onListening) =>
-    value.listen({ host, port: number }, onListening),
+    value.listen(
+      isIP(host) === 6 ? { host, port: number, ipv6Only: false } : { host, port: number },
+      onListening,
+    ),
   holdConnections = false,
   prepare?: (server: T) => HostListenerHttpEvents,
 ): Effect.Effect<BoundServer<T>, PortUnavailableError, Scope.Scope> =>
@@ -214,10 +261,22 @@ export const checkHostPort = (
   port: number,
   field: string,
 ): Effect.Effect<void, PortUnavailableError> =>
-  Effect.scoped(
-    bind(createNetServer(), address, port, field).pipe(
-      Effect.flatMap(({ server, connections }) => closeServer(server, connections)),
-    ),
+  Effect.scoped(bindHeldPort(address, port, field).pipe(Effect.asVoid));
+
+/** Bind and retain one TCP port until its enclosing scope is closed. */
+export const bindHeldPort = (
+  address: string,
+  port: number,
+  field: string,
+): Effect.Effect<HeldPort, PortUnavailableError, Scope.Scope> =>
+  Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const server = createNetServer({ allowHalfOpen: true });
+      const bound = yield* restore(bind(server, address, port, field, undefined, true));
+      const close = yield* Effect.cached(closeServer(bound.server, bound.connections));
+      yield* Effect.addFinalizer(() => close);
+      return { port: boundPort(bound.server, port), close } satisfies HeldPort;
+    }),
   );
 
 /** Bind and retain one public host listener for direct adoption by a gateway. */
@@ -235,56 +294,75 @@ export const bindHostListenerWithOptions = (
   options: HostListenerBindOptions = {},
 ): Effect.Effect<HostListener, PortUnavailableError, Scope.Scope> => {
   if (PORT_FIELD_PROTOCOL[field] === "http")
-    return Effect.gen(function* () {
-      const queue = yield* Queue.unbounded<HostListenerHttpEvent>();
-      const server = options.createHttpServer?.() ?? createHttpServer();
-      configureHttpTimeouts(server);
-      const bound = yield* bind(server, address, port, field, options.listen, false, (server) =>
-        captureHttpEvents(server, queue),
-      );
-      const close = yield* Effect.cached(
-        Effect.sync(() => bound.pendingEvents?.detach()).pipe(
-          Effect.andThen(
-            bound.pendingEvents === undefined
-              ? Effect.void
-              : Queue.shutdown(bound.pendingEvents.queue),
-          ),
-          Effect.andThen(closeServer(bound.server, bound.connections)),
-        ),
-      );
-      yield* Effect.addFinalizer(() => close);
-      return {
-        field,
-        address,
-        port,
-        close,
-        connections: bound.connections,
-        binding: { kind: "http", server: bound.server, pendingEvents: bound.pendingEvents },
-      } satisfies HostListener;
-    });
-  return bind(
-    options.createTcpServer?.() ?? createNetServer({ allowHalfOpen: true }),
-    address,
-    port,
-    field,
-    options.listen,
-    true,
-  ).pipe(
-    Effect.flatMap(({ server, connections }) =>
+    return Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
-        const close = yield* Effect.cached(closeServer(server, connections));
+        const queue = yield* Queue.unbounded<HostListenerHttpEvent>();
+        const server = options.createHttpServer?.() ?? createHttpServer();
+        configureHttpTimeouts(server);
+        const bound = yield* restore(
+          bind(server, address, port, field, options.listen, false, (server) =>
+            captureHttpEvents(server, queue),
+          ),
+        );
+        const close = yield* Effect.cached(
+          Effect.sync(() => bound.pendingEvents?.detach()).pipe(
+            Effect.andThen(
+              bound.pendingEvents === undefined
+                ? Effect.void
+                : Queue.shutdown(bound.pendingEvents.queue),
+            ),
+            Effect.andThen(closeServer(bound.server, bound.connections)),
+          ),
+        );
         yield* Effect.addFinalizer(() => close);
         return {
           field,
-          address,
-          port,
+          address: boundAddress(bound.server, address),
+          port: boundPort(bound.server, port),
           close,
-          connections,
-          binding: { kind: "tcp", server, allowHalfOpen: true },
+          connections: bound.connections,
+          binding: { kind: "http", server: bound.server, pendingEvents: bound.pendingEvents },
         } satisfies HostListener;
       }),
-    ),
+    );
+  return Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const server = options.createTcpServer?.() ?? createNetServer({ allowHalfOpen: true });
+      const bound = yield* restore(bind(server, address, port, field, options.listen, true));
+      const close = yield* Effect.cached(closeServer(bound.server, bound.connections));
+      yield* Effect.addFinalizer(() => close);
+      return {
+        field,
+        address: boundAddress(bound.server, address),
+        port: boundPort(bound.server, port),
+        close,
+        connections: bound.connections,
+        binding: { kind: "tcp", server: bound.server, allowHalfOpen: true },
+      } satisfies HostListener;
+    }),
   );
 };
 
 export const isHttpPortField = (field: PortField): boolean => PORT_FIELD_PROTOCOL[field] === "http";
+
+const boundAddress = (server: HttpServer | NetServer, fallback: string): string => {
+  const address = server.address();
+  return typeof address === "object" && address !== null ? address.address : fallback;
+};
+
+const boundPort = (server: HttpServer | NetServer, fallback: number): number => {
+  const address = server.address();
+  return typeof address === "object" && address !== null ? address.port : fallback;
+};
+
+const isIpv4 = (address: string): boolean => isIP(address) === 4;
+const isIpv6 = (address: string): boolean => isIP(address) === 6;
+
+/** Whether a bound listener is known to cover an internal bind address. */
+export const hostListenerCoversAddress = (listener: HostListener, address: string): boolean => {
+  if (listener.address === address) return true;
+  if (listener.address === "0.0.0.0" && isIpv4(address)) return true;
+  // IPv6 wildcard listeners are explicitly dual-stack in bind().
+  if (listener.address === "::" && (isIpv6(address) || isIpv4(address))) return true;
+  return false;
+};
