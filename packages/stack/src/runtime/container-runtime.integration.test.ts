@@ -2716,11 +2716,7 @@ describe("container runtime", () => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-container-follower-" });
         const testStackId = yield* deriveStackId({
           projectRoot: root,
-          checkoutRoot: root,
-          workspaceId: root,
-          checkoutId: root,
           branchContext: "ordinary-workspace",
-          localProjectKey: ".",
           stackName: "container-follower",
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
@@ -2729,11 +2725,7 @@ describe("container runtime", () => {
           identity: {
             stackId: testStackId,
             projectRoot: root,
-            checkoutRoot: root,
-            workspaceId: root,
-            checkoutId: root,
             branchContext: "ordinary-workspace",
-            localProjectKey: ".",
             stackName: "container-follower",
           },
           runtime: { kind: "container", engine: "docker" },

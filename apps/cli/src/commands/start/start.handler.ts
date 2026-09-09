@@ -1972,10 +1972,13 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         // (`apiEnabled`/`apiTlsCertPath`/`apiTlsKeyPath`) are the ones handed
         // on. Also folds in the
         // already-resolved `values.jwtSecret`/`values.serviceRoleKey` (decrypted,
-        // env/dotenv-overridden — the same values the real GoTrue/Storage containers
-        // were started with) instead of the raw `config.auth.*`
-        // `resolveStorageCredentials`'s local branch would otherwise
-        // re-derive from a narrower, dotenv-blind `process.env`-only check.
+        // env/dotenv-overridden, signing-keys-aware — the same values the real
+        // GoTrue/Storage containers were started with) instead of the raw
+        // `config.auth.*`. `resolveStorageCredentials`'s local branch now
+        // applies the same env/dotenv override + decrypt composition itself,
+        // but its own derivation is symmetric-only (`generateGoJwt`), so this
+        // fold remains load-bearing for the `signing_keys_path` case where
+        // `values.serviceRoleKey` is asymmetric-signed.
         // Also folds in `storageFileSizeLimit`/
         // `storageVectorEnabled` so `seedBucketsRun` (which reads
         // `config.storage.file_size_limit`/`config.storage.vector.enabled` to fill

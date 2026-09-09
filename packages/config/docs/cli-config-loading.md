@@ -337,13 +337,11 @@ The CLI also keeps machine-local project state outside `@supabase/config`'s scop
 (see `apps/cli/docs/supabase-home.md` for the full layout):
 
 - a repo-local `.supabase/` directory, sibling to `supabase/`, holding checkout-specific caches:
-  linked remote project metadata (`project.json`), checkout-local service-version overrides
-  (`local-versions.json`), and, for ordinary non-Git folders, a workspace-identity marker
-  (`identity.json`) — Git checkouts keep that identity in Git metadata instead and don't write
-  that marker
+  linked remote project metadata (`project.json`) and checkout-local service-version overrides
+  (`local-versions.json`). It does not hold stack identity markers
 - the global `SUPABASE_HOME` directory, holding managed-stack metadata and runtime state, keyed by
-  stack identity — the canonical local-project key relative to the enclosing Git checkout, plus
-  workspace identity — not the config-discovered project root
+  the canonical project root, the full Git branch ref (or `detached`/`ordinary-workspace`), and
+  the stack name
 
 Neither is part of `@supabase/config`'s input.
 

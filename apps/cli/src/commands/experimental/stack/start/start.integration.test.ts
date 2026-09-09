@@ -123,6 +123,7 @@ function handlerLayer(opts: {
       ),
   });
   const apiLayer = Layer.succeed(ExperimentalStackApi, {
+    findStack: () => Effect.succeed(Option.none()),
     createStack: (options) => {
       opts.onCreate?.(options);
       return Effect.succeed(opts.stack);
@@ -197,6 +198,7 @@ describe("experimental stack start targeting", () => {
 
   it.effect("classifies an existing stack runtime mismatch as provided flags", () => {
     const api = Layer.succeed(ExperimentalStackApi, {
+      findStack: () => Effect.succeed(Option.none()),
       createStack: () => Effect.die("unused"),
       openStack: () => Effect.die("unused"),
       inspectStack: () =>
@@ -503,6 +505,7 @@ describe("experimental stack start targeting", () => {
         },
       }),
       Layer.succeed(ExperimentalStackApi, {
+        findStack: () => Effect.succeed(Option.none()),
         createStack: () => {
           created = true;
           return Effect.die("create should not run");

@@ -1,6 +1,7 @@
-import { Context, Data, Effect, FileSystem, Layer, Path, Crypto } from "effect";
+import { Context, Data, Effect, FileSystem, Layer, Option, Path, Crypto } from "effect";
 import {
   createStack,
+  findStack,
   inspectStack,
   isStackId,
   openStack,
@@ -26,6 +27,7 @@ interface ExperimentalStackTarget {
 export class ExperimentalStackTargetError extends Data.TaggedError("ExperimentalStackTargetError")<{
   readonly message: string;
   readonly reason: "flags" | "invalid-config";
+  readonly suggestion?: string;
   readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -55,6 +57,12 @@ export class ExperimentalStackTargetResolver extends Context.Service<
 export class ExperimentalStackApi extends Context.Service<
   ExperimentalStackApi,
   {
+    readonly findStack: (
+      ...args: Parameters<typeof findStack>
+    ) => Effect.Effect<
+      Effect.Success<ReturnType<typeof findStack>>,
+      Effect.Error<ReturnType<typeof findStack>>
+    >;
     readonly createStack: (
       ...args: Parameters<typeof createStack>
     ) => Effect.Effect<
@@ -76,6 +84,45 @@ export class ExperimentalStackApi extends Context.Service<
   }
 >()("supabase/experimental-stack/StackApi") {}
 
+export const validateExperimentalStackTarget = (input: {
+  readonly stack?: string;
+  readonly stackId?: string;
+}): Effect.Effect<void, ExperimentalStackTargetError> =>
+  Effect.gen(function* () {
+    if (input.stack !== undefined && input.stackId !== undefined) {
+      return yield* new ExperimentalStackTargetError({
+        message: "--stack and --stack-id cannot be used together",
+        reason: "flags",
+      });
+    }
+  });
+
+export const validateExperimentalStackId = (
+  id: string,
+): Effect.Effect<StackId, ExperimentalStackTargetError> =>
+  isStackId(id)
+    ? Effect.succeed(id)
+    : Effect.fail(
+        new ExperimentalStackTargetError({
+          message: "--stack-id must be a lowercase SHA-256 stack id",
+          reason: "flags",
+        }),
+      );
+
+export const rejectExperimentalStackOutput = (
+  outputFlag: Option.Option<Option.Option<string>>,
+): Effect.Effect<void, ExperimentalStackTargetError> =>
+  Option.isSome(outputFlag) && Option.isSome(outputFlag.value)
+    ? Effect.fail(
+        new ExperimentalStackTargetError({
+          message: "The legacy -o/--output flag is not supported here; use --output-format json.",
+          reason: "flags",
+          suggestion:
+            "Use --output-format json, --output-format text, or --output-format stream-json.",
+        }),
+      )
+    : Effect.void;
+
 export const experimentalStackApiLayer = Layer.effect(
   ExperimentalStackApi,
   Effect.gen(function* () {
@@ -91,6 +138,7 @@ export const experimentalStackApiLayer = Layer.effect(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcess),
       );
     return {
+      findStack: (...args: Parameters<typeof findStack>) => provideServices(findStack(...args)),
       createStack: (...args: Parameters<typeof createStack>) =>
         provideServices(createStack(...args)),
       openStack: (...args: Parameters<typeof openStack>) => provideServices(openStack(...args)),
@@ -104,13 +152,7 @@ export const experimentalStackApiLayer = Layer.effect(
 export const experimentalStackTargetResolverLayer = Layer.succeed(ExperimentalStackTargetResolver, {
   resolve: (input) =>
     Effect.gen(function* () {
-      if (input.id !== undefined && !isStackId(input.id)) {
-        return yield* new ExperimentalStackTargetError({
-          message: "--stack-id must be a lowercase SHA-256 stack id",
-          reason: "flags",
-        });
-      }
-      const id = input.id;
+      const id = input.id === undefined ? undefined : yield* validateExperimentalStackId(input.id);
       const stackApi = yield* ExperimentalStackApi;
       const inspection =
         id === undefined
