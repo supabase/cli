@@ -194,6 +194,17 @@ describe("getHostname", () => {
   });
 });
 
+describe("platformDefaultDockerHost", () => {
+  it("resolves the unix default off Windows", () => {
+    expect(platformDefaultDockerHost("darwin")).toBe("unix:///var/run/docker.sock");
+    expect(platformDefaultDockerHost("linux")).toBe("unix:///var/run/docker.sock");
+  });
+
+  it("resolves the named-pipe default on Windows", () => {
+    expect(platformDefaultDockerHost("win32")).toBe("npipe:////./pipe/docker_engine");
+  });
+});
+
 describe("resolveDockerDaemonEndpoint", () => {
   let configDirs: Array<string> = [];
 

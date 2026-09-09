@@ -14,7 +14,6 @@ import {
   type VectorContainerSpecInput,
   type VectorDockerSocketPlan,
 } from "./vector.service.ts";
-import { platformDefaultDockerHost } from "../../../command-internal/hostname.ts";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -143,17 +142,6 @@ describe("shouldMountRootDockerSocket", () => {
 
   test("does not match a bare Linux root socket path (never reached in practice, since that branch never checks it)", () => {
     expect(shouldMountRootDockerSocket("/var/run/docker.sock")).toBe(false);
-  });
-});
-
-describe("platformDefaultDockerHost", () => {
-  test("resolves the unix default off Windows", () => {
-    expect(platformDefaultDockerHost("darwin")).toBe("unix:///var/run/docker.sock");
-    expect(platformDefaultDockerHost("linux")).toBe("unix:///var/run/docker.sock");
-  });
-
-  test("resolves the npipe default on Windows", () => {
-    expect(platformDefaultDockerHost("win32")).toBe("npipe:////./pipe/docker_engine");
   });
 });
 

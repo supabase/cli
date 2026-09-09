@@ -12,6 +12,7 @@ import { isContainerNotFoundMessage, spawnContainerCli } from "../container-cli.
 import { readDbToml } from "../db-config.toml-read.ts";
 import { resolveLocalProjectId, localDbContainerId } from "../docker-ids.ts";
 import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "../docker-suggest.ts";
+import { redactHttpUrl } from "../../auth/http-debug.layer.ts";
 import { DebugLogger } from "../debug-logger.service.ts";
 import { resolveDockerDaemonEndpoint } from "../hostname.ts";
 
@@ -39,7 +40,8 @@ export class LocalDbRunningError extends Data.TaggedError("LocalDbRunningError")
  * `docker` CLI binary (issue #6110). `containerExists`: `Option.some(true)` —
  * an Engine-identified 200 with a valid inspect payload; `Option.some(false)`
  * — an Engine-identified 404; `Option.none()` — anything else (non-addressable
- * endpoint, transport failure, silent socket, non-Engine responder, abnormal
+ * endpoint, transport failure, silent socket, the 5s wall-clock bound
+ * expiring, non-Engine responder, abnormal
  * status, malformed body), telling the caller to fall back to the container
  * CLI, which preserves the established wording, daemon-down classification,
  * and Podman fallback.
@@ -77,8 +79,15 @@ export function dockerEndpointSocketPath(endpoint: string): string | undefined {
 const ENGINE_PROBE_TIMEOUT_MS = 2000;
 
 /**
+ * Absolute wall-clock deadline for one probe. The socket timeout above is
+ * inactivity-based, so a peer trickling bytes could evade it; past this bound
+ * the probe is interrupted (aborting the request) and falls back.
+ */
+const ENGINE_PROBE_DEADLINE_MS = 5000;
+
+/**
  * Body bound (an inspect payload is a few KB); past it the probe stops
- * reading and falls back. Matches `ControlHttpReader`'s own cap.
+ * reading and falls back.
  */
 const ENGINE_MAX_RESPONSE_BYTES = 64 * 1024;
 
@@ -95,8 +104,8 @@ const isEngineResponse = (response: http.IncomingMessage): boolean =>
  * `GET /containers/<id>/json` over a local socket / named pipe. Total: every
  * terminal state settles exactly once, and anything that is not an
  * Engine-identified 200/404 settles `Option.none()`. `agent: false` keeps the
- * one-shot connection out of the process-global pool (`ControlHttpReader`'s
- * precedent).
+ * one-shot connection out of the process-global pool, so nothing outlives the
+ * probe.
  */
 const inspectContainerOverSocket = (
   socketPath: string,
@@ -206,6 +215,8 @@ export const localDockerEngineLayer: Layer.Layer<LocalDockerEngine> = Layer.effe
     const debugLogger = yield* Effect.serviceOption(DebugLogger);
     const debug = (line: string) =>
       Option.isSome(debugLogger) ? debugLogger.value.debug(line) : Effect.void;
+    const httpLine = (url: string) =>
+      Option.isSome(debugLogger) ? debugLogger.value.http("GET", redactHttpUrl(url)) : Effect.void;
     return LocalDockerEngine.of({
       containerExists: (containerId) =>
         Effect.suspend(() => {
@@ -214,13 +225,15 @@ export const localDockerEngineLayer: Layer.Layer<LocalDockerEngine> = Layer.effe
             endpoint === undefined ? undefined : dockerEndpointSocketPath(endpoint);
           if (socketPath === undefined) {
             return debug(
-              `local db engine probe: endpoint not directly addressable (${endpoint ?? "unresolved context"}) — using the container CLI`,
+              `local db engine probe: endpoint not directly addressable (${endpoint === undefined ? "unresolved context" : redactHttpUrl(endpoint)}) — using the container CLI`,
             ).pipe(Effect.as(Option.none()));
           }
-          return debug(
-            `local db engine probe: GET ${endpoint} /containers/${containerId}/json`,
-          ).pipe(
+          return httpLine(`${endpoint}/containers/${containerId}/json`).pipe(
             Effect.andThen(inspectContainerOverSocket(socketPath, containerId)),
+            Effect.timeoutOrElse({
+              duration: ENGINE_PROBE_DEADLINE_MS,
+              orElse: () => Effect.succeed(Option.none<boolean>()),
+            }),
             Effect.tap((answer) =>
               Option.isNone(answer)
                 ? debug(
