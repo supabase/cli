@@ -61,14 +61,14 @@ describe("buildKongEmailTemplateBind", () => {
 
   test("builds the bind string from an already-resolved resolvedPath (start.go:531-538)", () => {
     expect(buildKongEmailTemplateBind({ id: "invite", resolvedPath: "/work/invite.html" })).toBe(
-      "/work/invite.html:/home/kong/templates/email/invite.html:rw",
+      "/work/invite.html:/home/kong/templates/email/invite.html:rw,z",
     );
   });
 
   test("drops the extension when resolvedPath has none", () => {
     expect(
       buildKongEmailTemplateBind({ id: "invite_notification", resolvedPath: "/work/invite" }),
-    ).toBe("/work/invite:/home/kong/templates/email/invite_notification:rw");
+    ).toBe("/work/invite:/home/kong/templates/email/invite_notification:rw,z");
   });
 });
 
@@ -200,8 +200,8 @@ describe("buildKongContainerSpec", () => {
       ],
     });
     expect(spec.binds).toEqual([
-      "/work/invite.html:/home/kong/templates/email/invite.html:rw",
-      "/abs/recovery.html:/home/kong/templates/email/recovery_notification.html:rw",
+      "/work/invite.html:/home/kong/templates/email/invite.html:rw,z",
+      "/abs/recovery.html:/home/kong/templates/email/recovery_notification.html:rw,z",
     ]);
   });
 
