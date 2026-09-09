@@ -85,11 +85,19 @@ terminal, a "What's on your mind?" text prompt collects it first.
 { "delete_token": "<uuid>", "message": "Thanks for the feedback!" }
 ```
 
+The "Sending feedback..." task is reported on stderr as `[task] start: Sending
+feedback...`; stdout carries the payload only.
+
 ### `--output-format stream-json`
 
 ```ndjson
+{"type":"log","level":"info","message":"Sending feedback...","timestamp":"…"}
 {"type":"result","data":{"delete_token":"<uuid>","message":"Thanks for the feedback!"},"timestamp":"…"}
 ```
+
+The task start arrives as a `log` event before the `result` event (on
+failure, a `level: "error"` log reading `Task failed.` precedes the `error`
+event); the shared stream-json layer emits these for every `output.task`.
 
 ## Notes
 

@@ -93,15 +93,22 @@ the delete runs behind a "Deleting feedback..." spinner. `--yes` /
 ```
 
 Requires `--yes`: machine modes cannot prompt, and the command fails loudly
-rather than deleting without confirmation.
+rather than deleting without confirmation. The "Looking up feedback..." and
+"Deleting feedback..." tasks are reported on stderr as `[task] start: …` lines;
+stdout carries the payload only.
 
 ### `--output-format stream-json`
 
 ```ndjson
+{"type":"log","level":"info","message":"Looking up feedback...","timestamp":"…"}
+{"type":"log","level":"info","message":"Deleting feedback...","timestamp":"…"}
 {"type":"result","data":{"feedback":"<feedback text>","message":"Feedback deleted."},"timestamp":"…"}
 ```
 
-Also requires `--yes`.
+Also requires `--yes`. Each task start arrives as a `log` event before the
+`result` event (on failure, a `level: "error"` log reading `Task failed.`
+precedes the `error` event); the shared stream-json layer emits these for
+every `output.task`.
 
 ## Notes
 
