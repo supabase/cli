@@ -1,25 +1,21 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  LEGACY_PULL_PAYLOAD_VERSION,
-  legacyPullConfirmMessage,
-  legacyPullDirtyWarningMessage,
-  legacyPullPayload,
-  legacyPullSummaryMessage,
-  legacyRenderPullSummary,
-  type LegacyPullConfirmMessageInput,
+  PULL_PAYLOAD_VERSION,
+  pullConfirmMessage,
+  pullDirtyWarningMessage,
+  pullPayload,
+  pullSummaryMessage,
+  renderPullSummary,
+  type PullConfirmMessageInput,
 } from "./pull.format.ts";
-import {
-  LEGACY_PULL_STEP_ORDER,
-  type LegacyPullAggregate,
-  type LegacyPullStepResult,
-} from "./pull.types.ts";
+import { PULL_STEP_ORDER, type PullAggregate, type PullStepResult } from "./pull.types.ts";
 
 const PROJECT_REF = "abcdefghijklmnopqrst";
 
-describe("legacyPullPayload", () => {
+describe("pullPayload", () => {
   it("shapes a dry-run aggregate: every step planned, no branch, wrote:false", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+    const results: ReadonlyArray<PullStepResult> = [
       {
         step: "config",
         status: "planned",
@@ -30,7 +26,7 @@ describe("legacyPullPayload", () => {
       { step: "db", status: "planned", written: [], detail: {} },
       { step: "functions", status: "planned", written: [], detail: {} },
     ];
-    const aggregate: LegacyPullAggregate = {
+    const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: undefined,
       dryRun: true,
@@ -38,8 +34,8 @@ describe("legacyPullPayload", () => {
       results,
     };
 
-    expect(legacyPullPayload(aggregate)).toEqual({
-      schema_version: LEGACY_PULL_PAYLOAD_VERSION,
+    expect(pullPayload(aggregate)).toEqual({
+      schema_version: PULL_PAYLOAD_VERSION,
       target: { project_ref: PROJECT_REF },
       dry_run: true,
       confirmed: false,
@@ -56,7 +52,7 @@ describe("legacyPullPayload", () => {
   });
 
   it("shapes a fully-succeeded aggregate: every step changed, branch present, wrote:true", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+    const results: ReadonlyArray<PullStepResult> = [
       {
         step: "config",
         status: "changed",
@@ -82,7 +78,7 @@ describe("legacyPullPayload", () => {
         detail: { project_ref: PROJECT_REF, function_slugs: ["hello"] },
       },
     ];
-    const aggregate: LegacyPullAggregate = {
+    const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: "staging",
       dryRun: false,
@@ -90,8 +86,8 @@ describe("legacyPullPayload", () => {
       results,
     };
 
-    expect(legacyPullPayload(aggregate)).toEqual({
-      schema_version: LEGACY_PULL_PAYLOAD_VERSION,
+    expect(pullPayload(aggregate)).toEqual({
+      schema_version: PULL_PAYLOAD_VERSION,
       target: { project_ref: PROJECT_REF, branch: "staging" },
       dry_run: false,
       confirmed: true,
@@ -124,7 +120,7 @@ describe("legacyPullPayload", () => {
   });
 
   it("shapes a declined aggregate: config/db/functions planned, migration_history skipped(declined), wrote:false", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+    const results: ReadonlyArray<PullStepResult> = [
       { step: "config", status: "planned", written: [], detail: { schema_version: 1 } },
       {
         step: "migration_history",
@@ -136,7 +132,7 @@ describe("legacyPullPayload", () => {
       { step: "db", status: "planned", written: [], detail: {} },
       { step: "functions", status: "planned", written: [], detail: {} },
     ];
-    const aggregate: LegacyPullAggregate = {
+    const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: undefined,
       dryRun: false,
@@ -144,7 +140,7 @@ describe("legacyPullPayload", () => {
       results,
     };
 
-    const payload = legacyPullPayload(aggregate);
+    const payload = pullPayload(aggregate);
     expect(payload["wrote"]).toBe(false);
     expect(payload["confirmed"]).toBe(false);
     expect(payload["dry_run"]).toBe(false);
@@ -164,7 +160,7 @@ describe("legacyPullPayload", () => {
   });
 
   it("shapes a mixed-failure aggregate: one step failed, wrote:true from the OTHER changed steps", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+    const results: ReadonlyArray<PullStepResult> = [
       {
         step: "config",
         status: "changed",
@@ -189,7 +185,7 @@ describe("legacyPullPayload", () => {
         detail: { project_ref: PROJECT_REF, function_slugs: ["hello"] },
       },
     ];
-    const aggregate: LegacyPullAggregate = {
+    const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: undefined,
       dryRun: false,
@@ -197,7 +193,7 @@ describe("legacyPullPayload", () => {
       results,
     };
 
-    const payload = legacyPullPayload(aggregate);
+    const payload = pullPayload(aggregate);
     expect(payload["wrote"]).toBe(true);
     expect((payload["steps"] as Record<string, unknown>)["migration_history"]).toEqual({
       status: "failed",
@@ -217,75 +213,75 @@ describe("legacyPullPayload", () => {
     });
   });
 
-  it("always reports step_order as LEGACY_PULL_STEP_ORDER, verbatim and in order", () => {
-    const aggregate: LegacyPullAggregate = {
+  it("always reports step_order as PULL_STEP_ORDER, verbatim and in order", () => {
+    const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: undefined,
       dryRun: false,
       confirmed: true,
       results: [],
     };
-    expect(legacyPullPayload(aggregate)["step_order"]).toEqual(LEGACY_PULL_STEP_ORDER);
+    expect(pullPayload(aggregate)["step_order"]).toEqual(PULL_STEP_ORDER);
   });
 
   it("omits a step's key entirely from steps when no result was reported for it", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+    const results: ReadonlyArray<PullStepResult> = [
       { step: "config", status: "changed", written: ["supabase/config.toml"], detail: {} },
     ];
-    const aggregate: LegacyPullAggregate = {
+    const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: undefined,
       dryRun: false,
       confirmed: true,
       results,
     };
-    const payload = legacyPullPayload(aggregate);
+    const payload = pullPayload(aggregate);
     expect(Object.keys(payload["steps"] as Record<string, unknown>)).toEqual(["config"]);
   });
 });
 
-describe("legacyPullSummaryMessage", () => {
+describe("pullSummaryMessage", () => {
   it("reads 'declined' and lists the actual counts when the confirmation was declined outside a dry run", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+    const results: ReadonlyArray<PullStepResult> = [
       { step: "config", status: "planned", written: [], detail: {} },
       { step: "migration_history", status: "skipped", written: [], detail: {}, reason: "declined" },
       { step: "db", status: "planned", written: [], detail: {} },
       { step: "functions", status: "planned", written: [], detail: {} },
     ];
-    const aggregate: LegacyPullAggregate = {
+    const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: undefined,
       dryRun: false,
       confirmed: false,
       results,
     };
-    const message = legacyPullSummaryMessage(aggregate);
+    const message = pullSummaryMessage(aggregate);
     expect(message).toBe(
       "Pull declined: nothing was changed (0 changed, 0 unchanged, 1 skipped, 3 planned, 0 failed).",
     );
   });
 
   it("reads 'preview (dry run)' and lists the actual counts for --dry-run", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+    const results: ReadonlyArray<PullStepResult> = [
       { step: "config", status: "planned", written: [], detail: {} },
       { step: "migration_history", status: "planned", written: [], detail: {} },
       { step: "db", status: "planned", written: [], detail: {} },
       { step: "functions", status: "planned", written: [], detail: {} },
     ];
-    const aggregate: LegacyPullAggregate = {
+    const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: undefined,
       dryRun: true,
       confirmed: false,
       results,
     };
-    expect(legacyPullSummaryMessage(aggregate)).toBe(
+    expect(pullSummaryMessage(aggregate)).toBe(
       "Pull preview (dry run): nothing was changed (0 changed, 0 unchanged, 0 skipped, 4 planned, 0 failed).",
     );
   });
 
   it("reads 'finished with failures' when at least one step failed", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+    const results: ReadonlyArray<PullStepResult> = [
       { step: "config", status: "changed", written: ["supabase/config.toml"], detail: {} },
       {
         step: "migration_history",
@@ -297,45 +293,45 @@ describe("legacyPullSummaryMessage", () => {
       { step: "db", status: "unchanged", written: [], detail: {} },
       { step: "functions", status: "changed", written: ["supabase/functions/a"], detail: {} },
     ];
-    const aggregate: LegacyPullAggregate = {
+    const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: undefined,
       dryRun: false,
       confirmed: true,
       results,
     };
-    expect(legacyPullSummaryMessage(aggregate)).toBe(
+    expect(pullSummaryMessage(aggregate)).toBe(
       "Pull finished with failures: 2 changed, 1 unchanged, 0 skipped, 0 planned, 1 failed.",
     );
   });
 
   it("reads 'complete' once confirmed and nothing failed", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+    const results: ReadonlyArray<PullStepResult> = [
       { step: "config", status: "changed", written: ["supabase/config.toml"], detail: {} },
       { step: "migration_history", status: "changed", written: ["a"], detail: {} },
       { step: "db", status: "changed", written: ["b"], detail: {} },
       { step: "functions", status: "changed", written: ["c"], detail: {} },
     ];
-    const aggregate: LegacyPullAggregate = {
+    const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: undefined,
       dryRun: false,
       confirmed: true,
       results,
     };
-    expect(legacyPullSummaryMessage(aggregate)).toBe(
+    expect(pullSummaryMessage(aggregate)).toBe(
       "Pull complete: 4 changed, 0 unchanged, 0 skipped, 0 planned, 0 failed.",
     );
   });
 });
 
-describe("legacyRenderPullSummary", () => {
+describe("renderPullSummary", () => {
   function rowFor(text: string, step: string): string | undefined {
     return text.split("\n").find((line) => line.startsWith(`  ${step}`));
   }
 
-  it("names the target project in the header and renders every step in LEGACY_PULL_STEP_ORDER order", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+  it("names the target project in the header and renders every step in PULL_STEP_ORDER order", () => {
+    const results: ReadonlyArray<PullStepResult> = [
       { step: "config", status: "changed", written: ["supabase/config.toml"], detail: {} },
       {
         step: "migration_history",
@@ -358,7 +354,7 @@ describe("legacyRenderPullSummary", () => {
         detail: {},
       },
     ];
-    const aggregate: LegacyPullAggregate = {
+    const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: undefined,
       dryRun: false,
@@ -366,11 +362,11 @@ describe("legacyRenderPullSummary", () => {
       results,
     };
 
-    const text = legacyRenderPullSummary(aggregate);
+    const text = renderPullSummary(aggregate);
     const lines = text.split("\n");
     expect(lines[0]).toBe(`Pull summary — project ${PROJECT_REF}`);
 
-    const stepIndexes = LEGACY_PULL_STEP_ORDER.map((step) =>
+    const stepIndexes = PULL_STEP_ORDER.map((step) =>
       lines.findIndex((line) => line.startsWith(`  ${step}`)),
     );
     expect(stepIndexes.every((index) => index !== -1)).toBe(true);
@@ -380,7 +376,7 @@ describe("legacyRenderPullSummary", () => {
   });
 
   it("inlines a failed step's failure message on its own row", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+    const results: ReadonlyArray<PullStepResult> = [
       { step: "config", status: "changed", written: ["supabase/config.toml"], detail: {} },
       { step: "migration_history", status: "unchanged", written: [], detail: {} },
       {
@@ -392,19 +388,19 @@ describe("legacyRenderPullSummary", () => {
       },
       { step: "functions", status: "unchanged", written: [], detail: {} },
     ];
-    const aggregate: LegacyPullAggregate = {
+    const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: undefined,
       dryRun: false,
       confirmed: true,
       results,
     };
-    const dbRow = rowFor(legacyRenderPullSummary(aggregate), "db");
+    const dbRow = rowFor(renderPullSummary(aggregate), "db");
     expect(dbRow).toContain("shadow database container failed to start");
   });
 
   it("inlines a skipped step's reason in parentheses", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+    const results: ReadonlyArray<PullStepResult> = [
       { step: "config", status: "unchanged", written: [], detail: {} },
       {
         step: "migration_history",
@@ -416,19 +412,19 @@ describe("legacyRenderPullSummary", () => {
       { step: "db", status: "unchanged", written: [], detail: {} },
       { step: "functions", status: "unchanged", written: [], detail: {} },
     ];
-    const aggregate: LegacyPullAggregate = {
+    const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: undefined,
       dryRun: false,
       confirmed: true,
       results,
     };
-    const row = rowFor(legacyRenderPullSummary(aggregate), "migration_history");
+    const row = rowFor(renderPullSummary(aggregate), "migration_history");
     expect(row).toContain("(not_needed)");
   });
 
   it("shows only the first written path with a '+N more' suffix when a step wrote more than one file", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+    const results: ReadonlyArray<PullStepResult> = [
       { step: "config", status: "unchanged", written: [], detail: {} },
       { step: "migration_history", status: "unchanged", written: [], detail: {} },
       { step: "db", status: "unchanged", written: [], detail: {} },
@@ -439,20 +435,20 @@ describe("legacyRenderPullSummary", () => {
         detail: {},
       },
     ];
-    const aggregate: LegacyPullAggregate = {
+    const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: undefined,
       dryRun: false,
       confirmed: true,
       results,
     };
-    const row = rowFor(legacyRenderPullSummary(aggregate), "functions");
+    const row = rowFor(renderPullSummary(aggregate), "functions");
     expect(row).toContain("supabase/functions/a (+2 more)");
     expect(row).not.toContain("supabase/functions/b");
   });
 
   it("renders a failed step's suggestion as indented lines below its row, in order, so a text-mode user sees it too", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+    const results: ReadonlyArray<PullStepResult> = [
       { step: "config", status: "unchanged", written: [], detail: {} },
       { step: "migration_history", status: "unchanged", written: [], detail: {} },
       {
@@ -470,7 +466,7 @@ describe("legacyRenderPullSummary", () => {
       },
       { step: "functions", status: "unchanged", written: [], detail: {} },
     ];
-    const aggregate: LegacyPullAggregate = {
+    const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: undefined,
       dryRun: false,
@@ -478,7 +474,7 @@ describe("legacyRenderPullSummary", () => {
       results,
     };
 
-    const text = legacyRenderPullSummary(aggregate);
+    const text = renderPullSummary(aggregate);
     const lines = text.split("\n");
     const dbRowIndex = lines.findIndex((line) => line.startsWith("  db"));
     expect(lines[dbRowIndex + 1]).toContain("Make sure your local git repo is up-to-date.");
@@ -493,7 +489,7 @@ describe("legacyRenderPullSummary", () => {
   });
 
   it("adds no continuation lines for a failed step with no suggestion", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+    const results: ReadonlyArray<PullStepResult> = [
       { step: "config", status: "unchanged", written: [], detail: {} },
       { step: "migration_history", status: "unchanged", written: [], detail: {} },
       {
@@ -505,21 +501,21 @@ describe("legacyRenderPullSummary", () => {
       },
       { step: "functions", status: "unchanged", written: [], detail: {} },
     ];
-    const aggregate: LegacyPullAggregate = {
+    const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: undefined,
       dryRun: false,
       confirmed: true,
       results,
     };
-    const lines = legacyRenderPullSummary(aggregate).split("\n");
+    const lines = renderPullSummary(aggregate).split("\n");
     const dbRowIndex = lines.findIndex((line) => line.startsWith("  db"));
     expect(lines[dbRowIndex + 1]!.startsWith("  functions")).toBe(true);
   });
 });
 
-describe("legacyPullConfirmMessage", () => {
-  const BASE: LegacyPullConfirmMessageInput = {
+describe("pullConfirmMessage", () => {
+  const BASE: PullConfirmMessageInput = {
     ref: PROJECT_REF,
     branch: undefined,
     configDiffText: undefined,
@@ -529,29 +525,29 @@ describe("legacyPullConfirmMessage", () => {
   };
 
   it("names the target project in the header line", () => {
-    const message = legacyPullConfirmMessage(BASE);
+    const message = pullConfirmMessage(BASE);
     expect(message.startsWith(`Pulling from project ${PROJECT_REF}\n\n`)).toBe(true);
   });
 
   it("names the branch in the header line when one is set", () => {
-    const message = legacyPullConfirmMessage({ ...BASE, branch: "staging" });
+    const message = pullConfirmMessage({ ...BASE, branch: "staging" });
     expect(message.startsWith(`Pulling from project ${PROJECT_REF} (branch "staging")\n\n`)).toBe(
       true,
     );
   });
 
   it("reports 'no config differences' when configDiffText is undefined", () => {
-    const message = legacyPullConfirmMessage(BASE);
+    const message = pullConfirmMessage(BASE);
     expect(message).toContain("No config differences found.\n\n");
   });
 
   it("reports 'no config differences' when configDiffText is an empty string", () => {
-    const message = legacyPullConfirmMessage({ ...BASE, configDiffText: "" });
+    const message = pullConfirmMessage({ ...BASE, configDiffText: "" });
     expect(message).toContain("No config differences found.\n\n");
   });
 
   it("inlines a real config diff, trimming trailing whitespace, instead of the 'no differences' line", () => {
-    const message = legacyPullConfirmMessage({
+    const message = pullConfirmMessage({
       ...BASE,
       configDiffText: "api.max_rows [update, write]\n  local:  500\n  remote: 1000\n\n\n",
     });
@@ -560,7 +556,7 @@ describe("legacyPullConfirmMessage", () => {
   });
 
   it("always describes the db and functions steps qualitatively, regardless of other inputs", () => {
-    const message = legacyPullConfirmMessage(BASE);
+    const message = pullConfirmMessage(BASE);
     expect(message).toContain(
       "Pull the remote database schema into supabase/migrations (also updates the remote migration history table; requires Docker).",
     );
@@ -569,7 +565,7 @@ describe("legacyPullConfirmMessage", () => {
 
   it("omits the migration-history line entirely when willFetchMigrationHistory is false, regardless of the reason value", () => {
     for (const migrationHistoryReason of ["flag", "bootstrap", undefined] as const) {
-      const message = legacyPullConfirmMessage({
+      const message = pullConfirmMessage({
         ...BASE,
         willFetchMigrationHistory: false,
         migrationHistoryReason,
@@ -579,7 +575,7 @@ describe("legacyPullConfirmMessage", () => {
   });
 
   it("names --with-migration-history when willFetchMigrationHistory is true for reason 'flag'", () => {
-    const message = legacyPullConfirmMessage({
+    const message = pullConfirmMessage({
       ...BASE,
       willFetchMigrationHistory: true,
       migrationHistoryReason: "flag",
@@ -590,7 +586,7 @@ describe("legacyPullConfirmMessage", () => {
   });
 
   it("adds the overwrite-disclosure line only when the migration-history fetch is due to '--with-migration-history' (reason 'flag')", () => {
-    const message = legacyPullConfirmMessage({
+    const message = pullConfirmMessage({
       ...BASE,
       willFetchMigrationHistory: true,
       migrationHistoryReason: "flag",
@@ -601,7 +597,7 @@ describe("legacyPullConfirmMessage", () => {
   });
 
   it("omits the overwrite-disclosure line for the bootstrap case (nothing to overwrite)", () => {
-    const message = legacyPullConfirmMessage({
+    const message = pullConfirmMessage({
       ...BASE,
       willFetchMigrationHistory: true,
       migrationHistoryReason: "bootstrap",
@@ -610,7 +606,7 @@ describe("legacyPullConfirmMessage", () => {
   });
 
   it("names the no-migration-files bootstrap case when willFetchMigrationHistory is true for reason 'bootstrap'", () => {
-    const message = legacyPullConfirmMessage({
+    const message = pullConfirmMessage({
       ...BASE,
       willFetchMigrationHistory: true,
       migrationHistoryReason: "bootstrap",
@@ -621,7 +617,7 @@ describe("legacyPullConfirmMessage", () => {
   });
 
   it("falls back to the bootstrap wording when willFetchMigrationHistory is true but no reason is given", () => {
-    const message = legacyPullConfirmMessage({
+    const message = pullConfirmMessage({
       ...BASE,
       willFetchMigrationHistory: true,
       migrationHistoryReason: undefined,
@@ -632,19 +628,19 @@ describe("legacyPullConfirmMessage", () => {
   });
 
   it("omits the dirty-tree warning when dirtyPaths is empty", () => {
-    const message = legacyPullConfirmMessage({ ...BASE, dirtyPaths: [] });
+    const message = pullConfirmMessage({ ...BASE, dirtyPaths: [] });
     expect(message).not.toContain("uncommitted or untracked changes");
   });
 
   it("appends the dirty-tree warning as its own trailing block naming the one dirty path", () => {
-    const message = legacyPullConfirmMessage({ ...BASE, dirtyPaths: ["supabase/config.toml"] });
+    const message = pullConfirmMessage({ ...BASE, dirtyPaths: ["supabase/config.toml"] });
     expect(message).toContain(
       "supabase/config.toml has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
     );
   });
 
   it("uses whatever paths are given, not a hardcoded supabase/config.toml", () => {
-    const message = legacyPullConfirmMessage({
+    const message = pullConfirmMessage({
       ...BASE,
       dirtyPaths: ["supabase/config.json"],
     });
@@ -655,7 +651,7 @@ describe("legacyPullConfirmMessage", () => {
   });
 
   it("names every dirty path when more than one location is dirty", () => {
-    const message = legacyPullConfirmMessage({
+    const message = pullConfirmMessage({
       ...BASE,
       dirtyPaths: ["supabase/config.toml", "supabase/migrations", "supabase/functions"],
     });
@@ -665,7 +661,7 @@ describe("legacyPullConfirmMessage", () => {
   });
 
   it("orders the body config → migration_history → db → functions, and composes a config diff, a bootstrap migration-history fetch, and the dirty warning together in one message", () => {
-    const message = legacyPullConfirmMessage({
+    const message = pullConfirmMessage({
       ...BASE,
       configDiffText: "api.max_rows [update, write]\n  local:  500\n  remote: 1000",
       willFetchMigrationHistory: true,
@@ -688,22 +684,22 @@ describe("legacyPullConfirmMessage", () => {
   });
 });
 
-describe("legacyPullDirtyWarningMessage", () => {
+describe("pullDirtyWarningMessage", () => {
   it("uses singular 'has' for exactly one dirty path", () => {
-    expect(legacyPullDirtyWarningMessage(["supabase/config.toml"])).toBe(
+    expect(pullDirtyWarningMessage(["supabase/config.toml"])).toBe(
       "supabase/config.toml has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
     );
   });
 
   it("joins two dirty paths with 'and' and uses plural 'have'", () => {
-    expect(legacyPullDirtyWarningMessage(["supabase/config.toml", "supabase/functions"])).toBe(
+    expect(pullDirtyWarningMessage(["supabase/config.toml", "supabase/functions"])).toBe(
       "supabase/config.toml and supabase/functions have uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
     );
   });
 
   it("joins three dirty paths with an Oxford comma and uses plural 'have'", () => {
     expect(
-      legacyPullDirtyWarningMessage([
+      pullDirtyWarningMessage([
         "supabase/config.toml",
         "supabase/migrations",
         "supabase/functions",

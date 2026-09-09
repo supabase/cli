@@ -1,34 +1,34 @@
 import { Cause } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { LegacyDbPullMigrationConflictError } from "../db/pull/pull.errors.ts";
+import { DbPullMigrationConflictError } from "../db/pull/pull.errors.ts";
 import {
-  legacyPullAggregate,
-  legacyPullConfigStepResult,
-  legacyPullCounts,
-  legacyPullDbStepResult,
-  legacyPullFailedStepResult,
-  legacyPullFunctionsStepResult,
-  legacyPullMigrationHistoryStepResult,
-  legacyPullRetryHint,
-  type LegacyPullConfigStepOutcome,
-  type LegacyPullDbStepOutcome,
-  type LegacyPullFunctionsStepOutcome,
-  type LegacyPullMigrationHistoryStepOutcome,
+  pullAggregate,
+  pullConfigStepResult,
+  pullCounts,
+  pullDbStepResult,
+  pullFailedStepResult,
+  pullFunctionsStepResult,
+  pullMigrationHistoryStepResult,
+  pullRetryHint,
+  type PullConfigStepOutcome,
+  type PullDbStepOutcome,
+  type PullFunctionsStepOutcome,
+  type PullMigrationHistoryStepOutcome,
 } from "./pull.aggregate.ts";
-import type { LegacyPullStepResult } from "./pull.types.ts";
+import type { PullStepResult } from "./pull.types.ts";
 
-describe("legacyPullConfigStepResult", () => {
+describe("pullConfigStepResult", () => {
   const payload = { schema_version: 1 };
 
   it("reports unchanged when the plan had no work at all, even if confirmed and not a dry run", () => {
-    const outcome: LegacyPullConfigStepOutcome = {
+    const outcome: PullConfigStepOutcome = {
       dryRun: false,
       hasWork: false,
       confirmed: true,
       configFilePath: "supabase/config.toml",
     };
-    expect(legacyPullConfigStepResult(outcome, payload)).toEqual({
+    expect(pullConfigStepResult(outcome, payload)).toEqual({
       step: "config",
       status: "unchanged",
       written: [],
@@ -37,13 +37,13 @@ describe("legacyPullConfigStepResult", () => {
   });
 
   it("reports planned for a dry run that has work", () => {
-    const outcome: LegacyPullConfigStepOutcome = {
+    const outcome: PullConfigStepOutcome = {
       dryRun: true,
       hasWork: true,
       confirmed: false,
       configFilePath: "supabase/config.toml",
     };
-    expect(legacyPullConfigStepResult(outcome, payload)).toEqual({
+    expect(pullConfigStepResult(outcome, payload)).toEqual({
       step: "config",
       status: "planned",
       written: [],
@@ -52,13 +52,13 @@ describe("legacyPullConfigStepResult", () => {
   });
 
   it("reports planned for a declined confirmation that has work, identically to a dry run", () => {
-    const outcome: LegacyPullConfigStepOutcome = {
+    const outcome: PullConfigStepOutcome = {
       dryRun: false,
       hasWork: true,
       confirmed: false,
       configFilePath: "supabase/config.toml",
     };
-    expect(legacyPullConfigStepResult(outcome, payload)).toEqual({
+    expect(pullConfigStepResult(outcome, payload)).toEqual({
       step: "config",
       status: "planned",
       written: [],
@@ -67,13 +67,13 @@ describe("legacyPullConfigStepResult", () => {
   });
 
   it("reports changed and writes the config file path once actually applied", () => {
-    const outcome: LegacyPullConfigStepOutcome = {
+    const outcome: PullConfigStepOutcome = {
       dryRun: false,
       hasWork: true,
       confirmed: true,
       configFilePath: "supabase/config.toml",
     };
-    expect(legacyPullConfigStepResult(outcome, payload)).toEqual({
+    expect(pullConfigStepResult(outcome, payload)).toEqual({
       step: "config",
       status: "changed",
       written: ["supabase/config.toml"],
@@ -82,24 +82,24 @@ describe("legacyPullConfigStepResult", () => {
   });
 
   it("passes the payload through verbatim as detail, regardless of status", () => {
-    const outcome: LegacyPullConfigStepOutcome = {
+    const outcome: PullConfigStepOutcome = {
       dryRun: false,
       hasWork: false,
       confirmed: true,
       configFilePath: "supabase/config.toml",
     };
     const richPayload = { schema_version: 1, changes: [{ path: ["api", "max_rows"] }] };
-    expect(legacyPullConfigStepResult(outcome, richPayload).detail).toBe(richPayload);
+    expect(pullConfigStepResult(outcome, richPayload).detail).toBe(richPayload);
   });
 });
 
-describe("legacyPullMigrationHistoryStepResult", () => {
+describe("pullMigrationHistoryStepResult", () => {
   it("reports skipped with reason not_needed", () => {
-    const outcome: LegacyPullMigrationHistoryStepOutcome = {
+    const outcome: PullMigrationHistoryStepOutcome = {
       kind: "skipped",
       reason: "not_needed",
     };
-    expect(legacyPullMigrationHistoryStepResult(outcome)).toEqual({
+    expect(pullMigrationHistoryStepResult(outcome)).toEqual({
       step: "migration_history",
       status: "skipped",
       written: [],
@@ -109,8 +109,8 @@ describe("legacyPullMigrationHistoryStepResult", () => {
   });
 
   it("reports skipped with reason declined", () => {
-    const outcome: LegacyPullMigrationHistoryStepOutcome = { kind: "skipped", reason: "declined" };
-    expect(legacyPullMigrationHistoryStepResult(outcome)).toEqual({
+    const outcome: PullMigrationHistoryStepOutcome = { kind: "skipped", reason: "declined" };
+    expect(pullMigrationHistoryStepResult(outcome)).toEqual({
       step: "migration_history",
       status: "skipped",
       written: [],
@@ -120,8 +120,8 @@ describe("legacyPullMigrationHistoryStepResult", () => {
   });
 
   it("reports planned for a dry run that would have fetched", () => {
-    const outcome: LegacyPullMigrationHistoryStepOutcome = { kind: "planned" };
-    expect(legacyPullMigrationHistoryStepResult(outcome)).toEqual({
+    const outcome: PullMigrationHistoryStepOutcome = { kind: "planned" };
+    expect(pullMigrationHistoryStepResult(outcome)).toEqual({
       step: "migration_history",
       status: "planned",
       written: [],
@@ -130,12 +130,12 @@ describe("legacyPullMigrationHistoryStepResult", () => {
   });
 
   it("reports unchanged when fetched but no files were written", () => {
-    const outcome: LegacyPullMigrationHistoryStepOutcome = {
+    const outcome: PullMigrationHistoryStepOutcome = {
       kind: "fetched",
       outcome: { files: [] },
       workdir: "/home/user/project",
     };
-    expect(legacyPullMigrationHistoryStepResult(outcome)).toEqual({
+    expect(pullMigrationHistoryStepResult(outcome)).toEqual({
       step: "migration_history",
       status: "unchanged",
       written: [],
@@ -144,7 +144,7 @@ describe("legacyPullMigrationHistoryStepResult", () => {
   });
 
   it("reports changed and strips the workdir prefix off each written file", () => {
-    const outcome: LegacyPullMigrationHistoryStepOutcome = {
+    const outcome: PullMigrationHistoryStepOutcome = {
       kind: "fetched",
       outcome: {
         files: [
@@ -154,7 +154,7 @@ describe("legacyPullMigrationHistoryStepResult", () => {
       },
       workdir: "/home/user/project",
     };
-    expect(legacyPullMigrationHistoryStepResult(outcome)).toEqual({
+    expect(pullMigrationHistoryStepResult(outcome)).toEqual({
       step: "migration_history",
       status: "changed",
       written: [
@@ -171,21 +171,21 @@ describe("legacyPullMigrationHistoryStepResult", () => {
   });
 
   it("leaves a written file untouched when it does not start with the workdir prefix", () => {
-    const outcome: LegacyPullMigrationHistoryStepOutcome = {
+    const outcome: PullMigrationHistoryStepOutcome = {
       kind: "fetched",
       outcome: { files: ["/elsewhere/supabase/migrations/20240101000000_remote.sql"] },
       workdir: "/home/user/project",
     };
-    expect(legacyPullMigrationHistoryStepResult(outcome).written).toEqual([
+    expect(pullMigrationHistoryStepResult(outcome).written).toEqual([
       "/elsewhere/supabase/migrations/20240101000000_remote.sql",
     ]);
   });
 });
 
-describe("legacyPullDbStepResult", () => {
+describe("pullDbStepResult", () => {
   it("reports planned for a dry run", () => {
-    const outcome: LegacyPullDbStepOutcome = { kind: "planned" };
-    expect(legacyPullDbStepResult(outcome)).toEqual({
+    const outcome: PullDbStepOutcome = { kind: "planned" };
+    expect(pullDbStepResult(outcome)).toEqual({
       step: "db",
       status: "planned",
       written: [],
@@ -194,8 +194,8 @@ describe("legacyPullDbStepResult", () => {
   });
 
   it("reports unchanged when the remote is already in sync", () => {
-    const outcome: LegacyPullDbStepOutcome = { kind: "in_sync" };
-    expect(legacyPullDbStepResult(outcome)).toEqual({
+    const outcome: PullDbStepOutcome = { kind: "in_sync" };
+    expect(pullDbStepResult(outcome)).toEqual({
       step: "db",
       status: "unchanged",
       written: [],
@@ -204,7 +204,7 @@ describe("legacyPullDbStepResult", () => {
   });
 
   it("reports changed for a declarative pull, stripping the workdir prefix off the schema file", () => {
-    const outcome: LegacyPullDbStepOutcome = {
+    const outcome: PullDbStepOutcome = {
       kind: "applied",
       outcome: {
         kind: "declarative",
@@ -213,7 +213,7 @@ describe("legacyPullDbStepResult", () => {
       },
       workdir: "/home/user/project",
     };
-    expect(legacyPullDbStepResult(outcome)).toEqual({
+    expect(pullDbStepResult(outcome)).toEqual({
       step: "db",
       status: "changed",
       written: ["supabase/schemas/prod.sql"],
@@ -222,7 +222,7 @@ describe("legacyPullDbStepResult", () => {
   });
 
   it("reports changed for a migration-mode pull, listing every schema file and the engine/history flag", () => {
-    const outcome: LegacyPullDbStepOutcome = {
+    const outcome: PullDbStepOutcome = {
       kind: "applied",
       outcome: {
         kind: "migration",
@@ -232,7 +232,7 @@ describe("legacyPullDbStepResult", () => {
       },
       workdir: "/home/user/project",
     };
-    expect(legacyPullDbStepResult(outcome)).toEqual({
+    expect(pullDbStepResult(outcome)).toEqual({
       step: "db",
       status: "changed",
       written: ["supabase/migrations/20240101000000_remote_schema.sql"],
@@ -241,7 +241,7 @@ describe("legacyPullDbStepResult", () => {
   });
 
   it("reports migration-mode remote_history_updated:false verbatim when db pull skipped updating the remote table", () => {
-    const outcome: LegacyPullDbStepOutcome = {
+    const outcome: PullDbStepOutcome = {
       kind: "applied",
       outcome: {
         kind: "migration",
@@ -251,7 +251,7 @@ describe("legacyPullDbStepResult", () => {
       },
       workdir: "/home/user/project",
     };
-    expect(legacyPullDbStepResult(outcome).detail).toEqual({
+    expect(pullDbStepResult(outcome).detail).toEqual({
       declarative: false,
       engine: "pg-delta",
       remote_history_updated: false,
@@ -259,10 +259,10 @@ describe("legacyPullDbStepResult", () => {
   });
 });
 
-describe("legacyPullFunctionsStepResult", () => {
+describe("pullFunctionsStepResult", () => {
   it("reports planned for a dry run", () => {
-    const outcome: LegacyPullFunctionsStepOutcome = { kind: "planned" };
-    expect(legacyPullFunctionsStepResult(outcome)).toEqual({
+    const outcome: PullFunctionsStepOutcome = { kind: "planned" };
+    expect(pullFunctionsStepResult(outcome)).toEqual({
       step: "functions",
       status: "planned",
       written: [],
@@ -271,11 +271,11 @@ describe("legacyPullFunctionsStepResult", () => {
   });
 
   it("reports unchanged when the project has no functions at all", () => {
-    const outcome: LegacyPullFunctionsStepOutcome = {
+    const outcome: PullFunctionsStepOutcome = {
       kind: "downloaded",
       result: { projectRef: "abcdefghijklmnopqrst", slugs: [], empty: true },
     };
-    expect(legacyPullFunctionsStepResult(outcome)).toEqual({
+    expect(pullFunctionsStepResult(outcome)).toEqual({
       step: "functions",
       status: "unchanged",
       written: [],
@@ -284,11 +284,11 @@ describe("legacyPullFunctionsStepResult", () => {
   });
 
   it("reports changed with one representative directory path per downloaded slug", () => {
-    const outcome: LegacyPullFunctionsStepOutcome = {
+    const outcome: PullFunctionsStepOutcome = {
       kind: "downloaded",
       result: { projectRef: "abcdefghijklmnopqrst", slugs: ["hello", "world"], empty: false },
     };
-    expect(legacyPullFunctionsStepResult(outcome)).toEqual({
+    expect(pullFunctionsStepResult(outcome)).toEqual({
       step: "functions",
       status: "changed",
       written: ["supabase/functions/hello", "supabase/functions/world"],
@@ -297,14 +297,14 @@ describe("legacyPullFunctionsStepResult", () => {
   });
 });
 
-describe("legacyPullFailedStepResult", () => {
+describe("pullFailedStepResult", () => {
   it("extracts message, suggestion, and code (the squashed cause's own _tag) from a real Cause.squash-produced tagged error", () => {
-    const error = new LegacyDbPullMigrationConflictError({
+    const error = new DbPullMigrationConflictError({
       message: "remote migration history does not match local files",
       suggestion: "Run supabase migration repair to reconcile the history table.",
     });
     const squashed = Cause.squash(Cause.fail(error));
-    expect(legacyPullFailedStepResult("db", squashed)).toEqual({
+    expect(pullFailedStepResult("db", squashed)).toEqual({
       step: "db",
       status: "failed",
       written: [],
@@ -312,14 +312,14 @@ describe("legacyPullFailedStepResult", () => {
       failure: {
         message: "remote migration history does not match local files",
         suggestion: "Run supabase migration repair to reconcile the history table.",
-        code: "LegacyDbPullMigrationConflictError",
+        code: "DbPullMigrationConflictError",
       },
     });
   });
 
   it("falls back to no suggestion for a plain Error, using its message", () => {
     const error = new Error("ECONNREFUSED: connection refused");
-    expect(legacyPullFailedStepResult("functions", error)).toEqual({
+    expect(pullFailedStepResult("functions", error)).toEqual({
       step: "functions",
       status: "failed",
       written: [],
@@ -329,7 +329,7 @@ describe("legacyPullFailedStepResult", () => {
   });
 
   it("uses a bare string cause as the message directly", () => {
-    expect(legacyPullFailedStepResult("config", "something went wrong")).toEqual({
+    expect(pullFailedStepResult("config", "something went wrong")).toEqual({
       step: "config",
       status: "failed",
       written: [],
@@ -339,7 +339,7 @@ describe("legacyPullFailedStepResult", () => {
   });
 
   it("falls back to String(cause) for a value with neither a message nor a suggestion", () => {
-    expect(legacyPullFailedStepResult("migration_history", { code: "EFAIL" })).toEqual({
+    expect(pullFailedStepResult("migration_history", { code: "EFAIL" })).toEqual({
       step: "migration_history",
       status: "failed",
       written: [],
@@ -349,14 +349,14 @@ describe("legacyPullFailedStepResult", () => {
   });
 
   it("falls back to String(cause) for null and undefined without throwing", () => {
-    expect(legacyPullFailedStepResult("db", null)).toEqual({
+    expect(pullFailedStepResult("db", null)).toEqual({
       step: "db",
       status: "failed",
       written: [],
       detail: {},
       failure: { message: "null" },
     });
-    expect(legacyPullFailedStepResult("db", undefined)).toEqual({
+    expect(pullFailedStepResult("db", undefined)).toEqual({
       step: "db",
       status: "failed",
       written: [],
@@ -366,7 +366,7 @@ describe("legacyPullFailedStepResult", () => {
   });
 
   it("treats an empty-string message as absent and falls back to String(cause), rather than reporting a blank failure message", () => {
-    expect(legacyPullFailedStepResult("config", { message: "" })).toEqual({
+    expect(pullFailedStepResult("config", { message: "" })).toEqual({
       step: "config",
       status: "failed",
       written: [],
@@ -376,7 +376,7 @@ describe("legacyPullFailedStepResult", () => {
   });
 
   it("drops an empty-string suggestion rather than including a blank one", () => {
-    expect(legacyPullFailedStepResult("db", { message: "boom", suggestion: "" })).toEqual({
+    expect(pullFailedStepResult("db", { message: "boom", suggestion: "" })).toEqual({
       step: "db",
       status: "failed",
       written: [],
@@ -386,58 +386,55 @@ describe("legacyPullFailedStepResult", () => {
   });
 });
 
-describe("legacyPullRetryHint", () => {
+describe("pullRetryHint", () => {
   const ref = "abcdefghijklmnopqrst";
 
   it("names 'supabase config pull --project-ref <ref>' for the config step", () => {
-    expect(legacyPullRetryHint("config", ref, undefined)).toBe(
+    expect(pullRetryHint("config", ref, undefined)).toBe(
       "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst",
     );
   });
 
   it("appends --remote-label to the config hint when one was passed", () => {
-    expect(legacyPullRetryHint("config", ref, "staging-remote")).toBe(
+    expect(pullRetryHint("config", ref, "staging-remote")).toBe(
       "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst --remote-label staging-remote",
     );
   });
 
   it("names 'supabase migration fetch --project-ref <ref>' for the migration_history step", () => {
-    expect(legacyPullRetryHint("migration_history", ref, undefined)).toBe(
+    expect(pullRetryHint("migration_history", ref, undefined)).toBe(
       "To retry just this step, run: supabase migration fetch --project-ref abcdefghijklmnopqrst",
     );
   });
 
   it("names 'supabase db pull --project-ref <ref>' for the db step", () => {
-    expect(legacyPullRetryHint("db", ref, undefined)).toBe(
+    expect(pullRetryHint("db", ref, undefined)).toBe(
       "To retry just this step, run: supabase db pull --project-ref abcdefghijklmnopqrst",
     );
   });
 
   it("names 'supabase functions download --project-ref <ref>' for the functions step", () => {
-    expect(legacyPullRetryHint("functions", ref, undefined)).toBe(
+    expect(pullRetryHint("functions", ref, undefined)).toBe(
       "To retry just this step, run: supabase functions download --project-ref abcdefghijklmnopqrst",
     );
   });
 
   it("ignores a remote label for every step other than config", () => {
-    expect(legacyPullRetryHint("migration_history", ref, "staging-remote")).not.toContain(
+    expect(pullRetryHint("migration_history", ref, "staging-remote")).not.toContain(
       "--remote-label",
     );
-    expect(legacyPullRetryHint("db", ref, "staging-remote")).not.toContain("--remote-label");
-    expect(legacyPullRetryHint("functions", ref, "staging-remote")).not.toContain("--remote-label");
+    expect(pullRetryHint("db", ref, "staging-remote")).not.toContain("--remote-label");
+    expect(pullRetryHint("functions", ref, "staging-remote")).not.toContain("--remote-label");
   });
 });
 
-describe("legacyPullCounts", () => {
-  function result(
-    status: LegacyPullStepResult["status"],
-    step: LegacyPullStepResult["step"],
-  ): LegacyPullStepResult {
+describe("pullCounts", () => {
+  function result(status: PullStepResult["status"], step: PullStepResult["step"]): PullStepResult {
     return { step, status, written: [], detail: {} };
   }
 
   it("returns every count at zero for an empty result list", () => {
-    expect(legacyPullCounts([])).toEqual({
+    expect(pullCounts([])).toEqual({
       changed: 0,
       unchanged: 0,
       skipped: 0,
@@ -453,7 +450,7 @@ describe("legacyPullCounts", () => {
       result("changed", "db"),
       result("changed", "functions"),
     ];
-    expect(legacyPullCounts(results)).toEqual({
+    expect(pullCounts(results)).toEqual({
       changed: 4,
       unchanged: 0,
       skipped: 0,
@@ -469,7 +466,7 @@ describe("legacyPullCounts", () => {
       result("skipped", "db"),
       result("failed", "functions"),
     ];
-    expect(legacyPullCounts(results)).toEqual({
+    expect(pullCounts(results)).toEqual({
       changed: 1,
       unchanged: 1,
       skipped: 1,
@@ -479,13 +476,13 @@ describe("legacyPullCounts", () => {
   });
 });
 
-describe("legacyPullAggregate", () => {
+describe("pullAggregate", () => {
   it("passes every field through unchanged", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+    const results: ReadonlyArray<PullStepResult> = [
       { step: "config", status: "changed", written: ["supabase/config.toml"], detail: {} },
     ];
     expect(
-      legacyPullAggregate({
+      pullAggregate({
         ref: "abcdefghijklmnopqrst",
         branch: "staging",
         dryRun: true,
@@ -502,7 +499,7 @@ describe("legacyPullAggregate", () => {
   });
 
   it("does not mutate or reorder the input results array", () => {
-    const results: ReadonlyArray<LegacyPullStepResult> = [
+    const results: ReadonlyArray<PullStepResult> = [
       { step: "config", status: "changed", written: [], detail: {} },
       {
         step: "migration_history",
@@ -515,7 +512,7 @@ describe("legacyPullAggregate", () => {
       { step: "functions", status: "planned", written: [], detail: {} },
     ];
     const frozen = Object.freeze([...results]);
-    const aggregate = legacyPullAggregate({
+    const aggregate = pullAggregate({
       ref: "abcdefghijklmnopqrst",
       branch: undefined,
       dryRun: false,

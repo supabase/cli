@@ -18,7 +18,7 @@ const DEAD_DB_URL = "postgres://postgres:postgres@127.0.0.1:1/postgres";
 // auto-selects JSON on stdout in a detected agent environment).
 const TEXT_MODE = ["--agent", "no"];
 
-describe("supabase inspect report (legacy)", () => {
+describe("supabase inspect report", () => {
   test(
     "creates the dated output directory and prints the connect diagnostic before failing on an unreachable database",
     { timeout: E2E_TIMEOUT_MS },
@@ -27,7 +27,7 @@ describe("supabase inspect report (legacy)", () => {
       const outputDir = mkdtempSync(join(tmpdir(), "supabase-report-e2e-"));
       const { exitCode, stderr } = await runSupabase(
         ["inspect", "report", ...TEXT_MODE, "--db-url", DEAD_DB_URL, "--output-dir", outputDir],
-        { entrypoint: "legacy", home: home.dir, env: { HOME: home.dir } },
+        { home: home.dir, env: { HOME: home.dir } },
       );
       expect(exitCode).toBe(1);
       // The native handler writes the connect diagnostic to stderr.

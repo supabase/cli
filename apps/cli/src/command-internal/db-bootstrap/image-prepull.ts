@@ -4,7 +4,7 @@
  * guarantees every image `supabase start` needs is resolved/pulled into the
  * local Docker cache BEFORE any container is created, using the same
  * multi-registry fallback as the per-container start path
- * (`legacyMakeDockerImageResolver`).
+ * (`makeDockerImageResolver`).
  *
  * Go's caller (`internal/start/start.go:264-291`, `run`) also runs a
  * best-effort `docker-compose`-based pre-pull first
@@ -12,7 +12,7 @@
  * backstop that catches whatever the compose pre-pull's `IgnoreFailures` step
  * skipped. This port does not implement docker-compose integration anywhere
  * (an intentional architecture decision for this port), so
- * {@link legacyEnsureImagesCached} is the ONLY image pre-pull step here, not a
+ * {@link ensureImagesCached} is the ONLY image pre-pull step here, not a
  * backstop for a separate best-effort pass — every image must resolve through
  * this call before any container starts.
  */
@@ -25,11 +25,8 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
-import { legacyMakeDockerImageResolver } from "../legacy-docker-image-resolve.ts";
-import {
-  LEGACY_SUGGEST_DOCKER_INSTALL,
-  legacyIsDockerDaemonUnreachable,
-} from "../legacy-docker-suggest.ts";
+import { makeDockerImageResolver } from "../docker-image-resolve.ts";
+import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "../docker-suggest.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -39,7 +36,7 @@ type Spawner = ChildProcessSpawner["Service"];
  * aggregates every failed image's own error rather than surfacing only the
  * first failure, so a caller can see every broken image in one report.
  */
-export class LegacyImagePrepullError extends Data.TaggedError("LegacyImagePrepullError")<{
+export class ImagePrepullError extends Data.TaggedError("ImagePrepullError")<{
   readonly message: string;
   readonly reason: "docker_daemon" | "registry_pull" | "image_inspect";
 }> {
@@ -60,7 +57,7 @@ export class LegacyImagePrepullError extends Data.TaggedError("LegacyImagePrepul
  * unbounded goroutines) via the shared registry-fallback resolver, and returns
  * a map from the ORIGINAL image reference to the resolved image URL a caller
  * must use to reference that image afterward (e.g. as
- * `LegacyStartContainerSpec.image`) — resolving the same image twice would be
+ * `StartContainerSpec.image`) — resolving the same image twice would be
  * wasteful and could, in theory, land on a different registry candidate on a
  * second, independent call.
  *
@@ -68,13 +65,13 @@ export class LegacyImagePrepullError extends Data.TaggedError("LegacyImagePrepul
  * `start.go:238-249`) — callers are not expected to have already deduped their
  * service image list.
  */
-export function legacyEnsureImagesCached(
+export function ensureImagesCached(
   spawner: Spawner,
   images: ReadonlyArray<string>,
   projectEnvValues?: Readonly<Record<string, string>>,
-): Effect.Effect<ReadonlyMap<string, string>, LegacyImagePrepullError> {
+): Effect.Effect<ReadonlyMap<string, string>, ImagePrepullError> {
   const uniqueImages = [...new Set(images)];
-  const resolveImage = legacyMakeDockerImageResolver(spawner, projectEnvValues);
+  const resolveImage = makeDockerImageResolver(spawner, projectEnvValues);
 
   return Effect.gen(function* () {
     const results = yield* Effect.all(
@@ -84,7 +81,7 @@ export function legacyEnsureImagesCached(
 
     const resolved = new Map<string, string>();
     const failures: Array<string> = [];
-    let failureReason: LegacyImagePrepullError["reason"] = "image_inspect";
+    let failureReason: ImagePrepullError["reason"] = "image_inspect";
     for (const [index, image] of uniqueImages.entries()) {
       const result = results[index];
       if (result === undefined || Result.isFailure(result)) {
@@ -109,11 +106,9 @@ export function legacyEnsureImagesCached(
       // concurrent goroutines would race on the shared `CmdSuggestion` global.
       // There is no such global here, so the hint is appended directly onto
       // the joined message instead.
-      const hint = failures.some(legacyIsDockerDaemonUnreachable)
-        ? `\n\n${LEGACY_SUGGEST_DOCKER_INSTALL}`
-        : "";
+      const hint = failures.some(isDockerDaemonUnreachable) ? `\n\n${SUGGEST_DOCKER_INSTALL}` : "";
       return yield* Effect.fail(
-        new LegacyImagePrepullError({
+        new ImagePrepullError({
           message: `${failures.join("\n")}${hint}`,
           reason: failureReason,
         }),

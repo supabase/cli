@@ -7,21 +7,21 @@ import { Effect, Exit, FileSystem, Layer, Option, PlatformError } from "effect";
 
 import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import {
-  LEGACY_VALID_REF,
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyPlatformApi,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { LegacyDebugLogger } from "../../../command-internal/legacy-debug-logger.service.ts";
+  VALID_REF,
+  buildTestRuntime,
+  mockCommandSettings,
+  mockCommandPlatformApi,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
-import { legacySecretsSet } from "./set.handler.ts";
+import { secretsSet } from "./set.handler.ts";
 
-function mockLegacyDebugLoggerTracked() {
+function mockDebugLoggerTracked() {
   const messages: Array<string> = [];
   return {
     messages,
-    layer: Layer.succeed(LegacyDebugLogger, {
+    layer: Layer.succeed(DebugLogger, {
       debug: (message) =>
         Effect.sync(() => {
           messages.push(message);
@@ -61,19 +61,19 @@ interface SetupOpts {
   env?: Record<string, string | undefined>;
 }
 
-const tempRoot = useLegacyTempWorkdir("supabase-secrets-set-int-");
+const tempRoot = useTempWorkdir("supabase-secrets-set-int-");
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     // POST `/v1/projects/{ref}/secrets` returns 201 with no body on success.
     response: { status: opts.status ?? 201, body: null },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const debugLogger = mockLegacyDebugLoggerTracked();
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const debugLogger = mockDebugLoggerTracked();
   const layer = Layer.mergeAll(
-    buildLegacyTestRuntime({
+    buildTestRuntime({
       out,
       api,
       cliSettings,
@@ -97,16 +97,16 @@ function writeSupabaseDotEnv(content: string) {
 }
 
 function parsePostBody(body: unknown): Array<{ name: string; value: string }> {
-  // `mockLegacyPlatformApi` JSON-decodes the request body when it parses; this
+  // `mockCommandPlatformApi` JSON-decodes the request body when it parses; this
   // helper just narrows the type for the test assertions.
   return body as Array<{ name: string; value: string }>;
 }
 
-describe("legacy secrets set integration", () => {
+describe("secrets set integration", () => {
   it.live("sets a single secret via CLI arg FOO=bar", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySecretsSet({
+      yield* secretsSet({
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: ["FOO=bar"],
@@ -120,7 +120,7 @@ describe("legacy secrets set integration", () => {
   it.live("sets multiple secrets via CLI args", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySecretsSet({
+      yield* secretsSet({
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: ["FOO=bar", "BAZ=qux"],
@@ -138,7 +138,7 @@ describe("legacy secrets set integration", () => {
   it.live("batches large secret sets into requests of at most 100", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySecretsSet({
+      yield* secretsSet({
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: Array.from({ length: 150 }, (_, i) => `KEY${i}=value${i}`),
@@ -159,7 +159,7 @@ describe("legacy secrets set integration", () => {
   it.live("batches 250 secrets into three requests (100/100/50)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySecretsSet({
+      yield* secretsSet({
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: Array.from({ length: 250 }, (_, i) => `KEY${i}=value${i}`),
@@ -183,7 +183,7 @@ describe("legacy secrets set integration", () => {
       );
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySecretsSet({
+          secretsSet({
             projectRef: Option.none(),
             envFile: Option.none(),
             secrets,
@@ -191,7 +191,7 @@ describe("legacy secrets set integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacySecretsSetInputError");
+          expect(JSON.stringify(exit.cause)).toContain("SecretsSetInputError");
           const classified = classifyCliCauseActionability(exit.cause);
           expect(classified.error_kind).toBe("user_actionable");
           expect(classified.error_category).toBe("invalid_input");
@@ -205,7 +205,7 @@ describe("legacy secrets set integration", () => {
     writeFileSync(join(tempRoot.current, "myfile.env"), "FROM_FILE=fromvalue\n");
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySecretsSet({
+      yield* secretsSet({
         projectRef: Option.none(),
         envFile: Option.some("myfile.env"),
         secrets: [],
@@ -221,7 +221,7 @@ describe("legacy secrets set integration", () => {
     writeFileSync(abs, "ABS=value\n");
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySecretsSet({
+      yield* secretsSet({
         projectRef: Option.none(),
         envFile: Option.some(abs),
         secrets: [],
@@ -234,7 +234,7 @@ describe("legacy secrets set integration", () => {
     writeFileSync(join(tempRoot.current, "override.env"), "FOO=from-file\n");
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySecretsSet({
+      yield* secretsSet({
         projectRef: Option.none(),
         envFile: Option.some("override.env"),
         secrets: ["FOO=from-arg"],
@@ -255,7 +255,7 @@ SHARED = "config-shared"
       writeFileSync(join(tempRoot.current, ".env-file"), "SHARED=envfile-shared\n");
       const { layer, api } = setup();
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.some(".env-file"),
           secrets: ["SHARED=cli-shared"],
@@ -279,7 +279,7 @@ DB_URL = "env(MY_DB_URL)"
     );
     const { layer, api } = setup({ env: { MY_DB_URL: "postgres://x" } });
     return Effect.gen(function* () {
-      yield* legacySecretsSet({
+      yield* secretsSet({
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: [],
@@ -300,7 +300,7 @@ LITERAL = "plain-value"
     );
     const { layer, api } = setup({ env: { MY_DB_URL: "postgres://x" } });
     return Effect.gen(function* () {
-      yield* legacySecretsSet({
+      yield* secretsSet({
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: [],
@@ -332,7 +332,7 @@ NON_EMPTY = "config-value"
       );
       const { layer, api } = setup();
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -357,7 +357,7 @@ FOO = "literal-foo"
       );
       const { layer, api } = setup({ env: { SUPABASE_ANALYTICS_PORT: "54327" } });
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -372,7 +372,7 @@ FOO = "literal-foo"
   it.live("skips SUPABASE_-prefixed entries with a stderr warning", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySecretsSet({
+      yield* secretsSet({
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: ["FOO=bar", "SUPABASE_BAD=x"],
@@ -386,12 +386,12 @@ FOO = "literal-foo"
   });
 
   it.live(
-    "fails with LegacySecretsNoArgumentsError when args and env-file produce zero non-SUPABASE_ entries",
+    "fails with SecretsNoArgumentsError when args and env-file produce zero non-SUPABASE_ entries",
     () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySecretsSet({
+          secretsSet({
             projectRef: Option.none(),
             envFile: Option.none(),
             secrets: ["SUPABASE_ONLY=x"],
@@ -399,18 +399,18 @@ FOO = "literal-foo"
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacySecretsNoArgumentsError");
+          expect(JSON.stringify(exit.cause)).toContain("SecretsNoArgumentsError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("fails with LegacyInvalidSecretPairError when an arg has no `=`", () => {
+  it.live("fails with InvalidSecretPairError when an arg has no `=`", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySecretsSet({
+        secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["NOTAPAIR"],
@@ -419,18 +419,18 @@ FOO = "literal-foo"
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("LegacyInvalidSecretPairError");
+        expect(errJson).toContain("InvalidSecretPairError");
         expect(errJson).toContain("Invalid secret pair: NOTAPAIR");
       }
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacySecretsEnvFileOpenError when env-file does not exist", () => {
+  it.live("fails with SecretsEnvFileOpenError when env-file does not exist", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySecretsSet({
+        secretsSet({
           projectRef: Option.none(),
           envFile: Option.some("does-not-exist.env"),
           secrets: [],
@@ -439,12 +439,12 @@ FOO = "literal-foo"
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("LegacySecretsEnvFileOpenError");
+        expect(errJson).toContain("SecretsEnvFileOpenError");
         expect(errJson).toContain("failed to open env file");
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
           error_category: "invalid_input",
           suggestion_type: "provide_flags",
-          error_fingerprint: "tag:LegacySecretsEnvFileOpenError:not_found",
+          error_fingerprint: "tag:SecretsEnvFileOpenError:not_found",
         });
       }
     }).pipe(Effect.provide(layer));
@@ -456,7 +456,7 @@ FOO = "literal-foo"
     const layer = Layer.mergeAll(baseLayer, permissionDeniedReadLayer(envPath));
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySecretsSet({
+        secretsSet({
           projectRef: Option.none(),
           envFile: Option.some(envPath),
           secrets: [],
@@ -468,7 +468,7 @@ FOO = "literal-foo"
           error_kind: "user_actionable",
           error_category: "permission",
           suggestion_type: "none",
-          error_fingerprint: "tag:LegacySecretsEnvFileOpenError:filesystem",
+          error_fingerprint: "tag:SecretsEnvFileOpenError:filesystem",
         });
       }
       expect(api.requests).toHaveLength(0);
@@ -481,7 +481,7 @@ FOO = "literal-foo"
       writeConfig("this is not valid = = toml [[[\n");
       const { layer, api, debugLogger } = setup();
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -514,7 +514,7 @@ port = "not-a-number"
       );
       const { layer, api, debugLogger } = setup();
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -550,7 +550,7 @@ FROM_CONFIG = "config-value"
       );
       const { layer, api, debugLogger } = setup();
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -583,7 +583,7 @@ FROM_CONFIG = "config-value"
       writeSupabaseDotEnv("THIS IS NOT A VALID DOTENV LINE\n");
       const { layer, api, debugLogger } = setup();
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -615,7 +615,7 @@ BAD = 123
       );
       const { layer, api, debugLogger } = setup();
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -647,7 +647,7 @@ port = "not-a-number"
       );
       const { layer, api, debugLogger } = setup();
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -681,7 +681,7 @@ secrets = ["actual-secret"]
       );
       const { layer, api, debugLogger } = setup();
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -699,7 +699,7 @@ secrets = ["actual-secret"]
     () => {
       // `analytics.port` is an unrelated schema-decode error that triggers the
       // recovery path. `remotes.staging.project_id` matches the ref the
-      // resolver defaults to (`mockLegacyCliSettings`'s `LEGACY_VALID_REF`), so
+      // resolver defaults to (`mockCommandSettings`'s `VALID_REF`), so
       // Go seeds `Config.ProjectId` before `Load()`
       // (`internal/utils/flags/config_path.go:11-12`) and merges the remote
       // override in `loadFromFile` (`pkg/config/config.go:604-609`) before the
@@ -713,7 +713,7 @@ FROM_CONFIG = "base-value"
 port = "not-a-number"
 
 [remotes.staging]
-project_id = "${LEGACY_VALID_REF}"
+project_id = "${VALID_REF}"
 
 [remotes.staging.edge_runtime.secrets]
 FROM_CONFIG = "remote-value"
@@ -721,7 +721,7 @@ FROM_CONFIG = "remote-value"
       );
       const { layer, out, api, debugLogger } = setup();
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -746,14 +746,14 @@ FROM_CONFIG = "remote-value"
       // No decode error here — the plain success path. `loadFromFile`
       // prints `Loading config override: [remotes.<name>]` to stderr
       // unconditionally whenever a `[remotes.*]` block's `project_id` matches
-      // `Config.ProjectId`, before `mapstructure` ever runs. `mockLegacyCliSettings`
-      // defaults the resolved ref to `LEGACY_VALID_REF`.
+      // `Config.ProjectId`, before `mapstructure` ever runs. `mockCommandSettings`
+      // defaults the resolved ref to `VALID_REF`.
       writeConfig(
         `[edge_runtime.secrets]
 FROM_CONFIG = "base-value"
 
 [remotes.staging]
-project_id = "${LEGACY_VALID_REF}"
+project_id = "${VALID_REF}"
 
 [remotes.staging.edge_runtime.secrets]
 FROM_CONFIG = "remote-value"
@@ -761,7 +761,7 @@ FROM_CONFIG = "remote-value"
       );
       const { layer, out, api } = setup();
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -784,7 +784,7 @@ FROM_CONFIG = "config-value"
       );
       const { layer, out, api } = setup();
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -818,7 +818,7 @@ project_id = "dupe-project-id"
       );
       const { layer, api, debugLogger } = setup();
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -851,7 +851,7 @@ project_id = "not-a-valid-ref"
       );
       const { layer, api, debugLogger } = setup();
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -878,7 +878,7 @@ project_id = "not-a-valid-ref"
       );
       const { layer, debugLogger } = setup();
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -907,7 +907,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
       );
       const { layer, api, debugLogger } = setup();
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -921,13 +921,13 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
   );
 
   it.live(
-    "still fails with LegacySecretsNoArgumentsError when a malformed config leaves zero secret sources",
+    "still fails with SecretsNoArgumentsError when a malformed config leaves zero secret sources",
     () => {
       writeConfig("this is not valid = = toml [[[\n");
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacySecretsSet({
+          secretsSet({
             projectRef: Option.none(),
             envFile: Option.none(),
             secrets: [],
@@ -935,18 +935,18 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacySecretsNoArgumentsError");
+          expect(JSON.stringify(exit.cause)).toContain("SecretsNoArgumentsError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("fails with LegacySecretsSetNetworkError on transport failure", () => {
+  it.live("fails with SecretsSetNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySecretsSet({
+        secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -955,17 +955,17 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("LegacySecretsSetNetworkError");
+        expect(errJson).toContain("SecretsSetNetworkError");
         expect(errJson).toContain("failed to set secrets");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacySecretsSetUnexpectedStatusError on HTTP 500", () => {
+  it.live("fails with SecretsSetUnexpectedStatusError on HTTP 500", () => {
     const { layer } = setup({ status: 500 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacySecretsSet({
+        secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -974,7 +974,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("LegacySecretsSetUnexpectedStatusError");
+        expect(errJson).toContain("SecretsSetUnexpectedStatusError");
         expect(errJson).toContain("Unexpected error setting project secrets");
       }
     }).pipe(Effect.provide(layer));
@@ -983,14 +983,14 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
   it.live("emits a success event with { project_ref, count } for --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacySecretsSet({
+      yield* secretsSet({
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: ["FOO=bar", "BAZ=qux"],
       });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
-      expect(success?.data).toEqual({ project_ref: LEGACY_VALID_REF, count: 2 });
+      expect(success?.data).toEqual({ project_ref: VALID_REF, count: 2 });
     }).pipe(Effect.provide(layer));
   });
 
@@ -999,7 +999,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
     () => {
       const { layer, out } = setup({ goOutput: "json" });
       return Effect.gen(function* () {
-        yield* legacySecretsSet({
+        yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],

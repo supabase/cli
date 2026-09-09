@@ -1,34 +1,32 @@
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
-  LegacyBackupRestoreNetworkError,
-  LegacyBackupRestoreUnexpectedStatusError,
+  BackupRestoreNetworkError,
+  BackupRestoreUnexpectedStatusError,
 } from "../backups.errors.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
-import type { LegacyBackupsRestoreFlags } from "./restore.command.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import type { BackupsRestoreFlags } from "./restore.command.ts";
 
-const mapRestoreError = mapLegacyHttpError({
-  networkError: LegacyBackupRestoreNetworkError,
-  statusError: LegacyBackupRestoreUnexpectedStatusError,
+const mapRestoreError = mapHttpError({
+  networkError: BackupRestoreNetworkError,
+  statusError: BackupRestoreUnexpectedStatusError,
   networkMessage: (cause) => `failed to restore backup: ${cause}`,
   statusMessage: (status, body) => `unexpected restore backup status ${status}: ${body}`,
 });
 
-export const legacyBackupsRestore = Effect.fn("legacy.backups.restore")(function* (
-  flags: LegacyBackupsRestoreFlags,
-) {
+export const backupsRestore = Effect.fn("backups.restore")(function* (flags: BackupsRestoreFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   const ref = yield* resolver.resolve(flags.projectRef);
   const recoveryTimeTargetUnix = Option.getOrElse(flags.timestamp, () => 0);

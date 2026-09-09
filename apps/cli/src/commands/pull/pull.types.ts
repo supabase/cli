@@ -1,10 +1,10 @@
-export const LEGACY_PULL_STEP_ORDER = ["config", "migration_history", "db", "functions"] as const;
+export const PULL_STEP_ORDER = ["config", "migration_history", "db", "functions"] as const;
 
-export type LegacyPullStepId = (typeof LEGACY_PULL_STEP_ORDER)[number];
+export type PullStepId = (typeof PULL_STEP_ORDER)[number];
 
-export type LegacyPullStepStatus = "changed" | "unchanged" | "skipped" | "planned" | "failed";
+export type PullStepStatus = "changed" | "unchanged" | "skipped" | "planned" | "failed";
 
-export interface LegacyPullStepFailure {
+export interface PullStepFailure {
   readonly message: string;
   readonly suggestion?: string;
   /** The squashed cause's own `_tag`, when it has one — lets a machine consumer of the JSON
@@ -12,9 +12,9 @@ export interface LegacyPullStepFailure {
   readonly code?: string;
 }
 
-export interface LegacyPullStepResult {
-  readonly step: LegacyPullStepId;
-  readonly status: LegacyPullStepStatus;
+export interface PullStepResult {
+  readonly step: PullStepId;
+  readonly status: PullStepStatus;
   /** Workdir-relative paths written by this step. Empty when nothing was written. */
   readonly written: ReadonlyArray<string>;
   /** Per-step machine detail, shape varies by step (see plan's payload section). */
@@ -22,18 +22,18 @@ export interface LegacyPullStepResult {
   /** Present for `status: "skipped"` (e.g. "not_needed", "declined", "--with-migration-history not set"). */
   readonly reason?: string;
   /** Present for `status: "failed"`. */
-  readonly failure?: LegacyPullStepFailure;
+  readonly failure?: PullStepFailure;
 }
 
-export interface LegacyPullStepContext {
+export interface PullStepContext {
   readonly ref: string;
   readonly assumeYes: boolean;
 }
 
-export interface LegacyPullAggregate {
+export interface PullAggregate {
   readonly ref: string;
   readonly branch: string | undefined;
   readonly dryRun: boolean;
   readonly confirmed: boolean;
-  readonly results: ReadonlyArray<LegacyPullStepResult>;
+  readonly results: ReadonlyArray<PullStepResult>;
 }

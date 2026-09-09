@@ -14,8 +14,8 @@ import {
   lastExplicitLongFlagValue,
   hasExplicitLongFlag,
 } from "../cli/cobra-flag-groups.ts";
-import { legacyDescribeContainerCliFailure } from "../../command-internal/legacy-container-cli.ts";
-import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-env.ts";
+import { describeContainerCliFailure } from "../../command-internal/container-cli.ts";
+import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
 import {
   buildFunctionsDockerRunArgs,
   edgeRuntimeCacheVolume,
@@ -77,8 +77,8 @@ interface DownloadDockerRuntimeDependencies extends DownloadRuntimeDependencies 
   /**
    * Optional shell-specific styling hook for the `Downloading function:`
    * progress line — mirrors `deploy.ts`'s `DeployFunctionsDependencies.styleEmphasis`.
-   * Defaults to identity (plain text); the legacy shell injects Go's bold
-   * styling here so the next shell stays isolated from `legacy/`-specific
+   * Defaults to identity (plain text); the CLI injects Go's bold
+   * styling here so this shared module stays free of CLI-specific
    * rendering. Go: `utils.Bold(slug)` (`downloadOne`, `download.go:219`).
    */
   readonly styleEmphasis?: (text: string) => string;
@@ -106,8 +106,8 @@ interface DownloadDockerRuntimeDependencies extends DownloadRuntimeDependencies 
 interface EdgeRuntimeImageDependencies {
   readonly projectRoot: string;
   /**
-   * `undefined` in `next`; the legacy shell injects
-   * `legacyFunctionsGoConfigCompat` so this file never imports `legacy/`
+   * `undefined` for library callers; the CLI injects
+   * `functionsGoConfigCompat` so this file never imports the command tree
    * directly — see {@link FunctionsGoConfigCompat}.
    */
   readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
@@ -136,7 +136,7 @@ export interface DownloadFunctionsDependencies<
    * child's raw stdout must not reach the terminal (it would corrupt the
    * JSON/NDJSON envelope, CLI-1546's "stdout is payload-only in machine
    * mode" invariant), so the dependency must capture/discard it (e.g. via
-   * `LegacyGoProxy.execCapture`) instead of inheriting stdio. Only invoked
+   * `GoProxy.execCapture`) instead of inheriting stdio. Only invoked
    * for `--legacy-bundle` today — `--use-docker` now runs natively (CLI-1963).
    */
   readonly proxyDownload: (
@@ -921,11 +921,11 @@ function suggestDenoV2(styleEmphasis: (text: string) => string = (text) => text)
  * code. `ensureDockerNetwork`/`ensureDockerNamedVolume` already prefix their
  * own "failed to create docker network/volume: ..." context on the failures
  * they raise themselves (`functions-docker.ts`), so this only normalizes
- * (never re-prefixes) whatever `legacyDescribeContainerCliFailure` reports.
+ * (never re-prefixes) whatever `describeContainerCliFailure` reports.
  */
 function withLegacyBundleSuggestion(slug: string, styleAqua?: (text: string) => string) {
   return (cause: unknown): Error =>
-    Object.assign(new Error(legacyDescribeContainerCliFailure(cause)), {
+    Object.assign(new Error(describeContainerCliFailure(cause)), {
       suggestion: suggestLegacyBundle(slug, styleAqua),
     });
 }
@@ -940,7 +940,7 @@ function withLegacyBundleSuggestion(slug: string, styleAqua?: (text: string) => 
  */
 function withDockerStepFailure(step: string, slug: string, styleAqua?: (text: string) => string) {
   return (cause: unknown): Error =>
-    Object.assign(new Error(`${step}: ${legacyDescribeContainerCliFailure(cause)}`), {
+    Object.assign(new Error(`${step}: ${describeContainerCliFailure(cause)}`), {
       suggestion: suggestLegacyBundle(slug, styleAqua),
     });
 }
@@ -951,8 +951,8 @@ function withDockerStepFailure(step: string, slug: string, styleAqua?: (text: st
 // project's configured/default tag (`resolveEdgeRuntimeVersion`, shared with
 // `deploy.ts`). Resolved once per invocation by the caller
 // (`downloadFunctions`), not once per slug — Go's `Config` is likewise loaded
-// once, before any per-function work. `loadFunctionsCliConfig` (legacy
-// shell only) runs the same `Config.Validate`/dotenv/env-override pipeline
+// once, before any per-function work. `loadFunctionsCliConfig` (CLI
+// path only) runs the same `Config.Validate`/dotenv/env-override pipeline
 // `start`/`stop`/`status` already go through — see `functions-config.ts`.
 const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
   dependencies: EdgeRuntimeImageDependencies,
@@ -1060,7 +1060,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   // back to `false` (cleanup runs) when `--debug` never appears. `SUPABASE_DEBUG`
   // env-var fallback is a separate, pre-existing gap shared with every other
   // presence-only `--debug` read this file family used to have
-  // (e.g. `deploy.ts`) and the legacy debug logger itself, none of which
+  // (e.g. `deploy.ts`) and the CLI's debug logger itself, none of which
   // currently honor it either — left open rather than fixed piecemeal here.
   const debugEnabled = explicitBooleanLongFlag(dependencies.rawArgs, "debug") ?? false;
   const cleanupEszip = debugEnabled
@@ -1083,14 +1083,14 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   // preserves the "explicitly cleared" vs "never touched" distinction
   // `resolveDockerNetworkMode` needs to decide whether `SUPABASE_NETWORK_ID`
   // applies — see that function's own doc comment. `SUPABASE_NETWORK_ID`
-  // (env or project dotenv) is legacy-shell-only — same Go-viper-parity gate
-  // as `projectEnvValues` itself (`undefined` in `next`).
+  // (env or project dotenv) is CLI-only — same Go-viper-parity gate
+  // as `projectEnvValues` itself (`undefined` for library callers).
   const networkMode = resolveDockerNetworkMode({
     explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
     envOverride:
       projectEnvValues === undefined
         ? undefined
-        : legacyViperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+        : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
     projectId,
   });
 
@@ -1365,7 +1365,7 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
       : yield* listRemoteFunctionSlugs(dependencies.api, projectRef);
 
     // Final-summary emission for the empty-project case moved to the
-    // standalone handler (`legacyFunctionsDownload`) — this only computes and
+    // standalone handler (`functionsDownload`) — this only computes and
     // returns the result now.
     if (slugs.length === 0) {
       return { projectRef, slugs: [], empty: true };
@@ -1419,7 +1419,7 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
     }
 
     // Final-summary emission for the completed download loop moved to the
-    // standalone handler (`legacyFunctionsDownload`) — this only computes and
+    // standalone handler (`functionsDownload`) — this only computes and
     // returns the result now.
     return { projectRef, slugs: downloaded, empty: false };
   });

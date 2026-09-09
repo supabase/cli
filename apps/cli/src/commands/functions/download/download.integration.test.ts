@@ -11,25 +11,25 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { CurrentAnalyticsContext } from "../../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import {
-  buildLegacyTestRuntime,
-  legacyJsonResponse,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  buildTestRuntime,
+  jsonResponse,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
-import { LegacyGoProxy } from "../../../shared/legacy/go-proxy.service.ts";
-import { legacyContainerRuntimeNotFoundMessage } from "../../../command-internal/legacy-container-cli.ts";
+import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
+import { containerRuntimeNotFoundMessage } from "../../../command-internal/container-cli.ts";
 import { downloadFunctions } from "../../../shared/functions/download.ts";
-import { legacyFunctionsGoConfigCompat } from "../../../command-internal/legacy-functions-go-config.ts";
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
+import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ConflictingFunctionDownloadFlagsError } from "../../../shared/functions/download.errors.ts";
-import { legacyFunctionsDownloadHandler } from "./download.command.ts";
-import type { LegacyFunctionsDownloadFlags } from "./download.command.ts";
-import { legacyFunctionsDownload } from "./download.handler.ts";
+import { functionsDownloadHandler } from "./download.command.ts";
+import type { FunctionsDownloadFlags } from "./download.command.ts";
+import { functionsDownload } from "./download.handler.ts";
 
 const PROJECT_ID = "abcdefghijklmnopqrst";
 
@@ -71,10 +71,10 @@ function mockDockerUnbundle(
  * failing. This models `child_process.spawn` (or the container runtime
  * binary) never starting at all, which `runChildProcess` surfaces as an
  * `unknown` cause rather than an `{ exitCode, stdout, stderr }` result.
- * Mirrors `legacy-container-cli.unit.test.ts`'s `mockSpawner({ bothMissing:
+ * Mirrors `container-cli.unit.test.ts`'s `mockSpawner({ bothMissing:
  * true })`: failing both the `docker` and `podman` fallback attempts for the
  * `run` step is what makes `spawnContainerCli` surface
- * `legacyContainerRuntimeNotFoundMessage` instead of retrying indefinitely.
+ * `containerRuntimeNotFoundMessage` instead of retrying indefinitely.
  * Every other Docker call (`info`, `network inspect`, `volume create`)
  * succeeds with exit code 0, so only the unbundle step itself fails.
  */
@@ -124,11 +124,11 @@ function mockDockerRunSpawnFailure() {
   };
 }
 
-const tempRoot = useLegacyTempWorkdir("supabase-functions-download-legacy-");
+const tempRoot = useTempWorkdir("supabase-functions-download-legacy-");
 
-// `withLegacyCommandInstrumentation` threads `flags`/`command`/etc. through
+// `withCommandTelemetry` threads `flags`/`command`/etc. through
 // `CurrentAnalyticsContext`, not the direct `capture()` call args — mirrors
-// the identical local helper in `legacy-command-instrumentation.unit.test.ts`.
+// the identical local helper in `command-telemetry.unit.test.ts`.
 // The shared `mockAnalytics()` in tests/helpers/mocks.ts deliberately doesn't
 // merge this context (most callers don't need it).
 function mockContextualAnalytics() {
@@ -148,7 +148,7 @@ function mockContextualAnalytics() {
   );
   return { layer, captured };
 }
-const baseFlags: LegacyFunctionsDownloadFlags = {
+const baseFlags: FunctionsDownloadFlags = {
   functionName: Option.some("hello-world"),
   projectRef: Option.none(),
   useApi: false,
@@ -190,7 +190,7 @@ function mockProxy() {
     envs,
     captureCalls,
     captureEnvs,
-    layer: Layer.succeed(LegacyGoProxy, {
+    layer: Layer.succeed(GoProxy, {
       exec: (args, opts) =>
         Effect.sync(() => {
           calls.push([...args]);
@@ -206,23 +206,23 @@ function mockProxy() {
   };
 }
 
-describe("legacy functions download", () => {
+describe("functions download", () => {
   it.live("downloads a function natively into the legacy workdir", () => {
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi({
+    const api = mockCommandPlatformApi({
       handler: (request) =>
         request.url.endsWith("/body")
           ? Effect.succeed(multipartResponse(request))
-          : Effect.succeed(legacyJsonResponse(request, 200, {})),
+          : Effect.succeed(jsonResponse(request, 200, {})),
     });
     const proxy = mockProxy();
-    const linkedProjectCache = mockLegacyLinkedProjectCacheTracked();
-    const telemetry = mockLegacyTelemetryStateTracked();
+    const linkedProjectCache = mockLinkedProjectCacheTracked();
+    const telemetry = mockTelemetryStateTracked();
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         linkedProjectCache: linkedProjectCache.layer,
         telemetry: telemetry.layer,
       }),
@@ -239,7 +239,7 @@ describe("legacy functions download", () => {
     );
 
     return Effect.gen(function* () {
-      yield* legacyFunctionsDownload(baseFlags);
+      yield* functionsDownload(baseFlags);
 
       expect(proxy.calls).toEqual([]);
       expect(
@@ -262,7 +262,7 @@ describe("legacy functions download", () => {
     "runs the native Docker unbundle path by default (Go parity), with no flags passed",
     () => {
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi();
+      const api = mockCommandPlatformApi();
       const proxy = mockProxy();
       // Non-empty stdout/stderr on the `docker run` step exercises both the
       // text-mode stdout routing branch and the always-to-stderr container
@@ -272,10 +272,10 @@ describe("legacy functions download", () => {
         runStderr: ["unbundle: warning about deno.json"],
       });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -295,7 +295,7 @@ describe("legacy functions download", () => {
         // default (CLI-1862) — no `--use-docker` flag appears in argv above.
         // CLI-1963: this now runs the native Docker-unbundle path instead of
         // delegating to the Go proxy.
-        yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+        yield* functionsDownload({ ...baseFlags, useDocker: true });
 
         expect(proxy.calls).toEqual([]);
         expect(proxy.captureCalls).toEqual([]);
@@ -327,18 +327,18 @@ describe("legacy functions download", () => {
     "does not treat the --use-docker default as conflicting with an explicit --use-api",
     () => {
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi({
+      const api = mockCommandPlatformApi({
         handler: (request) =>
           request.url.endsWith("/body")
             ? Effect.succeed(multipartResponse(request))
-            : Effect.succeed(legacyJsonResponse(request, 200, {})),
+            : Effect.succeed(jsonResponse(request, 200, {})),
       });
       const proxy = mockProxy();
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         Stdio.layerTest({
@@ -358,7 +358,7 @@ describe("legacy functions download", () => {
         // even though only `--use-api` was passed explicitly. Neither the
         // mutex check nor the routing decision should treat that default as
         // if the user had asked for Docker.
-        yield* legacyFunctionsDownload({ ...baseFlags, useApi: true, useDocker: true });
+        yield* functionsDownload({ ...baseFlags, useApi: true, useDocker: true });
 
         expect(proxy.calls).toEqual([]);
         expect(
@@ -377,14 +377,14 @@ describe("legacy functions download", () => {
     "still runs the native Docker unbundle path when --use-api=false is passed explicitly",
     () => {
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi();
+      const api = mockCommandPlatformApi();
       const proxy = mockProxy();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -406,7 +406,7 @@ describe("legacy functions download", () => {
         // treated like `--use-api` — it should leave the `--use-docker`
         // default (true) in effect and still run the native Docker path
         // (CLI-1963).
-        yield* legacyFunctionsDownload({ ...baseFlags, useApi: false, useDocker: true });
+        yield* functionsDownload({ ...baseFlags, useApi: false, useDocker: true });
 
         expect(proxy.calls).toEqual([]);
         expect(proxy.captureCalls).toEqual([]);
@@ -423,17 +423,17 @@ describe("legacy functions download", () => {
     "emits a JSON success envelope when running the native Docker path in machine-output mode",
     () => {
       const out = mockOutput({ format: "json" });
-      const api = mockLegacyPlatformApi();
+      const api = mockCommandPlatformApi();
       const proxy = mockProxy();
       // Non-empty container stdout exercises the machine-mode branch that
       // routes it to stderr instead of stdout (CLI-1546: stdout stays
       // payload-only in json/stream-json modes).
       const child = mockDockerUnbundle({ runStdout: ["unbundle: wrote index.ts"] });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -455,7 +455,7 @@ describe("legacy functions download", () => {
         // this asserts the JSON envelope this command emits itself still
         // shows up correctly, with no delegated Go child's stdout to worry
         // about capturing.
-        yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+        yield* functionsDownload({ ...baseFlags, useDocker: true });
 
         expect(proxy.calls).toEqual([]);
         expect(proxy.captureCalls).toEqual([]);
@@ -478,24 +478,21 @@ describe("legacy functions download", () => {
 
   it.live("lists remote functions and downloads each natively via Docker in machine mode", () => {
     const out = mockOutput({ format: "json" });
-    const api = mockLegacyPlatformApi({
+    const api = mockCommandPlatformApi({
       handler: (request) =>
         request.url.endsWith("/functions")
           ? Effect.succeed(
-              legacyJsonResponse(request, 200, [
-                { slug: "hello-world" },
-                { slug: "goodbye-world" },
-              ]),
+              jsonResponse(request, 200, [{ slug: "hello-world" }, { slug: "goodbye-world" }]),
             )
-          : Effect.succeed(legacyJsonResponse(request, 200, {})),
+          : Effect.succeed(jsonResponse(request, 200, {})),
     });
     const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -512,7 +509,7 @@ describe("legacy functions download", () => {
     );
 
     return Effect.gen(function* () {
-      yield* legacyFunctionsDownload({
+      yield* functionsDownload({
         ...baseFlags,
         functionName: Option.none(),
         useDocker: true,
@@ -550,14 +547,14 @@ describe("legacy functions download", () => {
 
   it.live("runs docker with the expected binds, network, and unbundle command", () => {
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi();
+    const api = mockCommandPlatformApi();
     const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -574,7 +571,7 @@ describe("legacy functions download", () => {
     );
 
     return Effect.gen(function* () {
-      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+      yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       // Go: `extractOne` (`download.go:260-266`) — bind order and network
       // reuse the same primitives `deploy.ts`'s own Docker-bundling path
@@ -634,14 +631,14 @@ describe("legacy functions download", () => {
     // allow (review round on CLI-1963's `functions download` port;
     // `deploy.ts`'s `buildDockerBinds` already applies this same carve-out).
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi();
+    const api = mockCommandPlatformApi();
     const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -661,7 +658,7 @@ describe("legacy functions download", () => {
     process.env["BITBUCKET_CLONE_DIR"] = "/opt/atlassian/pipelines/agent/build";
 
     return Effect.gen(function* () {
-      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+      yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
       expect(runCommand?.args).not.toContain(
@@ -699,14 +696,14 @@ describe("legacy functions download", () => {
     // of the raw eszip body an un-overridden request receives (review round
     // on CLI-1963's `functions download` port).
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi();
+    const api = mockCommandPlatformApi();
     const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -723,7 +720,7 @@ describe("legacy functions download", () => {
     );
 
     return Effect.gen(function* () {
-      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+      yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       const bodyRequest = api.requests.find((request) => request.url.endsWith("/hello-world/body"));
       expect(bodyRequest?.headers["accept"]).toBe("*/*");
@@ -732,14 +729,14 @@ describe("legacy functions download", () => {
 
   it.live("uses an explicit --network-id override instead of the derived network name", () => {
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi();
+    const api = mockCommandPlatformApi();
     const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -761,7 +758,7 @@ describe("legacy functions download", () => {
       // `--network-id` is a persistent root flag (`cmd/root.go:328`), not
       // registered on `functions download` itself — `lastExplicitLongFlagValue`
       // scans the whole argv unscoped.
-      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+      yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
         command: "docker",
@@ -781,14 +778,14 @@ describe("legacy functions download", () => {
       // generated network name just like an omitted flag (review round on
       // CLI-1963's `functions download` port).
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi();
+      const api = mockCommandPlatformApi();
       const proxy = mockProxy();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -806,7 +803,7 @@ describe("legacy functions download", () => {
       );
 
       return Effect.gen(function* () {
-        yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+        yield* functionsDownload({ ...baseFlags, useDocker: true });
 
         expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
           command: "docker",
@@ -826,14 +823,14 @@ describe("legacy functions download", () => {
     // first match instead of returning early (review round on CLI-1963's
     // `functions download` port).
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi();
+    const api = mockCommandPlatformApi();
     const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -854,7 +851,7 @@ describe("legacy functions download", () => {
     );
 
     return Effect.gen(function* () {
-      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+      yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
       expect(runCommand?.args).toContain("custom-network");
@@ -870,14 +867,14 @@ describe("legacy functions download", () => {
       // fall through to the generated network name, not the earlier
       // non-empty value.
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi();
+      const api = mockCommandPlatformApi();
       const proxy = mockProxy();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -897,7 +894,7 @@ describe("legacy functions download", () => {
       );
 
       return Effect.gen(function* () {
-        yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+        yield* functionsDownload({ ...baseFlags, useDocker: true });
 
         const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
         expect(runCommand?.args).toContain(`supabase_network_${PROJECT_ID}`);
@@ -917,15 +914,15 @@ describe("legacy functions download", () => {
       // for network/volume naming, not an ancestor project's configured
       // `project_id`, even though `cliSettings.workdir` sits right inside one.
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi();
+      const api = mockCommandPlatformApi();
       const proxy = mockProxy();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const nestedWorkdir = join(tempRoot.current, "nested");
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: nestedWorkdir }),
+          cliSettings: mockCommandSettings({ workdir: nestedWorkdir }),
         }),
         proxy.layer,
         child.layer,
@@ -953,7 +950,7 @@ describe("legacy functions download", () => {
           ),
         );
 
-        yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+        yield* functionsDownload({ ...baseFlags, useDocker: true });
 
         expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
           command: "docker",
@@ -974,14 +971,14 @@ describe("legacy functions download", () => {
     // `config.toml`, not prefer the JSON file as the package loader
     // otherwise would.
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi();
+    const api = mockCommandPlatformApi();
     const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -1014,7 +1011,7 @@ describe("legacy functions download", () => {
         ),
       );
 
-      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+      yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
       expect(runCommand?.args).toContain("supabase_network_toml-project");
@@ -1031,14 +1028,14 @@ describe("legacy functions download", () => {
     // `docker run --network` (review round on CLI-1963's `functions
     // download` port).
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi();
+    const api = mockCommandPlatformApi();
     const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -1057,7 +1054,7 @@ describe("legacy functions download", () => {
     );
 
     return Effect.gen(function* () {
-      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+      yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toBeUndefined();
       const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
@@ -1068,18 +1065,18 @@ describe("legacy functions download", () => {
   it.live("does not double-prefix an already v-prefixed edge-runtime-version pin", () => {
     // Established behavior: the pin file's raw content is appended verbatim
     // after the image's `:`, so a pin already carrying its own `v` prefix (a
-    // legitimate form — see `legacy-edge-runtime-image.unit.test.ts`'s own
+    // legitimate form — see `edge-runtime-image.unit.test.ts`'s own
     // `"v9.9.9"` fixture) must not be prepended with a second `v` (review
     // round on CLI-1963's `functions download` port).
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi();
+    const api = mockCommandPlatformApi();
     const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -1103,7 +1100,7 @@ describe("legacy functions download", () => {
         writeFile(join(tempRoot.current, "supabase", ".temp", "edge-runtime-version"), "v9.9.9\n"),
       );
 
-      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+      yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
       expect(runCommand?.args.slice(-6)[0]).toBe("public.ecr.aws/supabase/edge-runtime:v9.9.9");
@@ -1112,14 +1109,14 @@ describe("legacy functions download", () => {
 
   it.live("keeps the temporary eszip file when --debug is passed", () => {
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi();
+    const api = mockCommandPlatformApi();
     const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -1137,7 +1134,7 @@ describe("legacy functions download", () => {
     );
 
     return Effect.gen(function* () {
-      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+      yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       expect(
         existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
@@ -1153,14 +1150,14 @@ describe("legacy functions download", () => {
       // check would get this backwards and treat `--debug=false` like
       // `--debug` (review round on CLI-1963's `functions download` port).
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi();
+      const api = mockCommandPlatformApi();
       const proxy = mockProxy();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -1178,7 +1175,7 @@ describe("legacy functions download", () => {
       );
 
       return Effect.gen(function* () {
-        yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+        yield* functionsDownload({ ...baseFlags, useDocker: true });
 
         expect(
           existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
@@ -1196,16 +1193,16 @@ describe("legacy functions download", () => {
       // falling through to the server-side path's API/filesystem side
       // effects (review round on CLI-1963's `functions download` port).
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi();
+      const api = mockCommandPlatformApi();
       const proxy = mockProxy();
       // Every docker command (including the `docker info` probe) fails,
       // modeling Docker not running.
       const child = mockChildProcessSpawner({ exitCode: 1 });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -1231,9 +1228,7 @@ describe("legacy functions download", () => {
           ),
         );
 
-        const error = yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true }).pipe(
-          Effect.flip,
-        );
+        const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
         expect((error as Error).message).toBe(
@@ -1247,14 +1242,14 @@ describe("legacy functions download", () => {
   describe("docker unbundle container failures", () => {
     it.live("fails with the legacy-bundle suggestion when the container exits non-zero", () => {
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi();
+      const api = mockCommandPlatformApi();
       const proxy = mockProxy();
       const child = mockDockerUnbundle({ runExitCode: 1, runStderr: ["boom"] });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -1271,9 +1266,7 @@ describe("legacy functions download", () => {
       );
 
       return Effect.gen(function* () {
-        const error = yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true }).pipe(
-          Effect.flip,
-        );
+        const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
         expect((error as Error).message).toBe("error running container: exit 1");
@@ -1287,7 +1280,7 @@ describe("legacy functions download", () => {
       "prepends the deno v2 suggestion when deno_version is 1 and the container reports an invalid eszip",
       () => {
         const out = mockOutput({ format: "text" });
-        const api = mockLegacyPlatformApi();
+        const api = mockCommandPlatformApi();
         const proxy = mockProxy();
         const child = mockDockerUnbundle({
           runExitCode: 1,
@@ -1298,10 +1291,10 @@ describe("legacy functions download", () => {
           runStderr: ["invalid eszip v2"],
         });
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api,
-            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           }),
           proxy.layer,
           child.layer,
@@ -1328,7 +1321,7 @@ describe("legacy functions download", () => {
             ),
           );
 
-          const error = yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true }).pipe(
+          const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(
             Effect.flip,
           );
 
@@ -1346,14 +1339,14 @@ describe("legacy functions download", () => {
       "does not prepend the deno v2 suggestion when deno_version is 1 but the container's error is unrelated",
       () => {
         const out = mockOutput({ format: "text" });
-        const api = mockLegacyPlatformApi();
+        const api = mockCommandPlatformApi();
         const proxy = mockProxy();
         const child = mockDockerUnbundle({ runExitCode: 1, runStderr: ["permission denied"] });
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api,
-            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           }),
           proxy.layer,
           child.layer,
@@ -1380,7 +1373,7 @@ describe("legacy functions download", () => {
             ),
           );
 
-          const error = yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true }).pipe(
+          const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(
             Effect.flip,
           );
 
@@ -1394,7 +1387,7 @@ describe("legacy functions download", () => {
 
   it.live("fails when ensureDockerNetwork can't create a missing network", () => {
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi();
+    const api = mockCommandPlatformApi();
     const proxy = mockProxy();
     const spawnerOpts: {
       exitCode?: number;
@@ -1407,10 +1400,10 @@ describe("legacy functions download", () => {
     };
     const child = mockChildProcessSpawner(spawnerOpts);
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -1427,9 +1420,7 @@ describe("legacy functions download", () => {
     );
 
     return Effect.gen(function* () {
-      const error = yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true }).pipe(
-        Effect.flip,
-      );
+      const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toBe(
@@ -1451,14 +1442,14 @@ describe("legacy functions download", () => {
     "fails with the docker-step prefix when the unbundle container itself cannot be spawned",
     () => {
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi();
+      const api = mockCommandPlatformApi();
       const proxy = mockProxy();
       const child = mockDockerRunSpawnFailure();
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -1475,9 +1466,7 @@ describe("legacy functions download", () => {
       );
 
       return Effect.gen(function* () {
-        const error = yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true }).pipe(
-          Effect.flip,
-        );
+        const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
 
         // Distinct from `ensureDockerNetwork`/`ensureDockerNamedVolume`
         // failures (asserted above), which already self-describe and must
@@ -1486,7 +1475,7 @@ describe("legacy functions download", () => {
         // command was running, so `withDockerStepFailure` adds one.
         expect(error).toBeInstanceOf(Error);
         expect((error as Error).message).toBe(
-          `failed to run the edge-runtime unbundle container: ${legacyContainerRuntimeNotFoundMessage}`,
+          `failed to run the edge-runtime unbundle container: ${containerRuntimeNotFoundMessage}`,
         );
         expect((error as Error & { suggestion?: string }).suggestion).toBe(
           "\nIf your function is deployed using CLI < 1.120.0, trying running supabase functions download --legacy-bundle hello-world instead.",
@@ -1503,23 +1492,23 @@ describe("legacy functions download", () => {
     "reports no functions found without delegating when the project is empty in machine mode",
     () => {
       const out = mockOutput({ format: "json" });
-      const api = mockLegacyPlatformApi({
+      const api = mockCommandPlatformApi({
         handler: (request) =>
           request.url.endsWith("/functions")
-            ? Effect.succeed(legacyJsonResponse(request, 200, []))
-            : Effect.succeed(legacyJsonResponse(request, 200, {})),
+            ? Effect.succeed(jsonResponse(request, 200, []))
+            : Effect.succeed(jsonResponse(request, 200, {})),
       });
       const proxy = mockProxy();
       // Deterministic stand-in for `emptyEnv()`'s real `ChildProcessSpawner`
-      // (via `BunServices`, pulled in by `buildLegacyTestRuntime`) — `useDocker:
+      // (via `BunServices`, pulled in by `buildTestRuntime`) — `useDocker:
       // true` still probes `docker info` even though this project has no
       // functions to download, so this must not spawn a real `docker` process.
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -1540,7 +1529,7 @@ describe("legacy functions download", () => {
         // native path's "No functions found." short-circuit instead of
         // still invoking the Go/Docker child and reporting a misleading
         // "Downloaded Edge Function source." success with an empty list.
-        yield* legacyFunctionsDownload({
+        yield* functionsDownload({
           ...baseFlags,
           functionName: Option.none(),
           useDocker: true,
@@ -1561,19 +1550,19 @@ describe("legacy functions download", () => {
 
   it.live("fails before delegating when the pre-flight function list fails in machine mode", () => {
     const out = mockOutput({ format: "json" });
-    const api = mockLegacyPlatformApi({
+    const api = mockCommandPlatformApi({
       handler: (request) =>
         request.url.endsWith("/functions")
-          ? Effect.succeed(legacyJsonResponse(request, 500, { message: "unavailable" }))
-          : Effect.succeed(legacyJsonResponse(request, 200, {})),
+          ? Effect.succeed(jsonResponse(request, 500, { message: "unavailable" }))
+          : Effect.succeed(jsonResponse(request, 200, {})),
     });
     const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -1594,7 +1583,7 @@ describe("legacy functions download", () => {
       // side effect — the delegated proxy must never be invoked (CLI-1862
       // review: a listing failure after a successful delegated download
       // must not mask that success).
-      const exit = yield* legacyFunctionsDownload({
+      const exit = yield* functionsDownload({
         ...baseFlags,
         functionName: Option.none(),
         useDocker: true,
@@ -1614,19 +1603,19 @@ describe("legacy functions download", () => {
     // functions found." nor a silent partial download (review round on
     // CLI-1963's `functions download` port).
     const out = mockOutput({ format: "json" });
-    const api = mockLegacyPlatformApi({
+    const api = mockCommandPlatformApi({
       handler: (request) =>
         request.url.endsWith("/functions")
-          ? Effect.succeed(legacyJsonResponse(request, 200, [{}]))
-          : Effect.succeed(legacyJsonResponse(request, 200, {})),
+          ? Effect.succeed(jsonResponse(request, 200, [{}]))
+          : Effect.succeed(jsonResponse(request, 200, {})),
     });
     const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -1643,7 +1632,7 @@ describe("legacy functions download", () => {
     );
 
     return Effect.gen(function* () {
-      const exit = yield* legacyFunctionsDownload({
+      const exit = yield* functionsDownload({
         ...baseFlags,
         functionName: Option.none(),
         useDocker: true,
@@ -1659,13 +1648,13 @@ describe("legacy functions download", () => {
 
   it.live("forwards only --legacy-bundle to the Go proxy, not the --use-docker default too", () => {
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi();
+    const api = mockCommandPlatformApi();
     const proxy = mockProxy();
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       Stdio.layerTest({
@@ -1685,7 +1674,7 @@ describe("legacy functions download", () => {
       // though only `--legacy-bundle` was passed explicitly. The Go proxy
       // call must not forward both, or the Go binary's own
       // MarkFlagsMutuallyExclusive rejects the combination.
-      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true, legacyBundle: true });
+      yield* functionsDownload({ ...baseFlags, useDocker: true, legacyBundle: true });
 
       expect(proxy.calls).toEqual([
         [
@@ -1703,13 +1692,13 @@ describe("legacy functions download", () => {
 
   it.live("rejects an invalid slug before ever reaching the Go proxy", () => {
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi();
+    const api = mockCommandPlatformApi();
     const proxy = mockProxy();
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       Stdio.layerTest({
@@ -1727,7 +1716,7 @@ describe("legacy functions download", () => {
       // `useDocker: true` is the real default (CLI-1862). Before this fix,
       // slug validation only ran on the native path, so a malformed slug
       // would sail past it and straight into the Go proxy argv.
-      const exit = yield* legacyFunctionsDownload({
+      const exit = yield* functionsDownload({
         ...baseFlags,
         functionName: Option.some("../../etc"),
         useDocker: true,
@@ -1742,19 +1731,19 @@ describe("legacy functions download", () => {
     "does not redact --project-ref in cli_command_executed (Go parity: cmd/functions.go:178)",
     () => {
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi({
+      const api = mockCommandPlatformApi({
         handler: (request) =>
           request.url.endsWith("/body")
             ? Effect.succeed(multipartResponse(request))
-            : Effect.succeed(legacyJsonResponse(request, 200, {})),
+            : Effect.succeed(jsonResponse(request, 200, {})),
       });
       const proxy = mockProxy();
       const analytics = mockContextualAnalytics();
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           analytics,
         }),
         proxy.layer,
@@ -1771,7 +1760,7 @@ describe("legacy functions download", () => {
       );
 
       return Effect.gen(function* () {
-        yield* legacyFunctionsDownloadHandler({
+        yield* functionsDownloadHandler({
           ...baseFlags,
           projectRef: Option.some("abcdefghijklmnopqrst"),
         });
@@ -1784,13 +1773,13 @@ describe("legacy functions download", () => {
 
   it.live("rejects the bundler mutex with cobra's exact error text", () => {
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi();
+    const api = mockCommandPlatformApi();
     const proxy = mockProxy();
     const layer = Layer.mergeAll(
-      buildLegacyTestRuntime({
+      buildTestRuntime({
         out,
         api,
-        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       Stdio.layerTest({
@@ -1799,7 +1788,7 @@ describe("legacy functions download", () => {
     );
 
     return Effect.gen(function* () {
-      const error = yield* legacyFunctionsDownload({
+      const error = yield* functionsDownload({
         ...baseFlags,
         useApi: true,
         useDocker: true,
@@ -1821,14 +1810,14 @@ describe("legacy functions download", () => {
       "fails before any Docker/API work when config.toml has an explicit empty project_id",
       () => {
         const out = mockOutput({ format: "text" });
-        const api = mockLegacyPlatformApi();
+        const api = mockCommandPlatformApi();
         const proxy = mockProxy();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api,
-            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           }),
           proxy.layer,
           child.layer,
@@ -1851,7 +1840,7 @@ describe("legacy functions download", () => {
             writeFile(join(tempRoot.current, "supabase", "config.toml"), 'project_id = ""\n'),
           );
 
-          const error = yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true }).pipe(
+          const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(
             Effect.flip,
           );
 
@@ -1870,14 +1859,14 @@ describe("legacy functions download", () => {
         // — `db.major_version = 12` is a genuinely unrelated Go `Config.Validate`
         // branch (`config.go:1034-1062`).
         const out = mockOutput({ format: "text" });
-        const api = mockLegacyPlatformApi();
+        const api = mockCommandPlatformApi();
         const proxy = mockProxy();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api,
-            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           }),
           proxy.layer,
           child.layer,
@@ -1903,7 +1892,7 @@ describe("legacy functions download", () => {
             ),
           );
 
-          const error = yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true }).pipe(
+          const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(
             Effect.flip,
           );
 
@@ -1921,14 +1910,14 @@ describe("legacy functions download", () => {
       "resolves the deno v1 edge-runtime image tag when SUPABASE_EDGE_RUNTIME_DENO_VERSION=1 overrides an unset config value",
       () => {
         const out = mockOutput({ format: "text" });
-        const api = mockLegacyPlatformApi();
+        const api = mockCommandPlatformApi();
         const proxy = mockProxy();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api,
-            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           }),
           proxy.layer,
           child.layer,
@@ -1948,7 +1937,7 @@ describe("legacy functions download", () => {
         process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
 
         return Effect.gen(function* () {
-          yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+          yield* functionsDownload({ ...baseFlags, useDocker: true });
 
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args.slice(-6)[0]).toBe(
@@ -1974,14 +1963,14 @@ describe("legacy functions download", () => {
       "uses SUPABASE_NETWORK_ID as the docker network when no --network-id flag is passed",
       () => {
         const out = mockOutput({ format: "text" });
-        const api = mockLegacyPlatformApi();
+        const api = mockCommandPlatformApi();
         const proxy = mockProxy();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api,
-            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           }),
           proxy.layer,
           child.layer,
@@ -2001,7 +1990,7 @@ describe("legacy functions download", () => {
         process.env["SUPABASE_NETWORK_ID"] = "env-network";
 
         return Effect.gen(function* () {
-          yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+          yield* functionsDownload({ ...baseFlags, useDocker: true });
 
           expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
             command: "docker",
@@ -2027,14 +2016,14 @@ describe("legacy functions download", () => {
 
     it.live("prefers an explicit --network-id flag over SUPABASE_NETWORK_ID", () => {
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi();
+      const api = mockCommandPlatformApi();
       const proxy = mockProxy();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -2056,7 +2045,7 @@ describe("legacy functions download", () => {
       process.env["SUPABASE_NETWORK_ID"] = "env-network";
 
       return Effect.gen(function* () {
-        yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+        yield* functionsDownload({ ...baseFlags, useDocker: true });
 
         expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
           command: "docker",
@@ -2084,14 +2073,14 @@ describe("legacy functions download", () => {
       "resolves a registry override configured only via project dotenv, not the ambient shell",
       () => {
         const out = mockOutput({ format: "text" });
-        const api = mockLegacyPlatformApi();
+        const api = mockCommandPlatformApi();
         const proxy = mockProxy();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api,
-            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           }),
           proxy.layer,
           child.layer,
@@ -2118,7 +2107,7 @@ describe("legacy functions download", () => {
             ),
           );
 
-          yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+          yield* functionsDownload({ ...baseFlags, useDocker: true });
 
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args.slice(-6)[0]).toBe(
@@ -2164,13 +2153,13 @@ describe("legacy functions download", () => {
       const child = mockChildProcessSpawner(spawnerOpts);
 
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi();
+      const api = mockCommandPlatformApi();
       const proxy = mockProxy();
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -2187,7 +2176,7 @@ describe("legacy functions download", () => {
       );
 
       return Effect.gen(function* () {
-        yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+        yield* functionsDownload({ ...baseFlags, useDocker: true });
 
         expect(
           child.spawned.filter(
@@ -2205,14 +2194,14 @@ describe("legacy functions download", () => {
       "labels the unbundle container with the resolved project id (Go parity: docker.go:349-386)",
       () => {
         const out = mockOutput({ format: "text" });
-        const api = mockLegacyPlatformApi();
+        const api = mockCommandPlatformApi();
         const proxy = mockProxy();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api,
-            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           }),
           proxy.layer,
           child.layer,
@@ -2229,7 +2218,7 @@ describe("legacy functions download", () => {
         );
 
         return Effect.gen(function* () {
-          yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+          yield* functionsDownload({ ...baseFlags, useDocker: true });
 
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args).toEqual(
@@ -2248,22 +2237,22 @@ describe("legacy functions download", () => {
   describe("docker-not-running warning styling (Go parity: download.go:146; only WARNING: is styled)", () => {
     it.live("wraps only the WARNING token, not the rest of the fallback line", () => {
       // Calls the shared `downloadFunctions` with a marker `styleWarning`
-      // instead of going through `legacyFunctionsDownload`: the real hook
-      // (`legacyYellow`) is TTY-gated and therefore inert under vitest, so
+      // instead of going through `functionsDownload`: the real hook
+      // (`yellow`) is TTY-gated and therefore inert under vitest, so
       // only an injected marker can deterministically observe styling scope.
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi({
+      const api = mockCommandPlatformApi({
         handler: (request) =>
           request.url.endsWith("/body")
             ? Effect.succeed(multipartResponse(request))
-            : Effect.succeed(legacyJsonResponse(request, 200, {})),
+            : Effect.succeed(jsonResponse(request, 200, {})),
       });
       const child = mockChildProcessSpawner({ exitCode: 1 });
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
         child.layer,
         Stdio.layerTest({
@@ -2278,7 +2267,7 @@ describe("legacy functions download", () => {
       );
 
       return Effect.gen(function* () {
-        const platformApi = yield* LegacyPlatformApi;
+        const platformApi = yield* CommandPlatformApi;
 
         yield* downloadFunctions(
           { ...baseFlags, useDocker: true },
@@ -2286,7 +2275,7 @@ describe("legacy functions download", () => {
             api: platformApi,
             projectRoot: tempRoot.current,
             rawArgs: ["functions", "download", "hello-world", "--project-ref", PROJECT_ID],
-            goConfigCompat: legacyFunctionsGoConfigCompat,
+            goConfigCompat: functionsGoConfigCompat,
             edgeRuntimeVersion: "1.69.12",
             resolveProjectRef: () => Effect.succeed(PROJECT_ID),
             proxyDownload: () => Effect.die("unexpected proxy invocation"),

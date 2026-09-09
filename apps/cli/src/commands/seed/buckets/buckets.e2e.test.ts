@@ -14,7 +14,7 @@ const E2E_TIMEOUT_MS = 30_000;
  *  - `--local --linked` is rejected by the mutually-exclusive flag check.
  * Bucket/object seeding parity is covered by the integration + unit suites.
  */
-describe("supabase seed buckets (legacy)", () => {
+describe("supabase seed buckets", () => {
   let projectDir: string;
 
   beforeAll(() => {
@@ -32,7 +32,6 @@ describe("supabase seed buckets (legacy)", () => {
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stdout } = await runSupabase(["seed", "buckets"], {
-        entrypoint: "legacy",
         cwd: projectDir,
       });
       expect(exitCode).toBe(0);
@@ -43,7 +42,7 @@ describe("supabase seed buckets (legacy)", () => {
   test("rejects passing both --local and --linked", { timeout: E2E_TIMEOUT_MS }, async () => {
     const { exitCode, stdout, stderr } = await runSupabase(
       ["seed", "buckets", "--local", "--linked"],
-      { entrypoint: "legacy", cwd: projectDir },
+      { cwd: projectDir },
     );
     expect(exitCode).toBe(1);
     expect(`${stdout}${stderr}`).toContain(
@@ -59,7 +58,6 @@ describe("supabase seed buckets (legacy)", () => {
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stdout, stderr } = await runSupabase(["seed", "--local", "buckets"], {
-        entrypoint: "legacy",
         cwd: projectDir,
       });
       // Parsed (no "Unrecognized flag") and routed to the local no-op path.
@@ -72,7 +70,7 @@ describe("supabase seed buckets (legacy)", () => {
   test("rejects --local --linked before the subcommand", { timeout: E2E_TIMEOUT_MS }, async () => {
     const { exitCode, stdout, stderr } = await runSupabase(
       ["seed", "--local", "--linked", "buckets"],
-      { entrypoint: "legacy", cwd: projectDir },
+      { cwd: projectDir },
     );
     expect(exitCode).toBe(1);
     expect(`${stdout}${stderr}`).toContain(

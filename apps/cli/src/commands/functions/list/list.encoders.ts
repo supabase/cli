@@ -1,40 +1,37 @@
-import { encodeGoJson } from "../../../command-internal/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
 import {
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-  legacyGoBool,
-  legacyGoInt,
-  legacyGoPtr,
-  legacyGoSlice,
-  legacyGoString,
-  legacyGoStruct,
-  legacyGoTomlListWrapper,
-} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
+  encodeGoToml,
+  encodeGoYaml,
+  goBool,
+  goInt,
+  goPtr,
+  goSlice,
+  goString,
+  goStruct,
+  goTomlListWrapper,
+} from "../../../command-internal/go-struct-output.encoders.ts";
 
 /** Struct spec for the function response. */
-const LEGACY_GO_FUNCTION_RESPONSE = legacyGoStruct([
-  ["created_at", legacyGoInt],
-  ["entrypoint_path", legacyGoPtr(legacyGoString)],
-  ["ezbr_sha256", legacyGoPtr(legacyGoString)],
-  ["id", legacyGoString],
-  ["import_map", legacyGoPtr(legacyGoBool)],
-  ["import_map_path", legacyGoPtr(legacyGoString)],
-  ["name", legacyGoString],
-  ["slug", legacyGoString],
-  ["status", legacyGoString],
-  ["updated_at", legacyGoInt],
-  ["verify_jwt", legacyGoPtr(legacyGoBool)],
-  ["version", legacyGoInt],
+const GO_FUNCTION_RESPONSE = goStruct([
+  ["created_at", goInt],
+  ["entrypoint_path", goPtr(goString)],
+  ["ezbr_sha256", goPtr(goString)],
+  ["id", goString],
+  ["import_map", goPtr(goBool)],
+  ["import_map_path", goPtr(goString)],
+  ["name", goString],
+  ["slug", goString],
+  ["status", goString],
+  ["updated_at", goInt],
+  ["verify_jwt", goPtr(goBool)],
+  ["version", goInt],
 ]);
 
-const LEGACY_GO_FUNCTIONS_LIST = legacyGoSlice(LEGACY_GO_FUNCTION_RESPONSE);
+const GO_FUNCTIONS_LIST = goSlice(GO_FUNCTION_RESPONSE);
 
-const LEGACY_GO_FUNCTIONS_TOML_WRAPPER = legacyGoTomlListWrapper(
-  "functions",
-  LEGACY_GO_FUNCTION_RESPONSE,
-);
+const GO_FUNCTIONS_TOML_WRAPPER = goTomlListWrapper("functions", GO_FUNCTION_RESPONSE);
 
-interface LegacyFunctionRecord {
+interface FunctionRecord {
   readonly id: string;
   readonly slug: string;
   readonly name: string;
@@ -49,7 +46,7 @@ interface LegacyFunctionRecord {
   readonly ezbr_sha256?: string;
 }
 
-export type Functions = ReadonlyArray<LegacyFunctionRecord>;
+export type Functions = ReadonlyArray<FunctionRecord>;
 export type ParsedFunctions = {
   readonly functions: Functions;
   readonly isNil: boolean;
@@ -106,7 +103,7 @@ function readRequiredFunctionFields(
   record: Record<string, unknown>,
 ):
   | Omit<
-      LegacyFunctionRecord,
+      FunctionRecord,
       "verify_jwt" | "import_map" | "entrypoint_path" | "import_map_path" | "ezbr_sha256"
     >
   | undefined {
@@ -168,7 +165,7 @@ function parseFunctionsResponse(value: unknown): ParsedFunctions | undefined {
   if (!Array.isArray(value)) {
     return undefined;
   }
-  const functions: LegacyFunctionRecord[] = [];
+  const functions: FunctionRecord[] = [];
   for (const item of value) {
     const record = item === null ? EMPTY_FUNCTION_RECORD : isRecord(item) ? item : undefined;
     if (record === undefined) {
@@ -252,15 +249,15 @@ export function encodeFunctionsGoJson(parsed: ParsedFunctions): string {
 }
 
 export function encodeFunctionsGoYaml(functions: Functions): string {
-  return encodeLegacyGoYaml(functions, LEGACY_GO_FUNCTIONS_LIST);
+  return encodeGoYaml(functions, GO_FUNCTIONS_LIST);
 }
 
 export function encodeFunctionsGoToml(parsed: ParsedFunctions): string {
   // Go encodes `Functions: *resp.JSON200` — a JSON `null` body decodes to a
   // nil slice (BurntSushi emits nothing), while `[]` decodes to a non-nil
   // empty slice (`functions = []`).
-  return encodeLegacyGoToml(
+  return encodeGoToml(
     { functions: parsed.isNil ? undefined : parsed.functions },
-    LEGACY_GO_FUNCTIONS_TOML_WRAPPER,
+    GO_FUNCTIONS_TOML_WRAPPER,
   );
 }

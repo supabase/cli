@@ -1,11 +1,11 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Fiber, Option } from "effect";
+import { Cause, Effect, Exit, Fiber, Option, Predicate, Queue } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
-import { createServer, type Server as HttpServer } from "node:http";
+import { createServer, request as httpRequest, type Server as HttpServer } from "node:http";
 import { connect as connectNet, type Server as NetServer, type Socket } from "node:net";
 import { PortUnavailableError } from "../public/Errors.ts";
-import { bindHostListener, bindHostListenerWithOptions } from "./HostListener.ts";
+import { bindHostListener, bindHostListenerWithOptions, checkHostPort } from "./HostListener.ts";
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
@@ -14,6 +14,69 @@ const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 
 describe("host listener binding", () => {
+  it.live("allocates independent TCP resources for each evaluation", () =>
+    run(
+      Effect.gen(function* () {
+        const effect = bindHostListener("127.0.0.1", 0, "database");
+        const [first, second] = yield* Effect.all([effect, effect], { concurrency: 2 });
+        expect(first.port).toBeGreaterThan(0);
+        expect(second.port).toBeGreaterThan(0);
+        expect(first.port).not.toBe(second.port);
+        yield* first.close;
+        expect(first.binding.server.listening).toBe(false);
+        const socket = yield* Effect.acquireRelease(
+          Effect.callback<Socket, Error>((resume) => {
+            const connection = connectNet(second.port, "127.0.0.1");
+            connection.once("connect", () => resume(Effect.succeed(connection)));
+            connection.once("error", (error) => resume(Effect.fail(error)));
+            return Effect.sync(() => connection.destroy());
+          }),
+          (connection) => Effect.sync(() => connection.destroy()),
+        );
+        expect(socket.destroyed).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("evaluates concurrent port checks with independent temporary servers", () =>
+    run(
+      Effect.gen(function* () {
+        const effect = checkHostPort("127.0.0.1", 0, "database");
+        const ports = yield* Effect.all([effect, effect], { concurrency: 2 });
+        expect(ports).toEqual([undefined, undefined]);
+      }),
+    ),
+  );
+
+  it.live("binds an IPv6 wildcard listener with dual-stack IPv4 access", () =>
+    run(
+      Effect.gen(function* () {
+        const listener = yield* bindHostListener("::", 0, "api");
+        expect(listener.port).toBeGreaterThan(0);
+        if (listener.binding.kind !== "http" || listener.binding.pendingEvents === undefined)
+          return yield* Effect.die("IPv6 API listener did not expose HTTP events");
+        const request = yield* Effect.forkChild(
+          Effect.callback<import("node:http").IncomingMessage, Error>((resume) => {
+            const request = httpRequest(
+              { host: "127.0.0.1", port: listener.port, path: "/" },
+              (response) => resume(Effect.succeed(response)),
+            );
+            request.once("error", (error) => resume(Effect.fail(error)));
+            request.end();
+            return Effect.sync(() => request.destroy());
+          }),
+          { startImmediately: true },
+        );
+        const event = yield* Queue.take(listener.binding.pendingEvents.queue);
+        if (!Predicate.isTagged(event, "request"))
+          return yield* Effect.die("IPv4 request was not captured");
+        event.response.end("ok");
+        const response = yield* Fiber.join(request);
+        response.resume();
+      }),
+    ),
+  );
+
   it.live("binds HTTP and TCP listeners for direct gateway adoption", () =>
     run(
       Effect.gen(function* () {
@@ -47,7 +110,9 @@ describe("host listener binding", () => {
             return created;
           },
         }).pipe(Effect.exit);
-        expect(errorOf(failed)).toBeInstanceOf(PortUnavailableError);
+        const error = errorOf(failed);
+        expect(error).toBeInstanceOf(PortUnavailableError);
+        expect(error).toMatchObject({ cause: { code: "EADDRINUSE" } });
         expect(failedServer?.listening).toBe(false);
       }),
     ),

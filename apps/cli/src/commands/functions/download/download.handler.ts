@@ -6,25 +6,25 @@ import {
 } from "../../../shared/functions/download.ts";
 import { resolveEdgeRuntimeVersionPin } from "../../../shared/functions/functions.shared.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { LegacyGoProxy } from "../../../shared/legacy/go-proxy.service.ts";
-import { legacyAqua, legacyBold, legacyYellow } from "../../../command-internal/legacy-colors.ts";
-import { legacyFunctionsGoConfigCompat } from "../../../command-internal/legacy-functions-go-config.ts";
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import type { LegacyFunctionsDownloadFlags } from "./download.command.ts";
+import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
+import { aqua, bold, yellow } from "../../../command-internal/colors.ts";
+import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import type { FunctionsDownloadFlags } from "./download.command.ts";
 
-export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(function* (
-  flags: LegacyFunctionsDownloadFlags,
+export const functionsDownload = Effect.fn("functions.download")(function* (
+  flags: FunctionsDownloadFlags,
 ) {
-  const api = yield* LegacyPlatformApi;
-  const cliSettings = yield* LegacyCliSettings;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
-  const proxy = yield* LegacyGoProxy;
+  const api = yield* CommandPlatformApi;
+  const cliSettings = yield* CommandSettings;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
+  const proxy = yield* GoProxy;
   const output = yield* Output;
   const stdio = yield* Stdio.Stdio;
   const rawArgs = yield* stdio.args;
@@ -38,17 +38,17 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
       api,
       projectRoot: cliSettings.workdir,
       rawArgs,
-      goConfigCompat: legacyFunctionsGoConfigCompat,
+      goConfigCompat: functionsGoConfigCompat,
       edgeRuntimeVersion,
       // Established styling: bold on the `Downloading function:` slug
-      // (stderr) — matches `legacyBold`'s default TTY gate.
-      styleEmphasis: (text) => legacyBold(text),
+      // (stderr) — matches `bold`'s default TTY gate.
+      styleEmphasis: (text) => bold(text),
       // Established styling: aqua on the suggested `--legacy-bundle` command
-      // (stderr) — matches `legacyAqua`'s default TTY gate.
-      styleAqua: (text) => legacyAqua(text),
+      // (stderr) — matches `aqua`'s default TTY gate.
+      styleAqua: (text) => aqua(text),
       // Established styling: yellow on the `WARNING:` token before "Docker is
-      // not running" (stderr) — matches `legacyYellow`'s default TTY gate.
-      styleWarning: (text) => legacyYellow(text),
+      // not running" (stderr) — matches `yellow`'s default TTY gate.
+      styleWarning: (text) => yellow(text),
       resolveProjectRef: (projectRef) =>
         resolver.resolve(projectRef).pipe(
           Effect.tap((ref) =>
@@ -59,7 +59,7 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
         ),
       // The delegated Go binary runs its own `Execute()` and would otherwise
       // fire its own `cli_command_executed` on top of this command's own
-      // `withLegacyCommandInstrumentation` wrapper. Suppress it so proxied
+      // `withCommandTelemetry` wrapper. Suppress it so proxied
       // invocations record exactly one event, matching Go (mirrors `db pull` /
       // `db diff`'s delegated-call pattern).
       //

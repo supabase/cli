@@ -1,9 +1,9 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyWorkersStatus } from "./status.handler.ts";
+import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { workersStatus } from "./status.handler.ts";
 
 const config = {
   name: Argument.string("name").pipe(Argument.withDescription("Worker to inspect.")),
@@ -13,9 +13,9 @@ const config = {
   ),
 } as const;
 
-export type LegacyWorkersStatusFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type WorkersStatusFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyWorkersStatusCommand = Command.make("status", config).pipe(
+export const workersStatusCommand = Command.make("status", config).pipe(
   Command.withDescription(
     "Show one worker in detail: build state, size, access, image, live instance tally and source directory.",
   ),
@@ -27,10 +27,7 @@ export const legacyWorkersStatusCommand = Command.make("status", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyWorkersStatus(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
-      withJsonErrorHandling,
-    ),
+    workersStatus(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["experimental", "workers", "status"])),
+  Command.provide(managementApiRuntimeLayer(["experimental", "workers", "status"])),
 );

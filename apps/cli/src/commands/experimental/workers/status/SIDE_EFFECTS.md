@@ -71,7 +71,7 @@ wrapper emits for every command.
 | `-o env`                      | refused before any request; the payload nests an instance tally a flat `KEY=value` list cannot express | the error                                                           |
 
 A structured emission is the end of the run: the handler returns at
-`legacyEmitWorkersMachineOutput` or at `output.success`, so nothing in the text
+`emitWorkersMachineOutput` or at `output.success`, so nothing in the text
 branch below it — the instance tally and the build-retry trailer — is reached.
 `-o pretty`, `table` and `csv` are the exception, since they encode nothing and
 fall through to that same text branch.

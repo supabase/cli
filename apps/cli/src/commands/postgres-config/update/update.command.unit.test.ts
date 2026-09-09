@@ -2,12 +2,12 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit } from "effect";
 import { describe, expect, test } from "vitest";
 import { normalizeCause } from "../../../shared/output/normalize-error.ts";
-import { legacyPostgresConfigUpdateConfigFlag } from "./update.command.ts";
+import { postgresConfigUpdateConfigFlag } from "./update.command.ts";
 
-describe("legacy postgres-config update --config flag (pflag StringSlice parity)", () => {
+describe("postgres-config update --config flag (pflag StringSlice parity)", () => {
   test("splits a comma-separated value into multiple key=value pairs", async () => {
     const [, values] = await Effect.runPromise(
-      legacyPostgresConfigUpdateConfigFlag
+      postgresConfigUpdateConfigFlag
         .parse({
           flags: { config: ["max_connections=100,statement_timeout=600"] },
           arguments: [],
@@ -20,7 +20,7 @@ describe("legacy postgres-config update --config flag (pflag StringSlice parity)
 
   test("accumulates repeated occurrences, each CSV-split", async () => {
     const [, values] = await Effect.runPromise(
-      legacyPostgresConfigUpdateConfigFlag
+      postgresConfigUpdateConfigFlag
         .parse({
           flags: { config: ["max_connections=100,statement_timeout=600", "custom_key=alpha"] },
           arguments: [],
@@ -36,7 +36,7 @@ describe("legacy postgres-config update --config flag (pflag StringSlice parity)
     // raises no parse error — pflag calls `csv.Reader.Read()` once, so the
     // malformed second line is silently dropped.
     const [, values] = await Effect.runPromise(
-      legacyPostgresConfigUpdateConfigFlag
+      postgresConfigUpdateConfigFlag
         .parse({
           flags: { config: ['a=1\nb"2'] },
           arguments: [],
@@ -49,7 +49,7 @@ describe("legacy postgres-config update --config flag (pflag StringSlice parity)
 
   test("rejects malformed CSV (unterminated quote) with pflag's exact diagnostic", async () => {
     const exit = await Effect.runPromise(
-      legacyPostgresConfigUpdateConfigFlag
+      postgresConfigUpdateConfigFlag
         .parse({
           flags: { config: ['"max_connections=100'] },
           arguments: [],
@@ -72,7 +72,7 @@ describe("legacy postgres-config update --config flag (pflag StringSlice parity)
     // Go-verified (CLI-2005): `postgres-config update --config $'\n'` →
     // `invalid argument "\n" for "--config" flag: EOF`.
     const exit = await Effect.runPromise(
-      legacyPostgresConfigUpdateConfigFlag
+      postgresConfigUpdateConfigFlag
         .parse({
           flags: { config: ["\n"] },
           arguments: [],

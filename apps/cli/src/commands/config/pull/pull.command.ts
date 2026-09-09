@@ -2,12 +2,12 @@ import { Option } from "effect";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { Command, Flag } from "effect/unstable/cli";
 
-import { PROJECT_REF_PATTERN } from "../../../config/legacy-project-ref.service.ts";
+import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { LEGACY_GLOBAL_OUTPUT_FORMATS } from "../../../shared/legacy/global-flags.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyConfigPull } from "./pull.handler.ts";
+import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { configPull } from "./pull.handler.ts";
 
 const config = {
   // `config diff`'s settled vocabulary (CLI-2167): one flag that accepts
@@ -37,16 +37,16 @@ const config = {
   ),
 } as const;
 
-export type LegacyConfigPullFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type ConfigPullFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-const legacyConfigPullHandler = (flags: LegacyConfigPullFlags) =>
-  legacyConfigPull(flags).pipe(
+const configPullHandler = (flags: ConfigPullFlags) =>
+  configPull(flags).pipe(
     // `--project-ref` accepts branch names here (CLI-2167 vocabulary), so its
     // value is only safe to log verbatim when it is actually ref-shaped — a
     // user-created branch name must never reach PostHog. Same guard as
     // `link`/`config diff`. `--remote-label` is a free-form, user-chosen
     // string and is NEVER safe to log verbatim.
-    withLegacyCommandInstrumentation({
+    withCommandTelemetry({
       flags,
       safeFlags:
         Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
@@ -56,12 +56,12 @@ const legacyConfigPullHandler = (flags: LegacyConfigPullFlags) =>
       // itself rejects every `-o/--output` value with a message pointing at
       // `--output-format`, so the full global choice set — single-sourced
       // from the flag's own definition — is declared "allowed" here.
-      outputFormats: LEGACY_GLOBAL_OUTPUT_FORMATS,
+      outputFormats: GLOBAL_OUTPUT_FORMATS,
     }),
     withJsonErrorHandling,
   );
 
-export const legacyConfigPullCommand = Command.make("pull", config).pipe(
+export const configPullCommand = Command.make("pull", config).pipe(
   Command.withDescription(
     "Writes configuration from a remote project or branch into supabase/config.toml. Prompts for confirmation before writing on an interactive TTY, unless --yes is set; --output-format json|stream-json skips the prompt entirely and takes its default answer, while a non-interactive text run still prints the prompt to stderr and reads one line from piped stdin (y/n honored, default otherwise) — use --dry-run to preview first.",
   ),
@@ -80,6 +80,6 @@ export const legacyConfigPullCommand = Command.make("pull", config).pipe(
       description: "Preview the changes without writing the config file",
     },
   ]),
-  Command.withHandler(legacyConfigPullHandler),
-  Command.provide(legacyManagementApiRuntimeLayer(["config", "pull"])),
+  Command.withHandler(configPullHandler),
+  Command.provide(managementApiRuntimeLayer(["config", "pull"])),
 );

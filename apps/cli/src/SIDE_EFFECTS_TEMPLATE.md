@@ -1,7 +1,7 @@
 # Side-effect Documentation Template
 
 > **What is this file?**
-> Every legacy command must include a `SIDE_EFFECTS.md` in its command directory.
+> Every command must include a `SIDE_EFFECTS.md` in its command directory.
 > It documents all observable behavior of the command: files touched, API calls made,
 > environment variables consumed, and exit codes. This is the source of truth for
 > the command's side effects, and the primary input to the E2E compatibility test
@@ -77,7 +77,7 @@
 ## Telemetry Events Fired
 
 <!-- List every PostHog event the command emits, including the universal cli_command_executed.
-     If the legacy command is still a Phase 0 proxy, write "proxy — see Go binary" and leave
+     If the command is still a Phase 0 proxy, write "proxy — see Go binary" and leave
      the table empty; the Go subprocess fires telemetry. For a still-wrapped command, grep
      its Go source under apps/cli-go/internal/<command>/*.go for `service.Capture`,
      `service.Alias`, `service.Identify`, `service.GroupIdentify`, `TrackUpgradeSuggested`

@@ -5,11 +5,11 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
-import { legacyParseSchemaFlags } from "../../../command-internal/legacy-schema-flags.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { LegacyDbDumpRunError } from "./dump.errors.ts";
-import { legacyDbDump } from "./dump.handler.ts";
-import { legacyDbDumpRuntimeLayer } from "./dump.layers.ts";
+import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { DbDumpRunError } from "./dump.errors.ts";
+import { dbDump } from "./dump.handler.ts";
+import { dbDumpRuntimeLayer } from "./dump.layers.ts";
 
 /**
  * `db dump` streams the pg_dump SQL to stdout (or `--file`) in every output
@@ -20,7 +20,7 @@ import { legacyDbDumpRuntimeLayer } from "./dump.layers.ts";
  * mode send the diagnostic to stderr and exit 1 instead; text mode keeps
  * normal error rendering.
  */
-const onRunFailure = (error: LegacyDbDumpRunError) =>
+const onRunFailure = (error: DbDumpRunError) =>
   Effect.gen(function* () {
     const output = yield* Output;
     if (output.format === "text") return yield* Effect.fail(error);
@@ -56,7 +56,7 @@ const config = {
     // --exclude/-x is a CSV string-slice value; use the shared pflag-faithful
     // helper so quoted commas survive and malformed CSV fails at parse time.
     Flag.mapTryCatch(
-      (rawValues) => legacyParseSchemaFlags(rawValues),
+      (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
@@ -103,20 +103,20 @@ const config = {
     Flag.atLeast(0),
     // --schema/-s is a CSV string-slice value; same CSV semantics as --exclude above.
     Flag.mapTryCatch(
-      (rawValues) => legacyParseSchemaFlags(rawValues),
+      (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
 } as const;
 
-export type LegacyDbDumpFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DbDumpFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDbDumpCommand = Command.make("dump", config).pipe(
+export const dbDumpCommand = Command.make("dump", config).pipe(
   Command.withDescription("Dumps data or schemas from the remote database."),
   Command.withShortDescription("Dumps data or schemas from the remote database"),
   Command.withHandler((flags) =>
-    legacyDbDump(flags).pipe(
-      withLegacyCommandInstrumentation({
+    dbDump(flags).pipe(
+      withCommandTelemetry({
         flags: {
           "dry-run": flags.dryRun,
           "data-only": flags.dataOnly,
@@ -142,9 +142,9 @@ export const legacyDbDumpCommand = Command.make("dump", config).pipe(
         // long name.
         aliases: { s: "schema", x: "exclude", f: "file", p: "password" },
       }),
-      Effect.catchTag("LegacyDbDumpRunError", onRunFailure),
+      Effect.catchTag("DbDumpRunError", onRunFailure),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyDbDumpRuntimeLayer),
+  Command.provide(dbDumpRuntimeLayer),
 );

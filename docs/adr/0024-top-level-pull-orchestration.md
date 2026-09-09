@@ -28,11 +28,11 @@ implementations rather than assuming a thin composition layer would do:
    orchestrator would emit three separate JSON objects on `--output-format json`, corrupting the
    "one JSON object per invocation" contract every other command upholds.
 2. `db pull` reads `db.major_version` out of `config.toml` for shadow-container provisioning
-   (`commands/db/pull/pull.handler.ts`, via `legacyReadDbToml`/`toml.majorVersion`) — a value
+   (`commands/db/pull/pull.handler.ts`, via `readDbToml`/`toml.majorVersion`) — a value
    `config pull` can have just changed moments earlier in the same `pull` invocation.
 3. `db pull` reconciles `supabase/migrations` against the remote migration history table
-   (`legacyReconcileMigrations`, `commands/db/pull/pull.handler.ts`) and hard-fails
-   (`LegacyDbPullMigrationConflictError`) when the remote has history the local directory doesn't —
+   (`reconcileMigrations`, `commands/db/pull/pull.handler.ts`) and hard-fails
+   (`DbPullMigrationConflictError`) when the remote has history the local directory doesn't —
    exactly the state a fresh checkout starts in, which is one of the two cases this command exists
    for.
 
@@ -40,13 +40,13 @@ implementations rather than assuming a thin composition layer would do:
 
 ### 1. Resolve once; thread the ref, no target-resolution refactor
 
-`legacyResolveConfigTarget` (`commands/config/config.target.ts`) is called exactly once, in
+`resolveConfigTarget` (`commands/config/config.target.ts`) is called exactly once, in
 `pull.handler.ts`, producing `{ ref, branch }`. That `ref` is passed directly into every sub-step's
 existing `--project-ref`-shaped input (each step already accepts one) rather than reusing the
 sub-step's own resolver end to end. This is safe because the resolved `ref` is always already the
-API-addressable ref, including for a branch target: `legacyResolveBranchProjectRef` returns
+API-addressable ref, including for a branch target: `resolveBranchProjectRef` returns
 `detail.ref`/`branch.project_ref` and re-asserts it against the branch-project-ref pattern before
-returning. Downstream, `LegacyProjectRefResolver.loadProjectRef` short-circuits on a ref-shaped
+returning. Downstream, `ProjectRefResolver.loadProjectRef` short-circuits on a ref-shaped
 value with no network call at all. The combination means passing `target.ref` through gives true
 resolve-once behavior — one branch lookup, one config fetch — without touching any sub-step's own
 resolver implementation.
@@ -78,20 +78,20 @@ Each reused sub-step is split into a "run core" — a function that performs the
 returns a typed outcome, with no `output.success` call and no confirmation prompt of its own — and
 its existing standalone-command emission stays only in that command's own top-level handler:
 
-- `config pull`: `legacyPlanConfigPullRun` (preview: fetch, diff, fixpoint-expand, validate — no
-  git check, no prompt, no write) and `legacyApplyConfigPullRun` (the TOCTOU re-read, edit, atomic
-  write). `legacyRunConfigPull` — the standalone command's own body — is reimplemented on top of
+- `config pull`: `planConfigPullRun` (preview: fetch, diff, fixpoint-expand, validate — no
+  git check, no prompt, no write) and `applyConfigPullRun` (the TOCTOU re-read, edit, atomic
+  write). `runConfigPull` — the standalone command's own body — is reimplemented on top of
   these two with its exact existing behavior preserved; its own integration/e2e tests pass
   unmodified.
-- `db pull`: `legacyRunDbPull(flags, invoke?)`, returning a typed `LegacyDbPullOutcome`. The
-  standalone `legacyDbPull` handler now calls this plus its own existing emission, unchanged
-  externally. `LegacyDbPullInvoke` gained `assumeYes?: boolean` (the same precedent as its existing
+- `db pull`: `runDbPull(flags, invoke?)`, returning a typed `DbPullOutcome`. The
+  standalone `dbPull` handler now calls this plus its own existing emission, unchanged
+  externally. `DbPullInvoke` gained `assumeYes?: boolean` (the same precedent as its existing
   `skipFinishedLine`), which suppresses the internal "Update remote migration history table?"
   prompt for a caller whose own confirmation already covers it.
-- `migration fetch`: `legacyRunMigrationFetch(input)`, taking an explicit `{ flags, target,
-assumeYes? }` rather than deriving its target from raw CLI args (`resolveLegacyDbTargetFlags`),
+- `migration fetch`: `runMigrationFetch(input)`, taking an explicit `{ flags, target,
+assumeYes? }` rather than deriving its target from raw CLI args (`resolveDbTargetFlags`),
   which an in-process caller has no argv to feed. `assumeYes` is required here, not cosmetic:
-  `legacyMigrationConfirm` prompts regardless of `output.format` with a 10-minute stdin timeout —
+  `migrationConfirm` prompts regardless of `output.format` with a 10-minute stdin timeout —
   without an override, `pull --output-format json` on a TTY would hang waiting for input no
   machine-mode caller can answer.
 - `functions download`: `downloadFunctions(flags, dependencies)` already returned a typed
@@ -109,8 +109,8 @@ how many of the four steps actually ran.
 covering all four steps. The preview is asymmetric because the sub-steps' own preview machinery
 is asymmetric:
 
-- **config** gets a real diff — `legacyPlanConfigPullRun`'s plan is already fully computed by the
-  time the confirmation renders, so `legacyRenderConfigPullText` renders the same change-by-change
+- **config** gets a real diff — `planConfigPullRun`'s plan is already fully computed by the
+  time the confirmation renders, so `renderConfigPullText` renders the same change-by-change
   body `config diff`/`config pull --dry-run` would show.
 - **db pull**, **migration fetch**, and **functions download** have no preview machinery of their
   own (no dry-run mode, no plan/apply split) — each gets one qualitative line in the confirmation
@@ -140,7 +140,7 @@ every step has run, the aggregate is emitted (text mode) or attached to the mach
 `Effect.failCause` — preserving that failure's own `_tag`/classification for telemetry, rather than
 rebuilding a generic error that would lose it.
 
-`db pull`'s "already in sync" condition (`LegacyDbPullInSyncError`) is caught at the `db` step's own
+`db pull`'s "already in sync" condition (`DbPullInSyncError`) is caught at the `db` step's own
 adapter (`pull.steps.ts`) and reported as `status: "unchanged"` — a finding, not a failure, at this
 level, even though standalone `db pull` treats the same condition as a non-zero exit. This is a
 deliberate, documented divergence (see the command's own `SIDE_EFFECTS.md`): from `pull`'s
@@ -150,10 +150,10 @@ to fail the whole invocation.
 ### 6. Payload keyed by asset type
 
 The `--output-format json`/`stream-json` payload is a top-level object with `steps` keyed by
-`LegacyPullStepId` (`config`, `migration_history`, `db`, `functions`), plus `step_order` giving the
+`PullStepId` (`config`, `migration_history`, `db`, `functions`), plus `step_order` giving the
 stable execution order as an array (so a consumer never has to hardcode or infer it), `target`,
 `dry_run`, `confirmed`, `wrote`, and `counts` (per-status totals across the closed vocabulary
-`changed | unchanged | skipped | planned | failed`, modelled on `LegacyConfigPushServiceStatus`).
+`changed | unchanged | skipped | planned | failed`, modelled on `ConfigPushServiceStatus`).
 Keying by asset type rather than, say, an ordered array of step results makes a consumer's "did the
 db step change anything" question a direct property lookup instead of a linear scan, and makes
 adding a future step (e.g. storage buckets, see Non-Goals) an additive key rather than a shape
@@ -215,8 +215,8 @@ change to an existing array.
 
 ## Alternatives Considered
 
-1. **Call each sub-step's existing standalone handler (`legacyConfigPull`, `legacyDbPull`,
-   `legacyMigrationFetch`, `legacyFunctionsDownload`) directly, unmodified**: rejected — each one
+1. **Call each sub-step's existing standalone handler (`configPull`, `dbPull`,
+   `migrationFetch`, `functionsDownload`) directly, unmodified**: rejected — each one
    calls `output.success` internally, so three would each independently emit a full JSON object,
    producing 3-4 JSON lines on stdout for one `pull` invocation and breaking the "one JSON object
    per command" contract every other command upholds under `--output-format json`.
@@ -240,7 +240,7 @@ several real defects, all fixed in the same change before merge — see the comm
 and git history for the full list (the `--dry-run` preview being silently dropped, the config step's
 `written` field leaking an absolute path, the git-dirty guard aborting runs the config step had no
 work in, an undisclosed migration-file-overwrite path, and a `pull.layers.ts` `Layer.mergeAll` merge
-order the comment claimed decided the winning `LegacyProjectRefResolver` but which Effect's actual
+order the comment claimed decided the winning `ProjectRefResolver` but which Effect's actual
 concurrent-build memoization made a race — fixed by eliminating the duplicate binding outright rather
 than reordering).
 
@@ -254,13 +254,13 @@ review, extend section 4 and 5 above:
   because the `db` step has no preview machinery to know ahead of time whether it will find schema
   drift and write there; `supabase/functions` is checked unconditionally since the `functions` step
   always runs. `--force` now bypasses all three checks. See `pull.format.ts`'s
-  `legacyPullDirtyWarningMessage` and `pull.handler.ts`'s three independently-tracked dirty locations.
+  `pullDirtyWarningMessage` and `pull.handler.ts`'s three independently-tracked dirty locations.
 - **Failed steps now carry a "retry just this step" hint** naming the exact standalone command
   (`supabase <command> --project-ref <resolved-ref>`) — added because a failure inside an orchestrator
   is easy to mis-diagnose as "re-run the whole orchestrator" when re-running just the one failed
   sub-command is both correct and far cheaper. Appended to `failure.suggestion` after any
   step-specific remedy (e.g. the `db` step's migration-conflict hint), surfaced in both the JSON
-  payload and the text-mode summary. See `pull.aggregate.ts`'s `legacyPullRetryHint`.
+  payload and the text-mode summary. See `pull.aggregate.ts`'s `pullRetryHint`.
 
 ## Related Decisions
 
@@ -268,8 +268,8 @@ review, extend section 4 and 5 above:
   names `supabase pull` in the outside-in command surface and states the "runs all sub-syncs in
   parallel" aspiration this decision refines for `pull` specifically.
 - [ADR 0023](0023-config-pull-write-strategy-and-scope-resolution.md): `config pull` Write Strategy
-  and Scope Resolution — the plan/apply split this decision's `legacyPlanConfigPullRun`/
-  `legacyApplyConfigPullRun` extraction is built on top of, unchanged in its own write/scope rules.
+  and Scope Resolution — the plan/apply split this decision's `planConfigPullRun`/
+  `applyConfigPullRun` extraction is built on top of, unchanged in its own write/scope rules.
 
 ## See Also
 

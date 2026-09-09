@@ -22,7 +22,7 @@ initial-pull `pg_dump` container). See "Database writes" and "Docker" below.
 
 | Path                                                       | Format     | When                                                                                                                                                                                                                                         |
 | ---------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml` or `config.json`          | TOML/JSON  | always, before any network call — `legacyOpenConfigPullSource`, the SAME base load `config pull` itself opens (no `[remotes.*]` overlay yet); see `config/pull/SIDE_EFFECTS.md` for the loader's own rules                                   |
+| `<workdir>/supabase/config.toml` or `config.json`          | TOML/JSON  | always, before any network call — `openConfigPullSource`, the SAME base load `config pull` itself opens (no `[remotes.*]` overlay yet); see `config/pull/SIDE_EFFECTS.md` for the loader's own rules                                         |
 | `<workdir>/supabase/.env`, `.env.local`                    | dotenv     | always, to resolve `env(VAR)` references inside `config.toml` (via the config step's loader)                                                                                                                                                 |
 | `<workdir>/supabase/.temp/project-ref`                     | plain text | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file) when `--project-ref` is absent; parent-ref candidate for a branch-name `--project-ref` (checked eagerly, before any spinner or branch lookup)                                |
 | `<workdir>/supabase/.temp/linked-project.json`             | JSON       | parent-ref candidate for a branch-name `--project-ref` (same eager pre-check)                                                                                                                                                                |
@@ -36,7 +36,7 @@ Each executed sub-step also performs its own file reads exactly as documented in
 threads the already-resolved `ref` into each step's existing `--project-ref`-shaped input rather
 than having each step re-resolve it (ADR 0024's "resolve once" decision) — most of a sub-step's own
 target-resolution file reads are therefore skipped in practice (the ref is already ref-shaped, so
-`LegacyProjectRefResolver.loadProjectRef` short-circuits with no file/network access).
+`ProjectRefResolver.loadProjectRef` short-circuits with no file/network access).
 
 ## Files Written
 
@@ -62,7 +62,7 @@ each step's own documented "when" in its own `SIDE_EFFECTS.md`.
 
 `pull` checks THREE locations for uncommitted or untracked git changes, independently, using the
 same underlying mechanism `config pull` uses for its own config-only guard
-(`legacyPathHasUncommittedChanges`, `command-internal/legacy-git-status.ts`) but owned and called
+(`pathHasUncommittedChanges`, `command-internal/git-status.ts`) but owned and called
 directly by `pull` itself, not delegated to any sub-step's own guard (none of the reused run-cores
 run a git check of their own):
 
@@ -82,7 +82,7 @@ A dirty (or untracked) result on ANY of the three changes behavior by output mod
 `config pull`'s own single-path guard: an interactive TTY text run without `--yes` downgrades the
 aggregated confirmation prompt's default answer from yes to no and adds the warning (naming every
 dirty path) to the confirmation body; every other case — a non-interactive or machine-format run,
-or `--yes` passed on any TTY — aborts before the prompt (`LegacyPullUncommittedChangesError`, exit
+or `--yes` passed on any TTY — aborts before the prompt (`PullUncommittedChangesError`, exit
 1, naming every dirty path in its message). `--yes`/`SUPABASE_YES` never bypasses this guard; only
 `--force` does, for all three locations at once.
 
@@ -92,11 +92,11 @@ each location's check is independent, so a spawn failure on one does not affect 
 
 ## API Routes
 
-| #   | Purpose                 | Method | Path                                 | When                                                                                                                                              |
-| --- | ----------------------- | ------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1a  | branch by UUID          | GET    | `/v1/branches/{branch_id}`           | `--project-ref` is a branch UUID — resolved once, up front (ADR 0024 "resolve once"); needs no linked project                                     |
-| 1b  | branch by name          | GET    | `/v1/projects/{ref}/branches/{name}` | `--project-ref` is a branch NAME (not a ref/UUID); the parent ref is resolved from local state first                                              |
-| 2   | effective remote config | GET    | `/v2/projects/{ref}/config`          | the config step's own fetch (`legacyPlanConfigPullRun`) — guaranteed single by the plan/apply split, never repeated for a dry run or a real apply |
+| #   | Purpose                 | Method | Path                                 | When                                                                                                                                        |
+| --- | ----------------------- | ------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1a  | branch by UUID          | GET    | `/v1/branches/{branch_id}`           | `--project-ref` is a branch UUID — resolved once, up front (ADR 0024 "resolve once"); needs no linked project                               |
+| 1b  | branch by name          | GET    | `/v1/projects/{ref}/branches/{name}` | `--project-ref` is a branch NAME (not a ref/UUID); the parent ref is resolved from local state first                                        |
+| 2   | effective remote config | GET    | `/v2/projects/{ref}/config`          | the config step's own fetch (`planConfigPullRun`) — guaranteed single by the plan/apply split, never repeated for a dry run or a real apply |
 
 Every other route belongs to a reused sub-step, called with the already-resolved `ref` (no
 re-resolution): the db step's own routes (temp login role, IPv4 pooler config, linked-project
@@ -130,14 +130,14 @@ Docker-dependent.
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                 | Required?                                                                                                                                                                                 |
-| ----------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SUPABASE_YES`          | answers `pull`'s own aggregated confirmation "yes" (same as `--yes`); does NOT bypass the dirty guard   | no — resolved via the GLOBAL flag (`legacyResolveYes`), no project-`.env` fallback (unlike the sub-steps' own internal prompts, which are all bypassed by `pull` before they can read it) |
-| `SUPABASE_PROJECT_ID`   | project ref (flag → this → `.temp/project-ref` → prompt)                                                | no                                                                                                                                                                                        |
-| `SUPABASE_WORKDIR`      | working directory `config.toml`/`.json`/`supabase/migrations`/`supabase/functions` are resolved against | no                                                                                                                                                                                        |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                    | no (falls back to keyring → `~/.supabase/access-token`)                                                                                                                                   |
-| `SUPABASE_PROFILE`      | API profile selection                                                                                   | no                                                                                                                                                                                        |
-| `env(VAR)` references   | interpolated into `config.toml` values by the config step's loader                                      | no                                                                                                                                                                                        |
+| Variable                | Purpose                                                                                                 | Required?                                                                                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_YES`          | answers `pull`'s own aggregated confirmation "yes" (same as `--yes`); does NOT bypass the dirty guard   | no — resolved via the GLOBAL flag (`resolveYes`), no project-`.env` fallback (unlike the sub-steps' own internal prompts, which are all bypassed by `pull` before they can read it) |
+| `SUPABASE_PROJECT_ID`   | project ref (flag → this → `.temp/project-ref` → prompt)                                                | no                                                                                                                                                                                  |
+| `SUPABASE_WORKDIR`      | working directory `config.toml`/`.json`/`supabase/migrations`/`supabase/functions` are resolved against | no                                                                                                                                                                                  |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                    | no (falls back to keyring → `~/.supabase/access-token`)                                                                                                                             |
+| `SUPABASE_PROFILE`      | API profile selection                                                                                   | no                                                                                                                                                                                  |
+| `env(VAR)` references   | interpolated into `config.toml` values by the config step's loader                                      | no                                                                                                                                                                                  |
 
 Once the db and functions steps run, they consume their own established environment variables
 exactly as documented in their own `SIDE_EFFECTS.md` files (e.g. `SUPABASE_DB_PASSWORD`,
@@ -149,31 +149,31 @@ functions) — `pull` does not read or override any of these itself, it only sup
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                                                       |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | every step succeeded (any mix of `changed`/`unchanged`/`skipped`)                                                                                                                                                                                                               |
-| `0`  | `--dry-run` (every step reports `planned`/`skipped`, nothing written)                                                                                                                                                                                                           |
-| `0`  | the aggregated confirmation was declined (every step reports `planned`/`skipped`, nothing written)                                                                                                                                                                              |
-| `1`  | the `-o`/`--output` global flag passed (any value — not supported by this command, `LegacyPullOutputFlagUnsupportedError`)                                                                                                                                                      |
-| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`LegacyPullWorkdirError`)                                                                                                                                                                           |
-| `1`  | branch-name `--project-ref` target-resolution failure (`LegacyPullBranchNotLinkedError` / `LegacyPullParentRefInvalidError` / `LegacyPullBranchNotFoundError` / `LegacyPullBranchNotReadyError` / `LegacyPullBranchResolveNetworkError` / `LegacyPullBranchResolveStatusError`) |
-| `1`  | `supabase/config.toml`/`.json`, `supabase/migrations`, and/or `supabase/functions` has uncommitted or untracked changes and no human will read the warning (`LegacyPullUncommittedChangesError`) — see Git above                                                                |
-| `1`  | any one step fails (config, migration history, db, or functions) — every OTHER step still runs and is reported, but the process exits non-zero and re-fails with the FIRST original failure's own cause/classification                                                          |
+| Code | Condition                                                                                                                                                                                                                                   |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | every step succeeded (any mix of `changed`/`unchanged`/`skipped`)                                                                                                                                                                           |
+| `0`  | `--dry-run` (every step reports `planned`/`skipped`, nothing written)                                                                                                                                                                       |
+| `0`  | the aggregated confirmation was declined (every step reports `planned`/`skipped`, nothing written)                                                                                                                                          |
+| `1`  | the `-o`/`--output` global flag passed (any value — not supported by this command, `PullOutputFlagUnsupportedError`)                                                                                                                        |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`PullWorkdirError`)                                                                                                                                             |
+| `1`  | branch-name `--project-ref` target-resolution failure (`PullBranchNotLinkedError` / `PullParentRefInvalidError` / `PullBranchNotFoundError` / `PullBranchNotReadyError` / `PullBranchResolveNetworkError` / `PullBranchResolveStatusError`) |
+| `1`  | `supabase/config.toml`/`.json`, `supabase/migrations`, and/or `supabase/functions` has uncommitted or untracked changes and no human will read the warning (`PullUncommittedChangesError`) — see Git above                                  |
+| `1`  | any one step fails (config, migration history, db, or functions) — every OTHER step still runs and is reported, but the process exits non-zero and re-fails with the FIRST original failure's own cause/classification                      |
 
 **Deliberate divergence from standalone `db pull`:** when the db step finds the remote already in
-sync with local migrations (`LegacyDbPullInSyncError`), `pull` reports it as `status: "unchanged"`
+sync with local migrations (`DbPullInSyncError`), `pull` reports it as `status: "unchanged"`
 — a finding, not a failure — rather than the non-zero exit standalone `db pull` gives that same
 condition. Every other step's failure still counts as a `pull` failure.
 
 ## Telemetry Events Fired
 
-| Event                  | When                                                                  | Notable properties / groups                                                                                                                                                                  |
-| ---------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via `withLegacyCommandInstrumentation`) | `exit_code`, `duration_ms`, `flags`; `--project-ref`'s value is only in `safeFlags` (logged verbatim) when it is ref-shaped (`PROJECT_REF_PATTERN`) — a user-created branch name is redacted |
+| Event                  | When                                                      | Notable properties / groups                                                                                                                                                                  |
+| ---------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via `withCommandTelemetry`) | `exit_code`, `duration_ms`, `flags`; `--project-ref`'s value is only in `safeFlags` (logged verbatim) when it is ref-shaped (`PROJECT_REF_PATTERN`) — a user-created branch name is redacted |
 
 Exactly one `cli_command_executed` fires per `pull` invocation. None of the four reused steps fire
 their own `cli_command_executed` (or any other event) when run through `pull` — each is called as a
-plain library function (its run-core), never through its own `withLegacyCommandInstrumentation`
+plain library function (its run-core), never through its own `withCommandTelemetry`
 wrapper, which lives only in that step's own standalone command handler.
 
 ## Output
@@ -200,7 +200,7 @@ one whose cause actually exits the command non-zero.
 Before this summary, the confirmation body is always printed — on `--dry-run` too, not just a real
 run — starting with a header line naming the target (`Pulling from project <ref>`, or `Pulling
 from project <ref> (branch "<branch>")` when a branch is set), then one section per step in
-`LEGACY_PULL_STEP_ORDER` order (config's own real diff, or "No config differences found."; a
+`PULL_STEP_ORDER` order (config's own real diff, or "No config differences found."; a
 migration-history line, only when that step will actually run this invocation, calling out that it
 overwrites same-named local files when the reason is `--with-migration-history` rather than the
 bootstrap case; a db line noting it also updates the remote migration history table and requires
@@ -213,7 +213,7 @@ set or the run is `--dry-run`/declined.
 is instead attached to the single JSON/stream-json error envelope via `MachineErrorContext` (spread
 onto the envelope's top level, alongside `_tag`/`error`) before the process fails — never a second,
 separate JSON object. `schema_version` is `pull`'s own payload version
-(`LEGACY_PULL_PAYLOAD_VERSION`, currently `1`), independent of any sub-step's own payload version.
+(`PULL_PAYLOAD_VERSION`, currently `1`), independent of any sub-step's own payload version.
 Shape (`pull.format.ts`):
 
 ```jsonc
@@ -258,7 +258,7 @@ is the squashed cause's own `_tag`, when it has one, so a machine consumer can c
 every field of it); the other three steps' `detail` shapes are `pull`-owned and narrower, as shown
 above.
 
-### `-o`/`--output` (legacy machine formats)
+### `-o`/`--output` (machine formats)
 
 Not supported. `pull` is a net-new TS command with no Go parity contract (CLI-2156). Any
 `-o`/`--output` value — every machine-format value AND `pretty` — is rejected outright before any
@@ -280,9 +280,9 @@ the -o/--output flag is not supported by pull; use --output-format json|stream-j
   whenever `supabase/migrations` is missing, or a raw (unfiltered) directory listing of it is
   empty, the step runs anyway, since there is nothing local to overwrite and a bootstrap checkout
   would otherwise hit `db pull`'s own hard failure when the remote has history the local directory
-  doesn't (`LegacyDbPullMigrationConflictError`). This eligibility check is DELIBERATELY the same
+  doesn't (`DbPullMigrationConflictError`). This eligibility check is DELIBERATELY the same
   raw-listing predicate `migration fetch`'s own overwrite-confirmation guard uses for "existing
-  files" (not the filtered, `MIGRATE_FILE_PATTERN`-matching count `legacyLoadLocalVersions`
+  files" (not the filtered, `MIGRATE_FILE_PATTERN`-matching count `loadLocalVersions`
   produces for db/migration reconciliation elsewhere) — so a directory holding only a
   `README.md`/`.gitkeep`/deprecated `_init.sql` reads as non-empty to both checks, never
   auto-running the bootstrap case over files `migration fetch`'s own standalone guard would have
@@ -292,8 +292,8 @@ the -o/--output flag is not supported by pull; use --output-format json|stream-j
 - **`--remote-label`** redirects the config step's write from the config root into a
   `[remotes.<label>]` block, identically to `config pull`'s own flag of the same name (see
   `config/pull/SIDE_EFFECTS.md`) — `pull` threads the flag's value straight through to
-  `legacyPlanConfigPullRun`'s `remoteLabel` parameter.
-- **A `db`-step failure classified as `LegacyDbPullMigrationConflictError`** (the remote migration
+  `planConfigPullRun`'s `remoteLabel` parameter.
+- **A `db`-step failure classified as `DbPullMigrationConflictError`** (the remote migration
   history doesn't match local files) gets one extra line appended to its `suggestion`, pointing at
   `supabase pull --with-migration-history` as the more direct fix `pull` itself provides — on top
   of that error's own built-in `supabase migration repair` commands. This is `pull`-only framing;
@@ -304,8 +304,8 @@ the -o/--output flag is not supported by pull; use --output-format json|stream-j
   (BRA-268, unstarted upstream). Adding a storage step later is additive — see ADR 0024's
   non-goals.
 - **The config step never runs its own dirty guard or its own no-work short-circuit prompt-skip.**
-  `pull` calls `legacyPlanConfigPullRun`/`legacyApplyConfigPullRun` directly (the plan/apply split),
-  never `legacyRunConfigPull` — so standalone `config pull`'s own git check and its "nothing to do,
+  `pull` calls `planConfigPullRun`/`applyConfigPullRun` directly (the plan/apply split),
+  never `runConfigPull` — so standalone `config pull`'s own git check and its "nothing to do,
   skip the prompt entirely" behavior are both bypassed in favor of `pull`'s own single guard and
   single aggregated prompt (which always runs, even when the config step itself has no work, since
   the other three steps might).

@@ -8,10 +8,10 @@ import {
 
 /**
  * Reading `supabase/.temp/project-ref` failed for a reason other than the file
- * being absent (which maps to `LegacyProjectNotLinkedError`). Message format:
+ * being absent (which maps to `ProjectRefNotLinkedError`). Message format:
  * `"failed to load project ref: " + err`.
  */
-export class LegacyUnlinkRefReadError extends Data.TaggedError("LegacyUnlinkRefReadError")<{
+export class UnlinkRefReadError extends Data.TaggedError("UnlinkRefReadError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -23,7 +23,7 @@ export class LegacyUnlinkRefReadError extends Data.TaggedError("LegacyUnlinkRefR
  * Removing the `supabase/.temp` directory failed. Byte-matches Go's
  * `"failed to remove temp directory: " + err` (`unlink.go:32`).
  */
-export class LegacyUnlinkTempRemovalError extends Data.TaggedError("LegacyUnlinkTempRemovalError")<{
+export class UnlinkTempRemovalError extends Data.TaggedError("UnlinkTempRemovalError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

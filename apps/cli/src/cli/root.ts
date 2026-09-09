@@ -1,121 +1,121 @@
 import { Effect, Layer, Option } from "effect";
 import { Command } from "effect/unstable/cli";
-import { legacyBackupsCommand } from "../commands/backups/backups.command.ts";
-import { legacyBootstrapCommand } from "../commands/bootstrap/bootstrap.command.ts";
-import { legacyBranchesCommand } from "../commands/branches/branches.command.ts";
-import { legacyCompletionCommand } from "../commands/completion/completion.command.ts";
-import { legacyConfigCommand } from "../commands/config/config.command.ts";
-import { legacyDbCommand } from "../commands/db/db.command.ts";
-import { legacyDomainsCommand } from "../commands/domains/domains.command.ts";
-import { legacyEncryptionCommand } from "../commands/encryption/encryption.command.ts";
-import { legacyExperimentalCommand } from "../commands/experimental/experimental.command.ts";
-import { legacyFunctionsCommand } from "../commands/functions/functions.command.ts";
-import { legacyGenCommand } from "../commands/gen/gen.command.ts";
-import { legacyInitCommand } from "../commands/init/init.command.ts";
-import { legacyInspectCommand } from "../commands/inspect/inspect.command.ts";
-import { legacyIssueCommand } from "../commands/issue/issue.command.ts";
-import { legacyLinkCommand } from "../commands/link/link.command.ts";
-import { legacyLoginCommand } from "../commands/login/login.command.ts";
-import { legacyLogoutCommand } from "../commands/logout/logout.command.ts";
-import { legacyMigrationCommand } from "../commands/migration/migration.command.ts";
-import { legacyNetworkBansCommand } from "../commands/network-bans/network-bans.command.ts";
-import { legacyNetworkRestrictionsCommand } from "../commands/network-restrictions/network-restrictions.command.ts";
-import { legacyOrgsCommand } from "../commands/orgs/orgs.command.ts";
-import { legacyPostgresConfigCommand } from "../commands/postgres-config/postgres-config.command.ts";
-import { legacyProjectsCommand } from "../commands/projects/projects.command.ts";
-import { legacyPullCommand } from "../commands/pull/pull.command.ts";
-import { legacySecretsCommand } from "../commands/secrets/secrets.command.ts";
-import { legacySeedCommand } from "../commands/seed/seed.command.ts";
-import { legacyServicesCommand } from "../commands/services/services.command.ts";
-import { legacySnippetsCommand } from "../commands/snippets/snippets.command.ts";
-import { legacySslEnforcementCommand } from "../commands/ssl-enforcement/ssl-enforcement.command.ts";
-import { legacySsoCommand } from "../commands/sso/sso.command.ts";
-import { legacyStartCommand } from "../commands/start/start.command.ts";
-import { legacyStatusCommand } from "../commands/status/status.command.ts";
-import { legacyStopCommand } from "../commands/stop/stop.command.ts";
-import { legacyStorageCommand } from "../commands/storage/storage.command.ts";
-import { legacyTestCommand } from "../commands/test/test.command.ts";
-import { legacyTelemetryCommand } from "../commands/telemetry/telemetry.command.ts";
-import { legacyUnlinkCommand } from "../commands/unlink/unlink.command.ts";
-import { legacyVanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
+import { backupsCommand } from "../commands/backups/backups.command.ts";
+import { bootstrapCommand } from "../commands/bootstrap/bootstrap.command.ts";
+import { branchesCommand } from "../commands/branches/branches.command.ts";
+import { completionCommand } from "../commands/completion/completion.command.ts";
+import { configCommand } from "../commands/config/config.command.ts";
+import { dbCommand } from "../commands/db/db.command.ts";
+import { domainsCommand } from "../commands/domains/domains.command.ts";
+import { encryptionCommand } from "../commands/encryption/encryption.command.ts";
+import { experimentalCommand } from "../commands/experimental/experimental.command.ts";
+import { functionsCommand } from "../commands/functions/functions.command.ts";
+import { genCommand } from "../commands/gen/gen.command.ts";
+import { initCommand } from "../commands/init/init.command.ts";
+import { inspectCommand } from "../commands/inspect/inspect.command.ts";
+import { issueCommand } from "../commands/issue/issue.command.ts";
+import { linkCommand } from "../commands/link/link.command.ts";
+import { loginCommand } from "../commands/login/login.command.ts";
+import { logoutCommand } from "../commands/logout/logout.command.ts";
+import { migrationCommand } from "../commands/migration/migration.command.ts";
+import { networkBansCommand } from "../commands/network-bans/network-bans.command.ts";
+import { networkRestrictionsCommand } from "../commands/network-restrictions/network-restrictions.command.ts";
+import { orgsCommand } from "../commands/orgs/orgs.command.ts";
+import { postgresConfigCommand } from "../commands/postgres-config/postgres-config.command.ts";
+import { projectsCommand } from "../commands/projects/projects.command.ts";
+import { pullCommand } from "../commands/pull/pull.command.ts";
+import { secretsCommand } from "../commands/secrets/secrets.command.ts";
+import { seedCommand } from "../commands/seed/seed.command.ts";
+import { servicesCommand } from "../commands/services/services.command.ts";
+import { snippetsCommand } from "../commands/snippets/snippets.command.ts";
+import { sslEnforcementCommand } from "../commands/ssl-enforcement/ssl-enforcement.command.ts";
+import { ssoCommand } from "../commands/sso/sso.command.ts";
+import { startCommand } from "../commands/start/start.command.ts";
+import { statusCommand } from "../commands/status/status.command.ts";
+import { stopCommand } from "../commands/stop/stop.command.ts";
+import { storageCommand } from "../commands/storage/storage.command.ts";
+import { testCommand } from "../commands/test/test.command.ts";
+import { telemetryCommand } from "../commands/telemetry/telemetry.command.ts";
+import { unlinkCommand } from "../commands/unlink/unlink.command.ts";
+import { vanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
 import { OutputFormatFlag } from "../shared/cli/global-flags.ts";
 import { outputLayerFor } from "../shared/output/output.layer.ts";
-import { legacyQuietProgressTextOutputLayer } from "../output/legacy-quiet-progress-text-output.layer.ts";
-import { makeGoProxyLayer } from "../shared/legacy/go-proxy.layer.ts";
+import { quietProgressTextOutputLayer } from "../output/quiet-progress-text-output.layer.ts";
+import { makeGoProxyLayer } from "../command-internal/go-proxy.layer.ts";
 import { AiTool } from "../shared/telemetry/ai-tool.service.ts";
 import { aiToolLayer } from "../shared/telemetry/ai-tool.layer.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { isBuiltInTextRequest, resolveAgentOutputFormat } from "../shared/cli/agent-output.ts";
 import {
-  LEGACY_GLOBAL_FLAGS,
-  LegacyAgentFlag,
-  LegacyCreateTicketFlag,
-  LegacyDebugFlag,
-  LegacyDnsResolverFlag,
-  LegacyExperimentalFlag,
-  LegacyNetworkIdFlag,
-  LegacyOutputFlag,
-  LegacyProfileFlag,
-  LegacyWorkdirFlag,
-  LegacyYesFlag,
-} from "../shared/legacy/global-flags.ts";
+  GLOBAL_FLAGS,
+  AgentFlag,
+  CreateTicketFlag,
+  DebugFlag,
+  DnsResolverFlag,
+  ExperimentalFlag,
+  NetworkIdFlag,
+  OutputFlag,
+  ProfileFlag,
+  WorkdirFlag,
+  YesFlag,
+} from "../command-internal/global-flags.ts";
 
-export const legacyRoot = Command.make("supabase").pipe(
+export const rootCommand = Command.make("supabase").pipe(
   Command.withDescription("Supabase CLI (stable channel)."),
   Command.withSubcommands([
-    legacyBackupsCommand,
-    legacyBootstrapCommand,
-    legacyBranchesCommand,
-    legacyCompletionCommand,
-    legacyConfigCommand,
-    legacyDbCommand,
-    legacyDomainsCommand,
-    legacyEncryptionCommand,
-    legacyExperimentalCommand,
-    legacyFunctionsCommand,
-    legacyGenCommand,
-    legacyInitCommand,
-    legacyInspectCommand,
-    legacyIssueCommand,
-    legacyLinkCommand,
-    legacyLoginCommand,
-    legacyLogoutCommand,
-    legacyMigrationCommand,
-    legacyNetworkBansCommand,
-    legacyNetworkRestrictionsCommand,
-    legacyOrgsCommand,
-    legacyPostgresConfigCommand,
-    legacyProjectsCommand,
-    legacyPullCommand,
-    legacySecretsCommand,
-    legacySeedCommand,
-    legacyServicesCommand,
-    legacySnippetsCommand,
-    legacySslEnforcementCommand,
-    legacySsoCommand,
-    legacyStartCommand,
-    legacyStatusCommand,
-    legacyStopCommand,
-    legacyStorageCommand,
-    legacyTelemetryCommand,
-    legacyTestCommand,
-    legacyUnlinkCommand,
-    legacyVanitySubdomainsCommand,
+    backupsCommand,
+    bootstrapCommand,
+    branchesCommand,
+    completionCommand,
+    configCommand,
+    dbCommand,
+    domainsCommand,
+    encryptionCommand,
+    experimentalCommand,
+    functionsCommand,
+    genCommand,
+    initCommand,
+    inspectCommand,
+    issueCommand,
+    linkCommand,
+    loginCommand,
+    logoutCommand,
+    migrationCommand,
+    networkBansCommand,
+    networkRestrictionsCommand,
+    orgsCommand,
+    postgresConfigCommand,
+    projectsCommand,
+    pullCommand,
+    secretsCommand,
+    seedCommand,
+    servicesCommand,
+    snippetsCommand,
+    sslEnforcementCommand,
+    ssoCommand,
+    startCommand,
+    statusCommand,
+    stopCommand,
+    storageCommand,
+    telemetryCommand,
+    testCommand,
+    unlinkCommand,
+    vanitySubdomainsCommand,
   ]),
   Command.provide(
     Layer.unwrap(
       Effect.gen(function* () {
         const explicitOutputFormat = yield* OutputFormatFlag;
-        const goOutput = yield* LegacyOutputFlag;
-        const profile = yield* LegacyProfileFlag;
-        const debug = yield* LegacyDebugFlag;
-        const workdir = yield* LegacyWorkdirFlag;
-        const experimental = yield* LegacyExperimentalFlag;
-        const networkId = yield* LegacyNetworkIdFlag;
-        const yes = yield* LegacyYesFlag;
-        const dnsResolver = yield* LegacyDnsResolverFlag;
-        const createTicket = yield* LegacyCreateTicketFlag;
-        const agent = yield* LegacyAgentFlag;
+        const goOutput = yield* OutputFlag;
+        const profile = yield* ProfileFlag;
+        const debug = yield* DebugFlag;
+        const workdir = yield* WorkdirFlag;
+        const experimental = yield* ExperimentalFlag;
+        const networkId = yield* NetworkIdFlag;
+        const yes = yield* YesFlag;
+        const dnsResolver = yield* DnsResolverFlag;
+        const createTicket = yield* CreateTicketFlag;
+        const agent = yield* AgentFlag;
         const cliArgs = yield* CliArgs;
 
         const aiTool = yield* AiTool.pipe(Effect.provide(aiToolLayer));
@@ -124,7 +124,7 @@ export const legacyRoot = Command.make("supabase").pipe(
         // when that flag is absent.
         const outputFormat = resolveAgentOutputFormat({
           explicitOutputFormat,
-          legacyOutputFormat: goOutput,
+          goOutputFormat: goOutput,
           agentOverride: agent,
           detectedAgentName: aiTool.name,
           isBuiltInTextRequest: isBuiltInTextRequest(cliArgs.args),
@@ -157,7 +157,7 @@ export const legacyRoot = Command.make("supabase").pipe(
         const goFmt = Option.getOrUndefined(goOutput);
         const isGoMachineFormat = goFmt !== undefined && goFmt !== "pretty" && goFmt !== "table";
         const outputLayer = isGoMachineFormat
-          ? legacyQuietProgressTextOutputLayer
+          ? quietProgressTextOutputLayer
           : outputLayerFor(outputFormat);
 
         return Layer.mergeAll(
@@ -167,5 +167,5 @@ export const legacyRoot = Command.make("supabase").pipe(
       }),
     ),
   ),
-  Command.withGlobalFlags([OutputFormatFlag, ...LEGACY_GLOBAL_FLAGS]),
+  Command.withGlobalFlags([OutputFormatFlag, ...GLOBAL_FLAGS]),
 );

@@ -3,25 +3,21 @@ import { Effect, Option } from "effect";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { initProject } from "../../shared/init/project-init.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import {
-  LegacyExperimentalFlag,
-  LegacyWorkdirFlag,
-  legacyResolveYes,
-} from "../../shared/legacy/global-flags.ts";
-import { LegacyInitConfigExistsError, LegacyInitExperimentalRequiredError } from "./init.errors.ts";
-import type { LegacyInitFlags } from "./init.command.ts";
+import { ExperimentalFlag, WorkdirFlag, resolveYes } from "../../command-internal/global-flags.ts";
+import { InitConfigExistsError, InitExperimentalRequiredError } from "./init.errors.ts";
+import type { InitFlags } from "./init.command.ts";
 
-export const legacyInit = Effect.fn("legacy.init")(function* (flags: LegacyInitFlags) {
+export const init = Effect.fn("init")(function* (flags: InitFlags) {
   const output = yield* Output;
   const runtimeInfo = yield* RuntimeInfo;
-  const experimental = yield* LegacyExperimentalFlag;
-  const workdir = yield* LegacyWorkdirFlag;
+  const experimental = yield* ExperimentalFlag;
+  const workdir = yield* WorkdirFlag;
 
   if (flags.useOrioledb && !experimental) {
     // Go marks `experimental` required in PreRun (`cmd/init.go:32-36`), so cobra's
     // `ValidateRequiredFlags` fails with its standard required-flag message.
     return yield* Effect.fail(
-      new LegacyInitExperimentalRequiredError({
+      new InitExperimentalRequiredError({
         message: `required flag(s) "experimental" not set`,
       }),
     );
@@ -35,7 +31,7 @@ export const legacyInit = Effect.fn("legacy.init")(function* (flags: LegacyInitF
     // `--yes` OR `SUPABASE_YES` (`viper.GetBool("YES")`, root.go:318-320):
     // auto-accepts the `-i` IDE prompts with the established stderr echo
     // instead of prompting anyway (CLI-1974).
-    yes: yield* legacyResolveYes,
+    yes: yield* resolveYes,
     withVscodeSettings: flags.withVscodeWorkspace || flags.withVscodeSettings,
     withIntellijSettings: flags.withIntellijSettings,
   });
@@ -55,7 +51,7 @@ export const legacyInit = Effect.fn("legacy.init")(function* (flags: LegacyInitF
         ? "failed to create config file: open supabase\\config.toml: The file exists."
         : "failed to create config file: open supabase/config.toml: file exists";
     return yield* Effect.fail(
-      new LegacyInitConfigExistsError({
+      new InitConfigExistsError({
         message,
         suggestion: "Run supabase init --force to overwrite existing config file.",
       }),

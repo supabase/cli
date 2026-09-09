@@ -5,22 +5,22 @@ import { Command } from "effect/unstable/cli";
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { EventCommandExecuted } from "../../../shared/telemetry/event-catalog.ts";
-import { legacyCompletionFishCommand } from "./fish.command.ts";
-import { legacyCompletionFish } from "./fish.handler.ts";
+import { completionFishCommand } from "./fish.command.ts";
+import { completionFish } from "./fish.handler.ts";
 
-function setupLegacyCompletionFish() {
+function setupCompletionFish() {
   return mockOutput();
 }
 
-function legacyTestRoot() {
-  return Command.make("supabase").pipe(Command.withSubcommands([legacyCompletionFishCommand]));
+function testRoot() {
+  return Command.make("supabase").pipe(Command.withSubcommands([completionFishCommand]));
 }
 
-describe("legacy completion fish", () => {
+describe("completion fish", () => {
   it.live("prints the native fish completion script", () => {
-    const out = setupLegacyCompletionFish();
+    const out = setupCompletionFish();
     return Effect.gen(function* () {
-      yield* legacyCompletionFish({ noDescriptions: false });
+      yield* completionFish({ noDescriptions: false });
       expect(out.stdoutText).toContain("# fish completion for supabase");
       expect(out.stdoutText).not.toContain("__completeNoDesc");
       expect(out.stdoutText).toContain("__complete");
@@ -30,9 +30,9 @@ describe("legacy completion fish", () => {
   it.live(
     "prints the native fish completion script without descriptions when --no-descriptions is set",
     () => {
-      const out = setupLegacyCompletionFish();
+      const out = setupCompletionFish();
       return Effect.gen(function* () {
-        yield* legacyCompletionFish({ noDescriptions: true });
+        yield* completionFish({ noDescriptions: true });
         expect(out.stdoutText).toContain("__completeNoDesc");
       }).pipe(Effect.provide(out.layer));
     },
@@ -41,10 +41,10 @@ describe("legacy completion fish", () => {
   it.live(
     "accepts --no-descriptions from real argv via the command parser and still prints the no-desc script",
     () => {
-      const out = setupLegacyCompletionFish();
+      const out = setupCompletionFish();
       // Running through the real command (rather than calling the handler
       // directly, as the two tests above do) also runs
-      // `withLegacyCommandInstrumentation` (fires the `cli_command_executed`
+      // `withCommandTelemetry` (fires the `cli_command_executed`
       // event), which needs `Analytics`/`ProcessControl`/`Stdio` alongside
       // `Output` — the same minimal layer set `telemetry.integration.test.ts`
       // uses for its own local-only (no Management API) native command.
@@ -55,7 +55,7 @@ describe("legacy completion fish", () => {
         processControlLayer,
       );
       return Effect.gen(function* () {
-        yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })([
+        yield* Command.runWith(testRoot(), { version: "0.0.0-test" })([
           "fish",
           "--no-descriptions",
         ]);
@@ -67,7 +67,7 @@ describe("legacy completion fish", () => {
   it.live(
     "fires the cli_command_executed telemetry event, matching Go's PersistentPostRun (CLI-1965 review finding)",
     () => {
-      const out = setupLegacyCompletionFish();
+      const out = setupCompletionFish();
       const analytics = mockAnalytics();
       const layer = Layer.mergeAll(
         out.layer,
@@ -76,7 +76,7 @@ describe("legacy completion fish", () => {
         processControlLayer,
       );
       return Effect.gen(function* () {
-        yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })(["fish"]);
+        yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["fish"]);
         const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
         expect(event).toBeDefined();
       }).pipe(Effect.provide(layer)) as Effect.Effect<void>;

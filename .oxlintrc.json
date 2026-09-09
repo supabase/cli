@@ -27,7 +27,7 @@
   },
   "overrides": [
     {
-      // The legacy CLI is the stable, shipped shell; a lint-driven rewrite of
+      // The CLI is the stable, shipped tool; a lint-driven rewrite of
       // its existing string-building code isn't worth the churn.
       "files": ["apps/cli/src/**"],
       "rules": {

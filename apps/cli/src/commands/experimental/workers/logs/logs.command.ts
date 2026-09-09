@@ -1,13 +1,13 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../../command-internal/legacy-management-api-runtime.layer.ts";
+import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
 import {
   WORKER_LOG_KINDS,
   WORKER_LOG_POLL_SECONDS,
 } from "../../../../shared/workers/worker-logs.sql.ts";
-import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyWorkersLogs } from "./logs.handler.ts";
+import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { workersLogs } from "./logs.handler.ts";
 
 /**
  * The endpoint's own ceiling is the SQL `LIMIT`, so this bound is the CLI's
@@ -38,7 +38,7 @@ const config = {
       `Keep printing new lines until interrupted, polling every ${WORKER_LOG_POLL_SECONDS} seconds.`,
     ),
     // Required: `Flag.boolean` alone builds a *required* param, which breaks
-    // invocations that omit the flag. `legacy-boolean-flag-defaults.unit.test.ts`
+    // invocations that omit the flag. `boolean-flag-defaults.unit.test.ts`
     // walks the command tree and fails any bare boolean.
     Flag.withDefault(false),
   ),
@@ -54,9 +54,9 @@ const config = {
   ),
 } as const;
 
-export type LegacyWorkersLogsFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type WorkersLogsFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyWorkersLogsCommand = Command.make("logs", config).pipe(
+export const workersLogsCommand = Command.make("logs", config).pipe(
   Command.withDescription(
     "Print a worker's recent logs: its own output, the HTTP requests it served, and its " +
       "deploy lifecycle events.\n\n" +
@@ -86,12 +86,12 @@ export const legacyWorkersLogsCommand = Command.make("logs", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyWorkersLogs(flags).pipe(
+    workersLogs(flags).pipe(
       // `config` as well as `flags`: `--kind` is a choice flag, and the wrapper
       // treats a command's own declared choices as safe to log verbatim.
-      withLegacyCommandInstrumentation({ flags, config }),
+      withCommandTelemetry({ flags, config }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["experimental", "workers", "logs"])),
+  Command.provide(managementApiRuntimeLayer(["experimental", "workers", "logs"])),
 );

@@ -43,18 +43,18 @@ describe("toSlimImage", () => {
     );
   });
 
-  it("maps current docker.io pins onto the published slim tags", () => {
-    expect(toSlimImage("pg", dockerfileServiceImageRaw("pg"))).toBe(
-      "ghcr.io/supabase/cli/postgres:17.6.1.167",
-    );
-    expect(toSlimImage("supavisor", dockerfileServiceImageRaw("supavisor"))).toBe(
-      "ghcr.io/supabase/cli/pooler:v2.9.12",
-    );
-    expect(toSlimImage("realtime", dockerfileServiceImageRaw("realtime"))).toBe(
+  // Fixed pins, not manifest pins: dependabot bumps the manifest, so spelling
+  // out a current pin here would fail on every bump. The `it.each` above covers
+  // the part that must track it (the repository each alias maps to).
+  it("keeps a single v on pins already prefixed on docker.io", () => {
+    expect(toSlimImage("realtime", "supabase/realtime:v2.130.0")).toBe(
       "ghcr.io/supabase/cli/realtime:v2.130.0",
     );
-    expect(toSlimImage("storage", dockerfileServiceImageRaw("storage"))).toBe(
+    expect(toSlimImage("storage", "supabase/storage-api:v1.72.1")).toBe(
       "ghcr.io/supabase/cli/storage:v1.72.1",
+    );
+    expect(toSlimImage("gotrue", "supabase/gotrue:V2.196.0")).toBe(
+      "ghcr.io/supabase/cli/auth:v2.196.0",
     );
   });
 

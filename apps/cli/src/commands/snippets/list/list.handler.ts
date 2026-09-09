@@ -2,34 +2,34 @@ import { Effect, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../../command-internal/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
 import {
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-  legacyGoBool,
-  legacyGoFloat32,
-  legacyGoNullable,
-  legacyGoPtr,
-  legacyGoSlice,
-  legacyGoString,
-  legacyGoStruct,
-} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
-import { resolveLegacyAccessToken } from "../../../command-internal/legacy-resolve-token.ts";
-import { sanitizeLegacyErrorBody } from "../../../command-internal/legacy-http-errors.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+  encodeGoToml,
+  encodeGoYaml,
+  goBool,
+  goFloat32,
+  goNullable,
+  goPtr,
+  goSlice,
+  goString,
+  goStruct,
+} from "../../../command-internal/go-struct-output.encoders.ts";
+import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
+import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
-  LegacySnippetsEnvNotSupportedError,
-  LegacySnippetsListNetworkError,
-  LegacySnippetsListUnexpectedStatusError,
-  LegacySnippetsTomlEncodeError,
+  SnippetsEnvNotSupportedError,
+  SnippetsListNetworkError,
+  SnippetsListUnexpectedStatusError,
+  SnippetsTomlEncodeError,
 } from "../snippets.errors.ts";
 import { renderSnippetsTable, type SnippetRow } from "../snippets.format.ts";
-import type { LegacySnippetsListFlags } from "./list.command.ts";
+import type { SnippetsListFlags } from "./list.command.ts";
 
 // Tolerant accessors for the API response body. The real `/v1/snippets`
 // payload regularly omits optional fields like `description` that the
@@ -38,7 +38,7 @@ import type { LegacySnippetsListFlags } from "./list.command.ts";
 // with a `SchemaError: Missing key …` on any real-world response — see the
 // cli-e2e `snippets-download-prints-sql-content-to-stdout` failure that
 // prompted the bypass. Same workaround pattern as
-// `legacy-linked-project-cache.layer.ts` and `legacySuggestUpgrade`.
+// `linked-project-cache.layer.ts` and `suggestUpgrade`.
 function readString(obj: unknown, key: string): string {
   if (typeof obj === "object" && obj !== null && key in obj) {
     const value = (obj as Record<string, unknown>)[key];
@@ -58,41 +58,41 @@ function asRecord(obj: unknown): Record<string, unknown> {
  * yaml.v3 renders it as a `map[bool]string`, and BurntSushi refuses it
  * whenever present (CLI-1975).
  */
-const LEGACY_GO_SNIPPET_LIST = legacyGoStruct([
-  ["cursor", legacyGoPtr(legacyGoString)],
+const GO_SNIPPET_LIST = goStruct([
+  ["cursor", goPtr(goString)],
   [
     "data",
-    legacyGoSlice(
-      legacyGoStruct([
-        ["description", legacyGoNullable(legacyGoString)],
-        ["favorite", legacyGoBool],
-        ["id", legacyGoString],
-        ["inserted_at", legacyGoString],
-        ["name", legacyGoString],
+    goSlice(
+      goStruct([
+        ["description", goNullable(goString)],
+        ["favorite", goBool],
+        ["id", goString],
+        ["inserted_at", goString],
+        ["name", goString],
         [
           "owner",
-          legacyGoStruct([
-            ["id", legacyGoFloat32],
-            ["username", legacyGoString],
+          goStruct([
+            ["id", goFloat32],
+            ["username", goString],
           ]),
         ],
         [
           "project",
-          legacyGoStruct([
-            ["id", legacyGoFloat32],
-            ["name", legacyGoString],
+          goStruct([
+            ["id", goFloat32],
+            ["name", goString],
           ]),
         ],
-        ["type", legacyGoString],
-        ["updated_at", legacyGoString],
+        ["type", goString],
+        ["updated_at", goString],
         [
           "updated_by",
-          legacyGoStruct([
-            ["id", legacyGoFloat32],
-            ["username", legacyGoString],
+          goStruct([
+            ["id", goFloat32],
+            ["username", goString],
           ]),
         ],
-        ["visibility", legacyGoString],
+        ["visibility", goString],
       ]),
     ),
   ],
@@ -121,16 +121,14 @@ function toSnippetRow(raw: unknown): SnippetRow {
   };
 }
 
-export const legacySnippetsList = Effect.fn("legacy.snippets.list")(function* (
-  flags: LegacySnippetsListFlags,
-) {
+export const snippetsList = Effect.fn("snippets.list")(function* (flags: SnippetsListFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
+  const goOutputFlag = yield* OutputFlag;
   const httpClient = yield* HttpClient.HttpClient;
-  const cliSettings = yield* LegacyCliSettings;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const cliSettings = yield* CommandSettings;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   // Fixed lifecycle every command must preserve:
   //   resolve project ref
@@ -142,12 +140,12 @@ export const legacySnippetsList = Effect.fn("legacy.snippets.list")(function* (
 
     yield* Effect.gen(function* () {
       if (Option.getOrUndefined(goOutputFlag) === "env") {
-        return yield* new LegacySnippetsEnvNotSupportedError({
+        return yield* new SnippetsEnvNotSupportedError({
           message: "--output env flag is not supported",
         });
       }
 
-      const tokenOpt = yield* resolveLegacyAccessToken;
+      const tokenOpt = yield* resolveAccessToken;
       const authHeader: (
         req: HttpClientRequest.HttpClientRequest,
       ) => HttpClientRequest.HttpClientRequest = Option.isSome(tokenOpt)
@@ -165,7 +163,7 @@ export const legacySnippetsList = Effect.fn("legacy.snippets.list")(function* (
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
         Effect.catch(
           (cause) =>
-            new LegacySnippetsListNetworkError({
+            new SnippetsListNetworkError({
               message: `failed to list snippets: ${cause.reason.description ?? cause.reason._tag}`,
             }),
         ),
@@ -174,8 +172,8 @@ export const legacySnippetsList = Effect.fn("legacy.snippets.list")(function* (
       if (response.status !== 200) {
         yield* fetching?.fail() ?? Effect.void;
         const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-        const body = sanitizeLegacyErrorBody(rawBody);
-        return yield* new LegacySnippetsListUnexpectedStatusError({
+        const body = sanitizeErrorBody(rawBody);
+        return yield* new SnippetsListUnexpectedStatusError({
           status: response.status,
           body,
           message: `unexpected list snippets status ${response.status}: ${body}`,
@@ -185,7 +183,7 @@ export const legacySnippetsList = Effect.fn("legacy.snippets.list")(function* (
       const rawBody = yield* response.json.pipe(
         Effect.catch(
           (cause) =>
-            new LegacySnippetsListNetworkError({
+            new SnippetsListNetworkError({
               message: `failed to list snippets: ${String(cause)}`,
               // 200-response body decode failure — an API-response problem, not
               // a transport/network failure.
@@ -207,7 +205,7 @@ export const legacySnippetsList = Effect.fn("legacy.snippets.list")(function* (
         return;
       }
       if (goFmt === "yaml") {
-        yield* output.raw(encodeLegacyGoYaml(rawBody, LEGACY_GO_SNIPPET_LIST));
+        yield* output.raw(encodeGoYaml(rawBody, GO_SNIPPET_LIST));
         return;
       }
       if (goFmt === "toml") {
@@ -215,9 +213,9 @@ export const legacySnippetsList = Effect.fn("legacy.snippets.list")(function* (
         // field (`map[bool]string`), so Go fails whenever any snippet carries a
         // `description` key. Mirror the failure byte-for-byte.
         const toml = yield* Effect.try({
-          try: () => encodeLegacyGoToml(rawBody, LEGACY_GO_SNIPPET_LIST),
+          try: () => encodeGoToml(rawBody, GO_SNIPPET_LIST),
           catch: (cause) =>
-            new LegacySnippetsTomlEncodeError({
+            new SnippetsTomlEncodeError({
               message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
             }),
         });

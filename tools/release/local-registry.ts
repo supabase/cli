@@ -127,8 +127,7 @@ async function main() {
   Logs     : ${logPath}
 
   Publish the CLI in another terminal:
-    pnpm cli-release --next
-    pnpm cli-release --legacy
+    pnpm cli-release
 
   Global npm/pnpm registry config is untouched — pass --registry ${REGISTRY}
   to npx / npm install when testing the published package.

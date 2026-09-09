@@ -1,30 +1,30 @@
 import type { V1GetProjectApiKeysOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { apiKeysToEnv } from "../../../command-internal/legacy-api-keys.format.ts";
-import { legacyGetProjectApiKeys } from "../../../command-internal/legacy-get-api-keys.ts";
+import { apiKeysToEnv } from "../../../command-internal/api-keys.format.ts";
+import { getProjectApiKeys } from "../../../command-internal/get-api-keys.ts";
 import {
   encodeEnv,
   encodeGoJson,
   encodeToml,
-} from "../../../command-internal/legacy-go-output.encoders.ts";
+} from "../../../command-internal/go-output.encoders.ts";
 import {
-  encodeLegacyGoYaml,
-  legacyGoAny,
-  legacyGoMap,
-  legacyGoNullable,
-  legacyGoSlice,
-  legacyGoString,
-  legacyGoStruct,
-  legacyGoTime,
-} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
+  encodeGoYaml,
+  goAny,
+  goMap,
+  goNullable,
+  goSlice,
+  goString,
+  goStruct,
+  goTime,
+} from "../../../command-internal/go-struct-output.encoders.ts";
 import { renderProjectApiKeysTable } from "../projects.format.ts";
-import type { LegacyProjectsApiKeysFlags } from "./api-keys.command.ts";
+import type { ProjectsApiKeysFlags } from "./api-keys.command.ts";
 
 type ApiKeys = typeof V1GetProjectApiKeysOutput.Type;
 
@@ -34,29 +34,29 @@ type ApiKeys = typeof V1GetProjectApiKeysOutput.Type;
  * instead — and yaml.v3 renders the `nullable.Nullable[T]` fields as
  * `map[bool]T`.
  */
-const LEGACY_GO_API_KEYS_LIST = legacyGoSlice(
-  legacyGoStruct([
-    ["api_key", legacyGoNullable(legacyGoString)],
-    ["description", legacyGoNullable(legacyGoString)],
-    ["hash", legacyGoNullable(legacyGoString)],
-    ["id", legacyGoNullable(legacyGoString)],
-    ["inserted_at", legacyGoNullable(legacyGoTime)],
-    ["name", legacyGoString],
-    ["prefix", legacyGoNullable(legacyGoString)],
-    ["secret_jwt_template", legacyGoNullable(legacyGoMap(legacyGoAny))],
-    ["type", legacyGoNullable(legacyGoString)],
-    ["updated_at", legacyGoNullable(legacyGoTime)],
+const GO_API_KEYS_LIST = goSlice(
+  goStruct([
+    ["api_key", goNullable(goString)],
+    ["description", goNullable(goString)],
+    ["hash", goNullable(goString)],
+    ["id", goNullable(goString)],
+    ["inserted_at", goNullable(goTime)],
+    ["name", goString],
+    ["prefix", goNullable(goString)],
+    ["secret_jwt_template", goNullable(goMap(goAny))],
+    ["type", goNullable(goString)],
+    ["updated_at", goNullable(goTime)],
   ]),
 );
 
-export const legacyProjectsApiKeys = Effect.fn("legacy.projects.api-keys")(function* (
-  flags: LegacyProjectsApiKeysFlags,
+export const projectsApiKeys = Effect.fn("projects.api-keys")(function* (
+  flags: ProjectsApiKeysFlags,
 ) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   // `--project-ref` resolution prompts on a TTY and fails when unlinked.
   const ref = yield* resolver.resolve(flags.projectRef);
@@ -64,7 +64,7 @@ export const legacyProjectsApiKeys = Effect.fn("legacy.projects.api-keys")(funct
   yield* Effect.gen(function* () {
     const fetching =
       output.format === "text" ? yield* output.task("Fetching API keys...") : undefined;
-    const keys: ApiKeys = yield* legacyGetProjectApiKeys(ref, flags.reveal).pipe(
+    const keys: ApiKeys = yield* getProjectApiKeys(ref, flags.reveal).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
     );
     yield* fetching?.clear() ?? Effect.void;
@@ -86,7 +86,7 @@ export const legacyProjectsApiKeys = Effect.fn("legacy.projects.api-keys")(funct
       return;
     }
     if (goFmt === "yaml") {
-      yield* output.raw(encodeLegacyGoYaml(keys, LEGACY_GO_API_KEYS_LIST));
+      yield* output.raw(encodeGoYaml(keys, GO_API_KEYS_LIST));
       return;
     }
 

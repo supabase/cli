@@ -9,7 +9,7 @@ const cliRoot = path.resolve(import.meta.dirname, "../..");
  * — the contract `docs/README.md` documents: the spec YAML is the ONLY thing
  * on stdout (`> cli_v1_commands.yaml` must yield a clean parseable file), the
  * version defaults to `latest`, and a `v`-prefixed argument is stripped. The
- * builder itself is covered in-process by `legacy-docs-spec.unit.test.ts`;
+ * builder itself is covered in-process by `docs-spec.unit.test.ts`;
  * these two spawns pin the argv handling, path resolution, and stdout purity
  * that direct helper calls cannot.
  */

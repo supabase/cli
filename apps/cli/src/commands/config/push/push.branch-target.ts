@@ -1,21 +1,15 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { BRANCH_LOOKUP_TIMEOUT, findBranchName } from "../../../command-internal/branch-target.ts";
 import {
-  LEGACY_BRANCH_LOOKUP_TIMEOUT,
-  legacyFindBranchName,
-} from "../../../command-internal/legacy-branch-target.ts";
-import {
-  type LegacyCachedLinkedProject,
-  legacyParseCachedLinkedProject,
-} from "../../../command-internal/legacy-parent-project-ref.ts";
-import { LEGACY_BRANCH_PROJECT_REF_PATTERN } from "../../../command-internal/legacy-ref-patterns.ts";
-import {
-  legacyReadProjectRefFile,
-  legacyTempPaths,
-} from "../../../command-internal/legacy-temp-paths.ts";
+  type CachedLinkedProject,
+  parseCachedLinkedProject,
+} from "../../../command-internal/parent-project-ref.ts";
+import { BRANCH_PROJECT_REF_PATTERN } from "../../../command-internal/ref-patterns.ts";
+import { readProjectRefFile, tempPaths } from "../../../command-internal/temp-paths.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 
 /**
@@ -38,7 +32,7 @@ import { Output } from "../../../shared/output/output.service.ts";
  *     jitter. Never asserted as a project either — the target-echo line
  *     says plainly that it doesn't know.
  */
-export type LegacyConfigPushTarget =
+export type ConfigPushTarget =
   | { readonly kind: "project"; readonly ref: string; readonly name?: string }
   | {
       readonly kind: "branch";
@@ -52,7 +46,7 @@ export type LegacyConfigPushTarget =
 /**
  * A branch name/UUID the caller already resolved `ref` from (CLI-2289's
  * `--project-ref <name-or-uuid>` path) — this makes the caller's knowledge
- * that `ref` is a branch DEFINITIVE, so {@link legacyResolveConfigPushTarget}
+ * that `ref` is a branch DEFINITIVE, so {@link resolveConfigPushTarget}
  * never runs the live `getProject` probe for it:
  *
  *   - `"name"` — both fields were resolved eagerly, nothing more to recover.
@@ -65,13 +59,13 @@ export type LegacyConfigPushTarget =
  *     without a name, or vice versa) is not a shape this resolver needs to
  *     handle, so it doesn't exist to be handled incorrectly.
  */
-export type LegacyConfigPushKnownBranch =
+export type ConfigPushKnownBranch =
   | { readonly kind: "name"; readonly branchName: string; readonly parentRef: string }
   | { readonly kind: "uuid" };
 
 /** `V1GetProjectOutput.name`/a branch's `name` are unconstrained strings — an
  * empty (or empty-after-sanitization-adjacent) live value must render as "no
- * name available", matching `legacyParseCachedLinkedProject`'s own
+ * name available", matching `parseCachedLinkedProject`'s own
  * empty-filtering convention for cached names. */
 function normalizeApiName(name: string | undefined): string | undefined {
   return name !== undefined && name.length > 0 ? name : undefined;
@@ -89,7 +83,7 @@ function isNotFound(cause: unknown): boolean {
  * Resolves what `ref` actually is, so `config push` can tell the user
  * whether they're pushing to the linked project or one of its branches
  * (CLI-2168), and so a branch push can be gated behind confirmation. NEVER
- * FAILS — matching `legacyFindBranchName`'s own best-effort contract, this
+ * FAILS — matching `findBranchName`'s own best-effort contract, this
  * probe is diagnostic-only and must never abort a push that would otherwise
  * succeed.
  *
@@ -99,7 +93,7 @@ function isNotFound(cause: unknown): boolean {
  *   - `opts.knownBranch?.kind === "uuid"`, or a live 404: `ref` is
  *     CONFIRMED a branch; run the shared best-effort recovery below.
  *   - Otherwise (`opts.knownBranch` absent): `GET /v1/projects/{ref}`,
- *     bounded at {@link LEGACY_BRANCH_LOOKUP_TIMEOUT} and wrapped in a
+ *     bounded at {@link BRANCH_LOOKUP_TIMEOUT} and wrapped in a
  *     `"Checking project..."` task. A 200 is a plain project. A TIMEOUT, a
  *     transport failure, or any status other than 200/404 is `"unknown"` —
  *     the task is marked failed (this diagnostic step genuinely didn't
@@ -113,31 +107,31 @@ function isNotFound(cause: unknown): boolean {
  *      `{ kind: "branch", ref }` shape, no further filesystem or API calls.
  *   2. Otherwise, read `.temp/project-ref` — `fileRef` — and best-effort
  *      look up the branch's own name among the candidate parent's branches
- *      ({@link legacyFindBranchName}).
+ *      ({@link findBranchName}).
  *   3. The branch-list lookup positively confirming the parent, OR `ref`
  *      being literally what `.temp/project-ref` currently holds —
  *      inheriting that file's own link-completed invariant (the same
- *      reasoning `legacy-linked-state.ts` documents for its own analogous
+ *      reasoning `linked-state.ts` documents for its own analogous
  *      case, restated here for a caller-supplied ref instead of a
  *      self-resolved one) — is what lets the parent claim stand. Neither →
  *      the bare `{ kind: "branch", ref }` shape, no parent claim at all.
  */
-export function legacyResolveConfigPushTarget(
+export function resolveConfigPushTarget(
   ref: string,
-  opts: { readonly knownBranch?: LegacyConfigPushKnownBranch },
+  opts: { readonly knownBranch?: ConfigPushKnownBranch },
 ): Effect.Effect<
-  LegacyConfigPushTarget,
+  ConfigPushTarget,
   never,
-  LegacyPlatformApi | LegacyCliSettings | FileSystem.FileSystem | Path.Path | Output
+  CommandPlatformApi | CommandSettings | FileSystem.FileSystem | Path.Path | Output
 > {
   return Effect.gen(function* () {
-    const cliSettings = yield* LegacyCliSettings;
+    const cliSettings = yield* CommandSettings;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const linkedProjectCachePath = legacyTempPaths(path, cliSettings.workdir).linkedProjectCache;
+    const linkedProjectCachePath = tempPaths(path, cliSettings.workdir).linkedProjectCache;
     const readCachedParent = fs.readFileString(linkedProjectCachePath).pipe(
-      Effect.map(legacyParseCachedLinkedProject),
-      Effect.orElseSucceed(() => Option.none<LegacyCachedLinkedProject>()),
+      Effect.map(parseCachedLinkedProject),
+      Effect.orElseSucceed(() => Option.none<CachedLinkedProject>()),
     );
 
     // Cheap path (a NAME target, CLI-2289): both fields already known — no
@@ -162,7 +156,7 @@ export function legacyResolveConfigPushTarget(
     // run the probe — its only two "certain" outcomes are 200 (return
     // immediately) and 404 (fall through to the shared recovery below).
     if (opts.knownBranch === undefined) {
-      const api = yield* LegacyPlatformApi;
+      const api = yield* CommandPlatformApi;
       const output = yield* Output;
       const probing =
         output.format === "text" ? yield* output.task("Checking project...") : undefined;
@@ -185,7 +179,7 @@ export function legacyResolveConfigPushTarget(
           ),
         ),
         {
-          duration: LEGACY_BRANCH_LOOKUP_TIMEOUT,
+          duration: BRANCH_LOOKUP_TIMEOUT,
           orElse: () => Effect.succeed<ProbeOutcome>({ kind: "unknown" }),
         },
       );
@@ -215,18 +209,18 @@ export function legacyResolveConfigPushTarget(
     const candidateParentRef =
       Option.isSome(cached) &&
       cached.value.ref !== ref &&
-      LEGACY_BRANCH_PROJECT_REF_PATTERN.test(cached.value.ref)
+      BRANCH_PROJECT_REF_PATTERN.test(cached.value.ref)
         ? cached.value.ref
         : undefined;
     if (candidateParentRef === undefined) {
       return { kind: "branch", ref };
     }
 
-    const fileRef = yield* legacyReadProjectRefFile(fs, path, cliSettings.workdir).pipe(
+    const fileRef = yield* readProjectRefFile(fs, path, cliSettings.workdir).pipe(
       Effect.orElseSucceed(() => Option.none<string>()),
     );
     const branchName = normalizeApiName(
-      yield* legacyFindBranchName(candidateParentRef, ref, {
+      yield* findBranchName(candidateParentRef, ref, {
         spinnerLabel: "Checking branch name...",
       }),
     );

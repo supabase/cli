@@ -1,9 +1,5 @@
-import { legacyPullCounts } from "./pull.aggregate.ts";
-import {
-  LEGACY_PULL_STEP_ORDER,
-  type LegacyPullAggregate,
-  type LegacyPullStepResult,
-} from "./pull.types.ts";
+import { pullCounts } from "./pull.aggregate.ts";
+import { PULL_STEP_ORDER, type PullAggregate, type PullStepResult } from "./pull.types.ts";
 
 /**
  * Pure text/JSON formatters for `supabase pull` — no Effect, no services.
@@ -12,17 +8,17 @@ import {
  */
 
 /** Version of the machine payload's own shape — bump when it changes incompatibly. */
-export const LEGACY_PULL_PAYLOAD_VERSION = 1;
+export const PULL_PAYLOAD_VERSION = 1;
 
 /**
  * The structured result for `--output-format json|stream-json`, per step
- * keyed by `LegacyPullStepId` — see `pull.aggregate.ts`'s per-step mappers for
+ * keyed by `PullStepId` — see `pull.aggregate.ts`'s per-step mappers for
  * how each `steps.<id>` entry's `detail` is built.
  */
-export function legacyPullPayload(aggregate: LegacyPullAggregate): Record<string, unknown> {
+export function pullPayload(aggregate: PullAggregate): Record<string, unknown> {
   const resultByStep = new Map(aggregate.results.map((result) => [result.step, result] as const));
   const steps: Record<string, unknown> = {};
-  for (const step of LEGACY_PULL_STEP_ORDER) {
+  for (const step of PULL_STEP_ORDER) {
     const result = resultByStep.get(step);
     if (result === undefined) {
       continue;
@@ -37,7 +33,7 @@ export function legacyPullPayload(aggregate: LegacyPullAggregate): Record<string
   }
 
   return {
-    schema_version: LEGACY_PULL_PAYLOAD_VERSION,
+    schema_version: PULL_PAYLOAD_VERSION,
     target: {
       project_ref: aggregate.ref,
       ...(aggregate.branch === undefined ? {} : { branch: aggregate.branch }),
@@ -45,9 +41,9 @@ export function legacyPullPayload(aggregate: LegacyPullAggregate): Record<string
     dry_run: aggregate.dryRun,
     confirmed: aggregate.confirmed,
     wrote: aggregate.results.some((result) => result.status === "changed"),
-    step_order: LEGACY_PULL_STEP_ORDER,
+    step_order: PULL_STEP_ORDER,
     steps,
-    counts: legacyPullCounts(aggregate.results),
+    counts: pullCounts(aggregate.results),
   };
 }
 
@@ -57,8 +53,8 @@ export function legacyPullPayload(aggregate: LegacyPullAggregate): Record<string
  * partial-failure result for a completed pull, so every branch names its own
  * disposition up front, then always reports the full per-status breakdown.
  */
-export function legacyPullSummaryMessage(aggregate: LegacyPullAggregate): string {
-  const counts = legacyPullCounts(aggregate.results);
+export function pullSummaryMessage(aggregate: PullAggregate): string {
+  const counts = pullCounts(aggregate.results);
   const countsText = `${counts.changed} changed, ${counts.unchanged} unchanged, ${counts.skipped} skipped, ${counts.planned} planned, ${counts.failed} failed`;
   if (!aggregate.confirmed && !aggregate.dryRun) {
     return `Pull declined: nothing was changed (${countsText}).`;
@@ -72,8 +68,8 @@ export function legacyPullSummaryMessage(aggregate: LegacyPullAggregate): string
   return `Pull complete: ${countsText}.`;
 }
 
-/** Longest `LegacyPullStepStatus` word (`"unchanged"`) — the status column's fixed width. */
-const LEGACY_PULL_STATUS_COLUMN_WIDTH = "unchanged".length;
+/** Longest `PullStepStatus` word (`"unchanged"`) — the status column's fixed width. */
+const PULL_STATUS_COLUMN_WIDTH = "unchanged".length;
 
 /**
  * Strips control characters (CR/LF/tab) from a failure message before it is inlined into an
@@ -81,15 +77,15 @@ const LEGACY_PULL_STATUS_COLUMN_WIDTH = "unchanged".length;
  * function slug, an API response body) that would otherwise forge fake additional summary rows
  * in text-mode output.
  */
-function legacyPullSanitizeRowText(message: string): string {
+function pullSanitizeRowText(message: string): string {
   return message.replace(/[\r\n\t]+/g, " ");
 }
 
 /** The representative detail shown on a step's summary row — its failure message, its skip
  *  reason, or the first written path (with a "+N more" suffix when there is more than one). */
-function legacyPullStepDetailText(result: LegacyPullStepResult): string {
+function pullStepDetailText(result: PullStepResult): string {
   if (result.status === "failed") {
-    return legacyPullSanitizeRowText(result.failure?.message ?? "");
+    return pullSanitizeRowText(result.failure?.message ?? "");
   }
   if (result.status === "skipped" && result.reason !== undefined) {
     return `(${result.reason})`;
@@ -113,39 +109,39 @@ function legacyPullStepDetailText(result: LegacyPullStepResult): string {
  * suggestion can carry remote-controlled content, so no line may itself
  * embed a further CR/LF/tab that could forge additional fake summary rows.
  */
-function legacyPullSuggestionLines(suggestion: string): ReadonlyArray<string> {
+function pullSuggestionLines(suggestion: string): ReadonlyArray<string> {
   return suggestion
     .split("\n")
-    .map((line) => legacyPullSanitizeRowText(line).trim())
+    .map((line) => pullSanitizeRowText(line).trim())
     .filter((line) => line.length > 0);
 }
 
 /**
  * The full text-mode summary block: a header line naming the target project,
- * then one aligned row per step in `LEGACY_PULL_STEP_ORDER` order. A `failed`
+ * then one aligned row per step in `PULL_STEP_ORDER` order. A `failed`
  * step's row inlines its failure message even though only the first original
  * failure re-fails the process (`pull.handler.ts`'s job).
  */
-export function legacyRenderPullSummary(aggregate: LegacyPullAggregate): string {
+export function renderPullSummary(aggregate: PullAggregate): string {
   const resultByStep = new Map(aggregate.results.map((result) => [result.step, result] as const));
-  const stepColumnWidth = Math.max(...LEGACY_PULL_STEP_ORDER.map((step) => step.length));
+  const stepColumnWidth = Math.max(...PULL_STEP_ORDER.map((step) => step.length));
 
   // Continuation lines (a failed step's suggestion) indent to line up under
   // the detail column, rather than repeating the step/status columns.
-  const continuationPrefix = `  ${"".padEnd(stepColumnWidth)}  ${"".padEnd(LEGACY_PULL_STATUS_COLUMN_WIDTH)}  `;
+  const continuationPrefix = `  ${"".padEnd(stepColumnWidth)}  ${"".padEnd(PULL_STATUS_COLUMN_WIDTH)}  `;
 
   const lines: Array<string> = [`Pull summary — project ${aggregate.ref}`];
-  for (const step of LEGACY_PULL_STEP_ORDER) {
+  for (const step of PULL_STEP_ORDER) {
     const result = resultByStep.get(step);
     if (result === undefined) {
       continue;
     }
-    const detail = legacyPullStepDetailText(result);
+    const detail = pullStepDetailText(result);
     lines.push(
-      `  ${step.padEnd(stepColumnWidth)}  ${result.status.padEnd(LEGACY_PULL_STATUS_COLUMN_WIDTH)}  ${detail}`.trimEnd(),
+      `  ${step.padEnd(stepColumnWidth)}  ${result.status.padEnd(PULL_STATUS_COLUMN_WIDTH)}  ${detail}`.trimEnd(),
     );
     if (result.failure?.suggestion !== undefined) {
-      for (const line of legacyPullSuggestionLines(result.failure.suggestion)) {
+      for (const line of pullSuggestionLines(result.failure.suggestion)) {
         lines.push(`${continuationPrefix}${line}`);
       }
     }
@@ -153,14 +149,14 @@ export function legacyRenderPullSummary(aggregate: LegacyPullAggregate): string 
   return `${lines.join("\n")}\n`;
 }
 
-export interface LegacyPullConfirmMessageInput {
+export interface PullConfirmMessageInput {
   /** The resolved target project ref — named in the header line so the confirmation body says
    *  which project/branch is about to be written to. */
   readonly ref: string;
   /** The branch name `--project-ref` resolved, when it named one; `undefined` for a ref-shaped
    *  or linked-fallback target. */
   readonly branch: string | undefined;
-  /** `config pull`'s own rendered diff body (`legacyRenderConfigPullText`), when there was
+  /** `config pull`'s own rendered diff body (`renderConfigPullText`), when there was
    *  anything to show; `undefined`/empty reads as "no config differences found". */
   readonly configDiffText: string | undefined;
   /** Whether the migration-history step will actually run this invocation. */
@@ -176,7 +172,7 @@ export interface LegacyPullConfirmMessageInput {
 
 /** Joins `paths` into an English list — `"a"`, `"a and b"`, or `"a, b, and c"` — for the shared
  *  dirty-tree warning below. */
-function legacyJoinPathList(paths: ReadonlyArray<string>): string {
+function joinPathList(paths: ReadonlyArray<string>): string {
   if (paths.length <= 1) {
     return paths[0] ?? "";
   }
@@ -188,26 +184,26 @@ function legacyJoinPathList(paths: ReadonlyArray<string>): string {
 
 /**
  * The dirty-tree warning sentence naming every path in `dirtyPaths` — shared between the
- * confirmation body's trailing warning (below) and `LegacyPullUncommittedChangesError`'s own
+ * confirmation body's trailing warning (below) and `PullUncommittedChangesError`'s own
  * message (`pull.handler.ts`), so the two surfaces can never drift on wording. Singular/plural
  * verb agreement follows `dirtyPaths.length`.
  */
-export function legacyPullDirtyWarningMessage(dirtyPaths: ReadonlyArray<string>): string {
+export function pullDirtyWarningMessage(dirtyPaths: ReadonlyArray<string>): string {
   const verb = dirtyPaths.length === 1 ? "has" : "have";
-  return `${legacyJoinPathList(dirtyPaths)} ${verb} uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.`;
+  return `${joinPathList(dirtyPaths)} ${verb} uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.`;
 }
 
 /**
  * The single aggregated confirmation prompt's disclosure body — printed
- * before the actual yes/no question, mirroring `legacyRenderConfigPullText`'s
+ * before the actual yes/no question, mirroring `renderConfigPullText`'s
  * role in `config pull`. `db pull` and `functions download` have no preview
  * machinery of their own, so they get one qualitative line each instead of a
  * real diff; migration history only gets a line when it will actually run
  * this invocation (see the confirmed bootstrap-auto-run decision, ADR 0024).
- * The body's lines are ordered to match `LEGACY_PULL_STEP_ORDER` (config →
+ * The body's lines are ordered to match `PULL_STEP_ORDER` (config →
  * migration_history → db → functions).
  */
-export function legacyPullConfirmMessage(input: LegacyPullConfirmMessageInput): string {
+export function pullConfirmMessage(input: PullConfirmMessageInput): string {
   const lines: Array<string> = [
     input.branch === undefined
       ? `Pulling from project ${input.ref}`
@@ -240,7 +236,7 @@ export function legacyPullConfirmMessage(input: LegacyPullConfirmMessageInput): 
   // functions
   lines.push("Download every Edge Function's source into supabase/functions.");
   if (input.dirtyPaths.length > 0) {
-    lines.push("", legacyPullDirtyWarningMessage(input.dirtyPaths));
+    lines.push("", pullDirtyWarningMessage(input.dirtyPaths));
   }
   return `${lines.join("\n")}\n`;
 }

@@ -1,106 +1,99 @@
 import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 
-import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
-import { legacyPathHasUncommittedChanges } from "../../command-internal/legacy-git-status.ts";
-import { mapLegacyHttpError } from "../../command-internal/legacy-http-errors.ts";
-import { LegacyMigrationsReadError } from "../../command-internal/legacy-migration.errors.ts";
-import { legacyValidateWorkdirIsDirectory } from "../../command-internal/legacy-workdir-validation.ts";
+import { CommandSettings } from "../../config/command-settings.service.ts";
+import { pathHasUncommittedChanges } from "../../command-internal/git-status.ts";
+import { mapHttpError } from "../../command-internal/http-errors.ts";
+import { MigrationsReadError } from "../../command-internal/migration.errors.ts";
+import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
 import { MachineErrorContext } from "../../shared/output/machine-error-context.service.ts";
-import { legacyResolveYes, LegacyOutputFlag } from "../../shared/legacy/global-flags.ts";
-import { legacyPromptYesNo } from "../../shared/legacy/legacy-prompt-yes-no.ts";
+import { resolveYes, OutputFlag } from "../../command-internal/global-flags.ts";
+import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
-import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyConfigTargetErrorsFor, legacyResolveConfigTarget } from "../config/config.target.ts";
-import { legacyUnexpectedStatusMessage } from "../config/config.read-status.ts";
+import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
+import { configTargetErrorsFor, resolveConfigTarget } from "../config/config.target.ts";
+import { unexpectedStatusMessage } from "../config/config.read-status.ts";
 import {
-  legacyConfigPullPayload,
-  legacyRenderConfigPullText,
-  type LegacyConfigPullOutcome,
+  configPullPayload,
+  renderConfigPullText,
+  type ConfigPullOutcome,
 } from "../config/pull/pull.format.ts";
 import {
-  legacyOpenConfigPullSource,
-  legacyPlanConfigPullRun,
-  type LegacyConfigPullRunPlan,
+  openConfigPullSource,
+  planConfigPullRun,
+  type ConfigPullRunPlan,
 } from "../config/pull/pull.handler.ts";
-import { LegacyDbPullMigrationConflictError } from "../db/pull/pull.errors.ts";
+import { DbPullMigrationConflictError } from "../db/pull/pull.errors.ts";
 import {
-  legacyPullConfigStep,
-  legacyPullDbStep,
-  legacyPullFunctionsStep,
-  legacyPullMigrationHistoryStep,
+  pullConfigStep,
+  pullDbStep,
+  pullFunctionsStep,
+  pullMigrationHistoryStep,
 } from "./pull.steps.ts";
 import {
-  legacyPullAggregate,
-  legacyPullConfigStepResult,
-  legacyPullDbStepResult,
-  legacyPullFailedStepResult,
-  legacyPullFunctionsStepResult,
-  legacyPullMigrationHistoryStepResult,
-  legacyPullRetryHint,
-  type LegacyPullMigrationHistoryStepOutcome,
+  pullAggregate,
+  pullConfigStepResult,
+  pullDbStepResult,
+  pullFailedStepResult,
+  pullFunctionsStepResult,
+  pullMigrationHistoryStepResult,
+  pullRetryHint,
+  type PullMigrationHistoryStepOutcome,
 } from "./pull.aggregate.ts";
 import {
-  legacyPullConfirmMessage,
-  legacyPullDirtyWarningMessage,
-  legacyPullPayload,
-  legacyPullSummaryMessage,
-  legacyRenderPullSummary,
+  pullConfirmMessage,
+  pullDirtyWarningMessage,
+  pullPayload,
+  pullSummaryMessage,
+  renderPullSummary,
 } from "./pull.format.ts";
-import type {
-  LegacyPullAggregate,
-  LegacyPullStepContext,
-  LegacyPullStepResult,
-} from "./pull.types.ts";
+import type { PullAggregate, PullStepContext, PullStepResult } from "./pull.types.ts";
 import {
-  LegacyPullBranchNotFoundError,
-  LegacyPullBranchNotLinkedError,
-  LegacyPullBranchNotReadyError,
-  LegacyPullBranchResolveNetworkError,
-  LegacyPullBranchResolveStatusError,
-  LegacyPullOutputFlagUnsupportedError,
-  LegacyPullParentRefInvalidError,
-  LegacyPullUncommittedChangesError,
-  LegacyPullWorkdirError,
+  PullBranchNotFoundError,
+  PullBranchNotLinkedError,
+  PullBranchNotReadyError,
+  PullBranchResolveNetworkError,
+  PullBranchResolveStatusError,
+  PullOutputFlagUnsupportedError,
+  PullParentRefInvalidError,
+  PullUncommittedChangesError,
+  PullWorkdirError,
 } from "./pull.errors.ts";
-import type { LegacyPullFlags } from "./pull.command.ts";
+import type { PullFlags } from "./pull.command.ts";
 
-/** Error construction for `legacyResolveConfigTarget` (`../config/config.target.ts`),
+/** Error construction for `resolveConfigTarget` (`../config/config.target.ts`),
  *  keeping `pull`'s own minted tagged error classes (`pull.errors.ts`). */
-const pullTargetErrors = legacyConfigTargetErrorsFor({
-  notLinked: LegacyPullBranchNotLinkedError,
-  parentRefInvalid: LegacyPullParentRefInvalidError,
-  branchNotFound: LegacyPullBranchNotFoundError,
-  branchNotReady: LegacyPullBranchNotReadyError,
+const pullTargetErrors = configTargetErrorsFor({
+  notLinked: PullBranchNotLinkedError,
+  parentRefInvalid: PullParentRefInvalidError,
+  branchNotFound: PullBranchNotFoundError,
+  branchNotReady: PullBranchNotReadyError,
 });
 
-const mapBranchResolveError = mapLegacyHttpError({
-  networkError: LegacyPullBranchResolveNetworkError,
-  statusError: LegacyPullBranchResolveStatusError,
+const mapBranchResolveError = mapHttpError({
+  networkError: PullBranchResolveNetworkError,
+  statusError: PullBranchResolveStatusError,
   networkMessage: (cause) => `failed to resolve branch: ${cause}`,
-  statusMessage: legacyUnexpectedStatusMessage,
+  statusMessage: unexpectedStatusMessage,
 });
 
 /** The union of every typed error the four Phase-3 step runners
  *  (`pull.steps.ts`) can fail with — keeps `firstFailureCause` (Phase 3, below)
  *  typed instead of erasing the error channel to `unknown`. */
-type LegacyPullStepFailureCause =
-  | Effect.Error<ReturnType<typeof legacyPullConfigStep>>
-  | Effect.Error<ReturnType<typeof legacyPullMigrationHistoryStep>>
-  | Effect.Error<ReturnType<typeof legacyPullDbStep>>
-  | Effect.Error<ReturnType<typeof legacyPullFunctionsStep>>;
+type PullStepFailureCause =
+  | Effect.Error<ReturnType<typeof pullConfigStep>>
+  | Effect.Error<ReturnType<typeof pullMigrationHistoryStep>>
+  | Effect.Error<ReturnType<typeof pullDbStep>>
+  | Effect.Error<ReturnType<typeof pullFunctionsStep>>;
 
 /** The config step's own machine payload, verbatim — `runPlan`'s fields plus
  *  the run's actual `{dryRun, declined}` disposition (unknown until the
  *  aggregated confirmation resolves). One call site so every one of the four
- *  places that builds a config `LegacyPullStepResult` (dry run, declined,
+ *  places that builds a config `PullStepResult` (dry run, declined,
  *  and the real Phase 3 apply) shapes the payload identically. */
-const legacyConfigPullPayloadFor = (
-  runPlan: LegacyConfigPullRunPlan,
-  outcome: LegacyConfigPullOutcome,
-) =>
-  legacyConfigPullPayload(runPlan.changeSet, runPlan.scope, runPlan.plan, runPlan.context, outcome);
+const configPullPayloadFor = (runPlan: ConfigPullRunPlan, outcome: ConfigPullOutcome) =>
+  configPullPayload(runPlan.changeSet, runPlan.scope, runPlan.plan, runPlan.context, outcome);
 
 /**
  * Emits the aggregate exactly like every non-failure disposition (dry run,
@@ -111,10 +104,10 @@ const legacyConfigPullPayloadFor = (
  * payload into `MachineErrorContext` ahead of a re-failed cause, so it is
  * inlined at that one call site instead of being folded in here.
  */
-const legacyPullEmit = (output: typeof Output.Service, aggregate: LegacyPullAggregate) =>
+const pullEmit = (output: typeof Output.Service, aggregate: PullAggregate) =>
   output.format === "text"
-    ? output.raw(legacyRenderPullSummary(aggregate))
-    : output.success(legacyPullSummaryMessage(aggregate), legacyPullPayload(aggregate));
+    ? output.raw(renderPullSummary(aggregate))
+    : output.success(pullSummaryMessage(aggregate), pullPayload(aggregate));
 
 /**
  * Runs `effect`, capturing a typed failure into `{kind: "failed", cause}`
@@ -125,7 +118,7 @@ const legacyPullEmit = (output: typeof Output.Service, aggregate: LegacyPullAggr
  * earlier one failed, and the ORIGINAL `Cause` of the first typed failure is
  * preserved (not rebuilt) for re-failing once every step has reported.
  */
-function legacyPullCaptureStep<A, E, R>(
+function pullCaptureStep<A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<
   | { readonly kind: "ok"; readonly value: A }
@@ -148,15 +141,12 @@ function legacyPullCaptureStep<A, E, R>(
 /**
  * Appends `extra` to `result`'s own `failure.suggestion` on its own line —
  * never replacing whatever is already there. A no-op for a non-failed
- * result. Shared by `legacyPullDbStepFailureResult`'s `--with-migration-history`
- * remedy and `legacyPullWithRetryHint`'s generic per-step retry command below,
+ * result. Shared by `pullDbStepFailureResult`'s `--with-migration-history`
+ * remedy and `pullWithRetryHint`'s generic per-step retry command below,
  * so both compose onto the same field in a fixed order without clobbering
  * each other.
  */
-function legacyPullAppendSuggestion(
-  result: LegacyPullStepResult,
-  extra: string,
-): LegacyPullStepResult {
+function pullAppendSuggestion(result: PullStepResult, extra: string): PullStepResult {
   if (result.failure === undefined) {
     return result;
   }
@@ -172,7 +162,7 @@ function legacyPullAppendSuggestion(
 
 /**
  * The db step's own failure result, with one addition: when the underlying
- * cause is `LegacyDbPullMigrationConflictError` (the remote migration history
+ * cause is `DbPullMigrationConflictError` (the remote migration history
  * doesn't match local files), its built-in suggestion — a list of `supabase
  * migration repair` commands — never mentions the more direct fix `pull`
  * itself offers. `db pull` doesn't know it's being called from `pull`, so this
@@ -180,12 +170,12 @@ function legacyPullAppendSuggestion(
  * callers). Scoped to the `suggestion` field only; the underlying error class
  * and its own message/suggestion text are untouched.
  */
-function legacyPullDbStepFailureResult(cause: unknown): LegacyPullStepResult {
-  const result = legacyPullFailedStepResult("db", cause);
-  if (!(cause instanceof LegacyDbPullMigrationConflictError)) {
+function pullDbStepFailureResult(cause: unknown): PullStepResult {
+  const result = pullFailedStepResult("db", cause);
+  if (!(cause instanceof DbPullMigrationConflictError)) {
     return result;
   }
-  return legacyPullAppendSuggestion(
+  return pullAppendSuggestion(
     result,
     "Alternatively, rerun `supabase pull --with-migration-history` to fetch and reconcile the remote migration history table automatically.",
   );
@@ -193,17 +183,17 @@ function legacyPullDbStepFailureResult(cause: unknown): LegacyPullStepResult {
 
 /**
  * Appends the exact standalone command to retry just THIS failed step
- * (`legacyPullRetryHint`, `pull.aggregate.ts`) on top of whatever the step's
+ * (`pullRetryHint`, `pull.aggregate.ts`) on top of whatever the step's
  * own failure already says — including, for the db step, the
- * `--with-migration-history` remedy `legacyPullDbStepFailureResult` may have
+ * `--with-migration-history` remedy `pullDbStepFailureResult` may have
  * already appended above. A no-op for a non-failed result.
  */
-function legacyPullWithRetryHint(
-  result: LegacyPullStepResult,
+function pullWithRetryHint(
+  result: PullStepResult,
   ref: string,
   remoteLabel: string | undefined,
-): LegacyPullStepResult {
-  return legacyPullAppendSuggestion(result, legacyPullRetryHint(result.step, ref, remoteLabel));
+): PullStepResult {
+  return pullAppendSuggestion(result, pullRetryHint(result.step, ref, remoteLabel));
 }
 
 /**
@@ -214,15 +204,15 @@ function legacyPullWithRetryHint(
  * notably, the `db` step writes `supabase_migrations.schema_migrations` on
  * the REMOTE database, not just local files, and requires Docker.
  */
-export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullFlags) {
+export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const yes = yield* legacyResolveYes;
-  const cliSettings = yield* LegacyCliSettings;
+  const goOutputFlag = yield* OutputFlag;
+  const yes = yield* resolveYes;
+  const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
   const machineErrorContext = yield* MachineErrorContext;
 
   const requested = Option.filter(flags.projectRef, (value) => value.length > 0);
@@ -236,7 +226,7 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
     // Phase 0.1: reject the Go-compat `-o/--output` flag outright — `pull` is
     // a net-new TS command with no Go parity contract (CLI-2156).
     if (Option.isSome(goOutputFlag)) {
-      return yield* new LegacyPullOutputFlagUnsupportedError({
+      return yield* new PullOutputFlagUnsupportedError({
         message:
           "the -o/--output flag is not supported by pull; use --output-format json|stream-json instead.",
       });
@@ -245,24 +235,24 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
     // Phase 0.2: the resolved `--workdir`/`SUPABASE_WORKDIR` must exist and
     // be a directory before anything else — beats every step's own target
     // resolution and network calls.
-    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
-      Effect.mapError((error) => new LegacyPullWorkdirError({ message: error.message })),
+    yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
+      Effect.mapError((error) => new PullWorkdirError({ message: error.message })),
     );
 
     // Phase 0.3-0.4: open the base config source, then resolve the pull
     // target exactly once — every sub-step below targets `ref` directly
     // instead of re-resolving (ADR 0024's "resolve once" decision).
-    const source = yield* legacyOpenConfigPullSource();
-    const { ref, branch } = yield* legacyResolveConfigTarget(
+    const source = yield* openConfigPullSource();
+    const { ref, branch } = yield* resolveConfigTarget(
       requested,
       pullTargetErrors,
       mapBranchResolveError,
     );
     resolvedRef = ref;
 
-    // Phase 1: preview. `legacyPlanConfigPullRun` does everything up through
+    // Phase 1: preview. `planConfigPullRun` does everything up through
     // the schema-validation gate — no git check, no prompt, no write.
-    const runPlan = yield* legacyPlanConfigPullRun({
+    const runPlan = yield* planConfigPullRun({
       target: { ref, branch },
       remoteLabel,
       source,
@@ -276,10 +266,7 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
     const configDirty =
       flags.force || !runPlan.hasWork
         ? false
-        : Option.getOrElse(
-            yield* legacyPathHasUncommittedChanges(runPlan.configFilePath),
-            () => false,
-          );
+        : Option.getOrElse(yield* pathHasUncommittedChanges(runPlan.configFilePath), () => false);
 
     // Unlike the config step, the db step always attempts to run (no flag
     // skips it) and has no preview machinery of its own — there is no way to
@@ -294,7 +281,7 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
     const migrationsDirty = flags.force
       ? false
-      : Option.getOrElse(yield* legacyPathHasUncommittedChanges(migrationsDir), () => false);
+      : Option.getOrElse(yield* pathHasUncommittedChanges(migrationsDir), () => false);
 
     // The functions step always runs unconditionally too, with no "does it
     // have work" signal at all without calling the API first — same
@@ -302,11 +289,11 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
     const functionsDir = path.join(cliSettings.workdir, "supabase", "functions");
     const functionsDirty = flags.force
       ? false
-      : Option.getOrElse(yield* legacyPathHasUncommittedChanges(functionsDir), () => false);
+      : Option.getOrElse(yield* pathHasUncommittedChanges(functionsDir), () => false);
 
     // Tracked separately (not collapsed into one boolean) so the confirmation
     // body and the abort error can each name exactly which path(s) are dirty.
-    // Ordered config → migrations → functions, matching `LEGACY_PULL_STEP_ORDER`.
+    // Ordered config → migrations → functions, matching `PULL_STEP_ORDER`.
     const dirtyPaths: ReadonlyArray<string> = [
       ...(configDirty ? [runPlan.context.configPath] : []),
       ...(migrationsDirty ? ["supabase/migrations"] : []),
@@ -319,7 +306,7 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
     // bootstrap-auto-run decision (ADR 0024): there is nothing to overwrite,
     // and it is what makes a fresh checkout work by default. Mirrors
     // `migration fetch`'s OWN "existing files" check exactly (a raw,
-    // unfiltered directory listing — NOT the filtered `legacyLoadLocalVersions`
+    // unfiltered directory listing — NOT the filtered `loadLocalVersions`
     // count `db diff`/`pull` reconciliation uses elsewhere) so the two can
     // never disagree about whether the directory is "empty": a directory
     // holding only a `README.md`/`.gitkeep`/deprecated `_init.sql` reads as
@@ -332,7 +319,7 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
             cause.reason._tag === "NotFound"
               ? Effect.succeed<ReadonlyArray<string>>([])
               : Effect.fail(
-                  new LegacyMigrationsReadError({
+                  new MigrationsReadError({
                     message: `failed to read migrations: ${cause.message}`,
                   }),
                 ),
@@ -347,7 +334,7 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
     // Phase 2: one confirmation, asymmetric preview (a real diff for config,
     // a qualitative description for db/functions/migration-history).
     const configDiffText = runPlan.hasWork
-      ? legacyRenderConfigPullText(
+      ? renderConfigPullText(
           runPlan.changeSet,
           runPlan.scope,
           runPlan.plan,
@@ -355,7 +342,7 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
           runPlan.context.configPath,
         )
       : undefined;
-    const confirmBody = legacyPullConfirmMessage({
+    const confirmBody = pullConfirmMessage({
       ref,
       branch,
       configDiffText,
@@ -373,101 +360,96 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
     }
 
     if (flags.dryRun) {
-      const results: ReadonlyArray<LegacyPullStepResult> = [
-        legacyPullConfigStepResult(
+      const results: ReadonlyArray<PullStepResult> = [
+        pullConfigStepResult(
           {
             dryRun: true,
             hasWork: runPlan.hasWork,
             confirmed: false,
             configFilePath: runPlan.context.configPath,
           },
-          legacyConfigPullPayloadFor(runPlan, { dryRun: true, declined: false }),
+          configPullPayloadFor(runPlan, { dryRun: true, declined: false }),
         ),
-        legacyPullMigrationHistoryStepResult(
+        pullMigrationHistoryStepResult(
           shouldFetchMigrationHistory
             ? { kind: "planned" }
             : { kind: "skipped", reason: "not_needed" },
         ),
-        legacyPullDbStepResult({ kind: "planned" }),
-        legacyPullFunctionsStepResult({ kind: "planned" }),
+        pullDbStepResult({ kind: "planned" }),
+        pullFunctionsStepResult({ kind: "planned" }),
       ];
-      const aggregate = legacyPullAggregate({
+      const aggregate = pullAggregate({
         ref,
         branch,
         dryRun: true,
         confirmed: false,
         results,
       });
-      yield* legacyPullEmit(output, aggregate);
+      yield* pullEmit(output, aggregate);
       return;
     }
 
     if (dirty) {
       const tty = yield* Tty;
       if (yes || output.format !== "text" || !tty.stdinIsTty) {
-        return yield* new LegacyPullUncommittedChangesError({
-          message: legacyPullDirtyWarningMessage(dirtyPaths),
+        return yield* new PullUncommittedChangesError({
+          message: pullDirtyWarningMessage(dirtyPaths),
         });
       }
     }
 
-    const confirmed = yield* legacyPromptYesNo(
-      output,
-      yes,
-      "Proceed with pull?",
-      dirty ? false : true,
-    );
+    const confirmed = yield* promptYesNo(output, yes, "Proceed with pull?", dirty ? false : true);
     if (!confirmed) {
-      const results: ReadonlyArray<LegacyPullStepResult> = [
-        legacyPullConfigStepResult(
+      const results: ReadonlyArray<PullStepResult> = [
+        pullConfigStepResult(
           {
             dryRun: false,
             hasWork: runPlan.hasWork,
             confirmed: false,
             configFilePath: runPlan.context.configPath,
           },
-          legacyConfigPullPayloadFor(runPlan, { dryRun: false, declined: true }),
+          configPullPayloadFor(runPlan, { dryRun: false, declined: true }),
         ),
-        legacyPullMigrationHistoryStepResult({
+        pullMigrationHistoryStepResult({
           kind: "skipped",
           reason: shouldFetchMigrationHistory ? "declined" : "not_needed",
         }),
-        legacyPullDbStepResult({ kind: "planned" }),
-        legacyPullFunctionsStepResult({ kind: "planned" }),
+        pullDbStepResult({ kind: "planned" }),
+        pullFunctionsStepResult({ kind: "planned" }),
       ];
-      const aggregate = legacyPullAggregate({
+      const aggregate = pullAggregate({
         ref,
         branch,
         dryRun: false,
         confirmed: false,
         results,
       });
-      yield* legacyPullEmit(output, aggregate);
+      yield* pullEmit(output, aggregate);
       return;
     }
 
     // Phase 3: execute. Each step is failure-isolated — one failing does not
     // stop the rest from running and being reported.
-    const stepContext: LegacyPullStepContext = { ref, assumeYes: true };
-    let firstFailureCause: Cause.Cause<LegacyPullStepFailureCause> | undefined;
-    const results: Array<LegacyPullStepResult> = [];
+    const stepContext: PullStepContext = { ref, assumeYes: true };
+    let firstFailureCause: Cause.Cause<PullStepFailureCause> | undefined;
+    const results: Array<PullStepResult> = [];
 
-    const configCapture = yield* legacyPullCaptureStep(legacyPullConfigStep({ runPlan, source }));
+    const configCapture = yield* pullCaptureStep(pullConfigStep({ runPlan, source }));
     if (configCapture.kind === "ok") {
       results.push(
-        legacyPullConfigStepResult(
-          // `legacyPullConfigStep` (`pull.steps.ts`) returns the plan's own
+        pullConfigStepResult(
+          // `pullConfigStep` (`pull.steps.ts`) returns the plan's own
           // ABSOLUTE `configFilePath` (`loaded.path`) — overridden here to the
-          // workdir-relative `context.configPath` `LegacyPullConfigStepOutcome`
+          // workdir-relative `context.configPath` `PullConfigStepOutcome`
           // documents, matching the dry-run/declined branches above.
           { ...configCapture.value, configFilePath: runPlan.context.configPath },
-          legacyConfigPullPayloadFor(runPlan, { dryRun: false, declined: false }),
+          configPullPayloadFor(runPlan, { dryRun: false, declined: false }),
         ),
       );
     } else {
       results.push(
-        legacyPullWithRetryHint(
-          legacyPullFailedStepResult("config", Cause.squash(configCapture.cause)),
+        pullWithRetryHint(
+          pullFailedStepResult("config", Cause.squash(configCapture.cause)),
           ref,
           remoteLabel,
         ),
@@ -475,20 +457,20 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
       firstFailureCause = configCapture.cause;
     }
 
-    const migrationCapture = yield* legacyPullCaptureStep(
+    const migrationCapture = yield* pullCaptureStep(
       shouldFetchMigrationHistory
-        ? legacyPullMigrationHistoryStep(stepContext)
-        : Effect.succeed<LegacyPullMigrationHistoryStepOutcome>({
+        ? pullMigrationHistoryStep(stepContext)
+        : Effect.succeed<PullMigrationHistoryStepOutcome>({
             kind: "skipped",
             reason: "not_needed",
           }),
     );
     if (migrationCapture.kind === "ok") {
-      results.push(legacyPullMigrationHistoryStepResult(migrationCapture.value));
+      results.push(pullMigrationHistoryStepResult(migrationCapture.value));
     } else {
       results.push(
-        legacyPullWithRetryHint(
-          legacyPullFailedStepResult("migration_history", Cause.squash(migrationCapture.cause)),
+        pullWithRetryHint(
+          pullFailedStepResult("migration_history", Cause.squash(migrationCapture.cause)),
           ref,
           remoteLabel,
         ),
@@ -496,27 +478,23 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
       firstFailureCause ??= migrationCapture.cause;
     }
 
-    const dbCapture = yield* legacyPullCaptureStep(legacyPullDbStep(stepContext));
+    const dbCapture = yield* pullCaptureStep(pullDbStep(stepContext));
     if (dbCapture.kind === "ok") {
-      results.push(legacyPullDbStepResult(dbCapture.value));
+      results.push(pullDbStepResult(dbCapture.value));
     } else {
       results.push(
-        legacyPullWithRetryHint(
-          legacyPullDbStepFailureResult(Cause.squash(dbCapture.cause)),
-          ref,
-          remoteLabel,
-        ),
+        pullWithRetryHint(pullDbStepFailureResult(Cause.squash(dbCapture.cause)), ref, remoteLabel),
       );
       firstFailureCause ??= dbCapture.cause;
     }
 
-    const functionsCapture = yield* legacyPullCaptureStep(legacyPullFunctionsStep(stepContext));
+    const functionsCapture = yield* pullCaptureStep(pullFunctionsStep(stepContext));
     if (functionsCapture.kind === "ok") {
-      results.push(legacyPullFunctionsStepResult(functionsCapture.value));
+      results.push(pullFunctionsStepResult(functionsCapture.value));
     } else {
       results.push(
-        legacyPullWithRetryHint(
-          legacyPullFailedStepResult("functions", Cause.squash(functionsCapture.cause)),
+        pullWithRetryHint(
+          pullFailedStepResult("functions", Cause.squash(functionsCapture.cause)),
           ref,
           remoteLabel,
         ),
@@ -525,20 +503,20 @@ export const legacyPull = Effect.fn("legacy.pull")(function* (flags: LegacyPullF
     }
 
     // Phase 4: aggregate, emit, exit.
-    const aggregate = legacyPullAggregate({ ref, branch, dryRun: false, confirmed: true, results });
+    const aggregate = pullAggregate({ ref, branch, dryRun: false, confirmed: true, results });
     if (firstFailureCause === undefined) {
-      yield* legacyPullEmit(output, aggregate);
+      yield* pullEmit(output, aggregate);
       return;
     }
 
     if (output.format === "text") {
-      yield* output.raw(legacyRenderPullSummary(aggregate));
+      yield* output.raw(renderPullSummary(aggregate));
     } else {
-      yield* machineErrorContext.set(legacyPullPayload(aggregate));
+      yield* machineErrorContext.set(pullPayload(aggregate));
     }
     return yield* Effect.failCause(firstFailureCause);
   }).pipe(
-    // Legacy Shell Invariant #1: telemetry flushes on EVERY invocation,
+    // CLI Invariant #1: telemetry flushes on EVERY invocation,
     // including target-resolution failures; the linked-project cache write
     // only fires once a ref has actually resolved.
     Effect.ensuring(

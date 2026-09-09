@@ -5,7 +5,7 @@ import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stdio, Stream 
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import { legacyV2ProjectConfigResponse } from "../../../tests/helpers/legacy-config-fixtures.ts";
+import { v2ProjectConfigResponse } from "../../../tests/helpers/config-fixtures.ts";
 import {
   mockContextualAnalytics,
   mockOutput,
@@ -15,58 +15,52 @@ import {
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  LEGACY_VALID_REF,
-  legacyJsonResponse,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyShadowContainerCliSpawner,
-  mockLegacyTelemetryStateTracked,
-  legacyTransportFailure,
-  useLegacyShadowCacheDisabled,
-  useLegacyTempWorkdir,
-} from "../../../tests/helpers/legacy-mocks.ts";
+  buildTestRuntime,
+  VALID_REF,
+  jsonResponse,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockShadowContainerCliSpawner,
+  mockTelemetryStateTracked,
+  transportFailure,
+  useShadowCacheDisabled,
+  useTempWorkdir,
+} from "../../../tests/helpers/command-mocks.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { machineErrorContextLayer } from "../../shared/output/machine-error-context.layer.ts";
 import { jsonOutputLayer, streamJsonOutputLayer } from "../../shared/output/output.layer.ts";
 import {
-  LegacyDebugFlag,
-  LegacyDnsResolverFlag,
-  LegacyExperimentalFlag,
-  LegacyNetworkIdFlag,
-  LegacyYesFlag,
-} from "../../shared/legacy/global-flags.ts";
+  DebugFlag,
+  DnsResolverFlag,
+  ExperimentalFlag,
+  NetworkIdFlag,
+  YesFlag,
+} from "../../command-internal/global-flags.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
-import { LegacyDbConfigResolver } from "../../command-internal/legacy-db-config.service.ts";
-import {
-  LegacyDbConnection,
-  type LegacyDbSession,
-} from "../../command-internal/legacy-db-connection.service.ts";
-import { LegacyDockerRun } from "../../command-internal/legacy-docker-run.service.ts";
-import { LegacyEdgeRuntimeScript } from "../../command-internal/legacy-edge-runtime-script.service.ts";
-import { LegacyPgDeltaSslProbe } from "../../command-internal/legacy-pgdelta-ssl-probe.service.ts";
+import { DbConfigResolver } from "../../command-internal/db-config.service.ts";
+import { DbConnection, type DbSession } from "../../command-internal/db-connection.service.ts";
+import { DockerRun } from "../../command-internal/docker-run.service.ts";
+import { EdgeRuntimeScript } from "../../command-internal/edge-runtime-script.service.ts";
+import { PgDeltaSslProbe } from "../../command-internal/pgdelta-ssl-probe.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import {
-  LegacyPgDeltaEngine,
-  LegacyPgDeltaEngineError,
-} from "../db/shared/legacy-pgdelta-engine.service.ts";
-import type { LegacyPullFlags } from "./pull.command.ts";
-import { legacyPullHandler } from "./pull.command.ts";
+import { PgDeltaEngine, PgDeltaEngineError } from "../db/shared/pgdelta-engine.service.ts";
+import type { PullFlags } from "./pull.command.ts";
+import { pullHandler } from "./pull.command.ts";
 
 /**
  * Scenario-oriented integration coverage for `supabase pull` (CLI-1272,
- * ADR 0024). Drives the real exported `legacyPullHandler` — the SAME
- * `safeFlags`/`withLegacyCommandInstrumentation`/`withJsonErrorHandling`
+ * ADR 0024). Drives the real exported `pullHandler` — the SAME
+ * `safeFlags`/`withCommandTelemetry`/`withJsonErrorHandling`
  * wiring `pull.command.ts`'s `Command.withHandler` composes (mirrors
  * `functions download`'s own exported-handler precedent) — against a fully
  * mocked db-pull/
- * migration-fetch/functions-download substrate: `LegacyPgDeltaEngine` is
+ * migration-fetch/functions-download substrate: `PgDeltaEngine` is
  * mocked directly (so every db step forces the pg-delta diff engine via
  * `[experimental.pgdelta] enabled = true`, skipping both the migra/edge-runtime
  * path and the pg_dump initial-pull seed entirely — pg-delta initial pulls
- * diff against an empty shadow and never dump), `LegacyDbConnection`/
- * `LegacyDbConfigResolver` are mocked with a shared fake Postgres session
+ * diff against an empty shadow and never dump), `DbConnection`/
+ * `DbConfigResolver` are mocked with a shared fake Postgres session
  * (shared by the migration-history and db steps, since both read the
  * SAME `supabase_migrations.schema_migrations` table), and a composite
  * `ChildProcessSpawner` combines the real shadow-container container-lifecycle
@@ -76,8 +70,8 @@ import { legacyPullHandler } from "./pull.command.ts";
  * for the config-file dirty guard.
  */
 
-const tempRoot = useLegacyTempWorkdir("supabase-pull-int-");
-useLegacyShadowCacheDisabled();
+const tempRoot = useTempWorkdir("supabase-pull-int-");
+useShadowCacheDisabled();
 
 const BRANCH_REF = "cccccccccccccccccccc";
 
@@ -85,7 +79,7 @@ const BRANCH_BY_NAME = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "staging",
   project_ref: BRANCH_REF,
-  parent_project_ref: LEGACY_VALID_REF,
+  parent_project_ref: VALID_REF,
   is_default: false,
   persistent: true,
   status: "MIGRATIONS_PASSED",
@@ -103,7 +97,7 @@ function migrationsDir(): string {
 }
 
 /** Writes a minimal, schema-valid `supabase/config.toml` with pg-delta forced on
- *  (so every db step exercises the fully-mocked `LegacyPgDeltaEngine`, never the
+ *  (so every db step exercises the fully-mocked `PgDeltaEngine`, never the
  *  migra/edge-runtime path or the pg_dump initial-pull seed). */
 function writeConfig(extraToml = ""): string {
   const dir = join(tempRoot.current, "supabase");
@@ -111,12 +105,12 @@ function writeConfig(extraToml = ""): string {
   const path = configPath();
   writeFileSync(
     path,
-    `project_id = "${LEGACY_VALID_REF}"\n\n[experimental.pgdelta]\nenabled = true\n${extraToml}`,
+    `project_id = "${VALID_REF}"\n\n[experimental.pgdelta]\nenabled = true\n${extraToml}`,
   );
   return path;
 }
 
-/** Seeds a local migration file whose basename `legacyLoadLocalVersions` parses
+/** Seeds a local migration file whose basename `loadLocalVersions` parses
  *  back into `version` — content is irrelevant to every mocked collaborator here. */
 function seedLocalMigration(
   version: string,
@@ -129,7 +123,7 @@ function seedLocalMigration(
   return path;
 }
 
-/** The rendered step row for `step` in `legacyRenderPullSummary`'s output, with
+/** The rendered step row for `step` in `renderPullSummary`'s output, with
  *  internal padding collapsed to single spaces so assertions don't hardcode
  *  column widths. Empty string when the step has no row at all. */
 function stepLine(text: string, step: string): string {
@@ -137,7 +131,7 @@ function stepLine(text: string, step: string): string {
   return line === undefined ? "" : line.trim().replace(/\s+/g, " ");
 }
 
-function pullFlags(overrides: Partial<LegacyPullFlags> = {}): LegacyPullFlags {
+function pullFlags(overrides: Partial<PullFlags> = {}): PullFlags {
   return {
     projectRef: overrides.projectRef ?? Option.none(),
     remoteLabel: overrides.remoteLabel ?? Option.none(),
@@ -151,8 +145,8 @@ function pullFlags(overrides: Partial<LegacyPullFlags> = {}): LegacyPullFlags {
  *  imported rather than reimplemented, so this suite can never drift from
  *  what actually ships (mirrors `functions download`'s own exported-handler
  *  precedent). */
-function runPull(flags: LegacyPullFlags) {
-  return legacyPullHandler(flags);
+function runPull(flags: PullFlags) {
+  return pullHandler(flags);
 }
 
 // ---------------------------------------------------------------------------
@@ -176,7 +170,7 @@ function composeSpawner(
   readonly shadowSpawned: ReadonlyArray<{ readonly args: ReadonlyArray<string> }>;
   readonly gitCalls: ReadonlyArray<ReadonlyArray<string>>;
 } {
-  const shadow = mockLegacyShadowContainerCliSpawner();
+  const shadow = mockShadowContainerCliSpawner();
   const gitCalls: Array<ReadonlyArray<string>> = [];
   const encoder = new TextEncoder();
 
@@ -258,8 +252,8 @@ function composeSpawner(
 
 // ---------------------------------------------------------------------------
 // A shared fake Postgres session backing BOTH the migration-history step
-// (`legacyReadMigrationTable`) and the db step (`legacyListRemoteMigrations`/
-// `legacyUpdateMigrationHistory`) — both read the SAME
+// (`readMigrationTable`) and the db step (`listRemoteMigrations`/
+// `updateMigrationHistory`) — both read the SAME
 // `supabase_migrations.schema_migrations` table in production.
 // ---------------------------------------------------------------------------
 
@@ -274,7 +268,7 @@ function makeMigrationSession(
   callOrder: Array<string>,
   tag: "target" | "shadow",
 ): {
-  readonly session: LegacyDbSession;
+  readonly session: DbSession;
   readonly historyUpserts: ReadonlyArray<ReadonlyArray<unknown>>;
 } {
   const historyUpserts: Array<ReadonlyArray<unknown>> = [];
@@ -299,7 +293,7 @@ function makeMigrationSession(
     }
     return Effect.succeed([] as ReadonlyArray<Record<string, unknown>>);
   };
-  const session: LegacyDbSession = {
+  const session: DbSession = {
     exec,
     query,
     execBatch: (statements) =>
@@ -319,7 +313,7 @@ function makeDbConfigLayers(
   remoteMigrations: ReadonlyArray<RemoteMigrationRow>,
   callOrder: Array<string>,
 ): {
-  readonly layer: Layer.Layer<LegacyDbConfigResolver | LegacyDbConnection>;
+  readonly layer: Layer.Layer<DbConfigResolver | DbConnection>;
   readonly historyUpserts: ReadonlyArray<ReadonlyArray<unknown>>;
   readonly connectedPorts: ReadonlyArray<number>;
 } {
@@ -327,7 +321,7 @@ function makeDbConfigLayers(
   const shadow = makeMigrationSession([], callOrder, "shadow");
   const connectedPorts: Array<number> = [];
 
-  const dbConnection = Layer.succeed(LegacyDbConnection, {
+  const dbConnection = Layer.succeed(DbConnection, {
     connect: (cfg: { readonly database: string; readonly port: number }) =>
       Effect.sync(() => {
         connectedPorts.push(cfg.port);
@@ -335,19 +329,19 @@ function makeDbConfigLayers(
       }),
   });
 
-  const resolver = Layer.succeed(LegacyDbConfigResolver, {
+  const resolver = Layer.succeed(DbConfigResolver, {
     resolve: (resolveFlags) => {
       const { connType } = resolveFlags;
       return Effect.succeed({
         conn: {
-          host: connType === "local" ? "127.0.0.1" : `db.${LEGACY_VALID_REF}.supabase.co`,
+          host: connType === "local" ? "127.0.0.1" : `db.${VALID_REF}.supabase.co`,
           port: TARGET_PORT,
           user: "postgres",
           password: "x",
           database: "postgres",
         },
         isLocal: connType === "local",
-        ref: Option.some(LEGACY_VALID_REF),
+        ref: Option.some(VALID_REF),
       });
     },
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
@@ -361,7 +355,7 @@ function makeDbConfigLayers(
 }
 
 // ---------------------------------------------------------------------------
-// A fully-mocked `LegacyPgDeltaEngine` — every db step forces this engine via
+// A fully-mocked `PgDeltaEngine` — every db step forces this engine via
 // `[experimental.pgdelta] enabled = true` in `writeConfig`, so neither the
 // migra/edge-runtime path nor the pg_dump initial-pull seed is ever reached.
 // ---------------------------------------------------------------------------
@@ -369,19 +363,19 @@ function makeDbConfigLayers(
 interface DiffOutcome {
   readonly changes: boolean;
   readonly files?: ReadonlyArray<{ readonly name: string; readonly sql: string }>;
-  /** Fails the diff with a typed `LegacyPgDeltaEngineError` (an ordinary db-step failure). */
+  /** Fails the diff with a typed `PgDeltaEngineError` (an ordinary db-step failure). */
   readonly fail?: string;
-  /** Dies the diff with a defect — proves `legacyPullCaptureStep` re-raises a
+  /** Dies the diff with a defect — proves `pullCaptureStep` re-raises a
    *  defect/interruption instead of ever capturing it as a per-step failure. */
   readonly die?: string;
 }
 
 function makePgDeltaEngine(diffOutcome: () => DiffOutcome): {
-  readonly layer: Layer.Layer<LegacyPgDeltaEngine>;
+  readonly layer: Layer.Layer<PgDeltaEngine>;
   readonly diffCount: () => number;
 } {
   let diffCount = 0;
-  const layer = Layer.succeed(LegacyPgDeltaEngine, {
+  const layer = Layer.succeed(PgDeltaEngine, {
     diffExplicit: () => Effect.die("diffExplicit unused"),
     diffDatabase: () => {
       diffCount += 1;
@@ -390,9 +384,7 @@ function makePgDeltaEngine(diffOutcome: () => DiffOutcome): {
         return Effect.die(new Error(outcome.die));
       }
       if (outcome.fail !== undefined) {
-        return Effect.fail(
-          new LegacyPgDeltaEngineError({ message: outcome.fail, cause: outcome.fail }),
-        );
+        return Effect.fail(new PgDeltaEngineError({ message: outcome.fail, cause: outcome.fail }));
       }
       const files = (outcome.files ?? []).map((file, index) => ({
         sequence: index + 1,
@@ -420,7 +412,7 @@ function makePgDeltaEngine(diffOutcome: () => DiffOutcome): {
 // ---------------------------------------------------------------------------
 
 function multipartFixture(content: string): { readonly boundary: string; readonly body: string } {
-  const boundary = "legacy-pull-test";
+  const boundary = "pull-test";
   return {
     boundary,
     body: [
@@ -448,22 +440,22 @@ interface ApiOpts {
 }
 
 function makeApiMock(opts: ApiOpts) {
-  return mockLegacyPlatformApi({
+  return mockCommandPlatformApi({
     handler: (request) => {
       const url = request.url;
       if (url.includes("/v2/projects/") && url.endsWith("/config")) {
         return Effect.succeed(
-          legacyJsonResponse(request, 200, opts.configResponse ?? legacyV2ProjectConfigResponse()),
+          jsonResponse(request, 200, opts.configResponse ?? v2ProjectConfigResponse()),
         );
       }
       if (url.includes("/v1/branches/")) {
-        return Effect.succeed(legacyJsonResponse(request, 200, {}));
+        return Effect.succeed(jsonResponse(request, 200, {}));
       }
       if (url.includes("/branches/")) {
         if (opts.branchNetworkFails === true) {
-          return Effect.fail(legacyTransportFailure(request));
+          return Effect.fail(transportFailure(request));
         }
-        return Effect.succeed(legacyJsonResponse(request, 200, BRANCH_BY_NAME));
+        return Effect.succeed(jsonResponse(request, 200, BRANCH_BY_NAME));
       }
       if (url.endsWith("/body")) {
         const { boundary, body } = multipartFixture("console.log('pull');\n");
@@ -480,18 +472,18 @@ function makeApiMock(opts: ApiOpts) {
       if (url.endsWith("/functions")) {
         if (opts.functionsListStatus !== undefined && opts.functionsListStatus !== 200) {
           return Effect.succeed(
-            legacyJsonResponse(request, opts.functionsListStatus, "list functions failed"),
+            jsonResponse(request, opts.functionsListStatus, "list functions failed"),
           );
         }
         return Effect.succeed(
-          legacyJsonResponse(
+          jsonResponse(
             request,
             200,
             (opts.functionSlugs ?? []).map((slug) => ({ slug })),
           ),
         );
       }
-      return Effect.succeed(legacyJsonResponse(request, 200, {}));
+      return Effect.succeed(jsonResponse(request, 200, {}));
     },
   });
 }
@@ -529,7 +521,7 @@ function mockCapturingStdio(args: ReadonlyArray<string>) {
  * `config/pull/pull.integration.test.ts`'s own `withConfirmSideEffect`, used
  * here to simulate a concurrent edit landing on `supabase/config.toml`
  * WHILE the orchestrator's own confirmation prompt is "on screen" (the
- * config step's TOCTOU guard, `legacyApplyConfigPullRun`).
+ * config step's TOCTOU guard, `applyConfigPullRun`).
  */
 function withConfirmSideEffect(
   base: Layer.Layer<Output>,
@@ -592,8 +584,8 @@ function setup(opts: SetupOpts = {}) {
         ? out!.layer
         : withConfirmSideEffect(out!.layer, opts.confirmSideEffect);
 
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const linkedProjectCache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const linkedProjectCache = mockLinkedProjectCacheTracked();
   const processControl = mockProcessControl();
   const analytics = mockContextualAnalytics();
 
@@ -608,13 +600,13 @@ function setup(opts: SetupOpts = {}) {
   const dbConfig = makeDbConfigLayers(opts.remoteMigrations ?? [], callOrder);
   const pgDelta = makePgDeltaEngine(opts.diffOutcome ?? (() => ({ changes: false })));
 
-  const cliSettings = mockLegacyCliSettings({
+  const cliSettings = mockCommandSettings({
     workdir: opts.workdir ?? tempRoot.current,
-    projectId: Option.some(LEGACY_VALID_REF),
+    projectId: Option.some(VALID_REF),
   });
 
   const layer = Layer.mergeAll(
-    buildLegacyTestRuntime({
+    buildTestRuntime({
       out: { layer: finalOutputLayer },
       api,
       cliSettings,
@@ -632,10 +624,10 @@ function setup(opts: SetupOpts = {}) {
     capturingStdio?.layer ?? Stdio.layerTest({ args: Effect.succeed(["pull"]) }),
     dbConfig.layer,
     pgDelta.layer,
-    Layer.succeed(LegacyEdgeRuntimeScript, {
+    Layer.succeed(EdgeRuntimeScript, {
       run: () => Effect.die("migra edge runtime unused — every db step forces pg-delta"),
     }),
-    Layer.succeed(LegacyDockerRun, {
+    Layer.succeed(DockerRun, {
       run: () => Effect.die("run unused"),
       runCapture: () => Effect.die("runCapture unused"),
       runStream: (runOpts) =>
@@ -643,19 +635,19 @@ function setup(opts: SetupOpts = {}) {
           ? Effect.succeed({ exitCode: 0, stderr: "" })
           : Effect.die("runStream unused — pg-delta initial pulls skip the pg_dump seed"),
     }),
-    Layer.succeed(LegacyPgDeltaSslProbe, {
+    Layer.succeed(PgDeltaSslProbe, {
       requireSsl: () => Effect.succeed(false),
       requireSslForHost: () => Effect.succeed(false),
     }),
-    Layer.succeed(LegacyYesFlag, opts.yes ?? false),
-    Layer.succeed(LegacyExperimentalFlag, false),
-    Layer.succeed(LegacyDebugFlag, false),
-    Layer.succeed(LegacyDnsResolverFlag, "native"),
-    Layer.succeed(LegacyNetworkIdFlag, Option.none()),
+    Layer.succeed(YesFlag, opts.yes ?? false),
+    Layer.succeed(ExperimentalFlag, false),
+    Layer.succeed(DebugFlag, false),
+    Layer.succeed(DnsResolverFlag, "native"),
+    Layer.succeed(NetworkIdFlag, Option.none()),
     Layer.succeed(CliArgs, { args: [] }),
-    // Listed after `buildLegacyTestRuntime` so it overrides the real spawner
+    // Listed after `buildTestRuntime` so it overrides the real spawner
     // `BunServices.layer` provides (last-wins, same precedent as
-    // `config/pull/pull.integration.test.ts`'s `mockLegacyGitStatusSpawner`).
+    // `config/pull/pull.integration.test.ts`'s `mockGitStatusSpawner`).
     spawner.layer,
   );
 
@@ -675,7 +667,7 @@ function setup(opts: SetupOpts = {}) {
   };
 }
 
-describe("legacy pull integration", () => {
+describe("pull integration", () => {
   // -------------------------------------------------------------------------
   // 1. Fresh-checkout bootstrap.
   // -------------------------------------------------------------------------
@@ -758,7 +750,7 @@ describe("legacy pull integration", () => {
         // record of every parameterized write against
         // `supabase_migrations.schema_migrations` on the (mocked) REMOTE
         // database, and the payload's own `remote_history_updated` field
-        // (`pull.aggregate.ts`'s `legacyPullDbStepResult`) reports the same
+        // (`pull.aggregate.ts`'s `pullDbStepResult`) reports the same
         // fact back to a machine consumer.
         expect(dbConfig.historyUpserts.length).toBeGreaterThan(0);
         const dbDetail = (steps["db"] as Record<string, unknown>)["detail"] as Record<
@@ -770,7 +762,7 @@ describe("legacy pull integration", () => {
         // The linked-project cache was written with the resolved ref once
         // target resolution succeeded.
         expect(linkedProjectCache.cached).toBe(true);
-        expect(linkedProjectCache.cachedRef).toBe(LEGACY_VALID_REF);
+        expect(linkedProjectCache.cachedRef).toBe(VALID_REF);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -972,11 +964,11 @@ describe("legacy pull integration", () => {
         expect(processControl.exitCode).toBe(1);
 
         // A partial step failure (ref resolved, but a later step failed) still
-        // performs BOTH Legacy Shell Invariant #1 finalizers — the ref
+        // performs BOTH CLI Invariant #1 finalizers — the ref
         // resolved before the functions step ever ran, so the cache write
         // still fires alongside the telemetry flush.
         expect(linkedProjectCache.cached).toBe(true);
-        expect(linkedProjectCache.cachedRef).toBe(LEGACY_VALID_REF);
+        expect(linkedProjectCache.cachedRef).toBe(VALID_REF);
         expect(telemetry.flushed).toBe(true);
       }).pipe(Effect.provide(layer));
     },
@@ -1075,7 +1067,7 @@ describe("legacy pull integration", () => {
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
           const rendered = JSON.stringify(exit);
-          expect(rendered).toContain("LegacyPullUncommittedChangesError");
+          expect(rendered).toContain("PullUncommittedChangesError");
           expect(out!.promptConfirmCalls).toHaveLength(0);
           expect(readFileSync(configPath(), "utf8")).toBe(before);
         }).pipe(Effect.provide(layer));
@@ -1093,7 +1085,7 @@ describe("legacy pull integration", () => {
         expect(capturingStdio!.stdout).toHaveLength(1);
         const envelope = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
         expect((envelope["error"] as Record<string, unknown>)["code"]).toBe(
-          "LegacyPullUncommittedChangesError",
+          "PullUncommittedChangesError",
         );
         expect(processControl.exitCode).toBe(1);
       }).pipe(Effect.provide(layer));
@@ -1107,7 +1099,7 @@ describe("legacy pull integration", () => {
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
-          expect(JSON.stringify(exit)).toContain("LegacyPullUncommittedChangesError");
+          expect(JSON.stringify(exit)).toContain("PullUncommittedChangesError");
           expect(out!.promptConfirmCalls).toHaveLength(0);
         }).pipe(Effect.provide(layer));
       },
@@ -1167,7 +1159,7 @@ describe("legacy pull integration", () => {
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
-          expect(JSON.stringify(exit)).toContain("LegacyPullUncommittedChangesError");
+          expect(JSON.stringify(exit)).toContain("PullUncommittedChangesError");
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1187,7 +1179,7 @@ describe("legacy pull integration", () => {
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
-          expect(JSON.stringify(exit)).toContain("LegacyPullUncommittedChangesError");
+          expect(JSON.stringify(exit)).toContain("PullUncommittedChangesError");
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1236,7 +1228,7 @@ describe("legacy pull integration", () => {
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(runPull(pullFlags()));
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("LegacyPullUncommittedChangesError");
+        expect(JSON.stringify(exit)).toContain("PullUncommittedChangesError");
       }).pipe(Effect.provide(layer));
     });
 
@@ -1333,7 +1325,7 @@ describe("legacy pull integration", () => {
       const { layer, spawner } = setup({
         yes: true,
         api: {
-          configResponse: legacyV2ProjectConfigResponse({
+          configResponse: v2ProjectConfigResponse({
             attributes: (attributes) => ({
               ...attributes,
               database: {
@@ -1398,7 +1390,7 @@ describe("legacy pull integration", () => {
         const exit = yield* Effect.exit(runPull(pullFlags()));
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("LegacyPullOutputFlagUnsupportedError");
+        expect(rendered).toContain("PullOutputFlagUnsupportedError");
         expect(rendered).toContain("--output-format");
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
@@ -1419,10 +1411,10 @@ describe("legacy pull integration", () => {
         const exit = yield* Effect.exit(runPull(pullFlags()));
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("LegacyPullWorkdirError");
+        expect(rendered).toContain("PullWorkdirError");
         expect(api.requests).toHaveLength(0);
 
-        // Legacy Shell Invariant #1: telemetry flushes on EVERY invocation,
+        // CLI Invariant #1: telemetry flushes on EVERY invocation,
         // even a target-resolution failure — but the linked-project cache
         // write only fires once a ref has actually resolved, which never
         // happened here (the workdir check runs before target resolution).
@@ -1440,7 +1432,7 @@ describe("legacy pull integration", () => {
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(runPull(pullFlags({ projectRef: Option.some("staging") })));
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("LegacyPullBranchResolveNetworkError");
+        expect(JSON.stringify(exit)).toContain("PullBranchResolveNetworkError");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1457,7 +1449,7 @@ describe("legacy pull integration", () => {
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(runPull(pullFlags()));
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("LegacyMigrationsReadError");
+        expect(JSON.stringify(exit)).toContain("MigrationsReadError");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1563,7 +1555,7 @@ describe("legacy pull integration", () => {
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
-          expect(JSON.stringify(exit)).toContain("LegacyConfigPullFileChangedError");
+          expect(JSON.stringify(exit)).toContain("ConfigPullFileChangedError");
 
           expect(stepLine(out!.stdoutText, "config")).toContain("failed");
           expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
@@ -1574,7 +1566,7 @@ describe("legacy pull integration", () => {
           // the failed config step, using the resolved ref — surfaced in the
           // text-mode summary, not just the JSON payload.
           expect(out!.stdoutText).toContain(
-            `To retry just this step, run: supabase config pull --project-ref ${LEGACY_VALID_REF}`,
+            `To retry just this step, run: supabase config pull --project-ref ${VALID_REF}`,
           );
         }).pipe(Effect.provide(layer));
       },
@@ -1607,7 +1599,7 @@ describe("legacy pull integration", () => {
           expect(stepLine(out!.stdoutText, "config")).toContain("failed");
 
           expect(out!.stdoutText).toContain(
-            `To retry just this step, run: supabase config pull --project-ref ${LEGACY_VALID_REF} --remote-label staging-remote`,
+            `To retry just this step, run: supabase config pull --project-ref ${VALID_REF} --remote-label staging-remote`,
           );
         }).pipe(Effect.provide(layer));
       },
@@ -1620,7 +1612,7 @@ describe("legacy pull integration", () => {
         const { layer, out } = setup({
           yes: true,
           api: { functionSlugs: [] },
-          // A path-traversal `name` trips `legacyRunMigrationFetch`'s own
+          // A path-traversal `name` trips `runMigrationFetch`'s own
           // injection guard (CWE-22) — a real, reachable write failure, not a
           // synthetic one. Since the fetch never gets to write this row, the
           // db step's own remote/local reconciliation (same table) also
@@ -1635,8 +1627,8 @@ describe("legacy pull integration", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           // The FIRST failure (migration_history) is what re-fails the
           // process, even though db independently fails too.
-          expect(JSON.stringify(exit)).toContain("LegacyMigrationFetchWriteError");
-          expect(JSON.stringify(exit)).not.toContain("LegacyDbPullMigrationConflictError");
+          expect(JSON.stringify(exit)).toContain("MigrationFetchWriteError");
+          expect(JSON.stringify(exit)).not.toContain("DbPullMigrationConflictError");
 
           expect(stepLine(out!.stdoutText, "config")).toContain("unchanged");
           expect(stepLine(out!.stdoutText, "migration_history")).toContain("failed");
@@ -1647,10 +1639,10 @@ describe("legacy pull integration", () => {
           // step's own (its failure is a migration conflict, cascading from
           // the same hostile row) show up in the text-mode summary.
           expect(out!.stdoutText).toContain(
-            `To retry just this step, run: supabase migration fetch --project-ref ${LEGACY_VALID_REF}`,
+            `To retry just this step, run: supabase migration fetch --project-ref ${VALID_REF}`,
           );
           expect(out!.stdoutText).toContain(
-            `To retry just this step, run: supabase db pull --project-ref ${LEGACY_VALID_REF}`,
+            `To retry just this step, run: supabase db pull --project-ref ${VALID_REF}`,
           );
         }).pipe(Effect.provide(layer));
       },
@@ -1672,7 +1664,7 @@ describe("legacy pull integration", () => {
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
-          expect(JSON.stringify(exit)).toContain("LegacyPgDeltaEngineError");
+          expect(JSON.stringify(exit)).toContain("PgDeltaEngineError");
 
           expect(stepLine(out!.stdoutText, "config")).toContain("unchanged");
           expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
@@ -1680,7 +1672,7 @@ describe("legacy pull integration", () => {
           expect(stepLine(out!.stdoutText, "functions")).toContain("unchanged");
 
           expect(out!.stdoutText).toContain(
-            `To retry just this step, run: supabase db pull --project-ref ${LEGACY_VALID_REF}`,
+            `To retry just this step, run: supabase db pull --project-ref ${VALID_REF}`,
           );
         }).pipe(Effect.provide(layer));
       },
@@ -1691,9 +1683,9 @@ describe("legacy pull integration", () => {
       () => {
         writeConfig();
         // A local file that does not match the single remote history row —
-        // `legacyReconcileMigrations` treats every non-matching version on
+        // `reconcileMigrations` treats every non-matching version on
         // either side as a conflict — trips `db pull`'s own
-        // `LegacyDbPullMigrationConflictError`, not a synthetic one.
+        // `DbPullMigrationConflictError`, not a synthetic one.
         seedLocalMigration("20260101000000");
         const { layer, capturingStdio } = setup({
           format: "json",
@@ -1714,14 +1706,14 @@ describe("legacy pull integration", () => {
             string,
             unknown
           >;
-          expect(String(failure["code"])).toBe("LegacyDbPullMigrationConflictError");
+          expect(String(failure["code"])).toBe("DbPullMigrationConflictError");
 
           const suggestion = String(failure["suggestion"]);
           const migrationHistoryHintIndex = suggestion.indexOf(
             "Alternatively, rerun `supabase pull --with-migration-history`",
           );
           const retryHintIndex = suggestion.indexOf(
-            `To retry just this step, run: supabase db pull --project-ref ${LEGACY_VALID_REF}`,
+            `To retry just this step, run: supabase db pull --project-ref ${VALID_REF}`,
           );
           expect(migrationHistoryHintIndex).toBeGreaterThan(-1);
           expect(retryHintIndex).toBeGreaterThan(migrationHistoryHintIndex);
@@ -1752,7 +1744,7 @@ describe("legacy pull integration", () => {
           expect(stepLine(out!.stdoutText, "functions")).toContain("failed");
           expect(out!.stdoutText).toContain("500");
           expect(out!.stdoutText).toContain(
-            `To retry just this step, run: supabase functions download --project-ref ${LEGACY_VALID_REF}`,
+            `To retry just this step, run: supabase functions download --project-ref ${VALID_REF}`,
           );
         }).pipe(Effect.provide(layer));
       },
@@ -1822,12 +1814,12 @@ describe("legacy pull integration", () => {
 // `--project-ref` telemetry redaction: the raw `--project-ref` VALUE recorded
 // in `cli_command_executed`'s `flags` map depends on the literal argv the
 // wrapper's `changedFlagNames` scan reads from `Stdio.args` — a separate
-// source from the `LegacyPullFlags` object the handler itself runs on — so
+// source from the `PullFlags` object the handler itself runs on — so
 // each case below overrides `Stdio.args` on top of `setup()`'s own default
 // (mirrors `config diff`'s own telemetry-wiring precedent).
 // ---------------------------------------------------------------------------
 
-describe("legacy pull telemetry wiring", () => {
+describe("pull telemetry wiring", () => {
   const withProjectRefArgs = (base: ReturnType<typeof setup>["layer"], projectRef: string) =>
     Layer.mergeAll(
       base,
@@ -1838,10 +1830,10 @@ describe("legacy pull telemetry wiring", () => {
     writeConfig();
     const { layer, analytics } = setup({ yes: true });
     return Effect.gen(function* () {
-      yield* runPull(pullFlags({ projectRef: Option.some(LEGACY_VALID_REF), dryRun: true }));
+      yield* runPull(pullFlags({ projectRef: Option.some(VALID_REF), dryRun: true }));
       const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-      expect(event?.properties["flags"]).toEqual({ "project-ref": LEGACY_VALID_REF });
-    }).pipe(Effect.provide(withProjectRefArgs(layer, LEGACY_VALID_REF)));
+      expect(event?.properties["flags"]).toEqual({ "project-ref": VALID_REF });
+    }).pipe(Effect.provide(withProjectRefArgs(layer, VALID_REF)));
   });
 
   it.live("redacts a branch-name-shaped --project-ref in cli_command_executed", () => {
@@ -1866,7 +1858,7 @@ describe("legacy pull telemetry wiring", () => {
 // `success`'s own shape.
 // ---------------------------------------------------------------------------
 
-describe("legacy pull stream-json output", () => {
+describe("pull stream-json output", () => {
   it.live(
     "a successful run emits exactly one NDJSON result event with the payload nested under data",
     () => {
@@ -1923,7 +1915,7 @@ describe("legacy pull stream-json output", () => {
         // own `steps.functions.failure.message` reports below.
         const error = event["error"] as Record<string, unknown>;
         expect(String(error["message"])).toContain("500");
-        // The aggregate payload (`legacyPullPayload`) is spread directly onto
+        // The aggregate payload (`pullPayload`) is spread directly onto
         // the event, sibling to `type`/`error`/`timestamp` — not nested.
         const steps = event["steps"] as Record<string, unknown>;
         expect((steps["functions"] as Record<string, unknown>)["status"]).toBe("failed");

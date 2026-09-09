@@ -4,11 +4,10 @@
  * mutations happen inside a system temp directory that is deleted on exit.
  *
  * Usage:
- *   pnpm cli-release --next [--version 0.0.0-local.1234567890]
- *   pnpm cli-release --legacy [--version 0.0.0-local.1234567890]
+ *   pnpm cli-release [--version 0.0.0-local.1234567890]
  *
  * Requires `pnpm local-registry` to be running in another terminal.
- * Requires Go in PATH when using --legacy.
+ * Requires Go in PATH to build the `supabase-go` sidecar.
  */
 
 import { $ } from "bun";
@@ -134,7 +133,7 @@ async function checkGo(): Promise<void> {
     await $`go version`.quiet();
   } catch {
     console.error("\nError: `go` not found in PATH.");
-    console.error("Install Go from https://go.dev/dl/ to build the legacy shell.\n");
+    console.error("Install Go from https://go.dev/dl/ to build the CLI.\n");
     process.exit(1);
   }
 }
@@ -153,39 +152,24 @@ async function checkGoSource(): Promise<string> {
 async function main() {
   const { values } = parseArgs({
     options: {
-      legacy: { type: "boolean", default: false },
-      next: { type: "boolean", default: false },
       version: { type: "string" },
     },
   });
 
-  if (!values.legacy && !values.next) {
-    console.error("Usage: pnpm cli-release --next | --legacy [--version <v>]");
-    process.exit(1);
-  }
-  if (values.legacy && values.next) {
-    console.error("Error: Specify either --next or --legacy, not both.");
-    process.exit(1);
-  }
-
-  const shell = values.legacy ? "legacy" : "next";
   const version = values.version ?? `0.0.0-local.${Math.floor(Date.now() / 1000)}`;
 
   await checkRegistry();
   const token = await readToken();
   const platform = getPlatformInfo();
 
-  let goSource: string | undefined;
-  if (shell === "legacy") {
-    await checkGo();
-    goSource = await checkGoSource();
+  await checkGo();
+  const goSource = await checkGoSource();
 
-    if (process.platform === "linux") {
-      console.warn(
-        "Note: local-release builds the glibc variant only (cli-linux-*). " +
-          "The musl variant is skipped for local dev.\n",
-      );
-    }
+  if (process.platform === "linux") {
+    console.warn(
+      "Note: local-release builds the glibc variant only (cli-linux-*). " +
+        "The musl variant is skipped for local dev.\n",
+    );
   }
 
   // All build output goes into a system temp directory — never into the git repo.
@@ -196,7 +180,7 @@ async function main() {
     const cliPkgJson = await Bun.file(path.join(root, "apps", "cli", "package.json")).json();
     const umbrellaName: string = cliPkgJson.name;
 
-    console.log(`\nBuilding ${umbrellaName}@${version} (${shell}, ${platform.platformPkg})...\n`);
+    console.log(`\nBuilding ${umbrellaName}@${version} (${platform.platformPkg})...\n`);
 
     // ── Build platform package ────────────────────────────────────────────
 
@@ -204,14 +188,14 @@ async function main() {
     const tmpPlatformBinDir = path.join(tmpPlatformDir, "bin");
     await mkdir(tmpPlatformBinDir, { recursive: true });
 
-    const entrypoint = path.join(root, "apps", "cli", "src", shell, "main.ts");
+    const entrypoint = path.join(root, "apps", "cli", "src", "main.ts");
     const bunBinary = path.join(tmpPlatformBinDir, `supabase${platform.ext}`);
     const libc = libcForBunTarget(platform.bunTarget);
 
-    console.log(`[1/${shell === "legacy" ? 3 : 2}] Compiling ${shell} CLI binary...`);
+    console.log("[1/3] Compiling CLI binary...");
     await $`bun build ${entrypoint} --compile --target=${platform.bunTarget} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --outfile=${bunBinary}`;
 
-    if (shell === "legacy" && goSource) {
+    {
       const goBinary = path.join(tmpPlatformBinDir, `supabase-go${platform.ext}`);
       console.log(`[2/3] Compiling Go CLI binary (${platform.goos}/${platform.goarch})...`);
       // Run go build from within the Go source directory so Go can find
@@ -234,8 +218,7 @@ async function main() {
 
     const shimSrc = path.join(root, "apps", "cli", "src", "shared", "cli", "bin.ts");
     const shimOut = path.join(tmpCliDistDir, "supabase.js");
-    const shimStep = shell === "legacy" ? 3 : 2;
-    console.log(`[${shimStep}/${shimStep}] Building Node.js shim...`);
+    console.log("[3/3] Building Node.js shim...");
     await $`bun build ${shimSrc} --outfile=${shimOut} --target=node`;
 
     // ── Write package.json files ──────────────────────────────────────────

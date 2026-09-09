@@ -1,9 +1,9 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyMigrationDbRuntimeLayer } from "../migration.layers.ts";
-import { legacyMigrationRepair } from "./repair.handler.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { migrationDbRuntimeLayer } from "../migration.layers.ts";
+import { migrationRepair } from "./repair.handler.ts";
 
 const config = {
   versions: Argument.string("version").pipe(
@@ -39,11 +39,11 @@ const config = {
   ),
 } as const;
 
-export const legacyMigrationRepairCommand = Command.make("repair", config).pipe(
+export const migrationRepairCommand = Command.make("repair", config).pipe(
   Command.withDescription("Repair the migration history table."),
   Command.withShortDescription("Repair the migration history table"),
   Command.withHandler((flags) =>
-    legacyMigrationRepair({
+    migrationRepair({
       versions: flags.versions.map(String),
       status: flags.status,
       dbUrl: flags.dbUrl,
@@ -52,7 +52,7 @@ export const legacyMigrationRepairCommand = Command.make("repair", config).pipe(
       projectRef: flags.projectRef,
       password: flags.password,
     }).pipe(
-      withLegacyCommandInstrumentation({
+      withCommandTelemetry({
         flags: {
           status: flags.status,
           "db-url": flags.dbUrl,
@@ -71,5 +71,5 @@ export const legacyMigrationRepairCommand = Command.make("repair", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyMigrationDbRuntimeLayer(["migration", "repair"])),
+  Command.provide(migrationDbRuntimeLayer(["migration", "repair"])),
 );

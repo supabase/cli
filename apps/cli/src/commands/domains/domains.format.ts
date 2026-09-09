@@ -5,13 +5,13 @@ import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
  * structure for get / create / reverify / activate, so a single type covers
  * every status formatter.
  */
-export type LegacyHostnameResponse = typeof V1GetHostnameConfigOutput.Type;
+export type HostnameResponse = typeof V1GetHostnameConfigOutput.Type;
 
-type LegacyHostnameSsl = LegacyHostnameResponse["data"]["result"]["ssl"];
+type HostnameSsl = HostnameResponse["data"]["result"]["ssl"];
 
-type LegacyHostnameStatus = Exclude<LegacyHostnameResponse["status"], undefined>;
+type HostnameStatus = Exclude<HostnameResponse["status"], undefined>;
 
-function getHostnameStatus(response: LegacyHostnameResponse): LegacyHostnameStatus | undefined {
+function getHostnameStatus(response: HostnameResponse): HostnameStatus | undefined {
   if (response.status !== undefined) {
     return response.status;
   }
@@ -32,7 +32,7 @@ function getHostnameStatus(response: LegacyHostnameResponse): LegacyHostnameStat
  * written to stderr — mind the trailing-newline difference between
  * `Fprintln` (adds `\n`) and `Fprintf` (does not).
  */
-export function formatHostnameStatus(response: LegacyHostnameResponse): string {
+export function formatHostnameStatus(response: HostnameResponse): string {
   switch (getHostnameStatus(response)) {
     case "5_services_reconfigured":
       // Fprintf — no trailing newline.
@@ -94,7 +94,7 @@ ${response.custom_hostname} CNAME -> ${response.data.result.custom_origin_server
  * byte-reproducible; this dump is deterministic and documented as a
  * divergence in SIDE_EFFECTS.md.
  */
-export function formatSslStructDump(ssl: LegacyHostnameSsl): string {
+export function formatSslStructDump(ssl: HostnameSsl): string {
   const validationErrors =
     ssl.validation_errors === undefined
       ? "<nil>"

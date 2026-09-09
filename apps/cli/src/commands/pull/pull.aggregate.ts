@@ -1,33 +1,33 @@
 import type { DownloadFunctionsResult } from "../../shared/functions/download.ts";
-import type { LegacyDbPullOutcome } from "../db/pull/pull.handler.ts";
-import type { LegacyMigrationFetchOutcome } from "../migration/fetch/fetch.handler.ts";
+import type { DbPullOutcome } from "../db/pull/pull.handler.ts";
+import type { MigrationFetchOutcome } from "../migration/fetch/fetch.handler.ts";
 import type {
-  LegacyPullAggregate,
-  LegacyPullStepFailure,
-  LegacyPullStepId,
-  LegacyPullStepResult,
-  LegacyPullStepStatus,
+  PullAggregate,
+  PullStepFailure,
+  PullStepId,
+  PullStepResult,
+  PullStepStatus,
 } from "./pull.types.ts";
 
 /**
  * Pure result-shaping helpers for `supabase pull` — no Effect, no services.
- * Each `legacyPull<Step>StepResult` maps one sub-step's own already-frozen
- * outcome type into the shared `LegacyPullStepResult` shape `pull.handler.ts`
+ * Each `pull<Step>StepResult` maps one sub-step's own already-frozen
+ * outcome type into the shared `PullStepResult` shape `pull.handler.ts`
  * aggregates across all four steps (`pull.types.ts`). Status derivation rules
  * are documented per function below.
  */
 
 /**
  * Strips a leading `workdir` prefix from an absolute path — the same
- * prefix-strip `legacy-workdir-project.ts`'s `legacyRelativeConfigPath`
+ * prefix-strip `workdir-project.ts`'s `relativeConfigPath`
  * implements, duplicated here (rather than imported) so this module stays
  * free of that file's own Effect-importing neighbors.
  */
-function legacyPullRelativeToWorkdir(workdir: string, path: string): string {
+function pullRelativeToWorkdir(workdir: string, path: string): string {
   return path.startsWith(workdir) ? path.slice(workdir.length).replace(/^[/\\]/, "") : path;
 }
 
-export interface LegacyPullConfigStepOutcome {
+export interface PullConfigStepOutcome {
   /** `--dry-run` was requested. */
   readonly dryRun: boolean;
   /** The config plan had at least one write or a new `[remotes.*]` block to create. */
@@ -47,16 +47,12 @@ export interface LegacyPullConfigStepOutcome {
  * step's own JSON payload verbatim, since `config pull` computes a real diff
  * report even for a dry-run or declined outcome.
  */
-export function legacyPullConfigStepResult(
-  outcome: LegacyPullConfigStepOutcome,
+export function pullConfigStepResult(
+  outcome: PullConfigStepOutcome,
   payload: Record<string, unknown>,
-): LegacyPullStepResult {
+): PullStepResult {
   const applied = outcome.hasWork && !outcome.dryRun && outcome.confirmed;
-  const status: LegacyPullStepStatus = !outcome.hasWork
-    ? "unchanged"
-    : applied
-      ? "changed"
-      : "planned";
+  const status: PullStepStatus = !outcome.hasWork ? "unchanged" : applied ? "changed" : "planned";
   return {
     step: "config",
     status,
@@ -65,7 +61,7 @@ export function legacyPullConfigStepResult(
   };
 }
 
-export type LegacyPullMigrationHistoryStepOutcome =
+export type PullMigrationHistoryStepOutcome =
   | {
       /**
        * Never attempted this run — `supabase/migrations` already had files and
@@ -86,7 +82,7 @@ export type LegacyPullMigrationHistoryStepOutcome =
     }
   | {
       readonly kind: "fetched";
-      readonly outcome: LegacyMigrationFetchOutcome;
+      readonly outcome: MigrationFetchOutcome;
       readonly workdir: string;
     };
 
@@ -96,9 +92,9 @@ export type LegacyPullMigrationHistoryStepOutcome =
  * `planned` for a dry run that would have fetched; otherwise `changed`/
  * `unchanged` based on whether the fetch actually wrote any files.
  */
-export function legacyPullMigrationHistoryStepResult(
-  outcome: LegacyPullMigrationHistoryStepOutcome,
-): LegacyPullStepResult {
+export function pullMigrationHistoryStepResult(
+  outcome: PullMigrationHistoryStepOutcome,
+): PullStepResult {
   if (outcome.kind === "skipped") {
     return {
       step: "migration_history",
@@ -111,9 +107,7 @@ export function legacyPullMigrationHistoryStepResult(
   if (outcome.kind === "planned") {
     return { step: "migration_history", status: "planned", written: [], detail: { files: [] } };
   }
-  const written = outcome.outcome.files.map((file) =>
-    legacyPullRelativeToWorkdir(outcome.workdir, file),
-  );
+  const written = outcome.outcome.files.map((file) => pullRelativeToWorkdir(outcome.workdir, file));
   return {
     step: "migration_history",
     status: written.length > 0 ? "changed" : "unchanged",
@@ -122,19 +116,19 @@ export function legacyPullMigrationHistoryStepResult(
   };
 }
 
-export type LegacyPullDbStepOutcome =
+export type PullDbStepOutcome =
   | { readonly kind: "planned" }
   | { readonly kind: "in_sync" }
-  | { readonly kind: "applied"; readonly outcome: LegacyDbPullOutcome; readonly workdir: string };
+  | { readonly kind: "applied"; readonly outcome: DbPullOutcome; readonly workdir: string };
 
 /**
  * `db` step: `planned` for a dry run (`db pull` has no real preview
  * machinery, same rationale as migration history above); `unchanged` for `db
- * pull`'s own "already in sync" finding (`LegacyDbPullInSyncError`, caught by
+ * pull`'s own "already in sync" finding (`DbPullInSyncError`, caught by
  * the handler and reported here — a finding, not a failure, at the `pull`
  * level per ADR 0024); `changed` once a schema was actually written.
  */
-export function legacyPullDbStepResult(outcome: LegacyPullDbStepOutcome): LegacyPullStepResult {
+export function pullDbStepResult(outcome: PullDbStepOutcome): PullStepResult {
   if (outcome.kind === "planned") {
     return { step: "db", status: "planned", written: [], detail: {} };
   }
@@ -146,14 +140,14 @@ export function legacyPullDbStepResult(outcome: LegacyPullDbStepOutcome): Legacy
     return {
       step: "db",
       status: "changed",
-      written: [legacyPullRelativeToWorkdir(workdir, dbOutcome.schemaWritten)],
+      written: [pullRelativeToWorkdir(workdir, dbOutcome.schemaWritten)],
       detail: { declarative: true, engine: dbOutcome.engine },
     };
   }
   return {
     step: "db",
     status: "changed",
-    written: dbOutcome.schemaFiles.map((file) => legacyPullRelativeToWorkdir(workdir, file)),
+    written: dbOutcome.schemaFiles.map((file) => pullRelativeToWorkdir(workdir, file)),
     detail: {
       declarative: false,
       engine: dbOutcome.engine,
@@ -162,7 +156,7 @@ export function legacyPullDbStepResult(outcome: LegacyPullDbStepOutcome): Legacy
   };
 }
 
-export type LegacyPullFunctionsStepOutcome =
+export type PullFunctionsStepOutcome =
   | { readonly kind: "planned" }
   | { readonly kind: "downloaded"; readonly result: DownloadFunctionsResult };
 
@@ -173,9 +167,7 @@ export type LegacyPullFunctionsStepOutcome =
  * directory — `DownloadFunctionsResult` doesn't enumerate individual files,
  * so the directory is the most useful representative path per slug.
  */
-export function legacyPullFunctionsStepResult(
-  outcome: LegacyPullFunctionsStepOutcome,
-): LegacyPullStepResult {
+export function pullFunctionsStepResult(outcome: PullFunctionsStepOutcome): PullStepResult {
   if (outcome.kind === "planned") {
     return { step: "functions", status: "planned", written: [], detail: {} };
   }
@@ -220,7 +212,7 @@ function hasStringTag(value: unknown): value is { readonly _tag: string } {
  * type, so this file stays free of Effect imports. The handler owns deciding
  * exactly what value reaches here.
  */
-function legacyPullFailureMessage(cause: unknown): string {
+function pullFailureMessage(cause: unknown): string {
   if (hasStringMessage(cause) && cause.message.length > 0) {
     return cause.message;
   }
@@ -230,13 +222,13 @@ function legacyPullFailureMessage(cause: unknown): string {
   return String(cause);
 }
 
-function legacyPullFailureSuggestion(cause: unknown): string | undefined {
+function pullFailureSuggestion(cause: unknown): string | undefined {
   return hasStringSuggestion(cause) && cause.suggestion.length > 0 ? cause.suggestion : undefined;
 }
 
 /** The squashed cause's own `_tag`, when it has one — a machine consumer's only way to classify
  *  a non-first (never re-failed) step failure without parsing `message`. */
-function legacyPullFailureCode(cause: unknown): string | undefined {
+function pullFailureCode(cause: unknown): string | undefined {
   return hasStringTag(cause) && cause._tag.length > 0 ? cause._tag : undefined;
 }
 
@@ -252,13 +244,13 @@ function legacyPullFailureCode(cause: unknown): string | undefined {
  * names the same way `pull` does, while a resolved ref is always a valid
  * `--project-ref` value everywhere.
  */
-export function legacyPullRetryHint(
-  step: LegacyPullStepId,
+export function pullRetryHint(
+  step: PullStepId,
   ref: string,
   remoteLabel: string | undefined,
 ): string {
   const remoteLabelFlag = remoteLabel === undefined ? "" : ` --remote-label ${remoteLabel}`;
-  const commandByStep: Record<LegacyPullStepId, string> = {
+  const commandByStep: Record<PullStepId, string> = {
     config: `supabase config pull --project-ref ${ref}${remoteLabelFlag}`,
     migration_history: `supabase migration fetch --project-ref ${ref}`,
     db: `supabase db pull --project-ref ${ref}`,
@@ -268,14 +260,11 @@ export function legacyPullRetryHint(
 }
 
 /** Builds a `status: "failed"` result for `step` from an arbitrary caught value. */
-export function legacyPullFailedStepResult(
-  step: LegacyPullStepId,
-  cause: unknown,
-): LegacyPullStepResult {
-  const message = legacyPullFailureMessage(cause);
-  const suggestion = legacyPullFailureSuggestion(cause);
-  const code = legacyPullFailureCode(cause);
-  const failure: LegacyPullStepFailure = {
+export function pullFailedStepResult(step: PullStepId, cause: unknown): PullStepResult {
+  const message = pullFailureMessage(cause);
+  const suggestion = pullFailureSuggestion(cause);
+  const code = pullFailureCode(cause);
+  const failure: PullStepFailure = {
     message,
     ...(suggestion === undefined ? {} : { suggestion }),
     ...(code === undefined ? {} : { code }),
@@ -283,7 +272,7 @@ export function legacyPullFailedStepResult(
   return { step, status: "failed", written: [], detail: {}, failure };
 }
 
-export interface LegacyPullCounts {
+export interface PullCounts {
   readonly changed: number;
   readonly unchanged: number;
   readonly skipped: number;
@@ -291,8 +280,8 @@ export interface LegacyPullCounts {
   readonly failed: number;
 }
 
-export function legacyPullCounts(results: ReadonlyArray<LegacyPullStepResult>): LegacyPullCounts {
-  const counts: { [status in LegacyPullStepStatus]: number } = {
+export function pullCounts(results: ReadonlyArray<PullStepResult>): PullCounts {
+  const counts: { [status in PullStepStatus]: number } = {
     changed: 0,
     unchanged: 0,
     skipped: 0,
@@ -306,13 +295,13 @@ export function legacyPullCounts(results: ReadonlyArray<LegacyPullStepResult>): 
 }
 
 /** Thin constructor so `pull.handler.ts` has one call site for building the aggregate. */
-export function legacyPullAggregate(input: {
+export function pullAggregate(input: {
   readonly ref: string;
   readonly branch: string | undefined;
   readonly dryRun: boolean;
   readonly confirmed: boolean;
-  readonly results: ReadonlyArray<LegacyPullStepResult>;
-}): LegacyPullAggregate {
+  readonly results: ReadonlyArray<PullStepResult>;
+}): PullAggregate {
   return {
     ref: input.ref,
     branch: input.branch,

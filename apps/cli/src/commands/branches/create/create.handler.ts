@@ -1,50 +1,45 @@
 import type { V1CreateABranchOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag, legacyResolveYes } from "../../../shared/legacy/global-flags.ts";
-import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag, resolveYes } from "../../../command-internal/global-flags.ts";
+import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { detectGitBranch } from "../../../shared/git/git-branch.ts";
-import { legacyAqua } from "../../../command-internal/legacy-colors.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/legacy-go-output.encoders.ts";
+import { aqua } from "../../../command-internal/colors.ts";
+import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
+import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
+import { GO_BRANCH_RESPONSE } from "../branches.go-payload.ts";
 import {
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
-import { legacyResolveParentScopedProjectRef } from "../../../command-internal/legacy-parent-project-ref.ts";
-import { legacyGateMapError } from "../../../command-internal/legacy-upgrade-suggest.ts";
-import { LEGACY_GO_BRANCH_RESPONSE } from "../branches.go-payload.ts";
-import {
-  LegacyBranchesBranchNameEmptyError,
-  LegacyBranchesCreateCancelledError,
-  LegacyBranchesCreateNetworkError,
-  LegacyBranchesCreateUnexpectedStatusError,
+  BranchesBranchNameEmptyError,
+  BranchesCreateCancelledError,
+  BranchesCreateNetworkError,
+  BranchesCreateUnexpectedStatusError,
 } from "../branches.errors.ts";
 import { renderBranchesListTable } from "../branches.format.ts";
-import type { LegacyBranchesCreateFlags } from "./create.command.ts";
+import type { BranchesCreateFlags } from "./create.command.ts";
 
 type CreatedBranch = typeof V1CreateABranchOutput.Type;
 
-const mapCreateErrorRaw = mapLegacyHttpError({
-  networkError: LegacyBranchesCreateNetworkError,
-  statusError: LegacyBranchesCreateUnexpectedStatusError,
+const mapCreateErrorRaw = mapHttpError({
+  networkError: BranchesCreateNetworkError,
+  statusError: BranchesCreateUnexpectedStatusError,
   networkMessage: (cause) => `failed to create preview branch: ${cause}`,
   statusMessage: (status, body) => `unexpected create branch status ${status}: ${body}`,
 });
 
-export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function* (
-  flags: LegacyBranchesCreateFlags,
-) {
+export const branchesCreate = Effect.fn("branches.create")(function* (flags: BranchesCreateFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   // -----------------------------------------------------------------------
   // Branch-name resolution: defaults to the current git branch when the arg
@@ -66,15 +61,15 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
       // (100ms) before falling back to the Yes default —
       // `echo n | supabase branches create` cancels. The branch name is
       // wrapped in `utils.Aqua`.
-      const yes = yield* legacyResolveYes;
-      const confirmed = yield* legacyPromptYesNo(
+      const yes = yield* resolveYes;
+      const confirmed = yield* promptYesNo(
         output,
         yes,
-        `Do you want to create a branch named ${legacyAqua(gitBranch.value)}?`,
+        `Do you want to create a branch named ${aqua(gitBranch.value)}?`,
         true,
       );
       if (!confirmed) {
-        return yield* new LegacyBranchesCreateCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
+        return yield* new BranchesCreateCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
       }
       branchName = gitBranch.value;
       if (gitBranchForBody === undefined) {
@@ -84,7 +79,7 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
   }
 
   if (branchName.length === 0) {
-    return yield* new LegacyBranchesBranchNameEmptyError({
+    return yield* new BranchesBranchNameEmptyError({
       message: "branch name cannot be empty",
     });
   }
@@ -92,7 +87,7 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
   // `branches` is PARENT-scoped: after `supabase link <branch>`,
   // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
   // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
-  const ref = yield* legacyResolveParentScopedProjectRef(flags.projectRef);
+  const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
 
   yield* Effect.gen(function* () {
     const creating =
@@ -115,14 +110,14 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
         // On any non-201 status (including gated 4xx), run the plan-gate
         // check before mapping the error.
         Effect.catch(
-          legacyGateMapError(
+          gateMapError(
             { projectRef: ref, featureKey: "branching_limit" },
             (cause, upgradeSuggested) =>
               Effect.gen(function* () {
                 const mapped = yield* Effect.flip(mapCreateErrorRaw(cause));
-                if (mapped._tag === "LegacyBranchesCreateUnexpectedStatusError") {
+                if (mapped._tag === "BranchesCreateUnexpectedStatusError") {
                   return yield* Effect.fail(
-                    new LegacyBranchesCreateUnexpectedStatusError({
+                    new BranchesCreateUnexpectedStatusError({
                       status: mapped.status,
                       body: mapped.body,
                       message: mapped.message,
@@ -148,12 +143,12 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
     }
     if (goFmt === "yaml") {
       yield* output.raw("Created preview branch:\n");
-      yield* output.raw(encodeLegacyGoYaml(created, LEGACY_GO_BRANCH_RESPONSE));
+      yield* output.raw(encodeGoYaml(created, GO_BRANCH_RESPONSE));
       return;
     }
     if (goFmt === "toml") {
       yield* output.raw("Created preview branch:\n");
-      yield* output.raw(encodeLegacyGoToml(created, LEGACY_GO_BRANCH_RESPONSE));
+      yield* output.raw(encodeGoToml(created, GO_BRANCH_RESPONSE));
       return;
     }
     if (goFmt === "env") {

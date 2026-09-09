@@ -8,14 +8,14 @@ import { badArgument } from "effect/PlatformError";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  mockLegacyCliSettings,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { LEGACY_PGTAP_TEMPLATE } from "./new.template.ts";
-import { legacyTestNew } from "./new.handler.ts";
+  mockCommandSettings,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { PGTAP_TEMPLATE } from "./new.template.ts";
+import { testNew } from "./new.handler.ts";
 
-const tempRoot = useLegacyTempWorkdir("supabase-test-new-int-");
+const tempRoot = useTempWorkdir("supabase-test-new-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -47,8 +47,8 @@ function failingFsLayer(op: "writeFileString" | "makeDirectory") {
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cliSettings = mockLegacyCliSettings({
+  const telemetry = mockTelemetryStateTracked();
+  const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
     projectId: Option.none(),
   });
@@ -71,14 +71,14 @@ const flags = (name: string, template?: "pgtap") => ({
   template: template === undefined ? Option.none<"pgtap">() : Option.some(template),
 });
 
-describe("legacy test new integration", () => {
+describe("test new integration", () => {
   it.live("creates a pgtap test file and prints the created path", () => {
     const { layer, out, workdir } = setup();
     return Effect.gen(function* () {
-      yield* legacyTestNew(flags("pet"));
+      yield* testNew(flags("pet"));
       const target = join(workdir, "supabase", "tests", "pet_test.sql");
       expect(existsSync(target)).toBe(true);
-      expect(readFileSync(target, "utf8")).toBe(LEGACY_PGTAP_TEMPLATE);
+      expect(readFileSync(target, "utf8")).toBe(PGTAP_TEMPLATE);
       expect(out.stdoutText).toContain("Created new pgtap test at ");
       expect(out.stdoutText).toContain("supabase/tests/pet_test.sql");
     }).pipe(Effect.provide(layer));
@@ -88,7 +88,7 @@ describe("legacy test new integration", () => {
     const { layer, workdir } = setup();
     const prevUmask = process.umask(0);
     return Effect.gen(function* () {
-      yield* legacyTestNew(flags("modepin"));
+      yield* testNew(flags("modepin"));
       const target = join(workdir, "supabase", "tests", "modepin_test.sql");
       expect(statSync(target).mode & 0o777).toBe(0o644);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => process.umask(prevUmask))));
@@ -97,16 +97,16 @@ describe("legacy test new integration", () => {
   it.live("defaults the template to pgtap when --template is omitted", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
-      yield* legacyTestNew(flags("nodbtemplate"));
+      yield* testNew(flags("nodbtemplate"));
       const target = join(workdir, "supabase", "tests", "nodbtemplate_test.sql");
-      expect(readFileSync(target, "utf8")).toBe(LEGACY_PGTAP_TEMPLATE);
+      expect(readFileSync(target, "utf8")).toBe(PGTAP_TEMPLATE);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("honors an explicit --template pgtap", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
-      yield* legacyTestNew(flags("explicit", "pgtap"));
+      yield* testNew(flags("explicit", "pgtap"));
       expect(existsSync(join(workdir, "supabase", "tests", "explicit_test.sql"))).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -114,7 +114,7 @@ describe("legacy test new integration", () => {
   it.live("emits a structured success in json mode (no human text)", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacyTestNew(flags("petjson"));
+      yield* testNew(flags("petjson"));
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({
         path: "supabase/tests/petjson_test.sql",
@@ -127,45 +127,45 @@ describe("legacy test new integration", () => {
   it.live("emits a structured success in stream-json mode", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
-      yield* legacyTestNew(flags("petstream"));
+      yield* testNew(flags("petstream"));
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ path: "supabase/tests/petstream_test.sql" });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyTestNewFileExistsError when the file already exists", () => {
+  it.live("fails with TestNewFileExistsError when the file already exists", () => {
     const { layer, workdir } = setup();
     mkdirSync(join(workdir, "supabase", "tests"), { recursive: true });
     writeFileSync(join(workdir, "supabase", "tests", "dupe_test.sql"), "-- existing\n");
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyTestNew(flags("dupe")));
+      const exit = yield* Effect.exit(testNew(flags("dupe")));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyTestNewFileExistsError");
+        expect(json).toContain("TestNewFileExistsError");
         expect(json).toContain("supabase/tests/dupe_test.sql already exists.");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyTestNewWriteError when the write fails", () => {
+  it.live("fails with TestNewWriteError when the write fails", () => {
     const { layer } = setup({ writeFails: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyTestNew(flags("nowrite")));
+      const exit = yield* Effect.exit(testNew(flags("nowrite")));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyTestNewWriteError");
+        expect(JSON.stringify(exit.cause)).toContain("TestNewWriteError");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyTestNewWriteError when the tests dir cannot be created", () => {
+  it.live("fails with TestNewWriteError when the tests dir cannot be created", () => {
     const { layer } = setup({ mkdirFails: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyTestNew(flags("nomkdir")));
+      const exit = yield* Effect.exit(testNew(flags("nomkdir")));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyTestNewWriteError");
+        expect(JSON.stringify(exit.cause)).toContain("TestNewWriteError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -173,7 +173,7 @@ describe("legacy test new integration", () => {
   it.live("flushes telemetry via ensuring", () => {
     const { layer, telemetry } = setup();
     return Effect.gen(function* () {
-      yield* legacyTestNew(flags("petflush"));
+      yield* testNew(flags("petflush"));
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });

@@ -6,7 +6,7 @@
  * both the PG >= 15 and PG <= 14 branches. Do not hand-edit — re-transcribe
  * from the Go source if it changes.
  */
-export const LEGACY_START_DB_SUPABASE_SQL = `CREATE DATABASE _supabase WITH OWNER postgres;
+export const START_DB_SUPABASE_SQL = `CREATE DATABASE _supabase WITH OWNER postgres;
 
 -- Switch to the newly created _supabase database
 \\c _supabase

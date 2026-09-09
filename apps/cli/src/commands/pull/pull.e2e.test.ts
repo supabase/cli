@@ -14,8 +14,8 @@ const TEST_TOKEN = "sbp_" + "a".repeat(40);
 describe("pull CLI surface", () => {
   test("plain `supabase pull` parses its flags and fails on target resolution, not argument parsing", async () => {
     // A loadable `supabase/config.toml` with no `project_id` env/ref-file
-    // state is required to get PAST config loading (`legacyOpenConfigPullSource`
-    // runs before target resolution) and into `legacyResolveConfigTarget`
+    // state is required to get PAST config loading (`openConfigPullSource`
+    // runs before target resolution) and into `resolveConfigTarget`
     // itself, which is what this test actually exercises.
     const cwd = await mkdtemp(join(tmpdir(), "supabase-pull-e2e-"));
     try {
@@ -23,7 +23,6 @@ describe("pull CLI surface", () => {
       await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "test"\n');
 
       const { exitCode, stderr } = await runSupabase(["pull"], {
-        entrypoint: "legacy",
         cwd,
         env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN },
       });
@@ -44,7 +43,6 @@ describe("pull CLI surface", () => {
     const cwd = await mkdtemp(join(tmpdir(), "supabase-pull-e2e-"));
     try {
       const { exitCode, stderr } = await runSupabase(["pull", "-o", "json"], {
-        entrypoint: "legacy",
         cwd,
         env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN },
       });

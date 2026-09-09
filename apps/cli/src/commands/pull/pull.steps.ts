@@ -1,37 +1,37 @@
 import { join } from "node:path";
 import { Effect, Option, Stdio } from "effect";
 
-import { LegacyPlatformApi } from "../../auth/legacy-platform-api.service.ts";
-import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
-import { legacyAqua, legacyBold, legacyYellow } from "../../command-internal/legacy-colors.ts";
-import { legacyFunctionsGoConfigCompat } from "../../command-internal/legacy-functions-go-config.ts";
+import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
+import { CommandSettings } from "../../config/command-settings.service.ts";
+import { aqua, bold, yellow } from "../../command-internal/colors.ts";
+import { functionsGoConfigCompat } from "../../command-internal/functions-go-config.ts";
 import {
   downloadFunctions,
   type DownloadFunctionsResult,
 } from "../../shared/functions/download.ts";
 import { resolveEdgeRuntimeVersionPin } from "../../shared/functions/functions.shared.ts";
 import {
-  legacyApplyConfigPullRun,
-  type LegacyConfigPullRunPlan,
-  type LegacyConfigPullSource,
+  applyConfigPullRun,
+  type ConfigPullRunPlan,
+  type ConfigPullSource,
 } from "../config/pull/pull.handler.ts";
-import { legacyRunDbPull } from "../db/pull/pull.handler.ts";
-import type { LegacyDbPullFlags } from "../db/pull/pull.command.ts";
-import { legacyRunMigrationFetch } from "../migration/fetch/fetch.handler.ts";
-import type { LegacyMigrationFetchFlags } from "../migration/fetch/fetch.command.ts";
+import { runDbPull } from "../db/pull/pull.handler.ts";
+import type { DbPullFlags } from "../db/pull/pull.command.ts";
+import { runMigrationFetch } from "../migration/fetch/fetch.handler.ts";
+import type { MigrationFetchFlags } from "../migration/fetch/fetch.command.ts";
 import type {
-  LegacyPullConfigStepOutcome,
-  LegacyPullDbStepOutcome,
-  LegacyPullFunctionsStepOutcome,
-  LegacyPullMigrationHistoryStepOutcome,
+  PullConfigStepOutcome,
+  PullDbStepOutcome,
+  PullFunctionsStepOutcome,
+  PullMigrationHistoryStepOutcome,
 } from "./pull.aggregate.ts";
-import type { LegacyPullStepContext } from "./pull.types.ts";
+import type { PullStepContext } from "./pull.types.ts";
 
 /**
- * `supabase pull` step runners — one per `LEGACY_PULL_STEP_ORDER` entry
+ * `supabase pull` step runners — one per `PULL_STEP_ORDER` entry
  * (`pull.types.ts`). Each is a thin adapter over its sub-step's own run-core:
  * it calls the real implementation and shapes the result into the
- * `LegacyPullXStepOutcome` union `pull.aggregate.ts`'s mappers expect.
+ * `PullXStepOutcome` union `pull.aggregate.ts`'s mappers expect.
  *
  * No confirmation, `Exit`-based failure capture, or aggregation lives here —
  * that is `pull.handler.ts`'s job (Phase 3). These runners are only ever
@@ -45,23 +45,23 @@ import type { LegacyPullStepContext } from "./pull.types.ts";
 /**
  * `config` step: applies the already-planned config write (skipped when the
  * plan had no work at all) and reports the fixed `{dryRun: false, confirmed:
- * true}` shape `legacyPullConfigStepResult` expects for an executed run — the
+ * true}` shape `pullConfigStepResult` expects for an executed run — the
  * `dryRun`/declined variants of this outcome are built directly by
  * `pull.handler.ts` (Phase 1/2), never through this function.
  */
-export const legacyPullConfigStep = Effect.fnUntraced(function* (input: {
-  readonly runPlan: LegacyConfigPullRunPlan;
-  readonly source: LegacyConfigPullSource;
+export const pullConfigStep = Effect.fnUntraced(function* (input: {
+  readonly runPlan: ConfigPullRunPlan;
+  readonly source: ConfigPullSource;
 }) {
   if (input.runPlan.hasWork) {
-    yield* legacyApplyConfigPullRun({ runPlan: input.runPlan, source: input.source });
+    yield* applyConfigPullRun({ runPlan: input.runPlan, source: input.source });
   }
   return {
     dryRun: false,
     hasWork: input.runPlan.hasWork,
     confirmed: true,
     configFilePath: input.runPlan.configFilePath,
-  } satisfies LegacyPullConfigStepOutcome;
+  } satisfies PullConfigStepOutcome;
 });
 
 /**
@@ -75,17 +75,15 @@ export const legacyPullConfigStep = Effect.fnUntraced(function* (input: {
  * empty/missing `supabase/migrations`) — the "not needed" skip is built
  * directly by `pull.handler.ts`, never through this function.
  */
-export const legacyPullMigrationHistoryStep = Effect.fnUntraced(function* (
-  context: LegacyPullStepContext,
-) {
-  const cliSettings = yield* LegacyCliSettings;
-  const flags: LegacyMigrationFetchFlags = {
+export const pullMigrationHistoryStep = Effect.fnUntraced(function* (context: PullStepContext) {
+  const cliSettings = yield* CommandSettings;
+  const flags: MigrationFetchFlags = {
     dbUrl: Option.none(),
     linked: true,
     local: false,
     projectRef: Option.some(context.ref),
   };
-  const outcome = yield* legacyRunMigrationFetch({
+  const outcome = yield* runMigrationFetch({
     flags,
     target: { setFlags: [], connType: "linked" },
     assumeYes: context.assumeYes,
@@ -94,21 +92,21 @@ export const legacyPullMigrationHistoryStep = Effect.fnUntraced(function* (
     kind: "fetched",
     outcome,
     workdir: cliSettings.workdir,
-  } satisfies LegacyPullMigrationHistoryStepOutcome;
+  } satisfies PullMigrationHistoryStepOutcome;
 });
 
 /**
  * `db` step: pulls the linked project's schema in migration mode (no
  * `--declarative`/diff-engine override), targeting `context.ref` directly and
  * suppressing `db pull`'s own remote-history-update prompt with `assumeYes`.
- * `LegacyDbPullInSyncError` — the remote already matches local migrations —
+ * `DbPullInSyncError` — the remote already matches local migrations —
  * is caught here and reported as `in_sync` (a finding, not a failure, at the
  * `pull` level per ADR 0024) rather than propagating to `pull.handler.ts`'s
  * failure-capture path.
  */
-export const legacyPullDbStep = Effect.fnUntraced(function* (context: LegacyPullStepContext) {
-  const cliSettings = yield* LegacyCliSettings;
-  const flags: LegacyDbPullFlags = {
+export const pullDbStep = Effect.fnUntraced(function* (context: PullStepContext) {
+  const cliSettings = yield* CommandSettings;
+  const flags: DbPullFlags = {
     name: Option.none(),
     declarative: Option.none(),
     usePgDelta: Option.none(),
@@ -121,17 +119,17 @@ export const legacyPullDbStep = Effect.fnUntraced(function* (context: LegacyPull
     projectRef: Option.some(context.ref),
     password: Option.none(),
   };
-  return yield* legacyRunDbPull(flags, {
+  return yield* runDbPull(flags, {
     assumeYes: context.assumeYes,
     skipFinishedLine: true,
   }).pipe(
-    Effect.map((outcome): LegacyPullDbStepOutcome => ({
+    Effect.map((outcome): PullDbStepOutcome => ({
       kind: "applied",
       outcome,
       workdir: cliSettings.workdir,
     })),
-    Effect.catchTag("LegacyDbPullInSyncError", () =>
-      Effect.succeed<LegacyPullDbStepOutcome>({ kind: "in_sync" }),
+    Effect.catchTag("DbPullInSyncError", () =>
+      Effect.succeed<PullDbStepOutcome>({ kind: "in_sync" }),
     ),
   );
 });
@@ -144,11 +142,9 @@ export const legacyPullDbStep = Effect.fnUntraced(function* (context: LegacyPull
  * unreachable and `resolveProjectRef` never re-resolves — the target ref was
  * already resolved once, up front, by the orchestrator.
  */
-export const legacyPullFunctionsStep = Effect.fnUntraced(function* (
-  context: LegacyPullStepContext,
-) {
-  const api = yield* LegacyPlatformApi;
-  const cliSettings = yield* LegacyCliSettings;
+export const pullFunctionsStep = Effect.fnUntraced(function* (context: PullStepContext) {
+  const api = yield* CommandPlatformApi;
+  const cliSettings = yield* CommandSettings;
   const stdio = yield* Stdio.Stdio;
   const rawArgs = yield* stdio.args;
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(
@@ -167,11 +163,11 @@ export const legacyPullFunctionsStep = Effect.fnUntraced(function* (
       api,
       projectRoot: cliSettings.workdir,
       rawArgs,
-      goConfigCompat: legacyFunctionsGoConfigCompat,
+      goConfigCompat: functionsGoConfigCompat,
       edgeRuntimeVersion,
-      styleEmphasis: (text) => legacyBold(text),
-      styleAqua: (text) => legacyAqua(text),
-      styleWarning: (text) => legacyYellow(text),
+      styleEmphasis: (text) => bold(text),
+      styleAqua: (text) => aqua(text),
+      styleWarning: (text) => yellow(text),
       resolveProjectRef: () => Effect.succeed(context.ref),
       proxyDownload: () =>
         Effect.die(
@@ -181,5 +177,5 @@ export const legacyPullFunctionsStep = Effect.fnUntraced(function* (
         ),
     },
   );
-  return { kind: "downloaded", result } satisfies LegacyPullFunctionsStepOutcome;
+  return { kind: "downloaded", result } satisfies PullFunctionsStepOutcome;
 });
