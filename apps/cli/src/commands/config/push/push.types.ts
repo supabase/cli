@@ -1,4 +1,4 @@
-import type { LegacyPushResource } from "./push.plan.ts";
+import type { PushResource } from "./push.plan.ts";
 
 /**
  * Outcome of pushing a single service's config to the linked project.
@@ -20,7 +20,7 @@ import type { LegacyPushResource } from "./push.plan.ts";
  * There is no machine output for the previous per-service-subset `config
  * push`; this shape backs the TS `json` / `stream-json` modes only.
  */
-type LegacyConfigPushServiceStatus =
+type ConfigPushServiceStatus =
   | "updated"
   | "up_to_date"
   | "skipped"
@@ -28,9 +28,9 @@ type LegacyConfigPushServiceStatus =
   | "unavailable"
   | "not_pushable";
 
-export interface LegacyConfigPushServiceResult {
-  readonly service: LegacyPushResource | "experimental.webhooks";
-  readonly status: LegacyConfigPushServiceStatus;
+export interface ConfigPushServiceResult {
+  readonly service: PushResource | "experimental.webhooks";
+  readonly status: ConfigPushServiceStatus;
   /** Change paths this service's write communicated (empty for `up_to_date`/`disabled`/
    *  `unavailable`/`not_pushable`; `skipped` carries what the declined write would have
    *  communicated, excluding secrets). For `experimental.webhooks` — which has no

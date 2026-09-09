@@ -6,13 +6,13 @@
  *
  * A black-box `runSupabase` subprocess test, like the other local Docker-stack `*.e2e.test.ts`
  * suites: the facts it is here to prove are the ones only the real wiring can — that `db diff`
- * actually routes through `legacyAcquireShadowDatabase`, that the cache engages with
+ * actually routes through `acquireShadowDatabase`, that the cache engages with
  * `SUPABASE_SHADOW_CACHE` genuinely UNSET (the shipped default — the run removes the harness's
  * isolation pin rather than opting in) and that
  * `${SUPABASE_HOME}/cache/shadow-baseline` survives a real process boundary, that the cache key is STABLE across two
  * separate CLI processes (an in-process test computes it once), and that a warm-restored cluster
  * yields the same migration SQL as a cold-provisioned one. It replaces an earlier in-process
- * version of this file that called `legacyAcquireShadowDatabase` directly with a synthetic layer
+ * version of this file that called `acquireShadowDatabase` directly with a synthetic layer
  * graph — that shape could stay green while the `db diff` wiring, the env propagation, or the cache
  * enablement was broken.
  *
@@ -47,9 +47,9 @@ const LIFECYCLE_OVERHEAD_MS = 90_000;
  * local stack or a neighbouring suite would be holding, and retry the scenario on the next
  * candidate when the CLI reports a real bind conflict.
  *
- * Fed through `SUPABASE_DB_SHADOW_PORT` (`legacy-db-config.toml-read.ts`'s `envOverride`) rather
+ * Fed through `SUPABASE_DB_SHADOW_PORT` (`db-config.toml-read.ts`'s `envOverride`) rather
  * than by rewriting the generated `config.toml`, so the `init` template stays exactly as a user's
- * would be. The port is deliberately NOT part of the cache key (see `legacyShadowCacheKey`), so
+ * would be. The port is deliberately NOT part of the cache key (see `shadowCacheKey`), so
  * retrying on a different one cannot change which tar the run looks for.
  *
  * The candidate sequence is derived from this process's own pid, so two independently concurrent
@@ -92,7 +92,6 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
       // Best-effort cleanup even if an assertion above failed mid-lifecycle — a leaked local
       // stack would otherwise pollute the CI runner for later jobs.
       await runSupabase(["stop", "--no-backup"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: CLEANUP_TIMEOUT_MS,
         ...(home === undefined ? {} : { home: home.dir }),
@@ -118,7 +117,6 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
       const cacheDir = path.join(home.dir, "cache", "shadow-baseline");
 
       const init = await runSupabase(["init"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         home: home.dir,
       });
@@ -128,7 +126,7 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
       // container reachable, same rationale as stop/status/diff.
       const start = await runSupabase(
         ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
-        { entrypoint: "legacy", cwd: projectDir, home: home.dir, exitTimeoutMs: START_TIMEOUT_MS },
+        { cwd: projectDir, home: home.dir, exitTimeoutMs: START_TIMEOUT_MS },
       );
       expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
 
@@ -147,7 +145,7 @@ language sql
 as $$ select 1; $$;`,
           "--local",
         ],
-        { entrypoint: "legacy", cwd: projectDir, home: home.dir },
+        { cwd: projectDir, home: home.dir },
       );
       expect(
         createFunction.exitCode,
@@ -165,7 +163,6 @@ as $$ select 1; $$;`,
         // this attempt's first run a warm one.
         await rm(cacheDir, { recursive: true, force: true });
         const diffOptions = {
-          entrypoint: "legacy" as const,
           cwd: projectDir,
           home: home.dir,
           exitTimeoutMs: DIFF_TIMEOUT_MS,

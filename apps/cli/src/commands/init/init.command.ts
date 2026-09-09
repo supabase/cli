@@ -4,8 +4,8 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
-import { legacyInit } from "./init.handler.ts";
+import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
+import { init } from "./init.handler.ts";
 
 const config = {
   interactive: Flag.boolean("interactive").pipe(
@@ -38,15 +38,15 @@ const config = {
   ),
 } as const;
 
-export type LegacyInitFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type InitFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyInitCommand = Command.make("init", config).pipe(
+export const initCommand = Command.make("init", config).pipe(
   Command.withDescription("Initialize a local project."),
   Command.withShortDescription("Initialize a local project"),
   Command.withHandler((flags) =>
-    legacyInit(flags).pipe(withLegacyCommandInstrumentation({ flags }), withJsonErrorHandling),
+    init(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
-  // `stdinLayer` satisfies `legacyPromptYesNo`'s `Stdin` requirement (via the
+  // `stdinLayer` satisfies `promptYesNo`'s `Stdin` requirement (via the
   // shared `initProject` IDE prompts). The prompts are gated on a TTY stdin, so
   // init never actually reads a piped line at runtime — the layer is here for
   // the effect's type requirements only.

@@ -20,11 +20,11 @@
  * Deliberately has ZERO knowledge of `--ignore-health-check` — matching Go exactly: that flag is
  * `internal/start/start.go`'s `Run()`'s own concern, entirely OUTSIDE `StartDatabase` (Go's
  * `StartDatabase` has no `ignoreHealthCheck` parameter at all). `supabase start`'s own caller
- * wraps the WHOLE call to {@link legacyStartDatabase} in its own `Effect.result` and decides
+ * wraps the WHOLE call to {@link startDatabase} in its own `Effect.result` and decides
  * whether to downgrade an unhealthy-Postgres failure to a warning and continue with the REST of
  * its own bring-up (the other ~13 services) — this function only ever propagates that failure
  * bare, exactly like Go's `StartDatabase` returning it to `run()` unfiltered. Rollback
- * (`legacyRollbackStart`) is ALSO the caller's own concern, not this function's — matching Go,
+ * (`rollbackStart`) is ALSO the caller's own concern, not this function's — matching Go,
  * where `DockerRemoveAll` lives in `Run()` (both `db/start/start.go`'s own `Run` and
  * `internal/start/start.go`'s `Run`), never inside `StartDatabase` itself.
  *
@@ -59,42 +59,39 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
-import { legacyAqua } from "../legacy-colors.ts";
-import { LegacyDbConnection } from "../legacy-db-connection.service.ts";
-import type { LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
-import { LEGACY_CLI_PROJECT_LABEL } from "../legacy-docker-ids.ts";
-import type { LegacyDockerRun } from "../legacy-docker-run.service.ts";
+import { aqua } from "../colors.ts";
+import { DbConnection } from "../db-connection.service.ts";
+import type { DbConnectError } from "../db-connection.errors.ts";
+import { CLI_PROJECT_LABEL } from "../docker-ids.ts";
+import type { DockerRun } from "../docker-run.service.ts";
 import {
-  legacyEnsureNetwork,
-  legacyCreateContainer,
-  legacyVolumeExists,
-  LEGACY_COMPOSE_PROJECT_LABEL,
-  type LegacyContainerCreateError,
-  type LegacyContainerOpts,
-  type LegacyContainerStartError,
-  type LegacyNetworkCreateError,
-  type LegacyVolumeCreateError,
-  type LegacyVolumeInspectError,
+  ensureNetwork,
+  createContainer,
+  volumeExists,
+  COMPOSE_PROJECT_LABEL,
+  type ContainerCreateError,
+  type ContainerOpts,
+  type ContainerStartError,
+  type NetworkCreateError,
+  type VolumeCreateError,
+  type VolumeInspectError,
 } from "./container-lifecycle.ts";
 import {
-  legacyRunDatabaseWebhooksSetup,
-  legacyRunFreshDbSetup,
-  legacyStartInitCurrentBranch,
-  type LegacyFreshDbSetupInput,
-  type LegacyStartSetupLocalDatabaseError,
+  runDatabaseWebhooksSetup,
+  runFreshDbSetup,
+  startInitCurrentBranch,
+  type FreshDbSetupInput,
+  type StartSetupLocalDatabaseError,
 } from "./db-setup.ts";
-import type { LegacyImagePrepullError } from "./image-prepull.ts";
+import type { ImagePrepullError } from "./image-prepull.ts";
+import { waitForHealthyServices, type HealthCheckTimeoutError } from "./health-check.ts";
 import {
-  legacyWaitForHealthyServices,
-  type LegacyHealthCheckTimeoutError,
-} from "./health-check.ts";
-import {
-  LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
-  LEGACY_START_STARTING_DATABASE_MESSAGE,
+  START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
+  START_STARTING_DATABASE_MESSAGE,
 } from "./messages.ts";
 import {
-  legacyBuildPostgresStartContainerSpec,
-  type LegacyPostgresStartServiceInput,
+  buildPostgresStartContainerSpec,
+  type PostgresStartServiceInput,
 } from "./postgres.service.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
@@ -107,11 +104,9 @@ type Spawner = ChildProcessSpawner["Service"];
  * container is created (no `docker create`/`docker start` happens on this path). Only ever
  * reachable via `db start` (the sole caller that ever sets `postgresSpec.fromBackup`).
  * Exported only so the exhaustive actionability guard can inspect its declaration;
- * runtime callers observe it through {@link LegacyStartDatabaseError}.
+ * runtime callers observe it through {@link StartDatabaseError}.
  */
-export class LegacyStartBackupVolumeExistsError extends Data.TaggedError(
-  "LegacyStartBackupVolumeExistsError",
-)<{
+class StartBackupVolumeExistsError extends Data.TaggedError("StartBackupVolumeExistsError")<{
   readonly message: string;
   readonly suggestion?: string;
 }> {
@@ -120,20 +115,20 @@ export class LegacyStartBackupVolumeExistsError extends Data.TaggedError(
   }
 }
 
-/** Every failure {@link legacyStartDatabase} itself can produce, independent of the caller's own `E`. */
-export type LegacyStartDatabaseError =
-  | LegacyNetworkCreateError
-  | LegacyVolumeInspectError
-  | LegacyStartBackupVolumeExistsError
-  | LegacyVolumeCreateError
-  | LegacyContainerCreateError
-  | LegacyContainerStartError
-  | LegacyImagePrepullError
-  | LegacyHealthCheckTimeoutError
-  | LegacyDbConnectError
-  | LegacyStartSetupLocalDatabaseError;
+/** Every failure {@link startDatabase} itself can produce, independent of the caller's own `E`. */
+export type StartDatabaseError =
+  | NetworkCreateError
+  | VolumeInspectError
+  | StartBackupVolumeExistsError
+  | VolumeCreateError
+  | ContainerCreateError
+  | ContainerStartError
+  | ImagePrepullError
+  | HealthCheckTimeoutError
+  | DbConnectError
+  | StartSetupLocalDatabaseError;
 
-export interface LegacyStartDatabaseInput<E> {
+export interface StartDatabaseInput<E> {
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly workdir: string;
@@ -143,23 +138,23 @@ export interface LegacyStartDatabaseInput<E> {
   /** `localDbContainerId(projectId)` — also the connect-target host inside the local Postgres session below. */
   readonly dbContainerId: string;
   readonly dbPort: number;
-  readonly containerOpts: LegacyContainerOpts;
-  /** Fed straight to `legacyBuildPostgresStartContainerSpec` — `fromBackup` (if set) drives BOTH the restore-entrypoint variant and the backup-volume-exists guard below. */
-  readonly postgresSpec: Omit<LegacyPostgresStartServiceInput, "image">;
+  readonly containerOpts: ContainerOpts;
+  /** Fed straight to `buildPostgresStartContainerSpec` — `fromBackup` (if set) drives BOTH the restore-entrypoint variant and the backup-volume-exists guard below. */
+  readonly postgresSpec: Omit<PostgresStartServiceInput, "image">;
   /**
    * Lazy — evaluated right where Go's `DockerStart` would resolve it. See this module's header.
-   * Fixed to `LegacyImagePrepullError` (not generic `E`): both callers' real implementations
+   * Fixed to `ImagePrepullError` (not generic `E`): both callers' real implementations
    * either never fail (`supabase start`'s already-resolved `Effect.succeed`) or fail with exactly
-   * this error (`db start`'s own `legacyEnsureImagesCached` call) — already part of this
-   * function's own fixed {@link LegacyStartDatabaseError} union.
+   * this error (`db start`'s own `ensureImagesCached` call) — already part of this
+   * function's own fixed {@link StartDatabaseError} union.
    */
-  readonly resolvePostgresImage: Effect.Effect<string, LegacyImagePrepullError>;
+  readonly resolvePostgresImage: Effect.Effect<string, ImagePrepullError>;
   readonly dbHealthTimeoutSeconds: number;
   /** Effective `[experimental.webhooks].enabled`, used to converge existing volumes. */
   readonly webhooksEnabled: boolean;
-  readonly setup: LegacyFreshDbSetupInput<E>;
+  readonly setup: FreshDbSetupInput<E>;
   /**
-   * Caller's `utils.NoBackupVolume` equivalent for `legacyRollbackStart`. Fired once
+   * Caller's `utils.NoBackupVolume` equivalent for `rollbackStart`. Fired once
    * after pre-create refuse guards pass. Skipped on those guards so rollback cannot
    * treat leftover sibling volumes as this run's fresh data.
    */
@@ -171,15 +166,15 @@ export interface LegacyStartDatabaseInput<E> {
  * and for why `resolvePostgresImage`/`setup.jwks` are caller-supplied `Effect`s rather than plain
  * values.
  */
-export const legacyStartDatabase = <E>(
+export const startDatabase = <E>(
   spawner: Spawner,
-  input: LegacyStartDatabaseInput<E>,
+  input: StartDatabaseInput<E>,
 ): Effect.Effect<
   void,
-  LegacyStartDatabaseError | E,
+  StartDatabaseError | E,
   | Output
-  | LegacyDbConnection
-  | LegacyDockerRun
+  | DbConnection
+  | DockerRun
   | RuntimeInfo
   | HttpClient.HttpClient
   | FileSystem.FileSystem
@@ -195,7 +190,7 @@ export const legacyStartDatabase = <E>(
     // network behind even for a request the guard below is about to reject outright — Go's own
     // `VolumeInspect` and the guard both run strictly BEFORE `DockerStart`, which is the ONLY
     // place Go ever creates the network (`docker.go:363-386`).
-    const isFreshVolume = !(yield* legacyVolumeExists(spawner, input.dbContainerId));
+    const isFreshVolume = !(yield* volumeExists(spawner, input.dbContainerId));
     const fromBackup = input.postgresSpec.fromBackup;
 
     if (!isFreshVolume && fromBackup !== undefined) {
@@ -203,9 +198,9 @@ export const legacyStartDatabase = <E>(
       // already-provisioned volume is refused outright, BEFORE any container or network is
       // created — and before freshness is published, so rollback cannot prune it.
       return yield* Effect.fail(
-        new LegacyStartBackupVolumeExistsError({
+        new StartBackupVolumeExistsError({
           message: "backup volume already exists",
-          suggestion: `Run ${legacyAqua("supabase stop --no-backup")} to remove existing docker volumes.`,
+          suggestion: `Run ${aqua("supabase stop --no-backup")} to remove existing docker volumes.`,
         }),
       );
     }
@@ -213,9 +208,7 @@ export const legacyStartDatabase = <E>(
     // Print this before image resolve so a flag-off cold/failed pull still
     // follows the established progress order.
     yield* output.raw(
-      isFreshVolume
-        ? LEGACY_START_STARTING_DATABASE_MESSAGE
-        : LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
+      isFreshVolume ? START_STARTING_DATABASE_MESSAGE : START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
       "stderr",
     );
 
@@ -226,20 +219,20 @@ export const legacyStartDatabase = <E>(
     // Go's `DockerStart` (`docker.go:363-386`): image resolve, THEN network create, both
     // strictly ahead of container create — hoisted here to run ONCE per `start` run instead of
     // once per container (Go's own repeated per-container call is a no-op after the first, see
-    // `legacyEnsureNetwork`'s own doc comment), but kept in Go's own relative position:
+    // `ensureNetwork`'s own doc comment), but kept in Go's own relative position:
     // after the volume probe/guard above, never before it.
-    yield* legacyEnsureNetwork(spawner, input.networkId, {
-      [LEGACY_CLI_PROJECT_LABEL]: input.projectId,
-      [LEGACY_COMPOSE_PROJECT_LABEL]: input.projectId,
+    yield* ensureNetwork(spawner, input.networkId, {
+      [CLI_PROJECT_LABEL]: input.projectId,
+      [COMPOSE_PROJECT_LABEL]: input.projectId,
     });
 
-    const postgresSpec = legacyBuildPostgresStartContainerSpec({
+    const postgresSpec = buildPostgresStartContainerSpec({
       ...input.postgresSpec,
       image: resolvedPostgresImage,
     });
-    yield* legacyCreateContainer(spawner, postgresSpec, input.containerOpts);
+    yield* createContainer(spawner, postgresSpec, input.containerOpts);
 
-    const postgresHealthResult = yield* legacyWaitForHealthyServices(
+    const postgresHealthResult = yield* waitForHealthyServices(
       spawner,
       [postgresSpec.containerName],
       {
@@ -250,7 +243,7 @@ export const legacyStartDatabase = <E>(
     if (Result.isFailure(postgresHealthResult)) {
       // Go's `StartDatabase` (`start.go:179-181`): `WaitForHealthyService`'s error is discarded
       // ONLY when `len(fromBackup) > 0` — the log dump to stderr already happened inside
-      // `legacyWaitForHealthyServices` regardless of this branch. Any OTHER failure propagates
+      // `waitForHealthyServices` regardless of this branch. Any OTHER failure propagates
       // BARE — this function has no `--ignore-health-check` knowledge at all, see this module's
       // header for why that's entirely the caller's concern.
       if (fromBackup === undefined) {
@@ -262,7 +255,7 @@ export const legacyStartDatabase = <E>(
     // (`start.go:184-188`) — SKIPPED IN FULL when `fromBackup` is set, not merely reduced: no
     // initSchema/ApplyApiPrivileges/vault/roles.sql/MigrateAndSeed on that path at all.
     if (isFreshVolume && fromBackup === undefined) {
-      yield* legacyRunFreshDbSetup(spawner, {
+      yield* runFreshDbSetup(spawner, {
         fs: input.fs,
         path: input.path,
         workdir: input.workdir,
@@ -278,7 +271,7 @@ export const legacyStartDatabase = <E>(
         setup: input.setup,
       });
     } else if (fromBackup === undefined) {
-      yield* legacyRunDatabaseWebhooksSetup({
+      yield* runDatabaseWebhooksSetup({
         fs: input.fs,
         path: input.path,
         hostname: input.hostname,
@@ -291,5 +284,5 @@ export const legacyStartDatabase = <E>(
     // Go's `initCurrentBranch` (`db/start/start.go:189`) — the LAST line of `StartDatabase`,
     // reached on every path that doesn't already return/fail above: a fresh volume, a non-fresh
     // restart, AND a swallowed `fromBackup` health-check timeout.
-    yield* legacyStartInitCurrentBranch(input.fs, input.path, input.workdir);
+    yield* startInitCurrentBranch(input.fs, input.path, input.workdir);
   });

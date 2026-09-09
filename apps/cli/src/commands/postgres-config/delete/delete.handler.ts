@@ -1,29 +1,29 @@
 import { Effect } from "effect";
 
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
-  LegacyPostgresConfigDeleteNetworkError,
-  LegacyPostgresConfigDeleteSerializeError,
-  LegacyPostgresConfigDeleteUnexpectedStatusError,
-  LegacyPostgresConfigDeleteUnmarshalError,
+  PostgresConfigDeleteNetworkError,
+  PostgresConfigDeleteSerializeError,
+  PostgresConfigDeleteUnexpectedStatusError,
+  PostgresConfigDeleteUnmarshalError,
 } from "../postgres-config.errors.ts";
 import {
   fetchCurrentPostgresConfig,
   putPostgresConfig,
   writePostgresConfigOutput,
 } from "../postgres-config.shared.ts";
-import type { LegacyPostgresConfigDeleteFlags } from "./delete.command.ts";
+import type { PostgresConfigDeleteFlags } from "./delete.command.ts";
 
-export const legacyPostgresConfigDelete = Effect.fn("legacy.postgres-config.delete")(function* (
-  flags: LegacyPostgresConfigDeleteFlags,
+export const postgresConfigDelete = Effect.fn("postgres-config.delete")(function* (
+  flags: PostgresConfigDeleteFlags,
 ) {
   const output = yield* Output;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
     const ref = yield* resolver.resolve(flags.projectRef);
@@ -44,10 +44,10 @@ export const legacyPostgresConfigDelete = Effect.fn("legacy.postgres-config.dele
       }
 
       const updated = yield* putPostgresConfig(ref, currentConfig, {
-        serializeError: (args) => new LegacyPostgresConfigDeleteSerializeError(args),
-        networkError: (args) => new LegacyPostgresConfigDeleteNetworkError(args),
-        statusError: (args) => new LegacyPostgresConfigDeleteUnexpectedStatusError(args),
-        unmarshalError: (args) => new LegacyPostgresConfigDeleteUnmarshalError(args),
+        serializeError: (args) => new PostgresConfigDeleteSerializeError(args),
+        networkError: (args) => new PostgresConfigDeleteNetworkError(args),
+        statusError: (args) => new PostgresConfigDeleteUnexpectedStatusError(args),
+        unmarshalError: (args) => new PostgresConfigDeleteUnmarshalError(args),
         networkMessage: (description) => `failed to delete config overrides: ${description}`,
         statusMessage: (status, body) =>
           `unexpected delete config overrides status ${status}: ${body}`,

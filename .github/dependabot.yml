@@ -11,10 +11,24 @@ updates:
       actions-major:
         patterns:
           - "*"
+        exclude-patterns:
+          - "openai/codex-action"
     ignore:
       - dependency-name: "supabase/setup-cli"
         update-types:
           - "version-update:semver-major"
+      - dependency-name: "openai/codex-action"
+        versions:
+          - "1.12.x"
+        # Deliberately pinned to v1.11 in ai-review.yml — v1.12 has two
+        # confirmed, still-open upstream regressions: a wrapper-level hang
+        # (openai/codex-action#151) and a runner-killing failure
+        # (openai/codex-action#160). A grouped Dependabot bump already
+        # silently reintroduced v1.12 once (PR #6484, 2026-09-07). Scoped to
+        # 1.12.x (not a blanket ignore) so Dependabot still proposes v1.13+
+        # once a fix ships; evaluate any such proposal in its own deliberate
+        # PR, checking the upstream changelog/issue tracker first — never
+        # bundle it into the actions-major group.
     cooldown:
       default-days: 7
   - package-ecosystem: "gomod"
@@ -24,6 +38,8 @@ updates:
     schedule:
       interval: "cron"
       cronjob: "0 0 * * *"
+    commit-message:
+      prefix: "chore(cli-go): "
     groups:
       go-minor:
         update-types:
@@ -43,9 +59,8 @@ updates:
       interval: "cron"
       cronjob: "0 0 * * *"
     commit-message:
-      prefix: "fix"
-      prefix-development: "chore"
-      include: "scope"
+      prefix: "fix(misc): "
+      prefix-development: "chore(misc): "
     groups:
       npm-major:
         patterns:
@@ -58,7 +73,7 @@ updates:
       interval: "cron"
       cronjob: "0 0 * * *"
     commit-message:
-      prefix: "fix(docker): "
+      prefix: "fix(misc): "
     groups:
       docker-minor:
         update-types:

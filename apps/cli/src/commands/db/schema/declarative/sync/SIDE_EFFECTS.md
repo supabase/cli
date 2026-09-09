@@ -37,10 +37,10 @@ disabling safe compaction.
 
 ## Subprocesses / Containers
 
-| What                                                                                                                                                                                                                 | When                                                              |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Two natively-provisioned shadows (migrated source + declarative target) via `legacyAcquireShadowDatabase` — ephemeral host ports, settings-keyed global baseline cache                                               | always                                                            |
-| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `legacyResetLocalDatabase` — only on the failed-apply recovery path | TTY only, apply failed, and the user confirms "reset and reapply" |
+| What                                                                                                                                                                                                           | When                                                              |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Two natively-provisioned shadows (migrated source + declarative target) via `acquireShadowDatabase` — ephemeral host ports, settings-keyed global baseline cache                                               | always                                                            |
+| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase` — only on the failed-apply recovery path | TTY only, apply failed, and the user confirms "reset and reapply" |
 
 ## Environment Variables
 
@@ -80,7 +80,7 @@ stderr after generating and writing — on both interactive and `--yes` paths.
 without prompting; both override the global `--yes`. `--no-apply` and `--apply`
 are mutually exclusive.
 
-A manifest-less legacy tree is refused by two compatibility gates — one when the
+A manifest-less CLI tree is refused by two compatibility gates — one when the
 tree fails to load on the bundled engine's shadow, one when the plan drops an
 extension the tree no longer declares (removing or renaming a `pg_cron` job or
 `pgmq` queue declaration is an ordinary change and is never refused). Both
@@ -121,7 +121,7 @@ existing SQL or creates an export manifest.
 - The migration apply is native (connects to the local DB and records migration
   history). On apply failure a debug bundle is written under
   `supabase/.temp/pgdelta/debug/` and, in a TTY, a reset-and-reapply is offered
-  (the reset itself is native too — `legacyResetLocalDatabase` — run in-process,
+  (the reset itself is native too — `resetLocalDatabase` — run in-process,
   sharing this command's own telemetry/linked-project-cache finalizer cycle
   rather than firing a second one from a child process).
 - **Architecture:** the engine plans and renders in-process from two live
@@ -137,15 +137,15 @@ existing SQL or creates an export manifest.
 ### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 
 The bundled (pg-delta next) engine provisions both plan shadows through
-`legacyAcquireShadowDatabase` (`legacy-pgdelta-next-shadow.layer.ts`): on by default, off when
+`acquireShadowDatabase` (`pgdelta-next-shadow.layer.ts`): on by default, off when
 `SUPABASE_SHADOW_CACHE` is set to anything not viper-true (ambient env or project dotenv); `--no-cache`
 bypasses restore and publish for that invocation. Next allocates an ephemeral host port per
 shadow; the cache key hashes the cluster recipe (including the effective Webhooks/`pg_net`
 policy), not the published port, so worktrees and repeated syncs with the same settings share
 a warm hit. The migrations shadow follows project config; the declarative shadow forces
 `pg_net` off — those are distinct keys when Webhooks are enabled. A warm hit skips the
-platform baseline on both shadows (`legacyMigrateNextShadowDatabase` /
-`legacySetupShadowDatabase` are baseline-state-aware). When both snapshots are
+platform baseline on both shadows (`migrateNextShadowDatabase` /
+`setupShadowDatabase` are baseline-state-aware). When both snapshots are
 already published they restore concurrently; a first-run pair that shares a
 cache key builds the baseline once and hands it off; otherwise the two shadows
 stay sequential so progress lines never interleave. Artifact:

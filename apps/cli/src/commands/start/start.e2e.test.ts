@@ -7,7 +7,7 @@ import { runSupabase, stripAnsi } from "../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
-describe("supabase start (legacy)", () => {
+describe("supabase start", () => {
   let projectDir: string;
 
   beforeEach(() => {
@@ -36,7 +36,6 @@ describe("supabase start (legacy)", () => {
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stdout, stderr } = await runSupabase(["start", "--exclude", "bogus"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         env: { DOCKER_HOST: "tcp://127.0.0.1:1" },
       });

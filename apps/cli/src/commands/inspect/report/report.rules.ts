@@ -1,16 +1,12 @@
 import { Option } from "effect";
-import { legacyInspectText } from "../db/legacy-inspect-query.ts";
-import {
-  type LegacyCsvTableProvider,
-  LegacyInspectCsvqError,
-  legacyEvalCsvqScalar,
-} from "./report.csvq.ts";
+import { inspectText } from "../db/inspect-query.ts";
+import { type CsvTableProvider, InspectCsvqError, evalCsvqScalar } from "./report.csvq.ts";
 
 /**
  * One report validation rule: the csvq `query` over the written
  * CSVs, the `name` shown in the summary, and the `pass`/`fail` STATUS strings.
  */
-export interface LegacyInspectRule {
+export interface InspectRule {
   readonly query: string;
   readonly name: string;
   readonly pass: string;
@@ -21,7 +17,7 @@ export interface LegacyInspectRule {
  * The default rules. Used when
  * `[experimental.inspect.rules]` is absent or empty in `config.toml`.
  */
-export const LEGACY_DEFAULT_INSPECT_RULES: ReadonlyArray<LegacyInspectRule> = [
+export const DEFAULT_INSPECT_RULES: ReadonlyArray<InspectRule> = [
   {
     query: "SELECT LISTAGG(stmt, ',') AS match FROM `locks.csv` WHERE age > '00:02:00'",
     name: "No old locks",
@@ -110,7 +106,7 @@ export const LEGACY_DEFAULT_INSPECT_RULES: ReadonlyArray<LegacyInspectRule> = [
 ];
 
 /** The outcome of evaluating one rule: the STATUS and MATCHES summary cells. */
-export interface LegacyInspectRuleResult {
+export interface InspectRuleResult {
   readonly name: string;
   readonly status: string;
   readonly matches: string;
@@ -126,12 +122,12 @@ export interface LegacyInspectRuleResult {
  * - a csvq error → STATUS = the error message, MATCHES = `-` (the command does not
  *   fail; the error becomes the cell).
  */
-export function legacyEvaluateInspectRule(
-  rule: LegacyInspectRule,
-  provider: LegacyCsvTableProvider,
-): LegacyInspectRuleResult {
+export function evaluateInspectRule(
+  rule: InspectRule,
+  provider: CsvTableProvider,
+): InspectRuleResult {
   try {
-    const match = legacyEvalCsvqScalar(rule.query, provider);
+    const match = evalCsvqScalar(rule.query, provider);
     if (Option.isNone(match)) {
       return { name: rule.name, status: rule.pass, matches: "-" };
     }
@@ -141,15 +137,15 @@ export function legacyEvaluateInspectRule(
     return {
       name: rule.name,
       status: rule.fail,
-      matches: legacySummarizeInspectRuleMatch(match.value),
+      matches: summarizeInspectRuleMatch(match.value),
     };
   } catch (error) {
-    const message = error instanceof LegacyInspectCsvqError ? error.message : String(error);
+    const message = error instanceof InspectCsvqError ? error.message : String(error);
     return { name: rule.name, status: message, matches: "-" };
   }
 }
 
-function legacySummarizeInspectRuleMatch(match: string): string {
+function summarizeInspectRuleMatch(match: string): string {
   if (match.length <= 20) return match;
   return `${match.split(",").length} matches`;
 }
@@ -159,16 +155,16 @@ function legacySummarizeInspectRuleMatch(match: string): string {
  * `renderGlamourTable`. Each cell wraps in backticks inside its markdown:
  * Glamour strips a non-empty inline code span (so a populated
  * cell renders bare), but an EMPTY code span (`` `` ``) is passed through as the
- * two literal backtick characters — the same rule `legacyInspectText` encodes for
+ * two literal backtick characters — the same rule `inspectText` encodes for
  * the `inspect db` tables. A valid empty `matches` cell therefore renders as `` ``
  * (width 2); `name`/`status` are never empty.
  */
-export function legacyBuildRuleSummaryRows(
-  results: ReadonlyArray<LegacyInspectRuleResult>,
+export function buildRuleSummaryRows(
+  results: ReadonlyArray<InspectRuleResult>,
 ): ReadonlyArray<ReadonlyArray<string>> {
   return results.map((result) => [
-    legacyInspectText(result.name),
-    legacyInspectText(result.status),
-    legacyInspectText(result.matches),
+    inspectText(result.name),
+    inspectText(result.status),
+    inspectText(result.matches),
   ]);
 }

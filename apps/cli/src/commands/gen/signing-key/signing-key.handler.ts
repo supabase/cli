@@ -3,31 +3,31 @@ import { styleText } from "node:util";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { emitSuccessTrailer } from "../../../shared/cli/success-trailer.ts";
 import { findGitRootPath } from "../../../shared/git/git-root.ts";
-import { legacyLoadProjectEnv } from "../../../command-internal/legacy-db-config.toml-read.ts";
-import { LegacyDebugLogger } from "../../../command-internal/legacy-debug-logger.service.ts";
-import { LEGACY_DEFAULT_SIGNING_KEY } from "../../../command-internal/legacy-go-jwt.ts";
-import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyResolveYesWithProjectEnv } from "../../../shared/legacy/global-flags.ts";
+import { loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
+import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DEFAULT_SIGNING_KEY } from "../../../command-internal/go-jwt.ts";
+import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import {
-  legacyReadSigningKeysFile,
-  legacyResolveSigningKeysConfigPaths,
-  type LegacyStoredSigningKeyJwk,
+  readSigningKeysFile,
+  resolveSigningKeysConfigPaths,
+  type StoredSigningKeyJwk,
 } from "../gen.signing-keys-config.ts";
-import type { LegacyGenSigningKeyFlags } from "./signing-key.command.ts";
+import type { GenSigningKeyFlags } from "./signing-key.command.ts";
 import {
-  LegacyGenSigningKeyCancelledError,
-  LegacyGenSigningKeyConfigParseError,
-  LegacyGenSigningKeyGenerateError,
-  LegacyGenSigningKeyDecodeError,
-  LegacyGenSigningKeyReadError,
-  LegacyGenSigningKeyWriteError,
+  GenSigningKeyCancelledError,
+  GenSigningKeyConfigParseError,
+  GenSigningKeyGenerateError,
+  GenSigningKeyDecodeError,
+  GenSigningKeyReadError,
+  GenSigningKeyWriteError,
 } from "./signing-key.errors.ts";
 
 type SigningAlgorithm = "ES256" | "RS256";
@@ -57,7 +57,7 @@ interface ResolvedSigningKeysConfig {
   readonly configured: Option.Option<{
     actualPath: string;
     displayPath: string;
-    existingKeys: ReadonlyArray<LegacyStoredSigningKeyJwk>;
+    existingKeys: ReadonlyArray<StoredSigningKeyJwk>;
   }>;
 }
 
@@ -68,12 +68,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function readStringField(
   value: Record<string, unknown>,
   field: string,
-): Effect.Effect<string, LegacyGenSigningKeyGenerateError> {
+): Effect.Effect<string, GenSigningKeyGenerateError> {
   const candidate = value[field];
   return typeof candidate === "string"
     ? Effect.succeed(candidate)
     : Effect.fail(
-        new LegacyGenSigningKeyGenerateError({
+        new GenSigningKeyGenerateError({
           message: `failed to generate signing key: missing jwk field ${field}`,
         }),
       );
@@ -98,7 +98,7 @@ const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgori
     const exported = privateKey.export({ format: "jwk" });
     if (!isRecord(exported)) {
       return yield* Effect.fail(
-        new LegacyGenSigningKeyGenerateError({
+        new GenSigningKeyGenerateError({
           message: "failed to generate signing key: rsa jwk export failed",
         }),
       );
@@ -125,7 +125,7 @@ const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgori
   const exported = privateKey.export({ format: "jwk" });
   if (!isRecord(exported)) {
     return yield* Effect.fail(
-      new LegacyGenSigningKeyGenerateError({
+      new GenSigningKeyGenerateError({
         message: "failed to generate signing key: ec jwk export failed",
       }),
     );
@@ -155,12 +155,12 @@ const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgori
 // --append` overwrote the file with the default ES256 key plus the newly generated one,
 // discarding the original entry entirely — surprising, but this is the
 // established behavior, so this must gate the read on `paths.authEnabled`
-// exactly like `gen bearer-jwt`'s own `legacyResolveBearerJwtSigningKey`
+// exactly like `gen bearer-jwt`'s own `resolveBearerJwtSigningKey`
 // already does.
 const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
-  const paths = yield* legacyResolveSigningKeysConfigPaths(
+  const paths = yield* resolveSigningKeysConfigPaths(
     cwd,
-    (message) => new LegacyGenSigningKeyConfigParseError({ message }),
+    (message) => new GenSigningKeyConfigParseError({ message }),
   );
   if (Option.isNone(paths.signingKeysPath)) {
     return {
@@ -171,12 +171,12 @@ const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
 
   const { actualPath, displayPath } = paths.signingKeysPath.value;
   const existingKeys = paths.authEnabled
-    ? yield* legacyReadSigningKeysFile(
+    ? yield* readSigningKeysFile(
         actualPath,
-        (message) => new LegacyGenSigningKeyReadError({ message }),
-        (message) => new LegacyGenSigningKeyDecodeError({ message }),
+        (message) => new GenSigningKeyReadError({ message }),
+        (message) => new GenSigningKeyDecodeError({ message }),
       )
-    : [{ ...LEGACY_DEFAULT_SIGNING_KEY }];
+    : [{ ...DEFAULT_SIGNING_KEY }];
   return {
     configDisplayPath: paths.configDisplayPath,
     configured: Option.some({ actualPath, displayPath, existingKeys }),
@@ -209,12 +209,10 @@ const isGitIgnored = Effect.fnUntraced(function* (filePath: string, searchFrom: 
     .pipe(Effect.map((exitCode) => Option.some(Number(exitCode) === 0)));
 });
 
-export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function* (
-  flags: LegacyGenSigningKeyFlags,
-) {
-  const cliSettings = yield* LegacyCliSettings;
-  const debugLogger = yield* LegacyDebugLogger;
-  const telemetryState = yield* LegacyTelemetryState;
+export const genSigningKey = Effect.fn("gen.signing-key")(function* (flags: GenSigningKeyFlags) {
+  const cliSettings = yield* CommandSettings;
+  const debugLogger = yield* DebugLogger;
+  const telemetryState = yield* TelemetryState;
   const output = yield* Output;
   const tty = yield* Tty;
   const fs = yield* FileSystem.FileSystem;
@@ -229,8 +227,8 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
     // malformed/unreadable `.env` still flushes telemetry below — telemetry
     // must attach before the config load runs, so the capture still fires
     // even when that load fails.
-    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
-    const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
+    const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+    const yes = yield* resolveYesWithProjectEnv(projectEnv);
     // The configured signing-keys file is validated before any key is
     // generated, so a broken config fails fast without doing throwaway crypto work.
     const signingKeysConfig = yield* loadSigningKeysConfig(cliSettings.workdir);
@@ -249,7 +247,7 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
     const nextKeys = flags.append
       ? [...configured.value.existingKeys, key]
       : yield* Effect.gen(function* () {
-          // `legacyPromptYesNo` silently returns the default (true) for any non-text
+          // `promptYesNo` silently returns the default (true) for any non-text
           // `--output-format`, but this command has no structured json/stream-json output
           // (SIDE_EFFECTS.md) — that combination only arises from a real interactive TTY
           // explicitly requesting machine output. Fail closed rather than silently
@@ -257,8 +255,8 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
           const confirmed =
             !yes && tty.stdinIsTty && output.format !== "text"
               ? false
-              : yield* legacyPromptYesNo(
-                  // `legacyPromptYesNo` checks `output.format !== "text"` BEFORE it checks
+              : yield* promptYesNo(
+                  // `promptYesNo` checks `output.format !== "text"` BEFORE it checks
                   // TTY, so a non-TTY (piped or empty) invocation under `json`/`stream-json`
                   // would otherwise hit that check first and return the default without
                   // ever reading stdin. The confirmation prompt has no concept of output
@@ -274,7 +272,7 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
                 );
           if (!confirmed) {
             return yield* Effect.fail(
-              new LegacyGenSigningKeyCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
+              new GenSigningKeyCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
             );
           }
           return [key];
@@ -287,7 +285,7 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
       .pipe(
         Effect.mapError(
           (cause) =>
-            new LegacyGenSigningKeyWriteError({
+            new GenSigningKeyWriteError({
               message: `failed to open signing key: ${String(cause)}`,
             }),
         ),

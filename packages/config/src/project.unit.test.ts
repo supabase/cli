@@ -557,8 +557,8 @@ account_sid = "AC123"
   });
 
   // Pins the pre-PR-#5765 strict SCREAMING_SNAKE_CASE `env()` matcher as the
-  // default for `resolveCliConfigValue`/`resolveCliConfigSubtree`, since `next/`
-  // and `packages/stack` call these without ever passing `goViperCompat`.
+  // default for `resolveCliConfigValue`/`resolveCliConfigSubtree`, since
+  // `packages/stack` calls these without ever passing `goViperCompat`.
   test("resolveCliConfigValue does not resolve a lowercase-named env() reference by default", async () => {
     const cwd = makeTempProject();
     const projectRoot = join(cwd, "repo");

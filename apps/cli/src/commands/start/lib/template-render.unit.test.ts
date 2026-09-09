@@ -1,19 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import { LEGACY_START_KONG_YML_TEMPLATE } from "../templates/kong.yml.ts";
-import { LEGACY_START_POOLER_EXS_TEMPLATE } from "../templates/pooler.exs.ts";
-import { LEGACY_START_VECTOR_YAML_TEMPLATE } from "../templates/vector.yaml.ts";
+import { START_KONG_YML_TEMPLATE } from "../templates/kong.yml.ts";
+import { START_POOLER_EXS_TEMPLATE } from "../templates/pooler.exs.ts";
+import { START_VECTOR_YAML_TEMPLATE } from "../templates/vector.yaml.ts";
 import {
-  legacyRenderGoTemplate,
-  legacyRenderStartKongYml,
-  legacyRenderStartPoolerExs,
-  legacyRenderStartVectorYaml,
-  type LegacyStartKongYmlFields,
-  type LegacyStartPoolerExsFields,
-  type LegacyStartVectorYamlFields,
+  renderGoTemplate,
+  renderStartKongYml,
+  renderStartPoolerExs,
+  renderStartVectorYaml,
+  type StartKongYmlFields,
+  type StartPoolerExsFields,
+  type StartVectorYamlFields,
 } from "./template-render.ts";
 
-const kongFields: LegacyStartKongYmlFields = {
+const kongFields: StartKongYmlFields = {
   gotrueId: "supabase_auth_test",
   restId: "supabase_rest_test",
   realtimeId: "supabase_realtime_test",
@@ -29,7 +29,7 @@ const kongFields: LegacyStartKongYmlFields = {
   queryToken: "test-query-token",
 };
 
-const vectorFields: LegacyStartVectorYamlFields = {
+const vectorFields: StartVectorYamlFields = {
   apiKey: "test-api-key",
   vectorId: "supabase_vector_test",
   logflareId: "supabase_analytics_test",
@@ -42,7 +42,7 @@ const vectorFields: LegacyStartVectorYamlFields = {
   dbId: "supabase_db_test",
 };
 
-const poolerFields: LegacyStartPoolerExsFields = {
+const poolerFields: StartPoolerExsFields = {
   dbHost: "supabase_db_test",
   dbPort: 6543,
   dbDatabase: "postgres",
@@ -53,33 +53,31 @@ const poolerFields: LegacyStartPoolerExsFields = {
   defaultPoolSize: 20,
 };
 
-describe("legacyRenderGoTemplate", () => {
+describe("renderGoTemplate", () => {
   it("substitutes bare {{ .Field }} placeholders", () => {
-    expect(legacyRenderGoTemplate("hello {{ .Name }}", { Name: "world" })).toBe("hello world");
+    expect(renderGoTemplate("hello {{ .Name }}", { Name: "world" })).toBe("hello world");
   });
 
   it("tolerates any amount of whitespace inside the braces", () => {
-    expect(legacyRenderGoTemplate("{{.Name}} {{  .Name  }} {{ .Name }}", { Name: "x" })).toBe(
-      "x x x",
-    );
+    expect(renderGoTemplate("{{.Name}} {{  .Name  }} {{ .Name }}", { Name: "x" })).toBe("x x x");
   });
 
   it("renders numeric fields as base-10 strings with no added quotes or decimals", () => {
-    expect(legacyRenderGoTemplate("port={{ .Port }}", { Port: 6543 })).toBe("port=6543");
+    expect(renderGoTemplate("port={{ .Port }}", { Port: 6543 })).toBe("port=6543");
   });
 
   it("throws when a referenced field is missing (missingkey=error parity)", () => {
-    expect(() => legacyRenderGoTemplate("{{ .Missing }}", {})).toThrow(/\.Missing/);
+    expect(() => renderGoTemplate("{{ .Missing }}", {})).toThrow(/\.Missing/);
   });
 
   it("does not error on struct fields that exist but are never referenced", () => {
-    expect(legacyRenderGoTemplate("{{ .Used }}", { Used: "a", Unused: "b" })).toBe("a");
+    expect(renderGoTemplate("{{ .Used }}", { Used: "a", Unused: "b" })).toBe("a");
   });
 });
 
-describe("legacyRenderStartKongYml", () => {
+describe("renderStartKongYml", () => {
   it("replaces every placeholder with no template syntax or missing-value markers left behind", () => {
-    const rendered = legacyRenderStartKongYml(kongFields);
+    const rendered = renderStartKongYml(kongFields);
     expect(rendered).not.toContain("{{");
     expect(rendered).not.toContain("}}");
     expect(rendered).not.toContain("<no value>");
@@ -87,7 +85,7 @@ describe("legacyRenderStartKongYml", () => {
   });
 
   it("interpolates each service upstream URL from the matching container id", () => {
-    const rendered = legacyRenderStartKongYml(kongFields);
+    const rendered = renderStartKongYml(kongFields);
     expect(rendered).toContain("url: http://supabase_auth_test:9999/verify");
     expect(rendered).toContain("url: http://supabase_rest_test:3000/");
     expect(rendered).toContain("url: http://supabase_realtime_test:4000/socket");
@@ -100,12 +98,12 @@ describe("legacyRenderStartKongYml", () => {
   });
 
   it("interpolates the bearer and query tokens into every header/querystring reference", () => {
-    const rendered = legacyRenderStartKongYml(kongFields);
+    const rendered = renderStartKongYml(kongFields);
     expect(rendered).toContain('"Authorization: test-bearer-token"');
     expect(rendered).toContain('"sb-api-key: test-bearer-token"');
     expect(rendered).toContain('"apikey:test-query-token"');
     expect(rendered.match(/test-bearer-token/g)).toHaveLength(
-      (LEGACY_START_KONG_YML_TEMPLATE.match(/\{\{ \.BearerToken \}\}/g) ?? []).length,
+      (START_KONG_YML_TEMPLATE.match(/\{\{ \.BearerToken \}\}/g) ?? []).length,
     );
   });
 
@@ -125,15 +123,13 @@ describe("legacyRenderStartKongYml", () => {
       BearerToken: withoutGotrue.bearerToken,
       QueryToken: withoutGotrue.queryToken,
     };
-    expect(() => legacyRenderGoTemplate(LEGACY_START_KONG_YML_TEMPLATE, rawFields)).toThrow(
-      /\.GotrueId/,
-    );
+    expect(() => renderGoTemplate(START_KONG_YML_TEMPLATE, rawFields)).toThrow(/\.GotrueId/);
   });
 });
 
-describe("legacyRenderStartVectorYaml", () => {
+describe("renderStartVectorYaml", () => {
   it("replaces every placeholder with no template syntax or missing-value markers left behind", () => {
-    const rendered = legacyRenderStartVectorYaml(vectorFields);
+    const rendered = renderStartVectorYaml(vectorFields);
     expect(rendered).not.toContain("{{");
     expect(rendered).not.toContain("}}");
     expect(rendered).not.toContain("<no value>");
@@ -141,7 +137,7 @@ describe("legacyRenderStartVectorYaml", () => {
   });
 
   it("interpolates the vector, router, and logflare sink fields", () => {
-    const rendered = legacyRenderStartVectorYaml(vectorFields);
+    const rendered = renderStartVectorYaml(vectorFields);
     expect(rendered).toContain('- "supabase_vector_test"');
     expect(rendered).toContain("kong: '.appname == \"supabase_kong_test\"'");
     expect(rendered).toContain("auth: '.appname == \"supabase_auth_test\"'");
@@ -169,15 +165,13 @@ describe("legacyRenderStartVectorYaml", () => {
       EdgeRuntimeId: withoutApiKey.edgeRuntimeId,
       DbId: withoutApiKey.dbId,
     };
-    expect(() => legacyRenderGoTemplate(LEGACY_START_VECTOR_YAML_TEMPLATE, rawFields)).toThrow(
-      /\.ApiKey/,
-    );
+    expect(() => renderGoTemplate(START_VECTOR_YAML_TEMPLATE, rawFields)).toThrow(/\.ApiKey/);
   });
 });
 
-describe("legacyRenderStartPoolerExs", () => {
+describe("renderStartPoolerExs", () => {
   it("renders the exact expected Elixir source", () => {
-    expect(legacyRenderStartPoolerExs(poolerFields)).toBe(
+    expect(renderStartPoolerExs(poolerFields)).toBe(
       `{:ok, _} = Application.ensure_all_started(:supavisor)
 
 {:ok, version} =
@@ -213,7 +207,7 @@ end
   });
 
   it("renders numeric fields as bare Elixir integer literals with no quotes or decimals", () => {
-    const rendered = legacyRenderStartPoolerExs(poolerFields);
+    const rendered = renderStartPoolerExs(poolerFields);
     expect(rendered).toContain('"db_port" => 6543,');
     expect(rendered).toContain('"default_max_clients" => 100,');
     expect(rendered).toContain('"default_pool_size" => 20,');
@@ -233,8 +227,6 @@ end
       DefaultMaxClients: withoutDbHost.defaultMaxClients,
       DefaultPoolSize: withoutDbHost.defaultPoolSize,
     };
-    expect(() => legacyRenderGoTemplate(LEGACY_START_POOLER_EXS_TEMPLATE, rawFields)).toThrow(
-      /\.DbHost/,
-    );
+    expect(() => renderGoTemplate(START_POOLER_EXS_TEMPLATE, rawFields)).toThrow(/\.DbHost/);
   });
 });

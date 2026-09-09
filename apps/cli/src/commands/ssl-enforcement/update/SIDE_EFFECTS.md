@@ -31,15 +31,15 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                      |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — SSL enforcement status (post-update) printed to stdout                                                                                                                               |
-| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) — checked in `.command.ts`, before the handler (and its flag validation/telemetry) ever runs |
-| `1`  | neither `--enable-db-ssl-enforcement` nor `--disable-db-ssl-enforcement` set (`LegacySslEnforcementNoEnableDisableFlagError`)                                                                  |
-| `1`  | both `--enable-db-ssl-enforcement` and `--disable-db-ssl-enforcement` set (`LegacySslEnforcementMutuallyExclusiveFlagsError`)                                                                  |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                                                                        |
-| `1`  | API non-200 (`LegacySslEnforcementUpdateUnexpectedStatusError`)                                                                                                                                |
-| `1`  | transport failure (`LegacySslEnforcementUpdateNetworkError`)                                                                                                                                   |
+| Code | Condition                                                                                                                                                                                |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — SSL enforcement status (post-update) printed to stdout                                                                                                                         |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) — checked in `.command.ts`, before the handler (and its flag validation/telemetry) ever runs |
+| `1`  | neither `--enable-db-ssl-enforcement` nor `--disable-db-ssl-enforcement` set (`SslEnforcementNoEnableDisableFlagError`)                                                                  |
+| `1`  | both `--enable-db-ssl-enforcement` and `--disable-db-ssl-enforcement` set (`SslEnforcementMutuallyExclusiveFlagsError`)                                                                  |
+| `1`  | project ref unresolved (`ProjectRefNotLinkedError` / `InvalidProjectRefError`)                                                                                                           |
+| `1`  | API non-200 (`SslEnforcementUpdateUnexpectedStatusError`)                                                                                                                                |
+| `1`  | transport failure (`SslEnforcementUpdateNetworkError`)                                                                                                                                   |
 
 ## Telemetry Events Fired
 

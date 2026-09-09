@@ -2,9 +2,9 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacySsoInfo } from "./info.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { ssoInfo } from "./info.handler.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -12,9 +12,9 @@ const config = {
     Flag.optional,
   ),
 };
-export type LegacySsoInfoFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type SsoInfoFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacySsoInfoCommand = Command.make("info", config).pipe(
+export const ssoInfoCommand = Command.make("info", config).pipe(
   Command.withDescription(
     "Returns all of the important SSO information necessary for your project to be registered with a SAML 2.0 compatible identity provider.",
   ),
@@ -26,10 +26,10 @@ export const legacySsoInfoCommand = Command.make("info", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacySsoInfo(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+    ssoInfo(flags).pipe(
+      withCommandTelemetry({ flags, safeFlags: ["project-ref"] }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["sso", "info"])),
+  Command.provide(managementApiRuntimeLayer(["sso", "info"])),
 );

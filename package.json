@@ -2,7 +2,7 @@
   "name": "@supabase/root",
   "private": true,
   "scripts": {
-    "prepare": "effect-tsgo patch --no-typescript --oxlint",
+    "prepare": "effect-tsgo patch --no-typescript --oxlint && husky",
     "build": "pnpm exec turbo run build",
     "generate": "pnpm exec turbo run @supabase/api#generate && pnpm exec turbo run @supabase/docs#generate",
     "test:live": "pnpm exec turbo run supabase#test:live --concurrency=1 --",
@@ -16,8 +16,8 @@
     "fix:all": "pnpm exec turbo run lint:fix fmt:fix knip:fix && pnpm run lint:effect:fix",
     "lint:check": "oxlint --config .oxlintrc.json",
     "lint:fix": "oxlint --config .oxlintrc.json --fix",
-    "lint:effect:check": "oxlint --config .oxlintrc.effect.json packages/stack packages/process-compose",
-    "lint:effect:fix": "oxlint --config .oxlintrc.effect.json --fix --fix-suggestions packages/stack packages/process-compose",
+    "lint:effect:check": "oxlint --config .oxlintrc.effect.json packages/stack apps/cli/src/commands/experimental/stack",
+    "lint:effect:fix": "oxlint --config .oxlintrc.effect.json --fix --fix-suggestions packages/stack apps/cli/src/commands/experimental/stack",
     "fmt:check": "oxfmt --config .oxfmtrc.json --check",
     "fmt:fix": "oxfmt --config .oxfmtrc.json",
     "knip:check": "knip-bun",
@@ -29,9 +29,12 @@
     "cli-release": "bun tools/release/local-release.ts"
   },
   "devDependencies": {
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
     "@effect/tsgo": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
+    "husky": "^9.1.7",
     "knip": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
@@ -45,7 +48,7 @@
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
-      "version": "12.3.0",
+      "version": "12.4.0",
       "onFail": "warn"
     }
   }

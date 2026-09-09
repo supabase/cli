@@ -4,42 +4,42 @@ import { CliOutput, Command } from "effect/unstable/cli";
 
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
-import { LEGACY_GLOBAL_FLAGS } from "../../shared/legacy/global-flags.ts";
+import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../shared/telemetry/identity.ts";
 import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyPlatformApi,
-  useLegacyTempWorkdir,
-} from "../../../tests/helpers/legacy-mocks.ts";
-import { legacySsoCommand } from "./sso.command.ts";
+  buildTestRuntime,
+  mockCommandSettings,
+  mockCommandPlatformApi,
+  useTempWorkdir,
+} from "../../../tests/helpers/command-mocks.ts";
+import { ssoCommand } from "./sso.command.ts";
 
 // All four sso domain-list flags are CSV string-slice flags, so malformed
 // CSV aborts flag parsing before the handler runs — and before
-// `legacyManagementApiRuntimeLayer`'s eager access-token resolution — with
+// `managementApiRuntimeLayer`'s eager access-token resolution — with
 // an `invalid argument %q for %q flag: %v` line on stderr. These scenarios
 // run the whole command tree (`Command.runWith`) so the assertion covers
 // the real flag wiring plus the renderer's pflag passthrough
 // (`formatInvalidValueMessage`).
 
-const tempRoot = useLegacyTempWorkdir("supabase-sso-string-slice-int-");
+const tempRoot = useTempWorkdir("supabase-sso-string-slice-int-");
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacySsoCommand]),
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
+  Command.withSubcommands([ssoCommand]),
+  Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
 function setup() {
   const out = mockOutput({ format: "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: 200, body: {} },
   });
-  const runtime = buildLegacyTestRuntime({
+  const runtime = buildTestRuntime({
     out,
     api,
-    cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+    cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
     // Keep the file-based token fallback inside this test's isolated tempRoot
     // so a stray token at the shared default test home can't leak in.
     runtimeInfo: mockRuntimeInfo({ homeDir: tempRoot.current }),
@@ -74,7 +74,7 @@ function setup() {
   return { layer, api };
 }
 
-describe("legacy sso StringSlice flags (pflag CSV parity)", () => {
+describe("sso StringSlice flags (pflag CSV parity)", () => {
   const cases: ReadonlyArray<{
     readonly name: string;
     readonly args: ReadonlyArray<string>;
@@ -115,7 +115,7 @@ describe("legacy sso StringSlice flags (pflag CSV parity)", () => {
         if (Exit.isFailure(exit)) {
           // Parse-time failure: the command's Management API layer (and its
           // eager token resolution) must never have been built.
-          expect(JSON.stringify(exit.cause)).not.toContain("LegacyPlatformAuthRequiredError");
+          expect(JSON.stringify(exit.cause)).not.toContain("AccessTokenRequiredError");
           expect(normalizeCause(exit.cause).message).toBe(message);
         }
         expect(api.requests).toHaveLength(0);

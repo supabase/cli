@@ -6,13 +6,13 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
-import { mapLegacyHttpError } from "../../command-internal/legacy-http-errors.ts";
+import { mapHttpError } from "../../command-internal/http-errors.ts";
 
 /**
  * Transport-level failure talking to the Management API pgsodium endpoints.
  * Message format: `failed to <verb> pgsodium config: <err>`.
  */
-export class LegacyEncryptionNetworkError extends Data.TaggedError("LegacyEncryptionNetworkError")<{
+class EncryptionNetworkError extends Data.TaggedError("EncryptionNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -28,9 +28,7 @@ export class LegacyEncryptionNetworkError extends Data.TaggedError("LegacyEncryp
  * (only `JSON200` is accepted). Message format:
  * `unexpected <verb> pgsodium config status <code>: <body>`.
  */
-export class LegacyEncryptionUnexpectedStatusError extends Data.TaggedError(
-  "LegacyEncryptionUnexpectedStatusError",
-)<{
+class EncryptionUnexpectedStatusError extends Data.TaggedError("EncryptionUnexpectedStatusError")<{
   readonly status: number;
   readonly body: string;
   readonly message: string;
@@ -44,15 +42,15 @@ export class LegacyEncryptionUnexpectedStatusError extends Data.TaggedError(
  * Build the network/status error mapper for an encryption subcommand. Go uses
  * different verbs for the network vs status message of the same subcommand
  * (get: "retrieve"/"get"; update: "update"/"update"), so the factory takes
- * both and shares the dispatch + body-truncation policy from `mapLegacyHttpError`.
+ * both and shares the dispatch + body-truncation policy from `mapHttpError`.
  */
-export function mapLegacyEncryptionHttpError(verbs: {
+export function mapEncryptionHttpError(verbs: {
   readonly networkVerb: string; // "retrieve" | "update"
   readonly statusVerb: string; // "get" | "update"
 }) {
-  return mapLegacyHttpError({
-    networkError: LegacyEncryptionNetworkError,
-    statusError: LegacyEncryptionUnexpectedStatusError,
+  return mapHttpError({
+    networkError: EncryptionNetworkError,
+    statusError: EncryptionUnexpectedStatusError,
     networkMessage: (cause) => `failed to ${verbs.networkVerb} pgsodium config: ${cause}`,
     statusMessage: (status, body) =>
       `unexpected ${verbs.statusVerb} pgsodium config status ${status}: ${body}`,

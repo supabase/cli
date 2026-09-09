@@ -7,13 +7,13 @@
 
 ## Files Read
 
-| Path                                     | Format     | When                                                                                                         |
-| ---------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------ |
-| `<workdir>/supabase/config.json`         | JSON       | always when present — preferred over `config.toml`; each worker's runtime, size, exposure, instances, source |
-| `<workdir>/supabase/config.toml`         | TOML       | always when no `config.json` exists — the same worker fields                                                 |
-| `<worker source>/**`                     | any        | always — packaged into the build context                                                                     |
-| `<SUPABASE_HOME or ~/.supabase>/profile` | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`         |
-| `<SUPABASE_PROFILE>` (YAML)              | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command  |
+| Path                                     | Format     | When                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.json`         | JSON       | always when present — preferred over `config.toml`; each worker's runtime, size, exposure, instances, source. An explicit `--workdir`/`SUPABASE_WORKDIR` is read exactly as given, with no ancestor search; with a DEFAULTED workdir the loader may resolve an ancestor project's `config.json` from a subdirectory (CLI-2285), and the resolved worker `source` below resolves against that SAME ancestor root |
+| `<workdir>/supabase/config.toml`         | TOML       | always when no `config.json` exists — the same worker fields, with the same explicit-vs-default workdir rule                                                                                                                                                                                                                                                                                                    |
+| `<worker source>/**`                     | any        | always — packaged into the build context                                                                                                                                                                                                                                                                                                                                                                        |
+| `<SUPABASE_HOME or ~/.supabase>/profile` | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`                                                                                                                                                                                                                                                                                                            |
+| `<SUPABASE_PROFILE>` (YAML)              | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command                                                                                                                                                                                                                                                                                                     |
 
 ## Files Written
 
@@ -54,12 +54,12 @@ run reports the accepted spec the deploy response returned.
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)  |
-| `SUPABASE_WORKDIR`      | project directory the command acts on                | no (falls back to `--workdir`, then the ancestor walk)  |
-| `SUPABASE_HOME`         | directory holding `telemetry.json`                   | no (falls back to `~/.supabase`)                        |
+| Variable                | Purpose                                              | Required?                                                                                                                                                                                                                             |
+| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`)                                                                                                                                                                               |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)                                                                                                                                                                                |
+| `SUPABASE_WORKDIR`      | project directory the command acts on                | no (falls back to `--workdir`, then the ancestor walk) — read exactly as given when SET (flag or env), with **no ancestor search**; a DEFAULTED workdir may still resolve an ancestor project's config from a subdirectory (CLI-2285) |
+| `SUPABASE_HOME`         | directory holding `telemetry.json`                   | no (falls back to `~/.supabase`)                                                                                                                                                                                                      |
 
 ## Telemetry Events Fired
 
@@ -82,7 +82,7 @@ follow-up hint (`workers status`) is emitted as a success trailer: stderr,
 once, at the end of the run rather than between workers. **Text output
 only** — like the rest of the human deploy report it sits behind
 `output.format === "text"` and the `-o` check, so `--output-format json`,
-`stream-json` and every legacy `-o` mode emit no hint. Machine callers read
+`stream-json` and every `-o` mode emit no hint. Machine callers read
 `build_state` from the payload instead. The hint carries an explicit
 `--project-ref` when the flag supplied one, since it is copy-pasted verbatim.
 
@@ -109,5 +109,5 @@ while `build_state` is `building`. The deploy response may carry an
 it is serving now — and that is the previous build's, not this one's.
 
 The presigned `PUT` above is the one request whose URL is itself a credential.
-`--debug` logs every request URL, so `legacyHttpClientLayer` redacts query
+`--debug` logs every request URL, so `httpClientLayer` redacts query
 strings that carry a signature.

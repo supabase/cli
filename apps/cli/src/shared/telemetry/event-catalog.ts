@@ -1,5 +1,5 @@
 // CLI telemetry catalog. Mirrors apps/cli-go/internal/telemetry/events.go
-// 1:1 so legacy/ ports send byte-identical PostHog payloads. When the Go
+// 1:1 so ported commands send byte-identical PostHog payloads. When the Go
 // catalog changes, update this file in the same PR. The failure-classification
 // properties below (error_kind … workflow) are TS-only: the native shells
 // classify failures (CLI-1561) and the Go binary never emits these fields, so

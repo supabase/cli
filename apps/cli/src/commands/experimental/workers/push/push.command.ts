@@ -2,9 +2,9 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { WORKER_EXPOSURES } from "../../../../shared/workers/worker-runtimes.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyWorkersPush } from "./push.handler.ts";
+import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { workersPush } from "./push.handler.ts";
 
 const config = {
   names: Argument.string("name").pipe(
@@ -54,9 +54,9 @@ const config = {
   ),
 } as const;
 
-export type LegacyWorkersPushFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type WorkersPushFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyWorkersPushCommand = Command.make("push", config).pipe(
+export const workersPushCommand = Command.make("push", config).pipe(
   Command.withAlias("deploy"),
   Command.withDescription(
     "Build and deploy workers into the linked Supabase project. Reads each worker's runtime, size, exposure and source directory from supabase/config.toml.",
@@ -85,10 +85,7 @@ export const legacyWorkersPushCommand = Command.make("push", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyWorkersPush(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, config }),
-      withJsonErrorHandling,
-    ),
+    workersPush(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["experimental", "workers", "push"])),
+  Command.provide(managementApiRuntimeLayer(["experimental", "workers", "push"])),
 );

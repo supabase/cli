@@ -2,9 +2,9 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyDbReset } from "./reset.handler.ts";
-import { legacyDbResetRuntimeLayer } from "./reset.layers.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { dbReset } from "./reset.handler.ts";
+import { dbResetRuntimeLayer } from "./reset.layers.ts";
 
 const noSqlPaths: ReadonlyArray<string> = [];
 
@@ -49,14 +49,14 @@ const config = {
   ),
 } as const;
 
-export type LegacyDbResetFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DbResetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDbResetCommand = Command.make("reset", config).pipe(
+export const dbResetCommand = Command.make("reset", config).pipe(
   Command.withDescription("Resets the local database to current migrations."),
   Command.withShortDescription("Resets the local database to current migrations"),
   Command.withHandler((flags) =>
-    legacyDbReset(flags).pipe(
-      withLegacyCommandInstrumentation({
+    dbReset(flags).pipe(
+      withCommandTelemetry({
         flags: {
           "db-url": flags.dbUrl,
           linked: flags.linked,
@@ -76,5 +76,5 @@ export const legacyDbResetCommand = Command.make("reset", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyDbResetRuntimeLayer),
+  Command.provide(dbResetRuntimeLayer),
 );

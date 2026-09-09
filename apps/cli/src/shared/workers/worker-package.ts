@@ -91,7 +91,7 @@ const collectEntries = (
 
       // `readLink` succeeds only for symlinks, so it stands in for the `lstat`
       // this FileSystem service does not expose (the same probe
-      // `legacy-sql-files-glob.ts` uses). Storing the link rather than following
+      // `sql-files-glob.ts` uses). Storing the link rather than following
       // it is what keeps a pnpm-installed `node_modules` from being inlined file
       // by file, keeps a broken link from vanishing, and stops a link pointing at
       // an ancestor from being walked into.

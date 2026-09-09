@@ -21,17 +21,17 @@ One piece of the old Go CLI's `start` remains explicitly **out of scope**:
    an "update available" hint. Omitted entirely — this port has zero Management API
    dependency for `start`, by design.
 
-### Fresh-volume DB setup (`legacyStartSetupLocalDatabase`)
+### Fresh-volume DB setup (`startSetupLocalDatabase`)
 
 Runs the initial schema/migrations/seed pipeline. Gated on
-`isFreshVolume` (`legacyVolumeExists` on the Postgres volume, checked BEFORE the
+`isFreshVolume` (`volumeExists` on the Postgres volume, checked BEFORE the
 volume is created) — this same check also selects which of
 `Starting database...`/`Starting database from backup...` prints to stderr immediately
 before Postgres's container is created. Runs immediately
 after Postgres's own health check passes, before "Starting containers..." prints and
-before any other service starts. Opens a direct `LegacyDbConnection` session to the
+before any other service starts. Opens a direct `DbConnection` session to the
 host-facing Postgres address (PG<=14: execs schema/globals/API-privileges SQL over that
-session; PG>=15: runs three one-shot `LegacyDockerRun` jobs instead, gated independently on
+session; PG>=15: runs three one-shot `DockerRun` jobs instead, gated independently on
 `realtime.enabled`/`storage.enabled`/`auth.enabled`; the realtime one-shot
 runs so user migrations see the tenant before long-running containers boot).
 Also upserts `[db.vault]` secrets and
@@ -43,23 +43,23 @@ enabled` is false, in which case `db.migrations.schema_paths` files are applied 
 `migrations/*.sql`; seed still runs either way.
 A failure at any step rolls back the whole `start` run (same as any other bring-up failure).
 
-`legacyStartInitCurrentBranch` (writes `supabase/.branches/_current_branch` = `"main"` if
+`startInitCurrentBranch` (writes `supabase/.branches/_current_branch` = `"main"` if
 absent) is NOT part of this fresh-volume-gated pipeline — it runs unconditionally on every
 `start`, immediately after this pipeline's gate closes (whether or not the pipeline itself
 ran).
 
-### Edge Runtime bring-up (`legacyStartEdgeRuntimeContainer`)
+### Edge Runtime bring-up (`startStackEdgeRuntimeContainer`)
 
 Reuses `shared/functions/serve.ts`'s `startEdgeRuntimeContainer` core (the same one
 `functions serve` uses). Gated on `edge_runtime.enabled && !--exclude edge-runtime`,
 started between ImgProxy and pg-meta in the container-start sequence. Its own
 `docker create` → `docker cp` (the bundled main-service template, streamed as a stdin
 tar archive) → `docker start` sequence is assembled by that shared core, not by
-`legacyCreateContainer` like every other service, and it is
+`createContainer` like every other service, and it is
 health-checked via an HTTP probe through Kong (`/functions/v1/_internal/health`), not a
 Docker healthcheck — mirroring PostgREST's own probe shape.
 
-### Storage bucket seeding (`legacySeedBucketsRun`)
+### Storage bucket seeding (`seedBucketsRun`)
 
 Runs only when `isFreshVolume && Storage started`, after the bulk
 health check genuinely succeeds, right before the `cli_stack_started` telemetry capture. A
@@ -82,7 +82,7 @@ command.
 | project-root / `SUPABASE_ENV`-selected dotenv file                                              | dotenv | always, same precedence chain as `stop`/`status`                                                                                                                                                                                                                                                                               |
 | `auth.signing_keys_path` file                                                                   | JSON   | when configured                                                                                                                                                                                                                                                                                                                |
 | `api.tls.cert_path` / `api.tls.key_path`                                                        | PEM    | when `api.tls.enabled`                                                                                                                                                                                                                                                                                                         |
-| `auth.email.template.*` / `auth.email.notification.*` content files                             | text   | when configured                                                                                                                                                                                                                                                                                                                |
+| `auth.email.template.*` / `auth.email.notification.*` content files                             | text   | when configured — for every configured template plus every ENABLED notification, resolved paths are CONFINED to the project root (symlinks dereferenced with `realpathSync`) and read-verified (bytes discarded) in an eager pre-Docker pass, REGARDLESS of `auth.enabled` (Kong mounts these unconditionally — see Notes)     |
 | GCP JWT credentials file                                                                        | JSON   | when `analytics.backend = "bigquery"`                                                                                                                                                                                                                                                                                          |
 | `<workdir>/supabase/roles.sql`                                                                  | SQL    | on a fresh volume (custom-roles seed) — the "Seeding globals..." message always prints first; the file itself is only read if it exists, tolerating a missing file                                                                                                                                                             |
 | `<workdir>/supabase/migrations/*.sql`, `supabase/seed.sql`                                      | SQL    | on a fresh volume, via the standard migration-apply + seed pipeline                                                                                                                                                                                                                                                            |
@@ -110,7 +110,7 @@ probes (`pg_isready` / `node`). Slim analytics keeps the docker.io start spec
 (`./logflare` migrate/start wrapper and BigQuery bind at
 `/opt/app/rel/logflare/bin/gcloud.json`) but its HEALTHCHECK — like slim auth,
 storage, Vector, realtime, and pooler — uses BusyBox `wget -q --spider`
-(`legacySlimWgetHealthcheck`; realtime also `--header Host:realtime-dev`).
+(`slimWgetHealthcheck`; realtime also `--header Host:realtime-dev`).
 Vector still writes `vector.yaml` via the Logflare-wait `sh` heredoc; when slim,
 that wait is `wget -q -T 2 --spider` (flag-off stays `--no-verbose --tries=1
 --spider`). Storage always emits both `ENABLE_IMAGE_TRANSFORMATION` and
@@ -120,12 +120,12 @@ Kong's `kong.yml`/TLS cert/TLS key, Postgres's `pgsodium_root.key`, and Supaviso
 key, TLS private key material, and the DB password respectively). Since
 supabase/cli#6022 these have been delivered via `docker cp` straight into the created
 (not yet started) container, never as host bind mounts. As of supabase/cli#6201,
-`legacyCopyStartSecretFilesIntoContainer` also avoids plaintext host files by packing all
+`copyStartSecretFilesIntoContainer` also avoids plaintext host files by packing all
 of one container's entries into one in-memory tar archive (mode `0644` — world-readable,
 since Kong (uid 100) and Postgres's post-privilege-drop `postgres` user read them back as
 non-root) and streams it through `docker cp - <id>:/`, extracting every entry at the exact path its
 container's entrypoint/`Cmd` expects — see `container-lifecycle.ts`'s
-`legacyCopyStartSecretFilesIntoContainer` doc comment for the full rationale
+`copyStartSecretFilesIntoContainer` doc comment for the full rationale
 (CWE-214/522: keeping secret content out of the `docker create`/`docker cp` argv the
 host can see via `ps`/`/proc/<pid>/cmdline`; and why `docker cp`, unlike a bind mount,
 works identically against a remote `DOCKER_HOST`/Docker-context daemon). Nothing from
@@ -143,7 +143,7 @@ containerName>/{env,multiline-env}/` (directory mode `0700`, files mode `0600`) 
 env file is read client-side by `--env-file`, the multiline-env directory is
 bind-mounted `:ro,Z` into the container — a deterministic, persistent path rather than
 `os.tmpdir()` (which is frequently tmpfs and gets wiped on reboot) so
-`legacyCleanupStartSecrets` (see the Exit Codes/rollback section below) can reclaim
+`cleanupStartSecrets` (see the Exit Codes/rollback section below) can reclaim
 them on `stop` or a failed-start rollback. Each writer removes and
 recreates its own subdirectory fresh on every call (self-healing), so a
 shrinking env set never leaves stale files behind. The bootstrap `index.ts` template
@@ -177,7 +177,7 @@ not implemented.
 | `SUPABASE_EXPERIMENTAL` (or `--experimental`)                                                                        | Fresh volume + no pg-delta: applies `db.migrations.schema_paths` files instead of `migrations/*.sql` (see "Fresh-volume DB setup" above)                                                                                                                                                                                                                                                                                                                                                                                    | no        |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                                                   | Overrides the image registry used to resolve every service's image                                                                                                                                                                                                                                                                                                                                                                                                                                                          | no        |
 | `SUPABASE_PROJECT_ID`                                                                                                | Overrides the resolved local project id (env → config.toml → workdir basename)                                                                                                                                                                                                                                                                                                                                                                                                                                              | no        |
-| `SUPABASE_WORKDIR`                                                                                                   | Resolves `LegacyCliSettings.workdir`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | no        |
+| `SUPABASE_WORKDIR`                                                                                                   | Resolves `CommandSettings.workdir`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | no        |
 | `BITBUCKET_CLONE_DIR`                                                                                                | When non-empty, drops named volumes and `--security-opt` from every container create                                                                                                                                                                                                                                                                                                                                                                                                                                        | no        |
 | `DOCKER_HOST` / `DOCKER_CONTEXT` / `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` / `DOCKER_API_VERSION` / `DOCKER_CONFIG` | Read (ambient shell OR a project `.env`/`.env.<env>`/`.env.local` file) to discover the Docker daemon this whole command talks to; `DOCKER_HOST` is also re-derived and set on Vector's container env so it can reach the host's Docker socket for log collection                                                                                                                                                                                                                                                           | no        |
 | `KONG_NGINX_WORKER_PROCESSES`                                                                                        | Read (ambient shell or project dotenv) into Kong's own container env (defaults to `"1"` when unset)                                                                                                                                                                                                                                                                                                                                                                                                                         | no        |
@@ -199,7 +199,7 @@ code is surfaced on failure.
 | `0`  | `--ignore-health-check` set and one or more containers timed out — the failure is printed and swallowed, no rollback                                                                                                                                                                                                                                                   |
 | `1`  | `--ignore-health-check` set, the fresh-volume/Storage-healthy recheck-and-seed path ran (see "Storage bucket seeding"), and that seed itself failed — rolls back despite the flag                                                                                                                                                                                      |
 | `1`  | malformed CSV in an `--exclude`/`-x` value — fails during flag parsing, before the handler and telemetry, with the exact diagnostic text on stderr; the shorthand frames it with both spellings (e.g. `invalid argument "a\"b" for "-x, --exclude" flag: parse error on line 1, column 2: bare " in non-quoted-field`; a blank-only value fails with `EOF`) — CLI-2005 |
-| `1`  | malformed `config.toml` / `Config.Validate` failure                                                                                                                                                                                                                                                                                                                    |
+| `1`  | malformed `config.toml` / `Config.Validate` failure, including an `auth.email.*.content_path` that resolves outside the project root, or that resolves in-root but is missing/unreadable (checked eagerly, before any Docker work, regardless of `auth.enabled` — see Notes)                                                                                           |
 | `1`  | stopped Postgres detected but the project id sanitizes to empty — aborts before recovery removes any containers                                                                                                                                                                                                                                                        |
 | `1`  | `docker`/`podman` not spawnable, or the daemon is unreachable                                                                                                                                                                                                                                                                                                          |
 | `1`  | stopped-stack recovery cannot list, stop, or prune current-project containers, or prune matching networks — aborts before startup; named volumes are preserved                                                                                                                                                                                                         |
@@ -211,16 +211,16 @@ code is surfaced on failure.
 | `1`  | fresh-volume DB setup failure (schema SQL / one-shot migrate job / vault upsert / roles seed / migration-apply) — rolls back                                                                                                                                                                                                                                           |
 | `1`  | fresh-volume bucket-seeding failure — rolls back                                                                                                                                                                                                                                                                                                                       |
 
-Rollback (`legacyRollbackStart`) tears down everything created so far by Docker label,
+Rollback (`rollbackStart`) tears down everything created so far by Docker label,
 and never masks the original failure — a rollback error
 is logged to stderr and swallowed. `deleteVolumes` is
 `true` only when this run's Postgres volume was freshly created (so a failed
 first-ever `start` prunes its own empty volume too), `false` otherwise (never touches a
 pre-existing user's data on a failed restart). Rollback also reclaims this run's own
 `<workdir>/supabase/.temp/start-secrets/<containerName>` directories (via
-`legacyCleanupStartSecrets`, `command-internal/legacy-start-secrets-cleanup.ts`) once
+`cleanupStartSecrets`, `command-internal/start-secrets-cleanup.ts`) once
 teardown is CONFIRMED complete — the matching containers come from
-`legacyDockerRemoveAll`'s `onContainersRemoved` hook, which fires only once `docker
+`dockerRemoveAll`'s `onContainersRemoved` hook, which fires only once `docker
 container prune` has actually removed them (not at the initial listing), so cleanup only
 ever targets containers this failed run itself created AND actually tore down. Each
 container's directory is located via its own `com.supabase.cli.workdir` label (stamped on
@@ -236,7 +236,7 @@ teardown — see `stop`'s own `SIDE_EFFECTS.md`.
 
 | Event                  | When                                                                                                                                                              | Notable properties / groups         |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via `withLegacyCommandInstrumentation`)                                                                                             | `exit_code`, `duration_ms`, `flags` |
+| `cli_command_executed` | post-run, success or failure (via `withCommandTelemetry`)                                                                                                         | `exit_code`, `duration_ms`, `flags` |
 | `cli_stack_started`    | once, only on a genuine bulk health-check success — never fires on an `--ignore-health-check` downgrade-to-warning path, Postgres's own or the later bulk check's | no properties                       |
 
 ## Output
@@ -320,7 +320,7 @@ prose, not structured data.
   security notice, and exited 0 even though no container ever started. That was an
   unintended quirk of a shape-based check, and it is deliberately NOT reproduced here —
   enforced by control flow, not by a classifier: unlike a single outer check on the whole
-  run result, this port consults `legacyIsUnhealthyStartError` (`start.rollback.ts`) only
+  run result, this port consults `isUnhealthyStartError` (`start.rollback.ts`) only
   inside its two health-wait failure branches, and the image pre-pull runs before
   bring-up, so its failure propagates out without ever reaching a downgrade branch. The
   same scenario exits 1 with no success banner and no status table, flag or no flag.
@@ -347,7 +347,8 @@ prose, not structured data.
   (nothing under its own directory anymore); it still matters for a removed Edge Runtime
   container, whose own env-file/multiline-env-script staging is
   unaffected by that change.
-- Existing local values declared under a Function import map's `scopes` are mounted read-only into Edge Runtime, and into the Studio container that shares the same resolved Function bind mounts, even when they resolve outside the nearest Git root. The mounted target itself is bound as declared; imports reached from inside an out-of-root target are not additionally bound. Edge Runtime bring-up prints a `WARN` naming each distinct out-of-root host path once; Studio's bind resolution stays silent, so with Edge Runtime excluded (`-x edge-runtime`) the mounts still reach Studio and no warning is printed. Missing targets retain Edge Runtime startup's existing skip behavior.
+- Existing local values declared under a Function import map's `scopes` are mounted read-only into Edge Runtime, and into the Studio container that shares the same resolved Function bind mounts, even when they resolve outside the nearest Git root. The Edge Runtime container additionally prunes its aggregated bind list before `docker create` — a bind already supplied verbatim by a same-mode parent bind is dropped so the bootstrap `docker cp` never sees a file bind nested inside a read-only parent (supabase/supabase#50088) — while Studio keeps the full unpruned set (its bring-up performs no `docker cp`). The mounted target itself is bound as declared; imports reached from inside an out-of-root target are not additionally bound. Edge Runtime bring-up prints a `WARN` naming each distinct out-of-root host path once; Studio's bind resolution stays silent, so with Edge Runtime excluded (`-x edge-runtime`) the mounts still reach Studio and no warning is printed. Missing targets retain Edge Runtime startup's existing skip behavior. This is NOT the same permissiveness as email template `content_path` below — a `scopes` value is an explicit opt-in mechanism, mounted `:ro`, with containment enforced on the upload side elsewhere (`functions deploy`), whereas `content_path` has no opt-in at all and is enforced at resolution time, mounted `:rw`.
+- **Auth email `content_path` project-root containment AND readability apply here regardless of `auth.enabled`.** Kong's mount set (`resolveKongEmailTemplateMounts`, `start.handler.ts`) covers every configured `[auth.email.template.*]` entry, and every `enabled = true` `[auth.email.notification.*]` entry, unconditionally — Kong is the stack's mandatory gateway, independent of whether GoTrue itself is started. `start.handler.ts` resolves, confines (`resolveEmailTemplateContentPath`; symlinks dereferenced with `realpathSync` before the check), AND read-verifies (a discarded `readFileSync`) that same set in one eager pass before any Docker work, in addition to the `auth.enabled`-gated read `resolveLocalConfigValues`'s own validation performs; the resulting resolved path is threaded straight into Kong's bind mount (`buildKongEmailTemplateBind` in `kong.service.ts`, which no longer re-resolves anything) rather than re-derived later, right before Kong's own `docker create`. A path that resolves outside the project root aborts the run with `Invalid config for auth.email.<section>.<name>.content_path: resolves outside the project root (<resolved path>)`; a resolved, in-root path that cannot be read as a regular file aborts with `Invalid config for auth.email.<section>.<name>.content_path: <read error>` — both before a single container is created, and both regardless of `auth.enabled` (closing the gap where a missing `content_path` would otherwise reach an unconditional Kong bind mount and the root-privileged Docker daemon would silently create a directory there).
 - Docker status `created` is not considered a recoverable stopped stack: the container and
   named volume are preserved because the volume may not have completed its first database
   initialization, and `start` reports the existing not-running status instead.

@@ -29,21 +29,21 @@
 //   subcommand/argument flags, validated while `Command.runWith` parses the
 //   command tree.
 // - `normalize-error.ts` formats errors from `GlobalFlag.setting` flags
-//   (`--output-format`, and the legacy `--output`/`-o`, `--dns-resolver`,
+//   (`--output-format`, and the `--output`/`-o`, `--dns-resolver`,
 //   `--agent`), which `Command.runWith` validates in a later step that runs
 //   *outside* the `ShowHelp` path and therefore never reaches the
 //   formatter — it surfaces as a raw failure through `runCli`'s catch-all
 //   instead.
 const EXPECTED_PREFIX = "Expected ";
 
-// Go-parity passthrough (CLI-1983, CLI-1990): legacy flags that byte-match Go
-// pflag's parse-time diagnostics (`legacyStringSliceFlag`'s malformed-CSV
+// Go-parity passthrough (CLI-1983, CLI-1990): flags that byte-match Go
+// pflag's parse-time diagnostics (`stringSliceFlag`'s malformed-CSV
 // failure, `migration down --last`, and `storage cp --jobs` via
 // `Flag.mapTryCatch`) fail with the COMPLETE Go message as `expected` —
 // pflag's `invalid argument %q for %q flag: %v` (pflag v1.0.10
 // `errors.go:116`). Wrapping that in `CliError.InvalidValue`'s own
 // `Invalid value for flag --X: "V". Expected: ...` template would
-// double-frame it and break the legacy shell's stderr contract (byte-parity
+// double-frame it and break the CLI's stderr contract (byte-parity
 // with the Go CLI), so render it verbatim instead.
 const PFLAG_INVALID_ARGUMENT_PREFIX = "invalid argument ";
 

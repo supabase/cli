@@ -1,10 +1,10 @@
 import {
-  legacyInspectBacktickStmt,
-  legacyInspectInt,
-  legacyInspectStmt,
-  legacyInspectText,
-  type LegacyInspectQuerySpec,
-} from "../legacy-inspect-query.ts";
+  inspectBacktickStmt,
+  inspectInt,
+  inspectStmt,
+  inspectText,
+  type InspectQuerySpec,
+} from "../inspect-query.ts";
 
 const SQL = `SELECT
   bl.pid AS blocked_pid,
@@ -28,7 +28,7 @@ WHERE NOT bl.granted`;
  * backtick-wraps every column EXCEPT `blocked_statement` (col 5), so
  * `blocking_statement` (col 2) uses the backtick variant and col 5 stays bare.
  */
-export const legacyBlockingSpec: LegacyInspectQuerySpec = {
+export const blockingSpec: InspectQuerySpec = {
   name: "blocking",
   sql: SQL,
   params: () => [],
@@ -41,11 +41,11 @@ export const legacyBlockingSpec: LegacyInspectQuerySpec = {
     "blocked duration",
   ],
   project: (row) => [
-    legacyInspectInt(row["blocked_pid"]),
-    legacyInspectBacktickStmt(row["blocking_statement"]),
-    legacyInspectText(row["blocking_duration"]),
-    legacyInspectInt(row["blocking_pid"]),
-    legacyInspectStmt(row["blocked_statement"]),
-    legacyInspectText(row["blocked_duration"]),
+    inspectInt(row["blocked_pid"]),
+    inspectBacktickStmt(row["blocking_statement"]),
+    inspectText(row["blocking_duration"]),
+    inspectInt(row["blocking_pid"]),
+    inspectStmt(row["blocked_statement"]),
+    inspectText(row["blocked_duration"]),
   ],
 };

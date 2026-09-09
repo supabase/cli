@@ -1,6 +1,6 @@
 module github.com/supabase/cli
 
-go 1.26
+go 1.26.0
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -35,7 +35,7 @@ require (
 	github.com/muesli/reflow v0.3.0
 	github.com/oapi-codegen/nullable v1.2.0
 	github.com/olekukonko/tablewriter v1.1.4
-	github.com/posthog/posthog-go v1.24.3
+	github.com/posthog/posthog-go v1.24.4
 	github.com/spf13/afero v1.15.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
@@ -45,9 +45,9 @@ require (
 	github.com/supabase/cli/pkg v1.0.0
 	github.com/zalando/go-keyring v0.2.8
 	go.opentelemetry.io/otel v1.46.0
-	golang.org/x/mod v0.40.0
+	golang.org/x/mod v0.41.0
 	golang.org/x/net v0.58.0
-	golang.org/x/oauth2 v0.36.0
+	golang.org/x/oauth2 v0.37.0
 	golang.org/x/term v0.45.0
 	google.golang.org/grpc v1.83.2
 	gopkg.in/yaml.v3 v3.0.1

@@ -1,28 +1,28 @@
-import { legacySchemaToCsvField } from "../../../../command-internal/legacy-schema-flags.ts";
+import { schemaToCsvField } from "../../../../command-internal/schema-flags.ts";
 import {
-  legacyDeclaredSqlExtensions,
-  legacyMaskSqlComments,
-} from "../../shared/legacy-pgdelta-declarative-shadow-prep.ts";
-import type { LegacyPgDeltaRemovalSummary } from "../../shared/legacy-pgdelta-engine.service.ts";
+  declaredSqlExtensions,
+  maskSqlComments,
+} from "../../shared/pgdelta-declarative-shadow-prep.ts";
+import type { PgDeltaRemovalSummary } from "../../shared/pgdelta-engine.service.ts";
 
 /** Extensions that legacy pg-delta treated as part of its implicit Supabase baseline. */
-const LEGACY_IMPLICIT_EXTENSIONS = ["pg_net", "pgcrypto", "uuid-ossp"] as const;
+const IMPLICIT_EXTENSIONS = ["pg_net", "pgcrypto", "uuid-ossp"] as const;
 
-export type LegacyDeclarativeImplicitExtension = (typeof LEGACY_IMPLICIT_EXTENSIONS)[number];
+type DeclarativeImplicitExtension = (typeof IMPLICIT_EXTENSIONS)[number];
 
-export interface LegacyDeclarativeLoadDiagnostic {
+export interface DeclarativeLoadDiagnostic {
   readonly code: string;
   readonly severity: string;
   readonly message: string;
 }
 
-export interface LegacyDeclarativeSqlFile {
+export interface DeclarativeSqlFile {
   readonly name: string;
   readonly sql: string;
 }
 
-export interface LegacyDeclarativeLoadCompatibilityFinding {
-  readonly extension: LegacyDeclarativeImplicitExtension;
+export interface DeclarativeLoadCompatibilityFinding {
+  readonly extension: DeclarativeImplicitExtension;
   /** Normalized routine or extension signature matched in the load diagnostic. */
   readonly signature: string;
   readonly diagnosticMessage: string;
@@ -30,13 +30,13 @@ export interface LegacyDeclarativeLoadCompatibilityFinding {
   readonly line?: number;
 }
 
-type LegacyDeclarativeCompatibilityAction = "none" | "repair-extensions" | "stage-next-export";
+type DeclarativeCompatibilityAction = "none" | "repair-extensions" | "stage-next-export";
 
-export interface LegacyDeclarativeCompatibilityGap {
+export interface DeclarativeCompatibilityGap {
   readonly repairableExtensions: ReadonlyArray<string>;
-  readonly extensionIntents: LegacyPgDeltaRemovalSummary["extensionIntents"];
+  readonly extensionIntents: PgDeltaRemovalSummary["extensionIntents"];
   readonly ambiguousRemovals: ReadonlyArray<string>;
-  readonly recommendedAction: LegacyDeclarativeCompatibilityAction;
+  readonly recommendedAction: DeclarativeCompatibilityAction;
 }
 
 /**
@@ -45,19 +45,19 @@ export interface LegacyDeclarativeCompatibilityGap {
  * Effect/services so handler decisions remain unit-testable.
  */
 
-export function legacyResolveDeclarativeMigrationName(name: string, file: string): string {
+export function resolveDeclarativeMigrationName(name: string, file: string): string {
   return name.length > 0 ? name : file;
 }
 
 /** Whether sync applies the generated migration, prompts, or skips. */
-export type LegacyDeclarativeApplyDecision = "apply" | "skip" | "prompt";
+export type DeclarativeApplyDecision = "apply" | "skip" | "prompt";
 
-export function legacyResolveDeclarativeSyncApplyDecision(opts: {
+export function resolveDeclarativeSyncApplyDecision(opts: {
   readonly apply: boolean;
   readonly noApply: boolean;
   readonly yes: boolean;
   readonly tty: boolean;
-}): LegacyDeclarativeApplyDecision {
+}): DeclarativeApplyDecision {
   if (opts.noApply) return "skip";
   if (opts.apply) return "apply";
   if (opts.yes) return "apply";
@@ -65,7 +65,7 @@ export function legacyResolveDeclarativeSyncApplyDecision(opts: {
   return "skip";
 }
 
-const emptyCompatibilityGap = (): LegacyDeclarativeCompatibilityGap => ({
+const emptyCompatibilityGap = (): DeclarativeCompatibilityGap => ({
   repairableExtensions: [],
   extensionIntents: [],
   ambiguousRemovals: [],
@@ -73,18 +73,18 @@ const emptyCompatibilityGap = (): LegacyDeclarativeCompatibilityGap => ({
 });
 
 /** Classifies manifest-less pg-delta removals without performing any I/O. */
-export function legacyClassifyDeclarativeCompatibilityGap(opts: {
+export function classifyDeclarativeCompatibilityGap(opts: {
   readonly manifestPresent: boolean;
-  readonly removals: LegacyPgDeltaRemovalSummary;
-}): LegacyDeclarativeCompatibilityGap {
+  readonly removals: PgDeltaRemovalSummary;
+}): DeclarativeCompatibilityGap {
   if (opts.manifestPresent) return emptyCompatibilityGap();
 
   const extensions = [...new Set(opts.removals.extensions)].sort();
   const repairableExtensions = extensions.filter((extension) =>
-    LEGACY_IMPLICIT_EXTENSIONS.some((implicit) => implicit === extension),
+    IMPLICIT_EXTENSIONS.some((implicit) => implicit === extension),
   );
   const ambiguousRemovals = extensions.filter(
-    (extension) => !LEGACY_IMPLICIT_EXTENSIONS.some((implicit) => implicit === extension),
+    (extension) => !IMPLICIT_EXTENSIONS.some((implicit) => implicit === extension),
   );
   // Removing a pg_cron job or pgmq queue declaration is an ordinary delete or
   // rename on a maintained tree, not legacy-export evidence: only a dropped
@@ -104,15 +104,15 @@ export function legacyClassifyDeclarativeCompatibilityGap(opts: {
   };
 }
 
-interface LegacyImplicitExtensionMatch {
-  readonly extension: LegacyDeclarativeImplicitExtension;
+interface ImplicitExtensionMatch {
+  readonly extension: DeclarativeImplicitExtension;
   readonly signature: string;
   readonly sourcePattern: RegExp;
 }
 
 const nonConvergingLoadDiagnosticCodes = new Set(["stuck_statement", "max_rounds_exceeded"]);
 
-function matchImplicitExtension(message: string): LegacyImplicitExtensionMatch | undefined {
+function matchImplicitExtension(message: string): ImplicitExtensionMatch | undefined {
   const uuidRoutine = message.match(
     /\bfunction\s+extensions\.(uuid_generate_v[a-zA-Z0-9_]*)\s*\([^)]*\)\s+does not exist\b/i,
   );
@@ -153,7 +153,7 @@ function matchImplicitExtension(message: string): LegacyImplicitExtensionMatch |
     /\bextension\s+"(pg_net|pgcrypto|uuid-ossp)"\s+does not exist\b/i,
   )?.[1];
   if (missingExtension === undefined) return undefined;
-  const extension = LEGACY_IMPLICIT_EXTENSIONS.find(
+  const extension = IMPLICIT_EXTENSIONS.find(
     (implicit) => implicit === missingExtension.toLowerCase(),
   );
   if (extension === undefined) return undefined;
@@ -164,31 +164,27 @@ function matchImplicitExtension(message: string): LegacyImplicitExtensionMatch |
   };
 }
 
-export function legacyDeclaredExtensions(
-  files: readonly LegacyDeclarativeSqlFile[],
-): ReadonlySet<string> {
-  return legacyDeclaredSqlExtensions(files);
+export function declaredExtensions(files: readonly DeclarativeSqlFile[]): ReadonlySet<string> {
+  return declaredSqlExtensions(files);
 }
 
 function declaredImplicitExtensions(
-  files: readonly LegacyDeclarativeSqlFile[],
-): ReadonlySet<LegacyDeclarativeImplicitExtension> {
-  const declaredNames = legacyDeclaredExtensions(files);
-  const declared = new Set(
-    LEGACY_IMPLICIT_EXTENSIONS.filter((extension) => declaredNames.has(extension)),
-  );
+  files: readonly DeclarativeSqlFile[],
+): ReadonlySet<DeclarativeImplicitExtension> {
+  const declaredNames = declaredExtensions(files);
+  const declared = new Set(IMPLICIT_EXTENSIONS.filter((extension) => declaredNames.has(extension)));
   return declared;
 }
 
 function locateSignature(
-  files: readonly LegacyDeclarativeSqlFile[],
+  files: readonly DeclarativeSqlFile[],
   diagnosticMessage: string,
   pattern: RegExp,
-): Pick<LegacyDeclarativeLoadCompatibilityFinding, "file" | "line"> {
+): Pick<DeclarativeLoadCompatibilityFinding, "file" | "line"> {
   const diagnosticFile = files.find((file) => diagnosticMessage.startsWith(`${file.name}:`));
   const candidates = diagnosticFile === undefined ? files : [diagnosticFile];
   for (const file of candidates) {
-    const match = pattern.exec(legacyMaskSqlComments(file.sql));
+    const match = pattern.exec(maskSqlComments(file.sql));
     if (match?.index === undefined) continue;
     return {
       file: file.name,
@@ -202,15 +198,15 @@ function locateSignature(
  * Classifies known legacy implicit-extension misses that prevent a manifestless
  * declarative tree from loading on pg-delta's isolated desired shadow.
  */
-export function legacyClassifyDeclarativeLoadCompatibility(opts: {
+export function classifyDeclarativeLoadCompatibility(opts: {
   readonly manifestPresent: boolean;
-  readonly diagnostics: readonly LegacyDeclarativeLoadDiagnostic[];
-  readonly files: readonly LegacyDeclarativeSqlFile[];
-}): ReadonlyArray<LegacyDeclarativeLoadCompatibilityFinding> {
+  readonly diagnostics: readonly DeclarativeLoadDiagnostic[];
+  readonly files: readonly DeclarativeSqlFile[];
+}): ReadonlyArray<DeclarativeLoadCompatibilityFinding> {
   if (opts.manifestPresent) return [];
 
   const declared = declaredImplicitExtensions(opts.files);
-  const findings: LegacyDeclarativeLoadCompatibilityFinding[] = [];
+  const findings: DeclarativeLoadCompatibilityFinding[] = [];
   const seen = new Set<string>();
   for (const diagnostic of opts.diagnostics) {
     if (diagnostic.severity !== "error" || !nonConvergingLoadDiagnosticCodes.has(diagnostic.code)) {
@@ -232,7 +228,7 @@ export function legacyClassifyDeclarativeLoadCompatibility(opts: {
   return findings;
 }
 
-export const legacyExtensionDeclaration = (extension: string): string =>
+export const extensionDeclaration = (extension: string): string =>
   `CREATE EXTENSION IF NOT EXISTS "${extension}" WITH SCHEMA "extensions";`;
 
 /**
@@ -242,15 +238,15 @@ export const legacyExtensionDeclaration = (extension: string): string =>
  * continuations; Windows gets single-line PowerShell (`Remove-Item`/`Move-Item`
  * with `;`), which also runs unmodified in Windows Terminal's default shell.
  */
-export type LegacyShellPlatform = "posix" | "windows";
+export type ShellPlatform = "posix" | "windows";
 
-export const legacyCurrentShellPlatform = (): LegacyShellPlatform =>
+export const currentShellPlatform = (): ShellPlatform =>
   process.platform === "win32" ? "windows" : "posix";
 
-export interface LegacyStagedExportContext {
+export interface StagedExportContext {
   readonly declarativeDir: string;
   readonly schema: ReadonlyArray<string>;
-  readonly platform: LegacyShellPlatform;
+  readonly platform: ShellPlatform;
 }
 
 /**
@@ -261,7 +257,7 @@ export interface LegacyStagedExportContext {
  * active tree, so a later sync would load the staged export recursively and
  * the printed `rm -rf <dir> && mv` adoption command would destroy both copies.
  */
-export const legacyResolveStagedDeclarativeDir = (declarativeDir: string): string => {
+export const resolveStagedDeclarativeDir = (declarativeDir: string): string => {
   const isSeparator = (ch: string | undefined) => ch === "/" || ch === "\\";
   let end = declarativeDir.length;
   while (end > 0) {
@@ -279,7 +275,7 @@ export const legacyResolveStagedDeclarativeDir = (declarativeDir: string): strin
 
 const BARE_SAFE_ARGUMENT = /^[a-zA-Z0-9_./:@%+=,-]+$/;
 
-function shellQuoteArgument(value: string, platform: LegacyShellPlatform): string {
+function shellQuoteArgument(value: string, platform: ShellPlatform): string {
   if (BARE_SAFE_ARGUMENT.test(value)) return value;
   // PowerShell single-quoted strings escape a quote by doubling it; POSIX
   // shells need the classic '"'"' dance.
@@ -288,22 +284,22 @@ function shellQuoteArgument(value: string, platform: LegacyShellPlatform): strin
     : `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-function schemaArguments(schema: ReadonlyArray<string>, platform: LegacyShellPlatform): string {
+function schemaArguments(schema: ReadonlyArray<string>, platform: ShellPlatform): string {
   return schema
-    .map((name) => ` --schema ${shellQuoteArgument(legacySchemaToCsvField(name), platform)}`)
+    .map((name) => ` --schema ${shellQuoteArgument(schemaToCsvField(name), platform)}`)
     .join("");
 }
 
-export const legacyFormatDeclarativeSyncCommand = (
+const formatDeclarativeSyncCommand = (
   schema: ReadonlyArray<string>,
-  platform: LegacyShellPlatform,
+  platform: ShellPlatform,
 ): string =>
   `  supabase db schema declarative sync --no-apply${schemaArguments(schema, platform)} --experimental`;
 
 const adoptionCommand = (
   declarativeDir: string,
   stagedDir: string,
-  platform: LegacyShellPlatform,
+  platform: ShellPlatform,
 ): string => {
   const dir = shellQuoteArgument(declarativeDir, platform);
   const staged = shellQuoteArgument(stagedDir, platform);
@@ -312,22 +308,22 @@ const adoptionCommand = (
     : `  rm -rf ${dir} && mv ${staged} ${dir}`;
 };
 
-export function legacyFormatStagedExportAdoption({
+export function formatStagedExportAdoption({
   declarativeDir,
   schema,
   platform,
-}: LegacyStagedExportContext): ReadonlyArray<string> {
-  const stagedDir = legacyResolveStagedDeclarativeDir(declarativeDir);
+}: StagedExportContext): ReadonlyArray<string> {
+  const stagedDir = resolveStagedDeclarativeDir(declarativeDir);
   return [
     `Review ${stagedDir}, then adopt it:`,
     adoptionCommand(declarativeDir, stagedDir, platform),
-    legacyFormatDeclarativeSyncCommand(schema, platform),
+    formatDeclarativeSyncCommand(schema, platform),
   ];
 }
 
 /** The staged-upgrade recipe, as a copy-pasteable block of indented shell lines. */
-function stagedExportCommands(context: LegacyStagedExportContext): ReadonlyArray<string> {
-  const stagedDir = legacyResolveStagedDeclarativeDir(context.declarativeDir);
+function stagedExportCommands(context: StagedExportContext): ReadonlyArray<string> {
+  const stagedDir = resolveStagedDeclarativeDir(context.declarativeDir);
   const staged = shellQuoteArgument(stagedDir, context.platform);
   const schemas = schemaArguments(context.schema, context.platform);
   // Backslash continuation is POSIX-only; keep the generate command on one line
@@ -345,7 +341,7 @@ function stagedExportCommands(context: LegacyStagedExportContext): ReadonlyArray
     ...generateCommand,
     `  # review ${stagedDir}`,
     adoptionCommand(context.declarativeDir, stagedDir, context.platform),
-    legacyFormatDeclarativeSyncCommand(context.schema, context.platform),
+    formatDeclarativeSyncCommand(context.schema, context.platform),
   ];
 }
 
@@ -354,8 +350,8 @@ function stagedExportCommands(context: LegacyStagedExportContext): ReadonlyArray
  * a legacy export (the plan-refuse gate). The load-fail gate builds its own
  * evidence from the shadow-load diagnostics instead.
  */
-export function legacyFormatDeclarativeGapEvidence(
-  gap: LegacyDeclarativeCompatibilityGap,
+export function formatDeclarativeGapEvidence(
+  gap: DeclarativeCompatibilityGap,
 ): ReadonlyArray<string> {
   return [
     ...(gap.repairableExtensions.length > 0
@@ -374,7 +370,7 @@ export function legacyFormatDeclarativeGapEvidence(
   ];
 }
 
-export interface LegacyDeclarativeUpgradeGateText {
+export interface DeclarativeUpgradeGateText {
   readonly message: string;
   readonly suggestion: string;
 }
@@ -388,14 +384,14 @@ export interface LegacyDeclarativeUpgradeGateText {
  *
  * Deliberately offers exactly ONE non-interactive recovery: the staged
  * regenerate. Telling a non-interactive user to hand-add an extension
- * declaration is a false trail — on a real legacy tree each declaration only
+ * declaration is a false trail — on a real CLI tree each declaration only
  * unlocks the next refusal. Interactive flows still offer the repair as an
  * advanced choice.
  */
-export function legacyFormatDeclarativeUpgradeGate(opts: {
+export function formatDeclarativeUpgradeGate(opts: {
   readonly evidence: ReadonlyArray<string>;
-  readonly context: LegacyStagedExportContext;
-}): LegacyDeclarativeUpgradeGateText {
+  readonly context: StagedExportContext;
+}): DeclarativeUpgradeGateText {
   const { declarativeDir } = opts.context;
   return {
     message: [

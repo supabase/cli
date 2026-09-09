@@ -5,7 +5,7 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
-import { legacyMintConfigTargetErrors } from "../config.target.ts";
+import { mintConfigTargetErrors } from "../config.target.ts";
 
 interface NetworkErrorArgs {
   readonly message: string;
@@ -19,11 +19,24 @@ interface StatusErrorArgs {
 }
 
 /** Local config file missing or unparseable. Aborts before any network call. */
-export class LegacyConfigDiffLoadConfigError extends Data.TaggedError(
-  "LegacyConfigDiffLoadConfigError",
-)<{ readonly message: string }> {
+export class ConfigDiffLoadConfigError extends Data.TaggedError("ConfigDiffLoadConfigError")<{
+  readonly message: string;
+}> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
+  }
+}
+
+/**
+ * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
+ * directory (`validateWorkdirIsDirectory`). Only reachable when the
+ * user explicitly set it — beats the config load and every network call.
+ */
+export class ConfigDiffWorkdirError extends Data.TaggedError("ConfigDiffWorkdirError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }
 
@@ -32,56 +45,48 @@ export class LegacyConfigDiffLoadConfigError extends Data.TaggedError(
  * net-new TS command with no Go parity contract, so machine output goes
  * through `--output-format` only (per Colum on CLI-2156).
  */
-export class LegacyConfigDiffOutputFlagUnsupportedError extends Data.TaggedError(
-  "LegacyConfigDiffOutputFlagUnsupportedError",
+export class ConfigDiffOutputFlagUnsupportedError extends Data.TaggedError(
+  "ConfigDiffOutputFlagUnsupportedError",
 )<{ readonly message: string }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidInput;
   }
 }
 
-const targetErrors = legacyMintConfigTargetErrors("LegacyConfigDiff");
+const targetErrors = mintConfigTargetErrors("ConfigDiff");
 
 /** `--project-ref` named a branch the parent project does not have. */
-export const LegacyConfigDiffBranchNotFoundError = targetErrors.BranchNotFoundError;
-export type LegacyConfigDiffBranchNotFoundError = InstanceType<
-  typeof LegacyConfigDiffBranchNotFoundError
->;
+export const ConfigDiffBranchNotFoundError = targetErrors.BranchNotFoundError;
+export type ConfigDiffBranchNotFoundError = InstanceType<typeof ConfigDiffBranchNotFoundError>;
 
 /**
  * `--project-ref` named a branch (by name), but no project is linked to
  * search for branches under — none of `SUPABASE_PROJECT_ID`,
  * `supabase/.temp/linked-project.json`, or `supabase/.temp/project-ref`
- * yielded a candidate. Mirrors `LegacyLinkBranchNotLinkedError`'s
+ * yielded a candidate. Mirrors `LinkBranchNotLinkedError`'s
  * classification (link.errors.ts).
  */
-export const LegacyConfigDiffBranchNotLinkedError = targetErrors.BranchNotLinkedError;
-export type LegacyConfigDiffBranchNotLinkedError = InstanceType<
-  typeof LegacyConfigDiffBranchNotLinkedError
->;
+export const ConfigDiffBranchNotLinkedError = targetErrors.BranchNotLinkedError;
+export type ConfigDiffBranchNotLinkedError = InstanceType<typeof ConfigDiffBranchNotLinkedError>;
 
 /**
  * `--project-ref` named a branch (by name), and a parent-project candidate
  * exists but is not ref-shaped — corrupt or stale linked state. Mirrors
- * `LegacyLinkParentRefInvalidError`'s classification (link.errors.ts).
+ * `LinkParentRefInvalidError`'s classification (link.errors.ts).
  */
-export const LegacyConfigDiffParentRefInvalidError = targetErrors.ParentRefInvalidError;
-export type LegacyConfigDiffParentRefInvalidError = InstanceType<
-  typeof LegacyConfigDiffParentRefInvalidError
->;
+export const ConfigDiffParentRefInvalidError = targetErrors.ParentRefInvalidError;
+export type ConfigDiffParentRefInvalidError = InstanceType<typeof ConfigDiffParentRefInvalidError>;
 
 /**
  * The resolved branch has no project ref yet (still provisioning) — guards
  * against an empty/placeholder ref reaching `/v2/projects//config`. Mirrors
- * `LegacyLinkBranchNotReadyError`'s classification (link.errors.ts).
+ * `LinkBranchNotReadyError`'s classification (link.errors.ts).
  */
-export const LegacyConfigDiffBranchNotReadyError = targetErrors.BranchNotReadyError;
-export type LegacyConfigDiffBranchNotReadyError = InstanceType<
-  typeof LegacyConfigDiffBranchNotReadyError
->;
+export const ConfigDiffBranchNotReadyError = targetErrors.BranchNotReadyError;
+export type ConfigDiffBranchNotReadyError = InstanceType<typeof ConfigDiffBranchNotReadyError>;
 
-export class LegacyConfigDiffBranchResolveNetworkError extends Data.TaggedError(
-  "LegacyConfigDiffBranchResolveNetworkError",
+export class ConfigDiffBranchResolveNetworkError extends Data.TaggedError(
+  "ConfigDiffBranchResolveNetworkError",
 )<NetworkErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return this.decode === true
@@ -90,16 +95,16 @@ export class LegacyConfigDiffBranchResolveNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyConfigDiffBranchResolveStatusError extends Data.TaggedError(
-  "LegacyConfigDiffBranchResolveStatusError",
+export class ConfigDiffBranchResolveStatusError extends Data.TaggedError(
+  "ConfigDiffBranchResolveStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
-export class LegacyConfigDiffReadNetworkError extends Data.TaggedError(
-  "LegacyConfigDiffReadNetworkError",
+export class ConfigDiffReadNetworkError extends Data.TaggedError(
+  "ConfigDiffReadNetworkError",
 )<NetworkErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return this.decode === true
@@ -108,8 +113,8 @@ export class LegacyConfigDiffReadNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyConfigDiffReadStatusError extends Data.TaggedError(
-  "LegacyConfigDiffReadStatusError",
+export class ConfigDiffReadStatusError extends Data.TaggedError(
+  "ConfigDiffReadStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     // `/v2/projects/{ref}/config` names a user-selected resource, so a 404

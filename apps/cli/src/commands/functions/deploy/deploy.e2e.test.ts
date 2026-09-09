@@ -26,7 +26,7 @@ const SLUG = "deploy-e2e-basic";
 const FAKE_TOKEN = `sbp_${"0".repeat(40)}`;
 const FAKE_REF = "a".repeat(20);
 
-describe("supabase functions deploy (legacy) — argument validation", () => {
+describe("supabase functions deploy — argument validation", () => {
   const conflicts = [
     { name: "--use-api + --use-docker", flags: ["--use-api", "--use-docker"] },
     { name: "--use-api + --legacy-bundle", flags: ["--use-api", "--legacy-bundle"] },
@@ -39,7 +39,6 @@ describe("supabase functions deploy (legacy) — argument validation", () => {
       const { exitCode, stderr } = await runSupabase(
         ["functions", "deploy", SLUG, "--project-ref", FAKE_REF, ...flags],
         {
-          entrypoint: "legacy",
           home: home.dir,
           env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
         },
@@ -57,7 +56,6 @@ describe("supabase functions deploy (legacy) — argument validation", () => {
     const { exitCode, stderr } = await runSupabase(
       ["functions", "deploy", SLUG, "--project-ref", FAKE_REF, "--use-docker", "--jobs", "2"],
       {
-        entrypoint: "legacy",
         home: home.dir,
         env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
       },
@@ -83,7 +81,6 @@ describe("supabase functions deploy (legacy) — argument validation", () => {
           "2",
         ],
         {
-          entrypoint: "legacy",
           home: home.dir,
           env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
         },
@@ -98,7 +95,6 @@ describe("supabase functions deploy (legacy) — argument validation", () => {
     const workdir = mkdtempSync(join(tmpdir(), "fn-deploy-nolink-"));
     try {
       const { exitCode, stderr } = await runSupabase(["functions", "deploy", SLUG], {
-        entrypoint: "legacy",
         home: home.dir,
         cwd: workdir,
         env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },

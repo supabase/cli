@@ -1,19 +1,19 @@
 import { Effect } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { legacyAqua, legacyYellow } from "../../../../command-internal/legacy-colors.ts";
+import { aqua, yellow } from "../../../../command-internal/colors.ts";
 import { displayPath } from "../../../../shared/workers/worker-paths.ts";
-import { renderGlamourTable } from "../../../../output/legacy-glamour-table.ts";
-import { legacyEmitWorkersMachineOutput, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
-import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
+import { renderGlamourTable } from "../../../../output/glamour-table.ts";
+import { emitWorkersMachineOutput, rejectWorkersEnvOutput } from "../workers.output.ts";
+import { CommandPlatformApi } from "../../../../auth/command-platform-api.service.ts";
+import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { formatApiSize } from "../../../../shared/workers/worker-runtimes.ts";
 import { workerUrl } from "../../../../shared/workers/worker-url.ts";
 import { listWorkers, type WorkerRecord } from "../../../../shared/workers/workers-api.ts";
-import { LegacyProjectRefResolver } from "../../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyDiscoverWorkerNames, legacyLoadWorkersProject } from "../workers.shared.ts";
-import type { LegacyWorkersListFlags } from "./list.command.ts";
+import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
+import { discoverWorkerNames, loadWorkersProject } from "../workers.shared.ts";
+import type { WorkersListFlags } from "./list.command.ts";
 
 /**
  * `supabase experimental workers list` — every worker in this project, deployed or not.
@@ -96,15 +96,15 @@ function toCells(row: WorkerRow): ReadonlyArray<string> {
   ];
 }
 
-export const legacyWorkersList = Effect.fn("legacy.experimental.workers.list")(function* (
-  flags: LegacyWorkersListFlags,
+export const workersList = Effect.fn("experimental.workers.list")(function* (
+  flags: WorkersListFlags,
 ) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
-  const settings = yield* LegacyCliSettings;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
+  const settings = yield* CommandSettings;
 
   // The ref is resolved outside the finalizers because caching it is one of
   // them; everything that can fail on its own — loading `config.toml`,
@@ -113,12 +113,12 @@ export const legacyWorkersList = Effect.fn("legacy.experimental.workers.list")(f
   const projectRef = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
-    const project = yield* legacyLoadWorkersProject();
+    const project = yield* loadWorkersProject();
 
     // Up front, like the rest of the family: this payload always carries a
     // `workers` array, so `-o env` can never encode it, and finding that out at
     // emit time means failing after the fetch has already been paid for.
-    yield* legacyRejectWorkersEnvOutput();
+    yield* rejectWorkersEnvOutput();
 
     const fetching = yield* output.task("Fetching workers...");
     const deployed = yield* listWorkers(api, projectRef).pipe(
@@ -129,9 +129,9 @@ export const legacyWorkersList = Effect.fn("legacy.experimental.workers.list")(f
     const byName = new Map(deployed.map((worker) => [worker.name, worker]));
     const configuredNames = Object.keys(project.section.workers);
     // Three sources: config entries, deployed workers, and directories under the
-    // workers root. The last are deployable — `legacyDiscoverWorkerNames` is the
+    // workers root. The last are deployable — `discoverWorkerNames` is the
     // walk a bare `push` does — so the inventory has to show them.
-    const discoveredNames = yield* legacyDiscoverWorkerNames(project);
+    const discoveredNames = yield* discoverWorkerNames(project);
     const names = [...new Set([...configuredNames, ...discoveredNames, ...byName.keys()])].sort();
 
     const rows: Array<WorkerRow> = names.map((name) => {
@@ -171,7 +171,7 @@ export const legacyWorkersList = Effect.fn("legacy.experimental.workers.list")(f
     // `-o` is independent of `--output-format`: it leaves `output.format` as
     // `text`, so this has to be checked before the text branch below, not
     // inside the structured one.
-    if (yield* legacyEmitWorkersMachineOutput(payload)) {
+    if (yield* emitWorkersMachineOutput(payload)) {
       return;
     }
 
@@ -182,7 +182,7 @@ export const legacyWorkersList = Effect.fn("legacy.experimental.workers.list")(f
 
     if (rows.length === 0) {
       yield* output.raw(
-        `No workers found. Scaffold one with ${legacyAqua("supabase experimental workers new <name>", process.stdout)}.\n`,
+        `No workers found. Scaffold one with ${aqua("supabase experimental workers new <name>", process.stdout)}.\n`,
       );
       return;
     }
@@ -207,7 +207,7 @@ export const legacyWorkersList = Effect.fn("legacy.experimental.workers.list")(f
     if (unconfigured.length > 0) {
       const configDisplay = displayPath(project.projectRoot, project.configPath);
       yield* output.raw(
-        `${legacyYellow("WARNING:")} ${nameList(unconfigured)} deployed but not in ${configDisplay}.\n` +
+        `${yellow("WARNING:")} ${nameList(unconfigured)} deployed but not in ${configDisplay}.\n` +
           `Pushing from here would have to guess the runtime.\n`,
         "stderr",
       );
@@ -218,7 +218,7 @@ export const legacyWorkersList = Effect.fn("legacy.experimental.workers.list")(f
       .map((row) => row.name);
     if (remoteOnly.length > 0) {
       yield* output.raw(
-        `${legacyYellow("WARNING:")} ${nameList(remoteOnly)} deployed with no source in this project.\n` +
+        `${yellow("WARNING:")} ${nameList(remoteOnly)} deployed with no source in this project.\n` +
           `Scaffold or restore before pushing from here.\n`,
         "stderr",
       );

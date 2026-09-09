@@ -1,41 +1,36 @@
 import type { V1ListAllOrganizationsOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../../command-internal/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { GO_ORGS_LIST, GO_ORGS_TOML_WRAPPER } from "../orgs.go-payload.ts";
 import {
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
-import { LEGACY_GO_ORGS_LIST, LEGACY_GO_ORGS_TOML_WRAPPER } from "../orgs.go-payload.ts";
-import {
-  LegacyOrgsEnvNotSupportedError,
-  LegacyOrgsListNetworkError,
-  LegacyOrgsListUnexpectedStatusError,
+  OrgsEnvNotSupportedError,
+  OrgsListNetworkError,
+  OrgsListUnexpectedStatusError,
 } from "../orgs.errors.ts";
 import { renderOrgsListTable } from "../orgs.format.ts";
-import type { LegacyOrgsListFlags } from "./list.command.ts";
+import type { OrgsListFlags } from "./list.command.ts";
 
 type Organizations = typeof V1ListAllOrganizationsOutput.Type;
 
-const mapListError = mapLegacyHttpError({
-  networkError: LegacyOrgsListNetworkError,
-  statusError: LegacyOrgsListUnexpectedStatusError,
+const mapListError = mapHttpError({
+  networkError: OrgsListNetworkError,
+  statusError: OrgsListUnexpectedStatusError,
   networkMessage: (cause) => `failed to list organizations: ${cause}`,
   statusMessage: (status, body) => `unexpected list organizations status ${status}: ${body}`,
 });
 
-export const legacyOrgsList = Effect.fn("legacy.orgs.list")(function* (
-  _flags: LegacyOrgsListFlags,
-) {
+export const orgsList = Effect.fn("orgs.list")(function* (_flags: OrgsListFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
     // Spinner runs only in text mode — it would corrupt machine-readable
@@ -53,7 +48,7 @@ export const legacyOrgsList = Effect.fn("legacy.orgs.list")(function* (
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
     if (goFmt === "env") {
-      return yield* new LegacyOrgsEnvNotSupportedError({
+      return yield* new OrgsEnvNotSupportedError({
         message: "--output env flag is not supported",
       });
     }
@@ -62,11 +57,11 @@ export const legacyOrgsList = Effect.fn("legacy.orgs.list")(function* (
       return;
     }
     if (goFmt === "yaml") {
-      yield* output.raw(encodeLegacyGoYaml(orgs, LEGACY_GO_ORGS_LIST));
+      yield* output.raw(encodeGoYaml(orgs, GO_ORGS_LIST));
       return;
     }
     if (goFmt === "toml") {
-      yield* output.raw(encodeLegacyGoToml({ organizations: orgs }, LEGACY_GO_ORGS_TOML_WRAPPER));
+      yield* output.raw(encodeGoToml({ organizations: orgs }, GO_ORGS_TOML_WRAPPER));
       return;
     }
 

@@ -1,15 +1,15 @@
 import { Effect, Option } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
-import { legacyAqua } from "../../../../command-internal/legacy-colors.ts";
-import { legacyRenderWorkerDetails } from "../workers.format.ts";
+import { aqua } from "../../../../command-internal/colors.ts";
+import { renderWorkerDetails } from "../workers.format.ts";
 import {
-  legacyEmitWorkersMachineOutput,
-  legacyRejectWorkersEnvOutput,
-  legacyWorkersMachineOutputRequested,
-  legacyWorkersProjectRefSuffix,
+  emitWorkersMachineOutput,
+  rejectWorkersEnvOutput,
+  workersMachineOutputRequested,
+  workersProjectRefSuffix,
 } from "../workers.output.ts";
-import { LegacyPlatformApi } from "../../../../auth/legacy-platform-api.service.ts";
+import { CommandPlatformApi } from "../../../../auth/command-platform-api.service.ts";
 import { displayPath } from "../../../../shared/workers/worker-paths.ts";
 import { deleteWorker, getWorker } from "../../../../shared/workers/workers-api.ts";
 import {
@@ -18,17 +18,17 @@ import {
   WorkerNotDeployedError,
   WorkersApiUnexpectedStatusError,
 } from "../../../../shared/workers/workers.errors.ts";
-import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
-import { LegacyProjectRefResolver } from "../../../../config/legacy-project-ref.service.ts";
+import { resolveYes } from "../../../../command-internal/global-flags.ts";
+import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
-import { LegacyLinkedProjectCache } from "../../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../../telemetry/legacy-telemetry-state.service.ts";
+import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
-  legacyDescribeWorkerForReporting,
-  legacyLoadWorkersProjectForReporting,
-  legacyValidateWorkerName,
+  describeWorkerForReporting,
+  loadWorkersProjectForReporting,
+  validateWorkerName,
 } from "../workers.shared.ts";
-import type { LegacyWorkersDeleteFlags } from "./delete.command.ts";
+import type { WorkersDeleteFlags } from "./delete.command.ts";
 
 /**
  * `supabase experimental workers delete [name]` — delete the worker; its instances and image
@@ -43,7 +43,7 @@ import type { LegacyWorkersDeleteFlags } from "./delete.command.ts";
  * to proceed — the same "confirm by typing it" pattern as GitHub's own repo
  * deletion, rather than a bare y/n that is too easy to reflexively confirm.
  * `--yes`/`SUPABASE_YES` skips it for scripts, resolved through
- * `legacyResolveYes` like every other confirming command rather than through a
+ * `resolveYes` like every other confirming command rather than through a
  * local flag that would shadow the root one. It also makes an already-absent
  * worker a success: teardown run twice should not fail the second time.
  *
@@ -51,18 +51,18 @@ import type { LegacyWorkersDeleteFlags } from "./delete.command.ts";
  * stdout, so merely redirecting output would otherwise delete unattended. This
  * refuses instead, and says which flag would have authorised it.
  */
-export const legacyWorkersDelete = Effect.fn("legacy.experimental.workers.delete")(function* (
-  flags: LegacyWorkersDeleteFlags,
+export const workersDelete = Effect.fn("experimental.workers.delete")(function* (
+  flags: WorkersDeleteFlags,
 ) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
   const tty = yield* Tty;
   // `--yes` OR `SUPABASE_YES`, matching `projects delete` and every other
   // command that guards a destructive step behind a prompt.
-  const yes = yield* legacyResolveYes;
+  const yes = yield* resolveYes;
 
   // The ref is resolved outside the finalizers because caching it is one of
   // them; everything that can fail on its own — loading `config.toml`,
@@ -71,17 +71,17 @@ export const legacyWorkersDelete = Effect.fn("legacy.experimental.workers.delete
   const projectRef = yield* resolver.resolve(flags.projectRef);
   // Every retry this command suggests is for a *destructive* re-run, so the ref
   // has to survive the copy-paste.
-  const refSuffix = legacyWorkersProjectRefSuffix(flags.projectRef);
+  const refSuffix = workersProjectRefSuffix(flags.projectRef);
 
   yield* Effect.gen(function* () {
-    const project = yield* legacyLoadWorkersProjectForReporting();
-    const name = yield* legacyValidateWorkerName(flags.name);
-    const worker = yield* legacyDescribeWorkerForReporting(project, name);
+    const project = yield* loadWorkersProjectForReporting();
+    const name = yield* validateWorkerName(flags.name);
+    const worker = yield* describeWorkerForReporting(project, name);
 
     // Before the first API call, not at emit time: the emit branch is reached
     // *after* the DELETE, so `--yes -o env` deleted the worker and only then
     // exited non-zero with no payload — which a script reads as a failed delete.
-    yield* legacyRejectWorkersEnvOutput();
+    yield* rejectWorkersEnvOutput();
 
     const fetching = yield* output.task("Fetching worker...");
     // The lookup is a courtesy, not a prerequisite: it supplies the instance
@@ -101,7 +101,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.experimental.workers.delete
     yield* fetching.clear();
 
     const deployed = lookup.worker;
-    const machineOutput = yield* legacyWorkersMachineOutputRequested();
+    const machineOutput = yield* workersMachineOutputRequested();
 
     // `--yes` is the scripted path, and `deleteWorker` already treats a DELETE
     // 404 as done — "a delete that races another one is still a delete that
@@ -198,7 +198,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.experimental.workers.delete
 
     // `-o` asks for a machine-readable stdout, so nothing human may be written
     // to it — `output.success` logs to stdout in text mode.
-    if (yield* legacyEmitWorkersMachineOutput(payload)) {
+    if (yield* emitWorkersMachineOutput(payload)) {
       return;
     }
 
@@ -210,13 +210,13 @@ export const legacyWorkersDelete = Effect.fn("legacy.experimental.workers.delete
     {
       if (deployed === undefined && lookup.readable) {
         yield* output.raw(
-          `Nothing was deployed for ${legacyAqua(name, process.stdout)} in project ${projectRef}, so there was nothing to delete.\n`,
+          `Nothing was deployed for ${aqua(name, process.stdout)} in project ${projectRef}, so there was nothing to delete.\n`,
         );
         return;
       }
 
       yield* output.raw(
-        `Deleted Worker ${legacyAqua(name, process.stdout)} from project ${projectRef}\n`,
+        `Deleted Worker ${aqua(name, process.stdout)} from project ${projectRef}\n`,
       );
 
       // "Deleted" reads more final than it is *when there is something left* —
@@ -228,14 +228,14 @@ export const legacyWorkersDelete = Effect.fn("legacy.experimental.workers.delete
         ...(keptEntry ? ["its supabase/config.toml entry"] : []),
       ];
       if (kept.length > 0) {
-        yield* output.raw(legacyRenderWorkerDetails([["Kept", kept.join(", ")]]));
+        yield* output.raw(renderWorkerDetails([["Kept", kept.join(", ")]]));
         // Only when the source is still there: a retained `config.toml` entry
         // alone is not enough to redeploy from, so `push` would fail on the very
         // command this line recommends.
         if (keptSource !== undefined) {
           // Trailer, like every other "what to run next" line in this shell.
           yield* emitSuccessTrailer(
-            `Redeploy it with ${legacyAqua(`supabase experimental workers push ${name}${refSuffix}`)}.\n`,
+            `Redeploy it with ${aqua(`supabase experimental workers push ${name}${refSuffix}`)}.\n`,
           );
         }
       } else {

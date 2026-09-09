@@ -7,15 +7,15 @@ import { badArgument } from "effect/PlatformError";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
-  mockLegacyCliSettings,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  mockCommandSettings,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockStdin } from "../../../../tests/helpers/mocks.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
-import { LegacyMigrationNewWriteError } from "./new.errors.ts";
-import { legacyMigrationNew } from "./new.handler.ts";
+import { MigrationNewWriteError } from "./new.errors.ts";
+import { migrationNew } from "./new.handler.ts";
 
 interface SetupOpts {
   readonly format?: OutputFormat;
@@ -47,12 +47,12 @@ function nonMaterializingFsLayer(
 
 function setup(workdir: string, opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const telemetry = mockLegacyTelemetryStateTracked();
+  const telemetry = mockTelemetryStateTracked();
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
     mockStdin(opts.isTTY ?? true, opts.piped),
-    mockLegacyCliSettings({ workdir }),
+    mockCommandSettings({ workdir }),
     BunServices.layer,
     ...(opts.openDoesNotMaterialize === true || opts.writeDoesNotMaterialize === true
       ? [nonMaterializingFsLayer(workdir, opts)]
@@ -61,7 +61,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   return { layer, out, telemetry };
 }
 
-const tmp = useLegacyTempWorkdir();
+const tmp = useTempWorkdir();
 
 const migrationsDir = (workdir: string) => join(workdir, "supabase", "migrations");
 const onlyMigration = (workdir: string) => {
@@ -70,11 +70,11 @@ const onlyMigration = (workdir: string) => {
   return files[0]!;
 };
 
-describe("legacy migration new", () => {
+describe("migration new", () => {
   it.live("creates a timestamped migration file and prints its relative path", () => {
     const { layer, out, telemetry } = setup(tmp.current);
     return Effect.gen(function* () {
-      yield* legacyMigrationNew({ migrationName: "create_widgets" });
+      yield* migrationNew({ migrationName: "create_widgets" });
 
       const file = onlyMigration(tmp.current);
       expect(file).toMatch(/^\d{14}_create_widgets\.sql$/u);
@@ -92,7 +92,7 @@ describe("legacy migration new", () => {
     const script = "create table pet;\ndrop table pet;\n";
     const { layer, out } = setup(tmp.current, { isTTY: false, piped: script });
     return Effect.gen(function* () {
-      yield* legacyMigrationNew({ migrationName: "from_stdin" });
+      yield* migrationNew({ migrationName: "from_stdin" });
 
       const file = onlyMigration(tmp.current);
       // Byte-exact: the trailing newline is preserved (raw stdin bytes are copied verbatim).
@@ -104,7 +104,7 @@ describe("legacy migration new", () => {
   it.live("creates an empty migration when stdin is piped but empty", () => {
     const { layer } = setup(tmp.current, { isTTY: false });
     return Effect.gen(function* () {
-      yield* legacyMigrationNew({ migrationName: "empty_pipe" });
+      yield* migrationNew({ migrationName: "empty_pipe" });
       const file = onlyMigration(tmp.current);
       expect(readFileSync(join(migrationsDir(tmp.current), file), "utf8")).toBe("");
     }).pipe(Effect.provide(layer));
@@ -113,7 +113,7 @@ describe("legacy migration new", () => {
   it.live("materializes the migration without relying on an open handle", () => {
     const { layer } = setup(tmp.current, { openDoesNotMaterialize: true });
     return Effect.gen(function* () {
-      yield* legacyMigrationNew({ migrationName: "windows_open" });
+      yield* migrationNew({ migrationName: "windows_open" });
       const file = onlyMigration(tmp.current);
       expect(readFileSync(join(migrationsDir(tmp.current), file), "utf8")).toBe("");
     }).pipe(Effect.provide(layer));
@@ -125,14 +125,14 @@ describe("legacy migration new", () => {
       writeDoesNotMaterialize: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationNew({ migrationName: "missing" }).pipe(Effect.exit);
+      const exit = yield* migrationNew({ migrationName: "missing" }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure)).toBe(true);
         if (Option.isSome(failure)) {
-          expect(failure.value).toBeInstanceOf(LegacyMigrationNewWriteError);
-          if (failure.value instanceof LegacyMigrationNewWriteError) {
+          expect(failure.value).toBeInstanceOf(MigrationNewWriteError);
+          if (failure.value instanceof MigrationNewWriteError) {
             expect(failure.value.message).toContain("failed to verify migration file");
           }
         }
@@ -146,7 +146,7 @@ describe("legacy migration new", () => {
   it.live("emits a structured result with the absolute path in json", () => {
     const { layer, out } = setup(tmp.current, { format: "json" });
     return Effect.gen(function* () {
-      yield* legacyMigrationNew({ migrationName: "as_json" });
+      yield* migrationNew({ migrationName: "as_json" });
 
       const file = onlyMigration(tmp.current);
       expect(out.stdoutText).toBe("");
@@ -163,7 +163,7 @@ describe("legacy migration new", () => {
   it.live("emits a structured result in stream-json", () => {
     const { layer, out } = setup(tmp.current, { format: "stream-json" });
     return Effect.gen(function* () {
-      yield* legacyMigrationNew({ migrationName: "as_stream" });
+      yield* migrationNew({ migrationName: "as_stream" });
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "Migration created" }),
       );
@@ -175,13 +175,13 @@ describe("legacy migration new", () => {
     writeFileSync(join(tmp.current, "supabase"), "not a directory");
     const { layer, telemetry } = setup(tmp.current);
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationNew({ migrationName: "doomed" }).pipe(Effect.exit);
+      const exit = yield* migrationNew({ migrationName: "doomed" }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure)).toBe(true);
         if (Option.isSome(failure)) {
-          expect(failure.value).toBeInstanceOf(LegacyMigrationNewWriteError);
+          expect(failure.value).toBeInstanceOf(MigrationNewWriteError);
         }
       }
       expect(existsSync(migrationsDir(tmp.current))).toBe(false);
@@ -192,7 +192,7 @@ describe("legacy migration new", () => {
   it.live("rejects a name that escapes the migrations directory and writes nothing", () => {
     const { layer, telemetry } = setup(tmp.current, { isTTY: false, piped: "DROP DATABASE;\n" });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationNew({
+      const exit = yield* migrationNew({
         migrationName: "../../../escapes",
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -200,7 +200,7 @@ describe("legacy migration new", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure)).toBe(true);
         if (Option.isSome(failure)) {
-          expect(failure.value).toBeInstanceOf(LegacyMigrationNewWriteError);
+          expect(failure.value).toBeInstanceOf(MigrationNewWriteError);
         }
       }
       expect(existsSync(join(tmp.current, "supabase"))).toBe(false);
@@ -224,23 +224,23 @@ describe("legacy migration new", () => {
         readLine: () => Effect.succeed(Option.none()),
       });
       const out = mockOutput();
-      const telemetry = mockLegacyTelemetryStateTracked();
+      const telemetry = mockTelemetryStateTracked();
       const layer = Layer.mergeAll(
         out.layer,
         telemetry.layer,
         failingStdin,
-        mockLegacyCliSettings({ workdir: tmp.current }),
+        mockCommandSettings({ workdir: tmp.current }),
         BunServices.layer,
       );
       return Effect.gen(function* () {
-        const exit = yield* legacyMigrationNew({ migrationName: "stdin_boom" }).pipe(Effect.exit);
+        const exit = yield* migrationNew({ migrationName: "stdin_boom" }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
           expect(Option.isSome(failure)).toBe(true);
           if (Option.isSome(failure)) {
-            expect(failure.value).toBeInstanceOf(LegacyMigrationNewWriteError);
-            if (failure.value instanceof LegacyMigrationNewWriteError) {
+            expect(failure.value).toBeInstanceOf(MigrationNewWriteError);
+            if (failure.value instanceof MigrationNewWriteError) {
               expect(failure.value.message).toContain("failed to copy from stdin");
             }
           }
