@@ -73,11 +73,7 @@ const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 const identity: StackIdentity = {
   projectRoot: "/tmp/project",
-  checkoutRoot: "/tmp/project",
-  workspaceId: "/tmp/project",
-  checkoutId: "/tmp/project",
   branchContext: "ordinary-workspace",
-  localProjectKey: ".",
   stackName: "default",
 };
 
@@ -187,10 +183,6 @@ describe("stack ownership", () => {
         const childIdentity = {
           ...identity,
           projectRoot: root,
-          checkoutRoot: root,
-          workspaceId: root,
-          checkoutId: root,
-          localProjectKey: ".",
         };
         const stackId = yield* deriveStackId(childIdentity);
         const environment: StackRuntimeEnvironmentValue = {

@@ -45,11 +45,7 @@ const intents = (api: "automatic" | number = "automatic"): ListenerIntents => ({
 
 const identity = (root: string, stackName: string): StackIdentity => ({
   projectRoot: root,
-  checkoutRoot: root,
-  workspaceId: root,
-  checkoutId: root,
   branchContext: "ordinary-workspace",
-  localProjectKey: ".",
   stackName,
 });
 

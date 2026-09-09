@@ -324,6 +324,41 @@ export function formatDockerBind(bind: DockerBind) {
   return `${bind.hostPath}:${bind.containerPath}:${bind.mode}`;
 }
 
+/**
+ * Drops every bind another bind already supplies verbatim: same mode, host
+ * path strictly beneath the other's, container path at the same relative
+ * offset. The import walker and import-map target enumeration routinely emit
+ * such pairs, and Docker rejects `docker cp` into a created container whose
+ * config nests a file bind inside a read-only parent bind
+ * (supabase/supabase#50088). A bind that overrides its parent's source, mode,
+ * or container mapping is never collapsed.
+ */
+export function pruneRedundantDockerBinds(
+  binds: ReadonlyArray<DockerBind>,
+): ReadonlyArray<DockerBind> {
+  const entries = binds.map((bind) => ({ bind, host: toSlash(bind.hostPath) }));
+  const isCovered = (child: { readonly bind: DockerBind; readonly host: string }) =>
+    entries.some((parent) => {
+      if (parent.bind.mode !== child.bind.mode) {
+        return false;
+      }
+      // Only a root path keeps its trailing separator through resolve/realpath,
+      // so each prefix appends one exactly when its own side lacks it; the
+      // host-equality guard is what then keeps a root bind from covering
+      // itself.
+      const hostPrefix = parent.host.endsWith("/") ? parent.host : `${parent.host}/`;
+      const containerPrefix = parent.bind.containerPath.endsWith("/")
+        ? parent.bind.containerPath
+        : `${parent.bind.containerPath}/`;
+      return (
+        child.host !== parent.host &&
+        child.host.startsWith(hostPrefix) &&
+        child.bind.containerPath === `${containerPrefix}${child.host.slice(hostPrefix.length)}`
+      );
+    });
+  return entries.filter((entry) => !isCovered(entry)).map((entry) => entry.bind);
+}
+
 function dockerNpmEnv(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<string> {
   return dockerNpmEnvNames.flatMap((name) => {
     const value = env[name];

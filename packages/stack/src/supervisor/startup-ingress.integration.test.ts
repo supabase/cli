@@ -89,11 +89,7 @@ describe("startup ingress", () => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-startup-ingress-" });
         const identity = {
           projectRoot: root,
-          checkoutRoot: root,
-          workspaceId: root,
-          checkoutId: root,
           branchContext: "ordinary-workspace",
-          localProjectKey: ".",
           stackName: "startup-ingress",
         } as const;
         const stackId = yield* deriveStackId(identity);

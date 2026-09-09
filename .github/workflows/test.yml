@@ -35,9 +35,8 @@ permissions:
   actions: read
 
 # Literal prefix: called workflows inherit github.workflow from the caller
-# (`run-ci`), which would cancel the caller and the preview call. `inputs.force`
-# keeps a skipped native Test run on a develop draft from cancelling the
-# forced run-ci call.
+# (`run-ci`), which would cancel the caller. `inputs.force` keeps a skipped
+# native Test run on a develop draft from cancelling the forced run-ci call.
 concurrency:
   group: test.yml-${{ github.event.pull_request.number || github.head_ref || github.ref }}-${{ inputs.force && 'run-ci' || 'direct' }}
   cancel-in-progress: true

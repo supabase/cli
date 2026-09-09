@@ -36,6 +36,14 @@ root. It is not a repository contract, service registry, compatibility facade,
 or independently versioned database schema. Platform entrypoints only provide
 filesystem, path, process, HTTP, and control-transport services.
 
+Stack identity is the SHA-256 digest of a length-delimited tuple containing the
+canonical project root, the current Git branch context, and the stack name. The
+branch context is the full symbolic ref or `detached`; projects outside Git use
+`ordinary-workspace`. This gives separate identities to worktrees, branches,
+monorepo project roots, and named stacks while keeping identity resolution
+read-only. Project relocation is not supported: a moved project resolves to a
+new identity.
+
 Stack handles are lightweight identity-scoped clients. Creating or opening one
 does not launch a Supervisor. Successful stop drains ingress, removes every
 ephemeral runtime resource, persists stopped state, delivers its response, then

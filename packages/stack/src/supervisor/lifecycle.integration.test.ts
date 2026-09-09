@@ -22,11 +22,7 @@ const layer = NodeServices.layer;
 
 const identity = {
   projectRoot: "/tmp/supabase-lifecycle",
-  checkoutRoot: "/tmp/supabase-lifecycle",
-  workspaceId: "/tmp/supabase-lifecycle",
-  checkoutId: "/tmp/supabase-lifecycle",
   branchContext: "ordinary-workspace",
-  localProjectKey: ".",
   stackName: "lifecycle",
 } as const;
 
