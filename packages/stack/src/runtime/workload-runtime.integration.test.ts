@@ -6,7 +6,7 @@ import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { deriveStackId } from "../identity/Identity.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import { makePortCoordinator, type ListenerIntents } from "../state/PortCoordinator.ts";
-import { bindHostListener } from "../supervisor/HostListener.ts";
+import { bindHeldPort, bindHostListener } from "../supervisor/HostListener.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
 import { CAPABILITY_NAMES } from "../public/Capability.ts";
 import { compileStack } from "../model/Compiler.ts";
@@ -300,18 +300,20 @@ describe("workload runtime catalog", () => {
       yield* store.initialize(stackId, {
         ...state,
         identity: { ...identity, stackId },
-        desiredLifecycle: "stopped",
+        desiredLifecycle: "running",
         ports: [],
         privatePorts: [],
       });
       const reservation = yield* makePortCoordinator({
         stateRoot: root,
         store,
-        checkHostPort: () => Effect.void,
         bindHost: bindHostListener,
-      }).planAndReserve(stackId, disabledListenerIntents, {
-        privateBindings: privateBindingIntentsFor(compiled.executionPlan),
-      });
+        bindPrivate: (address, port) => bindHeldPort(address, port, "private-binding"),
+      }).acquire(
+        stackId,
+        disabledListenerIntents,
+        privateBindingIntentsFor(compiled.executionPlan),
+      );
       const pgmetaPrimary = reservation.privateAssignments.find(
         ({ workloadId, binding }) => workloadId === "studio:pgmeta" && binding === "primary",
       );
@@ -323,8 +325,9 @@ describe("workload runtime catalog", () => {
       );
       if (pgmetaPrimary === undefined || pgmetaAdmin === undefined || vectorPrimary === undefined)
         throw new Error("Compiled plan did not reserve pgmeta and Vector bindings");
-      expect(pgmetaAdmin.port).toBe(pgmetaPrimary.port + 1);
-      expect(vectorPrimary.port).toBeGreaterThan(pgmetaAdmin.port);
+      expect(pgmetaAdmin.port).not.toBe(pgmetaPrimary.port);
+      expect(vectorPrimary.port).not.toBe(pgmetaPrimary.port);
+      expect(vectorPrimary.port).not.toBe(pgmetaAdmin.port);
       const pgmetaResolution = containerResolutionFor(
         { ...state, privatePorts: reservation.privateAssignments },
         planned("studio:pgmeta"),

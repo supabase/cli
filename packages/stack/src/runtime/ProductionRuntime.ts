@@ -24,7 +24,7 @@ import {
 import type { StackStateStore } from "../state/StackStateStore.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
 import { redactKnownSecrets } from "../state/SecretStore.ts";
-import type { PersistedStackState } from "../state/StackState.ts";
+import { privateBindingKey, type PersistedStackState } from "../state/StackState.ts";
 import type { PersistedSecretValues } from "../state/StackState.ts";
 import type { StackId } from "../public/StackId.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
@@ -64,6 +64,7 @@ import {
 import type { NativeProcessSpec } from "./NativeProcess.ts";
 import {
   resolveContainerResolutionFor,
+  privateBindingIntentsFor,
   runtimeSpecFor,
   validatePrivateAssignments,
   validateWorkloadRuntimeInputs,
@@ -807,12 +808,17 @@ export const makeProductionRuntime = (
               ),
             );
           }
-          for (const assignment of input.state.privatePorts)
+          const requestedPrivate = new Set(
+            privateBindingIntentsFor(input.plan).map(privateBindingKey),
+          );
+          for (const assignment of input.state.privatePorts) {
+            if (!requestedPrivate.has(privateBindingKey(assignment))) continue;
             yield* checkHostPort(
               "127.0.0.1",
               assignment.port,
               `${assignment.workloadId}:${assignment.binding}`,
             );
+          }
           yield* checkNativeDatabaseLockEvidence(
             fileSystem,
             pathService.join(paths.data, "database", "postmaster.pid"),
