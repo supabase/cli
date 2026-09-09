@@ -75,6 +75,14 @@ Thanks for the feedback!
 To delete this feedback later, run: supabase feedback delete <delete-token>
 ```
 
+When the submission carried a `project_ref`, the hint appends
+`--project-ref <ref>`, since the row can only be deleted with that same ref
+presented:
+
+```
+To delete this feedback later, run: supabase feedback delete <delete-token> --project-ref <ref>
+```
+
 Rendered as a clack success line plus an info line after a "Sending
 feedback..." spinner. The delete token is shown exactly once — it is not
 persisted anywhere by the CLI. When no message is passed on an interactive

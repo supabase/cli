@@ -236,12 +236,20 @@ describe("feedback add", () => {
   });
 
   it.live("attaches the linked project ref written by supabase link", () => {
-    const { layer, submitter } = setupFeedback();
+    const { layer, out, submitter } = setupFeedback();
     writeLinkedProjectRef(tempRoot.current, VALID_REF);
     return Effect.gen(function* () {
       yield* feedbackAdd({ message: ["linked project feedback"] });
 
       expect(submitter.submissions[0]?.projectRef).toBe(VALID_REF);
+      // The row now requires the same ref to delete, so the receipt must be
+      // self-contained when copied out of this directory.
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "info",
+          message: `To delete this feedback later, run: supabase feedback delete ${MOCK_DELETE_TOKEN} --project-ref ${VALID_REF}`,
+        }),
+      );
     }).pipe(Effect.provide(layer));
   });
 

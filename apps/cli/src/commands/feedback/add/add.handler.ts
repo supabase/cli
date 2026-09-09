@@ -172,8 +172,14 @@ export const feedbackAdd = Effect.fn("feedback.add")(function* (args: FeedbackAd
       return;
     }
     yield* output.success("Thanks for the feedback!");
-    yield* output.info(
-      `To delete this feedback later, run: supabase feedback delete ${deleteToken}`,
-    );
+    // A row submitted with a project ref can only be deleted with that same
+    // ref presented, so the one-time receipt carries it: copied into another
+    // directory later, the bare token would resolve no ref and report "not
+    // found".
+    const deleteCommand = Option.match(projectRef, {
+      onNone: () => `supabase feedback delete ${deleteToken}`,
+      onSome: (ref) => `supabase feedback delete ${deleteToken} --project-ref ${ref}`,
+    });
+    yield* output.info(`To delete this feedback later, run: ${deleteCommand}`);
   }).pipe(Effect.ensuring(telemetryState.flush));
 });
