@@ -7,22 +7,22 @@ import {
   type CreateEphemeralPostgresOptions,
   type EffectEphemeralPostgres,
 } from "@supabase/stack/effect";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput } from "../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   useTempWorkdir,
   withEnvVar,
-} from "../../../../tests/helpers/command-mocks.ts";
-import { SHADOW_CACHE_ENV } from "../../../command-internal/db-bootstrap/shadow-cache.ts";
-import { DbConnection } from "../../../command-internal/db-connection.service.ts";
-import { stackBackendLayer } from "./stack-backend.ts";
+} from "../../tests/helpers/command-mocks.ts";
+import { SHADOW_CACHE_ENV } from "./db-bootstrap/shadow-cache.ts";
+import { DbConnection } from "./db-connection.service.ts";
+import { stackBackendLayer } from "../commands/experimental/stack/stack-backend.ts";
 import {
   StackEphemeralPostgres,
   stackAcquireShadowDatabase,
   stackShadowBaselineTarFileName,
   stackShadowCacheKey,
 } from "./stack-shadow.ts";
-import type { ShadowSetupInput } from "../../../command-internal/db-bootstrap/shadow-database.ts";
+import type { ShadowSetupInput } from "./db-bootstrap/shadow-database.ts";
 
 const tmp = useTempWorkdir("stack-shadow-");
 const defaultConfig: CliConfig = Schema.decodeSync(CliConfigSchema)({});

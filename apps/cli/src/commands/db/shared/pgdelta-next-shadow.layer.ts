@@ -54,7 +54,7 @@ import {
   stackAcquireShadowDatabase,
   stackMigrateShadow,
   stackReleaseShadowDatabase,
-} from "../../experimental/stack/stack-shadow.ts";
+} from "../../../command-internal/stack-shadow.ts";
 
 const allocateFreeHostPort = Effect.callback<Option.Option<number>>((resume) => {
   const server = Net.createServer();

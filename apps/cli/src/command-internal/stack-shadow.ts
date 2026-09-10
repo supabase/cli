@@ -29,26 +29,26 @@ import {
   type StackRuntimePreference,
   type StackVersionUnsupportedError,
 } from "@supabase/stack/effect";
-import { Output } from "../../../shared/output/output.service.ts";
-import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { DbConnection } from "../../../command-internal/db-connection.service.ts";
-import { shadowBaselineCacheDir } from "../../../command-internal/pgdelta.paths.ts";
+import { Output } from "../shared/output/output.service.ts";
+import { CommandSettings } from "../config/command-settings.service.ts";
+import { DbConnection } from "./db-connection.service.ts";
+import { shadowBaselineCacheDir } from "./pgdelta.paths.ts";
 import {
   SHADOW_BASELINE_KEEP,
   SHADOW_BASELINE_MAX_AGE_MS,
   SHADOW_CACHE_ENV,
   shadowBaselineTarsToEvict,
   touchShadowBaselineTar,
-} from "../../../command-internal/db-bootstrap/shadow-cache.ts";
-import { viperEnvBoolWithProjectFallback } from "../../../command-internal/viper-env.ts";
+} from "./db-bootstrap/shadow-cache.ts";
+import { viperEnvBoolWithProjectFallback } from "./viper-env.ts";
 import {
   connectShadowDatabase,
   ShadowDbError,
   type ShadowSetupInput,
   type ShadowSourceResult,
-} from "../../../command-internal/db-bootstrap/shadow-database.ts";
-import { listLocalMigrationPaths } from "../../../command-internal/migration-history.ts";
-import { applyMigrations, seedGlobals } from "../../../command-internal/migration-apply.ts";
+} from "./db-bootstrap/shadow-database.ts";
+import { listLocalMigrationPaths } from "./migration-history.ts";
+import { applyMigrations, seedGlobals } from "./migration-apply.ts";
 import { stackProjectRuntime } from "./stack-local-database.ts";
 
 /** Optional factory so CLI tests can `Layer.succeed` a fake cluster. */

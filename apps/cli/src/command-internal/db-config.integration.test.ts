@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, Layer, Option, Redacted, Stream } from "effect";
+import { CAPABILITY_NAMES, StackIdSchema, type EffectStack } from "@supabase/stack/effect";
 
 import {
   mockAnalytics,
@@ -22,10 +23,12 @@ import {
 } from "./global-flags.ts";
 import { DebugLogger } from "./debug-logger.service.ts";
 import { identityStitchLayer } from "./identity-stitch.ts";
-import { dbConfigLayer } from "./db-config.layer.ts";
+import { dbConfigLayer, dbConfigResolverLayer } from "./db-config.layer.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import type { DbConfigFlags } from "./db-config.types.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
+import { stackBackendLayer } from "../commands/experimental/stack/stack-backend.ts";
+import { StackApi } from "../commands/experimental/stack/stack.shared.ts";
 
 // `--local` / `--db-url` never touch the Management API stack, so the resolver
 // builds with simple ambient stubs. The `--linked` sub-flow (login-role,
@@ -46,6 +49,8 @@ function buildResolver(
     readonly projectHost?: string;
     readonly poolerHost?: string;
     readonly dbConnection?: Layer.Layer<DbConnection>;
+    readonly stackApi?: Layer.Layer<StackApi>;
+    readonly stackBackend?: "legacy" | "stack";
   } = {},
 ) {
   const deps = Layer.mergeAll(
@@ -76,7 +81,14 @@ function buildResolver(
     ),
     BunServices.layer,
   );
-  return dbConfigLayer.pipe(Layer.provide(deps));
+  const resolver =
+    opts.stackApi !== undefined
+      ? dbConfigResolverLayer.pipe(Layer.provide(opts.stackApi), Layer.provide(deps))
+      : dbConfigLayer.pipe(Layer.provide(deps));
+  return Layer.mergeAll(
+    resolver,
+    opts.stackBackend !== undefined ? stackBackendLayer(opts.stackBackend) : Layer.empty,
+  );
 }
 
 function withWorkdir(toml?: string) {
@@ -161,6 +173,77 @@ describe("dbConfigResolver (local + db-url)", () => {
               profileName: "supabase",
             },
           });
+          expect(r.isLocal).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("local mode: uses the stack credentials URL when the stack backend is on", () => {
+    const dir = withWorkdir(["[db]", "port = 55555", 'password = "hunter2"', ""].join("\n"));
+    const unused = () => Effect.die("unused");
+    const stackId = StackIdSchema.make("a".repeat(64));
+    const stack: EffectStack = {
+      id: stackId,
+      status: () =>
+        Effect.succeed({
+          id: stackId,
+          lifecycle: "running",
+          desiredLifecycle: "running",
+          runtime: { kind: "native" },
+          endpoints: {},
+          versions: {},
+          capabilities: CAPABILITY_NAMES.map((name) => ({
+            name,
+            activation: name === "database" ? "eager" : "lazy",
+            state: name === "database" ? "ready" : "dormant",
+          })),
+          artifacts: [],
+        }),
+      credentials: () =>
+        Effect.succeed({
+          database: {
+            url: Redacted.make("postgresql://postgres:stack-secret@127.0.0.1:54329/postgres"),
+            password: Redacted.make("stack-secret"),
+          },
+          api: {
+            publishableKey: "anon",
+            secretKey: Redacted.make("service"),
+            anonJwt: "anon",
+            serviceRoleJwt: Redacted.make("service"),
+          },
+        }),
+      prepare: unused,
+      start: unused,
+      stop: unused,
+      destroy: unused,
+      logs: unused,
+      followLogs: () => Stream.empty,
+    };
+    const stackApi = Layer.succeed(StackApi, {
+      createStack: unused,
+      findStack: () =>
+        Effect.succeed(
+          Option.some({
+            id: stackId,
+            projectRoot: dir,
+            name: "default",
+            branchContext: "main",
+            runtime: { kind: "native" },
+            desiredLifecycle: "running",
+          }),
+        ),
+      discoverStacks: unused,
+      openStack: () => Effect.succeed(stack),
+      inspectStack: unused,
+    });
+    return resolve(dir, localFlags, { stackBackend: "stack", stackApi }).pipe(
+      Effect.tap((r) =>
+        Effect.sync(() => {
+          expect(r.conn.host).toBe("127.0.0.1");
+          expect(r.conn.port).toBe(54329);
+          expect(r.conn.password).toBe("stack-secret");
           expect(r.isLocal).toBe(true);
           rmSync(dir, { recursive: true, force: true });
         }),

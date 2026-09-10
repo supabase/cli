@@ -3,22 +3,21 @@ import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-} from "../../../shared/telemetry/error-actionability.ts";
+} from "../shared/telemetry/error-actionability.ts";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
 import type { EffectStack } from "@supabase/stack/effect";
 import type { StackRuntime } from "@supabase/stack/effect";
-import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
-import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
-import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { parseConnectionString } from "./db-config.parse.ts";
+import type { PgConnInput } from "./db-connection.service.ts";
+import { CommandSettings } from "../config/command-settings.service.ts";
 import {
   LocalDbRunningError,
   isLocalDbRunning,
   type LocalDockerEngine,
-} from "../../../command-internal/db-bootstrap/local-db-running.ts";
-import { DeclarativeShadowDbError } from "../../db/shared/pgdelta.errors.ts";
-import { currentStackBackend } from "./stack-backend.ts";
-import { StackApi } from "./stack.shared.ts";
-import { loadStackConfig } from "./stack-config.ts";
+} from "./db-bootstrap/local-db-running.ts";
+import { currentStackBackend } from "../commands/experimental/stack/stack-backend.ts";
+import { StackApi } from "../commands/experimental/stack/stack.shared.ts";
+import { loadStackConfig } from "../commands/experimental/stack/stack-config.ts";
 
 const notRunning = (message = "supabase start is not running.") =>
   new LocalDbRunningError({ message });
@@ -35,14 +34,13 @@ const databaseReady = (stack: EffectStack) =>
 
 const openProjectStack = () =>
   Effect.gen(function* () {
-    const api = yield* Effect.serviceOption(StackApi);
-    if (Option.isNone(api)) return Option.none();
+    const api = yield* StackApi;
     const cliSettings = yield* CommandSettings;
-    const descriptor = yield* api.value
+    const descriptor = yield* api
       .findStack({ projectRoot: cliSettings.workdir })
       .pipe(Effect.mapError((cause) => notRunning(cause.message)));
     if (Option.isNone(descriptor)) return Option.none();
-    const stack = yield* api.value
+    const stack = yield* api
       .openStack(descriptor.value.id)
       .pipe(Effect.mapError((cause) => notRunning(cause.message)));
     return yield* databaseReady(stack);
@@ -65,7 +63,7 @@ export const stackProjectRuntime: Effect.Effect<
   });
 });
 
-export const STACK_NATIVE_ENGINE_MESSAGE =
+const STACK_NATIVE_ENGINE_MESSAGE =
   "The stack backend only supports the pg-delta engine. Do not pass --use-migra, --use-pgadmin, --use-pg-schema, or --diff-engine migra.";
 
 export class StackNativeEngineError extends Data.TaggedError("StackNativeEngineError")<{
@@ -83,20 +81,23 @@ export const stackRejectNativeDockerDiffEngine: Effect.Effect<void, StackNativeE
     return yield* new StackNativeEngineError({ message: STACK_NATIVE_ENGINE_MESSAGE });
   });
 
-export const stackLocalDatabaseUrl: Effect.Effect<string, LocalDbRunningError, CommandSettings> =
-  Effect.gen(function* () {
-    const opened = yield* openProjectStack();
-    if (Option.isNone(opened)) return yield* notRunning();
-    const credentials = yield* opened.value.stack
-      .credentials()
-      .pipe(Effect.mapError((cause) => notRunning(cause.message)));
-    return Redacted.value(credentials.database.url);
-  });
+export const stackLocalDatabaseUrl: Effect.Effect<
+  string,
+  LocalDbRunningError,
+  CommandSettings | StackApi
+> = Effect.gen(function* () {
+  const opened = yield* openProjectStack();
+  if (Option.isNone(opened)) return yield* notRunning();
+  const credentials = yield* opened.value.stack
+    .credentials()
+    .pipe(Effect.mapError((cause) => notRunning(cause.message)));
+  return Redacted.value(credentials.database.url);
+});
 
 export const stackLocalDatabaseConn: Effect.Effect<
   PgConnInput,
   LocalDbRunningError,
-  CommandSettings
+  CommandSettings | StackApi
 > = Effect.gen(function* () {
   const url = yield* stackLocalDatabaseUrl;
   const conn = parseConnectionString(url);
@@ -106,10 +107,10 @@ export const stackLocalDatabaseConn: Effect.Effect<
   return conn;
 });
 
-export const stackLocalDatabaseIsRunning: Effect.Effect<
+const stackLocalDatabaseIsRunning: Effect.Effect<
   boolean,
   LocalDbRunningError,
-  CommandSettings
+  CommandSettings | StackApi
 > = openProjectStack().pipe(Effect.map(Option.isSome));
 
 export const resolveLocalDatabaseIsRunning = (
@@ -123,25 +124,22 @@ export const resolveLocalDatabaseIsRunning = (
     const backend = yield* currentStackBackend;
     if (backend.kind === "legacy")
       return yield* isLocalDbRunning(spawner, fs, path, workdir, configuredProjectId);
-    return yield* stackLocalDatabaseIsRunning;
+    const api = yield* Effect.serviceOption(StackApi);
+    if (Option.isNone(api)) return false;
+    return yield* stackLocalDatabaseIsRunning.pipe(Effect.provideService(StackApi, api.value));
   });
 
 export const stackEnsureLocalDatabaseStarted: Effect.Effect<
   void,
-  DeclarativeShadowDbError,
-  CommandSettings | FileSystem.FileSystem | Path.Path
+  LocalDbRunningError,
+  CommandSettings | FileSystem.FileSystem | Path.Path | StackApi
 > = Effect.gen(function* () {
-  const api = yield* Effect.serviceOption(StackApi);
-  if (Option.isNone(api)) {
-    return yield* new DeclarativeShadowDbError({
-      message: "failed to start local database: supabase start is not running.",
-    });
-  }
+  const api = yield* StackApi;
   const cliSettings = yield* CommandSettings;
-  const existing = yield* api.value.findStack({ projectRoot: cliSettings.workdir }).pipe(
+  const existing = yield* api.findStack({ projectRoot: cliSettings.workdir }).pipe(
     Effect.mapError(
       (cause) =>
-        new DeclarativeShadowDbError({
+        new LocalDbRunningError({
           message: `failed to start local database: ${cause.message}`,
         }),
     ),
@@ -149,24 +147,24 @@ export const stackEnsureLocalDatabaseStarted: Effect.Effect<
   const config = yield* loadStackConfig(cliSettings.workdir).pipe(
     Effect.mapError(
       (cause) =>
-        new DeclarativeShadowDbError({
+        new LocalDbRunningError({
           message: `failed to start local database: ${cause.message}`,
         }),
     ),
   );
   const stack = Option.isSome(existing)
-    ? yield* api.value.openStack(existing.value.id).pipe(
+    ? yield* api.openStack(existing.value.id).pipe(
         Effect.mapError(
           (cause) =>
-            new DeclarativeShadowDbError({
+            new LocalDbRunningError({
               message: `failed to start local database: ${cause.message}`,
             }),
         ),
       )
-    : yield* api.value.createStack({ projectRoot: cliSettings.workdir }).pipe(
+    : yield* api.createStack({ projectRoot: cliSettings.workdir }).pipe(
         Effect.mapError(
           (cause) =>
-            new DeclarativeShadowDbError({
+            new LocalDbRunningError({
               message: `failed to start local database: ${cause.message}`,
             }),
         ),
@@ -174,7 +172,7 @@ export const stackEnsureLocalDatabaseStarted: Effect.Effect<
   const status = yield* stack.status().pipe(
     Effect.mapError(
       (cause) =>
-        new DeclarativeShadowDbError({
+        new LocalDbRunningError({
           message: `failed to start local database: ${cause.message}`,
         }),
     ),
@@ -184,7 +182,7 @@ export const stackEnsureLocalDatabaseStarted: Effect.Effect<
   yield* stack.start({ config }).pipe(
     Effect.mapError(
       (cause) =>
-        new DeclarativeShadowDbError({
+        new LocalDbRunningError({
           message: `failed to start local database: ${cause.message}`,
         }),
     ),

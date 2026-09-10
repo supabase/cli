@@ -67,11 +67,11 @@ import {
 import { type PgDeltaContext, isPgDeltaDebugEnabled, resolvePgDeltaProjectId } from "./pgdelta.ts";
 import { prepareShadowSource } from "../commands/db/shared/shadow-source.ts";
 import { currentStackBackend } from "../commands/experimental/stack/stack-backend.ts";
-import { stackRejectNativeDockerDiffEngine } from "../commands/experimental/stack/stack-local-database.ts";
+import { stackRejectNativeDockerDiffEngine } from "./stack-local-database.ts";
 import {
   stackPrepareShadowSource,
   stackWithShadowDatabase,
-} from "../commands/experimental/stack/stack-shadow.ts";
+} from "./stack-shadow.ts";
 import type { DbPullFlags } from "../commands/db/pull/pull.command.ts";
 import {
   DbPullDumpError,

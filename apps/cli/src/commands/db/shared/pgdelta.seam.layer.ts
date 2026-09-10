@@ -14,7 +14,8 @@ import { resolveLocalProjectId, localDbContainerId } from "../../../command-inte
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
 import { currentStackBackend } from "../../experimental/stack/stack-backend.ts";
-import { stackEnsureLocalDatabaseStarted } from "../../experimental/stack/stack-local-database.ts";
+import { StackApi, stackApiLayer } from "../../experimental/stack/stack.shared.ts";
+import { stackEnsureLocalDatabaseStarted } from "../../../command-internal/stack-local-database.ts";
 
 const shadowDockerCause = (stderr: string): { readonly docker: "daemon" } | Record<never, never> =>
   isDockerDaemonUnreachable(stderr) ? { docker: "daemon" } : {};
@@ -65,6 +66,7 @@ export const declarativeSeamLayer = Layer.effect(
   DeclarativeSeam,
   Effect.gen(function* () {
     const cliSettings = yield* CommandSettings;
+    const stackApi = yield* StackApi;
     const spawner = yield* ChildProcessSpawner;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -82,6 +84,15 @@ export const declarativeSeamLayer = Layer.effect(
               Effect.provideService(CommandSettings, cliSettings),
               Effect.provideService(FileSystem.FileSystem, fs),
               Effect.provideService(Path.Path, path),
+              Effect.provideService(StackApi, stackApi),
+              Effect.mapError(
+                (cause) =>
+                  new DeclarativeShadowDbError({
+                    message: cause.message,
+                    ...(cause.daemonDown === true ? { docker: "daemon" as const } : {}),
+                    ...(cause.suggestion !== undefined ? { suggestion: cause.suggestion } : {}),
+                  }),
+              ),
             );
           }
           const running = yield* isLocalDbRunning(
@@ -122,8 +133,11 @@ export const declarativeSeamLayer = Layer.effect(
           );
         }),
       ensureLocalPostgresImageCurrent: () =>
-        Effect.scoped(
-          Effect.gen(function* () {
+        Effect.gen(function* () {
+          const backend = yield* currentStackBackend;
+          if (backend.kind === "stack") return;
+          return yield* Effect.scoped(
+            Effect.gen(function* () {
             const toml = yield* readDbToml(fs, path, cliSettings.workdir).pipe(
               Effect.mapError(
                 (error) =>
@@ -246,10 +260,11 @@ export const declarativeSeamLayer = Layer.effect(
               }),
             );
           }),
-        ),
+          );
+        }),
     });
   }),
-);
+).pipe(Layer.provide(stackApiLayer));
 
 type StartLocalDatabaseDeps =
   ReturnType<typeof startLocalDatabase> extends Effect.Effect<infer _A, infer _E, infer R>

@@ -45,7 +45,7 @@ import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { errorMessage, relativizeErrorMessage } from "../../../command-internal/error-message.ts";
 import { viperEnvStringWithProjectFallback } from "../../../command-internal/viper-env.ts";
 import { currentStackBackend } from "../../experimental/stack/stack-backend.ts";
-import { stackWithShadowDatabase } from "../../experimental/stack/stack-shadow.ts";
+import { stackWithShadowDatabase } from "../../../command-internal/stack-shadow.ts";
 import { applyMigrations, MigrationApplyError } from "../../../command-internal/migration-apply.ts";
 import {
   INSERT_MIGRATION_VERSION,

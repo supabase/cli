@@ -42,6 +42,7 @@ import {
 } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
+import { stackBackendLayer } from "../../experimental/stack/stack-backend.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
@@ -417,6 +418,7 @@ function setup(
     // Simulates an unlinked workdir: `loadProjectRef` fails with `ProjectRefNotLinkedError`
     // absent an explicit `--project-ref` flag, instead of falling back to `opts.ref`.
     linkedFails?: boolean;
+    stackBackend?: boolean;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -485,6 +487,7 @@ function setup(
     Layer.succeed(DebugFlag, opts.debug ?? false),
     telemetry.layer,
     linkedCache.layer,
+    ...(opts.stackBackend === true ? [stackBackendLayer("stack")] : []),
   );
   return {
     layer,
@@ -665,6 +668,28 @@ describe("db reset", () => {
         });
       },
     );
+
+    it.live("refuses --local reset when the stack backend is enabled, before any recreate", () => {
+      const { layer, child, resolver } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain(
+            "db reset --local is not supported when the stack backend is enabled.",
+          );
+        }
+        expect(resolver.calls).toBe(0);
+        expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
+          false,
+        );
+      });
+    });
 
     it.live(
       "fails a local reset before the destructive recreate on a malformed config.toml",
