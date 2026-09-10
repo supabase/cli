@@ -3,8 +3,9 @@ import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
+import { unsupportedOutputFlagMessage } from "../../command-internal/go-output-flag.ts";
 import {
-  authenticationFailedStatusMessage,
+  AUTHENTICATION_FAILED_STATUS_MESSAGE,
   mapHttpError,
 } from "../../command-internal/http-errors.ts";
 import { Output } from "../../shared/output/output.service.ts";
@@ -23,37 +24,25 @@ const mapProfileError = mapHttpError({
   networkMessage: (cause) => `failed to fetch user profile: ${cause}`,
   statusMessage: (status, body) =>
     status === 401
-      ? authenticationFailedStatusMessage()
+      ? AUTHENTICATION_FAILED_STATUS_MESSAGE
       : `unexpected get profile status ${status}: ${body}`,
 });
 
 type Profile = typeof V1GetProfileOutput.Type;
 
 /**
- * Emits whoami's intentionally bare public profile contract.
+ * Projects the Management API response into whoami's intentionally bare public
+ * profile contract.
  *
- * The shared `output.success` helper adds a `message` field in both machine modes,
- * while this command's public payload is exactly `{ id, email, username }`. Keep the
- * API-to-CLI field projection and the exceptional emission path together so API field
- * names and the shared success envelope cannot leak into that contract.
+ * Keep this projection explicit so API field names cannot leak into the CLI payload.
  */
 const emitMachineProfile = Effect.fnUntraced(function* (profile: Profile) {
   const output = yield* Output;
-  const machineProfile = {
+  yield* output.result({
     id: profile.gotrue_id,
     email: profile.primary_email,
     username: profile.username,
-  };
-
-  if (output.format === "json") {
-    yield* output.raw(`${JSON.stringify(machineProfile)}\n`);
-  } else {
-    yield* output.event({
-      type: "result",
-      data: machineProfile,
-      timestamp: new Date().toISOString(),
-    });
-  }
+  });
 });
 
 export const whoami = Effect.fn("whoami")(function* (_flags: WhoamiFlags) {
@@ -65,8 +54,7 @@ export const whoami = Effect.fn("whoami")(function* (_flags: WhoamiFlags) {
   yield* Effect.gen(function* () {
     if (Option.isSome(goOutputFlag)) {
       return yield* new WhoamiOutputFlagUnsupportedError({
-        message:
-          "the -o/--output flag is not supported by whoami; use --output-format json|stream-json instead.",
+        message: unsupportedOutputFlagMessage("whoami"),
       });
     }
 

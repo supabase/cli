@@ -1,5 +1,5 @@
 import {
-  authenticationFailedStatusMessage,
+  AUTHENTICATION_FAILED_STATUS_MESSAGE,
   sanitizeInlineName,
   unexpectedStatusMessage,
 } from "../../command-internal/http-errors.ts";
@@ -30,7 +30,7 @@ export function configReadStatusMessage(
   apiHost: string,
 ): string {
   if (status === 401) {
-    return authenticationFailedStatusMessage();
+    return AUTHENTICATION_FAILED_STATUS_MESSAGE;
   }
   if (status === 403) {
     return `Access denied for project ${sanitizeInlineName(ref)}: your account does not have permission to view its configuration.`;

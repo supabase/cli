@@ -49,3 +49,8 @@ export function outputFormatEnumMessage(allowed: ReadonlyArray<string>): string 
 export function invalidOutputFormatMessage(value: string, allowed: ReadonlyArray<string>): string {
   return `invalid argument "${value}" for "-o, --output" flag: ${outputFormatEnumMessage(allowed)}`;
 }
+
+/** Directs commands that do not support the legacy output flag to `--output-format`. */
+export function unsupportedOutputFlagMessage(command: string): string {
+  return `the -o/--output flag is not supported by ${command}; use --output-format json|stream-json instead.`;
+}
