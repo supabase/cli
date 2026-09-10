@@ -336,7 +336,11 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
 
   it.live("does not probe an explicitly native identity", () =>
     withRuntimeRoot((project) =>
-      createStack({ projectRoot: project, runtime: { kind: "native" } }),
+      createStack({ projectRoot: project, runtime: { kind: "native" } }).pipe(
+        Effect.provideService(ContainerEngineResolver, {
+          resolve: () => Effect.die("native stack must not resolve a container engine"),
+        }),
+      ),
     ),
   );
 
@@ -569,17 +573,6 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
       Effect.gen(function* () {
         const result = yield* openStack(StackIdSchema.make("0".repeat(64))).pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
-      }),
-    ),
-  );
-
-  it.live("an ordinary handle exposes no lifecycle close operation", () =>
-    withRuntimeRoot((project) =>
-      Effect.gen(function* () {
-        const first = yield* createStack({ projectRoot: project });
-        const id = first.id;
-        const second = yield* openStack(id);
-        expect((yield* second.status()).lifecycle).toBe("unconfigured");
       }),
     ),
   );

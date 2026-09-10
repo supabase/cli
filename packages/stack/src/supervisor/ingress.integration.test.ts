@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Crypto, Effect, Exit, FileSystem, Path, Ref, Scope } from "effect";
+import { Cause, Context, Crypto, Effect, Exit, FileSystem, Option, Path, Ref, Scope } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import {
   createServer as createHttpServer,
@@ -13,6 +13,7 @@ import {
 import type { Duplex } from "node:stream";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
 import { compileStack } from "../model/Compiler.ts";
+import type { ExecutionPlan } from "../model/ExecutionPlan.ts";
 import {
   GatewayActivationError,
   PortUnavailableError,
@@ -52,6 +53,41 @@ const listenBackend = (server: ReturnType<typeof createHttpServer>) =>
     () => closeServer(server),
   ).pipe(Effect.as(server));
 
+const makeIngressContext = (prefix: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const context = Context.make(FileSystem.FileSystem, fs).pipe(
+      Context.add(Path.Path, path),
+      Context.add(Crypto.Crypto, crypto),
+    );
+    const root = yield* fs.makeTempDirectoryScoped({ prefix });
+    return { context, fs, path, root };
+  });
+
+const persistedIngressState = (
+  identity: StackIdentity,
+  stackId: string,
+  compiled: {
+    readonly definition: PersistedStackState["definition"];
+    readonly executionPlan: ExecutionPlan;
+  },
+  privatePortBase: number,
+): PersistedStackState => ({
+  format: "supabase-stack-state-v1",
+  identity: { ...identity, stackId },
+  runtime: { kind: "native" },
+  desiredLifecycle: "running",
+  definition: compiled.definition,
+  ports: [],
+  privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
+    ...binding,
+    port: privatePortBase + index,
+  })),
+  secrets: {},
+});
+
 const request = (port: number, path = "/rest/v1/items", method = "GET", host = "127.0.0.1") =>
   Effect.callback<{ readonly status: number; readonly body: string }, Error>((resume) => {
     const client = requestHttp({ host, port, path, method }, (response: IncomingMessage) => {
@@ -75,14 +111,7 @@ describe("Supervisor ingress", () => {
   it.live("closes reservation scopes after repeated failed acquire attempts", () =>
     run(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
-        const context = Context.make(FileSystem.FileSystem, fs).pipe(
-          Context.add(Path.Path, path),
-          Context.add(Crypto.Crypto, crypto),
-        );
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-ingress-scope-" });
+        const { context, fs, path, root } = yield* makeIngressContext("supabase-ingress-scope-");
         const projectRoot = path.join(root, "project");
         yield* fs.makeDirectory(projectRoot);
         const stackIdentity = {
@@ -174,14 +203,7 @@ describe("Supervisor ingress", () => {
   it.live("adopts a coordinated listener and forwards a public request", () =>
     run(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
-        const context = Context.make(FileSystem.FileSystem, fs).pipe(
-          Context.add(Path.Path, path),
-          Context.add(Crypto.Crypto, crypto),
-        );
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-ingress-" });
+        const { context, root } = yield* makeIngressContext("supabase-ingress-");
         const stackIdentity = {
           ...identity,
           projectRoot: root,
@@ -213,19 +235,10 @@ describe("Supervisor ingress", () => {
           },
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
-        yield* store.initialize(stackId, {
-          format: "supabase-stack-state-v1",
-          identity: { ...stackIdentity, stackId },
-          runtime: { kind: "native" },
-          desiredLifecycle: "running",
-          definition: compiled.definition,
-          ports: [],
-          privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
-            ...binding,
-            port: 30000 + index,
-          })),
-          secrets: {},
-        });
+        yield* store.initialize(
+          stackId,
+          persistedIngressState(stackIdentity, stackId, compiled, 30000),
+        );
         const listenerCloseCount = yield* Ref.make(0);
         const bindHost = (address: string, port: number, field: HostListener["field"]) =>
           bindHostListener(address, port, field).pipe(
@@ -317,14 +330,7 @@ describe("Supervisor ingress", () => {
   it.live("reuses a wildcard API listener for the internal loopback bind", () =>
     run(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
-        const context = Context.make(FileSystem.FileSystem, fs).pipe(
-          Context.add(Path.Path, path),
-          Context.add(Crypto.Crypto, crypto),
-        );
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-ingress-wildcard-" });
+        const { context, root } = yield* makeIngressContext("supabase-ingress-wildcard-");
         const stackIdentity = {
           ...identity,
           projectRoot: root,
@@ -357,19 +363,7 @@ describe("Supervisor ingress", () => {
           },
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
-        const persisted: PersistedStackState = {
-          format: "supabase-stack-state-v1",
-          identity: { ...stackIdentity, stackId },
-          runtime: { kind: "native" },
-          desiredLifecycle: "running",
-          definition: compiled.definition,
-          ports: [],
-          privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
-            ...binding,
-            port: 30_000 + index,
-          })),
-          secrets: {},
-        };
+        const persisted = persistedIngressState(stackIdentity, stackId, compiled, 30_000);
         yield* store.initialize(stackId, persisted);
         const binds: Array<{ readonly address: string; readonly field: HostListener["field"] }> =
           [];
@@ -436,14 +430,7 @@ describe("Supervisor ingress", () => {
   it.live("rejects incomplete persisted gateway material before opening", () =>
     run(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
-        const context = Context.make(FileSystem.FileSystem, fs).pipe(
-          Context.add(Path.Path, path),
-          Context.add(Crypto.Crypto, crypto),
-        );
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-ingress-material-" });
+        const { context, root } = yield* makeIngressContext("supabase-ingress-material-");
         const stackId = yield* deriveStackId({
           ...identity,
           projectRoot: root,
@@ -500,6 +487,14 @@ describe("Supervisor ingress", () => {
           )
           .pipe(Effect.exit);
         expect(Exit.isFailure(failed)).toBe(true);
+        if (Exit.isFailure(failed)) {
+          const error = Cause.findErrorOption(failed.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value).toBeInstanceOf(StackPreparationError);
+            expect(error.value.message).toBe("Persisted API gateway material is incomplete");
+          }
+        }
       }),
     ),
   );
@@ -507,14 +502,7 @@ describe("Supervisor ingress", () => {
   it.live("opens non-API listeners without resolving API gateway material", () =>
     run(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
-        const context = Context.make(FileSystem.FileSystem, fs).pipe(
-          Context.add(Path.Path, path),
-          Context.add(Crypto.Crypto, crypto),
-        );
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-ingress-no-api-" });
+        const { context, root } = yield* makeIngressContext("supabase-ingress-no-api-");
         const stackIdentity = {
           ...identity,
           projectRoot: root,
@@ -548,19 +536,7 @@ describe("Supervisor ingress", () => {
           },
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
-        const persisted: PersistedStackState = {
-          format: "supabase-stack-state-v1" as const,
-          identity: { ...stackIdentity, stackId },
-          runtime: { kind: "native" as const },
-          desiredLifecycle: "running" as const,
-          definition: compiled.definition,
-          ports: [],
-          privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
-            ...binding,
-            port: 30200 + index,
-          })),
-          secrets: {},
-        };
+        const persisted = persistedIngressState(stackIdentity, stackId, compiled, 30200);
         yield* store.initialize(stackId, persisted);
         const ingress = yield* makeSupervisorIngress({
           stackId,
@@ -598,14 +574,7 @@ describe("Supervisor ingress", () => {
   it.live("serves accepted Auth templates locally with live content and no activation", () =>
     run(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
-        const context = Context.make(FileSystem.FileSystem, fs).pipe(
-          Context.add(Path.Path, path),
-          Context.add(Crypto.Crypto, crypto),
-        );
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-ingress-template-" });
+        const { context, fs, path, root } = yield* makeIngressContext("supabase-ingress-template-");
         const stackIdentity = {
           ...identity,
           projectRoot: root,
@@ -651,19 +620,7 @@ describe("Supervisor ingress", () => {
           },
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
-        const persisted: PersistedStackState = {
-          format: "supabase-stack-state-v1" as const,
-          identity: { ...stackIdentity, stackId },
-          runtime: { kind: "native" as const },
-          desiredLifecycle: "running" as const,
-          definition: compiled.definition,
-          ports: [],
-          privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
-            ...binding,
-            port: 30300 + index,
-          })),
-          secrets: {},
-        };
+        const persisted = persistedIngressState(stackIdentity, stackId, compiled, 30300);
         yield* store.initialize(stackId, persisted);
         const activated: string[] = [];
         const ingress = yield* makeSupervisorIngress({

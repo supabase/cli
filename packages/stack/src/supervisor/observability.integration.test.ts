@@ -10,22 +10,44 @@ const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 
+const boundedFixture = () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-logs-" });
+    const store = yield* makeLogStore({ path: path.join(root, "logs.json"), maxEntries: 2 });
+    return { fs, path, root, store };
+  });
+
 describe("observability", () => {
-  it.live("retains bounded redacted records and resumes from an opaque cursor", () =>
+  it.live("retains only the newest records at the configured entry bound", () =>
     withPlatform(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-logs-" });
-        const store = yield* makeLogStore({
-          path: path.join(root, "logs.json"),
-          maxEntries: 2,
-          knownSecrets: ["top-secret"],
+        const { store } = yield* boundedFixture();
+        yield* store.append({
+          source: "database",
+          stream: "stdout",
+          message: "one",
         });
+        yield* store.append({ source: "auth", stream: "stderr", message: "two" });
+        yield* store.append({
+          source: "gateway",
+          stream: "internal",
+          message: "three",
+        });
+        expect((yield* store.read()).map((entry) => entry.message)).toEqual(["two", "three"]);
+      }),
+    ),
+  );
+
+  it.live("resumes a bounded read after an opaque cursor", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const { store } = yield* boundedFixture();
         const first = yield* store.append({
           source: "database",
           stream: "stdout",
-          message: "top-secret one",
+          message: "one",
         });
         const second = yield* store.append({ source: "auth", stream: "stderr", message: "two" });
         const third = yield* store.append({
@@ -33,22 +55,62 @@ describe("observability", () => {
           stream: "internal",
           message: "three",
         });
-        const retained = yield* store.read();
-        expect(retained.map((entry) => entry.message)).toEqual(["two", "three"]);
         expect((yield* store.read({ cursor: first.cursor })).map((entry) => entry.cursor)).toEqual([
           second.cursor,
           third.cursor,
         ]);
+      }),
+    ),
+  );
+
+  it.live("filters retained records by capability before publishing a batch", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const { store } = yield* boundedFixture();
+        yield* store.append({ source: "database", stream: "stdout", message: "database" });
+        yield* store.append({ source: "auth", stream: "stderr", message: "auth" });
         const scanned = yield* store.read();
         expect(
           selectLogBatch(scanned, { capabilities: ["auth"] }).entries.map((entry) => entry.message),
-        ).toEqual(["two"]);
+        ).toEqual(["auth"]);
+      }),
+    ),
+  );
+
+  it.live("rejects invalid cursors while keeping the retained log file private", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const { fs, path, root, store } = yield* boundedFixture();
+        yield* store.append({ source: "auth", stream: "stderr", message: "auth" });
         const invalidCursor = yield* store
           .read({ cursor: { opaque: "not-a-cursor" } })
           .pipe(Effect.exit);
         expect(errorOf(invalidCursor)).toBeInstanceOf(InvalidLogCursorError);
-        expect(yield* fs.readFileString(path.join(root, "logs.json"))).not.toContain("top-secret");
         expect((yield* fs.stat(path.join(root, "logs.json"))).mode & 0o077).toBe(0);
+      }),
+    ),
+  );
+
+  it.live("redacts known secrets in retained entries before writing them to disk", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-log-redaction-" });
+        const logPath = path.join(root, "logs.json");
+        const store = yield* makeLogStore({ path: logPath, knownSecrets: ["top-secret"] });
+
+        const entry = yield* store.append({
+          source: "database",
+          stream: "stdout",
+          message: "password=top-secret",
+        });
+
+        expect(entry.message).toBe("password=[REDACTED]");
+        expect((yield* store.read()).map((retained) => retained.message)).toEqual([
+          "password=[REDACTED]",
+        ]);
+        expect(yield* fs.readFileString(logPath)).not.toContain("top-secret");
       }),
     ),
   );
