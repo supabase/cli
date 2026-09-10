@@ -109,7 +109,7 @@ describe("orgs create integration", () => {
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion\n");
-      // PascalCase field names at the top level — no table header (CLI-1975).
+      // PascalCase field names at the top level — no table header.
       expect(out.stdoutText).toContain('Name = "Acme"');
     }).pipe(Effect.provide(layer));
   });

@@ -15,12 +15,9 @@ import { InvalidWorkerSourceError } from "./workers.errors.ts";
 
 const PROJECT = "/repo";
 
-/**
- * Confinement is decided on the filesystem's terms, so these need a real one.
- * A path that does not exist still resolves — `canonicalize` walks up to the
- * deepest existing ancestor — which is what lets the `/repo` cases below stay
- * pure string scenarios.
- */
+// Confinement compares against a real filesystem, but `canonicalize` walks up to the deepest
+// existing ancestor for a path that doesn't exist yet — so the `/repo` cases below can stay pure
+// string scenarios.
 const runFs = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
   Effect.runPromise(effect.pipe(Effect.provide(BunServices.layer)));
 
@@ -40,8 +37,6 @@ describe("worker directories", () => {
     expect(await sourceDir("packages/api")).toBe(join(PROJECT, "packages", "api"));
   });
 
-  // `source` arrives from a committed `config.toml`, so it is as much an input
-  // as `--source` is — and `push` packages and uploads whatever it resolves to.
   test.each([["../../elsewhere"], ["/etc"], ["supabase/functions/hello"]])(
     "refuses a recorded source of %j",
     async (configuredSource) => {
@@ -83,8 +78,6 @@ describe("resolveWorkerSource", () => {
     ).toBe(join(PROJECT, "packages", "api"));
   });
 
-  // The starter files land in whatever this resolves to, so each of these would
-  // write into work belonging to the project or to the machine.
   test.each([
     [".", "the project root itself"],
     ["", "empty"],
@@ -97,10 +90,7 @@ describe("resolveWorkerSource", () => {
     ["supabase/migrations", "supabase/migrations/"],
     ["supabase/.temp", "supabase/.temp/"],
     ["supabase/.temp/project-ref", "supabase/.temp/"],
-    // Refusing the reserved directories is not enough on its own: this path is
-    // inside the project, is not `supabase/` itself, and is in no reserved
-    // subdirectory — so without this it would be authorized as a scaffold
-    // destination, and the project's config file is not that.
+    // Not covered by the reserved directories above: `config.toml` sits directly under `supabase/`.
     ["supabase/config.toml", "supabase/config.toml"],
     ["supabase/config.json", "supabase/config.json"],
   ])("refuses %j", async (raw, reason) => {
@@ -112,9 +102,8 @@ describe("resolveWorkerSource", () => {
   });
 });
 
-// Containment on a real filesystem, because a string comparison cannot see a
-// symlink: a directory inside the project is free to point anywhere outside it,
-// and the starter files land wherever the path really resolves.
+// Containment must be checked on a real filesystem: a string comparison can't see a symlink that
+// leads outside the project.
 describe("resolveWorkerSource containment on a real filesystem", () => {
   let project = "";
   let outside = "";
@@ -168,12 +157,8 @@ describe("resolveWorkerSource containment on a real filesystem", () => {
     expect(error.detail).toContain("supabase/functions/");
   });
 
-  // A destination that does not exist yet is the normal case for `new`, and the
-  // project root itself is usually behind a symlink on macOS (`/var` ->
-  // `/private/var`). Both have to compare equal, not fail containment.
-  // A name that ends in a space is legal on Unix, and only reaches argv as one
-  // entry if the user quoted it. Trimming it pointed the scaffold at a different
-  // directory than the one asked for.
+  // A trailing space is legal in a Unix directory name and only survives to argv as one entry
+  // when the user quotes it; trimming it would retarget the scaffold at a different directory.
   test("keeps whitespace that is part of the directory name", async () => {
     expect(
       await runFs(

@@ -1,14 +1,10 @@
 import { relative } from "node:path";
 
 /**
- * Builds the "To start your app:" hint printed at the end of bootstrap. Computes
- * the relative path from the original working directory (`utils.CurrentDirAbs`) to
- * the (post-chdir) project directory; a non-trivial relative path adds a `cd <rel>`
- * line, and a non-empty start command adds a second line.
+ * Builds the "To start your app:" hint printed at the end of bootstrap: a `cd <rel>` line when
+ * the project directory differs from the original cwd, then the start command if non-empty.
  *
- * Colour is applied via the injected `colorize` callback (each command line
- * is wrapped in `utils.Aqua`). It defaults to identity so unit tests assert
- * the raw text, matching a non-TTY (uncoloured) profile.
+ * `colorize` defaults to identity so unit tests can assert raw, uncoloured text.
  */
 export function suggestAppStart(
   currentDirAbs: string,

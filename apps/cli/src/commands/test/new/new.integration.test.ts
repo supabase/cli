@@ -56,9 +56,8 @@ function setup(opts: SetupOpts = {}) {
     out.layer,
     cliSettings,
     telemetry.layer,
-    // BunServices provides FileSystem + Path; when forcing a failure the failing
-    // layer is appended last so it overrides FileSystem (Path still comes from
-    // BunServices — duplicate-tag mergeAll is last-wins).
+    // The failing layer is appended last so it overrides BunServices' FileSystem
+    // (duplicate-tag mergeAll is last-wins); Path still comes from BunServices.
     BunServices.layer,
     ...(opts.writeFails === true ? [failingFsLayer("writeFileString")] : []),
     ...(opts.mkdirFails === true ? [failingFsLayer("makeDirectory")] : []),

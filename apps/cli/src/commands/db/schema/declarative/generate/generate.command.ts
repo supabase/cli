@@ -16,13 +16,9 @@ const config = {
     Flag.withDescription("Overwrite declarative schema files without confirmation."),
     Flag.withDefault(false),
   ),
-  // Deliberately NOT named `--output`/`-o`: the legacy root reserves those for
-  // the global machine-format flag (`OutputFlag`, `json|yaml|toml|env|…`),
-  // and a leaf string flag would shadow it — `generate -o json` would write a
-  // directory named `json` instead of being a (Go-ignored) format request.
-  // `db diff`'s local `--output`/`-o` shadowing is different: Go itself
-  // registers it (`cmd/db.go:222`), so parity fixes that name; this flag is
-  // TS-only and free to avoid the collision.
+  // Not named `--output`/`-o`: that's reserved for the global machine-format flag
+  // (`OutputFlag`), and a leaf string flag would shadow it — `generate -o json` would write a
+  // directory literally named `json` instead of requesting JSON output.
   outputDir: Flag.string("output-dir").pipe(
     Flag.withDescription(
       "Write the generated declarative schema to this directory without changing the configured declarative schema path.",
@@ -37,11 +33,8 @@ const config = {
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
-    // Go registers `--schema` as a cobra `StringSliceVarP`
-    // (`apps/cli-go/cmd/db_schema_declarative.go:495`, deleted in CLI-1970;
-    // last present at commit 7b469f5b3), which CSV-splits each
-    // occurrence so `-s public,auth` includes the two schemas separately. Mirror
-    // the `gen types` / `db lint` parsing so quoted commas are handled the same way.
+    // CSV-splits each occurrence so `-s public,auth` includes the two schemas separately, same
+    // as `gen types`/`db lint`'s quoted-comma parsing.
     Flag.mapTryCatch(
       (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
@@ -53,12 +46,8 @@ const config = {
     ),
     Flag.optional,
   ),
-  // Go gates explicit-target selection on `flag.Changed` (presence), not the bool
-  // value — `hasExplicitTargetFlag` is `Changed("local")||Changed("linked")||
-  // Changed("db-url")` (`apps/cli-go/cmd/db_schema_declarative.go:139-141`,
-  // deleted in CLI-1970; last present at commit 7b469f5b3). Model
-  // `--linked`/`--local` as `Option` (like `--db-url`) so `--linked=false` still
-  // takes the explicit linked path, matching Go (and the `db query` fix).
+  // Explicit-target selection keys off presence, not the bool value, so model `--linked`/
+  // `--local` as `Option` (like `--db-url`) so `--linked=false` still takes the explicit path.
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Generates declarative schema from the linked project."),
     Flag.optional,
@@ -96,10 +85,8 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
         strictCoverage: shared.strictCoverage,
       };
       return yield* dbSchemaDeclarativeGenerate(merged).pipe(
-        // Go's PostRun prints this on success via `fmt.Println` → stdout
-        // (`cmd/db_schema_declarative.go:93`), so keep it on stdout in text mode. In
-        // json / stream-json the bare human line would corrupt the payload, so emit a
-        // structured result instead (machine stdout is payload-only — CLI-1546).
+        // Printed on stdout in text mode; in json/stream-json the bare human line would corrupt
+        // the payload, so emit a structured result instead (machine stdout is payload-only).
         Effect.tap(() =>
           Effect.gen(function* () {
             const output = yield* Output;
@@ -121,15 +108,12 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
             "db-url": merged.dbUrl,
             linked: merged.linked,
             local: merged.local,
-            // `password` must never be added to `safeFlags` — it is a credential and
-            // must always reach telemetry as `<redacted>` (matches Go, which never
-            // marks `--password` telemetry-safe).
+            // `password` must never be added to `safeFlags`: it's a credential and must always
+            // reach telemetry as `<redacted>`.
             password: merged.password,
           },
-          // Go registers `--schema`/`-s` (StringSliceVarP) and `--password`/`-p`
-          // (StringVarP) (`cmd/db_schema_declarative.go:495,500`); telemetry reports
-          // changed flags by canonical `flag.Name` via `pflag.Visit`, so map the
-          // shorthands so `generate -s public -p secret` logs `schema`/`password`.
+          // Telemetry reports changed flags by canonical name, so map the shorthands: `generate
+          // -s public -p secret` must log `schema`/`password`.
           aliases: { s: "schema", p: "password" },
         }),
         withJsonErrorHandling,

@@ -82,9 +82,6 @@ describe("getRegistryImageUrl", () => {
     ).toEqual(["my.mirror.example/supabase/postgres:17.6.1.138"]);
   });
 
-  // `Config.Load` runs `loadNestedEnv`/`godotenv.Load`
-  // before any image resolution, so a project-dotenv-only `SUPABASE_INTERNAL_IMAGE_REGISTRY`
-  // (never set in the ambient shell) still reaches `GetRegistry()`.
   it("honors a projectEnvValues (dotenv)-only registry override, matching Go's post-Load os.Getenv", () => {
     expect(
       withRegistry(undefined, () =>
@@ -102,12 +99,6 @@ describe("getRegistryImageUrl", () => {
     ).toEqual(["my.mirror.example/supabase/postgres:17.6.1.138"]);
   });
 
-  // `projectEnvValues` is the caller's own dotenv+ambient MERGED view (ambient
-  // wins ties during that merge, matching `godotenv.Load`'s "don't override
-  // already-set" semantics — see `envOrDefault`'s doc comment for the
-  // same precedent), so checking it first is equivalent to checking the
-  // already-correctly-merged value first; falling back to bare `process.env`
-  // only covers a caller with no project-env context at all.
   it("prefers projectEnvValues over a bare process.env read when both are set", () => {
     expect(
       withRegistry("ambient.example", () =>
@@ -118,9 +109,7 @@ describe("getRegistryImageUrl", () => {
     ).toBe("merged.example/supabase/pg_prove:3.36");
   });
 
-  // Slim images are published only under `ghcr.io/supabase/cli`. Rewriting them
-  // by last path segment would silently pull the unrelated non-slim mirror, and
-  // no mirror of them exists for a registry override to point at.
+  // Published only under ghcr.io/supabase/cli; rewriting by last path segment would misroute it.
   const SLIM_IMAGE = "ghcr.io/supabase/cli/postgres:17.6.1.165";
 
   it("leaves a slim image unrewritten, whatever the registry override says", () => {

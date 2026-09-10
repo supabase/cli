@@ -13,10 +13,10 @@ import {
 } from "../../../telemetry/command-telemetry.ts";
 import { postgresConfigDelete } from "./delete.handler.ts";
 
-// Go declares `--config` with pflag's `StringSliceVar` (`cmd/postgres.go:64`);
-// malformed CSV fails at parse time with pflag's exact diagnostic (CLI-2005,
-// see `stringSliceFlag`) — before the `--experimental` gate, matching
-// cobra's ParseFlags-before-PersistentPreRunE ordering.
+/**
+ * CSV-splits each occurrence into config keys, failing at parse time with pflag's diagnostic
+ * on malformed CSV — before the --experimental gate runs.
+ */
 export const postgresConfigDeleteConfigFlag = stringSliceFlag(
   "config",
   "Config keys to delete (comma-separated)",
@@ -41,17 +41,12 @@ export const postgresConfigDeleteCommand = Command.make("delete", config).pipe(
   Command.withShortDescription("Delete Postgres database config overrides"),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      // Cobra parses flags — rejecting an out-of-enum `-o` (`internal/utils/enum.go:21-27`)
-      // — before `PersistentPreRunE` ever runs (`cobra@v1.10.2/command.go:919,985`), so an
-      // invalid `-o` value must win over a missing `--experimental` flag.
+      // Validate the -o value before the --experimental gate, so an invalid value is
+      // reported even without --experimental set.
       yield* validateOutputFormat(RESOURCE_OUTPUT_FORMATS);
-      // Go gates `postgresCmd` behind `--experimental` in PersistentPreRunE
-      // (root.go:91-96) BEFORE the `IsManagementAPI` login check (root.go:105-109).
-      // `managementApiRuntimeLayer` eagerly resolves an access token as part
-      // of building its `CommandPlatformApi` layer, so it must be provided AFTER
-      // the gate (inline here) rather than via `Command.provide` on the whole
-      // command — `Command.provide` would build the layer, and fail on a missing
-      // token, before this generator's first `yield*` ever runs.
+      // managementApiRuntimeLayer eagerly resolves an access token, so it's provided here
+      // (after the gate) rather than via Command.provide, which would build it — and fail
+      // on a missing token — before this generator's first yield* runs.
       yield* requireExperimental;
       return yield* postgresConfigDelete(flags).pipe(
         withCommandTelemetry({ flags }),

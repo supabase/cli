@@ -1,9 +1,8 @@
 /**
- * Shadow baseline cache for `db diff`/`db pull`/catalog resolution. Snapshots the platform
+ * Shadow baseline cache for `db diff`/`db pull`/catalog resolution: snapshots the platform
  * baseline as a PGDATA tar under `${SUPABASE_HOME}/cache/shadow-baseline/` (keep 3, 2-day TTL).
- * On by default; an explicitly set `SUPABASE_SHADOW_CACHE` that is not viper-true (`0`/`false`/
- * empty/garbage, from the shell env or the project dotenv) turns it off. A cache miss or
- * anomaly never fails the run except when the shadow does not come back after a cold export.
+ * On by default; set `SUPABASE_SHADOW_CACHE` to a falsy value to disable it. A cache miss or
+ * anomaly never fails the run, except when the shadow doesn't come back after a cold export.
  */
 
 import { createHash, scryptSync } from "node:crypto";
@@ -64,30 +63,18 @@ type Spawner = ChildProcessSpawner["Service"];
 export const SHADOW_CACHE_ENV = "SUPABASE_SHADOW_CACHE";
 
 /**
- * Internal-only "the cache cannot be used" signal. Deliberately NOT a `Data.TaggedError`: it
- * never reaches a user or telemetry — every producer is caught by
- * {@link acquireShadowDatabase} (which falls back to a cold provision) or by
- * {@link exportShadowBaseline} (which warns and continues uncached), so classifying it as a
- * CLI error would be misleading, and would pollute the error-actionability vocabulary with a
- * failure the user can neither see nor act on.
+ * Internal "cache unusable" signal, not a `Data.TaggedError`: it never reaches a user or
+ * telemetry, since every producer is caught by {@link acquireShadowDatabase} (falls back to a
+ * cold provision) or {@link exportShadowBaseline} (warns and continues uncached).
  */
 interface ShadowCacheUnavailable {
   readonly reason: string;
   /**
-   * `true` only when the failure implicates the TAR'S CONTENTS — today, exactly three producers,
-   * all in {@link warmShadow}: an archive whose header stream is missing a required entry —
-   * the PGDATA cluster file or the baseline marker; one whose marker vouches for a DIFFERENT cache
-   * key than the filename it is stored under (both checked before any container is created); and a
-   * restored cluster that started but never
-   * accepted connections (the readiness wait). The wrong-key case is the one where the bytes may
-   * be a perfectly good snapshot — of another key — so what is discarded is only the MISNAMED
-   * COPY, which is exactly right: nothing else can be keyed by this filename.
-   * Everything else (a `docker create`/`cp`/`start`
-   * failure — daemon outage,
-   * port collision, or even a corrupt archive's failed extraction) leaves the tar in place: an
-   * infra failure says nothing about the tar, and a genuinely corrupt one is atomically
-   * REPLACED by the cold fallback's own export in the same run, so deleting up front would only
-   * throw away a valid ~15s-to-rebuild baseline on transient Docker failures.
+   * `true` only when the failure implicates the tar's own contents: a missing required entry, a
+   * marker stamped with a different cache key, or a restored cluster that never became ready. Any
+   * other failure (a `docker create`/`cp`/`start` failure, a corrupt-archive extraction) leaves
+   * the tar in place — an infra failure says nothing about the tar's contents, and a genuinely
+   * corrupt one gets replaced by the cold fallback's own export.
    */
   readonly tarSuspect?: boolean;
 }
@@ -96,10 +83,6 @@ const shadowCacheUnavailable = (
   reason: string,
   opts: { readonly tarSuspect?: boolean } = {},
 ): ShadowCacheUnavailable => ({ reason, ...opts });
-
-// ---------------------------------------------------------------------------
-// Cache key
-// ---------------------------------------------------------------------------
 
 /** One of the three PG15+ one-shot migrate jobs, as the cache key sees it. */
 interface ShadowCacheServiceInput {
@@ -141,9 +124,8 @@ export interface ShadowCacheKeyInputs {
   /** `supabase/roles.sql`'s contents, `""` when absent. */
   readonly rolesSql: string;
   /**
-   * `[db.vault]` secrets — names AND values, both of which land in `vault.secrets`. Only
-   * RESOLVED entries are hashed ({@link shadowCacheKey}), because the upsert skips
-   * unresolved ones entirely — see the loop's own comment there.
+   * `[db.vault]` secrets — names and values, both of which land in `vault.secrets`. Only
+   * resolved entries are hashed ({@link shadowCacheKey}), since the upsert skips unresolved ones.
    */
   readonly vault: ReadonlyArray<VaultSecret>;
   readonly services: {
@@ -152,16 +134,10 @@ export interface ShadowCacheKeyInputs {
     readonly auth: ShadowCacheServiceInput;
   };
   /**
-   * The resolved JWKS string (`ShadowDbSetupInput.jwks`, an `Effect` the caller resolves
-   * lazily) that realtime's one-shot tenant-seed job bakes into the cluster
-   * (`buildRealtimeEnv`'s `jwks` field, `db-setup.ts`) — a config change under
-   * `auth.third_party` changes this value without touching anything else in this struct, so it
-   * needs its own field rather than folding into `services.realtime`. Hashed ONLY when
-   * `services.realtime` is enabled AND `majorVersion >= 15` — the exact compound gate
-   * {@link resolveDbSetupPrelude} itself uses to decide whether to resolve (and therefore
-   * whether the one-shot job ever consumes) this same effect during a real setup: a disabled or
-   * pre-PG15 realtime never reaches the job that reads it. `""` when excluded, mirroring
-   * {@link ShadowCacheServiceInput.image}.
+   * Realtime's resolved JWKS, baked into the cluster by its one-shot tenant-seed job. Kept as its
+   * own field because an `auth.third_party` config change alone changes this value. Hashed only
+   * when `services.realtime` is enabled and `majorVersion >= 15` — the same gate the real setup
+   * uses to decide whether the job ever reads it; `""` otherwise.
    */
   readonly jwks: string;
 }
@@ -205,27 +181,20 @@ function canonicalJson(value: unknown): string {
 }
 
 /**
- * The two-state behavior `applyApiPrivileges` (`db-setup.ts`) actually derives from
- * `api.auto_expose_new_tables`' tri-state: unset and explicit `true` both keep the grants and bake
- * the exact same cluster; only an explicit `false` execs
- * {@link START_REVOKE_API_PRIVILEGES_SQL}. Hashing the raw tri-state would split unset from
- * `true` into different keys and force a spurious ~90MB re-snapshot for a config edit that changes
- * nothing on disk.
+ * The two-state behavior `applyApiPrivileges` derives from the tri-state
+ * `api.auto_expose_new_tables`: unset and explicit `true` both keep the grants; only `false`
+ * revokes them. Hashing the raw tri-state would split unset from `true` into different keys for a
+ * config edit that changes nothing on disk.
  */
 const effectiveShadowApiGrantsKept = (value: Option.Option<boolean>): boolean =>
   Option.getOrElse(value, () => true);
 
 /**
- * The cache key: a 16-hex-char (64-bit) scrypt prefix over a fixed field order. 64 bits is
- * ample for a per-settings global cache whose only cost of a collision would be a wrong baseline
- * — and every genuinely divergent input is in the payload, so a collision needs an actual hash
- * collision, not a missed field. Short enough to read in a filename.
- *
- * scrypt, not a fast hash: the payload embeds `jwt_secret`, `root_key`, `db_password`, and
- * resolved vault values (excluding them would fingerprint the wrong PGDATA), and the key lands
- * in filenames, where a fast hash invites offline brute-force toward those secrets
- * (CodeQL js/insufficient-password-hash). The fixed salt is deliberate: the key must stay
- * deterministic across runs, or the cache never hits.
+ * The cache key: a 16-hex-char (64-bit) scrypt prefix over a fixed field order. 64 bits is ample
+ * for a global cache where a collision only costs a wrong baseline. scrypt, not a fast hash,
+ * because the payload embeds secrets (`jwt_secret`, `root_key`, `db_password`, vault values) and
+ * the key lands in filenames, where a fast hash would invite offline brute-force
+ * (CodeQL js/insufficient-password-hash). The salt is fixed so the key stays deterministic across runs.
  */
 export function shadowCacheKey(inputs: ShadowCacheKeyInputs): string {
   // JSON-encode unrestricted strings so a raw newline cannot forge the next payload line.
@@ -233,9 +202,8 @@ export function shadowCacheKey(inputs: ShadowCacheKeyInputs): string {
   const lines: Array<string> = [
     `postgres_image=${quoted(inputs.postgresImage)}`,
     `major_version=${inputs.majorVersion}`,
-    // Host publish port is deliberately excluded: it is not baked into PGDATA, and
-    // pg-delta next allocates an ephemeral port per shadow. Hashing it would miss
-    // every warm hit on that path. Restore always uses the current run's port.
+    // The host publish port is excluded: it isn't baked into PGDATA, and pg-delta next allocates
+    // an ephemeral port per shadow, so hashing it would miss every warm hit.
     `jwt_secret=${quoted(inputs.jwtSecret)}`,
     `jwt_expiry=${inputs.jwtExpiry}`,
     `root_key=${quoted(inputs.rootKey)}`,
@@ -253,16 +221,13 @@ export function shadowCacheKey(inputs: ShadowCacheKeyInputs): string {
         : `service=${name} enabled=false`,
     );
   }
-  // Realtime's resolved JWKS — see the field's own doc comment for the compound
-  // enabled+majorVersion gate (mirrors `service=realtime`'s own `enabled` exclusion above, plus
-  // the PG15+ gate the one-shot job itself is behind).
+  // Realtime's resolved JWKS; see the field's doc comment for the enabled+majorVersion gate.
   lines.push(
     inputs.services.realtime.enabled && inputs.majorVersion >= 15
       ? `realtime_jwks=${quoted(inputs.jwks)}`
       : "realtime_jwks=excluded",
   );
-  // Storage's migration pin — same compound enabled+majorVersion gate as the JWKS line above,
-  // because the consuming one-shot job (`startInitSchema15`) is behind the same gate.
+  // Storage's migration pin, gated the same way as the JWKS line above.
   lines.push(
     inputs.services.storage.enabled && inputs.majorVersion >= 15
       ? `storage_target_migration=${quoted(inputs.storageTargetMigration)}`
@@ -272,36 +237,20 @@ export function shadowCacheKey(inputs: ShadowCacheKeyInputs): string {
   for (const secret of inputs.vault
     .filter((secret) => secret.resolved)
     .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))) {
-    // JSON-encoded tuple, not `name=value`: both halves are unrestricted strings, so a bare
-    // `=` join would let (`a=b`, `c`) and (`a`, `b=c`) collide — and a value containing a
-    // newline could forge a whole extra payload line.
+    // JSON-encoded tuple, not `name=value`: a bare `=` join would let (`a=b`, `c`) and (`a`,
+    // `b=c`) collide, and a newline in the value could forge an extra payload line.
     lines.push(`vault=${JSON.stringify([secret.name, secret.value])}`);
   }
-  // Last, raw (it can contain anything, including newlines) — mirroring `setupInputsToken`,
-  // which also appends `roles.sql` verbatim at the end of its own payload.
+  // Appended last and raw since it can contain anything, including newlines.
   const payload = `${lines.join("\n")}\nroles_sql=\n${inputs.rolesSql}`;
   return scryptSync(payload, "supabase-shadow-cache-key", 32).toString("hex").slice(0, 16);
 }
 
 /**
- * Resolves {@link ShadowCacheKeyInputs} from the same run input the shadow container
- * itself is built from, plus `supabase/roles.sql` off disk. The service enabled flags come from
- * `setup.config` (NOT the `*EnabledForSetup` fields, which only gate JWKS resolution) because
- * `setupDatabase`'s own one-shot job gates read exactly those config fields.
- *
- * Returns `Option.none` (never a failure) for the two conditions that make caching
- * unavailable — an OrioleDB cluster (whose state is partly external, see the body's own
- * comment) and an unreadable `roles.sql` — so this function's OWN error channel carries
- * nothing but `E`: the `input.setup.jwks` effect below is `yield*`ed unguarded (only when the
- * consuming realtime job is actually reachable — see the field's own doc comment), and a real
- * JWKS failure must fail this whole acquire exactly as it would have failed a real setup, never
- * be folded into a cache-miss the way {@link ShadowCacheUnavailable} failures are
- * elsewhere in this module. Keeping the two failure modes on separate channels (`Option.none`
- * vs. a genuine `Effect` failure) is what lets the caller (`acquireShadowDatabase`)
- * degrade the former to an uncached shadow while letting the latter propagate, without an `as`
- * cast to tell them apart.
+ * Resolves {@link ShadowCacheKeyInputs}, reading `supabase/roles.sql` off disk. Returns
+ * `Option.none` (never a failure) when caching is unavailable (OrioleDB, unreadable `roles.sql`),
+ * so a genuine JWKS resolution failure surfaces on `E` and the caller can tell the two apart.
  */
-
 const resolveShadowCacheKeyInputs = <E>(
   input: ShadowSetupInput<E>,
   opts: ShadowCacheOpts = {},
@@ -328,16 +277,12 @@ const resolveShadowCacheKeyInputs = <E>(
     if (rolesSql === undefined) return Option.none();
 
     const overrides = input.setup.serviceVersionOverrides;
-    // The same registry rewrite `runStartMigrateJob`'s `ensureImagesCached` applies
-    // when the job actually runs (same `projectEnvValues`-then-ambient precedence) — see
+    // Same registry rewrite the real migrate job applies when it runs — see
     // {@link ShadowCacheServiceInput.image}.
     const resolveJobImage = (image: string): string =>
       getRegistryImageUrl(image, input.setup.projectEnvValues);
-    // The exact compound gate {@link resolveDbSetupPrelude} uses to decide whether the
-    // realtime one-shot job's JWKS effect is reached (and therefore run) at all during a real
-    // setup — see `db-setup.ts`. Gating on anything looser here would resolve (and risk failing
-    // on) an effect a real cold provision at this same `majorVersion`/`enabled` combination would
-    // never have touched.
+    // Same compound gate a real cold provision uses to decide whether the realtime job's JWKS
+    // effect ever runs.
     const realtimeConsumesJwks =
       input.setup.majorVersion >= 15 && input.setup.config.realtime.enabled;
     const jwks = realtimeConsumesJwks ? yield* input.setup.jwks : "";
@@ -346,10 +291,8 @@ const resolveShadowCacheKeyInputs = <E>(
       majorVersion: input.db.major_version,
       jwtSecret: input.jwtSecret,
       jwtExpiry: input.jwtExpiry,
-      // The EFFECTIVE value, not the raw input: `buildShadowPostgresContainerSpec`
-      // (`postgres.service.ts`) falls back to the embedded default when unset, so hashing `""`
-      // would fail to re-key if that security-sensitive default ever rotates between CLI
-      // releases.
+      // The effective value: the container spec falls back to an embedded default when unset,
+      // so hashing `""` would miss a re-key if that default ever changes.
       rootKey: input.rootKey ?? POSTGRES_DEFAULT_ROOT_KEY,
       dbPassword: input.password,
       dbSettings: input.db.settings,
@@ -376,10 +319,6 @@ const resolveShadowCacheKeyInputs = <E>(
     } satisfies ShadowCacheKeyInputs);
   });
 
-// ---------------------------------------------------------------------------
-// The tar artifact
-// ---------------------------------------------------------------------------
-
 /** Filename prefix shared by every key's snapshot — the handle the retention sweep enumerates by. */
 const SHADOW_BASELINE_TAR_PREFIX = "shadow-baseline-";
 
@@ -400,9 +339,8 @@ export function shadowBaselineTarFileName(key: string): string {
 }
 
 /**
- * Whether `fileName` is a published baseline snapshot (`shadow-baseline-<key>.tar`). Pure and
- * deliberately conservative: only this module's own prefix AND suffix, so partials
- * (`…tar.<pid>.partial`) and any unrelated file in the cache dir are never eviction candidates.
+ * Whether `fileName` is a published baseline snapshot (`shadow-baseline-<key>.tar`). Checks the
+ * exact prefix and suffix, so partials (`…tar.<pid>.partial`) are never eviction candidates.
  */
 export function isShadowBaselineTar(fileName: string): boolean {
   return (
@@ -460,10 +398,8 @@ const forgetShadowBaselineTar = (
 
 /**
  * Whether `fileName` is one of {@link exportPgDataTar}'s in-flight temp files
- * (`shadow-baseline-<key>.tar.<pid>.partial`). Pure name check only — whether it is ABANDONED
- * (crashed/SIGKILLed writer, whose `Effect.onError` cleanup never ran) is an mtime question the
- * sweep answers separately, so a concurrent writer's live temp file is never a candidate by name
- * alone.
+ * (`shadow-baseline-<key>.tar.<pid>.partial`). A name-only check; whether it's abandoned is an
+ * mtime question the sweep answers separately, so a live writer's temp file is never a candidate.
  */
 export function isShadowBaselinePartial(fileName: string): boolean {
   return /^shadow-baseline-[0-9a-f]{16}\.tar\.\d+\.partial$/u.test(fileName);
@@ -473,10 +409,9 @@ export function isShadowBaselinePartial(fileName: string): boolean {
 const SHADOW_PARTIAL_ABANDON_MS = 5 * 60 * 1000;
 
 /**
- * Removes abandoned `.partial` temp files (see {@link isShadowBaselinePartial}) — the one
- * artifact a SIGKILLed/crashed cold export leaves behind that nothing else ever cleans: later
- * runs use their own pid in the temp name, and the tar retention sweep deliberately ignores
- * `.partial` names — best-effort throughout.
+ * Removes abandoned `.partial` temp files (see {@link isShadowBaselinePartial}) left behind by a
+ * crashed cold export — later runs use their own pid, and the retention sweep ignores `.partial`
+ * names, so nothing else ever cleans these up. Best-effort throughout.
  */
 const sweepAbandonedShadowBaselinePartials = <E>(input: ShadowSetupInput<E>): Effect.Effect<void> =>
   Effect.gen(function* () {
@@ -540,10 +475,6 @@ const touchShadowBaselineTar = (fs: FileSystem.FileSystem, tarPath: string): Eff
     yield* fs.utimes(tarPath, now, now);
   }).pipe(Effect.orElseSucceed(() => undefined));
 
-// ---------------------------------------------------------------------------
-// Container primitives the cache adds on top of `shadow-database.ts`
-// ---------------------------------------------------------------------------
-
 /**
  * `docker <verb> <id>`, resolving to {@link ShadowCacheUnavailable} on anything but a clean
  * exit. Both verbs this is used for (`stop`, `start`) are steps the export cannot proceed without,
@@ -586,30 +517,20 @@ const awaitShadowReady = <E>(
     ),
   );
 
-// ---------------------------------------------------------------------------
-// Cold export
-// ---------------------------------------------------------------------------
-
 /**
- * Serializes same-process cold exports. Two shadows provisioned concurrently in one process
- * (pg-delta next's plan shadows) can both reach the export step, and with an equal key they
- * would race on the same `<tar>.<pid>.partial` temp path — `exportPgDataTar` scopes its
- * temp name by pid alone. One permit makes that interleaving impossible; cross-process writers
- * were never affected (distinct pids).
+ * Serializes same-process cold exports. Two shadows provisioned concurrently in one process with
+ * an equal key would race on the same `<tar>.<pid>.partial` temp path, since `exportPgDataTar`
+ * scopes that name by pid alone; cross-process writers are unaffected (distinct pids).
  */
 const shadowExportMutex = Semaphore.makeUnsafe(1);
 
 /**
- * Ensures the tar's global cache directory exists, delegates the actual export to
- * {@link exportPgDataTar} (`pgdata-snapshot.ts` — see that function's own doc comment for
- * the atomic-publish mechanics), then applies the LRU + TTL retention rule. Runs under
- * {@link shadowExportMutex}.
+ * Creates the tar's cache directory, delegates to {@link exportPgDataTar} for the export, then
+ * applies LRU + TTL retention. Runs under {@link shadowExportMutex}.
  *
- * `skipIfPublished` dedupes same-key sibling exports: when the tar was absent at acquire time,
- * one published while this fiber waited on the permit is a sibling's snapshot of this same
- * baseline. It must be `false` on the warm-fallback cold path, where a tar deliberately
- * retained despite an unusable restore is sitting at this path waiting to be atomically
- * replaced.
+ * `skipIfPublished` dedupes same-key sibling exports (a tar published by a sibling while this
+ * fiber waited on the permit); set it `false` on the warm-fallback cold path, where an unusable
+ * tar is retained at this path waiting to be replaced.
  */
 const writeShadowBaselineTar = <E>(
   spawner: Spawner,
@@ -705,20 +626,15 @@ const exportShadowBaseline = <E>(
     }
   });
 
-// ---------------------------------------------------------------------------
-// Acquire / release
-// ---------------------------------------------------------------------------
-
 export interface ShadowCacheOpts {
   /** `sync --no-cache`: neither restore nor publish, regardless of the env gate. */
   readonly bypassCache?: boolean;
   /** Effective webhooks/`pg_net` policy — hashed so migrate/declarative snapshots cannot mix. */
   readonly webhooks?: SetupDatabaseOptions["webhooks"];
   /**
-   * Key inputs a caller already resolved via {@link peekShadowBaseline}, so
-   * {@link acquireShadowDatabase} does not resolve them a second time. Resolution can
-   * include a live JWKS discovery request (realtime on PG15+). Must have been computed from the
-   * same `input`/`opts` pair, or the acquire keys against the wrong snapshot.
+   * Key inputs a caller already resolved via {@link peekShadowBaseline}, to skip resolving them
+   * again (resolution can include a live JWKS discovery request). Must come from the same
+   * `input`/`opts` pair, or the acquire keys against the wrong snapshot.
    */
   readonly precomputedKeyInputs?: ShadowCacheKeyInputs;
 }
@@ -736,13 +652,8 @@ export type ShadowBaselinePeek =
 
 /**
  * Answers "what would {@link acquireShadowDatabase} do for this input right now?" without
- * creating a container. Callers use it to choose an orchestration (pg-delta next's plan
- * provisioning picks parallel / baseline-handoff / sequential), never to skip the acquire's own
- * re-checks: the answer can go stale between peek and acquire, and the acquire re-deciding on
- * current disk state keeps that race merely suboptimal rather than incorrect.
- *
- * The error channel is the key resolution's own `E` (a JWKS resolution failure) — same rationale
- * as {@link acquireShadowDatabase}.
+ * creating a container, so callers can choose an orchestration strategy up front. The answer can
+ * go stale between peek and acquire; callers must not use it to skip the acquire's own re-checks.
  */
 export const peekShadowBaseline = <E>(
   input: ShadowSetupInput<E>,
@@ -771,20 +682,17 @@ export const peekShadowBaseline = <E>(
   });
 
 /**
- * What `Effect.acquireUseRelease`'s `acquire` hands the `use` phase: the container, whether its
- * cluster already carries the platform baseline, and the snapshot step to run once a fresh
- * baseline is in place. Release needs nothing extra — every shadow this module hands out is
- * removed the same way an uncached one is.
+ * What `acquireUseRelease`'s `acquire` hands the `use` phase: the container, whether its cluster
+ * already carries the platform baseline, and the snapshot step to run once a fresh baseline is in
+ * place. Release removes every shadow the same way, cached or not.
  */
 export interface ShadowAcquiredHandle extends ShadowBaselineState {
   readonly containerId: string;
   /**
-   * The resolved shadow-baseline cache key this handle's cluster is keyed under — present
-   * exactly when the acquisition was cache-eligible (a cold export or a warm restore), absent
-   * for an uncached, `bypassCache`d, or uncachable one. Two handles carrying the SAME key share
-   * the same tar's lineage: one either restored it or exported it this run, so their clusters
-   * are physical clones of each other. `pgdelta-next-shadow.layer.ts` reads it to decide
-   * whether pg-delta's same-database-identity guard must be bypassed for a plan's two shadows.
+   * The cache key this handle's cluster is keyed under — present exactly when the acquisition
+   * was cache-eligible (a cold export or a warm restore). Two handles carrying the same key are
+   * physical clones of each other's cluster; pg-delta reads this to decide whether its
+   * same-database-identity guard must be bypassed for a plan's two shadows.
    */
   readonly snapshotKey?: string;
 }
@@ -806,14 +714,12 @@ const uncachedShadow = <E>(
 /**
  * A cold, cache-enabled shadow: today's container plus the export step at the baseline seam.
  *
- * `autoRemove: false` is the one and only container-shape difference the cache introduces, and it
- * is forced: the export has to `docker stop` the container and `docker start` it again, and Docker
- * destroys an `--rm` container the moment it exits. Release still removes it with `docker rm -f
- * -v`, so the container's lifetime is unchanged — see
- * {@link CreateShadowDatabaseInput.autoRemove}.
+ * `autoRemove: false` is forced: the export must `docker stop`/`start` the container, and Docker
+ * destroys an `--rm` container the moment it exits. Release still removes it explicitly, so its
+ * lifetime is unchanged — see {@link CreateShadowDatabaseInput.autoRemove}.
  *
- * `skipIfPublished` must reflect whether the tar was absent when this cold acquisition began —
- * see {@link writeShadowBaselineTar}.
+ * `skipIfPublished` must reflect whether the tar was absent when this acquisition began — see
+ * {@link writeShadowBaselineTar}.
  */
 const coldCachedShadow = <E>(
   spawner: Spawner,
@@ -845,15 +751,10 @@ const coldCachedShadow = <E>(
 const SHADOW_CACHE_KEY_PATTERN = /^[0-9a-f]{16}$/u;
 
 /**
- * The warm-path warning's wording for a rejected snapshot. Names WHICH of the two content failures
- * happened, because they mean different things to whoever reads the line: a missing entry is a
- * broken or hand-placed artifact, while a wrong key is a real snapshot of another configuration
- * sitting under this one's filename (a copied cache directory, a renamed file) — and only the
- * misnamed copy is being discarded, not that other key's own tar.
- *
- * The marker's own bytes are NOT echoed verbatim: they come from a file this run did not write,
- * capped at a KiB but otherwise arbitrary, and stderr is not the place to render them. Only a token
- * that is shaped like a cache key is shown.
+ * Wording for the warm-path warning on a rejected snapshot, distinguishing a missing entry
+ * (broken or hand-placed artifact) from a wrong key (a real snapshot of another configuration
+ * under this filename). The marker's raw bytes are never echoed — only a token shaped like a
+ * cache key is shown, since the marker comes from a file this run didn't write.
  */
 const describeShadowArchiveProblem = (problem: PgDataArchiveProblem): string =>
   Match.valueTags(problem, {
@@ -868,22 +769,11 @@ const describeShadowArchiveProblem = (problem: PgDataArchiveProblem): string =>
   });
 
 /**
- * The warm path proper: verify the snapshot tar really carries a baselined cluster, create the
- * shadow with it unpacked into it before it starts ({@link CreateShadowDatabaseInput.restoreArchive}),
- * then wait for the restored Postgres. Every failure resolves to
- * {@link ShadowCacheUnavailable}, which the caller turns into the escape hatch.
- *
- * The readiness failure removes the container here rather than leaving it to the caller, because
- * the caller's fallback creates a REPLACEMENT container and the suspect one must be gone by then
- * (it holds the shadow's published port).
- *
- * The readiness wait is explicitly `Effect.interruptible`: this whole function runs inside
- * `Effect.acquireUseRelease`'s uninterruptible `acquire` ({@link withShadowDatabase}), and
- * while the restore itself is short (~2s of `docker create` + `docker cp -`), a restored container
- * that starts but never accepts connections would otherwise pin a Ctrl-C for the full
- * `healthTimeoutSeconds` budget — exactly the swallowed-SIGINT shape `prepareShadowSource`'s
- * own doc comment (`shadow-source.ts`) was restructured to avoid. `Effect.onInterrupt`
- * removes the container on that path, so re-enabling interruption cannot leak it.
+ * The warm path: verify the tar carries a baselined cluster, restore it into a new shadow, then
+ * wait for Postgres; every failure resolves to {@link ShadowCacheUnavailable}. The readiness
+ * check removes the container here so the caller's replacement can reuse its published port, and
+ * stays `Effect.interruptible` so a hung container can't pin Ctrl-C for the full health-timeout
+ * budget — `Effect.onInterrupt` removes it on that path.
  */
 const warmShadow = <E>(
   spawner: Spawner,
@@ -892,17 +782,11 @@ const warmShadow = <E>(
   tarPath: string,
 ): Effect.Effect<ShadowAcquiredHandle, ShadowCacheUnavailable, Output | DbConnection> =>
   Effect.gen(function* () {
-    // An archive that unpacks cleanly but carries the wrong thing is the ONE corruption the restore
-    // itself cannot report: `docker cp -` extracts whatever it is given, the entrypoint skips
-    // `initdb` (or runs one over an empty PGDATA), readiness passes, and this function would hand
-    // back `baselinePresent: true` for a cluster that never saw `setupDatabase` — the caller
-    // then skips it too and diffs against a BARE database, silently producing wrong SQL. The same
-    // shape hides a second lie: a fully baselined snapshot of ANOTHER key, copied over this key's
-    // filename, restores just as cleanly while carrying different roles/vault values/service
-    // schema. So the tar's own headers are scanned BEFORE anything is created (locally, no Docker)
-    // for the cluster file, for the baseline marker this module stamps immediately before every
-    // export, AND for that marker's key — see {@link validatePgDataArchive}. A read failure
-    // is infra and leaves the tar in place; either verdict implicates its CONTENTS.
+    // A tar that unpacks cleanly but carries the wrong cluster is the one corruption the restore
+    // can't report itself — readiness would still pass. So the headers are scanned before any
+    // container is created, checking the cluster file, this module's baseline marker, and the
+    // marker's key — see {@link validatePgDataArchive}. A read failure is infra and leaves the
+    // tar in place; either verdict implicates its contents.
     const problem = yield* validatePgDataArchive(input.fs, tarPath, key).pipe(
       Effect.mapError((cause) => shadowCacheUnavailable(cause.reason)),
     );
@@ -922,7 +806,7 @@ const warmShadow = <E>(
       ),
     );
     yield* awaitShadowReady(spawner, input, containerId, "restored shadow").pipe(
-      // The ONE failure that implicates the tar's contents: the restored cluster started but
+      // The one failure that implicates the tar's contents: the restored cluster started but
       // never accepted connections — see {@link ShadowCacheUnavailable.tarSuspect}.
       Effect.mapError((cause) => shadowCacheUnavailable(cause.reason, { tarSuspect: true })),
       Effect.tapError(() => removeShadowDatabase(spawner, containerId)),
@@ -939,29 +823,12 @@ const warmShadow = <E>(
   });
 
 /**
- * `Effect.acquireUseRelease`'s `acquire` for every shadow-provisioning call site that runs the
- * platform baseline (`db diff`'s migra/pg-delta branch, `db pull`'s migration diff, and
- * pg-delta's scoped shadows) — see
- * {@link withShadowDatabase} for the acquire/use/release wrapper, and
- * `pgdelta-next-shadow.layer.ts` for the scoped `acquireRelease` form next uses so the
- * container outlives provision (the engine keeps using the URL after this returns).
- *
- * An explicitly falsey {@link SHADOW_CACHE_ENV} (set, but not viper-true) is the
- * uncached create. Otherwise — including when the variable is unset, the default — it
- * restores this key's snapshot (warm) or creates one and exports the baseline (cold).
- *
- * Runs inside `acquireUseRelease`'s uninterruptible `acquire`, same as
- * `createShadowDatabase` — a warm restore adds ~2s of uninterruptible work (a `docker cp -`);
- * its readiness wait re-enables interruption explicitly (see {@link warmShadow}), and the
- * multi-second baseline/migration sequence stays in the interruptible `use` phase exactly as
- * before.
- *
- * The `E` in the error channel is {@link resolveShadowCacheKeyInputs}'s own JWKS
- * resolution alone (see that function's doc comment): every OTHER failure this function's own
- * body can produce while computing the key or restoring the snapshot is caught and degraded — an
- * unusable cache root to the plain uncached shadow (with a warning), anything on the warm path to
- * a cold provision — a genuine JWKS failure is the one case that must reach the caller instead,
- * since a real cold provision at this input would have failed the same way.
+ * `Effect.acquireUseRelease`'s `acquire` for every shadow that runs the platform baseline (`db
+ * diff`, `db pull`, pg-delta's scoped shadows) — see {@link withShadowDatabase} for the
+ * acquire/use/release wrapper. An explicitly falsy {@link SHADOW_CACHE_ENV} skips the cache
+ * entirely; otherwise it restores this key's snapshot (warm) or exports a fresh baseline (cold).
+ * The `E` error channel carries only a genuine JWKS resolution failure — every other failure here
+ * degrades to an uncached shadow or a cold provision instead of propagating.
  */
 export const acquireShadowDatabase = <E>(
   spawner: Spawner,
@@ -986,15 +853,11 @@ export const acquireShadowDatabase = <E>(
     );
     if (Option.isNone(keyInputs)) return yield* uncachedShadow(spawner, input);
 
-    // The cache root must be usable BEFORE committing to the cached lifecycle: the cold path
-    // drops `--rm` and pays a stop → export → restart cycle whose write is already doomed when
-    // this directory cannot be written (an unwritable or root-squashed `SUPABASE_HOME`) — and
-    // with the cache on by default, every affected invocation would pay that cycle just to warn.
-    // The mkdir is the exact one the export performs (which keeps its own as a safety net for a
-    // root that vanishes mid-run), but alone it is not a sufficient probe: recursive mkdir on an
-    // ALREADY-EXISTING directory creates nothing and succeeds regardless of permission, so the
-    // `access(W_OK)` check is what catches a pre-existing read-only root (EACCES for the current
-    // user, EROFS on a read-only mount, a root-squashing NFS server's denial).
+    // The cache root must be usable before committing to the cached lifecycle: the cold path
+    // drops `--rm` and pays a stop/export/restart cycle that's already doomed if this directory
+    // can't be written. The mkdir alone isn't a sufficient probe — it succeeds on an
+    // already-existing directory regardless of permission — so `access(W_OK)` catches a
+    // pre-existing read-only root (EACCES, EROFS, a root-squashing NFS server).
     const cacheDir = shadowBaselineCacheDir(input.path);
     const cacheRoot = yield* Effect.result(
       input.fs
@@ -1030,10 +893,9 @@ export const acquireShadowDatabase = <E>(
             `Warning: cached shadow baseline unusable (${cause.reason}); recreating.\n`,
             "stderr",
           );
-          // Delete ONLY when the failure implicates the tar's contents (a restored cluster that
-          // came up broken) — see {@link ShadowCacheUnavailable.tarSuspect} for why an
-          // infra or extraction failure leaves it in place (the cold fallback's own export
-          // republishes over a genuinely bad tar anyway).
+          // Delete only when the failure implicates the tar's contents — see
+          // {@link ShadowCacheUnavailable.tarSuspect}; an infra failure leaves it in place, since
+          // the cold fallback's own export republishes over a genuinely bad tar anyway.
           if (cause.tarSuspect === true) {
             yield* forgetShadowBaselineTar(input.fs, tarPath);
           }
@@ -1051,12 +913,11 @@ export const acquireShadowDatabase = <E>(
   });
 
 /**
- * Acquire/use/release for a platform-baseline shadow. `acquireUseRelease` registers
- * removal in the same uninterruptible continuation as a successful create, so a
- * SIGINT between those steps cannot leak the container. A create that fails
- * after `docker create` still has the pre-existing leak window. Health-wait and
- * migrate stay in `use` so they stay interruptible. A JWKS failure during key
- * resolve propagates from acquire rather than degrading to an uncached shadow.
+ * Acquire/use/release for a platform-baseline shadow. `acquireUseRelease` registers removal in
+ * the same uninterruptible continuation as a successful create, so a SIGINT between those steps
+ * can't leak the container — a create that fails after `docker create` still has the pre-existing
+ * leak window. Health-wait and migrate stay in `use`, and a JWKS failure during key resolution
+ * propagates from acquire rather than degrading to an uncached shadow.
  */
 export const withShadowDatabase = <E, A, E2, R2>(
   spawner: Spawner,

@@ -42,10 +42,9 @@ export const workersStatus = Effect.fn("experimental.workers.status")(function* 
   const telemetryState = yield* TelemetryState;
   const settings = yield* CommandSettings;
 
-  // The ref is resolved outside the finalizers because caching it is one of
-  // them; everything that can fail on its own — loading `config.toml`,
-  // validating the name, resolving the worker — belongs inside, so those
-  // failures still flush telemetry. Same shape as `config/push`.
+  // Resolved here, outside the block below, since caching it is one of that
+  // block's own finalizers — everything else that can fail belongs inside so
+  // those failures still flush telemetry.
   const projectRef = yield* resolver.resolve(flags.projectRef);
   const refSuffix = workersProjectRefSuffix(flags.projectRef);
 
@@ -54,8 +53,8 @@ export const workersStatus = Effect.fn("experimental.workers.status")(function* 
     const name = yield* validateWorkerName(flags.name);
     const worker = yield* describeWorkerForReporting(project, name);
 
-    // Up front, like the rest of the family: discovering an unencodable format
-    // at emit time means failing after the fetch has already been paid for.
+    // Checked up front: discovering an unencodable format at emit time would
+    // mean failing after the fetch has already been paid for.
     yield* rejectWorkersEnvOutput();
 
     const fetching = yield* output.task("Fetching worker...");
@@ -78,13 +77,10 @@ export const workersStatus = Effect.fn("experimental.workers.status")(function* 
       record.spec.exposure === "public"
         ? workerUrl(projectRef, settings.projectHost, name)
         : undefined;
-    // Reported only when an entry or the directory establishes it. With neither,
-    // the path is an inference about a worker that may have been deployed from
-    // another checkout.
-    //
-    // `sourceResolved` matters for the entry half: when the configured `source`
-    // could not be resolved, `sourceDir` is the *default* directory standing in
-    // for it, and printing that would name a path the entry does not.
+    // Reported only when an entry or the directory establishes it; with
+    // neither, the path is an inference about a worker deployed elsewhere.
+    // `sourceResolved` matters for the entry half: when `source` couldn't be
+    // resolved, `sourceDir` is the default directory standing in for it.
     const sourceDisplay =
       (worker.entry !== undefined && worker.sourceResolved) || worker.sourceExists
         ? displayPath(project.projectRoot, worker.sourceDir)
@@ -113,10 +109,9 @@ export const workersStatus = Effect.fn("experimental.workers.status")(function* 
       return;
     }
 
-    // One structured emission, in the structured branch only. Calling
-    // `output.success` before this check emitted the payload twice: the JSON
-    // layer appends each success to stdout, so `JSON.parse` failed, and
-    // `stream-json` saw two terminal result events.
+    // Checked after `emitWorkersMachineOutput`: calling `output.success` before
+    // it emitted the payload twice, since the JSON layer appends each success
+    // to stdout.
     if (output.format !== "text") {
       yield* output.success("", payload);
       return;
@@ -131,8 +126,8 @@ export const workersStatus = Effect.fn("experimental.workers.status")(function* 
       ["Access", record.spec.exposure],
       [
         // Every number in the tally line comes from the tally: mixing
-        // `instances.ready` with `spec.instances` compares a snapshot against
-        // the desired count, which mid-scale renders fractions like `3/1 ready`.
+        // `instances.ready` with `spec.instances` would render fractions like
+        // `3/1 ready` mid-scale.
         "Instances",
         record.instances !== undefined
           ? `${record.instances.ready}/${record.instances.declared} ready, ${record.instances.live} live, ${record.instances.stale} stale`
@@ -140,8 +135,6 @@ export const workersStatus = Effect.fn("experimental.workers.status")(function* 
       ],
       ["URL", url ?? ""],
       ["Project", projectRef],
-      // `renderWorkerDetails` drops empty-valued rows, so an unknown
-      // source omits the row rather than printing a guess.
       ["Source", sourceDisplay ?? ""],
     ];
 
@@ -153,8 +146,7 @@ export const workersStatus = Effect.fn("experimental.workers.status")(function* 
     // Not while it is being torn down: deletion is asynchronous, so a push here
     // races the tombstone or resurrects the very worker the user is removing.
     if (record.buildState === "failed" && record.deleting !== true) {
-      // Trailer, like every other "what to run next" line in this shell: the
-      // command reports a failed build but exits 0, so the trailer flushes.
+      // A trailer, since the command reports a failed build but exits 0.
       yield* emitSuccessTrailer(
         `Fix the issue, then re-run ${aqua(`supabase experimental workers push ${name}${refSuffix}`)}.\n`,
       );

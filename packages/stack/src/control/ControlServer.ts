@@ -207,9 +207,9 @@ const demuxSocket = (
           const startCompletion = (completion: Effect.Effect<void>) =>
             Effect.uninterruptible(
               FiberSet.run(completionFibers, completion, { startImmediately: true }).pipe(
-                // This witness is set only after the completion fiber has been
-                // handed to the owner-scoped FiberSet. The uninterruptible
-                // region keeps the fork and witness atomic to dispatch/onExit.
+                // Set only after the completion fiber is handed to the owner-scoped
+                // FiberSet; the uninterruptible region keeps fork and witness atomic
+                // with `onExit` below.
                 Effect.tap(() =>
                   Effect.sync(() => {
                     completionStarted = true;
@@ -280,12 +280,10 @@ const demuxSocket = (
             for (const frame of result.value) {
               if (closed) break;
               if (phase === "maintenance") {
-                // Probe and request validation are bounded by the maintenance admission
-                // deadline. A validated stop owns its full cleanup operation and may
-                // legitimately outlive that connection deadline; the caller joins the result.
-                // The preface deadline only governs admission until the first frame arrives;
-                // once a frame is present, dispatch owns the remaining validation/operation
-                // policy below.
+                // Probe/validation are bounded by the maintenance admission deadline; a
+                // validated stop owns its own cleanup and may outlive it. The preface deadline
+                // governs only admission until the first frame arrives — dispatch below owns
+                // policy after that.
                 yield* markPrefaceReady;
                 const operation = yield* Effect.exit(
                   decodeFrame(frame).pipe(
@@ -529,9 +527,9 @@ export const startControlServer = (
             })
           : protocol.send(clientId, response, transferables),
     });
-    // Keep handler defects as keyed Exit responses so lifecycle-completion request state can be
-    // cleaned by the same send path as typed failures. Without this option RpcServer emits a
-    // client-level Defect frame that has no requestId for the terminal handoff.
+    // Keeps handler defects as keyed Exit responses so lifecycle-completion state can be
+    // cleaned by the same send path as typed failures; otherwise RpcServer emits a Defect
+    // frame with no requestId for the terminal handoff.
     const rpcProgram: Effect.Effect<never, never> = RpcServer.make(StackRpcGroup, {
       disableTracing: true,
       disableFatalDefects: true,
@@ -626,19 +624,17 @@ export interface ControlClientOptions extends ControlIdentity {
 }
 
 export interface ControlClient {
-  // Each call allocates a fresh scoped socket, so these methods intentionally
-  // return per-call lazy Effects rather than shared Effect values.
-  // oxlint-disable-next-line effecttsgo/lazy-effect
+  // oxlint-disable-next-line effecttsgo/lazy-effect -- each call opens a fresh scoped socket.
   readonly probe: () => Effect.Effect<
     MaintenanceResponse,
     Socket.SocketError | MaintenanceProtocolError
   >;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
+  // oxlint-disable-next-line effecttsgo/lazy-effect -- each call opens a fresh scoped socket.
   readonly stop: () => Effect.Effect<
     MaintenanceResponse,
     Socket.SocketError | MaintenanceProtocolError
   >;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
+  // oxlint-disable-next-line effecttsgo/lazy-effect -- each call opens a fresh scoped socket.
   /** Connects with an RPC preface and completes when the owner closes the socket. */
   readonly awaitClose: (onOpen?: Effect.Effect<void>) => Effect.Effect<void, Socket.SocketError>;
   readonly rpc: Effect.Effect<StackRpcClient, RpcClientError, Scope.Scope>;
@@ -690,9 +686,9 @@ export const makeControlClient = (
           },
         );
         const fiber = yield* Effect.forkChild(read);
-        // A connection can fail before NodeSocket runs the onOpen hook. Join the
-        // reader alongside writer readiness so that failure cannot strand this
-        // handshake on an unresolved Deferred.
+        // A connection can fail before NodeSocket runs the onOpen hook; join the reader
+        // alongside writer readiness so failure can't strand this handshake on an unresolved
+        // Deferred.
         const readerReady = Fiber.join(fiber).pipe(
           Effect.andThen(
             Effect.fail(
@@ -718,9 +714,9 @@ export const makeControlClient = (
           stackId: options.stackId,
           ownerSessionId: options.ownerSessionId,
         }).pipe(Effect.flatMap(write));
-        // The server closes a successful maintenance connection immediately
-        // after flushing its response. Check the response witness after the
-        // reader exits so the close event cannot win that handoff race.
+        // The server closes a successful connection immediately after flushing its response;
+        // check the response witness after the reader exits so the close event can't win
+        // that race.
         const readerDone = Effect.exit(Fiber.join(fiber)).pipe(
           Effect.flatMap(() => Deferred.poll(response)),
           Effect.flatMap((completed) =>

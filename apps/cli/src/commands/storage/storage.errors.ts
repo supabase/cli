@@ -12,14 +12,12 @@ import { goQuote } from "../../command-internal/go-quote.ts";
  * Domain errors for `supabase storage ls/cp/mv/rm`. Each `message` is an
  * established stderr text.
  *
- * The Storage gateway errors (`StorageGateway{Network,Status}Error`) and
- * credential-derivation errors live in the shared modules
+ * Storage gateway errors and credential-derivation errors live in
  * `command-internal/storage-gateway.errors.ts` and
- * `command-internal/storage-credentials.errors.ts`; the url-parse failures
- * are thrown by `command-internal/storage-url.ts` and mapped here.
+ * `command-internal/storage-credentials.errors.ts`; url-parse failures come from
+ * `command-internal/storage-url.ts` and are mapped here.
  */
 
-/** `client.ErrInvalidURL` (`internal/storage/client/scheme.go:12`). */
 export class StorageInvalidUrlError extends Data.TaggedError("StorageInvalidUrlError")<{
   readonly message: string;
 }> {
@@ -32,11 +30,7 @@ export class StorageInvalidUrlError extends Data.TaggedError("StorageInvalidUrlE
   }
 }
 
-/**
- * A `url.Parse` failure, wrapped like Go's
- * `errors.Errorf("failed to parse … url: %w", err)`. The `message` already
- * contains the full `failed to parse storage url: parse "…": …` text.
- */
+/** `message` already contains the full `failed to parse storage url: parse "…": …` text. */
 export class StorageUrlParseError extends Data.TaggedError("StorageUrlParseError")<{
   readonly message: string;
 }> {
@@ -45,11 +39,7 @@ export class StorageUrlParseError extends Data.TaggedError("StorageUrlParseError
   }
 }
 
-/**
- * `cp`'s local→local branch (`internal/storage/cp/cp.go:59-60`). Go sets
- * `utils.CmdSuggestion` to the aqua `cp -r` hint, printed verbatim after the
- * error — the legacy text error renderer prints `suggestion` the same way.
- */
+/** Local→local copy is unsupported; `suggestion` renders as an aqua hint after the error. */
 export class StorageUnsupportedOperationError extends Data.TaggedError(
   "StorageUnsupportedOperationError",
 )<{
@@ -69,25 +59,15 @@ export class StorageUnsupportedOperationError extends Data.TaggedError(
 }
 
 /**
- * `cp`'s `--jobs` is a pflag uint: a non-uint token fails
- * `strconv.ParseUint(s, 0, 64)` at flag-parse time. Established message
- * format `invalid argument %q for %q flag: %v` with the shorthand-prefixed
- * flag name, carrying the RAW token (so `--jobs=-01` reports `"-01"`, not a
- * normalized `"-1"`) and strconv's cause (`invalid syntax` / `value out of
- * range`). Both token occurrences are `%q`-quoted — pflag applies `%q` to
- * the value and strconv's `NumError.Error()` wraps `e.Num` in
- * `strconv.Quote` — so an escapable token stays one escaped line (go1.26:
- * `--jobs 'a"b'` → `… "a\"b" …`, not a raw quote/newline).
- * Thrown from the flag's own `Flag.mapTryCatch` in `cp.command.ts` so the
- * rejection happens during command parsing — `formatInvalidValueMessage`
- * surfaces the resulting `CliError.InvalidValue`'s message verbatim.
+ * Formats an invalid `-j, --jobs` value using the established
+ * `invalid argument %q for %q flag: %v` message, with the raw (unnormalized) token
+ * quoted and escaped so it never breaks onto a new line.
  */
 export function storageInvalidJobsMessage(token: string, cause: string): string {
   const quoted = goQuote(new TextEncoder().encode(token));
   return `invalid argument ${quoted} for "-j, --jobs" flag: strconv.ParseUint: parsing ${quoted}: ${cause}`;
 }
 
-/** `cp`'s remote→remote branch (`internal/storage/cp/cp.go:57`). */
 export class StorageCopyBetweenBucketsError extends Data.TaggedError(
   "StorageCopyBetweenBucketsError",
 )<{
@@ -102,7 +82,6 @@ export class StorageCopyBetweenBucketsError extends Data.TaggedError(
   }
 }
 
-/** `mv`'s cross-bucket branch (`internal/storage/mv/mv.go:19,38`). */
 export class StorageUnsupportedMoveError extends Data.TaggedError("StorageUnsupportedMoveError")<{
   readonly message: string;
 }> {
@@ -115,7 +94,6 @@ export class StorageUnsupportedMoveError extends Data.TaggedError("StorageUnsupp
   }
 }
 
-/** `mv`'s both-root branch (`internal/storage/mv/mv.go:20,35`). */
 export class StorageMissingPathError extends Data.TaggedError("StorageMissingPathError")<{
   readonly message: string;
 }> {
@@ -128,7 +106,6 @@ export class StorageMissingPathError extends Data.TaggedError("StorageMissingPat
   }
 }
 
-/** `rm`'s root-arg branch (`internal/storage/rm/rm.go:21,41`). */
 export class StorageMissingBucketError extends Data.TaggedError("StorageMissingBucketError")<{
   readonly message: string;
 }> {
@@ -141,7 +118,6 @@ export class StorageMissingBucketError extends Data.TaggedError("StorageMissingB
   }
 }
 
-/** `rm`'s directory-without-`-r` branch (`internal/storage/rm/rm.go:22,44,53`). */
 export class StorageMissingFlagError extends Data.TaggedError("StorageMissingFlagError")<{
   readonly message: string;
 }> {
@@ -154,11 +130,7 @@ export class StorageMissingFlagError extends Data.TaggedError("StorageMissingFla
   }
 }
 
-/**
- * `Object not found: <path>` — `cp` recursive download with no objects
- * (`cp.go:94`), `mv` recursive with no objects (`mv.go:85`), `rm` recursive on
- * an empty prefix (`rm.go:114`).
- */
+/** Raised by recursive `cp`/`mv`/`rm` when no objects match the given path. */
 export class StorageObjectNotFoundError extends Data.TaggedError("StorageObjectNotFoundError")<{
   readonly message: string;
 }> {
@@ -171,7 +143,7 @@ export class StorageObjectNotFoundError extends Data.TaggedError("StorageObjectN
   }
 }
 
-/** `failed to read file:` / `failed to create file:` (`pkg/storage/objects.go`). */
+/** Raised with an established "failed to read file: …" or "failed to create file: …" message. */
 export class StorageFileError extends Data.TaggedError("StorageFileError")<{
   readonly message: string;
 }> {
@@ -180,9 +152,7 @@ export class StorageFileError extends Data.TaggedError("StorageFileError")<{
   }
 }
 
-/**
- * Both `--linked` and `--local` set — mutually exclusive.
- */
+/** Conflicting target flags: `--linked` with `--local`, or `--project-ref` with `--local`. */
 export class StorageMutuallyExclusiveFlagsError extends Data.TaggedError(
   "StorageMutuallyExclusiveFlagsError",
 )<{

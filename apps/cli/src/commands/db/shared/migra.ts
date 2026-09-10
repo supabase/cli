@@ -17,18 +17,15 @@ import { MigraDiffError, MigraSchemaLoadError } from "./migra.errors.ts";
 import { edgeRuntimeId, type PgDeltaContext } from "../../../command-internal/pgdelta.ts";
 
 /**
- * The migra Docker image, parsed by Go from its embedded Dockerfile
- * (`apps/cli-go/pkg/config/templates/Dockerfile:19` → `config.Images.Migra`).
- * Used only by the OOM bash fallback (`DiffSchemaMigraBash`); the common
- * edge-runtime path runs `@pgkit/migra` instead.
+ * The migra Docker image, used only by the OOM bash fallback; the common edge-runtime path
+ * runs `@pgkit/migra` instead.
  */
 const MIGRA_IMAGE = "supabase/migra:3.0.1663481299";
 
 /**
- * Schemas excluded from a no-`--schema` migra diff. Verbatim from Go's
- * `managedSchemas` (`apps/cli-go/internal/db/diff/migra.go:26-56`): local-dev,
- * extension-owned, deprecated-extension, and Supabase-managed schemas. Passed as
- * `EXCLUDED_SCHEMAS` to the edge-runtime template.
+ * Schemas excluded from a no-`--schema` migra diff: local-dev, extension-owned,
+ * deprecated-extension, and Supabase-managed schemas. Passed as `EXCLUDED_SCHEMAS` to the
+ * edge-runtime template.
  */
 const MIGRA_MANAGED_SCHEMAS: ReadonlyArray<string> = [
   // Local development
@@ -62,11 +59,7 @@ const MIGRA_MANAGED_SCHEMAS: ReadonlyArray<string> = [
   "supabase_migrations",
 ];
 
-/**
- * LIKE patterns excluded by `ListUserSchemas` when resolving the migra bash
- * fallback's schema list. Verbatim from Go's `migration.ManagedSchemas`
- * (`apps/cli-go/pkg/migration/drop.go:19-31`).
- */
+/** LIKE patterns excluded when resolving the migra bash fallback's schema list. */
 const LIST_SCHEMAS_EXCLUDE: ReadonlyArray<string> = [
   "information\\_schema",
   "pg\\_%",
@@ -82,12 +75,9 @@ const LIST_SCHEMAS_EXCLUDE: ReadonlyArray<string> = [
 ];
 
 /**
- * Lists user-defined schemas, excluding extension-created ones via a
- * `pg_depend` anti-join scoped by `classid` to `pg_namespace` rows (an oid
- * collision with another catalog must not hide a schema — supabase/cli#6375),
- * Supabase-managed names via the `$1` LIKE patterns, and schemas owned by
- * `supabase_admin`. Shared by the migra bash fallback and `db lint`
- * (`lint.lint-sql.ts`).
+ * Lists user-defined schemas, excluding extension-created ones (the `pg_depend` anti-join is
+ * scoped to `pg_namespace` via `classid` so an oid collision in another catalog can't hide a
+ * schema — see supabase/cli#6375), Supabase-managed names, and schemas owned by `supabase_admin`.
  */
 export const listSchemasSql = `-- List user defined schemas, excluding
 --  Extension created schemas
@@ -100,12 +90,10 @@ where pd.deptype is null
   and pn.nspowner::regrole::text != 'supabase_admin'
 order by pn.nspname`;
 
-/** Mirrors Go's `types.IsSSLDebugEnabled` (`internal/gen/types/types.go:201`). */
 function isSslDebugEnabled(): boolean {
   return (process.env["SUPABASE_SSL_DEBUG"] ?? "").toLowerCase() === "true";
 }
 
-/** Mirrors Go's `shouldFallbackToLegacyMigra` (`internal/db/diff/migra.go:155`). */
 function shouldFallbackToBashMigra(message: string): boolean {
   return (
     message.includes("Fatal JavaScript out of memory") ||
@@ -125,8 +113,7 @@ const buildMigraEnv = Effect.fnUntraced(function* (params: {
     TARGET: params.target,
   };
   if (isSslDebugEnabled()) env["SUPABASE_SSL_DEBUG"] = "true";
-  // Go's GetRootCA: probe the target for TLS; if it speaks TLS, inject the
-  // embedded CA bundle as SSL_CA (`internal/gen/types/types.go:124-148`).
+  // Probe the target for TLS; if it speaks TLS, inject the embedded CA bundle as SSL_CA.
   const requireSsl = yield* probe.requireSsl(params.target);
   if (requireSsl) env["SSL_CA"] = PG_DELTA_CA_BUNDLE;
   if (params.schema.length > 0) {
@@ -138,10 +125,8 @@ const buildMigraEnv = Effect.fnUntraced(function* (params: {
 });
 
 /**
- * Loads the target's user-defined schemas for the bash fallback (the bash
- * migra.sh iterates over an explicit schema list and cannot diff in exclude
- * mode). Mirrors Go's `loadSchema` → `migration.ListUserSchemas`
- * (`internal/db/diff/migra.go:99` / `pkg/migration/drop.go:40`).
+ * Loads the target's user-defined schemas for the bash fallback: migra.sh iterates over an
+ * explicit schema list and cannot diff in exclude mode.
  */
 const loadTargetUserSchemas = Effect.fnUntraced(function* (
   target: string,
@@ -180,10 +165,9 @@ const loadTargetUserSchemas = Effect.fnUntraced(function* (
 });
 
 /**
- * The OOM bash fallback: run migra in the `supabase/migra` Docker image over the
- * host network. Mirrors Go's `DiffSchemaMigraBash`
- * (`internal/db/diff/migra.go:60`): when no `--schema` is given the included
- * schemas are loaded from the target, then passed as positional args to migra.sh.
+ * The OOM bash fallback: runs migra in the `supabase/migra` Docker image over the host
+ * network. When no `--schema` is given, the included schemas are loaded from the target and
+ * passed as positional args to migra.sh.
  */
 const diffMigraBash = Effect.fnUntraced(function* (params: {
   readonly source: string;
@@ -200,14 +184,11 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
       : yield* loadTargetUserSchemas(params.target, params.connectOptions);
   const env: Record<string, string> = { SOURCE: params.source, TARGET: params.target };
   if (isSslDebugEnabled()) env["SUPABASE_SSL_DEBUG"] = "true";
-  // Passing the script as a string means command-line args must be set manually
-  // via `set --` so migra.sh's `"$@"` loop sees the schema list (Go's `args`).
+  // The script runs as a string, so command-line args must be set manually via `set --`
+  // for migra.sh's `"$@"` loop to see the schema list.
   const args = `set -- ${schema.join(" ")};`;
-  // Go's bash fallback (`DiffSchemaMigraBash`) routes through `DockerStart`
-  // (`internal/utils/docker.go:266-271`), which appends the Linux
-  // `host.docker.internal:host-gateway` mapping and overrides host networking with
-  // `--network-id` when set. Mirror that here so the fallback reaches the database
-  // on custom-network / `host.docker.internal` setups, matching the primary path.
+  // Add the Linux `host.docker.internal:host-gateway` mapping, and use a named network when
+  // `--network-id` is set, so this fallback reaches the database like the primary path does.
   const networkId = Option.getOrUndefined(networkIdFlag);
   const network =
     networkId !== undefined && networkId.length > 0
@@ -230,9 +211,8 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
         (cause) =>
           new MigraDiffError({
             message: `error diffing schema: ${cause.message}`,
-            // Thread the docker discriminant so a daemon-down / registry-pull
-            // failure at the docker boundary is not misclassified as user SQL,
-            // mirroring the edge-runtime-script fix.
+            // Distinguish a daemon-down / registry-pull failure at the docker boundary from
+            // a genuine user-SQL diff failure.
             docker: cause.reason === "spawn" || cause.daemonDown ? "daemon" : "pull",
           }),
       ),
@@ -248,13 +228,9 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
 });
 
 /**
- * Diffs SOURCE → TARGET with migra via the edge-runtime template
- * (`@pgkit/migra` + `@pgkit/client`), falling back to the `supabase/migra`
- * Docker image when the edge-runtime worker runs out of memory. Mirrors Go's
- * `DiffSchemaMigra` (`internal/db/diff/migra.go:109`). `source`/`target` are
- * live Postgres URLs (the shadow source and the diff target). Symmetric with
- * `diffPgDelta`: a free function over a `PgDeltaContext`, not a
- * service.
+ * Diffs SOURCE → TARGET with migra via the edge-runtime template, falling back to the
+ * `supabase/migra` Docker image when the edge-runtime worker runs out of memory.
+ * `source`/`target` are live Postgres URLs (the shadow source and the diff target).
  */
 export const diffMigra = Effect.fnUntraced(function* (
   ctx: PgDeltaContext,

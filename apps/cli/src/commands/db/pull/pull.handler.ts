@@ -25,21 +25,17 @@ export const dbPull = Effect.fn("db.pull")(function* (flags: DbPullFlags, invoke
     } else {
       const schemaWritten = outcome.schemaFiles[0];
       if (schemaWritten === undefined) {
-        // Unreachable: a "migration" outcome only reaches this emission after
-        // `runDbPull` confirmed at least one migration file was written
-        // (the migra path always pushes exactly one; the pg-delta path's
-        // `planFiles` is non-empty whenever the diff wasn't already caught by
-        // the `diffEmpty` in-sync failure above).
+        // Unreachable: `runDbPull` only returns a "migration" outcome after confirming at
+        // least one migration file was written (migra always pushes one; pg-delta's
+        // `planFiles` is non-empty unless already caught by the in-sync failure above).
         return yield* Effect.die(
           new Error("db pull: schemaFiles was empty for a migration outcome"),
         );
       }
       yield* output.success("Schema pulled.", {
         declarative: false,
-        // `schemaWritten` keeps the first written path for released consumers that
-        // read the string field; `schemaFiles` lists EVERY written migration path
-        // in write order (a pg-delta plan writes one file per unit), so machine
-        // callers see all of them, not just the first.
+        // `schemaWritten` is the first path, kept for consumers reading the string field;
+        // `schemaFiles` lists every written path in order (pg-delta writes one per unit).
         schemaWritten,
         schemaFiles: outcome.schemaFiles,
         remoteHistoryUpdated: outcome.remoteHistoryUpdated,

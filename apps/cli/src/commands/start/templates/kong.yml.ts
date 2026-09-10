@@ -1,11 +1,10 @@
 /**
- * The canonical `kong.yml` template — this is the sole source of truth; do
- * not hand-edit the YAML body. Also reused directly (not re-transcribed) by
+ * Canonical `kong.yml` template; do not hand-edit. Also reused directly (not re-transcribed) by
  * `shared/functions/serve-main-offline.e2e.test.ts`'s offline Kong fixture.
  *
- * Placeholders (`{{ .Field }}`): GotrueId, RestId, RealtimeId, StorageId,
- * StudioId, PgmetaId, EdgeRuntimeId, LogflareId, PoolerId, ApiHost, ApiPort,
- * BearerToken, QueryToken. Rendered by `lib/template-render.ts`.
+ * Placeholders (`{{ .Field }}`): GotrueId, RestId, RealtimeId, StorageId, StudioId, PgmetaId,
+ * EdgeRuntimeId, LogflareId, PoolerId, ApiHost, ApiPort, BearerToken, QueryToken — rendered by
+ * `lib/template-render.ts`.
  */
 export const START_KONG_YML_TEMPLATE = `_format_version: "1.1"
 services:

@@ -45,9 +45,6 @@ describe("parseLintResult", () => {
   });
 
   it("throws on Go-rejected shapes (top-level array/scalar, non-array issues, scalar entry)", () => {
-    // These shapes throw; the handler maps the throw to
-    // DbLintMalformedJsonError. The old parser silently coerced them to
-    // an empty result (false "no lint errors").
     expect(() => parseLintResult("[]", "public.f")).toThrow();
     expect(() => parseLintResult("42", "public.f")).toThrow();
     expect(() => parseLintResult(`{"issues":"nope"}`, "public.f")).toThrow();
@@ -56,9 +53,6 @@ describe("parseLintResult", () => {
   });
 
   it("throws on issue fields with the wrong JSON type (Go UnmarshalTypeError)", () => {
-    // The issue/statement/query string fields reject a non-string; a present
-    // non-object statement/query also throws. The old parser coerced these
-    // via String(...).
     expect(() => parseLintResult(`{"issues":[{"level":123,"message":"m"}]}`, "public.f")).toThrow();
     expect(() =>
       parseLintResult(`{"issues":[{"level":"warning","message":true}]}`, "public.f"),
@@ -78,8 +72,6 @@ describe("parseLintResult", () => {
   });
 
   it("throws on a present non-string top-level function field, accepts string/absent", () => {
-    // `function` is a string field; a non-string value throws before it is
-    // overridden with <schema>.<name>.
     expect(() => parseLintResult(`{"function":123,"issues":[]}`, "public.f")).toThrow();
     expect(parseLintResult(`{"function":"x","issues":[]}`, "public.f")).toEqual({
       function: "public.f",
@@ -92,7 +84,6 @@ describe("parseLintResult", () => {
   });
 
   it("tolerates Go-accepted shapes (null, missing issues, unknown fields)", () => {
-    // The result stays at zero on a top-level null, and unknown fields stay tolerated.
     expect(parseLintResult("null", "public.f")).toEqual({ function: "public.f", issues: [] });
     expect(parseLintResult("{}", "public.f")).toEqual({ function: "public.f", issues: [] });
     expect(parseLintResult(`{"issues":null}`, "public.f")).toEqual({
@@ -106,9 +97,8 @@ describe("parseLintResult", () => {
   });
 
   it("decodes a null array element to the zero-value Issue{} (Go encoding/json behavior)", () => {
-    // A null element in the issues array decodes as the zero-value issue
-    // (level: "", message: ""). It is included in the slice and later
-    // filtered out by filterLintResult since toEnum("") returns -1.
+    // Included in the slice, not skipped; `filterLintResult` later drops it since
+    // `toEnum("")` returns -1.
     const result = parseLintResult(`{"issues":[null]}`, "public.f");
     expect(result.issues).toEqual([{ level: "", message: "" }]);
   });

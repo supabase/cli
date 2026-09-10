@@ -488,8 +488,7 @@ describe("native runtime", { timeout: 15_000 }, () => {
           resolveProcess: () =>
             Effect.succeed({
               startup: [oneShotProcess("startup-failed", 7)],
-              // This path is intentionally invalid: a correct runtime must
-              // fail on the startup process before attempting to spawn it.
+              // Invalid on purpose: the runtime must fail the startup process before spawning it.
               main: { executable: "/missing/native-main" },
             }),
           waitForReadiness: () =>

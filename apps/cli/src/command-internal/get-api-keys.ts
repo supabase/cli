@@ -18,21 +18,17 @@ const mapApiKeysError = mapHttpError({
 });
 
 /**
- * Ports Go's `apiKeys.RunGetApiKeys` (`apps/cli-go/internal/projects/apiKeys/api_keys.go:41-49`,
- * deleted in CLI-1970; last present at commit 7b469f5b3):
- * `GET /v1/projects/{ref}/api-keys`, mapping transport / non-200 failures to the same
- * `failed to get api keys` / `unexpected get api keys status` errors Go raises. Shared by
+ * Fetches `GET /v1/projects/{ref}/api-keys`, mapping transport/non-200 failures to
+ * `failed to get api keys`/`unexpected get api keys status` errors. Shared by
  * `projects api-keys` (display) and `bootstrap` (which derives the `.env` keys).
  *
- * When `reveal` is `true`, the `reveal=true` query param is sent so the Management API
- * returns the full secret keys (prefix `sb_secret_`) in `api_key` instead of `null`
- * (issue #4775). The param is omitted entirely when `reveal` is `false` to keep the
- * default request byte-identical to Go's (`bootstrap` only consumes the never-redacted
- * anon key, so it stays on the default path).
+ * When `reveal` is `true`, the `reveal=true` query param is sent so the Management API returns
+ * the full secret keys (prefix `sb_secret_`) in `api_key` instead of `null`. The param is omitted
+ * entirely when `reveal` is `false` to keep the default request payload unchanged.
  *
- * Resolves the client lazily via `CommandPlatformApiFactory.make` so callers on the local
- * path (no `--linked`) never trigger Management API auth. The factory is memoised, so
- * repeated calls in the same command invocation reuse the same client.
+ * Resolves the client lazily via `CommandPlatformApiFactory.make` so callers on the local path
+ * (no `--linked`) never trigger Management API auth. The factory is memoised, so repeated calls
+ * in the same command invocation reuse the same client.
  */
 export const getProjectApiKeys = Effect.fnUntraced(function* (ref: string, reveal = false) {
   const api = yield* (yield* CommandPlatformApiFactory).make;

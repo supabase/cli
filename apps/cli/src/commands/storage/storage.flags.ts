@@ -5,19 +5,11 @@ import { changedLinkedLocalFlags } from "../../command-internal/db-target-flags.
 import { StorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
 
 /**
- * `--linked` / `--local`: `--linked` defaults to `true`, `--local` to
- * `false`, and the two are mutually exclusive. The routing reads the
- * **value** of `--local`: when true the project ref is cleared (local
- * stack), otherwise the linked path resolves it.
- *
- * These are declared **per-leaf** rather than as `storage`-group scoped globals
- * because Effect CLI requires global-flag names to be unique across the whole
- * command tree (`Command.runWith` builds one registry from every declared
- * global), and `seed` already owns scoped globals named `linked`/`local` with
- * different defaults/descriptions. The only behavioural cost is that
- * `--linked`/`--local` must follow the subcommand token (`storage ls
- * --local`, not `storage --local ls`) — the same shape the `db` family uses
- * for its per-leaf `--linked`/`--local`.
+ * `--local`'s value decides local vs linked: true clears the project ref, false
+ * resolves it via the linked project. Declared per-leaf rather than as a
+ * `storage`-scoped global because Effect CLI requires unique global-flag names
+ * tree-wide and `seed` already owns `linked`/`local`, so these must follow the
+ * subcommand token (`storage ls --local`, not `storage --local ls`).
  */
 export const StorageLinkedFlagDef = Flag.boolean("linked").pipe(
   Flag.withDescription("Connects to Storage API of the linked project."),
@@ -29,24 +21,21 @@ export const StorageLocalFlagDef = Flag.boolean("local").pipe(
   Flag.withDefault(false),
 );
 
-// TS-only override of the linked project ref — see push.command.ts (db push).
-// No Go equivalent: `storage.go` never registers `--project-ref` on this
-// command family. Declared once here (not per-leaf) since all four
-// `storage ls/cp/mv/rm` leaves share the identical declaration.
+// Overrides the project ref for the linked target; declared once since all four
+// storage leaves share the identical flag.
 export const StorageProjectRefFlagDef = Flag.string("project-ref").pipe(
   Flag.withDescription("Project ref of the Supabase project."),
   Flag.optional,
 );
 
-/** Changed `--linked`/`--local` set (cobra `pflag.Changed`), for the exclusivity check. */
+/** Names of `--linked`/`--local` flags that were explicitly passed, for the exclusivity check. */
 export function storageChangedTargetFlags(args: ReadonlyArray<string>): ReadonlyArray<string> {
   return changedLinkedLocalFlags(args);
 }
 
 /**
- * Mutual-exclusion check for `--linked`/`--local`. Rejected at flag
- * validation — before the handler body/telemetry flush — so it must NOT
- * emit `cli_command_executed`; each leaf calls this BEFORE
+ * Mutual-exclusion check for `--linked`/`--local`, rejected before the handler body
+ * so it never fires `cli_command_executed`. Each leaf must call this before
  * `withCommandTelemetry`.
  */
 export const assertStorageTargetsExclusive = Effect.fnUntraced(function* (

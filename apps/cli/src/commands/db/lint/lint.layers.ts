@@ -14,31 +14,19 @@ import { linkedProjectCacheLayer } from "../../../telemetry/linked-project-cache
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 
 /**
- * Runtime layer for `supabase db lint`, which spans local and linked DB access:
+ * Runtime layer for `supabase db lint`, spanning local and linked DB access:
+ * `--local`/`--db-url` use the Postgres connection and db-config resolver directly;
+ * `--linked` additionally resolves the project ref and refreshes the linked-project
+ * cache for telemetry grouping.
  *
- *   - **`--local` / `--db-url`** — the Postgres connection + db-config resolver.
- *   - **`--linked`** — direct DB connection via the db-config resolver's linked
- *     branch, plus project-ref resolution and the linked-project cache so the
- *     `--linked` run writes supabase/.temp/linked-project.json for telemetry
- *     grouping.
+ * Mirrors `advisors.layers.ts`. Does not use `managementApiRuntimeLayer`, whose eager
+ * `CommandPlatformApi` would resolve an access token at layer construction and fail
+ * the auth-free `--local` path before the handler runs (CLAUDE.md invariant 5/7) — the
+ * project-ref resolver instead gets the lazy `commandPlatformApiFactoryLayer`.
  *
- * Mirrors `advisors.layers.ts`. Deliberately does NOT use
- * `managementApiRuntimeLayer`: that layer exposes an *eagerly* built
- * `CommandPlatformApi`, which resolves an access token at layer construction, so
- * merging it would make the auth-free `--local` path fail before the handler
- * runs (CLAUDE.md invariant 5 / 7). The project-ref resolver is instead given
- * the **lazy** `commandPlatformApiFactoryLayer`; the linked lint path resolves the
- * ref via the non-prompting `loadProjectRef`, which never forces the factory.
- *
- * `commandSettingsLayer` is provided to each consumer that needs it (item 5:
- * `Layer.provide` does not share to merge siblings); layers are memoised by
- * reference so the config / credentials / HTTP instances are reused.
- *
- * `identityStitchLayer` (the one per-command identity stitcher) is provided
- * by the SAME reference to the platform-API factory, the linked-project cache, and
- * the db-config resolver, so memoisation gives all three a single
- * `stitchAttempted` guard. The db-config resolver snapshots that instance
- * into its lazy linked stack's ambient layer.
+ * Layers are memoised by reference, so `identityStitchLayer` is provided by the same
+ * reference to the platform-API factory, linked-project cache, and db-config resolver,
+ * giving all three a single shared `stitchAttempted` guard.
  */
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
@@ -81,15 +69,7 @@ export const dbLintRuntimeLayer = Layer.mergeAll(
   credentials,
   projectRef,
   linkedProjectCache,
-  // The one per-command identity stitcher, exposed at top level so
-  // `withCommandTelemetry` can read
-  // `stitchedDistinctId()` and attribute the cli_command_executed event to the
-  // gotrue id. The SAME reference is provided to platformApiFactory /
-  // linkedProjectCache / dbConfig above, so memoisation makes the linked
-  // path, the cache GET, and the db-config stack all share one
-  // `stitchAttempted` guard — aliasing/persisting at most once. Its
-  // Analytics / TelemetryRuntime / FileSystem / Path deps are ambient (root
-  // runtime). Mirrors advisors.layers.ts exactly.
+  // Exposed at top level so `withCommandTelemetry` can read `stitchedDistinctId()`.
   identityStitchLayer,
   telemetryStateLayer,
   commandRuntimeLayer(["db", "lint"]),

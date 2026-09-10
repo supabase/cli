@@ -29,26 +29,16 @@ import type {
 import type { PullStepContext } from "./pull.types.ts";
 
 /**
- * `supabase pull` step runners — one per `PULL_STEP_ORDER` entry
- * (`pull.types.ts`). Each is a thin adapter over its sub-step's own run-core:
- * it calls the real implementation and shapes the result into the
- * `PullXStepOutcome` union `pull.aggregate.ts`'s mappers expect.
- *
- * No confirmation, `Exit`-based failure capture, or aggregation lives here —
- * that is `pull.handler.ts`'s job (Phase 3). These runners are only ever
- * called once the aggregated confirmation has already been accepted (or
- * `--yes` bypassed it), so every one of them actually performs its side
- * effect — there is no internal "dry run"/"declined" branch here; those
- * outcomes are built directly by `pull.handler.ts` from `pull.aggregate.ts`'s
- * mappers without ever reaching this module.
+ * `supabase pull` step runners — one per `PULL_STEP_ORDER` entry, each a thin adapter over its
+ * sub-step's own run-core. No confirmation, failure capture, or aggregation lives here: these
+ * only run once the aggregated confirmation is accepted, so every one performs its side effect
+ * (there's no internal dry-run/declined branch).
  */
 
 /**
- * `config` step: applies the already-planned config write (skipped when the
- * plan had no work at all) and reports the fixed `{dryRun: false, confirmed:
- * true}` shape `pullConfigStepResult` expects for an executed run — the
- * `dryRun`/declined variants of this outcome are built directly by
- * `pull.handler.ts` (Phase 1/2), never through this function.
+ * `config` step: applies the already-planned config write (skipped when the plan had no work)
+ * and reports the fixed `{dryRun: false, confirmed: true}` shape `pullConfigStepResult` expects
+ * for an executed run.
  */
 export const pullConfigStep = Effect.fnUntraced(function* (input: {
   readonly runPlan: ConfigPullRunPlan;
@@ -67,14 +57,9 @@ export const pullConfigStep = Effect.fnUntraced(function* (input: {
 
 /**
  * `migration_history` step: fetches the remote migration history table into
- * `supabase/migrations` via `migration fetch`'s run-core, targeting the
- * already-resolved `context.ref` directly (`{setFlags: [], connType:
- * "linked"}` — resolve-once, per ADR 0024) and suppressing its own internal
- * overwrite prompt with `assumeYes` (the orchestrator's own confirmation
- * already covers this). Only called when the orchestrator decided this step
- * should actually run this invocation (`--with-migration-history`, or an
- * empty/missing `supabase/migrations`) — the "not needed" skip is built
- * directly by `pull.handler.ts`, never through this function.
+ * `supabase/migrations`, targeting the already-resolved `context.ref` directly (ADR 0024) and
+ * suppressing its own overwrite prompt with `assumeYes` since the orchestrator's confirmation
+ * already covers it.
  */
 export const pullMigrationHistoryStep = Effect.fnUntraced(function* (context: PullStepContext) {
   const cliSettings = yield* CommandSettings;
@@ -97,18 +82,12 @@ export const pullMigrationHistoryStep = Effect.fnUntraced(function* (context: Pu
 });
 
 /**
- * `db` step: pulls the linked project's schema in migration mode (no
- * `--declarative`/diff-engine override), targeting `context.ref` directly and
- * suppressing `db pull`'s own remote-history-update prompt with `assumeYes`.
- * `forceMigrationMode: true` closes the gap the constructed flags alone
- * cannot: without it, an ambient `--experimental`/`SUPABASE_EXPERIMENTAL` gate
- * would silently switch `runDbPull` to the declarative export path — writing
- * `supabase/schemas/**` and potentially `config.toml`'s `schema_paths` — none
- * of which `pull`'s own dirty-check/confirmation guards against (see
- * `DbPullInvoke.forceMigrationMode`'s doc comment). `DbPullInSyncError` — the
- * remote already matches local migrations — is caught here and reported as
- * `in_sync` (a finding, not a failure, at the `pull` level per ADR 0024)
- * rather than propagating to `pull.handler.ts`'s failure-capture path.
+ * `db` step: pulls the linked project's schema in migration mode, targeting `context.ref`
+ * directly and suppressing `db pull`'s remote-history-update prompt with `assumeYes`.
+ * `forceMigrationMode: true` prevents an ambient `--experimental` gate from silently switching to
+ * the declarative export path, which `pull`'s dirty-check and confirmation don't guard against.
+ * `DbPullInSyncError` is caught and reported as `in_sync`, a finding rather than a failure at the
+ * `pull` level (ADR 0024).
  */
 export const pullDbStep = Effect.fnUntraced(function* (context: PullStepContext) {
   const cliSettings = yield* CommandSettings;
@@ -141,12 +120,9 @@ export const pullDbStep = Effect.fnUntraced(function* (context: PullStepContext)
 });
 
 /**
- * `functions` step: downloads every Edge Function's source from the linked
- * project via the shared `downloadFunctions` run-core, matching the
- * standalone `functions download` command's own `--use-api`/`--use-docker`
- * defaults. `legacyBundle` is always `false`, so `proxyDownload` is
- * unreachable and `resolveProjectRef` never re-resolves — the target ref was
- * already resolved once, up front, by the orchestrator.
+ * `functions` step: downloads every Edge Function's source, matching the standalone `functions
+ * download` command's `--use-api`/`--use-docker` defaults. `legacyBundle: false` keeps
+ * `proxyDownload` unreachable, so `resolveProjectRef` just returns the already-resolved ref.
  */
 export const pullFunctionsStep = Effect.fnUntraced(function* (context: PullStepContext) {
   const api = yield* CommandPlatformApi;

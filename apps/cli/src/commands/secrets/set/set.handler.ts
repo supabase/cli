@@ -37,55 +37,18 @@ const mapSetError = mapHttpError({
 
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
-// Excludes arrays, matching `packages/config/src/io.ts`'s `isObject` (the
-// identical "is this a table" check used when merging `[remotes.*]`). A TOML
-// array for a map-typed field (e.g. `[edge_runtime] secrets = ["actual-secret"]`)
-// is not a recoverable table: `Object.entries` on an array yields index keys
-// ("0", "1", ...), which would otherwise fabricate spurious secret names. The
-// mapstructure decoder `pkg/config/config.go`'s `UnmarshalExact` uses never
-// does this either — it never sets `WeaklyTypedInput`, so a slice source for
-// a map-typed field hits `UnconvertibleTypeError` in `decodeMap` rather than
-// the index-as-key `decodeMapFromSlice` path, and the whole field is left
-// empty.
+// Excludes arrays: `Object.entries` on an array yields index keys ("0", "1", ...), which would
+// otherwise fabricate spurious secret names from a misconfigured `secrets = [...]` field.
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
- * Best-effort recovery for a schema-decode failure (as opposed to a raw
- * TOML/JSON parse failure) on `supabase/config.toml`. The `viper`+
- * `mapstructure` decode (`pkg/config/config.go:749`) mutates the
- * target struct field-by-field: a type error anywhere — an unrelated
- * top-level table (`analytics.port`), a sibling field inside the same
- * `edge_runtime` table (`edge_runtime.inspector_port`), *or* a single bad
- * entry inside the `edge_runtime.secrets` map itself (`BAD = 123`) — does not
- * stop the rest of `edge_runtime.secrets` from landing in `utils.Config`.
- * `UnmarshalExact` still populates every field (and every map entry) it *can*
- * decode before aggregating errors: `mapstructure`'s map decoder
- * (`decodeMapFromMap`) iterates each key independently, appends a per-entry
- * error and `continue`s rather than aborting, then still calls `val.Set` with
- * whatever entries succeeded. Confirmed empirically against this repo's
- * actual `pkg/config`: a TOML with both a malformed `edge_runtime.inspector_port`
- * and a valid `[edge_runtime.secrets]` block still yields a populated
- * `EdgeRuntime.Secrets` (`InspectorPort` is left at its zero value), and a
- * `[edge_runtime.secrets]` block with one bad entry alongside a good one
- * still yields the good entry.
- * `Schema.decodeUnknownSync` has no such tolerance; a single bad field
- * anywhere discards the whole decode — re-decoding the *entire* `edge_runtime`
- * subtree would still fail in the sibling-field case (`inspector_port` comes
- * along for the ride), and re-decoding the whole `secrets` map atomically
- * would still fail when just one entry in that map is bad. To keep
- * `secrets set` at parity without loosening `packages/config`'s decode
- * semantics for every caller: re-slice `edge_runtime.secrets` out of the
- * pre-decode document (`cause.document` — only set when the document itself
- * parsed fine and the *schema* decode is what failed, see
- * `CliConfigParseError`), decode each entry independently and keep only
- * the ones that succeed (mirroring `decodeMapFromMap`'s per-key tolerance),
- * then decode the filtered map against the full schema, where every other
- * field (including the rest of `edge_runtime`) defaults cleanly. A true parse
- * failure (`cause.document` undefined) has no recoverable structure in either
- * implementation — `viper.MergeConfig` also fails the whole load before
- * `mapstructure` ever runs in that case.
+ * Best-effort recovery of `[edge_runtime.secrets]` from a document that failed schema decode
+ * (not a raw parse failure). Matches the CLI's established per-field decode tolerance: an
+ * unrelated bad field, or a single bad entry inside `secrets` itself, must not discard every
+ * otherwise-valid secret. `Schema.decodeUnknownSync` has no such tolerance, so this re-slices
+ * `edge_runtime.secrets` out of the pre-decode document and decodes each entry independently.
  */
 function recoverEdgeRuntimeConfig(cause: CliConfigParseError): CliConfig | null {
   if (cause.document === undefined) {
@@ -93,13 +56,9 @@ function recoverEdgeRuntimeConfig(cause: CliConfigParseError): CliConfig | null 
   }
   const edgeRuntime = cause.document.edge_runtime;
   const secretsField = isRecord(edgeRuntime) ? edgeRuntime.secrets : undefined;
-  // `redactEdgeRuntimeSecrets` (`packages/config/src/io.ts`) wraps a malformed,
-  // non-object `secrets` field (e.g. a TOML array) in a single `Redacted`
-  // rather than leaving it a plain record, so an uncaught error can't leak it
-  // either. Unwrap before the `isRecord` check below — otherwise the
-  // `Redacted` wrapper object itself (an object, just not a secrets map) gets
-  // misread as a one-entry map and fabricates a bogus secret from its
-  // internal fields.
+  // A malformed, non-object `secrets` field arrives wrapped in `Redacted`; unwrap before the
+  // `isRecord` check below, or the wrapper object itself gets misread as a one-entry map and
+  // fabricates a bogus secret from its internal fields.
   const secrets = Redacted.isRedacted(secretsField) ? Redacted.value(secretsField) : secretsField;
   const decodableSecrets = isRecord(secrets) ? filterDecodableSecrets(secrets) : undefined;
   try {
@@ -112,19 +71,10 @@ function recoverEdgeRuntimeConfig(cause: CliConfigParseError): CliConfig | null 
 }
 
 /**
- * Mirrors mapstructure's per-entry map decode tolerance
- * (`decodeMapFromMap`, invoked via `v.UnmarshalExact` in
- * `pkg/config/config.go:749`): a decode error on one secret
- * value doesn't discard the whole `[edge_runtime.secrets]` map — only that
- * entry is dropped, and every other entry is still recovered.
- *
- * Each value arrives wrapped in `Redacted` (whatever its underlying type) —
- * `CliConfigParseError.document` wraps every `edge_runtime.secrets` entry
- * so an uncaught parse error can't leak a resolved secret, or a malformed
- * non-string entry, into a log or trace (see the field doc on `.document`).
- * Unwrap before re-decoding: `secret()`'s schema is a plain `Schema.String`,
- * not `Redacted`, and a non-string entry (e.g. an array) still fails that
- * decode and is dropped below, same as the reference decoder would.
+ * Decodes each `edge_runtime.secrets` entry independently and keeps only the ones that
+ * succeed, so one bad value doesn't discard the whole map. Each value arrives wrapped in
+ * `Redacted` (protecting it from leaking into a log if decode fails); unwrap before re-decoding
+ * since `secret()`'s schema is a plain `Schema.String`, not `Redacted`.
  */
 function filterDecodableSecrets(secrets: Record<string, unknown>): Record<string, unknown> {
   const kept: Record<string, unknown> = {};
@@ -134,7 +84,7 @@ function filterDecodableSecrets(secrets: Record<string, unknown>): Record<string
       decodeCliConfig({ edge_runtime: { secrets: { [name]: plainValue } } });
       kept[name] = plainValue;
     } catch {
-      // Drop this entry only, matching mapstructure's per-key error handling.
+      // Drop this entry only.
     }
   }
   return kept;
@@ -154,35 +104,18 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
   const ref = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
-    // Source 1: `[edge_runtime.secrets]` from `supabase/config.toml`.
-    //
-    // Only resolved secret values are sent — entries whose `env(VAR)` references
-    // are unresolved are skipped. This filters on whether the SHA256 hash is
-    // set: the hash is empty exactly when `DecryptSecretHookFunc`
-    // (`pkg/config/secret.go:98`) sees a still-literal `env(VAR)` and returns
-    // without hashing. In the TS path, `resolveCliConfigSubtree`
-    // wraps every resolved secret leaf in `Redacted<string>`; unresolved env()
-    // literals stay as plain strings, so `Redacted.isRedacted(...)` is the
-    // equivalent guard.
+    // Source 1: `[edge_runtime.secrets]` from `supabase/config.toml`. Only resolved values are
+    // sent: `resolveCliConfigSubtree` wraps every resolved secret leaf in `Redacted<string>`,
+    // while unresolved `env(VAR)` references stay plain strings, so `Redacted.isRedacted`
+    // distinguishes them.
     const merged = new Map<string, string>();
-    // A malformed config.toml (or a malformed `.env`/`.env.local` sibling —
-    // see the `CliProjectEnvParseError` catch below) is swallowed here (logged
-    // to the debug logger) and this proceeds with an empty
-    // `EdgeRuntime.Secrets` — env-file and positional-arg secrets still
-    // work. `secrets set` has no `--linked`/`--local`/`--db-url` flag, so
-    // (unlike most commands) the config isn't loaded any earlier either;
-    // this is the only load, and it must not be fatal.
+    // A malformed config.toml (or sibling .env/.env.local) is swallowed here (logged, not
+    // fatal) and proceeds with empty config-sourced secrets — env-file and positional-arg
+    // secrets still work.
     //
-    // Pass `ref` so a matching `[remotes.*]` block is merged over the base
-    // config before decode, mirroring `flags.LoadConfig`
-    // (`internal/utils/flags/config_path.go:11-12`: `utils.Config.ProjectId =
-    // ProjectRef` before `Load()`) merging the override in `loadFromFile`
-    // (`pkg/config/config.go:604-609`) ahead of the tolerant decode below.
-    // Without this, a schema-decode error on `--project-ref <remote-ref>`
-    // would recover the *base* `[edge_runtime.secrets]` instead of the
-    // explicitly selected remote's override.
-    // `goViperCompat: true` opts into `applyRemoteOverride`'s duplicate-
-    // `project_id`/format checks (`packages/config/src/io.ts`) — required for
+    // Passing `ref` merges a matching `[remotes.*]` block over the base config before decode,
+    // so a schema-decode error on a remote target recovers that remote's override, not the base
+    // document. `goViperCompat: true` enables the duplicate-project_id/format checks needed for
     // the `DuplicateRemoteProjectIdError` catch below to ever fire.
     const loadedConfig = yield* loadCliConfig(runtimeInfo.cwd, {
       projectRef: ref,
@@ -192,12 +125,9 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
         if (loaded === null) {
           return Effect.succeed(null);
         }
-        // Go prints this from inside config load, before any command output
-        // (`pkg/config/config.go:605`) — unconditionally on a matching
-        // `[remotes.*]` block, ahead of the (possibly failing) decode. Other
-        // handlers surface it the same way (e.g. `config push`); this
-        // path must not silently drop it just because it maps straight down
-        // to `.config` below.
+        // Printed unconditionally as soon as a matching `[remotes.*]` block is found, ahead of
+        // the (possibly failing) decode — other handlers surface this the same way, so this
+        // path must not silently drop it.
         return (
           loaded.appliedRemote !== undefined
             ? output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr")
@@ -205,36 +135,17 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
         ).pipe(Effect.as(loaded.config));
       }),
       Effect.catchTag("CliConfigParseError", (cause) => {
-        // `smol-toml`'s `TomlError` embeds a source codeblock after a
-        // blank-line separator — literal file content, which for this file's
-        // `[edge_runtime.secrets]` section can include real secret values.
-        // Truncating before the separator handles that case (`cause.document
-        // === undefined`, a raw parse failure with no decoded document to
-        // recover from — see the field doc on `CliConfigParseError`).
-        //
-        // A schema-decode error (`cause.document !== undefined`) has no such
-        // separator: Effect's `ParseError` puts the rejected value inline on
-        // one line (e.g. `Expected string, actual ["actual-secret"]`), which
-        // the truncation above wouldn't catch. The pinned mapstructure
-        // decode-error types (`UnconvertibleTypeError.Error()`,
-        // `DecodeError.Error()`, `github.com/go-viper/mapstructure/v2
-        // v2.5.0`) never include the rejected value, only type names — so a
-        // fixed, content-free message here matches that behaviour rather
-        // than just being defensive.
+        // `smol-toml` embeds a source codeblock (which can include real secret values) after a
+        // blank-line separator on a raw parse failure; truncate before it. A schema-decode
+        // error puts the rejected value inline instead, with no such separator, so use a fixed,
+        // content-free message there.
         const shortMessage =
           cause.document === undefined
             ? String(cause.cause).split("\n\n")[0]
             : "schema validation failed";
-        // The override notice is printed unconditionally as soon as a
-        // `[remotes.*]` block's `project_id` matches, *before* `mapstructure`
-        // decode ever runs (`pkg/config/config.go:604-609`) — so the notice is
-        // still owed here even though decode subsequently failed and this
-        // whole load is non-fatal. `cause.appliedRemote` carries that match
-        // through the failed decode (see the field doc on
-        // `CliConfigParseError.appliedRemote`); the success path above
-        // handles the non-error case. Emitted ahead of the debug log below to
-        // match that order: the print happens inside `loadFromFile`,
-        // the debug log only after config loading swallows the error.
+        // Printed here too since a matching `[remotes.*]` block is found before decode runs,
+        // even though decode then failed. Emitted ahead of the debug log below to preserve
+        // that order.
         return (
           cause.appliedRemote !== undefined
             ? output.raw(`Loading config override: [remotes.${cause.appliedRemote}]\n`, "stderr")
@@ -246,35 +157,20 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
           Effect.as(recoverEdgeRuntimeConfig(cause)),
         );
       }),
-      // `loadCliConfig` resolves `env(VAR)` references against
-      // `.env`/`.env.local` (`loadCliProjectEnvironment` inside
-      // `loadCliConfigFile`) *before* schema decode, so a malformed dotenv
-      // line fails with this distinct tag rather than `CliConfigParseError`.
-      // `Load()` (`pkg/config/config.go:788-791`) calls `loadNestedEnv`
-      // first too and returns immediately on error, before `loadFromFile` (the
-      // TOML parse) ever runs — so `EdgeRuntime.Secrets` never gets populated
-      // in this failure path, unlike the schema-decode-only case above. Recover
-      // to `null`, not `recoverEdgeRuntimeConfig`: there is no parsed document
-      // to recover a subtree from.
+      // A malformed dotenv line fails with this distinct tag (env resolution runs before
+      // schema decode), so there's no parsed document to recover a subtree from — recover to
+      // `null`, not `recoverEdgeRuntimeConfig`.
       Effect.catchTag("CliProjectEnvParseError", (cause) =>
         debugLogger.debug(`failed to parse ${cause.path}:${cause.line}`).pipe(Effect.as(null)),
       ),
-      // Two `[remotes.*]` blocks declare the same `project_id` as `ref` —
-      // `flags.LoadConfig` swallows *any* `Load()` error non-fatally,
-      // including this one, which `loadFromFile` raises before
-      // `mapstructure` ever runs (`pkg/config/config.go:601`).
-      // `cause.message` already matches that string verbatim (see
-      // `DuplicateRemoteProjectIdError`'s field doc).
+      // Two `[remotes.*]` blocks declaring the same `project_id` as `ref`; swallowed
+      // non-fatally like every other load error here.
       Effect.catchTag("DuplicateRemoteProjectIdError", (cause) =>
         debugLogger.debug(cause.message).pipe(Effect.as(null)),
       ),
-      // A `[remotes.*]` block's `project_id` fails the ref-pattern check —
-      // raised from `Config.Validate` (`pkg/config/config.go:996-1001`), which
-      // runs inside the same `Config.Load()` call as the duplicate check above
-      // (`config.go:882`). `flags.LoadConfig` swallows this the same
-      // non-fatal way, so a malformed remote block must not abort an
-      // otherwise-valid `secrets set`. `cause.message` already matches that
-      // string verbatim (see `InvalidRemoteProjectIdError`'s field doc).
+      // A `[remotes.*]` block's `project_id` fails the ref-pattern check; swallowed the same
+      // non-fatal way, so a malformed remote block must not abort an otherwise-valid
+      // `secrets set`.
       Effect.catchTag("InvalidRemoteProjectIdError", (cause) =>
         debugLogger.debug(cause.message).pipe(Effect.as(null)),
       ),
@@ -292,16 +188,10 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
           { goViperCompat: true },
         );
         for (const [name, value] of Object.entries(resolved.secrets ?? {})) {
-          // `DecryptSecretHookFunc` (`pkg/config/secret.go:98`) never
-          // hashes an empty value, and only config entries with a non-empty
-          // SHA256 are included — so an empty `[edge_runtime.secrets]` entry
-          // is silently skipped rather than sent as an empty-string
-          // overwrite of a remote secret. `Redacted.isRedacted` already
-          // excludes the other SHA256-empty case (a still-literal
-          // `env(VAR)` reference); check for a non-empty value too so both
-          // zero-hash cases match. This applies to config-sourced secrets
-          // only — an explicit `--env-file`/positional `NAME=` below is
-          // sent as-is unconditionally, regardless of source.
+          // An empty `[edge_runtime.secrets]` value is skipped rather than sent as an
+          // empty-string overwrite of a remote secret. This applies to config-sourced secrets
+          // only — an explicit `--env-file`/positional `NAME=` below is sent as-is regardless
+          // of value.
           if (Redacted.isRedacted(value) && Redacted.value(value).length > 0) {
             merged.set(name, Redacted.value(value));
           }
@@ -356,10 +246,8 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
       merged.set(pair.slice(0, eqIdx), pair.slice(eqIdx + 1));
     }
 
-    // Filter SUPABASE_-prefixed entries with stderr warning (Go `set.go:67-71`).
-    // The API rejects these names server-side anyway (`@supabase/api`'s schema
-    // also rejects them via regex), so the filter MUST happen client-side
-    // before any request is built — otherwise we'd surface a SchemaError instead.
+    // The API also rejects `SUPABASE_`-prefixed names server-side, but filtering client-side
+    // first avoids surfacing a raw SchemaError instead of this warning.
     const body: Array<{ name: string; value: string }> = [];
     for (const [name, value] of merged) {
       if (name.startsWith("SUPABASE_")) {
@@ -378,22 +266,16 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
     }
 
     // The Management API caps a single bulk-create request at 100 secrets
-    // (`V1BulkCreateSecretsInput`'s `isMaxLength(100)` check in `@supabase/api`).
-    // Go issues one unbatched request (`internal/secrets/set/set.go`), so against
-    // the capped API a >100-entry env file would be rejected wholesale; split into
-    // batches of at most 100 so large env files still upload.
+    // (`V1BulkCreateSecretsInput`'s `isMaxLength(100)` check); split into batches so large env
+    // files still upload instead of being rejected wholesale.
     const SECRETS_PER_REQUEST = 100;
     const batches: Array<typeof body> = [];
     for (let i = 0; i < body.length; i += SECRETS_PER_REQUEST) {
       batches.push(body.slice(i, i + SECRETS_PER_REQUEST));
     }
 
-    // Validate every batch (per-entry name/value constraints and the 100-item
-    // cap) before sending any request. Without this, a schema-invalid entry in a
-    // later batch would only surface after earlier batches had already been
-    // uploaded, leaving the project partially updated. Decoding fails with the
-    // same `SchemaError` `bulkCreateSecrets` raises. This validation is wholly
-    // user-derived, so keep it distinct from response-schema decode failures.
+    // Validated up front so a schema-invalid entry in a later batch can't leave the project
+    // partially updated after earlier batches already uploaded.
     yield* Effect.forEach(
       batches,
       (batch) => Schema.decodeUnknownEffect(V1BulkCreateSecretsInput)({ ref, body: batch }),

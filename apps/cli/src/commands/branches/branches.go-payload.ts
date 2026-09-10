@@ -37,11 +37,8 @@ export const GO_BRANCH_RESPONSE: GoType = goStruct([
   ["with_data", goBool],
 ]);
 
-/** `branches list -o yaml` encodes the bare `[]api.BranchResponse`. */
+/** `branches list -o yaml` encodes the bare array of branch structs. */
 export const GO_BRANCHES_LIST: GoType = goSlice(GO_BRANCH_RESPONSE);
 
-/**
- * `branches list -o toml` wraps the slice:
- * `struct{ Branches []api.BranchResponse `toml:"branches"` }`.
- */
+/** `branches list -o toml` wraps the array under a top-level `branches` key. */
 export const GO_BRANCHES_TOML_WRAPPER: GoType = goTomlListWrapper("branches", GO_BRANCH_RESPONSE);

@@ -34,7 +34,7 @@ afterEach(() => {
   rmSync(workdir, { recursive: true, force: true });
 });
 
-/** Matches the standing `mockSpawner` shape used across `docker-*.unit.test.ts` files, generalized to a per-call handler for multi-step orchestration (volume create -> container create -> container start). */
+/** Per-call handler, for multi-step orchestration (volume create -> container create -> start). */
 function mockSpawner(
   handler: (args: ReadonlyArray<string>) => { exitCode: number; stdout?: string; stderr?: string },
 ) {
@@ -165,7 +165,6 @@ describe("createContainer", () => {
           expect(create).toContain("--label");
           expect(create).toContain("com.supabase.cli.project=proj");
           expect(create).toContain("com.docker.compose.project=proj");
-          // Both the named-volume bind and the plain bind mount survive outside Bitbucket.
           expect(create).toContain("supabase_db_proj:/var/lib/postgresql/data");
           expect(create).toContain("/repo/backup.sql:/etc/backup.sql:ro");
           expect(create).toContain("--security-opt");
@@ -173,7 +172,6 @@ describe("createContainer", () => {
           const start = mock.spawned.find((args) => args[0] === "start");
           expect(start).toEqual(["start", "container-id-123"]);
 
-          // Order matters: the volume must exist before `docker create` references it.
           expect(mock.spawned.map((args) => args[0])).toEqual(["volume", "create", "start"]);
         }),
       );
@@ -183,14 +181,6 @@ describe("createContainer", () => {
   it.live(
     "stamps the container (but not its named volumes) with a com.supabase.cli.workdir label matching opts.workdir",
     () => {
-      // Read back later by `listContainerIdsAndNames` so a subsequent `stop`/rollback can
-      // reclaim `cleanupStartSecrets`'s staged-secret directory from the CONTAINER's own
-      // label rather than the invoking caller's own cwd/`--workdir` (see that label's doc
-      // comment, `docker-ids.ts`). Volumes deliberately do NOT get this label — nothing
-      // ever reads it back off a volume, and the "merges project + compose labels..." test above
-      // already pins the volume's label list to exactly the two project-identity labels via
-      // `toEqual`, so a regression that leaked the workdir label onto volumes too would fail that
-      // test's exact-match assertion.
       const mock = alwaysSucceed();
       return createContainer(mock.spawner, baseSpec, {
         projectId: "proj",
@@ -209,11 +199,6 @@ describe("createContainer", () => {
   it.live(
     "passes the spec's env values through the spawned process's own environment, extending it",
     () => {
-      // `docker-create-args.ts` emits the key-only `-e KEY` form (never `-e KEY=value`) so
-      // secrets never appear in argv — Docker then resolves each key's value from the
-      // spawned `docker create` process's own environment. If `env`/`extendEnv` are ever
-      // dropped from the spawn call again, every `-e KEY` flag silently resolves to nothing
-      // and every container starts with none of its configured environment.
       const mock = alwaysSucceed();
       const spec: StartContainerSpec = {
         ...baseSpec,
@@ -240,12 +225,6 @@ describe("createContainer", () => {
   it.live(
     "excludes DOCKER_HOST from the spawned docker create process's own env, even though it's in spec.env (Vector's tcp/npipe daemon host)",
     () => {
-      // `env`/`extendEnv: true` merge `spec.env` INTO the spawned `docker create` process's own
-      // environment (see the previous test) — but `DOCKER_HOST` configures which daemon the
-      // `docker`/`podman` CLI CLIENT itself talks to, not a container env var read via `-e KEY`.
-      // Letting a container-facing `DOCKER_HOST` (e.g. Vector's `http://host.docker.internal:...`
-      // for a tcp/npipe daemon host) leak into the spawned process's own env would hijack which
-      // daemon this `docker create` call itself targets, before the container even exists.
       const mock = alwaysSucceed();
       const spec: StartContainerSpec = {
         ...baseSpec,
@@ -417,9 +396,6 @@ describe("createContainer secretFiles", () => {
       });
 
       expect(containerId).toBe("container-id-snap");
-      // `docker cp` runs strictly between `docker create` and `docker start` — the
-      // container must already exist for it to have a target, and must not be running
-      // yet so its entrypoint never races the copy.
       expect(mock.spawned.map((args) => args[0])).toEqual(["create", "cp", "start"]);
 
       const cp = mock.spawnedOptions.find((entry) => entry.args[0] === "cp");
@@ -643,13 +619,8 @@ describe("ensureNetwork", () => {
   );
 
   it.live("skips docker network create for a container: network mode", () => {
-    // Go's `container.NetworkMode.IsUserDefined()`
-    // (`docker/api/types/container/hostconfig_unix.go:23-25`) explicitly
-    // excludes `IsContainer()` — `--network-id container:redis` attaches to
-    // another container's network stack, not a name `docker network create`
-    // could ever act on (review round on CLI-1963's `functions download`
-    // port, which surfaced the same gap in the shared
-    // `isUserDefinedDockerNetwork` predicate this helper reuses).
+    // `--network-id container:redis` attaches to another container's network stack, not a name
+    // `docker network create` could ever act on.
     const mock = mockSpawner(() => ({ exitCode: 1, stderr: "some failure" }));
     return ensureNetwork(mock.spawner, "container:redis", {}).pipe(
       Effect.map(() => {
@@ -886,9 +857,6 @@ describe("createContainer with an empty containerName (the shadow database)", ()
       }).pipe(
         Effect.map((containerId) => {
           expect(containerId).toBe("shadow-container-id");
-          // `docker cp` addresses the container by the id `docker create` returned, never by
-          // name — the unnamed shadow container is delivered its secret the same way a named
-          // one is.
           expect(cpArgs).toEqual(["cp", "-", "shadow-container-id:/"]);
         }),
       );

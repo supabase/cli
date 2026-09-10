@@ -100,7 +100,7 @@ const updateMigrationTable = Effect.fnUntraced(function* (
     ),
   );
 
-  // Printed only when NOT repairing the whole table.
+  // Printed only when not repairing the whole table.
   if (!repairAll) {
     yield* output.raw(
       `Repaired migration history: [${versions.join(" ")}] => ${status}\n`,
@@ -139,11 +139,10 @@ const runRepair = Effect.fnUntraced(function* (
 
   const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
   const repairAll = input.versions.length === 0;
-  const connType = target.connType ?? "linked"; // repair defaults to `--linked`.
+  const connType = target.connType ?? "linked";
 
   // `--project-ref` never implies `--linked` and must not be silently
-  // discarded on a non-linked target — see push.handler.ts's identical guard
-  // (db push) for the full TS-only rationale.
+  // discarded on a non-linked target; see push.handler.ts's identical guard.
   if (Option.isSome(input.projectRef) && connType !== "linked") {
     return yield* Effect.fail(
       new MigrationTargetFlagsError({
@@ -153,10 +152,8 @@ const runRepair = Effect.fnUntraced(function* (
     );
   }
 
-  // Resolve the DB config (and, for the linked default, the project ref) BEFORE the
-  // version parse and any prompt, so an
-  // unlinked / invalid-config / malformed-`--db-url` run surfaces that error before an
-  // invalid positional version or a prompt.
+  // Resolves the DB config (and, for the linked default, the project ref) before the
+  // version parse and any prompt, so an invalid target surfaces first.
   const cfg = yield* resolver.resolve({
     dbUrl: input.dbUrl,
     connType,
@@ -165,18 +162,14 @@ const runRepair = Effect.fnUntraced(function* (
     linkedProjectRef: input.projectRef,
   });
 
-  // The project .env loads after the parse-time flag-group validation above — so a
-  // SUPABASE_YES set only in supabase/.env auto-confirms the repair-all prompt, but a
-  // flag conflict still surfaces before any .env read. Resolve --yes against the
-  // project env here, not just process.env.
+  // Loads after the flag-group check above, so a flag conflict surfaces before any
+  // .env read; a SUPABASE_YES set only in supabase/.env still auto-confirms the
+  // repair-all prompt.
   const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
 
-  // Linked repair caches the project ref + identifies project groups, gated on the
-  // command having executed, NOT on the handler's own failure. The ref is loaded now
-  // (pre-run), and the cache is attached to the whole
-  // repair flow via `Effect.ensuring` below — so it runs even when the version parse fails
-  // or the repair-all prompt is declined (caches on cancellation too).
+  // Attached to the whole flow via `Effect.ensuring` below so the cache write still
+  // runs even when the version parse fails or the repair-all prompt is declined.
   const cacheLinkedRef =
     connType === "linked"
       ? yield* Effect.gen(function* () {
@@ -188,8 +181,7 @@ const runRepair = Effect.fnUntraced(function* (
       : undefined;
 
   const repairFlow = Effect.gen(function* () {
-    // Version validation runs after DB-config resolution. Rejects non-numeric AND
-    // out-of-int64-range values; `parseMigrationVersion` mirrors that exactly.
+    // Rejects non-numeric and out-of-int64-range values.
     for (const version of input.versions) {
       if (parseMigrationVersion(version) === undefined) {
         return yield* Effect.fail(
@@ -200,7 +192,7 @@ const runRepair = Effect.fnUntraced(function* (
       }
     }
 
-    // repair-all confirmation (default NO). Then load every local version.
+    // repair-all confirmation defaults to declining; then loads every local version.
     let versions = input.versions;
     if (repairAll) {
       const confirmed = yield* migrationConfirm(
@@ -217,8 +209,6 @@ const runRepair = Effect.fnUntraced(function* (
 
     yield* Effect.scoped(
       Effect.gen(function* () {
-        // The connect diagnostic prints to stderr before dialing,
-        // local/remote per the resolved connection.
         yield* output.raw(
           `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
           "stderr",
@@ -240,7 +230,7 @@ const runRepair = Effect.fnUntraced(function* (
     );
 
     if (output.format === "text") {
-      // The success banner (stdout) + follow-up suggestion (stderr), both on success.
+      // Success banner to stdout; follow-up suggestion to stderr.
       yield* output.raw(`Finished ${aqua("supabase migration repair")}.\n`);
       yield* emitSuccessTrailer(
         `Run ${aqua("supabase migration list")} to show the updated migration history.\n`,

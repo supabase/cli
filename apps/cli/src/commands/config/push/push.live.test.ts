@@ -9,11 +9,9 @@ import { requireLiveSuccess, test, throwWithCleanup } from "../../../../tests/he
 const PUSH_EXIT_TIMEOUT_MS = 75_000;
 const DIFF_EXIT_TIMEOUT_MS = 20_000;
 
-// Golden path only: a sparse config.toml declaring one property round-trips
-// through push, `config diff` proves convergence, and the restore push is
-// re-proven the same way (push exits 0 on "Nothing to push", so exit code
-// alone cannot tell a restore from a silent no-op). Branch coverage lives in
-// push.integration.test.ts.
+// Golden path only: a sparse config.toml declaring one property round-trips through push,
+// `config diff` proves convergence, and the restore push is re-proven the same way, since push
+// exits 0 on "Nothing to push" too. Branch coverage lives in push.integration.test.ts.
 test("pushes one declared property, diff proves it landed, and a restore push puts the captured value back", async ({
   cli,
   project,

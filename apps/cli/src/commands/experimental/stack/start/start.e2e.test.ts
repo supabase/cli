@@ -1,6 +1,5 @@
-// This is a compiled CLI boundary test. It deliberately starts and stops the native stack through
-// the built binary, then uses the package's public Promise API to inspect and destroy that exact
-// stack.
+// Starts and stops a native stack through the compiled CLI binary, then uses the package's
+// public Promise API to inspect and destroy that stack.
 // oxlint-disable-next-line effecttsgo/process-env -- package runtime composition is scoped below.
 
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- compiled CLI fixture requires host process/filesystem APIs

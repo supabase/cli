@@ -62,11 +62,8 @@ describe("workers new", () => {
         `${CONFIG_WITH_COMMENTS}\n[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n`,
       );
 
-      // Declarative line first, then the detail rows, then the next step —
-      // the shape `functions new` established.
       expect(out.stdoutText).toContain("Created new Worker at supabase/workers/api");
       expect(out.stdoutText).toContain("Runtime");
-      // The deploy hint is a success trailer, which lands on stderr.
       expect(out.stderrText).toContain("supabase experimental workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -89,8 +86,6 @@ describe("workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The prompt is the last place a mistyped or taken name can be corrected
-  // without ending the run, so it refuses both there rather than after asking.
   it.live("refuses a bad or already-recorded name at the name prompt", () => {
     const repo = project({
       "supabase/config.toml": `${CONFIG_WITH_COMMENTS}\n[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n`,
@@ -113,22 +108,18 @@ describe("workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Nowhere to ask means nothing to scaffold under: the name is the directory,
-  // the config key and the hostname, and none of those has a default.
   it.live.each([
     { label: "not interactive", setup: { interactive: false } },
-    // A TTY, but stdout was claimed by the payload, so a prompt would corrupt it.
+    // Stdout is a TTY, but claimed by the payload, so a prompt would corrupt it.
     { label: "-o json", setup: { goOutput: "json" as const } },
-    // `printf 'orders\n' | supabase experimental workers new`: stdout is still a
-    // terminal, so `output.interactive` on its own would have fed the pipe
-    // straight into the name prompt instead of taking this documented path.
+    // Stdout is still a terminal, so `output.interactive` alone would have fed
+    // piped stdin straight into the name prompt instead of taking this path.
     { label: "piped stdin", setup: { stdinIsTty: false } },
   ])("refuses a bare new when there is nowhere to ask ($label)", ({ setup }) => {
     const repo = project();
     const { layer, out } = setupWorkers({
       workdir: repo.dir,
-      // An answer is waiting, so a prompt would succeed rather than fail some
-      // other way.
+      // An answer is waiting, so a prompt would succeed rather than fail some other way.
       promptTextResponses: ["orders"],
       ...setup,
     });
@@ -140,8 +131,6 @@ describe("workers new", () => {
       if (!(error instanceof MissingWorkerNameError)) {
         return yield* Effect.die("expected MissingWorkerNameError");
       }
-      // The retry has to name the path the command is actually registered at;
-      // `supabase workers new` is an unknown command.
       expect(error.suggestion).toContain("supabase experimental workers new");
       expect(out.promptTextCalls).toEqual([]);
       expect(existsSync(join(repo.dir, "supabase", "workers"))).toBe(false);
@@ -171,9 +160,6 @@ describe("workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The whole reason `new` records it: `push` sends a complete spec every time,
-  // so an entry with no `exposure` is deployed public by the next bare `push`.
-  // Recording the answer is what makes a private worker stay private.
   it.live("records the chosen exposure so a later push keeps it", () => {
     const repo = project();
     const { layer } = setupWorkers({ workdir: repo.dir });
@@ -185,8 +171,6 @@ describe("workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The count a scaffold cannot guess: `--instances` has no prompt, so it is
-  // recorded when given and left out when not.
   it.live("records an instance count that differs from the default", () => {
     const repo = project();
     const { layer } = setupWorkers({ workdir: repo.dir });
@@ -194,17 +178,11 @@ describe("workers new", () => {
     return Effect.gen(function* () {
       yield* workersNew(flags({ instances: Option.some(3) }));
 
-      // Bare, not quoted: the config schema types `instances` as a number, so a
-      // quoted count would render a config.toml that no longer loads.
       expect(repo.config()).toContain("instances = 3");
       expect(repo.config()).not.toContain('instances = "3"');
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The end-to-end proof that the count is written as a number: the config
-  // schema types `instances` as one, so a quoted `"3"` renders a config.toml
-  // that no longer decodes — which only shows up on the *next* load, not on the
-  // write that caused it. Scaffolding a second worker is that next load.
   it.live("writes a count the config loader can read back", () => {
     const repo = project();
     const { layer } = setupWorkers({ workdir: repo.dir });
@@ -218,8 +196,6 @@ describe("workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Zero is an explicit count — it scales the worker to nothing — not an absent
-  // one, so it has to survive the "only record a non-default" rule.
   it.live("records a zero instance count", () => {
     const repo = project();
     const { layer } = setupWorkers({ workdir: repo.dir });
@@ -231,8 +207,6 @@ describe("workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // An absent `instances` and `instances = 1` mean the same thing to `push`, so
-  // the scaffold does not commit a line that says nothing.
   it.live("writes no instance count when nothing names one", () => {
     const repo = project();
     const { layer } = setupWorkers({ workdir: repo.dir });
@@ -255,9 +229,6 @@ describe("workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Written even when it is the default, the same way `runtime` and `size` are:
-  // an absent key and `public` mean the same thing to `push` today, but only the
-  // written one survives a change of default.
   it.live("records the default exposure when nothing names one", () => {
     const repo = project();
     const { layer } = setupWorkers({ workdir: repo.dir, format: "json" });
@@ -269,8 +240,6 @@ describe("workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The runtime and size prompts do have defaults to fall back on, so a piped
-  // stdin must leave them unasked rather than consuming the pipe.
   it.live("takes the defaults without prompting when stdin is piped", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -302,8 +271,6 @@ describe("workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A second `new` for the same name is refused rather than re-recorded. Changing
-  // a worker that exists is a `config.toml` edit, and the file is the user's.
   it.live("refuses a name that config.toml already records", () => {
     const repo = project();
     const { layer, out } = setupWorkers({ workdir: repo.dir });
@@ -324,14 +291,11 @@ describe("workers new", () => {
       ).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerAlreadyConfiguredError);
-      // Refused before anything was asked, and the entry is byte-identical.
       expect(out.promptSelectCalls).toHaveLength(0);
       expect(repo.config()).toBe(recorded);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Refused whichever way the entry happens to be written — the decoded config
-  // is what answers "does this exist", so no TOML shape matters here.
   it.live.each(['workers.api.runtime = "node"', "[workers.api]"])(
     "refuses an entry recorded as %s",
     (entry) => {
@@ -346,18 +310,11 @@ describe("workers new", () => {
 
         expect(error).toBeInstanceOf(WorkerAlreadyConfiguredError);
         expect(repo.config()).toBe(config);
-        // Nothing scaffolded either.
         expect(existsSync(join(repo.dir, "supabase", "workers", "api"))).toBe(false);
       }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
     },
   );
 
-  // CLI-2285 review follow-up: a DEFAULTED workdir's reader (`workers
-  // list`/`push`/`status`) can climb to discover a config.json-only ancestor
-  // project, but this command's own TOML-only writer never climbs — without
-  // an extra check, `new` would silently write a same-named duplicate at the
-  // subdirectory instead of refusing it the way it already refuses a
-  // duplicate at its own root.
   it.live(
     "refuses a name the reader would discover in a config.json-only ancestor project (defaulted workdir)",
     () => {
@@ -378,7 +335,6 @@ describe("workers new", () => {
         ).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(WorkerAlreadyConfiguredError);
-        // Nothing was scaffolded at the subdirectory either.
         expect(existsSync(join(sub, "supabase"))).toBe(false);
       }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(cleanup)));
     },
@@ -399,9 +355,6 @@ describe("workers new", () => {
       const { layer } = setupWorkers({ workdir: sub, explicitWorkdir: true });
 
       return Effect.gen(function* () {
-        // An explicit workdir never climbs for either the reader or the
-        // writer, so the ancestor's config.json is invisible to both — this
-        // is the established bare-directory scaffold, unaffected by the fix.
         yield* workersNew(flags({ name: Option.some("api"), runtime: Option.some("deno") }));
         expect(existsSync(join(sub, "supabase", "config.toml"))).toBe(true);
       }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(cleanup)));
@@ -444,7 +397,6 @@ describe("workers new", () => {
         expect(error).toBeInstanceOf(InvalidWorkerSourceError);
       }
 
-      // Nothing was written: the resolver refused before any directory was created.
       expect(existsSync(join(repo.dir, "README.md"))).toBe(true);
       expect(existsSync(join(repo.dir, "src", "app.ts"))).toBe(true);
       expect(repo.config()).toContain("project_id");
@@ -462,8 +414,6 @@ describe("workers new", () => {
       expect(readFileSync(join(created.dir, "supabase", "config.toml"), "utf8")).toBe(
         `[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n`,
       );
-      // An EXPLICIT --workdir has no cwd-relative reading, so the success
-      // message names the absolute path rather than a project-root-relative one.
       expect(out.stdoutText).toContain(`Created new Worker at ${workerDir}`);
     }).pipe(
       Effect.provide(layer),
@@ -485,8 +435,6 @@ describe("workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Scaffolding into an empty directory is fine — it is only a destination with
-  // contents that is refused.
   it.live("scaffolds into a directory that exists but is empty", () => {
     const repo = project();
     mkdirSync(join(repo.dir, "supabase", "workers", "api"), { recursive: true });
@@ -509,7 +457,6 @@ describe("workers new", () => {
       ).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerDirectoryExistsError);
-      // No flag to suggest any more, so the advice has to be actionable on its own.
       const suggestion = error instanceof WorkerDirectoryExistsError ? error.suggestion : "";
       expect(suggestion).toContain("Remove");
       expect(suggestion).not.toContain("--force");
@@ -536,10 +483,6 @@ describe("workers new", () => {
       yield* workersNew(flags({ runtime: Option.some("node") }));
 
       const payload: unknown = JSON.parse(out.stdoutText);
-      // Every dial the scaffold settled, not just the two it is named for: a
-      // caller reading this payload is deciding what to deploy, and an omitted
-      // `exposure` or `instances` reads as "unknown" rather than as the default
-      // the run actually chose.
       expect(payload).toMatchObject({
         worker_name: "api",
         runtime: "node",
@@ -551,9 +494,6 @@ describe("workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The count and the exposure are recorded sparsely — `instances` is left out
-  // of config.toml at the default — so the payload is the only place a caller
-  // can read what this scaffold will actually deploy as.
   it.live("reports the chosen exposure and count under -o json", () => {
     const repo = project();
     const { layer, out } = setupWorkers({ workdir: repo.dir, goOutput: "json" });
@@ -587,18 +527,12 @@ describe("workers new", () => {
         }),
       );
 
-      // `Access`, the way `workers status` and `push` label the same field.
       expect(out.stdoutText).toContain("Access");
       expect(out.stdoutText).toContain("private");
-      // `declared`, because nothing is running yet — a bare count would read as
-      // a live tally.
       expect(out.stdoutText).toContain("3 declared");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Why the config edit is planned before the starter files are written: this
-  // failure is knowable up front, and discovering it afterwards would leave a
-  // scaffold on disk that nothing records.
   it.live("writes no scaffold at all when the config edit cannot be made", () => {
     const repo = project({
       "supabase/config.toml": 'project_id = "demo"\n\nworkers.api.runtime = "node"\n',
@@ -611,17 +545,11 @@ describe("workers new", () => {
       ).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerAlreadyConfiguredError);
-      // No directory, and config.toml exactly as it was.
       expect(existsSync(join(repo.dir, "supabase", "workers", "api"))).toBe(false);
       expect(repo.config()).toBe('project_id = "demo"\n\nworkers.api.runtime = "node"\n');
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The project config loader prefers `supabase/config.json` when one exists,
-  // and the entry writer is a TOML text editor. Without `tomlOnly` the two
-  // disagree: the plan targets the JSON file and appends a `[workers.api]`
-  // table to it, leaving the project config unparseable — after the scaffold is
-  // already on disk.
   it.live("leaves config.json alone in a project that has one", () => {
     const configJson = `${JSON.stringify({ project_id: "demo" }, null, 2)}\n`;
     const repo = project({ "supabase/config.json": configJson });
@@ -634,19 +562,12 @@ describe("workers new", () => {
       expect(readFileSync(jsonPath, "utf8")).toBe(configJson);
       expect(() => JSON.parse(readFileSync(jsonPath, "utf8"))).not.toThrow();
 
-      // The worker is recorded in config.toml, which is the TOML editor's file.
       expect(repo.config()).toBe(
         `${CONFIG_WITH_COMMENTS}\n[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n`,
       );
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `settings.workdir` is already an authoritative project root, so the config
-  // loader must not climb out of it. Without `search: false` it does: the entry
-  // is appended to the *ancestor's* config.toml recording `source =
-  // "supabase/workers/api"`, which resolves against the ancestor root to a
-  // directory the scaffold never created, while the scaffold itself lands under
-  // the workdir. Both sides have to name the same project.
   it.live("records the worker in --workdir's own project, not an ancestor's", () => {
     const repo = project({ "bare-dir/.keep": "" });
     const workdir = join(repo.dir, "bare-dir");
@@ -655,11 +576,9 @@ describe("workers new", () => {
     return Effect.gen(function* () {
       yield* workersNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
 
-      // The ancestor project is untouched.
       expect(repo.config()).toBe(CONFIG_WITH_COMMENTS);
       expect(existsSync(join(repo.dir, "supabase", "workers", "api"))).toBe(false);
 
-      // The workdir got both the entry and the scaffold it points at.
       expect(readFileSync(join(workdir, "supabase", "config.toml"), "utf8")).toBe(
         '[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n',
       );
@@ -667,10 +586,6 @@ describe("workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A sealed inline `[workers]` cannot be extended by appending a table, and
-  // the name is absent from the decoded section, so the already-configured
-  // check does not fire. Parsing the plan is what refuses it — before the
-  // scaffold is written, like every other refusal here.
   it.live("writes no scaffold when [workers] is a sealed inline table", () => {
     const before = 'project_id = "demo"\n\nworkers = { web = { runtime = "node" } }\n';
     const repo = project({ "supabase/config.toml": before });
@@ -687,8 +602,6 @@ describe("workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A plain file must not read as an empty directory: that fails with a bare
-  // EEXIST from `makeDirectory` instead of naming what is in the way.
   it.live("refuses a plain file at the destination", () => {
     const repo = project({ "supabase/workers/api": "not a directory" });
     const { layer } = setupWorkers({ workdir: repo.dir });
@@ -705,8 +618,6 @@ describe("workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A relative `--source` is something typed at a shell prompt, so it means
-  // what it would mean to the shell: relative to where you are.
   it.live("resolves a relative --source against the directory it was typed in", () => {
     const repo = project({ "apps/web/.keep": "" });
     const { layer } = setupWorkers({
@@ -725,14 +636,10 @@ describe("workers new", () => {
 
       expect(existsSync(join(repo.dir, "apps", "web", "generated", "index.mjs"))).toBe(true);
       expect(existsSync(join(repo.dir, "generated"))).toBe(false);
-      // Persisted project-root-relative, with forward slashes on every platform.
       expect(repo.config()).toContain('source = "apps/web/generated"');
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Clack writes its prompt UI to stdout with no stream override, and `-o json`
-  // leaves `output.format` as `text` — so a prompt lands in front of the payload
-  // exactly as the notices did.
   it.live("does not prompt under -o json, so stdout stays parseable", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -747,16 +654,11 @@ describe("workers new", () => {
       yield* workersNew(flags({ name: Option.some("api") }));
 
       const payload: unknown = JSON.parse(out.stdoutText);
-      // The defaults stand, because there was nowhere to ask.
       expect(payload).toMatchObject({ runtime: "deno", size: "2gb" });
       expect(out.promptSelectCalls).toEqual([]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The prompts only ever offer values this CLI knows, so an unrecognized answer
-  // means the prompt layer handed back something off-menu. Recording it verbatim
-  // would put a runtime into config.toml that `push` then refuses; the default
-  // is the one answer that still scaffolds something deployable.
   it.live("falls back to the defaults when a prompt answers off-menu", () => {
     const repo = project();
     const { layer } = setupWorkers({
@@ -794,17 +696,10 @@ describe("workers new", () => {
       ).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(InvalidWorkerSourceError);
-      // The config survived, which is the whole point.
       expect(repo.config()).toBe(CONFIG_WITH_COMMENTS);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // CLI-2285 regression: before this fix, a typo'd/nonexistent --workdir
-  // reached `fs.makeDirectory(destination, { recursive: true })` below with no
-  // prior existence check, silently scaffolding a fresh
-  // supabase/workers/<name>/ tree (plus a new config.toml) at the wrong path.
-  // `validateWorkdirIsDirectory` must now fail first, before anything on
-  // disk changes.
   it.live(
     "fails without scaffolding anything when --workdir names a directory that does not exist at all",
     () => {
@@ -820,8 +715,6 @@ describe("workers new", () => {
         expect(rendered).toContain("WorkersNewWorkdirError");
         expect(rendered).toContain("failed to change workdir: chdir");
 
-        // The critical safety assertion: nothing was scaffolded at the bad
-        // path, and the ancestor project's own config is untouched.
         expect(existsSync(join(badWorkdir, "supabase"))).toBe(false);
         expect(repo.config()).toBe(CONFIG_WITH_COMMENTS);
       }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));

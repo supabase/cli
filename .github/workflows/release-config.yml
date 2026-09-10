@@ -7,16 +7,12 @@ on:
     paths:
       - "packages/config/**"
       - ".github/workflows/release-config.yml"
-  # workflow_dispatch is the manual re-cut path, mirroring the CLI's Release
-  # workflow. Defaults to `true` so a stray "Run workflow" click can't
-  # accidentally publish — operators must consciously untick this.
+  # workflow_dispatch is the manual re-cut path, mirroring the CLI's Release workflow. Defaults
+  # to `true` so a stray "Run workflow" click can't accidentally publish.
   #
-  # There is deliberately no `version` input: the publish job's registry probe
-  # skips versions that already exist on npm (after verifying the registry
-  # bytes match the reviewed artifact), so recovery from stale published
-  # bytes is "land a new (releasable) commit" — with no binary artifacts and a
-  # human approval in the loop, the CLI's cut-forward escape hatch isn't worth
-  # a second code path here.
+  # There is no `version` input: the publish job's registry probe already skips versions that
+  # exist on npm with matching bytes, so recovery from stale published bytes is just landing a
+  # new releasable commit — not worth a second cut-forward code path here.
   workflow_dispatch:
     inputs:
       dry_run:
@@ -45,11 +41,9 @@ jobs:
       npm_tag: ${{ steps.plan.outputs.npm_tag }}
       dry_run: ${{ steps.plan.outputs.dry_run }}
     steps:
-      # semantic-release runs `git push --dry-run HEAD:<branch>` as part of
-      # verifyAuth even in `dry_run: true` mode, so the token must have push
-      # access to the protected `develop` branch. The default GITHUB_TOKEN
-      # doesn't, so we mint an App-installation token from the same App used
-      # by the CLI's release pipeline.
+      # semantic-release runs `git push --dry-run HEAD:<branch>` as part of verifyAuth even in
+      # `dry_run: true` mode, so the token needs push access to the protected develop branch —
+      # the default GITHUB_TOKEN doesn't have it.
       - id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
@@ -57,11 +51,9 @@ jobs:
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
           permission-contents: write
 
-      # `persist-credentials: false` is required: otherwise checkout caches the
-      # default GITHUB_TOKEN as an `http.extraheader` in git config, and that
-      # Authorization header overrides the App token semantic-release puts in
-      # the push URL — making the dry-push identify as `github-actions[bot]`
-      # and get rejected by branch protection.
+      # `persist-credentials: false` is required: otherwise checkout caches the default
+      # GITHUB_TOKEN in git config, and its Authorization header overrides the App token
+      # semantic-release puts in the push URL, making the dry-push get rejected by branch protection.
       - uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1
         with:
           fetch-depth: 0
@@ -101,20 +93,16 @@ jobs:
           trap 'echo "::${resume_token}::"' EXIT
           pnpm exec bun packages/config/scripts/release-plan.ts --notes-out "$RUNNER_TEMP/config-release-notes.md"
 
-      # The build, gate, and pack steps also run on private-blocked pushes
-      # (should_release=false, version set): if `private` were ever flipped
-      # back on, every config push would still rehearse the plan half of the
-      # release train while the publish half stays parked.
+      # Build/gate/pack also run on private-blocked pushes (should_release=false, version set):
+      # if `private` is ever flipped back on, the plan half of the release train is already
+      # rehearsed on every config push.
       - name: Build @supabase/config
         if: steps.plan.outputs.version != ''
         run: pnpm exec turbo run @supabase/config#build
 
-      # Pack the exact tarball the approver's evidence (the gate summary
-      # below) describes. The publish job publishes THIS artifact rather than
-      # rebuilding: builds are not byte-reproducible across jobs (see
-      # release-shared.yml's brew/scoop cache-key comments for how that bit
-      # once before), and a rebuild would mean the approved bytes and the
-      # published bytes can differ.
+      # Packs the exact tarball the approver's evidence (the gate summary below) describes,
+      # rather than rebuilding: builds aren't byte-reproducible across jobs, so a rebuild could
+      # let the approved bytes and published bytes differ.
       - name: Pack the release tarball
         if: steps.plan.outputs.version != ''
         env:
@@ -127,11 +115,9 @@ jobs:
           pnpm pack --pack-destination "$RUNNER_TEMP/config-release-artifact"
           cp "$RUNNER_TEMP/config-release-notes.md" "$RUNNER_TEMP/config-release-artifact/"
 
-      # The gate diffs the declarations INSIDE the packed tarball (not the
-      # dist/ build directory it was packed from), so the approver's evidence
-      # is generated from the same bytes the publish job ships — a packlist
-      # regression that drops .d.ts files from the tarball fails here instead
-      # of shipping a surface the approver never saw.
+      # Diffs the declarations inside the packed tarball (not the dist/ directory it was packed
+      # from), so a packlist regression that drops .d.ts files fails here instead of shipping a
+      # surface the approver never saw.
       - name: Run type-surface release gate against the packed tarball
         if: steps.plan.outputs.version != ''
         env:
@@ -153,13 +139,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # The `config-release` environment's required-reviewers rule is repo
-      # configuration, not code: an environment referenced by a workflow is
-      # auto-created WITHOUT protection rules, in which case the publish job
-      # would run straight through unreviewed. Fail closed here — before a
-      # real (non-dry) release can reach the publish job — if the rule is
-      # missing or unreadable. Private-blocked rehearsals (should_release
-      # false) are unaffected — this only gates real releases.
+      # An environment referenced by a workflow is auto-created without protection rules, so if
+      # `config-release`'s required-reviewers rule (repo config, not code) goes missing, the
+      # publish job would run straight through unreviewed. Fail closed here before a real
+      # (non-dry) release can reach it; private-blocked rehearsals are unaffected.
       - name: Assert the release approval gate is armed
         if: steps.plan.outputs.should_release == 'true' && steps.plan.outputs.dry_run != 'true'
         env:
@@ -194,26 +177,21 @@ jobs:
     name: Publish
     needs: plan
     if: needs.plan.outputs.should_release == 'true' && needs.plan.outputs.dry_run != 'true'
-    # npm provenance verification rejects non-GitHub-hosted runners with
-    # E422 ("Unsupported GitHub Actions runner environment: self-hosted").
-    # Blacksmith runners count as self-hosted from sigstore's POV, so the
-    # publish job must stay on a github-hosted runner. The job is short and
-    # not compute-bound, so the wall-clock cost is negligible.
+    # npm provenance verification rejects non-GitHub-hosted runners with E422; Blacksmith runners
+    # count as self-hosted from sigstore's POV, so this job must stay on a github-hosted runner
+    # (it's short and not compute-bound, so the cost is negligible).
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
       name: config-release
-      # This environment must be configured with required reviewers in repo
-      # settings (asserted by the plan job above). The approver reviews the
-      # plan job's step summary (release notes + type-surface gate diff)
-      # before approving — that approval IS the hard semver gate, and the
-      # tarball published below is byte-identical to the one that evidence
-      # was generated from.
+      # Configured with required reviewers in repo settings (asserted by the plan job above). The
+      # approver reviews the plan job's step summary (release notes + type-surface gate diff)
+      # before approving — that approval is the hard semver gate, and the tarball published below
+      # is byte-identical to what that evidence was generated from.
       url: https://www.npmjs.com/package/@supabase/config/v/${{ needs.plan.outputs.version }}
-    # OIDC trusted publishing + provenance — same as release-shared.yml; no
-    # NPM_TOKEN anywhere. This job deliberately runs NO dependency install and
-    # NO build: the only repo code it executes is this workflow file, keeping
-    # arbitrary package code away from the job that holds id-token: write.
+    # OIDC trusted publishing + provenance — same as release-shared.yml; no NPM_TOKEN anywhere.
+    # This job runs no dependency install and no build: the only repo code it executes is this
+    # workflow file, keeping arbitrary package code away from the job that holds id-token: write.
     permissions:
       contents: write
       id-token: write
@@ -237,9 +215,8 @@ jobs:
           persist-credentials: true
           token: ${{ steps.app-token.outputs.token }}
 
-      # npm only — no `pnpm install`, no workspace toolchain. npm ≥ 11.5.1 is
-      # required for OIDC trusted publishing, newer than the runner image's
-      # system npm, and node 24 bundles it.
+      # npm only — no `pnpm install`, no workspace toolchain. npm ≥ 11.5.1 (required for OIDC
+      # trusted publishing) is newer than the runner image's system npm; node 24 bundles it.
       - name: Install node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -267,12 +244,9 @@ jobs:
             exit 1
           fi
 
-      # Idempotent, mirroring publish.ts's registry-probe intent: a re-run
-      # after a post-publish failure must not die on EPUBLISHCONFLICT — but
-      # the skip is only safe when the registry's bytes ARE the reviewed
-      # artifact, since the tag push below would otherwise bless foreign
-      # bytes (e.g. a previous run's tag push failed, new commits landed,
-      # and a fresh plan recomputed the same version from a newer tree).
+      # Idempotent, mirroring publish.ts's registry-probe intent: a re-run after a post-publish
+      # failure must not die on EPUBLISHCONFLICT. The skip is only safe when the registry's bytes
+      # match the reviewed artifact, since the tag push below would otherwise bless foreign bytes.
       - name: Publish to npm
         working-directory: ${{ runner.temp }}/config-release
         run: |
@@ -298,18 +272,12 @@ jobs:
             npm publish "./${tarball}" --ignore-scripts --provenance --tag "${NPM_TAG}"
           fi
 
-      # "Published successfully" for the notification jobs below means
-      # REGISTRY-VISIBLE with the reviewed bytes: probe npm until the version
-      # resolves (the registry can lag a publish by a few seconds) and its
-      # integrity matches the reviewed tarball. Runs before the tag push so a
-      # tag is never blessed for bytes this run couldn't confirm on the
-      # registry; the dist-tag assertion deliberately lives AFTER the tag push
-      # so a dist-tag propagation hiccup can't strand the release live on npm
-      # with origin untagged. A transient failure here is safe to re-run — the
-      # publish step's registry probe skips the republish and this check
-      # repeats — though a re-run of this job re-arms the config-release
-      # approval gate and costs a second human approval — hence the generous
-      # (~2 minute) visibility budget.
+      # "Published successfully" for the notification jobs means registry-visible with the
+      # reviewed bytes: probe npm until the version resolves and its integrity matches. Runs
+      # before the tag push so a tag is never blessed for unconfirmed bytes; the dist-tag
+      # assertion instead lives after the tag push so a propagation hiccup can't strand the
+      # release published but origin-untagged. A re-run of this job re-arms the approval gate and
+      # costs a second human approval, hence the generous (~2 minute) visibility budget.
       - name: Verify the release is live on npm
         working-directory: ${{ runner.temp }}/config-release
         run: |
@@ -347,12 +315,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      # Push the tag to origin as soon as npm has the bytes, before any
-      # downstream step that can fail. Without this, a failure in the GH
-      # release step leaves origin with no tag for the version that is now
-      # live on npm — and a subsequent plan would recompute the same version
-      # against stale bytes. Idempotent: skips push if the tag is already on
-      # origin (e.g. a re-run of a job that previously got past this step).
+      # Pushes the tag as soon as npm has the bytes, before any downstream step that can fail —
+      # otherwise a later failure leaves origin untagged for a version already live on npm, and a
+      # subsequent plan would recompute the same version against stale bytes. Idempotent: skips
+      # if the tag is already on origin.
       - name: Push version tag
         run: |
           set -euo pipefail
@@ -364,11 +330,10 @@ jobs:
             git push origin "${tag}"
           fi
 
-      # Asserted after the tag push on purpose: npm already holds the reviewed
-      # bytes (verified above), so a dist-tag propagation hiccup must not
-      # strand the release npm-published but origin-untagged. Retries until
-      # the tag points at THIS version — a stale packument still echoing the
-      # previous version is a retryable state, not a terminal mismatch.
+      # Asserted after the tag push on purpose: npm already holds the reviewed bytes (verified
+      # above), so a dist-tag propagation hiccup must not strand the release npm-published but
+      # origin-untagged. Retries until the tag points at this version, since a stale packument is
+      # a retryable state, not a terminal mismatch.
       - name: Verify the npm dist-tag
         run: |
           set -euo pipefail
@@ -406,13 +371,10 @@ jobs:
           # become the repo's "latest" release.
           make_latest: "false"
 
-  # Pages the release Slack channel the moment a real run arms the
-  # config-release approval gate. This job only needs `plan`, so it runs in
-  # parallel with the publish job's `waiting` state — the ping and the pending
-  # deployment appear together. The approval itself stays on GitHub: the run
-  # page hosts the Approve button and the plan job's evidence summary; the
-  # webhook is one-way and cannot host an interactive approval. Nothing
-  # depends on this job, so a Slack/webhook failure can't block the release.
+  # Pages Slack the moment a real run arms the config-release approval gate. Runs in parallel
+  # with the publish job's `waiting` state (needs only `plan`), so the ping and the pending
+  # deployment appear together — the approval itself stays on GitHub, since the webhook is
+  # one-way and can't host an interactive approval.
   notify-slack-approval:
     name: Notify Slack (approval needed)
     needs: plan
@@ -426,12 +388,9 @@ jobs:
     secrets:
       SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
 
-  # Posts once the publish job has verified the release is registry-visible
-  # with the reviewed bytes. No `if:` needed: the implicit success() gate
-  # means this only runs when plan and publish both succeeded, and publish
-  # itself only runs for real (non-dry) releases — dry runs and no-release
-  # pushes skip publish, which skips this too. Nothing depends on this job,
-  # so a Slack/webhook failure can't affect the already-completed release.
+  # Posts once publish has verified the release is registry-visible with the reviewed bytes. No
+  # `if:` needed: the implicit success() gate means this only runs when plan and publish both
+  # succeeded, and publish itself only runs for real releases.
   notify-slack:
     name: Notify Slack
     needs: [plan, publish]
@@ -445,14 +404,10 @@ jobs:
     secrets:
       SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
 
-  # Distinguishes "a reviewer rejected the pending deployment" from a real
-  # pipeline failure before paging the channel: a rejection marks the publish
-  # job failed, and announcing that as a broken release would page people
-  # about a deliberate decision. The run's approvals record is the only place
-  # the distinction is visible from inside the workflow. The dry-run guard
-  # reads the dispatch input directly rather than plan's output, so a plan
-  # job that dies before recording dry_run still can't page for an
-  # operator-watched dry run.
+  # Distinguishes a reviewer's rejection from a real pipeline failure before paging the channel —
+  # a rejection marks the publish job failed, and announcing that as a broken release would page
+  # people about an intentional call. The dry-run guard reads the dispatch input directly, so a
+  # plan job that dies before recording `dry_run` still can't page for an operator-watched run.
   classify-failure:
     name: Classify failure
     needs: [plan, publish]
@@ -493,14 +448,10 @@ jobs:
             echo "status=failure" >> "$GITHUB_OUTPUT"
           fi
 
-  # Reports a failed (or reviewer-declined) release. `failure()` on the
-  # classify job evaluates against its `needs` chain, so this pair fires
-  # whenever `plan` or `publish` fails — including an approval rejection —
-  # but stays quiet for dry runs and no-release pushes (skipped needs don't
-  # count as failures). When `plan` fails its outputs are empty, so the
-  # message falls back to the workflow run link as the actionable detail.
-  # Fails open: if the classifier itself breaks, the page still goes out as a
-  # plain failure (its status output is empty, so the expression falls back).
+  # Reports a failed (or reviewer-declined) release. `failure()` on the classify job evaluates
+  # against its `needs` chain, so this pair fires whenever `plan` or `publish` fails — including
+  # an approval rejection — but stays quiet for dry runs and no-release pushes. Fails open: if
+  # the classifier itself breaks, the page still goes out as a plain failure.
   notify-slack-failure:
     name: Notify Slack (failure)
     needs: [plan, publish, classify-failure]

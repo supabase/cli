@@ -9,10 +9,8 @@ const E2E_TIMEOUT_MS = 30_000;
 const VALID_TOKEN = "sbp_" + "a".repeat(40);
 
 describe("supabase login", () => {
-  // Golden path: --token persists the access token and reports success. The e2e
-  // harness sets SUPABASE_NO_KEYRING=1 and points SUPABASE_HOME at the isolated
-  // home dir, so the token lands in <SUPABASE_HOME>/access-token rather than the
-  // OS keyring.
+  // The e2e harness sets SUPABASE_NO_KEYRING=1, so the token lands in
+  // <SUPABASE_HOME>/access-token rather than the OS keyring.
   test(
     "login --token persists the token and prints the logged-in message",
     { timeout: E2E_TIMEOUT_MS },
@@ -28,7 +26,6 @@ describe("supabase login", () => {
     },
   );
 
-  // Non-TTY with no token cannot use the automatic flow.
   test(
     "login with no token in a non-TTY exits non-zero with the missing-token message",
     { timeout: E2E_TIMEOUT_MS },

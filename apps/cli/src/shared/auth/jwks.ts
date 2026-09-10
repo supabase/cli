@@ -1,12 +1,10 @@
 const remoteJwksTimeoutMs = 10_000;
 
 /**
- * Structural JWK shape shared by the two in-tree JWK types
- * (`command-internal/go-jwt.ts`'s `Jwk` and `shared/functions/serve.ts`'s
- * `SigningKeyJwk`) so either can be passed to {@link toPublicJwk} without conversion. Defined
- * locally rather than importing `Jwk` because `shared/` cannot import from the command tree (see
- * `apps/cli/CLAUDE.md`'s "Shared Code" rules) — both existing types already satisfy this shape
- * structurally, so no explicit relationship is needed.
+ * Structural JWK shape shared by the two in-tree JWK types (`command-internal/go-jwt.ts`'s
+ * `Jwk` and `shared/functions/serve.ts`'s `SigningKeyJwk`), so either can be passed to
+ * {@link toPublicJwk} without conversion. Defined locally since `shared/` cannot import from
+ * the command tree.
  */
 export interface JwkLike {
   readonly kty: string;
@@ -23,12 +21,10 @@ export interface JwkLike {
 }
 
 /**
- * Filters `key_ops` down to `"verify"` entries, returning `undefined` (never an empty array) when
- * none remain — matches Go's `encoding/json` `omitempty` on a slice field, which drops the field
- * entirely for a zero-length slice (`apps/cli-go/pkg/config/auth.go:92,126-130`): `ToPublicJWK`
- * only ever appends to a nil slice, so Go can emit an absent field or a non-empty array, never
- * `"key_ops":[]`. `key.key_ops?.filter(...)` alone doesn't reproduce this: it only returns
- * `undefined` when `key.key_ops` itself is `undefined`, not when filtering empties it out.
+ * Filters `key_ops` down to `"verify"` entries, returning `undefined` — never `[]` — when none
+ * remain, so the published JWK omits the field instead of serializing an empty array. A plain
+ * `.filter(...)` doesn't do this: it only returns `undefined` when `key_ops` itself was already
+ * `undefined`.
  */
 function publicKeyOps(
   keyOps: ReadonlyArray<string> | undefined,
@@ -38,12 +34,11 @@ function publicKeyOps(
 }
 
 /**
- * Go's `(j JWK) ToPublicJWK()` (`apps/cli-go/pkg/config/auth.go:111-145`): strips private key
- * material (`d`/`p`/`q`/`dp`/`dq`/`qi`) from a signing key before it's published in a JWKS, and
- * filters `key_ops` down to `"verify"` entries only (Go never republishes `"sign"`). Field order
- * in the returned object matches Go's `JWK` struct declaration order (`kty, kid, use, key_ops,
- * alg, ext, n, e` for RSA / `..., crv, x, y` for EC), since both Go's `encoding/json` and JS
- * `JSON.stringify` serialize object keys in insertion/declaration order.
+ * Strips private key material (`d`/`p`/`q`/`dp`/`dq`/`qi`) from a signing key before it's
+ * published in a JWKS, and filters `key_ops` down to `"verify"` entries only. Field order in
+ * the returned object is fixed (`kty, kid, use, key_ops, alg, ext, n, e` for RSA / `..., crv,
+ * x, y` for EC) since `JSON.stringify` serializes keys in declaration order and that order is
+ * part of the published output's byte contract.
  */
 export function toPublicJwk(key: JwkLike): JwkLike {
   if (key.kty === "RSA") {
@@ -74,10 +69,9 @@ export function toPublicJwk(key: JwkLike): JwkLike {
 
 /**
  * One `[auth.third_party.<provider>]` section, structurally matching `@supabase/config`'s
- * `CliConfig["auth"]["third_party"]` — both `shared/functions/serve.ts`'s
- * `PlainServeAuthConfig["third_party"]` (itself typed as `CliConfig["auth"]["third_party"]`)
- * and `command-internal/local-config-values.ts`'s env-override-resolved third-party object
- * satisfy this shape without conversion.
+ * `CliConfig["auth"]["third_party"]` so both `shared/functions/serve.ts`'s resolved auth
+ * config and `command-internal/local-config-values.ts`'s env-override-resolved object satisfy
+ * this shape without conversion.
  */
 export interface ThirdPartyProvidersLike {
   readonly firebase: { readonly enabled: boolean; readonly project_id?: string };
@@ -98,11 +92,10 @@ export interface ThirdPartyProvidersLike {
 const clerkDomainPattern = /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/;
 
 /**
- * Go's `(tpa *thirdParty) validate()` + `(tpa *thirdParty) IssuerURL()`
- * (`apps/cli-go/pkg/config/config.go:1635-1707`): rejects more than one enabled provider,
- * validates the enabled provider's required field(s), then builds its OIDC issuer URL. Throws a
- * plain `Error` with Go's exact message text on a validation failure; returns `undefined` when no
- * provider is enabled.
+ * Rejects more than one enabled third-party provider, validates the enabled provider's
+ * required field(s), then builds its OIDC issuer URL. Throws a plain `Error` with the
+ * established message text on a validation failure; returns `undefined` when no provider is
+ * enabled.
  */
 export function resolveThirdPartyIssuerUrl(
   thirdParty: ThirdPartyProvidersLike,
@@ -182,18 +175,11 @@ export function resolveThirdPartyIssuerUrl(
 }
 
 /**
- * Go's `(tpa *thirdParty) IssuerURL()` ALONE (`apps/cli-go/pkg/config/config.go:1685-1707`, each
- * provider's own unconditional `issuerURL()` at `config.go:1556-1636`) — no validation at all. Go's
- * `Auth.ThirdParty.validate()` (the "at most one enabled" + required-field checks
- * {@link resolveThirdPartyIssuerUrl} above performs) only runs inside `Config.Validate`'s `if
- * c.Auth.Enabled` block (`config.go:1087-1153`), but `ResolveJWKS`/`IssuerURL()` is called
- * unconditionally (formerly `internal/start/start.go:274`, deleted as unreachable in CLI-1966;
- * last present at commit a253ccba2) regardless of `auth.enabled`. So when auth is
- * disabled, only this unchecked, fixed-priority string builder applies: the first enabled
- * provider (firebase, auth0, aws_cognito, clerk, workos, in that order) wins, with no "more than
- * one enabled" rejection and no required-field check — a missing required field for the winning
- * provider just produces a URL with an empty segment, matching Go's own unchecked string
- * interpolation (`fmt.Sprintf` never errors on an empty string argument).
+ * Builds the OIDC issuer URL for whichever third-party provider is enabled, with no
+ * validation: the first enabled provider (firebase, auth0, aws_cognito, clerk, workos, in that
+ * order) wins, and a missing required field produces a URL with an empty segment rather than
+ * throwing. Used where {@link resolveThirdPartyIssuerUrl}'s "at most one enabled" and
+ * required-field checks don't apply.
  */
 export function thirdPartyIssuerUrlUnchecked(
   thirdParty: ThirdPartyProvidersLike,
@@ -219,14 +205,10 @@ export function thirdPartyIssuerUrlUnchecked(
 }
 
 /**
- * Go's OIDC-discovery + remote-JWKS fetch inside `(a *auth) ResolveJWKS`
- * (`apps/cli-go/pkg/config/config.go:1730-1774`): resolves `<issuerUrl>/.well-known/
- * openid-configuration`'s `jwks_uri`, then fetches that URI's `keys` array. Throws/rejects on any
- * failure rather than swallowing it — Go's `start` treats a failure here as a hard,
- * command-failing error (formerly `internal/start/start.go:274-277`, deleted as unreachable in
- * CLI-1966; last present at commit a253ccba2); `shared/functions/serve.ts`'s own
- * caller-side leniency (continuing with zero remote keys) is a `functions serve`-only choice made
- * at the call site, not part of this function's contract.
+ * Resolves `<issuerUrl>/.well-known/openid-configuration`'s `jwks_uri`, then fetches that
+ * URI's `keys` array. Rejects on any failure rather than swallowing it; any leniency (e.g.
+ * continuing with zero remote keys) is a caller-side choice, not part of this function's
+ * contract.
  */
 export async function resolveRemoteJwks(issuerUrl: string): Promise<ReadonlyArray<unknown>> {
   const discoveryResponse = await fetch(`${issuerUrl}/.well-known/openid-configuration`, {

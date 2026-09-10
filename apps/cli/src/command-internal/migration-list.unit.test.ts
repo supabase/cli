@@ -48,8 +48,6 @@ describe("listLocalMigrations", () => {
   it.effect(
     "warns (byte-exact, on stderr) when skipping a deprecated init and a misnamed file",
     () => {
-      // One stderr line for the deprecated `_init.sql` first file and one for any
-      // name that does not match `<timestamp>_name.sql`.
       const dir = withTemp();
       const migrationsDir = join(dir, "supabase", "migrations");
       mkdirSync(migrationsDir, { recursive: true });
@@ -81,11 +79,6 @@ describe("listLocalMigrations", () => {
   );
 
   it.effect("includes a validly-named .sql symlink to a directory (no symlink follow)", () => {
-    // A directory entry is classified from its own type without following symlinks,
-    // so a `.sql` symlink whose target is a directory is NOT skipped as a directory —
-    // it is only ever dropped later, if something actually tries to read it as a
-    // file. A naive stat-based directory check (which follows symlinks) would
-    // misclassify it and silently skip it.
     const dir = withTemp();
     const migrationsDir = join(dir, "supabase", "migrations");
     mkdirSync(migrationsDir, { recursive: true });
@@ -107,14 +100,10 @@ describe("listLocalMigrations", () => {
   });
 
   it.effect("sorts by UTF-8 byte order, not JS's default UTF-16 code-unit order", () => {
-    // Entries sort byte-wise over each name's UTF-8 encoding. A BMP private-use
-    // character (U+E000, single UTF-16 code unit `0xE000`) and a supplementary-plane
-    // character (U+1F600, a surrogate pair starting `0xD83D`) reverse order between
-    // the two schemes: JS's default `Array.prototype.sort()` ranks the surrogate pair
-    // first (`0xD83D < 0xE000`), while byte order — which preserves codepoint order —
-    // ranks U+1F600 (`> U+FFFF`) after U+E000. A migrations directory with such
-    // filenames must replay in byte order, or a dependent migration could apply out
-    // of order.
+    // U+E000 (BMP private-use, single UTF-16 code unit 0xE000) and U+1F600 (supplementary-plane,
+    // a surrogate pair starting 0xD83D) sort in opposite order under UTF-16 code units vs. UTF-8
+    // bytes: JS's default `.sort()` ranks the surrogate pair first (0xD83D < 0xE000), while byte
+    // order (which preserves codepoint order) ranks U+1F600 after U+E000.
     const dir = withTemp();
     const migrationsDir = join(dir, "supabase", "migrations");
     mkdirSync(migrationsDir, { recursive: true });
@@ -145,9 +134,6 @@ describe("listLocalMigrations", () => {
   });
 
   it.effect("fails (instead of returning []) when the migrations path is unreadable", () => {
-    // `supabase/migrations` exists but is a file, not a directory — the lister
-    // aborts with `failed to read directory` rather than treating it as "no
-    // migrations".
     const dir = withTemp();
     const migrationsPath = join(dir, "supabase", "migrations");
     mkdirSync(join(dir, "supabase"), { recursive: true });

@@ -109,7 +109,6 @@ describe("read (lenient) vs check (throws) split", () => {
     ).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          // The broken config is swallowed → the ignore-file defaults path (no vault).
           expect(v.vault).toEqual([]);
           expect(v.port).toBeGreaterThan(0);
           rmSync(dir, { recursive: true, force: true });
@@ -151,8 +150,7 @@ describe("readDbToml", () => {
     );
   });
 
-  // A known-good test vector: this ciphertext
-  // decrypts to "value" under the keypair below.
+  // A known-good test vector: decrypts to "value" under the keypair below.
   const VAULT_PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
   const VAULT_ENCRYPTED =
     "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
@@ -178,8 +176,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("fails the load for an encrypted: [db.vault] secret with no private key", () => {
-    // Go aborts the whole command (`failed to parse config: missing private key`)
-    // rather than silently skipping the secret.
     const previous = process.env["DOTENV_PRIVATE_KEY"];
     delete process.env["DOTENV_PRIVATE_KEY"];
     const dir = withConfig(["[db.vault]", `my_secret = "${VAULT_ENCRYPTED}"`, ""].join("\n"));
@@ -205,8 +201,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("collapses. and .. in relative seed sql_paths like Go's path.Join", () => {
-    // Go prefixes each relative pattern with `path.Join("supabase", pattern)`, which
-    // runs `path.Clean`. The cleaned path is the seed_files key.
     const dir = withConfig(
       ["[db.seed]", 'sql_paths = ["../seed.sql", "sub/../other.sql", "./plain.sql"]', ""].join(
         "\n",
@@ -223,7 +217,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("honors SUPABASE_DB_SEED_SQL_PATHS over the TOML array (comma split, no trim)", () => {
-    // Go's StringToSliceHookFunc(",") splits without trimming, so " b.sql" keeps its space.
     const previous = process.env["SUPABASE_DB_SEED_SQL_PATHS"];
     process.env["SUPABASE_DB_SEED_SQL_PATHS"] = "a.sql, b.sql";
     const dir = withConfig(["[db.seed]", 'sql_paths = ["ignored.sql"]', ""].join("\n"));
@@ -244,8 +237,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("decodes a STRING db.seed.sql_paths via StringToSliceHookFunc (comma, no trim)", () => {
-    // Go decodes a non-array sql_paths string into a slice, not just the
-    // env override; `"a.sql,b.sql"` → two supabase-prefixed paths, no trimming.
     const dir = withConfig(["[db.seed]", 'sql_paths = "a.sql,b.sql"', ""].join("\n"));
     return read(dir).pipe(
       Effect.tap((v) =>
@@ -272,8 +263,6 @@ describe("readDbToml", () => {
   it.effect(
     "expands env() before splitting a string sql_paths (LoadEnv before StringToSlice)",
     () => {
-      // Go runs LoadEnvHook before StringToSliceHookFunc(","), so env(SEEDS)=a.sql,b.sql
-      // expands first and then splits into two patterns.
       const previous = process.env["SEEDS"];
       process.env["SEEDS"] = "a.sql,b.sql";
       const dir = withConfig(["[db.seed]", 'sql_paths = "env(SEEDS)"', ""].join("\n"));
@@ -295,8 +284,6 @@ describe("readDbToml", () => {
   );
 
   it.effect("expands an env() array element but does NOT split it (Go array asymmetry)", () => {
-    // A TOML array element is decoded string→string: LoadEnvHook expands it, but
-    // StringToSliceHookFunc does not fire, so it stays one (comma-containing) pattern.
     const previous = process.env["SEEDS"];
     process.env["SEEDS"] = "a.sql,b.sql";
     const dir = withConfig(["[db.seed]", 'sql_paths = ["env(SEEDS)"]', ""].join("\n"));
@@ -319,9 +306,6 @@ describe("readDbToml", () => {
   it.effect(
     "weakly coerces non-string db.seed.sql_paths array elements (Go mapstructure parity)",
     () => {
-      // Same `config.Glob` decode path as schema_paths below — a bool/number element
-      // is coerced to its Go string form ("1"/"0" for bool, decimal for a number),
-      // not dropped.
       const dir = withConfig(["[db.seed]", 'sql_paths = [42, true, "seed.sql"]', ""].join("\n"));
       return read(dir).pipe(
         Effect.tap((v) =>
@@ -375,21 +359,11 @@ describe("readDbToml", () => {
   it.effect(
     "on Windows, resolves a leading-slash schema/seed path pattern under supabase/ instead of treating it as absolute (Go filepath.IsAbs parity)",
     () => {
-      // `resolve()` gates the `supabase/`-join on `!filepath.IsAbs(pattern)`,
-      // and `filepath.IsAbs` on Windows requires a volume name —
-      // a drive letter (`C:\`) or UNC prefix (`\\server\share`) — before a path counts as
-      // absolute (`internal/filepathlite/path_windows.go`'s `IsAbs`/`volumeNameLen`). A
-      // bare leading `/` has no volume name, so Go treats `/schemas/*.sql` as RELATIVE and
-      // joins it to `supabase/schemas/*.sql`. Node's `path.win32.isAbsolute`, backing the
-      // injected `Path.Path` service on an actual Windows host, instead treats a leading
-      // separator as rooted at the current drive — i.e. absolute — which would otherwise
-      // skip `supabase/`-join entirely. Exercises `resolveSeedSqlPath` (the
-      // single function `[db.migrations].schema_paths` and `[db.seed].sql_paths` both
-      // resolve through) directly with `BunPath.layerWin32`, rather than through the full
-      // `readDbToml` pipeline: that pipeline's OWN config-file lookup also runs
-      // through the same injected `Path.Path` service to open the real (POSIX-pathed,
-      // since this test host isn't Windows) temp config file on disk, so forcing win32
-      // path semantics there breaks the read itself rather than exercising the fix.
+      // A bare leading `/` has no Windows volume name, so it resolves as relative and joins to
+      // `supabase/`, unlike Node's `path.win32.isAbsolute`, which treats a leading separator as
+      // rooted at the current drive. Tests `resolveSeedSqlPath` directly with
+      // `BunPath.layerWin32` instead of the full `readDbToml` pipeline, since that pipeline
+      // needs the real (POSIX-pathed) `Path.Path` service to open the temp config file on disk.
       const originalPlatform = process.platform;
       Object.defineProperty(process, "platform", { value: "win32" });
       return Effect.gen(function* () {
@@ -433,13 +407,6 @@ describe("readDbToml", () => {
   it.effect(
     "formats a large numeric db.migrations.schema_paths entry as fixed decimal, not scientific notation (Go strconv.FormatFloat parity)",
     () => {
-      // `decodeString` renders a weakly-converted float via
-      // `strconv.FormatFloat(v, 'f', -1, 64)` — format `'f'` is ALWAYS fixed decimal,
-      // never scientific, regardless of magnitude. JS's bare `String(1e21)` switches to
-      // exponential notation ("1e+21") once the magnitude crosses 1e21, which would
-      // record (and later search for) the wrong file path. Verified empirically against
-      // Go's stdlib: `strconv.FormatFloat(1e21, 'f', -1, 64)` returns
-      // `"1000000000000000000000"`, not `"1e+21"`.
       const dir = withConfig(["[db.migrations]", "schema_paths = [1e21]", ""].join("\n"));
       return read(dir).pipe(
         Effect.tap((v) =>
@@ -455,14 +422,6 @@ describe("readDbToml", () => {
   it.effect(
     "formats TOML special-float db.migrations.schema_paths entries like Go's strconv.FormatFloat, not JS's toString (Go parity)",
     () => {
-      // `strconv.FormatFloat` special-cases the three non-finite values BEFORE the
-      // format verb is even consulted, so `'f'` never applies to them — it renders
-      // `+Inf` / `-Inf` / `NaN` (verified empirically: a real
-      // `schema_paths = [inf, -inf, nan]` config load resolves to exactly
-      // `supabase/{+Inf,-Inf,NaN}`). JS's own `Number.prototype.toString()` renders
-      // the two infinities as `"Infinity"`/`"-Infinity"` instead — a naive port would
-      // record (and later glob) the wrong path. TOML v1.0's bare `inf`/`-inf`/`nan`
-      // float literals parse to exactly these JS values (smol-toml).
       const dir = withConfig(["[db.migrations]", "schema_paths = [inf, -inf, nan]", ""].join("\n"));
       return read(dir).pipe(
         Effect.tap((v) =>
@@ -478,11 +437,6 @@ describe("readDbToml", () => {
   it.effect(
     "weakly coerces a TOP-LEVEL scalar db.migrations.schema_paths (Go mapstructure weak-decode of a []string field)",
     () => {
-      // `decodeSlice` wraps a non-array/non-string value into a synthetic
-      // single-element `[]any{value}` and decodes it through the same per-element
-      // rules as a real array entry — it does NOT fall back to the `[]` default the
-      // way an absent key does. Verified empirically:
-      // `schema_paths = 42` → `["42"]` (resolves to `supabase/42`), `= true` → `["1"]`.
       const dirNumber = withConfig(["[db.migrations]", "schema_paths = 42", ""].join("\n"));
       const dirBool = withConfig(["[db.migrations]", "schema_paths = true", ""].join("\n"));
       return Effect.all([read(dirNumber), read(dirBool)]).pipe(
@@ -501,9 +455,6 @@ describe("readDbToml", () => {
   it.effect(
     "treats a TOP-LEVEL empty-table db.migrations.schema_paths as no patterns (Go mapstructure zero-length-map special case)",
     () => {
-      // `decodeSlice` special-cases a zero-length map BEFORE the generic weak-typing
-      // wrap above: it decodes straight to an empty slice. Verified empirically against
-      // verified empirically: `schema_paths = {}` → `[]`.
       const dir = withConfig(["[db.migrations]", "schema_paths = {}", ""].join("\n"));
       return read(dir).pipe(
         Effect.tap((v) =>
@@ -524,16 +475,12 @@ describe("readDbToml", () => {
   ])(
     "aborts the whole config load on a TOP-LEVEL bare $name db.migrations.schema_paths instead of silently treating it as empty (Go mapstructure UnconvertibleTypeError, review CLI-1958)",
     ({ literal, goType }) => {
-      // `smol-toml` parses every TOML datetime variant to a `TomlDate` (a `Date`
-      // subclass) that stores its value internally, not as an enumerable own
-      // property — so `Object.keys(tomlDate).length === 0`, same as a genuine empty
-      // inline table (`schema_paths = {}`, tested above). Without excluding `TomlDate`
-      // from that zero-length-map special case, this would silently resolve to `[]`
-      // instead of aborting. Verified empirically
-      // `config.Load`: a bare datetime literal here fails with exactly this message,
-      // never resolving to an empty/partial glob list — one distinct Go type per TOML
-      // datetime variant (`time.Time` for the offset form, `toml.Local*` wrappers for
-      // the 3 zone-less "local" forms).
+      // `smol-toml` parses every TOML datetime variant to a `TomlDate` (a `Date` subclass)
+      // that stores its value internally, not as an enumerable own property, so
+      // `Object.keys(tomlDate).length === 0` — same as a genuine empty inline table
+      // (`schema_paths = {}`, tested above). `TomlDate` must be excluded from that
+      // zero-length-map special case, or this would silently resolve to `[]` instead of
+      // aborting.
       const dir = withConfig(["[db.migrations]", `schema_paths = ${literal}`, ""].join("\n"));
       return read(dir).pipe(
         Effect.exit,
@@ -555,11 +502,9 @@ describe("readDbToml", () => {
   it.effect(
     "aborts the whole config load on a bare datetime db.migrations.schema_paths ARRAY element (Go mapstructure UnconvertibleTypeError, review CLI-1958)",
     () => {
-      // Same `TomlDate`-vs-generic-object collision as the top-level scalar case above,
-      // but reached through the real-array branch (`goUnconvertibleType`) instead
-      // of the scalar fallback. Verified empirically:
-      // `schema_paths = ["schemas/*.sql", 1979-05-27T07:32:00Z]` fails config load with
-      // exactly this message — the valid glob entry never masks the datetime's failure.
+      // Same `TomlDate`-vs-generic-object collision as the top-level scalar case above, but
+      // reached through the real-array branch instead of the scalar fallback: the valid glob
+      // entry must never mask the datetime's failure.
       const dir = withConfig(
         ["[db.migrations]", 'schema_paths = ["schemas/*.sql", 1979-05-27T07:32:00Z]', ""].join(
           "\n",
@@ -606,10 +551,8 @@ describe("readDbToml", () => {
   it.effect(
     "aborts the whole config load on a TOP-LEVEL table db.migrations.schema_paths (Go mapstructure UnconvertibleTypeError, synthetic index 0)",
     () => {
-      // A non-empty map isn't weakly coercible, so `decodeSlice` wraps it into
-      // `[]any{value}` and fails decoding element 0 the same way a nested-array/table
-      // ARRAY element does. Verified empirically:
-      // `[db.migrations.schema_paths]\nfoo = "bar"` fails with this exact message.
+      // A non-empty map isn't weakly coercible, so it fails decoding element 0 the same way a
+      // nested-array/table array element does.
       const dir = withConfig(["[db.migrations.schema_paths]", 'foo = "bar"', ""].join("\n"));
       return read(dir).pipe(
         Effect.exit,
@@ -631,10 +574,8 @@ describe("readDbToml", () => {
   it.effect(
     "weakly coerces a TOP-LEVEL scalar db.seed.sql_paths instead of falling back to the ['seed.sql'] default",
     () => {
-      // The absent-key default (`["seed.sql"]`) only applies when the key is missing
-      // entirely — a PRESENT scalar still goes through Go's weak-decode wrap, same as
-      // schema_paths above. Verified empirically:
-      // `[db.seed]\nenabled = true\nsql_paths = 42` → `["42"]`, not `["seed.sql"]`.
+      // The absent-key default (`["seed.sql"]`) only applies when the key is missing entirely;
+      // a present scalar still goes through the weak-decode wrap, same as schema_paths above.
       const dir = withConfig(["[db.seed]", "enabled = true", "sql_paths = 42", ""].join("\n"));
       return read(dir).pipe(
         Effect.tap((v) =>
@@ -650,11 +591,8 @@ describe("readDbToml", () => {
   it.effect(
     "aborts the whole config load on a non-scalar db.migrations.schema_paths element (Go mapstructure UnconvertibleTypeError)",
     () => {
-      // Unlike a bool/number (weakly coerced above), a nested array/table is
-      // mapstructure's `UnconvertibleTypeError`, which fails `UnmarshalExact` entirely
-      // rather than dropping just that element. Verified empirically against
-      // verified empirically: `schema_paths = [[]]` fails config load with exactly this
-      // message, never resolving to an empty/partial glob list.
+      // Unlike a bool/number (weakly coerced above), a nested array/table fails the whole
+      // config load rather than dropping just that element.
       const dir = withConfig(["[db.migrations]", "schema_paths = [[]]", ""].join("\n"));
       return read(dir).pipe(
         Effect.exit,
@@ -676,9 +614,6 @@ describe("readDbToml", () => {
   it.effect(
     "aborts the whole config load on a table db.migrations.schema_paths element, reporting every bad index (Go mapstructure parity)",
     () => {
-      // Verified empirically: a second bad entry is reported
-      // alongside the first (mapstructure aggregates every `UnmarshalExact` error from
-      // the same decode call), and an inline table decodes as `map[string]interface {}`.
       const dir = withConfig(
         ["[db.migrations]", 'schema_paths = ["schemas/*.sql", { path = "x.sql" }]', ""].join("\n"),
       );
@@ -723,17 +658,6 @@ describe("readDbToml", () => {
   it.effect(
     "aggregates unconvertible-entry issues from BOTH db.seed.sql_paths and db.migrations.schema_paths in one error (Go UnmarshalExact single-pass parity, review CLI-1958)",
     () => {
-      // `UnmarshalExact` decodes the WHOLE config in a SINGLE mapstructure pass:
-      // `decodeStructFromMap`'s per-field loop never stops at the first field's error —
-      // it visits every field, collects every error, then joins them all together
-      // at the end. So a config invalid in BOTH `Glob` fields reports BOTH, not just
-      // whichever field is checked first. Verified empirically
-      // (`config.Load` with `sql_paths = [[]]` + `schema_paths = [[]]`): the single
-      // returned error contains both lines, `db.migrations.schema_paths[0]` BEFORE
-      // `db.seed.sql_paths[0]` — `db` struct declares `Migrations` before `Seed`,
-      // so mapstructure visits (and therefore reports)
-      // `schema_paths` first regardless of which field this reader happens to resolve
-      // first internally.
       const dir = withConfig(
         ["[db.seed]", "sql_paths = [[]]", "", "[db.migrations]", "schema_paths = [[]]", ""].join(
           "\n",
@@ -752,8 +676,6 @@ describe("readDbToml", () => {
                 "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type '[]interface {}'";
               expect(message).toContain(schemaIssue);
               expect(message).toContain(seedIssue);
-              // Both issues in ONE combined error, schema_paths first (Go's struct
-              // field declaration order), not two separate failures.
               expect(message.indexOf(schemaIssue)).toBeLessThan(message.indexOf(seedIssue));
             }
             rmSync(dir, { recursive: true, force: true });
@@ -766,8 +688,6 @@ describe("readDbToml", () => {
   it.effect(
     "an explicit remote db.migrations.schema_paths beats SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS",
     () => {
-      // Go applies each matched-remote key via v.Set (override tier) above AutomaticEnv,
-      // so an explicit remote value wins over the env var.
       const ref = "schmschmschmschmschm";
       const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
       process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "env-only.sql";
@@ -879,8 +799,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("SUPABASE_DB_MIGRATIONS_ENABLED still wins when the remote block omits it", () => {
-    // Control: the env override is suppressed only for keys the matched block explicitly
-    // set; a block that omits db.migrations.enabled leaves the env override in force.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
     process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "false";
@@ -902,10 +820,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("collapses. and .. in relative db.migrations.schema_paths like Go's path.Join", () => {
-    // Go prefixes each relative pattern with `path.Join("supabase", pattern)`,
-    // which runs `path.Clean` — same helper `db.seed.sql_paths`
-    // uses above (`resolveSeedSqlPath`), so `./schemas/a.sql` and `schemas/a.sql`
-    // resolve to the identical string instead of aliasing as two different glob patterns.
     const dir = withConfig(
       [
         "[db.migrations]",
@@ -996,9 +910,6 @@ describe("readDbToml", () => {
   );
 
   it.effect("an explicit remote experimental.pgdelta.enabled beats its SUPABASE_* env var", () => {
-    // Go's mergeRemoteConfig applies EVERY matched-block key via v.Set (above AutomaticEnv),
-    // not just db/seed — so a remote experimental.pgdelta.enabled wins
-    // over SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
     process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "false";
@@ -1028,8 +939,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED still wins when the block omits pgdelta", () => {
-    // Control: the env override is suppressed only for keys the matched block explicitly set;
-    // a block that omits experimental.pgdelta.enabled leaves the env override in force.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
     process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "true";
@@ -1051,9 +960,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("an explicit remote auth.enabled beats its SUPABASE_AUTH_ENABLED env var", () => {
-    // Same v.Set-above-AutomaticEnv precedence as db.migrations.enabled / pgdelta.enabled,
-    // but for auth.enabled specifically (CLI-1878): a matched remote
-    // block's auth.enabled must win over SUPABASE_AUTH_ENABLED.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_AUTH_ENABLED"];
     process.env["SUPABASE_AUTH_ENABLED"] = "true";
@@ -1083,8 +989,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("SUPABASE_AUTH_ENABLED still wins when the remote block omits auth.enabled", () => {
-    // Control: the env override is suppressed only for keys the matched block explicitly
-    // set; a block that omits auth.enabled leaves the env override in force.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_AUTH_ENABLED"];
     process.env["SUPABASE_AUTH_ENABLED"] = "false";
@@ -1108,11 +1012,9 @@ describe("readDbToml", () => {
   it.effect(
     "an explicit remote experimental.webhooks.enabled beats its SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED env var",
     () => {
-      // Same v.Set-above-AutomaticEnv precedence as auth.enabled/pgdelta.enabled:
-      // a matched remote block's experimental.webhooks.enabled must win
-      // over SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED. Without the fix, the suppressed env value
-      // (false) would win instead, and the merged [experimental.webhooks] section (present via
-      // the remote block) would then fail validation ("Webhooks cannot be deactivated").
+      // Without this precedence, the suppressed env value would win, and the merged
+      // [experimental.webhooks] section (present via the remote block) would then fail
+      // validation ("Webhooks cannot be deactivated").
       const ref = "abcdefghijklmnopqrst";
       const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
       process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "false";
@@ -1144,10 +1046,8 @@ describe("readDbToml", () => {
   it.effect(
     "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED still wins when the remote block omits webhooks",
     () => {
-      // Control: the env override is suppressed only for keys the matched block explicitly
-      // set; a block that omits experimental.webhooks leaves the env override in force — a
-      // base [experimental.webhooks] section (present, default true) flipped off by the env
-      // var still fails Go's "cannot be deactivated" validation.
+      // A base [experimental.webhooks] section (present, default true) flipped off by the env
+      // var still fails the "cannot be deactivated" validation.
       const ref = "abcdefghijklmnopqrst";
       const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
       process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "false";
@@ -1181,13 +1081,9 @@ describe("readDbToml", () => {
   it.effect(
     "ignores a malformed SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED when [experimental.webhooks] is absent",
     () => {
-      // Verified empirically (config.Load with an in-memory fs,
-      // no [experimental.webhooks] section, env override set to a non-boolean string): Go's
-      // Load() succeeds and Experimental.Webhooks stays nil — the env override is never applied
-      // because the key is only "known" to viper (and thus AutomaticEnv-bindable) when the
-      // section is declared, unlike experimental.pgdelta.enabled (always known via the Eject
-      // template merged into defaults). Before the presence gate, this reader parsed the env
-      // override unconditionally and failed the whole config load on the bogus value.
+      // The env override only applies when [experimental.webhooks] is declared (unlike
+      // experimental.pgdelta.enabled, always known via defaults); a malformed value must not
+      // fail the whole config load when the section is absent.
       const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
       process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "bogus";
       const dir = withConfig("");
@@ -1208,8 +1104,7 @@ describe("readDbToml", () => {
   );
 
   it.effect("matches a remote block by a SUPABASE_REMOTES_<NAME>_PROJECT_ID env override", () => {
-    // Viper AutomaticEnv supplies/overrides remotes.prod.project_id, so the block merges
-    // even with no TOML project_id (here it lifts major_version 15 over the base default).
+    // The env override alone is enough to match the block, with no TOML project_id at all.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"];
     process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"] = ref;
@@ -1231,8 +1126,7 @@ describe("readDbToml", () => {
   });
 
   it.effect("validates a remote project_id supplied only via env (no TOML literal)", () => {
-    // Without the env value the block (no TOML project_id) would fail Validate; the env
-    // override supplies a valid ref, so the load succeeds.
+    // Without the env value, the block (no TOML project_id) would fail validation.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"];
     process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"] = ref;
@@ -1240,8 +1134,8 @@ describe("readDbToml", () => {
     return read(dir).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          // Load succeeded (no invalid-remote error); read() without a ref leaves the base
-          // major_version default (17) since the block is not merged.
+          // read() without a ref leaves the base major_version default (17) since the block
+          // isn't merged.
           expect(v.majorVersion).toBe(17);
         }),
       ),
@@ -1256,8 +1150,7 @@ describe("readDbToml", () => {
   });
 
   it.effect("a remote block forcing db.seed.enabled=false beats SUPABASE_DB_SEED_ENABLED", () => {
-    // Go's mergeRemoteConfig v.Set(false) is an override-tier value above AutomaticEnv,
-    // so a remote that omits db.seed.enabled stays unseeded even with the env var set.
+    // A remote block that omits db.seed.enabled stays unseeded even with the env var set.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_DB_SEED_ENABLED"];
     process.env["SUPABASE_DB_SEED_ENABLED"] = "true";
@@ -1279,7 +1172,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("SUPABASE_DB_SEED_ENABLED still wins on the local path (no remote force)", () => {
-    // Negative control: with no matched remote block, the env override applies normally.
     const previous = process.env["SUPABASE_DB_SEED_ENABLED"];
     process.env["SUPABASE_DB_SEED_ENABLED"] = "false";
     const dir = withConfig(["[db.seed]", "enabled = true", ""].join("\n"));
@@ -1324,8 +1216,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("fails with DbConfigLoadError when config.toml is malformed", () => {
-    // Go's LoadConfig returns the decode error and aborts, rather than silently
-    // running against the default local database (Codex P2 / config parity).
     const dir = withConfig("[db]\nport = [unterminated");
     return read(dir).pipe(
       Effect.exit,
@@ -1393,8 +1283,6 @@ describe("readDbToml", () => {
     });
 
     it.effect("forces db.seed.enabled false when the matched remote block omits it", () => {
-      // Go's mergeRemoteConfig forces db.seed.enabled=false when the
-      // matched remote block itself doesn't set it — even if the base config enables it.
       const dir = withConfig(
         [
           'project_id = "base"',
@@ -1441,7 +1329,6 @@ describe("readDbToml", () => {
     });
 
     it.effect("rejects two remote blocks with the same project_id (any command)", () => {
-      // Go's config.Load aborts on duplicate project_id regardless of ref.
       const dir = withConfig(
         [
           "[remotes.a]",
@@ -1467,7 +1354,7 @@ describe("readDbToml", () => {
   });
 
   it.effect("rejects an invalid [edge_runtime] deno_version", () => {
-    // Go's config.Validate aborts on deno_version other than 1/2.
+    // Valid values are 1 and 2.
     const dir = withConfig(["[edge_runtime]", "deno_version = 3", ""].join("\n"));
     return read(dir).pipe(
       Effect.exit,
@@ -1516,9 +1403,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("rejects invalid [experimental.pgdelta] format_options JSON during load", () => {
-    // Go's config.Validate aborts with this exact message when format_options is
-    // non-empty but not valid JSON,
-    // before any shadow/catalog container runs.
     const dir = withConfig('[experimental.pgdelta]\nformat_options = "not-json"\n');
     return read(dir).pipe(
       Effect.exit,
@@ -1548,10 +1432,7 @@ describe("readDbToml", () => {
   });
 
   it.effect("rejects an invalid [storage.buckets.<name>] during load", () => {
-    // Go's config.Validate runs ValidateBucketName over every bucket key on load,
-    // aborting with this exact message
-    // before any db command — the trailing `(...)` is the regex
-    // source. `#` is outside bucketNamePattern, so this name is rejected.
+    // `#` is outside the allowed bucket-name characters, so this name is rejected.
     const dir = withConfig('[storage.buckets."bad#name"]\n');
     return read(dir).pipe(
       Effect.exit,
@@ -1561,9 +1442,7 @@ describe("readDbToml", () => {
           if (Exit.isFailure(exit)) {
             const json = JSON.stringify(exit.cause);
             expect(json).toContain("DbConfigLoadError");
-            // Prose part is backslash-free, so safe to assert through JSON.stringify;
-            // the trailing `(<regex source>)` is built from the pattern's `.source`,
-            // guaranteeing it byte-matches `bucketNamePattern.String()`.
+            // Prose part is backslash-free, so safe to assert through JSON.stringify.
             expect(json).toContain(
               "Invalid Bucket name: bad#name. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed.",
             );
@@ -1575,9 +1454,7 @@ describe("readDbToml", () => {
   });
 
   it.effect("rejects an invalid [functions.<slug>] during load", () => {
-    // Go's config.Validate runs ValidateFunctionSlug over every functions key on load,
-    // aborting with this exact message.
-    // `123` starts with a digit → rejected by `^[A-Za-z][A-Za-z0-9_-]*$`.
+    // `123` starts with a digit, rejected by `^[A-Za-z][A-Za-z0-9_-]*$`.
     const dir = withConfig("[functions.123]\n");
     return read(dir).pipe(
       Effect.exit,
@@ -1605,9 +1482,8 @@ describe("readDbToml", () => {
   });
 
   it.effect("accepts an underscore bucket name like Go's permissive pattern", () => {
-    // Go's bucketNamePattern uses `\w` (includes `_`) and is not case-restricted
-    // despite the prose, so `Bad_Name` actually passes — match the regex, not the
-    // message text.
+    // The bucket-name pattern uses `\w` (includes `_`) and is not case-restricted despite the
+    // prose, so `Bad_Name` actually passes: match the regex, not the message text.
     const dir = withConfig("[storage.buckets.Bad_Name]\n");
     return read(dir).pipe(
       Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
@@ -1615,9 +1491,7 @@ describe("readDbToml", () => {
   });
 
   it.effect("rejects an unparseable [storage.buckets.<name>].file_size_limit during load", () => {
-    // Go's config.Load decodes every bucket's file_size_limit via the sizeInBytes
-    // decode hook unconditionally, so a malformed value must
-    // fail config load itself — not only later, deep inside `seedBucketsRun`,
+    // A malformed value must fail config load itself, not only later inside `seedBucketsRun`,
     // where it would go unvalidated on a reused-volume restart or the already-running
     // short-circuit.
     const dir = withConfig('[storage.buckets.avatars]\nfile_size_limit = "bogus"\n');
@@ -1648,8 +1522,7 @@ describe("readDbToml", () => {
   });
 
   it.effect("parses [api] auto_expose_new_tables string with Go bool tokens (TRUE → true)", () => {
-    // Go decodes the *bool via strconv.ParseBool, so `TRUE`/`1`/`t` are true — not only
-    // the literal lowercase `true`.
+    // `TRUE`/`1`/`t` are also accepted as true, not just lowercase `true`.
     const dir = withConfig('[api]\nauto_expose_new_tables = "TRUE"\n');
     return read(dir).pipe(
       Effect.tap((v) =>
@@ -1675,7 +1548,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("rejects a malformed [api] auto_expose_new_tables during load", () => {
-    // Go's UnmarshalExact fails the load on a non-bool string rather than coercing.
     const dir = withConfig('[api]\nauto_expose_new_tables = "maybe"\n');
     return read(dir).pipe(
       Effect.exit,
@@ -1694,7 +1566,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("honors SUPABASE_API_AUTO_EXPOSE_NEW_TABLES env override (AutomaticEnv)", () => {
-    // viper AutomaticEnv overrides the TOML value; `1` decodes to true.
     const dir = withConfig("[api]\nauto_expose_new_tables = false\n");
     const saved = process.env["SUPABASE_API_AUTO_EXPOSE_NEW_TABLES"];
     process.env["SUPABASE_API_AUTO_EXPOSE_NEW_TABLES"] = "1";
@@ -1715,7 +1586,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("honors SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED / _DECLARATIVE_SCHEMA_PATH env", () => {
-    // Go's viper AutomaticEnv overrides TOML for experimental.pgdelta.* before validation.
     const dir = withConfig(undefined);
     const savedEnabled = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
     const savedPath = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"];
@@ -1743,8 +1613,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("expands an env() indirection in the PGDELTA_DECLARATIVE_SCHEMA_PATH override", () => {
-    // Go decodes the AutomaticEnv override through LoadEnvHook, so an
-    // env(VAR) indirection resolves before the supabase/ join — not stored literally.
     const dir = withConfig(undefined);
     const savedEnabled = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
     const savedPath = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"];
@@ -1835,9 +1703,7 @@ describe("readDbToml", () => {
   });
 
   it.effect("fails with DbConfigLoadError when config.toml is present but unreadable", () => {
-    // Go's mergeFileConfig swallows only os.ErrNotExist; every other read error aborts
-    // rather than silently running against the default local database (Codex P2 parity).
-    // A directory at the config.toml path yields a non-NotFound PlatformError on read.
+    // A directory at the config.toml path yields a non-NotFound read error.
     const dir = mkdtempSync(join(tmpdir(), "db-toml-"));
     mkdirSync(join(dir, "supabase", "config.toml"), { recursive: true });
     return read(dir).pipe(
@@ -1915,9 +1781,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("expands env(VAR) in db.seed.sql_paths entries before supabase-prefixing", () => {
-    // Go's LoadEnvHook expands env(VAR) on every string element of db.seed.sql_paths
-    // during unmarshal, before resolve() prefixes relative patterns — so the glob is
-    // the expanded value, not the literal `supabase/env(...)`.
     process.env["SEED_SQL"] = "custom/data.sql";
     const dir = withConfig(["[db.seed]", 'sql_paths = ["env(SEED_SQL)"]', ""].join("\n"));
     return read(dir).pipe(
@@ -1946,9 +1809,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("expands an env() indirection in SUPABASE_DB_SEED_ENABLED (Go LoadEnvHook)", () => {
-    // Go decodes the AutomaticEnv override through LoadEnvHook before the bool parse,
-    // so `env(SEED_ON)` resolves to SEED_ON's value rather
-    // than failing the load on a literal `env(...)` bool.
     process.env["SUPABASE_DB_SEED_ENABLED"] = "env(SEED_ON)";
     process.env["SEED_ON"] = "false";
     const dir = withConfig(["[db.seed]", "enabled = true", ""].join("\n"));
@@ -1996,8 +1856,6 @@ describe("readDbToml", () => {
   it.effect(
     "expands env(VAR) for the top-level project_id (Go config.Load before Docker IDs)",
     () => {
-      // Go expands `project_id` via LoadEnvHook before deriving local container names,
-      // so a raw `env(...)` must not leak into `supabase_db_env_PROJECT_ID_`.
       process.env["PROJECT_REF"] = "abcdefghijklmnopqrst";
       const dir = withConfig(['project_id = "env(PROJECT_REF)"', ""].join("\n"));
       return read(dir).pipe(
@@ -2013,11 +1871,9 @@ describe("readDbToml", () => {
   );
 
   it.effect("does not merge a remote block whose project_id is a TOML env() literal", () => {
-    // Go's in-load matching reads remotes.<name>.project_id via v.GetString,
-    // which returns the RAW literal `env(STAGING_REF)` — LoadEnvHook only expands it
-    // during the later UnmarshalExact. So the block is NOT selected by its expanded ref and
-    // does not merge (major_version stays the base 15), while Validate over the decoded,
-    // expanded field still passes the load.
+    // Remote matching happens on the raw `env(...)` literal, before expansion, so this block is
+    // never selected by its expanded ref (major_version stays the base 15) even though
+    // validation over the expanded field still passes.
     process.env["STAGING_REF"] = "stagingrefstagingref";
     const dir = withConfig(
       [
@@ -2034,7 +1890,7 @@ describe("readDbToml", () => {
     return readRef(dir, "stagingrefstagingref").pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(v.majorVersion).toBe(15); // block not merged: matched on the raw env() literal
+          expect(v.majorVersion).toBe(15);
           delete process.env["STAGING_REF"];
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -2043,7 +1899,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("rejects an env-backed remote project_id that expands to nothing", () => {
-    // An unset env() expands to the literal `env(...)`, which fails Go's ref pattern.
     delete process.env["MISSING_REF"];
     const dir = withConfig(["[remotes.staging]", 'project_id = "env(MISSING_REF)"', ""].join("\n"));
     return read(dir).pipe(
@@ -2089,8 +1944,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("warns (does not fail) for an unset S3 env on an OrioleDB project", () => {
-    // Go's assertEnvLoaded prints `WARN: environment variable is unset: <NAME>` to
-    // stderr for an S3 value still holding an unexpanded env(...), and returns nil.
     delete process.env["S3_KEY"];
     const writes: Array<string> = [];
     const original = process.stderr.write.bind(process.stderr);
@@ -2111,7 +1964,6 @@ describe("readDbToml", () => {
     return read(dir).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          // Config load succeeds (warning only), and the orioledb version is parsed.
           expect(Option.getOrNull(v.orioledbVersion)).toBe("15.1.0.55");
           expect(writes.join("")).toContain("WARN: environment variable is unset: S3_KEY");
           process.stderr.write = original;
@@ -2124,10 +1976,9 @@ describe("readDbToml", () => {
   it.effect(
     "warnOnUnresolvedEnv: false suppresses the S3 env WARN (review: Codex, PR #6022)",
     () => {
-      // `start`/`db start`'s fresh-volume bootstrap reads this same config.toml more
-      // than once per invocation (an earlier, authoritative preflight call already
-      // warned) — internal re-reads pass `warnOnUnresolvedEnv: false` so Go's
-      // exactly-once `flags.LoadConfig` WARN isn't printed a second/third time.
+      // `start`/`db start`'s fresh-volume bootstrap reads this same config.toml more than once
+      // per invocation; internal re-reads pass `warnOnUnresolvedEnv: false` so the warning isn't
+      // printed a second/third time.
       delete process.env["S3_KEY_QUIET"];
       const writes: Array<string> = [];
       const original = process.stderr.write.bind(process.stderr);
@@ -2166,9 +2017,6 @@ describe("readDbToml", () => {
   );
 
   it.effect("keeps the literal password when its env var is unset/empty", () => {
-    // Go's LoadEnvHook only substitutes when len(os.Getenv(name)) > 0; otherwise it
-    // preserves the literal string. Password is a plain string field, so an
-    // unresolved env() ref stays literal (it is not validated like the ports).
     delete process.env["DB_UNSET"];
     const dir = withConfig(["[db]", 'password = "env(DB_UNSET)"', ""].join("\n"));
     return read(dir).pipe(
@@ -2184,8 +2032,6 @@ describe("readDbToml", () => {
   it.effect(
     "fails when a present port is non-numeric, out of range, or an unresolved env()",
     () => {
-      // Go decodes [db].port into uint16 after LoadEnvHook; a present value that cannot
-      // unmarshal aborts config loading rather than silently defaulting to 54322.
       delete process.env["DB_UNSET"];
       const cases = ['port = "abc"', "port = 70000", "port = -1", 'port = "env(DB_UNSET)"'];
       return Effect.forEach(cases, (line) => {
@@ -2288,9 +2134,7 @@ describe("readDbToml", () => {
   });
 
   it.effect("fails when a project .env file exists but cannot be read", () => {
-    // Go's loadEnvIfExists swallows only os.ErrNotExist; any other read error
-    // aborts rather than hiding a broken env-backed config. A directory at the.
-    // env path yields a non-NotFound read error.
+    // A directory at the .env path yields a non-NotFound read error.
     const dir = withConfig(["[db]", "port = 5000", ""].join("\n"));
     mkdirSync(join(dir, "supabase", ".env"), { recursive: true });
     return read(dir).pipe(
@@ -2324,8 +2168,7 @@ describe("readDbToml", () => {
         Effect.sync(() => {
           expect(v.port).toBe(6000);
           expect(v.shadowPort).toBe(6001);
-          // db.password is tagged `json:"-"` in Go, so it is NOT bound from
-          // SUPABASE_DB_PASSWORD — the local password stays the config value.
+          // The password is excluded from SUPABASE_DB_* overrides; it stays the config value.
           expect(v.password).toBe("hunter2");
           for (const [k, val] of Object.entries({
             SUPABASE_DB_PORT: prev.PORT,
@@ -2342,7 +2185,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("does not source the local password from SUPABASE_DB_PASSWORD", () => {
-    // Go's db.Password is json:"-" — not env-bound; the local default is "postgres".
     const prev = process.env["SUPABASE_DB_PASSWORD"];
     process.env["SUPABASE_DB_PASSWORD"] = "remote-secret";
     const dir = withConfig(["[db]", "port = 5000", ""].join("\n"));
@@ -2359,10 +2201,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("rejects db.major_version = 0 with Go's missing-required message", () => {
-    // Divergence #1 fix: this used to fall through to the generic
-    // "Failed reading config: Invalid db.major_version: 0." message (the same branch that
-    // catches an unsupported value like 16) — `validateResolvedConfig`'s dedicated `0` case
-    // now matches `Missing required field in config: db.major_version`.
     const dir = withConfig(["[db]", "major_version = 0", ""].join("\n"));
     return read(dir).pipe(
       Effect.exit,
@@ -2427,8 +2265,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("rejects a non-integer db.major_version string instead of truncating it", () => {
-    // Go decodes major_version into a uint after LoadEnvHook; `17foo` fails the parse
-    // rather than being truncated to 17 by a parseInt-style read.
     const dir = withConfig(["[db]", 'major_version = "17foo"', ""].join("\n"));
     return read(dir).pipe(
       Effect.exit,
@@ -2477,8 +2313,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("honors SUPABASE_EDGE_RUNTIME_DENO_VERSION over the TOML value", () => {
-    // Go binds this via viper AutomaticEnv before Validate, so an env override of 1
-    // selects the deno1 edge-runtime image even when the TOML omits/sets a different value.
     const prev = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
     process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
     const dir = withConfig(["[edge_runtime]", "deno_version = 2", ""].join("\n"));
@@ -2495,8 +2329,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("rejects a non-integer edge_runtime.deno_version string instead of defaulting", () => {
-    // Go decodes deno_version into a uint before Validate; `2foo` fails the parse rather
-    // than being read as 2 / falling through to the default Deno 2 image.
     const dir = withConfig(["[edge_runtime]", 'deno_version = "2foo"', ""].join("\n"));
     return read(dir).pipe(
       Effect.exit,
@@ -2515,8 +2347,6 @@ describe("readDbToml", () => {
   });
 
   it.effect("rejects a malformed [remotes.*] project_id on every load (Go Validate)", () => {
-    // Go's Validate requires every remote project_id to match ^[a-z]{20}$, failing even
-    // local/direct commands.
     const dir = withConfig(["[remotes.staging]", 'project_id = "staging"', ""].join("\n"));
     return read(dir).pipe(
       Effect.exit,
@@ -2541,7 +2371,7 @@ describe("readDbToml", () => {
     return read(dir).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(v.majorVersion).toBe(17); // loads successfully (no remote selected)
+          expect(v.majorVersion).toBe(17);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -2582,11 +2412,8 @@ describe("readDbToml", () => {
   });
 
   it.effect("loadProjectEnv is pure: returns every key and never touches process.env", () => {
-    // The loader is a pure read: it returns all project-.env keys in the map (config
-    // env() resolution + the SUPABASE_YES / db-password readers use the map) and does
-    // NOT mutate process.env. Applying to process.env is the separate, opt-in
-    // applyProjectEnv (below), so a mere `load` for SUPABASE_YES has no global
-    // side effect.
+    // Applying to process.env is the separate, opt-in `applyProjectEnv` below, so a mere load
+    // for SUPABASE_YES has no global side effect.
     const saved: Record<string, string | undefined> = {};
     for (const k of ["SUPABASE_INTERNAL_IMAGE_REGISTRY", "SUPABASE_PROJECT_ID", "SUPABASE_ENV"]) {
       saved[k] = process.env[k];
@@ -2601,11 +2428,10 @@ describe("readDbToml", () => {
     return loadEnv(dir).pipe(
       Effect.tap((env) =>
         Effect.sync(() => {
-          // The returned map carries all keys.
           expect(env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("my-mirror.example.com");
           expect(env["SUPABASE_PROJECT_ID"]).toBe("envonlyref");
           expect(env["SUPABASE_ENV"]).toBe("staging");
-          // ...but process.env is untouched, including the allowlisted registry key.
+          // process.env stays untouched, including the allowlisted registry key.
           expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
           expect(process.env["SUPABASE_PROJECT_ID"]).toBeUndefined();
           expect(process.env["SUPABASE_ENV"]).toBeUndefined();
@@ -2622,13 +2448,10 @@ describe("readDbToml", () => {
   it.effect(
     "applyProjectEnv sets only the allowlisted keys in-scope, never overrides, reverts on close",
     () => {
-      // Go's loadNestedEnv os.Setenv's the project .env, but its root globals
-      // (project-ref, SUPABASE_ENV, workdir/profile) are resolved from the shell
-      // BEFORE loadNestedEnv. Our resolvers read process.env lazily, so we apply only
-      // the allowlisted `SUPABASE_INTERNAL_IMAGE_REGISTRY` (the process.env-only
-      // reader): a .env project-ref must not retarget the
-      // lazy ref/pooler resolvers, and a .env SUPABASE_ENV must not switch the
-      // env-file set.
+      // Our resolvers read process.env lazily, so only the allowlisted
+      // `SUPABASE_INTERNAL_IMAGE_REGISTRY` (the process.env-only reader) is applied: a .env
+      // project-ref must not retarget the lazy ref/pooler resolvers, and a .env SUPABASE_ENV
+      // must not switch the env-file set.
       const saved: Record<string, string | undefined> = {};
       for (const k of ["SUPABASE_INTERNAL_IMAGE_REGISTRY", "SUPABASE_PROJECT_ID", "SUPABASE_ENV"]) {
         saved[k] = process.env[k];
@@ -2652,7 +2475,7 @@ describe("readDbToml", () => {
         // After the scope closes the applied keys are reverted (no test-worker leak).
         expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
 
-        // An existing process.env value is never overridden, and is NOT deleted on close.
+        // An existing process.env value is never overridden, and is not deleted on close.
         process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = "shell-wins.example.com";
         yield* Effect.scoped(applyProjectEnv(loaded));
         expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("shell-wins.example.com");
@@ -2670,8 +2493,6 @@ describe("readDbToml", () => {
   );
 
   it.effect("ignores a [db.pooler] connection_string in config.toml (Go reads .temp only)", () => {
-    // The Go config field is tagged `toml:"-"`, so a connection_string in config.toml
-    // is never honored; only supabase/.temp/pooler-url counts.
     const dir = withConfig(
       [
         "[db.pooler]",
@@ -2731,7 +2552,6 @@ describe("readDbToml [experimental.pgdelta]", () => {
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.pgDelta.enabled).toBe(true);
-          // Go's config.resolve prefixes a relative path with SupabaseDirPath.
           expect(Option.getOrNull(v.pgDelta.declarativeSchemaPath)).toBe(
             join("supabase", "db", "decl"),
           );
@@ -2828,7 +2648,6 @@ describe("readDbToml auth.Enabled validation (Go config.Validate parity)", () =>
     ),
   );
 
-  // The reviewer's case: passkey enabled requires a valid [auth.webauthn].
   it.effect("rejects passkey enabled without [auth.webauthn]", () =>
     failsWith(
       ["[auth.passkey]", "enabled = true"],
@@ -2857,10 +2676,7 @@ describe("readDbToml auth.Enabled validation (Go config.Validate parity)", () =>
     ]),
   );
   it.effect("accepts a comma-separated rp_origins string instead of rejecting it as missing", () =>
-    // Go decodes `rp_origins` (a `[]string`) through the same `StringToSliceHookFunc(",")`
-    // mapstructure hook as every other `[]string` field, so a raw string (not just a literal
-    // TOML array) must split, not read as absent — matches local-config-values.ts's own
-    // resolveGotruePasskeyWebauthn/strToArr handling of this identical field.
+    // Matches `local-config-values.ts`'s own handling of this identical field.
     succeeds([
       "[auth.passkey]",
       "enabled = true",
@@ -2997,8 +2813,6 @@ describe("readDbToml auth.Enabled validation (Go config.Validate parity)", () =>
     ),
   );
 
-  // --- Follow-up parity fixes (Codex re-review) ---
-
   it.effect("defaults [auth.email.smtp] enabled=true when the table omits enabled (Go merge)", () =>
     failsWith(
       ["[auth.email.smtp]", 'user = "u"'],
@@ -3043,8 +2857,8 @@ describe("readDbToml auth.Enabled validation (Go config.Validate parity)", () =>
 });
 
 describe("readDbToml encrypted secret decryption (Go DecryptSecretHookFunc parity)", () => {
-  // Go decrypts every config.Secret during decode; an undecryptable `encrypted:` value
-  // anywhere in config.toml aborts `config.Load` with `failed to parse config: <error>`.
+  // An undecryptable `encrypted:` value anywhere in config.toml aborts the load with
+  // `failed to parse config: <error>`.
   const expectFails = (lines: ReadonlyArray<string>, message: string) =>
     Effect.gen(function* () {
       const dir = withConfig(lines.join("\n"));
@@ -3085,8 +2899,8 @@ describe("readDbToml encrypted secret decryption (Go DecryptSecretHookFunc parit
     expectLoads(["[db]", 'root_key = "env(SOME_UNSET_ROOT_KEY)"']),
   );
   it.effect("does NOT decrypt a non-secret string that starts with encrypted:", () =>
-    // Go's hook only runs while decoding into `config.Secret`; a non-secret field like an
-    // email-template subject stays plain text, so `db push`/`reset`/`start` must not abort.
+    // A non-secret field like an email-template subject stays plain text; the load must not
+    // abort on it.
     expectLoads([
       "[auth.email.template.invite]",
       'subject = "encrypted: your invite"',
@@ -3112,8 +2926,8 @@ describe("readDbToml encrypted secret decryption (Go DecryptSecretHookFunc parit
     ),
   );
   it.effect("fails on an undecryptable Secret inside a [remotes.*] block", () =>
-    // Go decodes every remote block into the same struct, so an undecryptable secret in any
-    // remote (matched or not) aborts the load.
+    // Every remote block decodes into the same struct, so an undecryptable secret aborts the
+    // load even when unmatched.
     expectFails(
       [
         "[remotes.preview]",
@@ -3127,9 +2941,8 @@ describe("readDbToml encrypted secret decryption (Go DecryptSecretHookFunc parit
 });
 
 describe("readDbToml non-scalar config booleans (Go UnmarshalExact parity)", () => {
-  // `UnmarshalExact` fails to decode a bool field given an array/inline-table value,
-  // aborting `LoadConfig` before any destructive work. A present non-scalar must not fall
-  // through to the schema default (which would let `db reset` prompt + drop schemas).
+  // A present non-scalar boolean must fail the config load rather than falling through to the
+  // schema default, which would let `db reset` prompt and drop schemas.
   const failsInvalid = (lines: ReadonlyArray<string>, field: string) =>
     Effect.gen(function* () {
       const dir = withConfig(lines.join("\n"));
@@ -3150,8 +2963,6 @@ describe("readDbToml non-scalar config booleans (Go UnmarshalExact parity)", () 
 
 describe("readDbToml empty project_id (Go config.Validate parity)", () => {
   it.effect("rejects a present-but-empty top-level project_id", () => {
-    // Go keeps the empty override and `config.Validate` fails "Missing required field in
-    // config: project_id" before any destructive command runs.
     const dir = withConfig('project_id = ""\n');
     return read(dir).pipe(
       Effect.exit,
@@ -3199,8 +3010,6 @@ describe("readDbToml [analytics] validation (Go config.Validate parity)", () => 
       rmSync(dir, { recursive: true, force: true });
     });
 
-  // `LogflareBackend.UnmarshalText` is a decode-time enum: it fires whenever
-  // `backend` is set, even when analytics is disabled.
   it.effect("rejects an unknown analytics.backend regardless of enabled", () =>
     failsWith(
       ["[analytics]", "enabled = false", 'backend = "clickhouse"'],
@@ -3334,11 +3143,6 @@ describe("readDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)", () 
   it.effect(
     "prefers a matched [remotes.<ref>]'s project_id over a conflicting SUPABASE_PROJECT_ID",
     () => {
-      // Regression (review: PRRT_kwDOErm0O86XHGDL) — `mergeRemoteConfig` installs the
-      // matched block's OWN `project_id` at viper's override tier, above `AutomaticEnv`;
-      // that block is selected BECAUSE its
-      // `project_id` equals the resolved ref, so it must win even when an unrelated
-      // `SUPABASE_PROJECT_ID` is set to something else entirely.
       const previous = process.env["SUPABASE_PROJECT_ID"];
       process.env["SUPABASE_PROJECT_ID"] = "local";
       const ref = "abcdefghijklmnopqrst";
@@ -3389,9 +3193,8 @@ describe("readDbToml remoteOverrideKeys — auth.captcha.provider / auth.email.t
   const ref = "abcdefghijklmnopqrst";
 
   it.effect("tracks auth.captcha.provider when a matched remote block supplies it", () => {
-    // Regression (review: PRRT_kwDOErm0O86XLAYn) — `provider` is a plain string leaf, not one of
-    // `applyRemoteOverride`'s dynamically-keyed sections, so it must be tracked via
-    // `ENV_OVERRIDABLE_KEYS` like any other fixed-name field.
+    // `provider` is a plain string leaf, not part of a dynamically-keyed section, so it must be
+    // tracked via `ENV_OVERRIDABLE_KEYS` like any other fixed-name field.
     const dir = withConfig(
       [
         "[auth.captcha]",
@@ -3419,9 +3222,9 @@ describe("readDbToml remoteOverrideKeys — auth.captcha.provider / auth.email.t
   });
 
   it.effect("tracks a matched remote block's auth.email.template.<name> leaves dynamically", () => {
-    // Regression (review: PRRT_kwDOErm0O86XLAYn) — `auth.email.template.<name>.*` is a
-    // genuinely arbitrarily-keyed map, same shape as `auth.external.<name>.*`, so it must be
-    // flattened dynamically instead of relying on a fixed `ENV_OVERRIDABLE_KEYS` entry.
+    // `auth.email.template.<name>.*` is an arbitrarily-keyed map, same shape as
+    // `auth.external.<name>.*`, so it must be flattened dynamically instead of relying on a
+    // fixed `ENV_OVERRIDABLE_KEYS` entry.
     const dir = withConfig(
       [
         "[remotes.prod]",
@@ -3452,8 +3255,7 @@ describe("readDbToml remoteOverrideKeys — auth.captcha.provider / auth.email.t
   it.effect(
     "tracks a matched remote block's auth.email.notification.<name> leaves dynamically",
     () => {
-      // Regression (review: PRRT_kwDOErm0O86XLAYo) — `auth.email.notification.<name>.*`'s
-      // sibling case, including `enabled` (a direct `envOverrideBool` throw site).
+      // Sibling case to auth.email.template, including a boolean leaf (`enabled`).
       const dir = withConfig(
         [
           "[remotes.prod]",

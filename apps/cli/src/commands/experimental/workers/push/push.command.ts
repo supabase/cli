@@ -12,10 +12,8 @@ const config = {
     Argument.variadic(),
   ),
   instances: Flag.integer("instances").pipe(
-    // Bounded at the parser, the same way `[workers.<name>] instances` is bounded
-    // in the config schema. Left unchecked it reached the deploy endpoint — after
-    // the build context had been packaged and uploaded — as a scaling request the
-    // platform cannot honour.
+    // Bounded at the parser: left unchecked, a negative value reached the deploy
+    // endpoint after the build context was already packaged and uploaded.
     Flag.filter(
       (instances) => instances >= 0,
       (instances) => `--instances ${instances} is negative; pass zero or more.`,
@@ -26,23 +24,19 @@ const config = {
     Flag.optional,
   ),
   exposure: Flag.choice("exposure", WORKER_EXPOSURES).pipe(
-    // A closed set at the parser, the way `new --runtime` and `new --size` are:
-    // the accepted values get listed in the refusal, and nothing unrecognized
-    // reaches the deploy endpoint after a build context has been uploaded.
-    // `[workers.<name>] exposure` stays a plain string, so a value the API
-    // grows before this CLI does can still be recorded there.
+    // A closed set at the parser, so nothing unrecognized reaches the deploy
+    // endpoint after a build context has been uploaded. `[workers.<name>] exposure`
+    // stays a plain string, so the API can grow new values before this CLI does.
     Flag.withDescription(
       "Whether the worker is reachable from the internet, overriding `exposure` in supabase/config.toml for this deploy. Falls back to the recorded value, then public.",
     ),
     Flag.optional,
   ),
   noWait: Flag.boolean("no-wait").pipe(
-    // The deploy POST is answered once the platform has accepted the spec and
-    // the uploaded context, and the server-side container build that follows
-    // routinely runs for minutes. Waiting stays the default so a plain push
-    // still reports the build's verdict, and `--no-wait` is the opt-out for the
-    // callers — an inner-loop redeploy, a fire-and-forget CI step — that only
-    // need the deploy accepted.
+    // The deploy POST returns once the platform accepts the spec and context; the
+    // server-side build that follows can run for minutes. Waiting stays the
+    // default so a plain push reports the build's verdict; `--no-wait` opts out
+    // for callers that only need the deploy accepted.
     Flag.withDescription(
       "Return once the deploy is accepted, without waiting for the server-side build to finish.",
     ),

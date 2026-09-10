@@ -17,12 +17,11 @@ export interface PulledMigration {
 }
 
 /**
- * Records the pulled migration(s) as applied in
- * `supabase_migrations.schema_migrations` WITHOUT re-executing them (the schema
- * already exists on the remote): create the history table, then UPSERT each
- * version row with the migration's name + statements. A pg-delta pull whose
- * plan crosses a transaction boundary writes several ordered files, so several
- * versions are recorded in one pass.
+ * Records the pulled migration(s) as applied in `supabase_migrations.schema_migrations`
+ * without re-executing them (the schema already exists on the remote): creates the
+ * history table, then upserts each version row with the migration's name + statements.
+ * A pg-delta pull whose plan crosses a transaction boundary writes several files, so
+ * several versions are recorded in one pass.
  */
 export const updateMigrationHistory = (
   session: DbSession,
@@ -32,12 +31,9 @@ export const updateMigrationHistory = (
 ) =>
   Effect.gen(function* () {
     const output = yield* Output;
-    // Resolve each file by globbing `<version>_*.sql` against the migrations dir,
-    // failing when nothing matches. The glob is anchored on the GENERATED version
-    // and `*` never crosses a path separator, so a migration name with a separator
-    // writes a nested file the glob can't reach — require the basename to both
-    // match the pattern AND carry the generated version rather than trusting
-    // `path.basename`.
+    // The glob (`<version>_*.sql`) never crosses a path separator, so a migration name
+    // with one writes a nested file it can't reach — require the basename to both match
+    // the pattern and carry the generated version, rather than trusting `path.basename`.
     const resolved: Array<{ version: string; name: string; migrationPath: string }> = [];
     for (const migration of migrations) {
       const match = MIGRATE_FILE_PATTERN.exec(path.basename(migration.path));
@@ -55,15 +51,11 @@ export const updateMigrationHistory = (
       });
     }
     yield* Effect.gen(function* () {
-      // Create the history schema/table first, in its OWN transaction. Keeping it
-      // outside the upsert transaction below avoids nesting BEGINs
-      // (`createMigrationTable` issues its own BEGIN/COMMIT).
+      // Created in its own transaction, outside the upsert transaction below, to avoid
+      // nesting BEGINs (`createMigrationTable` issues its own BEGIN/COMMIT).
       yield* createMigrationTable(session);
-      // Record every version in ONE explicit transaction: a mid-loop failure
-      // (dropped connection, unreadable migration file) must record NONE of them.
-      // Without a transaction here each UPSERT autocommits, so a failure partway
-      // through would leave partial remote history that fails the next pull's
-      // sync check.
+      // One explicit transaction: without it, each UPSERT autocommits, so a mid-loop
+      // failure would leave partial remote history that fails the next pull's sync check.
       yield* Effect.gen(function* () {
         yield* session.exec("BEGIN");
         for (const entry of resolved) {
@@ -73,10 +65,8 @@ export const updateMigrationHistory = (
         }
         yield* session.exec("COMMIT");
       }).pipe(
-        // Roll back on ANY failure inside the transaction — including a migration
-        // file read that fails after BEGIN. `Effect.ignore` keeps a ROLLBACK
-        // failure from masking the original error (`tapError` re-raises the
-        // original). Mirrors `createMigrationTable`'s rollback handling.
+        // `Effect.ignore` keeps a ROLLBACK failure from masking the original error
+        // (`tapError` re-raises it); mirrors `createMigrationTable`'s rollback handling.
         Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)),
       );
     }).pipe(
@@ -87,9 +77,8 @@ export const updateMigrationHistory = (
           }),
       ),
     );
-    // Prints `Repaired migration history: [<v1> <v2> ...] => applied` to stderr
-    // (established output contract; space-separated versions). Plain text on
-    // stderr, so it does not interfere with machine-output payloads on stdout.
+    // Established output contract; printed to stderr so it never interferes with a
+    // machine-output payload on stdout.
     const versions = resolved.map((entry) => entry.version).join(" ");
     yield* output.raw(`Repaired migration history: [${versions}] => applied\n`, "stderr");
   });

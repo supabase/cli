@@ -7,11 +7,9 @@ import {
 import { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "../src/schema-metadata.ts";
 import { collapseNonFiniteNumberUnions, withSchemaMetadata } from "./json-schema-postprocess.ts";
 
-// CLI-2234 group 6c: regression coverage for the exact post-processing
-// `scripts/build.ts` applies to both `dist/schema.json` and
-// `dist/project-schema.json` — generated in-memory here (no real build), via
-// the same pure functions the build script itself calls, against the real
-// `CliConfigSchema`/`ProjectConfigSchema`.
+// Regression coverage for the post-processing `scripts/build.ts` applies to
+// both `dist/schema.json` and `dist/project-schema.json`, generated in-memory
+// here via the same pure functions the build script itself calls.
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;

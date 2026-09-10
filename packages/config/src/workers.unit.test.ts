@@ -20,10 +20,6 @@ describe("workers schema", () => {
     expect(decode(every)).toEqual(every);
   });
 
-  // Unconstrained, like `runtime` and `size`: the Management API takes
-  // `spec.exposure` as a plain string, and `push` is what names the values it
-  // accepts. Pinning an enum here would make a config a newer CLI understands
-  // fail to load at all.
   test("accepts an exposure it does not itself recognize", () => {
     expect(decode({ api: { exposure: "internal" } })).toEqual({ api: { exposure: "internal" } });
   });
@@ -36,18 +32,12 @@ describe("workers schema", () => {
     expect(Schema.decodeUnknownSync(Schema.Struct({ workers }))({})).toEqual({ workers: {} });
   });
 
-  // Keys outside the DNS-label pattern fall outside the record's index
-  // signature and are dropped, the same way `[functions.<slug>]` treats a slug
-  // its own pattern does not match. `supabase experimental workers new` validates the name
-  // up front so the CLI never writes one that would vanish here.
   test("drops worker names that are not DNS labels", () => {
     expect(decode({ Not_A_Label: {}, api: { runtime: "node" } })).toEqual({
       api: { runtime: "node" },
     });
   });
 
-  // Every dial is optional: a worker scaffolded by `supabase experimental workers new` records
-  // only what it prompted for, and `push` resolves the rest from its own defaults.
   test("decodes a worker table with no dials set", () => {
     expect(decode({ api: {} })).toEqual({ api: {} });
   });
@@ -56,9 +46,6 @@ describe("workers schema", () => {
     expect(() => decode({ api: { instances: "three" } })).toThrow();
   });
 
-  // `spec.instances` is an integer in the Management API's input schema, and a
-  // value that slips through here is dropped downstream and silently rescales
-  // the worker to 1 rather than failing. Named at load time instead.
   test.each([
     ["a fraction", 1.5],
     ["a negative count", -1],
@@ -74,10 +61,6 @@ describe("workers schema", () => {
     expect(() => decode({ api: "node" })).toThrow();
   });
 
-  // The published asset at `PROJECT_CONFIG_SCHEMA_URL` is what editors read, so
-  // the worker dials have to stay described and completable — and a worker value
-  // has to be a plain table, or an editor would accept a bare scalar the CLI
-  // refuses to load.
   test("includes worker properties in the generated JSON schema", () => {
     const json = JSON.parse(JSON.stringify(Schema.toJsonSchemaDocument(workers).schema));
     const objectSchema = json.anyOf?.find((entry: { type?: string }) => entry?.type === "object");
@@ -90,8 +73,6 @@ describe("workers schema", () => {
     expect(workerSchema?.properties?.source).toBeDefined();
   });
 
-  // An integer bound the published schema carries, so an editor flags `1.5`
-  // before the CLI ever reads it.
   test("bounds instances as a non-negative integer in the generated JSON schema", () => {
     const json = JSON.parse(JSON.stringify(Schema.toJsonSchemaDocument(workers).schema));
     const objectSchema = json.anyOf?.find((entry: { type?: string }) => entry?.type === "object");

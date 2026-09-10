@@ -1,10 +1,8 @@
 /**
- * Connection-failure behavior of the real `@effect/sql-pg` driver layer against
- * real sockets: the `DbConnectError` message must carry the established
- * `failed to connect to postgres: failed to connect to
- * `host=… user=… database=…`: <cause>` structure (pgconn's own connect-error
- * wrapping), and the connect suggestion must classify real
- * node-postgres error shapes, not libpq wording.
+ * Connection-failure behavior of the real `@effect/sql-pg` driver layer against real sockets:
+ * the `DbConnectError` message must carry the established
+ * `failed to connect to postgres: failed to connect to `host=… user=… database=…`: <cause>`
+ * structure, and the connect suggestion must classify real node-postgres error shapes.
  */
 import * as net from "node:net";
 import { describe, expect, it } from "@effect/vitest";
@@ -25,9 +23,8 @@ const SUGGESTION_CONTEXT = {
   debug: false,
 } as const;
 
-// A distinctive sentinel so a regression that leaks the password into the
-// rendered message or suggestion fails the assertions below (pgconn embeds only
-// host/user/database — never the password).
+// A distinctive sentinel so a regression that leaks the password into the rendered message or
+// suggestion fails the assertions below.
 const SENTINEL_PASSWORD = "s3cr3t-pw-do-not-leak";
 
 /**
@@ -299,11 +296,10 @@ const fakeBatchServer = (
   });
 
 /**
- * A fake Postgres server that completes the startup handshake (no auth) and
- * answers every simple-protocol query ('Q') via `onQuery`, so tests can drive
- * the REAL driver stack — node-postgres wire parsing → `DatabaseError` →
- * `@effect/sql-pg`'s `SqlError` wrapping → `toExecError` — through real
- * server-side statement failures.
+ * A fake Postgres server that completes the startup handshake (no auth) and answers every
+ * simple-protocol query ('Q') via `onQuery`, so tests can drive the real driver stack — node-
+ * postgres wire parsing, `DatabaseError`, `@effect/sql-pg`'s `SqlError` wrapping, `toExecError`
+ * — through real server-side statement failures.
  */
 const fakeQueryServer = (
   onQuery: (sql: string) => Buffer,
@@ -418,10 +414,6 @@ describe("dbConnectionSqlPgLayer connect failures", () => {
     "keeps the CLI-1942 session-pooler EOF shape unclassified while surfacing the cause",
     () =>
       Effect.gen(function* () {
-        // The session pooler dropping the connection (CLI-1942) surfaces as
-        // node-postgres' `Connection terminated unexpectedly`. Go has no
-        // suggestion branch for the equivalent `unexpected EOF`, so no
-        // suggestion may fire — the generic --debug fallback applies.
         const server = yield* Effect.promise(() =>
           fakePostgresServer((socket) => socket.destroy()),
         );
@@ -435,7 +427,6 @@ describe("dbConnectionSqlPgLayer connect failures", () => {
             "Connection terminated unexpectedly",
         );
         expect(error.suggestion).toBeUndefined();
-        // An unexpected EOF is not a dial-level failure — never marked retryable.
         expect(error.retryable).toBeUndefined();
       }),
   );
@@ -445,24 +436,19 @@ describe("dbConnectionSqlPgLayer exec failures", () => {
   it.live(
     "maps a real wire ErrorResponse to pgconn's PgError rendering with detail and position",
     () =>
-      // Tripwire for the server-error extraction: drives the REAL driver stack
-      // (node-postgres wire parsing → `DatabaseError` → `@effect/sql-pg`'s
-      // `SqlError` cause chain → `toExecError`), so a dependency bump that
-      // changes the error wrapping fails here instead of silently degrading
-      // migration-apply failures back to the opaque driver text.
+      // Tripwire for the server-error extraction: drives the real driver stack (node-postgres
+      // wire parsing → `DatabaseError` → `@effect/sql-pg`'s `SqlError` cause chain →
+      // `toExecError`), so a dependency bump that changes the error wrapping fails here instead
+      // of degrading migration-apply failures to the opaque driver text.
       Effect.gen(function* () {
         const failing = "CREATE TABLE test (path ltree NOT NULL)";
         const server = yield* Effect.promise(() =>
           fakeQueryServer((sql) =>
             sql === failing
               ? Buffer.concat([
-                  // `S` (localized) and `V` (unlocalized) are deliberately distinct:
-                  // Go renders pgconn's `PgError.Severity`, populated from the wire
-                  // `S` field (pgproto3 `error_response.go` maps 'S'→Severity,
-                  // 'V'→SeverityUnlocalized), so a localized server prints e.g.
-                  // `FEHLER: …`. pg-protocol likewise assigns `severity = fields.S`
-                  // (`parser.js` parseErrorMessage); asserting `FEHLER` below fails
-                  // the tripwire if a dependency bump ever renders `V` instead.
+                  // `S` and `V` differ here since pg-protocol assigns `severity` from the wire
+                  // `S` field; asserting `FEHLER` below pins that against a dependency bump that
+                  // might render `V` instead.
                   errorResponse({
                     S: "FEHLER",
                     V: "ERROR",
@@ -656,8 +642,6 @@ describe("dbConnectionSqlPgLayer extended batches", () => {
   );
 
   it.live("fails a batch whose connection drops after it was written, then recovers", () =>
-    // A socket dropped after the batch was written must fail that batch and must not leave
-    // the client to be handed to the next one.
     Effect.gen(function* () {
       const server = yield* Effect.promise(() => fakeBatchServer({ destroyOnFirstSync: true }));
       yield* runWithBatchServer(server, (session) =>
@@ -678,16 +662,15 @@ describe("dbConnectionSqlPgLayer extended batches", () => {
   );
 
   it.live("survives an idle raw-client socket death and redials for the next query", () =>
-    // node-postgres emits `error` on an idle client; with no listener that terminates the
-    // process, so a database dying between two `queryRaw` calls must not take the CLI with it,
-    // and must not leave the corpse cached for the calls after it.
+    // node-postgres emits `error` on an idle client with no listener, which would otherwise
+    // crash the process; the dead client must not be left cached for later `queryRaw` calls.
     Effect.gen(function* () {
       const server = yield* Effect.promise(() => fakeBatchServer());
       yield* runWithBatchServer(server, (session) =>
         Effect.gen(function* () {
           yield* session.queryRaw("SELECT 1");
-          // `queryRaw` runs on its own client, opened after the pool's, so it is the
-          // newest connection the server has accepted.
+          // `queryRaw` opens its own client after the pool's, so it's the newest connection
+          // the server has accepted.
           const rawSocket = server.sockets.at(-1);
           const openedBeforeRedial = server.sockets.length;
 
@@ -697,8 +680,8 @@ describe("dbConnectionSqlPgLayer extended batches", () => {
           yield* Effect.sync(() => rawSocket?.destroy());
           yield* Effect.promise(() => closed);
 
-          // Whether the client has already noticed the death decides if this call redials or
-          // fails on the corpse, and that ordering is not ours to control, so accept either.
+          // The client's death-detection timing is racy, so accept either a redial or a
+          // failure here.
           yield* session.queryRaw("SELECT 1").pipe(
             Effect.exit,
             Effect.timeoutOrElse({
@@ -715,11 +698,10 @@ describe("dbConnectionSqlPgLayer extended batches", () => {
   );
 
   it.live("refuses to write a batch onto a real pooled client whose socket is already gone", () =>
-    // The unit test drives `submit` through a hand-built connection; this pins the same
-    // refusal against a real node-postgres client, so a driver change that stops making the
-    // socket unwritable would be caught rather than mocked over. Destroying the socket and
-    // submitting in one synchronous block keeps the window deterministic: `writable` flips
-    // immediately, while pg only marks the client unqueryable on the next tick's close.
+    // Pins the same refusal from the unit test's hand-built connection against a real
+    // node-postgres client. Destroying the socket and submitting in the same synchronous block
+    // keeps the window deterministic, since `writable` flips immediately but pg only marks the
+    // client unqueryable on the next tick's close.
     Effect.gen(function* () {
       const server = yield* Effect.promise(() => fakeBatchServer());
       yield* Effect.gen(function* () {
@@ -751,10 +733,8 @@ describe("dbConnectionSqlPgLayer extended batches", () => {
   );
 
   it.live("classifies a failed batch-connection acquisition as a connect error", () =>
-    // A batch checks its own connection out of the pool, so a refused checkout is a
-    // CONNECTION failure — not statement 0 failing. Misclassifying it as an exec error
-    // would drop the connect suggestion and make the migration-apply formatter blame
-    // the migration's first statement for the database being unreachable.
+    // A refused checkout is a connection failure, not statement 0 failing; misclassifying it
+    // would blame the migration's first statement for the database being unreachable.
     Effect.gen(function* () {
       const server = yield* Effect.promise(() => fakeBatchServer({ stall: true }));
       const error = yield* runWithBatchServer(server, (session) =>

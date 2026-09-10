@@ -109,8 +109,8 @@ import { resolveAuthSecrets, type PushSecretDecision } from "./push.secrets.ts";
 import type { ConfigPushFlags } from "./push.command.ts";
 import type { ConfigPushServiceResult } from "./push.types.ts";
 
-/** The `services[].changes` union (D8): encoded paths ∪ content extras ∪ secret paths the write
- * ACTUALLY sent, path-sorted. `sentSecretPaths` is `[]` for a declined/skipped write. */
+/** The `services[].changes` union: encoded paths ∪ content extras ∪ secret paths the write
+ *  actually sent, path-sorted. `sentSecretPaths` is `[]` for a declined/skipped write. */
 function pushServiceChanges(
   encoded: PushEncoded<unknown>,
   sentSecretPaths: ReadonlyArray<ReadonlyArray<string>>,
@@ -120,10 +120,9 @@ function pushServiceChanges(
     .sort(comparePaths);
 }
 
-/** `services[].changes`, `secrets.sent`, and `secrets.skipped` must all read from the same
- * source: the encoder's own `secretsEncoded` — the container that carries a `send` decision can
- * still drop it as `unencodable`, so the raw decision list alone over-counts what a write actually
- * placed in the body. */
+/** `services[].changes`, `secrets.sent`, and `secrets.skipped` must all read from the encoder's
+ *  own `secretsEncoded` — a container carrying a `send` decision can still drop it as
+ *  `unencodable`, so the raw decision list alone over-counts what was actually sent. */
 function pushSentSecretPaths(encoded: PushEncoded<unknown>): ReadonlyArray<ReadonlyArray<string>> {
   return encoded.secretsEncoded ?? [];
 }
@@ -141,9 +140,8 @@ const mapPushBranchResolveError = mapHttpError({
   statusMessage: unexpectedStatusMessage,
 });
 
-/** Error construction for `resolveConfigTarget` (`command-internal/project-target.ts`, shared with
- *  `config diff`/`config pull`), keeping `config push`'s own tagged error classes; the
- *  message wording is shared there. */
+/** Wires `resolveConfigTarget` (shared with `config diff`/`config pull`) to `config push`'s own
+ *  tagged error classes. */
 const configTargetErrors = configTargetErrorsFor({
   notLinked: ConfigPushBranchNotLinkedError,
   parentRefInvalid: ConfigPushParentRefInvalidError,
@@ -160,102 +158,55 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  // `--project-ref` accepts a project ref, or the name (or UUID) of a branch
-  // of the linked project — `link`'s/`config diff`'s settled vocabulary
-  // (CLI-2167/CLI-2289). An empty `--project-ref` value is absent, mirroring
-  // the resolver's own rule.
+  // `--project-ref` accepts a project ref, or the name (or UUID) of a branch of the linked
+  // project. An empty value is treated as absent, mirroring the resolver's own rule.
   const requestedRef = Option.filter(flags.projectRef, (value) => value.length > 0);
 
-  // Written once ref resolution succeeds, so the linked-project cache
-  // finalizer below only fires for invocations that got that far — mirrors
-  // `diff.handler.ts`'s `resolvedRef` pattern (CLI Invariant #1):
-  // every failure path from here on, including branch/UUID resolution,
-  // stays inside this file's single `Effect.ensuring`-wrapped block below.
+  // Set once ref resolution succeeds, so the linked-project cache write below only fires for
+  // invocations that got that far.
   let resolvedRef: string | undefined;
 
   yield* Effect.gen(function* () {
-    // 0. The resolved `--workdir`/`SUPABASE_WORKDIR` must exist and be a
-    // directory before anything else touches it. The project-root probe,
-    // project-env load, and private-key collection immediately below used to
-    // run BEFORE this check, in the outer function body — harmless for a
-    // missing directory (`loadProjectEnv` tolerates `NotFound`), but not
-    // for a `--workdir` that names a regular FILE: `loadProjectEnv`
-    // does not tolerate ENOTDIR, so it surfaced a confusing
-    // "failed to read environment file: ..." error instead of this one, and
-    // it did so OUTSIDE the `Effect.ensuring(telemetryState.flush)` wrapper
-    // below. Moved here so both failure shapes are caught by the same check,
-    // and telemetry flushes for either one.
+    // 0. The resolved `--workdir`/`SUPABASE_WORKDIR` must exist and be a directory before
+    // anything else touches it: a workdir naming a regular file makes `loadProjectEnv` throw
+    // ENOTDIR with a confusing "failed to read environment file" error instead of this one.
     yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
       Effect.mapError((error) => new ConfigPushWorkdirError({ message: error.message })),
     );
 
-    // `--yes` OR `SUPABASE_YES`. `config push` imports `supabase/.env` before
-    // the confirmation prompt reads the yes flag, so a `SUPABASE_YES` set only
-    // in `supabase/.env` auto-confirms. Resolve against the project env, not
-    // just the flag + shell env. Load it from the resolved project root
-    // (climbing only when `cliSettings.workdir` was defaulted, same as
-    // `loadCliConfig` below — an explicit `--workdir`/`SUPABASE_WORKDIR` is
-    // authoritative and never climbs, see `shouldSearchAncestors`), so a
-    // push from a subdirectory of a defaulted workdir still reads the project
-    // root's `supabase/.env`.
-    // Resolved against `cliSettings.workdir` — the same root the project-ref
-    // resolver and the linked-project cache use — so `--workdir ../other`
-    // pushes `../other`'s config.toml, never the invoking directory's file to
-    // another root's linked project.
+    // `--yes`/`SUPABASE_YES` resolves against the project env (not just the flag + shell env), so
+    // a `SUPABASE_YES` set only in `supabase/.env` auto-confirms. The project root climbs to find
+    // it only when `--workdir` was defaulted; an explicit `--workdir ../other` pushes that
+    // directory's own config.toml without climbing to another root's linked project.
     const projectRoot =
       (yield* findCliProjectRoot(cliSettings.workdir, {
         search: shouldSearchAncestors(cliSettings),
       })) ?? cliSettings.workdir;
     const projectEnv = yield* loadProjectEnv(fs, path, projectRoot);
     const yes = yield* resolveYesWithProjectEnv(projectEnv);
-    // dotenvx private keys for decrypting `encrypted:` secrets, from the shell
-    // + project env — same source/precedence as `db-config.toml-read.ts`
-    // (`process.env` wins over `supabase/.env`).
+    // dotenvx private keys for decrypting `encrypted:` secrets, from the shell + project env;
+    // `process.env` wins over `supabase/.env`, matching `db-config.toml-read.ts`.
     const dotenvPrivateKeys = collectDotenvPrivateKeys({ ...projectEnv, ...process.env });
-    // Only reached by `assertDecryptableSecrets` below for an `env(VAR)` literal that
-    // survives `loaded.document`'s own (`@supabase/config`) interpolation pass unresolved — i.e.
-    // when this wider env source resolves `VAR` but `@supabase/config`'s
-    // narrower one (`supabase/.env`/`.env.local` only) didn't. Practically
-    // unreachable in the same narrow way the CLI-1489 comment below already documents for
-    // non-secret fields; kept for parity with the shared function's other caller
-    // (`db-config.toml-read.ts`, whose pre-interpolation document relies on this).
+    // Reached only when an `env(VAR)` literal survives `@supabase/config`'s own (narrower)
+    // interpolation pass unresolved but this wider shell+project-env lookup can still resolve it.
     const secretEnvLookup = (name: string): string | undefined =>
       process.env[name] ?? projectEnv[name];
 
-    // 0.5. An explicit `--workdir`/`SUPABASE_WORKDIR` that holds no project
-    // fails HERE, before target resolution burns a branch-name/UUID lookup's
-    // network round trip — a pure `fs.exists` probe with no schema decode,
-    // so it does not touch the "only ONE decode may ever run" invariant step
-    // 2 below relies on. A DEFAULTED workdir is untouched (today, `config
-    // push` in a config-less directory with no linked project fails with the
-    // not-linked error from step 1, not a config error) — deliberately kept,
-    // since making this check unconditional would be an established-behavior
-    // change outside this fix's scope. Message is identical to the step-2
-    // `loaded === null` branch below (same builder), so the user-visible
-    // failure text is unchanged, only earlier in time.
+    // 0.5. An explicit `--workdir`/`SUPABASE_WORKDIR` with no project fails here, before a
+    // branch-name/UUID lookup burns a network round trip. A defaulted workdir is untouched: in a
+    // config-less directory with no linked project, it instead fails with step 1's not-linked
+    // error. Uses the same error message builder as the step-2 `loaded === null` branch.
     yield* requireExplicitWorkdirProject(cliSettings).pipe(
       Effect.mapError((error) => new ConfigPushLoadConfigError({ message: error.message })),
     );
 
-    // 1. Resolve the push target. `--project-ref` accepts a project ref, or
-    // the name (or UUID) of a branch of the linked project (CLI-2167/CLI-2289) —
-    // `resolveConfigTarget` (`command-internal/project-target.ts`, Hoist Before You
-    // Duplicate, shared with `config diff`/`config pull`). This is ALSO
-    // where `resolvedRef` is set, so every one of the shared resolver's
-    // failure paths (not linked, invalid parent, not found, not ready,
-    // network/status) still flushes telemetry and, once a ref is known,
-    // writes the linked-project cache.
+    // 1. Resolve the push target. `resolvedRef` is set here so every failure path from the shared
+    // resolver still flushes telemetry and, once a ref is known, writes the linked-project cache.
     //
-    // Deliberately runs BEFORE the config load below: a `[remotes.<name>]`
-    // overlay is merged INSIDE `loadCliConfig` itself (driven by
-    // `projectRef`) before its one full schema decode, and only ONE decode
-    // may ever run — a base document that's schema-invalid without its
-    // overlay must never be evaluated on its own, or a config that's only
-    // valid once the matching remote applies would be wrongly rejected. A
-    // branch name/UUID resolution may therefore cost a network round trip
-    // before a malformed `config.toml` is caught — an accepted, narrow
-    // tradeoff (matches this command's own pre-CLI-2168 behavior, which
-    // always resolved before loading).
+    // Runs before the config load below: a `[remotes.<name>]` overlay is merged inside
+    // `loadCliConfig` before its one schema decode, so a base document that's invalid without its
+    // overlay must never be decoded on its own — this can cost a network round trip before a
+    // malformed `config.toml` is caught.
     const { ref, branch } = yield* resolveConfigTarget(
       requestedRef,
       configTargetErrors,
@@ -263,22 +214,12 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     );
     resolvedRef = ref;
 
-    // 2. Load config.toml with the resolved ref (TOML parse error aborts
-    // before any network call). A matching `[remotes.<name>]` block's
-    // overlay is merged before decode in the SAME call — see the note
-    // above.
+    // 2. Load config.toml with the resolved ref (a TOML parse error aborts before any network
+    // call); a matching `[remotes.<name>]` overlay merges before decode in the same call.
     //
-    // NOTE (CLI-1489): `config push` needs the fully decoded config (every
-    // service subset), so it uses `loadLocalConfig` (`../config.load.ts`,
-    // shared with `config diff`/`config pull`) rather than the tolerant
-    // `db-config.toml-read.ts` subtree reader. The underlying
-    // `loadCliConfig` raises `CliConfigParseError` on `env(...)` refs over
-    // numeric/bool fields; `loadLocalConfig` catches it (and a
-    // duplicate-remote/missing-file failure) and converts it to this
-    // family's own tagged error via the shared message shapes — including
-    // the ancestor-search decision (`shouldSearchAncestors`), so an
-    // explicit `--workdir`/`SUPABASE_WORKDIR` with no project here never
-    // silently falls back to an ancestor project's config (CLI-2285).
+    // Uses `loadLocalConfig` (needs the fully decoded config) rather than the tolerant
+    // `db-config.toml-read.ts` subtree reader, converting its parse/duplicate-remote/missing-file
+    // failures into this family's own tagged error.
     const loaded = yield* loadLocalConfig(
       cliSettings,
       ref,
@@ -293,24 +234,12 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     }
     const config = loaded.config;
 
-    // 3. Assert every `config.Secret`-typed `encrypted:` value in the
-    // document (not just auth.*) can be decrypted — this must run before the
-    // cost matrix is fetched or any service is touched. An undecryptable
-    // secret anywhere in the document (even one `config push` never itself
-    // pushes, e.g. `studio.openai_api_key`) aborts here with a
-    // `failed to parse config: <cause>` message, before any remote service
-    // is read or updated.
+    // 3. Assert every `encrypted:` value in the document can be decrypted, even fields `config
+    // push` never itself pushes — this must run before the cost matrix or any service is touched.
     //
-    // `loaded.document` has already had deprecated
-    // `auth.external.{linkedin,slack}` blocks stripped by `@supabase/config`
-    // (`normalizeDeprecatedExternalProviders`), but the decrypt hook runs at
-    // decode time — before the later `external.validate()` deletes those
-    // blocks — so an `encrypted:` secret hiding in one of them still aborts
-    // the load. Fold `removedDeprecatedExternalProviders` back into a
-    // synthetic `auth.external` view and scan that too, reusing the same
-    // path list rather than a second scanner. `loadCliConfig` always
-    // populates this field with a (possibly empty) record — never
-    // `undefined` — so no fallback is needed here.
+    // Deprecated `auth.external.{linkedin,slack}` blocks are stripped from `loaded.document`
+    // before this decode, so scan `removedDeprecatedExternalProviders` too, or a secret hiding in
+    // one of them would skip the check.
     const secretError =
       assertDecryptableSecrets(loaded.document, secretEnvLookup, dotenvPrivateKeys) ??
       assertDecryptableSecrets(
@@ -325,14 +254,10 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // Config lives at <projectRoot>/supabase/config.{toml,json}.
     const configProjectRoot = dirname(dirname(loaded.path));
 
-    // 4. Email content validation runs during config load, before any network
-    // call. Unconditional regardless of `config.auth.enabled` (CLI-2314,
-    // review round): that flag is the local-only GoTrue Docker toggle and no
-    // longer gates whether the `auth` resource is pushed (`push.plan.ts`'s
-    // `pushResourceEnabled`) — gating this load the same way it used
-    // to would silently push empty template/notification content over a
-    // real hosted customization whenever `auth.enabled = false`, even though
-    // every other declared `auth.*` field is pushed normally in that case.
+    // 4. Email content validation runs during config load, before any network call, and is
+    // unconditional regardless of `config.auth.enabled` — that flag only toggles the local GoTrue
+    // Docker service and doesn't gate whether `auth` is pushed, so gating this load too would
+    // silently push empty content over a real hosted customization.
     const authEmailContent = yield* Effect.try({
       try: () => loadAuthEmailContent(configProjectRoot, config.auth.email),
       catch: (cause) =>
@@ -341,26 +266,14 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
         }),
     });
 
-    // 5. Determine the push target (plain project vs. branch vs. unknown)
-    // and, for a CONFIRMED branch, gate the push behind an explicit
-    // confirmation before any further network call — including the cost
-    // matrix below (CLI-2168). A target resolved from an EXPLICIT
-    // `--project-ref <name-or-uuid>` this invocation (`branch`, from the
-    // shared resolver above) skips the prompt: the user already expressed
-    // same-invocation intent, so re-confirming the exact string they just
-    // typed is friction with no safety benefit. The target-echo line below
-    // always prints regardless of kind.
+    // 5. Determine the push target and, for a confirmed branch, gate the push behind an explicit
+    // confirmation before any further network call. A target resolved from an explicit
+    // `--project-ref <name-or-uuid>` this invocation skips the prompt, since the user already
+    // expressed same-invocation intent.
     //
-    // `resolveConfigTarget` (shared with `config diff`/`config pull`,
-    // neither of which needs a branch's PARENT ref) returns only the raw
-    // `branch` string the user named, not its resolved parent. A UUID
-    // target genuinely has no parent to give (`GET /v1/branches/{id}`
-    // resolves it alone) — `{kind: "uuid"}`. A NAME target's parent WAS
-    // resolved internally to look it up, just not returned; re-deriving it
-    // here via `resolveLinkedParentRef()` is a second LOCAL-ONLY read
-    // (env/cache/file, no network) of the exact same chain that just
-    // resolved moments ago, so it can only disagree if something rewrote
-    // the linked state mid-command — safe to treat as unreachable.
+    // `resolveConfigTarget` returns only the raw branch name, not its resolved parent, so a name
+    // target's parent is re-derived here via a second local-only read (env/cache/file, no
+    // network) of the same chain that just resolved.
     let knownBranch: ConfigPushKnownBranch | undefined;
     if (branch !== undefined) {
       if (BRANCH_UUID_PATTERN.test(branch)) {
@@ -380,11 +293,8 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
         output,
         yes,
         configPushBranchPromptLabel(target),
-        // Deliberately `false` (unlike this file's other prompts, which
-        // default `true`): an unattended run (CI, an agent, a script)
-        // without `--yes` must safely decline a branch mutation rather than
-        // silently proceed. `--yes`/`SUPABASE_YES` (`yes`, resolved above)
-        // is the intended override.
+        // Defaults `false`, unlike this file's other prompts: an unattended run without `--yes`
+        // must decline a branch mutation rather than silently proceed.
         false,
       );
       if (!proceed) {
@@ -398,9 +308,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // 6. Cost matrix (drives cost-aware prompts).
     const cost = yield* getCostMatrix(ref);
 
-    // keep(name): the shared confirmation-prompt helper handles all modes,
-    // including scanning piped stdin on a non-TTY before falling back to
-    // the default.
+    // `promptYesNo` scans piped stdin on a non-TTY before falling back to the default.
     const keep = (name: string) =>
       Effect.gen(function* () {
         const item = cost.get(name);
@@ -411,9 +319,8 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
         return yield* promptYesNo(output, yes, title, true);
       });
 
-    // 7. Read the project's effective configuration once — replaces the
-    // former five per-service `GET /v1/...` calls. No spinner (matches the
-    // rest of this command's stderr progress lines).
+    // 7. Read the project's effective configuration in one call. No spinner, matching the rest
+    // of this command's stderr progress lines.
     const response = yield* api.executeRaw(operationDefinitions.v2GetProjectConfig, { ref }).pipe(
       Effect.mapError(
         (cause) =>
@@ -439,10 +346,8 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
           }),
       ),
     );
-    // A 200 response whose body isn't even a JSON object is an API-response
-    // problem, not something `fromApiProjectConfig` should have to reject
-    // via its own typed error — checked once, up front, so every read below
-    // can index `responseJson` directly.
+    // A non-object body is an API-response problem, not something `fromApiProjectConfig` should
+    // reject via its own typed error — checked once so reads below can index directly.
     if (!isRecord(responseJson)) {
       return yield* new ConfigPushConfigReadNetworkError({
         message: "failed to read project config: response body is not a JSON object",
@@ -450,11 +355,9 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       });
     }
 
-    // 8. Convert the response and classify against the local projection.
-    // A response the registry cannot narrow, or a local document it cannot
-    // canonicalize, is a typed `ProjectConfigParseError`; anything else is a
-    // defect (`configProjectConfigTry`, shared with `config
-    // diff`/`config pull`).
+    // 8. Convert the response and classify against the local projection. A response the registry
+    // cannot narrow, or a local document it cannot canonicalize, is a typed
+    // `ProjectConfigParseError`; anything else is a defect.
     const remote = yield* configProjectConfigTry(() => fromApiProjectConfig(responseJson));
 
     const data = responseJson["data"];
@@ -478,10 +381,8 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // 9. Route pushable changes to their v1 write endpoint and resolve every
     // declared secret's send/unchanged/not_set/gated status.
     const plan = planConfigPush(changeSet);
-    // Defensive: the document-wide decrypt-or-abort pre-check above (step 3)
-    // is expected to make this unreachable — kept as a typed failure, in the
-    // same `failed to parse config: <cause>` shape, rather than an uncaught
-    // throw, in case that invariant is ever violated (see push.secret.ts).
+    // Defensive: step 3's decrypt-or-abort check is expected to make this unreachable, but stays
+    // a typed failure rather than an uncaught throw in case that invariant is ever violated.
     const secrets = yield* Effect.try({
       try: () =>
         resolveAuthSecrets({
@@ -499,9 +400,8 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     });
     const now = new Date(yield* Clock.currentTimeMillis);
 
-    // Whether each resource's local gate is on — computed once, both for the
-    // resource loop below and for excluding a gated-off resource's own
-    // `unmanaged` entries from the summary note (D5).
+    // Whether each resource's local gate is on, computed once for the resource loop below and
+    // for excluding a gated-off resource's own `unmanaged` entries from the summary note.
     const resourceEnabled: Readonly<Record<PushResource, boolean>> = {
       api: pushResourceEnabled("api", config, local),
       "db.settings": pushResourceEnabled("db.settings", config, local),
@@ -519,11 +419,9 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     let authWriteRan = false;
     let secretsSent: ReadonlyArray<ReadonlyArray<string>> = [];
 
-    // 10. Prints the resource's `Updating ... with config:` block (or the
-    // up-to-date/not-pushable line), prompts, writes, and returns the
-    // service's result. `secretsForResource` is the resource's full
-    // (unfiltered) secret-decision list — `pushUpdatingLine` renders
-    // only `send`/`not_set` entries, so non-auth resources simply pass `[]`.
+    // 10. Prints the resource's `Updating ...`/up-to-date/not-pushable line, prompts, writes, and
+    // returns the result. `secretsForResource` is the resource's full secret-decision list; only
+    // `auth` needs to pass anything besides `[]`.
     function applyResource<Body, E, R>(
       resource: PushResource,
       changes: ReadonlyArray<ConfigChange>,
@@ -570,25 +468,11 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       });
     }
 
-    // 11. Six resources, in the established push order. A resource whose
-    // response block was omitted from the read is `unavailable` — nothing is
-    // compared, nothing is written (S5/D2); the `Comparison scope:` line
-    // above already explains why. Otherwise, a gated-off resource is
-    // `disabled` — today (CLI-2314) this can fire for two of the six:
-    // `db.network_restrictions`, whose own `enabled` flag is a genuine
-    // hosted-side management opt-out (the projection's disabled-sentinel
-    // prune still removes its `allowed_cidrs`/`allowed_cidrs_v6` siblings
-    // before diffing, so `plan.changesByResource` never has anything left to
-    // route to it while the flag is off); and `db.ssl_enforcement`, gated on
-    // simple presence (`pushResourceEnabled`'s
-    // `local.db?.ssl_enforcement !== undefined` case) rather than a decoded
-    // `enabled` value — the stock `supabase init` template ships this block
-    // commented out, so a fresh project hits `disabled` here by default.
-    // `auth` and `storage` always return `true` from
-    // `pushResourceEnabled` now — their local `enabled` toggle only
-    // controls a Docker service the Management API has no concept of, so
-    // this branch can no longer fire for either — and a gated-on resource
-    // dispatches to its own encoder/write pair.
+    // 11. Six resources, in the established push order. A missing response block makes a
+    // resource `unavailable` (nothing compared or written); a gated-off local `enabled` flag
+    // makes it `disabled` — this can only happen for `db.network_restrictions` and
+    // `db.ssl_enforcement`, since `auth`/`storage`'s local `enabled` toggle only controls a
+    // Docker service the Management API has no concept of.
     for (const resource of PUSH_RESOURCES) {
       if (scope.missing.includes(pushResponseBlock(resource))) {
         services.push({ service: resource, status: "unavailable", changes: [] });
@@ -687,10 +571,8 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
           break;
         }
         case "auth": {
-          // MFA addon cost filter runs before anything about auth is
-          // printed: a declined paid addon carries an explicit disable when
-          // the remote currently has it on, or is simply dropped otherwise
-          // (`applyMfaAddonDecline`, D12).
+          // MFA addon cost filter runs before anything about auth is printed: a declined paid
+          // addon carries an explicit disable when the remote currently has it on, or is dropped.
           let changes = plan.changesByResource.auth;
           for (const gate of PUSH_ADDON_GATES) {
             if (pushAddonPromptNeeded(changes, gate, remote) && !(yield* keep(gate.costKey))) {
@@ -770,8 +652,8 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
         services.push({
           service: "experimental.webhooks",
           status: "updated",
-          // No registry-comparable path backs this write, but the summary's property
-          // count (and a JSON consumer inspecting `changes`) must still see it (finding 5).
+          // No registry path backs this write, but the summary's property count (and a JSON
+          // consumer inspecting `changes`) must still see it.
           changes: [["experimental", "webhooks", "enabled"]],
         });
       } else {
@@ -779,19 +661,15 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       }
     }
 
-    // 12. Notes (stderr, after the resource loop) — declared properties with
-    // no API field, declared-but-unencodable properties, declared-but-
-    // unmanaged properties (count only, excluding a gated-off resource's own
-    // entries), forced companion defaults, empty/unresolved credentials, and
-    // the hands-off remote-only count.
+    // 12. Notes (stderr, after the resource loop): unsupported, unencodable, and unmanaged
+    // (count only, excluding a gated-off resource's own entries) declared properties, forced
+    // companion defaults, empty/unresolved credentials, and the hands-off remote-only count.
     const unmanagedCount = changeSet.unmanaged.filter((changePath) => {
       const resourceForPath = pushResourceForPath(changePath);
       return resourceForPath === "unsupported" || resourceEnabled[resourceForPath];
     }).length;
-    // An `unavailable` auth resource never read (or wrote) any credential —
-    // the "not pushed" framing this note carries is specific to a credential
-    // whose OWN value was empty/unresolved, which doesn't apply when the
-    // whole resource was never compared to begin with.
+    // An `unavailable` auth resource never read any credential, so the "not pushed" framing
+    // below doesn't apply — that's specific to a credential whose own value was unresolved.
     const authUnavailable =
       services.find((service) => service.service === "auth")?.status === "unavailable";
     const notes = pushNotes({

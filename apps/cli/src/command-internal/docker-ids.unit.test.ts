@@ -14,7 +14,6 @@ import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
 
 describe("resolveLocalProjectId", () => {
   it("prefers SUPABASE_PROJECT_ID (env) over config.toml and the basename", () => {
-    // Go applies SUPABASE_PROJECT_ID to Config.ProjectId (AutomaticEnv) before DbId.
     expect(resolveLocalProjectId("env-id", "toml-id", "/work/proj")).toBe("env-id");
   });
 
@@ -36,8 +35,6 @@ describe("resolveLocalProjectId", () => {
 
 describe("serviceContainerIds", () => {
   it("returns the 13 service container ids in Go's GetDockerIds() order", () => {
-    // kong, auth, inbucket, realtime,
-    // rest, storage, imgproxy, pg_meta, studio, edge_runtime, analytics, vector, pooler.
     expect(serviceContainerIds("my-app")).toEqual([
       "supabase_kong_my-app",
       "supabase_auth_my-app",
@@ -71,11 +68,6 @@ describe("cliProjectFilterValue", () => {
   });
 
   it("must be sanitized by the caller for the label to match what start wrote", () => {
-    // This function is a pure pass-through by design (see its doc comment) — a
-    // dirty config/env-derived id must be sanitized by the caller BEFORE being
-    // passed here, matching Go's Config.Validate sanitizing Config.ProjectId
-    // once at config-load time so every reader (including the Docker label
-    // `start` writes) sees the same string.
     const dirty = "My App!!";
     expect(cliProjectFilterValue(dirty)).toBe(`${CLI_PROJECT_LABEL}=My App!!`);
     expect(cliProjectFilterValue(sanitizeProjectId(dirty))).toBe(`${CLI_PROJECT_LABEL}=My_App_`);
@@ -89,10 +81,6 @@ describe("resolveDockerNetworkMode composed with viperEnvStringWithProjectFallba
     delete process.env[KEY];
   });
 
-  // `start`/`db start` resolve the network exactly like the `functions`
-  // Docker paths: the shared 3-way resolver fed by the viper-shaped
-  // shell/project-dotenv env read — one home, per the review round on
-  // CLI-1963 that deleted `resolveNetworkId`'s divergent copy.
   function resolve(flagValue: string | undefined, projectEnv: Record<string, string>) {
     return resolveDockerNetworkMode({
       explicit: flagValue,

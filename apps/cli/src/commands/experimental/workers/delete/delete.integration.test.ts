@@ -64,24 +64,15 @@ describe("workers delete", () => {
 
       expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
       expect(out.stdoutText).toContain("permanently deletes");
-      // Labelled "declared" because this response carries no live tally.
-      // `spec.instances` is the target, not what is running.
       expect(out.stdoutText).toContain("3 declared instances");
       expect(out.stdoutText).toContain("Kept");
 
-      // Nothing local is touched — that is what makes `push` a one-command undo.
       expect(existsSync(join(repo.dir, "supabase", "workers", "api", "index.js"))).toBe(true);
       expect(readFileSync(join(repo.dir, "supabase", "config.toml"), "utf8")).toBe(CONFIG);
-      // The redeploy hint is a success trailer, which lands on stderr.
       expect(out.stderrText).toContain("supabase experimental workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The refusal has to precede the DELETE. At emit time `--yes -o env` would
-  // remove the worker and then exit non-zero with no payload, which a script
-  // reads as "the delete failed" and may retry.
-  // Deletion never touches local files, so a malformed local config has no
-  // business standing between the user and a worker they named explicitly.
   it.live("deletes a remote worker despite an unparseable local config", () => {
     const repo = project("project_id = [unclosed\n");
     const otherRef = "qrstuvwxyzabcdefghij";
@@ -104,9 +95,6 @@ describe("workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The API grants `edge_functions:read` for the GET and `edge_functions:write`
-  // for the DELETE separately, so a credential holding only write could not
-  // delete a worker it is entitled to delete.
   it.live("deletes with --yes when the credential may not read the worker", () => {
     const repo = project();
     const { layer, http } = setupWorkers({
@@ -140,13 +128,11 @@ describe("workers delete", () => {
       yield* workersDelete({ name: "api", projectRef: Option.none() });
 
       expect(out.stdoutText).toContain("permanently deletes");
-      // No count is quoted: the read that would have supplied one was refused.
       expect(out.stdoutText).not.toContain("will be terminated");
       expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A refusal is not an absence: only a real 404 means there was nothing there.
   it.live("reports an unreadable worker as deleted, not as nothing to delete", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -205,9 +191,6 @@ describe("workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The suggested retry is copy-pasted verbatim and carries `--yes`, so dropping
-  // an explicit ref points a no-prompt delete at whatever this checkout is
-  // linked to — a same-named worker in a project the user never named.
   it.live("keeps an explicit --project-ref in the retry it suggests", () => {
     const repo = project();
     const otherRef = "qrstuvwxyzabcdefghij";
@@ -290,9 +273,6 @@ describe("workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `printf 'api\n' | supabase experimental workers delete api`: stdout is still a TTY, so
-  // `output.interactive` stayed true and the prompt read the worker name off the
-  // pipe — a confirmation the user never typed.
   it.live("refuses to read the confirmation off a piped stdin", () => {
     const repo = project();
     const { layer, http } = setupWorkers({
@@ -328,8 +308,6 @@ describe("workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `interactive` follows stdout, so a plain `>` redirect reaches this branch even
-  // from a live terminal — the case where deleting without asking would be worst.
   it.live("refuses when stdout is redirected and no --yes was given", () => {
     const repo = project();
     const { layer, http } = setupWorkers({
@@ -379,7 +357,6 @@ describe("workers delete", () => {
       }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerNotDeployedError);
-      // Not `workers push`: somebody deleting "api" does not want to deploy it.
       const suggestion = error instanceof WorkerNotDeployedError ? error.suggestion : "";
       expect(suggestion).toContain("supabase experimental workers list");
       expect(suggestion).not.toContain("workers push");
@@ -387,9 +364,6 @@ describe("workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `deleteWorker` already treats a DELETE 404 as done; the pre-flight GET used
-  // to contradict that, so a teardown script run twice failed the second time
-  // for a worker in exactly the state it asked for.
   it.live("succeeds under --yes when the worker is already gone", () => {
     const repo = project();
     const { layer, out, http } = setupWorkers({
@@ -401,7 +375,6 @@ describe("workers delete", () => {
     return Effect.gen(function* () {
       yield* workersDelete({ name: "api", projectRef: Option.none() });
 
-      // Nothing to delete, so nothing is asked of the API beyond the lookup.
       expect(http.routeKeys).toEqual([getRoute]);
       expect(out.stdoutText).toContain("nothing to delete");
       expect(out.stdoutText).not.toContain("Deleted Worker");
@@ -487,9 +460,6 @@ describe("workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `-o json` leaves `output.format` as `text`, so the interactive check alone
-  // still ran the warning and the prompt — onto the stdout the payload was
-  // supposed to own.
   it.live("refuses rather than prompting when -o json asked for the stdout", () => {
     const repo = project();
     const { layer, out, http } = setupWorkers({
@@ -511,9 +481,6 @@ describe("workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The live tally is what is actually running; `spec.instances` is the target.
-  // For a worker mid-provision the two differ, and a destructive confirmation is
-  // the worst place to overstate.
   it.live("counts the live instances in the confirmation when the API reports them", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -569,8 +536,6 @@ describe("workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Scaled to zero: there is a tally, and it says nothing is running. Warning
-  // about terminated instances there would invent a consequence.
   it.live("promises no terminations when nothing is running", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -599,9 +564,6 @@ describe("workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // An orphan — deployed from another checkout — has no local entry and no local
-  // directory, so there is nothing that was "kept" and `push` has no source to
-  // redeploy from.
   it.live("does not claim to have kept local files it never had", () => {
     const repo = project('project_id = "demo"\n');
     const { layer, out } = setupWorkers({
@@ -647,8 +609,6 @@ describe("workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A `config.toml` entry on its own is not something `push` can deploy from, so
-  // recommending it would send the user at a command that fails.
   it.live("keeps the config entry but does not advise redeploying without a source", () => {
     const repo = project();
     rmSync(join(repo.dir, "supabase", "workers", "api"), { recursive: true, force: true });
@@ -662,8 +622,6 @@ describe("workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Deletion never reads the local source, so a `source` that does not resolve
-  // inside the project must not block removing the remote worker.
   it.live("deletes the remote worker even when the configured source is unusable", () => {
     const repo = project('project_id = "demo"\n\n[workers.api]\nsource = "../../elsewhere"\n');
     const { layer, out, http } = setupWorkers({ workdir: repo.dir, routes, yes: true });

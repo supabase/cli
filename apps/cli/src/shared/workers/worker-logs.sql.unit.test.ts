@@ -17,8 +17,6 @@ describe("workerLogsQuery", () => {
 
     expect(sql).toContain("log_attributes['worker'] = 'api'");
     expect(sql).toContain("log_attributes['source'] in (");
-    // The load-bearing negative: worker rows carry an empty top-level `source`,
-    // so a predicate on that column matches nothing at all.
     expect(sql).not.toMatch(/(?:^|\s)where source =/);
     expect(sql).not.toMatch(/(?:^|\s)and source =/);
   });
@@ -26,8 +24,6 @@ describe("workerLogsQuery", () => {
   it("constrains to the known streams even when none was requested", () => {
     const sql = workerLogsQuery({ name: "api", streams: ALL_WORKER_LOG_STREAMS, tail: 10 });
 
-    // With `source` empty this list is the only thing keeping a non-worker row
-    // that happens to carry a `worker` attribute out of the results.
     expect(sql).toContain("'worker_guest_logs'");
     expect(sql).toContain("'worker_ingress_logs'");
     expect(sql).toContain("'worker_api_logs'");
@@ -48,8 +44,6 @@ describe("workerLogsQuery", () => {
     const sql = workerLogsQuery({ name: "api", streams: ALL_WORKER_LOG_STREAMS, tail: 1 });
 
     expect(sql).toContain("toUnixTimestamp64Milli(timestamp) as ts_ms");
-    // `%M` is ClickHouse's month name, and bare toString has no zone — neither
-    // belongs in this query.
     expect(sql).not.toContain("formatDateTime");
     expect(sql).not.toContain("toString(timestamp)");
   });
@@ -62,8 +56,8 @@ describe("workerLogsQuery", () => {
   });
 
   it("escapes a quote in the worker name", () => {
-    // Unreachable in practice — the handler validates first, see below — so this
-    // pins the backstop rather than the guard.
+    // Unreachable in practice (the handler validates first) — this pins the backstop, not
+    // the guard.
     const sql = workerLogsQuery({ name: "a'b", streams: ALL_WORKER_LOG_STREAMS, tail: 1 });
 
     expect(sql).toContain("log_attributes['worker'] = 'a''b'");
@@ -84,8 +78,6 @@ describe("logWindow", () => {
   it("always returns both bounds", () => {
     const window = logWindow(new Date("2026-08-31T12:00:00.000Z"));
 
-    // A lone bound yields a one-minute window server-side, and sending neither is
-    // an outright error, so there is no valid single-bound call.
     expect(window.start).toBeDefined();
     expect(window.end).toBeDefined();
   });
@@ -95,8 +87,6 @@ describe("logWindow", () => {
     const window = logWindow(now);
     const spanMs = Date.parse(window.end) - Date.parse(window.start);
 
-    // Being clamped is worse than being rejected: the server rewrites `end` to
-    // `start + 24h`, returning an older slice than the one asked for.
     expect(spanMs).toBeLessThan(24 * 60 * 60 * 1000);
     expect(WORKER_LOG_WINDOW_MINUTES).toBeLessThan(24 * 60);
   });
@@ -109,9 +99,8 @@ describe("logWindow", () => {
 });
 
 /**
- * The grace and the clamp are written as literals rather than read from the
- * module. Deriving the expectation from the constant under test would keep these
- * green through exactly the change they exist to catch.
+ * The grace and clamp are written as literals rather than read from the module, so a change
+ * to the constant under test doesn't silently keep these green.
  */
 describe("followWindow", () => {
   const now = new Date("2026-08-31T12:00:00.000Z");
@@ -120,8 +109,6 @@ describe("followWindow", () => {
     const cursor = Date.parse("2026-08-31T11:59:30.000Z");
     const window = followWindow(now, cursor);
 
-    // Guest lines are relayed late and out of order, so a window starting exactly
-    // on the cursor drops every straggler permanently.
     expect(window.start).toBe("2026-08-31T11:58:30.000Z");
     expect(Date.parse(window.start)).toBe(cursor - 60_000);
   });
@@ -134,10 +121,6 @@ describe("followWindow", () => {
   });
 
   it("clamps a cursor left behind by a suspend to the 24 hour span", () => {
-    // The case this clamp exists for: a tail left running across a laptop
-    // suspend resumes with a cursor days old. Unclamped, the server answers an
-    // over-wide request by rewriting `end` to `start + 24h` — returning an older
-    // slice rather than a truncated one, so the tail replays yesterday.
     const staleCursor = Date.parse("2026-08-28T09:00:00.000Z");
     const window = followWindow(now, staleCursor);
 
@@ -154,8 +137,6 @@ describe("followWindow", () => {
 
 describe("isoLogTimestamp", () => {
   it("emits a Z suffix and no numeric offset", () => {
-    // The v1 DTO validates with `z.string().datetime()`, which requires the Z and
-    // rejects `+00:00`.
     const formatted = isoLogTimestamp(new Date("2026-08-31T12:00:00.000Z"));
 
     expect(formatted).toBe("2026-08-31T12:00:00.000Z");

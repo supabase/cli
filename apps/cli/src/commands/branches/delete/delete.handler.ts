@@ -31,9 +31,9 @@ export const branchesDelete = Effect.fn("branches.delete")(function* (flags: Bra
   // requires it) resolves. The yielded value itself is unused.
   void (yield* Tty);
 
-  // `branches` is PARENT-scoped: after `supabase link <branch>`,
-  // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
-  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
+  // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
+  // holds the branch's own ref, and the platform 403s on that ref for every branches-management
+  // endpoint.
   const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
 
   yield* Effect.gen(function* () {
@@ -48,7 +48,6 @@ export const branchesDelete = Effect.fn("branches.delete")(function* (flags: Bra
     );
     yield* deleting?.clear() ?? Effect.void;
 
-    // Established behavior: writes `"Deleted preview branch: <ref>\n"` to STDERR.
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("Deleted preview branch", { project_ref: branchRef });
       return;

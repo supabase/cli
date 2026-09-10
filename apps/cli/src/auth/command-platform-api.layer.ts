@@ -18,11 +18,9 @@ export const makeCommandPlatformApi = Effect.gen(function* () {
   const cliSettings = yield* CommandSettings;
   const credentials = yield* CommandCredentials;
   const debugLogger = yield* DebugLogger;
-  // Every Management API response is passed through the per-command identity
-  // stitcher for session identity stitching. Consume the single per-command
-  // stitcher service rather than building one here, so the typed client shares
-  // the one `stitchAttempted` guard with the raw advisor GETs and the
-  // linked-project cache; otherwise each transport would re-alias/re-persist.
+  // Every Management API response goes through the per-command identity stitcher. Consuming
+  // the shared service, rather than building one here, keeps its `stitchAttempted` guard shared
+  // with the raw advisor GETs and the linked-project cache.
   const { stitch: stitchIdentityFromResponse } = yield* IdentityStitch;
 
   const transformClient = (client: HttpClient.HttpClient) => {
@@ -41,9 +39,9 @@ export const makeCommandPlatformApi = Effect.gen(function* () {
   const resolveAccessToken = Effect.gen(function* () {
     if (Option.isSome(configuredToken)) {
       yield* debugLogger.debug("Using access token from env var...");
-      // credentials.getAccessToken already validates the keyring/file paths;
-      // validate the env token here too so a malformed SUPABASE_ACCESS_TOKEN
-      // fails with the invalid-token error rather than being sent to the API.
+      // credentials.getAccessToken already validates the keyring/file paths; validate the env
+      // token here too so a malformed SUPABASE_ACCESS_TOKEN fails with the invalid-token error
+      // rather than being sent to the API.
       yield* validateAccessToken(Redacted.value(configuredToken.value), "env");
       return configuredToken;
     }

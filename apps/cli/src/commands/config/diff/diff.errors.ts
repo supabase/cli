@@ -40,11 +40,7 @@ export class ConfigDiffWorkdirError extends Data.TaggedError("ConfigDiffWorkdirE
   }
 }
 
-/**
- * The Go-compat global `-o/--output` flag was passed. `config diff` is a
- * net-new TS command with no Go parity contract, so machine output goes
- * through `--output-format` only (per Colum on CLI-2156).
- */
+/** The `-o/--output` flag was passed; this command only supports `--output-format`. */
 export class ConfigDiffOutputFlagUnsupportedError extends Data.TaggedError(
   "ConfigDiffOutputFlagUnsupportedError",
 )<{ readonly message: string }> {
@@ -60,27 +56,23 @@ export const ConfigDiffBranchNotFoundError = targetErrors.BranchNotFoundError;
 export type ConfigDiffBranchNotFoundError = InstanceType<typeof ConfigDiffBranchNotFoundError>;
 
 /**
- * `--project-ref` named a branch (by name), but no project is linked to
- * search for branches under — none of `SUPABASE_PROJECT_ID`,
- * `supabase/.temp/linked-project.json`, or `supabase/.temp/project-ref`
- * yielded a candidate. Mirrors `LinkBranchNotLinkedError`'s
- * classification (link.errors.ts).
+ * `--project-ref` named a branch by name, but no project is linked to search branches under —
+ * none of `SUPABASE_PROJECT_ID`, `supabase/.temp/linked-project.json`, or
+ * `supabase/.temp/project-ref` yielded a candidate. Mirrors `LinkBranchNotLinkedError`.
  */
 export const ConfigDiffBranchNotLinkedError = targetErrors.BranchNotLinkedError;
 export type ConfigDiffBranchNotLinkedError = InstanceType<typeof ConfigDiffBranchNotLinkedError>;
 
 /**
- * `--project-ref` named a branch (by name), and a parent-project candidate
- * exists but is not ref-shaped — corrupt or stale linked state. Mirrors
- * `LinkParentRefInvalidError`'s classification (link.errors.ts).
+ * `--project-ref` named a branch by name, and a parent-project candidate exists but isn't
+ * ref-shaped — corrupt or stale linked state. Mirrors `LinkParentRefInvalidError`.
  */
 export const ConfigDiffParentRefInvalidError = targetErrors.ParentRefInvalidError;
 export type ConfigDiffParentRefInvalidError = InstanceType<typeof ConfigDiffParentRefInvalidError>;
 
 /**
- * The resolved branch has no project ref yet (still provisioning) — guards
- * against an empty/placeholder ref reaching `/v2/projects//config`. Mirrors
- * `LinkBranchNotReadyError`'s classification (link.errors.ts).
+ * The resolved branch has no project ref yet (still provisioning), guarding against an
+ * empty ref reaching `/v2/projects//config`. Mirrors `LinkBranchNotReadyError`.
  */
 export const ConfigDiffBranchNotReadyError = targetErrors.BranchNotReadyError;
 export type ConfigDiffBranchNotReadyError = InstanceType<typeof ConfigDiffBranchNotReadyError>;
@@ -117,10 +109,8 @@ export class ConfigDiffReadStatusError extends Data.TaggedError(
   "ConfigDiffReadStatusError",
 )<StatusErrorArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // `/v2/projects/{ref}/config` names a user-selected resource, so a 404
-    // means "wrong project ref" — user-actionable, not an external-service
-    // problem (same rule as the branch-resolve error above and the
-    // ref-addressed push.errors.ts status errors).
+    // `/v2/projects/{ref}/config` names a user-selected resource, so a 404 means "wrong
+    // project ref" — user-actionable, not an external-service problem.
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }

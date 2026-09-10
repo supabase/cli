@@ -20,11 +20,9 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { formatBytes, packageWorkerDirectory } from "./worker-package.ts";
 
 /**
- * Whether the current user can still read `path` after it was chmod-ed shut.
- *
- * Root ignores the permission bits, and CI sometimes runs as root, so the
- * permission-denied tests below assert the opposite outcome instead of skipping
- * — either way the behaviour under test is pinned.
+ * Whether the current user can still read `path` after it was chmod-ed shut. Root ignores
+ * permission bits, and CI sometimes runs as root, so the permission-denied tests below assert
+ * the opposite outcome instead of skipping — either way the behavior under test is pinned.
  */
 function readableAsCurrentUser(path: string): boolean {
   try {
@@ -108,9 +106,8 @@ describe("packageWorkerDirectory", () => {
     expect(result.fileCount).toBe(3);
   });
 
-  // Anything pnpm installs is symlink-dense, so following links would inline
-  // every dependency's real contents — and a link pointing at an ancestor would
-  // be walked into until the OS refused.
+  // Anything pnpm installs is symlink-dense, so following links would inline every
+  // dependency's contents, and a link pointing at an ancestor would be walked into forever.
   test("stores symlinks as links rather than following them", async () => {
     writeFileSync(join(dir, "target.txt"), "hello");
     symlinkSync("target.txt", join(dir, "link.txt"));
@@ -122,9 +119,9 @@ describe("packageWorkerDirectory", () => {
     expect(link?.link).toBe("target.txt");
   });
 
-  // Broken, but pointing at a name inside the tree: whether the target exists is
-  // the server's problem once the archive is extracted, and dropping the link
-  // would change the tree the build sees.
+  // Broken, but pointing at a name inside the tree: whether the target exists is the
+  // server's problem after extraction, and dropping the link would change the tree the build
+  // sees.
   test("keeps a broken symlink instead of dropping it", async () => {
     symlinkSync("nowhere-at-all.txt", join(dir, "broken.txt"));
 
@@ -133,9 +130,8 @@ describe("packageWorkerDirectory", () => {
     expect(entries.find((entry) => entry.path === "broken.txt")?.type).toBe("2");
   });
 
-  // The archive is the whole of what the server gets, so a link out of it
-  // arrives dangling however valid it is here. Refused while the user is still
-  // at the terminal, rather than surfacing as a remote build failure.
+  // The archive is all the server gets, so a link pointing outside it would arrive dangling
+  // however valid it is here — refused locally rather than surfacing as a remote build failure.
   test.each([
     ["a relative escape", "../../outside.txt"],
     ["an absolute escape", "/nowhere-at-all"],
@@ -176,11 +172,9 @@ describe("packageWorkerDirectory", () => {
     expect(entries.find((entry) => entry.path === "sub/up")?.type).toBe("2");
   });
 
-  // A pre-1970 mtime is negative, and a negative number is not representable in
-  // a USTAR octal field: `(-1).toString(8)` renders to exactly the field width,
-  // so it would sail past the width check and ship a header GNU tar rejects
-  // after the upload. A botched `touch` is not worth failing a deploy over, so
-  // the timestamp collapses to the epoch instead.
+  // A pre-1970 mtime is negative and not representable in a USTAR octal field —
+  // `(-1).toString(8)` renders to exactly the field width, sailing past the width check and
+  // shipping a header GNU tar rejects. A botched `touch` isn't worth failing a deploy over.
   test("packages a file with a pre-epoch mtime, timestamped at the epoch", async () => {
     const file = join(dir, "a.txt");
     writeFileSync(file, "a");
@@ -189,9 +183,8 @@ describe("packageWorkerDirectory", () => {
     const result = await pack(dir);
 
     const entry = readEntries(result.archive).find((candidate) => candidate.path === "a.txt");
-    // Some filesystems refuse a pre-epoch timestamp and clamp it on the way in,
-    // in which case there is nothing to collapse — either way the field has to
-    // be a plain octal number the archive can carry.
+    // Some filesystems clamp a pre-epoch timestamp on the way in, leaving nothing to
+    // collapse — either way the field must be a plain octal number the archive can carry.
     const stored = statSync(file).mtimeMs;
     expect(entry?.mtime).toBe(stored < 0 ? "00000000000" : expectedOctalMtime(stored));
   });
@@ -203,9 +196,8 @@ describe("packageWorkerDirectory", () => {
     expect(result.fileCount).toBe(0);
   });
 
-  // Archiving an unreadable file as zero bytes would report success for a deploy
-  // carrying an empty file. Failing is the only honest answer: the archive is the
-  // application.
+  // Archiving an unreadable file as zero bytes would report success for a deploy carrying an
+  // empty file — failing is the only honest answer, since the archive is the application.
   test("fails rather than archiving a file it cannot read as empty", async () => {
     const unreadable = join(dir, "secret.txt");
     writeFileSync(unreadable, "important");
@@ -243,9 +235,9 @@ describe("packageWorkerDirectory", () => {
   });
 });
 
-// `createTar` throws for a name USTAR cannot represent. Called directly inside
-// the generator that became a defect, which `withJsonErrorHandling` does not
-// catch — so `--output-format json` would have died with no structured error.
+// `createTar` throws for a name USTAR can't represent, which becomes a defect
+// `withJsonErrorHandling` doesn't catch — `--output-format json` would die with no structured
+// error.
 describe("packageWorkerDirectory tar limits", () => {
   let dir: string;
 
@@ -266,19 +258,17 @@ describe("packageWorkerDirectory tar limits", () => {
     );
 
     expect(Exit.isFailure(exit)).toBe(true);
-    // A failure, not a defect: the difference is whether the JSON error handler
-    // ever sees it. `Exit.isFailure` alone does not say which, since a defect
-    // exits that way too — the cause is what tells them apart.
+    // A failure, not a defect — `Exit.isFailure` alone doesn't distinguish them since a
+    // defect exits that way too; the cause is what tells them apart.
     expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(false);
     expect(Exit.isFailure(exit) && Cause.hasFails(exit.cause)).toBe(true);
     expect(JSON.stringify(exit)).toContain("TarPathTooLong");
   });
 
-  // The other half of the same rule. `TarFieldOutOfRangeError` declares itself
-  // user-actionable too, and that declaration can only take effect if the error
-  // reaches the failure channel rather than being rethrown as a defect. An 8 GiB
-  // file trips it through the size field; a far-future mtime is the same check
-  // for the price of a `utimes` call.
+  // The other half of the same rule: `TarFieldOutOfRangeError`'s user-actionable
+  // classification only takes effect if it reaches the failure channel rather than being
+  // rethrown as a defect. A far-future mtime trips the same check as an 8 GiB file, for the
+  // price of a `utimes` call.
   test("reports an out-of-range header field as a failure rather than a defect", async () => {
     const file = join(dir, "a.txt");
     writeFileSync(file, "contents");

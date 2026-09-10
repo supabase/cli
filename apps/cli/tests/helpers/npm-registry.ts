@@ -57,9 +57,7 @@ async function startVerdaccio(
     try {
       const res = await fetch(`${url}/-/ping`);
       if (res.ok) return { url, [Symbol.asyncDispose]: async () => proc.kill() };
-    } catch {
-      // not ready yet
-    }
+    } catch {}
     await Bun.sleep(500);
   }
 
@@ -140,9 +138,7 @@ async function dumpInstalledTree(testDir: string, ext: string): Promise<void> {
         const bp = path.join(binDir, b);
         console.log(`    bin/${b}: ${await describePath(bp)}`);
       }
-    } catch {
-      // no bin/
-    }
+    } catch {}
   }
 }
 
@@ -159,9 +155,7 @@ async function findPlatformBinary(testDir: string, ext: string): Promise<string 
     try {
       await stat(candidate);
       return candidate;
-    } catch {
-      // not this one
-    }
+    } catch {}
   }
   return null;
 }
@@ -234,10 +228,9 @@ export async function runNpmTest(
   const configPath = path.join(tmp.path, "config.yaml");
   const storageDir = path.join(tmp.path, "storage");
 
-  // Verdaccio config: store our published tarballs locally. The umbrella
-  // package is shim-only at runtime and should resolve only our own
-  // `@supabase/cli-*` optional dependencies from this registry; the public npm
-  // uplink is retained for npm installer internals and any incidental tooling.
+  // Stores our published tarballs; the umbrella package's `@supabase/cli-*`
+  // optional deps resolve here, while the public npm uplink stays available
+  // for npm installer internals and other tooling.
   await writeFile(
     configPath,
     `storage: ${storageDir}
@@ -265,9 +258,8 @@ listen: 0.0.0.0:${PORT}
   );
 
   // pnpm publish delegates to npm internals, which only honor per-registry auth
-  // configured in an .npmrc — `NPM_CONFIG_TOKEN` is not consulted. Write a temp
-  // .npmrc with `_authToken` for the verdaccio host and point npm at it via
-  // `npm_config_userconfig` so every publish call sees credentials.
+  // in an .npmrc (not `NPM_CONFIG_TOKEN`); write one and point npm at it via
+  // `npm_config_userconfig`.
   const publishNpmrc = path.join(tmp.path, "publish.npmrc");
   await writeFile(publishNpmrc, `//localhost:${PORT}/:_authToken=dummy\n`);
   const publishEnv = { ...process.env, npm_config_userconfig: publishNpmrc };
@@ -298,14 +290,12 @@ listen: 0.0.0.0:${PORT}
     }
   }
 
-  // Inspect what Verdaccio actually received — directly answers whether
-  // `publishConfig.executableFiles` is being applied to the published tarball.
+  // Confirms `publishConfig.executableFiles` made it into the published tarball.
   console.log("\nVerdaccio tarball contents (bin entries only):");
   for (const pkg of platformPackages) {
     await inspectVerdaccioTarball(storageDir, pkg);
   }
 
-  // Build and publish umbrella package
   const cliDir = path.join(root, "apps", "cli");
   console.log("\nBuilding umbrella package shim...");
   await $`pnpm build:shim`.cwd(cliDir).quiet();
@@ -336,7 +326,6 @@ listen: 0.0.0.0:${PORT}
     console.log(`  <no umbrella tarball storage at ${umbrellaStorage}>`);
   }
 
-  // Create test project
   const testDir = path.join(tmp.path, "test-project");
   await mkdir(testDir);
   await writeFile(
@@ -348,17 +337,14 @@ listen: 0.0.0.0:${PORT}
     `registry=${registry.url}\n//localhost:${PORT}/:_authToken=dummy\n`,
   );
 
-  // Install. Pass --registry explicitly: in some environments (notably ones
-  // where pnpm has set `npm_config_*` env vars) those override the project
-  // .npmrc, and `npm install supabase` silently fetches from registry.npmjs.org
-  // instead — the test then accidentally exercises the published 2.x CLI rather
-  // than the umbrella we just packed. The CLI flag wins over both env vars and
-  // .npmrc, so it is the only resolution path that is actually safe here.
+  // Pass --registry explicitly: pnpm-set `npm_config_*` env vars can override the
+  // project .npmrc and silently fetch from registry.npmjs.org instead, installing
+  // the published CLI rather than the umbrella just packed. The CLI flag wins over
+  // both env vars and .npmrc.
   const installSpec = tag === "latest" ? umbrellaName : `${umbrellaName}@${tag}`;
   console.log(`\nInstalling ${installSpec}...`);
   await $`npm install --registry ${registry.url} ${installSpec}`.cwd(testDir);
 
-  // Verify
   console.log("\nVerifying...");
   const ext = process.platform === "win32" ? ".cmd" : "";
   const binPath = path.join(testDir, "node_modules", ".bin", `supabase${ext}`);
@@ -375,8 +361,7 @@ listen: 0.0.0.0:${PORT}
     console.log(`  stdout=${JSON.stringify(versionResult.stdout)}`);
     console.log(`  stderr=${JSON.stringify(versionResult.stderr)}`);
 
-    // Isolate "shim broken" vs "platform binary broken" by trying the
-    // platform binary directly.
+    // Isolate "shim broken" from "platform binary broken".
     const platformBin = await findPlatformBinary(testDir, ext);
     if (platformBin) {
       console.log(`\n[verify] retrying via platform binary: ${platformBin}`);

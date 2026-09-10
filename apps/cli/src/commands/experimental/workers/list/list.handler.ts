@@ -18,25 +18,22 @@ import type { WorkersListFlags } from "./list.command.ts";
 /**
  * `supabase experimental workers list` — every worker in this project, deployed or not.
  *
- * A union of two sources, because either half alone is misleading: the
- * project's `[workers.*]` entries (scaffolded, maybe never deployed) and what
- * the API reports as deployed (including anything deployed from elsewhere, or
- * from a directory since deleted). A worker in the config with nothing deployed
- * shows as `not deployed`; a deployed worker with no local entry is called out,
- * since pushing it from here would have to guess its runtime.
+ * Merges two sources that are each misleading alone: the project's
+ * `[workers.*]` entries (maybe never deployed) and what the API reports as
+ * deployed (including workers pushed from elsewhere). A configured worker with
+ * nothing deployed shows as `not deployed`; a deployed worker with no local
+ * entry is called out, since pushing it from here would have to guess its runtime.
  *
- * The list endpoint deliberately makes no per-worker backend call, so it
- * carries no live instance tally — the `INSTANCES` column is the declared
- * count from the spec. `status` is where the live tally lives.
+ * `INSTANCES` is the declared count from the spec — the list endpoint makes no
+ * per-worker call, so it carries no live tally; `status` has that.
  */
 
 /**
- * No URL column. Every worker's URL is the same 40-odd characters of host and
- * prefix with the name on the end, which pushed the table past 130 columns to
- * carry one derivable field — `renderGlamourTable` sizes each column to its
- * widest cell and never wraps. `workers status` renders it, vertically, for the
- * same reason (see `workers.format.ts`), and every machine format still carries
- * `url` per worker.
+ * No URL column: every worker's URL is the same ~40 characters of host and
+ * prefix with just the name changing, which would push the table past 130
+ * columns for one derivable field. `workers status` renders it vertically for
+ * the same reason (see `workers.format.ts`); every machine format still
+ * carries `url` per worker.
  */
 const HEADERS = ["NAME", "RUNTIME", "SIZE", "STATE", "INSTANCES"] as const;
 
@@ -62,10 +59,9 @@ function stateLabel(row: WorkerRow): string {
 }
 
 /**
- * The API omits `spec.runtime` only for a context-only build, so for a deployed
- * worker its absence *is* "dockerfile". For one that has never been deployed
- * there is nothing to infer from — `push` would guess from marker files — so say
- * unknown rather than assert a runtime it may not have.
+ * The API omits `spec.runtime` only for a context-only build, so its absence
+ * on a deployed worker means "dockerfile". An undeployed worker has nothing to
+ * infer from, so this reports unknown rather than guessing.
  */
 function runtimeLabelFor(row: WorkerRow): string | undefined {
   if (row.deployed !== undefined) {
@@ -106,18 +102,17 @@ export const workersList = Effect.fn("experimental.workers.list")(function* (
   const telemetryState = yield* TelemetryState;
   const settings = yield* CommandSettings;
 
-  // The ref is resolved outside the finalizers because caching it is one of
-  // them; everything that can fail on its own — loading `config.toml`,
-  // validating the name, resolving the worker — belongs inside, so those
-  // failures still flush telemetry. Same shape as `config/push`.
+  // Resolved here, outside the block below, since caching it is one of that
+  // block's own finalizers — everything else that can fail belongs inside so
+  // those failures still flush telemetry.
   const projectRef = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
     const project = yield* loadWorkersProject();
 
-    // Up front, like the rest of the family: this payload always carries a
-    // `workers` array, so `-o env` can never encode it, and finding that out at
-    // emit time means failing after the fetch has already been paid for.
+    // Checked up front: this payload always carries a `workers` array, which
+    // `-o env` can never encode, so failing at emit time would mean paying for
+    // the fetch first.
     yield* rejectWorkersEnvOutput();
 
     const fetching = yield* output.task("Fetching workers...");
@@ -128,9 +123,9 @@ export const workersList = Effect.fn("experimental.workers.list")(function* (
 
     const byName = new Map(deployed.map((worker) => [worker.name, worker]));
     const configuredNames = Object.keys(project.section.workers);
-    // Three sources: config entries, deployed workers, and directories under the
-    // workers root. The last are deployable — `discoverWorkerNames` is the
-    // walk a bare `push` does — so the inventory has to show them.
+    // Three sources: config entries, deployed workers, and on-disk directories
+    // under the workers root — the last are deployable via a bare `push`, so
+    // the inventory must show them too.
     const discoveredNames = yield* discoverWorkerNames(project);
     const names = [...new Set([...configuredNames, ...discoveredNames, ...byName.keys()])].sort();
 
@@ -156,10 +151,9 @@ export const workersList = Effect.fn("experimental.workers.list")(function* (
         configured: row.configured,
         local: row.local,
         deployed: row.deployed !== undefined,
-        // Read the same way `runtimeLabel` reads it, so `-o json` and the text
-        // table cannot disagree: for a deployed worker an absent `spec.runtime`
-        // *means* dockerfile, and falling back to the local config there
-        // reported a stale runtime the deployment had moved off.
+        // Reads the same way `runtimeLabel` does, so `-o json` and the text
+        // table can't disagree: an absent `spec.runtime` on a deployed worker
+        // means dockerfile, not a stale local config value.
         runtime: runtimeLabelFor(row),
         size: row.deployed?.spec.size,
         state: stateLabel(row),
@@ -168,9 +162,9 @@ export const workersList = Effect.fn("experimental.workers.list")(function* (
       })),
     };
 
-    // `-o` is independent of `--output-format`: it leaves `output.format` as
-    // `text`, so this has to be checked before the text branch below, not
-    // inside the structured one.
+    // `-o` is independent of `--output-format` and leaves `output.format` as
+    // `text`, so this must be checked before the text branch, not inside the
+    // structured one.
     if (yield* emitWorkersMachineOutput(payload)) {
       return;
     }
@@ -189,18 +183,10 @@ export const workersList = Effect.fn("experimental.workers.list")(function* (
 
     yield* output.raw(renderGlamourTable([...HEADERS], rows.map(toCells)));
 
-    // Two different problems, and they need different advice. A worker with a
-    // local directory but no entry can be pushed — the runtime is the only
-    // unknown. One with nothing local at all cannot: `deployOneWorker` checks
-    // the source directory *before* inferring a runtime and fails with
-    // `WorkerSourceMissingError`, so telling that user about runtime guessing
-    // points them at the wrong prerequisite.
-    //
-    // Both are written the way this shell writes every other heads-up that is
-    // not a failure: a yellow `WARNING:` prefix, then the consequence on its own
-    // line (`start`'s Docker-on-Windows notice is the same two-line shape). A
-    // single long sentence re-flows differently at every terminal width, right
-    // under a table that lines its columns up.
+    // A local directory with no config entry can still be pushed (only the
+    // runtime is unknown); nothing local at all can't — `deployOneWorker`
+    // requires a source directory before it infers a runtime, so pointing that
+    // case at runtime guessing would name the wrong problem.
     const unconfigured = rows
       .filter((row) => row.deployed !== undefined && !row.configured && row.local)
       .map((row) => row.name);

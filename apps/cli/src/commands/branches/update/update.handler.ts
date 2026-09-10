@@ -39,13 +39,10 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
   const api = yield* CommandPlatformApi;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
-  // Force `Tty` into the handler's R channel so `promptBranchId` (which
-  // requires it) resolves. The yielded value itself is unused.
-  void (yield* Tty);
+  void (yield* Tty); // ensures Tty is in handler R so promptBranchId resolves
 
-  // `branches` is PARENT-scoped: after `supabase link <branch>`,
-  // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
-  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
+  // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
+  // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
   const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
 
   yield* Effect.gen(function* () {
@@ -66,8 +63,7 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
       })
       .pipe(
         Effect.tapError(() => patching?.fail() ?? Effect.void),
-        // Pass the resolved branch's project ref so the entitlements check
-        // is scoped to the branch's org.
+        // Scopes the entitlements check to the branch's own org via its resolved project ref.
         Effect.catch(
           gateMapError(
             { projectRef: branchRef, featureKey: "branching_persistent" },
@@ -93,8 +89,7 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
-    // Go writes "Updated preview branch:" to STDERR (`fmt.Fprintln(os.Stderr, ...)`),
-    // then the payload to stdout via EncodeOutput / RenderTable.
+    // The confirmation message goes to stderr; the payload always goes to stdout.
     if (goFmt === "json") {
       yield* output.raw("Updated preview branch:\n", "stderr");
       yield* output.raw(encodeGoJson(updated));

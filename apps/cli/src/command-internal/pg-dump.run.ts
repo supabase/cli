@@ -7,22 +7,15 @@ import { getRegistryImageUrl } from "./docker-registry.ts";
 import { DockerRun } from "./docker-run.service.ts";
 
 /**
- * Runs a pg_dump / pg_dumpall bash script in a one-shot container, streaming its
- * stdout chunk-by-chunk to `onStdout` and teeing stderr live, returning the exit
- * code + captured stderr for failure classification. Mirrors `dockerExec`:
- * host networking by default (overridden
- * by the global `--network-id` flag, the ambient `SUPABASE_NETWORK_ID` env var, or
- * a project `supabase/.env` value, in that precedence), no security-opt, and the
- * Linux-only `host.docker.internal:host-gateway` extra host.
+ * Runs a pg_dump/pg_dumpall bash script in a one-shot container, streaming stdout
+ * chunk-by-chunk to `onStdout` and teeing stderr live, and returning the exit code and
+ * captured stderr for the caller to classify (e.g. with `isIPv6ConnectivityError`). Host
+ * networking by default, overridden by `--network-id`, `SUPABASE_NETWORK_ID`, or a project
+ * `supabase/.env` value, in that precedence.
  *
- * Shared by `db dump` (streams to `--file`/stdout), `db pull`'s initial-migra
- * schema dump (streams to the migration file), and (CLI-1969) `migration
- * squash`'s three one-shot dumps (before/after `auth`/`storage` diff buffers,
- * plus the full dump streamed straight into the target migration file) — the
- * third consumer is why this module lives in `command-internal/` rather than
- * `commands/db/shared/`. The pooler-fallback *decision* stays with the caller —
- * this helper runs a single attempt and surfaces its exit/stderr so the caller
- * can classify with `isIPv6ConnectivityError`.
+ * Shared by `db dump`, `db pull`'s initial-migra schema dump, and `migration squash`'s
+ * before/after/full dumps. Runs a single attempt only; the pooler-fallback decision stays
+ * with the caller.
  */
 export const streamPgDump = Effect.fnUntraced(function* <E>(params: {
   /** Resolved Postgres image tag (pre-registry-URL); the helper applies the registry mirror. */
@@ -43,14 +36,9 @@ export const streamPgDump = Effect.fnUntraced(function* <E>(params: {
   const runtimeInfo = yield* RuntimeInfo;
   const networkIdFlag = yield* NetworkIdFlag;
 
-  // `dockerExec` sets `NetworkMode` to host, but
-  // `DockerStart` then overrides it with `viper.GetString("network-id")` whenever
-  // that resolves non-empty — a bound flag/env value wins,
-  // flag > ambient env > project-`.env` (`viperEnvStringWithProjectFallback`
-  // precedence). Only when NEITHER the flag nor the env resolves does Go fall back
-  // to `NetId` — but that branch only fires when the caller
-  // left `NetworkMode` empty, which the dump path never does, so the effective
-  // pg_dump fallback is host networking, not the generated `supabase_network_*`.
+  // Host networking by default; a resolved flag/env/project-env value wins in that
+  // precedence order. The generated `supabase_network_*` fallback used elsewhere never
+  // applies here, since this path always sets a NetworkMode.
   const networkId = Option.getOrUndefined(networkIdFlag);
   const envNetworkId = viperEnvStringWithProjectFallback(
     "SUPABASE_NETWORK_ID",

@@ -15,12 +15,10 @@ import {
 import type { BranchesPauseFlags } from "./pause.command.ts";
 import { branchesPause } from "./pause.handler.ts";
 
-// 20-lowercase project ref returned by the resolver and forwarded to the
-// pause endpoint. Pause/Restore endpoints accept plain project refs, no oneOf.
+// Pause/restore endpoints accept a plain project ref, unlike getABranchConfig's oneOf.
 const BRANCH_REF = "cccccccccccccccccccc";
 const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
 
-// Full V1GetABranchConfigOutput body for the resolver's UUID path.
 const BRANCH_CONFIG = {
   ref: BRANCH_REF,
   postgres_version: "15",
@@ -31,7 +29,6 @@ const BRANCH_CONFIG = {
   db_port: 5432,
 };
 
-// Full V1GetABranchOutput body for the resolver's named-lookup path.
 const BRANCH_NAMED_LOOKUP = {
   id: BRANCH_UUID,
   name: "feat-x",
@@ -59,11 +56,9 @@ function buildApi(opts: SetupOpts) {
         if (request.method === "POST" && request.url.endsWith("/pause")) {
           return jsonResponse(request, pauseStatus, null);
         }
-        // Resolver UUID path: GET /v1/branches/{uuid}
         if (request.method === "GET" && request.url.includes("/v1/branches/")) {
           return jsonResponse(request, 200, BRANCH_CONFIG);
         }
-        // Resolver named-lookup path: GET /v1/projects/{ref}/branches/{name}
         if (
           request.method === "GET" &&
           request.url.includes(`/v1/projects/${VALID_REF}/branches/`)

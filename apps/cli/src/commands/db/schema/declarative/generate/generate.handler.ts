@@ -60,17 +60,11 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
   const telemetryState = yield* TelemetryState;
   const linkedProjectCache = yield* LinkedProjectCache;
   const dnsResolver = yield* DnsResolverFlag;
-  // Go's `dbDeclarativeCmd.PersistentPreRunE` calls `flags.LoadConfig` — which runs
-  // `loadNestedEnv` and `os.Setenv`s each project-.env key — BEFORE reading
-  // `viper.GetBool("EXPERIMENTAL")` for the gate below (`apps/cli-go/cmd/
-  // db_schema_declarative.go:73-78`, `pkg/config/config.go:789`). Load the project env
-  // first and resolve against it, as `db reset` does for its own experimental gate, so a
-  // `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` opens the gate too.
+  // The project env is loaded and resolved before the gate below, so a `SUPABASE_EXPERIMENTAL`
+  // set only in `supabase/.env` opens the gate too.
   const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
-  // `--yes` OR `SUPABASE_YES` (shell env or project `.env`): Go's prompts here
-  // read `viper.GetBool("YES")` after `loadNestedEnv`, so the env var must
-  // auto-confirm too, not just the flag (CLI-1974).
+  // `--yes` or `SUPABASE_YES` (shell env or project `.env`) must auto-confirm the prompts below.
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
 
   // The resolved linked ref (explicit `--linked` only), hoisted so the post-run
@@ -79,24 +73,18 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
 
   yield* Effect.gen(function* () {
     const baseToml = yield* readDbToml(fs, path, cliSettings.workdir);
-    // Gate before the mutex check below — order matters; see
-    // requirePgDelta's doc comment for why. The pg-delta gate also runs on
-    // the BASE config: Go's declarative `PersistentPreRunE` gates before the root
-    // `ParseDatabaseConfig` reloads any `[remotes.<ref>]` block, so a remote
-    // `experimental.pgdelta.enabled = true` must NOT enable a base-disabled
-    // command without `--experimental`.
+    // Gate before the mutex check below (see `requirePgDelta`'s doc comment for why), and on the
+    // base config: a remote `experimental.pgdelta.enabled = true` must not enable a
+    // base-disabled command without `--experimental`.
     yield* requirePgDelta({
       experimental,
       pgDeltaEnabled: baseToml.pgDelta.enabled,
       configPath: path.join("supabase", "config.toml"),
     });
 
-    // cobra `MarkFlagsMutuallyExclusive("db-url", "linked", "local")`
-    // (`apps/cli-go/cmd/db_schema_declarative.go:570`, deleted in CLI-1970;
-    // last present at commit 7b469f5b3) runs via
-    // `ValidateFlagGroups()`, which cobra invokes AFTER `PersistentPreRunE` (the
-    // gate above) — see requirePgDelta's doc comment for the full ordering.
-    // "Set" follows cobra's `Changed`: Option set when `Some`, boolean when `true`.
+    // Mutually-exclusive db-url/linked/local group, checked after the gate above (see
+    // `requirePgDelta`'s doc comment for the ordering). "Set" means explicitly set: Option
+    // `Some`, or boolean `true`.
     const exclusive: Array<string> = [];
     if (Option.isSome(flags.dbUrl)) exclusive.push("db-url");
     if (Option.isSome(flags.linked)) exclusive.push("linked");
@@ -109,15 +97,12 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
       );
     }
 
-    // Explicit `--linked`: Go re-loads config with the resolved ref (root
-    // `ParseDatabaseConfig` linked branch), so a matching `[remotes.<ref>]` block
-    // overrides `experimental.pgdelta.*` (declarative_schema_path / format_options)
-    // for the downstream path/format settings only — NOT the gate above. (Smart-mode
-    // "Linked project" does NOT re-load in Go, so it is excluded — only `flags.linked`.)
+    // Explicit `--linked` re-loads config with the resolved ref, so a matching `[remotes.<ref>]`
+    // block overrides `experimental.pgdelta.*` downstream only, not the gate above. Smart-mode's
+    // "Linked project" choice does not re-load, so only `flags.linked` triggers this.
     let toml = baseToml;
-    // The resolved linked ref (explicit `--linked` only) is threaded into the
-    // native raw-shadow export source (so its platform setup uses the
-    // remote-merged config, matching Go's `Generate`) and into the post-run
+    // The resolved linked ref (explicit `--linked` only) is threaded into the raw-shadow export
+    // source, so its platform setup uses the remote-merged config, and into the post-run
     // linked-project cache finalizer below.
     if (Option.isSome(flags.linked)) {
       const linkedRef = Option.isSome(cliSettings.projectId)
@@ -129,10 +114,9 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
       }
     }
 
-    // Preserve the selected value for user-facing output: invocation-local
-    // `--output` wins, otherwise use the configured declarative path. File I/O
-    // resolves relative values from the project workdir while keeping absolute
-    // values unchanged.
+    // Preserve the selected value for user-facing output: invocation-local `--output` wins,
+    // otherwise the configured declarative path. File I/O resolves relative values from the
+    // project workdir while keeping absolute values unchanged.
     const declarativeDirRel = Option.getOrElse(flags.outputDir, () =>
       resolveDeclarativeDir(path, toml.pgDelta),
     );
@@ -158,13 +142,10 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
 
     const run: DeclarativeRunContext = {
       pgDelta: {
-        // `resolvePgDeltaProjectId` mirrors Go's `Config.ProjectId` singleton
-        // (`SUPABASE_PROJECT_ID` env → config.toml's `project_id` → sanitized workdir
-        // basename) — NOT `cliSettings.projectId` alone, which is env-only and resolves to
-        // `""` for a project relying on config.toml's `project_id` or the workdir-basename
-        // default, mounting the WRONG `supabase_edge_runtime_` Deno-cache volume. `toml`
-        // reflects any `--linked` remote merge above, so its own `appliedRemote`/`projectId`
-        // suppress a conflicting ambient env var the same way `db diff`/`db pull` do.
+        // `resolvePgDeltaProjectId` resolves `SUPABASE_PROJECT_ID` env → config.toml's
+        // `project_id` → sanitized workdir basename — not `cliSettings.projectId` alone, which
+        // is env-only and would mount the wrong `supabase_edge_runtime_` Deno-cache volume for a
+        // project relying on config or the workdir-basename default.
         projectId: resolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
         cwd: cliSettings.workdir,
         // Merged config's deno_version (re-loaded with the linked ref above on
@@ -191,11 +172,8 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     if (hasExplicitTarget) {
       const seam = yield* DeclarativeSeam;
       if (Option.isSome(flags.local)) {
-        // Target selection keys off flag presence (Go's `Changed`), but the
-        // auto-start gates on the boolean VALUE: Go passes `declarativeLocal` to
-        // `ensureLocalDatabaseStarted` (`db_schema_declarative.go:190`), which
-        // short-circuits `if !local { return nil }` (`:127-128`). So `--local=false`
-        // selects the local target but must NOT start a stopped stack.
+        // Target selection keys off flag presence, but auto-start gates on the boolean value, so
+        // `--local=false` selects the local target but must not start a stopped stack.
         yield* seam.ensureLocalPostgresImageCurrent();
         if (Option.getOrElse(flags.local, () => false)) {
           yield* seam.ensureLocalDatabaseStarted();
@@ -214,10 +192,8 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
         );
       }
       if ((yield* hasDeclarativeFiles(fs, declarativeDir)) && !flags.overwrite) {
-        // Go asks via Console.PromptYesNo (db_schema_declarative.go:268-270,
-        // default false): --yes/SUPABASE_YES auto-confirms WITH the
-        // `<label> [y/N] y` stderr echo (console.go:70-72) — routed through
-        // `promptYesNo` so the echo is not skipped (CLI-1974).
+        // `--yes`/`SUPABASE_YES` auto-confirms, but still echoes the `<label> [y/N] y` stderr
+        // line via `promptYesNo` rather than skipping it.
         const ok = yield* promptYesNo(
           output,
           yes,
@@ -232,23 +208,14 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
         }
       }
       const hasMigrations = yield* hasMigrationFiles(fs, path, migrationsDir);
-      // Go's `runDeclarativeGenerate` calls `flags.LoadProjectRef` ONLY inside the
-      // `hasMigrationFiles` branch (`db_schema_declarative.go:219-224`): it offers a
-      // "Linked project" choice when the workdir is linked, and that `LoadProjectRef`
-      // sets the global `flags.ProjectRef`, so root `ensureProjectGroupsCached` writes
-      // the linked-project cache/groups regardless of which target the user then picks
-      // (`cmd/root.go:176,214-218`). Resolve the ref the same way the resolver's
-      // `--linked` branch does (config `project_id` → `.temp/project-ref`) — only when
-      // migrations exist (matching Go's placement; no read in the no-migrations path) —
-      // and record it for the post-run cache finalizer so smart generate in a linked
-      // workdir caches like Go even when the user chooses local/custom.
+      // Only when migrations exist, resolve the ref (config `project_id` → `.temp/project-ref`)
+      // and record it for the post-run cache finalizer, so smart generate in a linked workdir
+      // caches the project regardless of which target the user picks.
       let linkedRef = Option.none<string>();
       if (hasMigrations) {
-        // Smart prompt only decides whether to OFFER the linked choice — Go guards
-        // this `LoadProjectRef` with `if err == nil` (`db_schema_declarative.go:222-224`),
-        // ignoring read/validation errors and proceeding with local/custom. So swallow
-        // a broken `.temp/project-ref` here (omit the linked choice) rather than
-        // aborting; the explicit `--linked` branch above keeps propagating (hard path).
+        // Only decides whether to offer the linked choice, so swallow a broken
+        // `.temp/project-ref` here (omit the choice) rather than aborting; the explicit
+        // `--linked` branch above still propagates a real failure.
         linkedRef = Option.isSome(cliSettings.projectId)
           ? cliSettings.projectId
           : yield* readProjectRefFile(fs, path, cliSettings.workdir).pipe(
@@ -274,11 +241,8 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     const result = yield* generateDeclarativeOutput(run, target);
 
     if (!overwrite && (yield* confirmOverwriteHasFiles(fs, declarativeDir))) {
-      // Go's confirmOverwrite goes through Console.PromptYesNo (`internal/db/
-      // declarative/declarative.go:234`, default false): --yes/SUPABASE_YES
-      // auto-confirms WITH the `<label> [y/N] y` stderr echo (console.go:70-72)
-      // — routed through `promptYesNo` so the echo is not skipped
-      // (CLI-1974).
+      // `--yes`/`SUPABASE_YES` auto-confirms, but still echoes the `<label> [y/N] y` stderr line
+      // via `promptYesNo` rather than skipping it.
       const ok = yield* promptYesNo(
         output,
         yes,
@@ -298,13 +262,9 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     yield* warnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
     yield* output.raw(declarativeSchemaWrittenLine(declarativeDirRel), "stderr");
   }).pipe(
-    // Go's `ensureProjectGroupsCached` PersistentPostRun (`cmd/root.go:176,214-234`)
-    // writes the linked-project cache (`GET /v1/projects/{ref}` →
-    // `supabase/.temp/linked-project.json`) for any resolved ref, on success and
-    // failure. Only explicit `--linked` resolves a ref here (Go gates on
-    // `flags.ProjectRef != ""`); the cache layer no-ops when the file exists, the
-    // token is missing, or the GET is non-200. Read the ref lazily — it is assigned
-    // inside the body above.
+    // Writes the linked-project cache for any resolved ref, on success and failure. Only
+    // explicit `--linked` resolves a ref here; the cache layer no-ops when the file exists, the
+    // token is missing, or the GET is non-200.
     Effect.ensuring(
       Effect.suspend(() =>
         linkedProjectRef !== undefined ? linkedProjectCache.cache(linkedProjectRef) : Effect.void,
@@ -321,15 +281,10 @@ const hasDeclarativeFiles = Effect.fnUntraced(function* (fs: FileSystem.FileSyst
   return entries.length > 0;
 });
 
-// The overwrite-confirmation guard, mirroring Go's `confirmOverwrite`
-// (`apps/cli-go/internal/db/declarative/declarative.go:220-235`). Unlike the
-// smart-mode `hasDeclarativeFiles` above (which matches `cmd.hasDeclarativeFiles`
-// and swallows read errors), `confirmOverwrite` returns the `ReadDir` error and
-// `Generate` aborts on it (`declarative.go:123-127`). So an unreadable-but-existing
-// declarative dir must abort here rather than read as "empty" and get silently
-// overwritten by `writeDeclarativeSchemas`. Only a not-exist directory means
-// "no confirmation needed"; Go returns the raw error, so let the `PlatformError`
-// propagate unwrapped.
+// The overwrite-confirmation guard. Unlike the smart-mode `hasDeclarativeFiles` above (which
+// swallows read errors), an unreadable-but-existing declarative dir must abort here rather than
+// read as "empty" and get silently overwritten by `writeDeclarativeSchemas`; only a not-exist
+// directory means "no confirmation needed", so let any other `PlatformError` propagate unwrapped.
 const confirmOverwriteHasFiles = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   dir: string,
@@ -351,11 +306,9 @@ const hasMigrationFiles = Effect.fnUntraced(function* (
   path: Path.Path,
   migrationsDir: string,
 ) {
-  // Smart-mode presence/prompt probe only: mirror Go's `cmd.hasMigrationFiles`
-  // (`db_schema_declarative.go:164-169`), which wraps `migration.ListLocalMigrations`
-  // and returns `false` on EVERY error (unreadable dir, path-is-a-file, …), not just
-  // not-exist — so generate continues into the no-migrations local flow. The real diff
-  // path keeps `listLocalMigrations`' hard error behavior (Go `declarative.go:369`).
+  // Smart-mode presence/prompt probe only: returns `false` on any error (unreadable dir,
+  // path-is-a-file, not-exist, …), so generate continues into the no-migrations local flow. The
+  // real diff path keeps `listLocalMigrations`'s hard error behavior instead.
   const migrations = yield* listLocalMigrations(fs, path, migrationsDir).pipe(
     Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
   );

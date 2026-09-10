@@ -2,9 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { isValidBase0Int64, parseUintBase0 } from "./parse-uint.ts";
 
-// Every expectation in this file is ground truth captured from go1.26:
-// `strconv.ParseUint(s, 0, 64)` — the exact call pflag makes for a `UintVarP`
-// flag (`uintValue.Set`, `pflag/uint.go`).
 describe("parseUintBase0 (Go strconv.ParseUint(s, 0, 64) parity)", () => {
   it("parses plain decimal", () => {
     expect(parseUintBase0("0")).toEqual({ value: 0 });
@@ -55,18 +52,12 @@ describe("parseUintBase0 (Go strconv.ParseUint(s, 0, 64) parity)", () => {
   it("reports uint64 overflow as `value out of range`, accepting max uint64", () => {
     expect(parseUintBase0("18446744073709551616")).toEqual({ cause: "value out of range" });
     expect(parseUintBase0("0x10000000000000000")).toEqual({ cause: "value out of range" });
-    // Max uint64 parses (the Number conversion is lossy up there — documented
-    // residual in parse-uint.ts — but the accept/reject verdict matches Go).
     expect(parseUintBase0("18446744073709551615")).toEqual({
       value: Number(18446744073709551615n),
     });
   });
 });
 
-// Every expectation in this file is ground truth captured from go1.26:
-// `strconv.ParseInt(s, 0, 64)` — the exact call pflag makes for an
-// `Int64VarP` flag (`int64Value.Set`, `pflag/int64.go`), e.g. `backups
-// restore --timestamp`.
 describe("isValidBase0Int64 (Go strconv.ParseInt(s, 0, 64) parity)", () => {
   it("accepts int64's exact bounds, both signs", () => {
     expect(isValidBase0Int64("9223372036854775807")).toBe(true); // int64 max
@@ -74,11 +65,7 @@ describe("isValidBase0Int64 (Go strconv.ParseInt(s, 0, 64) parity)", () => {
   });
 
   it("rejects a magnitude one past int64's bound on each side — the asymmetric two's-complement range", () => {
-    // 9223372036854775808 is a syntactically valid uint64 (well under
-    // MAX_UINT64) but exceeds int64's positive bound by exactly one.
     expect(isValidBase0Int64("9223372036854775808")).toBe(false);
-    // -9223372036854775809's magnitude, 9223372036854775809, exceeds int64's
-    // negative-side bound (9223372036854775808) by one too.
     expect(isValidBase0Int64("-9223372036854775809")).toBe(false);
   });
 

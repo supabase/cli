@@ -14,7 +14,7 @@ import type { Path } from "effect";
 
 import { resolveSupabaseHome } from "../shared/config/supabase-home.ts";
 
-/** `supabase/.temp/pgdelta` — catalog snapshots and debug bundles (`declarative.go:44`). */
+/** `supabase/.temp/pgdelta` — catalog snapshots and debug bundles. */
 export function pgDeltaTempPath(path: Path.Path, workdir: string): string {
   return path.join(workdir, "supabase", ".temp", "pgdelta");
 }

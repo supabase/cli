@@ -34,11 +34,9 @@ import { declarativeSeamLayer } from "./pgdelta.seam.layer.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
 
 /**
- * Integration coverage for the fully-native `declarativeSeamLayer` (CLI-1970) —
- * `generate`/`sync`'s own integration tests stub `DeclarativeSeam` entirely
- * (per its own service doc comment), so this file is the only place the real
- * local-database bring-up composition gets exercised end-to-end, with a fake
- * `DbConnection`/`DockerRun`.
+ * Integration coverage for the fully-native `declarativeSeamLayer`: `generate`/`sync`'s own
+ * tests stub `DeclarativeSeam` entirely, so this file is the only place the real local-database
+ * bring-up composition is exercised end-to-end, with a fake `DbConnection`/`DockerRun`.
  */
 
 const alwaysReadyHttpClientLayer = Layer.succeed(

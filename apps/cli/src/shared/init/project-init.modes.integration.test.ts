@@ -29,12 +29,9 @@ function runInit(cwd: string) {
   }).pipe(Effect.provide(layer));
 }
 
-// Go pins every init-scaffolded directory to 0755 and file to 0644
-// (`internal/init/init.go:89,121,138,151,166` via `utils.WriteFile`/
-// `MkdirIfNotExistFS`, `internal/utils/misc.go:273,281-284`). Node's own
-// umask-masked defaults happen to coincide under the common `022`, so pin the
-// process umask to 0 here to prove the modes are pinned explicitly, not
-// incidental to the ambient umask.
+// Pin the process umask to 0 to prove the modes below are pinned explicitly,
+// not incidental to Node's own umask-masked defaults (which coincide under
+// the common 022).
 describe("initProject file modes (Go parity: 0755 dirs, 0644 files)", () => {
   it.live("pins the supabase dir and config.toml to Go's exact modes", () => {
     const cwd = makeTempProjectDir();

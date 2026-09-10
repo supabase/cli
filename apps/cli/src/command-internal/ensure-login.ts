@@ -17,20 +17,18 @@ import { LoginFailedError, type LoginVerificationError } from "../commands/login
 import { dashboardUrl } from "./profile.ts";
 import { resolveAccessToken } from "./resolve-token.ts";
 
-// `maxRetries`: the initial probe plus 2 retries (3 total).
+// Initial probe plus 2 retries (3 total).
 const MAX_LOGIN_RETRIES = 2;
 
 export const LOGGED_IN_MSG = "You are now logged in. Happy coding!\n";
 
 /**
- * Mirrors `handleTelemetryAfterLogin`: fetch the gotrue
- * id (best-effort), stitch or clear the telemetry identity, then always capture
- * `cli_login_completed`. The capture rides the just-stitched identity so PostHog
- * attributes it to the user.
+ * Fetches the gotrue id (best-effort), stitches or clears the telemetry identity, then always
+ * captures `cli_login_completed`, riding the just-stitched identity so PostHog attributes it to
+ * the user.
  *
- * NOTE: `StitchLogin` only *aliases* — it does NOT call `identify`. Do not add
- * `analytics.identify` here; it would emit an event the established telemetry
- * never sends. Shared by the token path (`login`) and the browser flow.
+ * `stitchLogin` only aliases — it does not call `identify`. Do not add `analytics.identify` here;
+ * it would emit an event the established telemetry never sends.
  */
 export const postLoginTelemetry = Effect.fnUntraced(function* (token: string) {
   const loginApi = yield* LoginApi;
@@ -58,12 +56,11 @@ export interface BrowserLoginOptions {
 }
 
 /**
- * The interactive browser login flow, extracted from `login`'s handler so
- * `bootstrap` can reuse it: generate an ECDH keypair, surface the dashboard
- * login link (optionally opening the browser), poll for the verification code
- * with Go's retry/notify cadence, decrypt + persist the token, then run the
- * post-login telemetry and print the success banners. Owns the single
- * `cli_login_completed` capture for this path.
+ * The interactive browser login flow, shared by `login` and `bootstrap`: generates an ECDH
+ * keypair, surfaces the dashboard login link (optionally opening the browser), polls for the
+ * verification code with a retry/notify cadence, decrypts and persists the token, then runs the
+ * post-login telemetry and prints the success banners. Owns the single `cli_login_completed`
+ * capture for this path.
  */
 export const browserLogin = Effect.fnUntraced(function* (opts: BrowserLoginOptions) {
   const output = yield* Output;
@@ -83,7 +80,7 @@ export const browserLogin = Effect.fnUntraced(function* (opts: BrowserLoginOptio
     ? opts.tokenName.value
     : yield* crypto.defaultTokenName;
 
-  // Go concatenates the query string without URL-encoding.
+  // Established behavior: the query string is concatenated without URL-encoding.
   const loginUrl =
     `${dashboardUrl(cliSettings.profile)}/cli/login` +
     `?session_id=${sessionId}&token_name=${tokenName}&public_key=${publicKeyHex}`;
@@ -111,9 +108,8 @@ export const browserLogin = Effect.fnUntraced(function* (opts: BrowserLoginOptio
     yield* output.raw(`Here is your login link, open it in the browser ${loginUrl}\n\n`, "stdout");
   }
 
-  // Verify + retry, mirroring `pollForAccessToken` backoff:
-  // the notifier prints `<err>\nRetry (n/2): ` after the
-  // first 2 failures; the 3rd failure gives up without a notice.
+  // Verify with retry: prints `<err>\nRetry (n/2): ` after each of the first 2 failures; the 3rd
+  // failure gives up without a notice.
   const verifyWithRetries = (
     failuresSoFar: number,
   ): Effect.Effect<
@@ -153,8 +149,8 @@ export const browserLogin = Effect.fnUntraced(function* (opts: BrowserLoginOptio
     publicKey: session.public_key,
     nonce: session.nonce,
   });
-  // Go returns the raw save error here — not the
-  // "cannot save provided token" wrapper used on the token path.
+  // Returns the raw save error here, not the "cannot save provided token" wrapper used on the
+  // token path.
   yield* credentials.saveAccessToken(token);
   yield* postLoginTelemetry(token);
 
@@ -168,10 +164,9 @@ export const browserLogin = Effect.fnUntraced(function* (opts: BrowserLoginOptio
 });
 
 /**
- * Ensures a Management API access token exists. Mirrors `bootstrap` login
- * step: if a token is already resolvable (env / keyring /
- * file) it is a no-op; otherwise the browser login flow runs and fires
- * `cli_login_completed` once.
+ * Ensures a Management API access token exists: a no-op if a token is already resolvable
+ * (env/keyring/file), otherwise runs the browser login flow and fires `cli_login_completed`
+ * once.
  */
 export const ensureLogin = Effect.fnUntraced(function* (opts: { openBrowser: boolean }) {
   const existing = yield* resolveAccessToken;

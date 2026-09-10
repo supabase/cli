@@ -2,20 +2,16 @@ import { Cause, Option } from "effect";
 import type { CliError as EffectCliError } from "effect/unstable/cli";
 
 /**
- * CLI error actionability taxonomy for KPI reporting (CLI-1560).
+ * CLI error actionability taxonomy for KPI reporting.
  *
- * Classification is declared where each error is defined: every error class in
- * `apps/cli/src` exposes a {@link CliErrorActionabilityDeclaration} under the
- * {@link ErrorActionabilityId} symbol (enforced by
- * `error-actionability-coverage.unit.test.ts`). Errors originating outside the
- * CLI workspace (`@supabase/config`,
- * `effect` cli/http) are classified by the
- * structural adapters at the bottom of this module, which are themselves
- * exhaustiveness-checked against those packages' sources.
+ * Every error class in `apps/cli/src` declares its own
+ * {@link CliErrorActionabilityDeclaration} under the {@link ErrorActionabilityId} symbol
+ * (enforced by `error-actionability-coverage.unit.test.ts`). Errors from outside the CLI
+ * workspace are classified by the structural adapters at the bottom of this module instead.
  *
- * Everything emitted from here is sanitized by construction: kinds, categories,
- * suggestion types, and fingerprints use closed enums and source-owned
- * identifiers — never raw error text or user-specific data.
+ * Everything emitted here is sanitized by construction: kinds, categories, suggestion types,
+ * and fingerprints use closed enums and source-owned identifiers, never raw error text or
+ * user-specific data.
  */
 
 export const CliErrorKind = {
@@ -405,16 +401,10 @@ export const planLimitGatedActionability: CliErrorActionabilityDeclaration = {
 };
 
 /**
- * Classification policy for errors that carry a Management API status code.
- * `upgradeSuggested` is the typed result of the entitlement gate
- * (`suggestUpgrade`) threaded through the error constructor — never
- * inferred from message text.
- *
- * A 404 is user-actionable only when the caller knows the endpoint names a
- * user-selected resource. List and discovery endpoints can also return 404,
- * so the default remains an API-status failure. The entitlement-gate branch
- * stays ahead of that opt-in so a confirmed plan-limited 404 still classifies
- * as `plan_limit`.
+ * Classification policy for errors carrying a Management API status code. `upgradeSuggested`
+ * is the entitlement gate's typed result, never inferred from message text. A 404 counts as
+ * user-actionable only when the caller confirms the endpoint names a user-selected resource,
+ * since list/discovery endpoints also 404.
  */
 export function statusCodeActionability(
   status: number | undefined,
@@ -741,18 +731,11 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   DuplicateRemoteProjectIdError: () => actionability.invalidConfig,
   InvalidRemoteProjectIdError: () => actionability.invalidConfig,
   CliConfigWriteError: () => ({ ...actionability.permission, fingerprint_suffix: "filesystem" }),
-  // A Management API project-config response that fails to map is a platform
-  // response problem, not a local config-file mistake — the user can't fix
-  // the payload by editing supabase/config.toml. `@supabase/config` now
-  // builds a real `suggestion` (upgrade the CLI, then report it) on every
-  // construction site, so `has_suggestion` flips to true here to match —
-  // `RerunDebug` is the closest existing bucket (same idiom as
-  // `internalPanic`/`impossibleState` below), there being no dedicated
-  // "upgrade the CLI" suggestion type in the closed vocabulary. The
-  // `caller_misuse` reason (a `toProjectConfig`/`attachApiResponse` argument
-  // error — the producer's typed field, never message text) is a programming
-  // error, not an external platform failure: bucketing it as `api_status`
-  // would corrupt the external-failure KPI with caller bugs.
+  // A Management API project-config response that fails to map is a platform problem, not
+  // something the user can fix by editing config.toml, so `has_suggestion` is true (using
+  // `RerunDebug`, the closest bucket, since there's no dedicated "upgrade the CLI" type).
+  // `caller_misuse` is a programming error (a bad `toProjectConfig` argument), not an
+  // external failure, so it's bucketed separately to keep the external-failure KPI clean.
   ProjectConfigParseError: (error) =>
     error.reason === "caller_misuse"
       ? { ...actionability.invalidInput, fingerprint_suffix: "request_input" }
@@ -767,10 +750,9 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   // access token / bad configuration); remediation is the token env var.
   SupabaseApiConfigError: () => actionability.authToken,
 
-  // @supabase/api — the generated client's input schema rejected a request
-  // before it was sent. Treat it as an internal request-construction failure
-  // unless the command boundary explicitly marked the whole request as
-  // user-derived; never infer provenance from the schema error message.
+  // The generated client's input schema rejected a request before it was sent — an internal
+  // request-construction failure unless the command boundary marked the whole request as
+  // user-derived. Never infer provenance from the schema error message.
   SupabaseApiInputError: (error) =>
     readString(error, "source") === "user_input"
       ? { ...actionability.invalidInput, fingerprint_suffix: "request_input" }
@@ -871,10 +853,10 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
     return classifyAtDepth(error["cause"], depth + 1);
   }
 
-  // DownloadError recurses ONLY into local filesystem causes (PlatformError:
-  // unwritable cache, extraction failure). HTTP causes stay on the wrapper —
-  // the HttpClientError adapter's 401/403 → auth/permission policy is
-  // Management-API-specific and must not apply to GitHub/CDN asset downloads.
+  // DownloadError recurses into local filesystem causes only (PlatformError: unwritable
+  // cache, extraction failure). HTTP causes stay on the wrapper, since the HttpClientError
+  // adapter's 401/403 → auth/permission policy is Management-API-specific and must not apply
+  // to GitHub/CDN asset downloads.
   if (isErrorRecord(error) && tag === "DownloadError") {
     const cause = error["cause"];
     if (isErrorRecord(cause) && readErrorTag(cause) === "PlatformError") {
@@ -926,10 +908,8 @@ export function classifyCliCauseActionability(cause: Cause.Cause<unknown>): CliE
 }
 
 /**
- * Fallback for a command that deliberately signalled failure through
- * ProcessControl without failing its Effect, when no typed error is available
- * to derive a classification from (see `withCommandTelemetry`,
- * which classifies the command's own fail-on error class where one exists).
+ * Fallback for a command that signals failure through ProcessControl without failing its
+ * Effect, when no typed error is available to classify (see `withCommandTelemetry`).
  */
 export const unknownProcessControlledFailureActionability: CliErrorActionability = toActionability(
   actionability.unknown,

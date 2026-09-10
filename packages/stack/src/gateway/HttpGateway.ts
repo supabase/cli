@@ -444,8 +444,8 @@ const handleUpgrade = (
     socket.destroy();
     return;
   }
-  // Observe EOF on a paused upgrade without consuming any queued protocol bytes. The observer is
-  // removed before the backend tunnel starts so it cannot interfere with flowing-mode piping.
+  // Observes EOF on a paused upgrade without consuming queued protocol bytes; removed before
+  // the backend tunnel starts so it can't interfere with flowing-mode piping.
   const onSocketReadable = () => {
     socket.read(0);
   };

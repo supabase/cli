@@ -4,11 +4,9 @@ import { expect } from "vitest";
 
 import { requireLiveSuccess, test } from "../../../../tests/helpers/live.ts";
 
-// Golden path only: the one thing mocks cannot prove is the real
-// `GET /v2/projects/{ref}/config` response shape (the GoTrue-keyed auth
-// record especially) decoding and classifying cleanly. Branch coverage lives
-// in diff.integration.test.ts. The `workspace` fixture behind `cli` is a
-// fresh `supabase init` project directory.
+// Golden path only: the one thing mocks can't prove is the real
+// `GET /v2/projects/{ref}/config` response shape (the GoTrue-keyed auth record especially)
+// decoding and classifying cleanly. Branch coverage lives in diff.integration.test.ts.
 test("diffs a freshly-initialized config against the project", async ({ cli, project }) => {
   const result = await cli([
     "config",
@@ -18,7 +16,6 @@ test("diffs a freshly-initialized config against the project", async ({ cli, pro
     "--output-format",
     "json",
   ]);
-  // Read-only success regardless of drift (no --exit-code passed).
   requireLiveSuccess(result, "config diff");
   expect(result.stderr).toContain(`Comparing against project ${project.ref} using base config`);
   const payload = JSON.parse(result.stdout) as {
@@ -28,9 +25,9 @@ test("diffs a freshly-initialized config against the project", async ({ cli, pro
   expect(payload.scope.present).toContain("auth");
   const changes = payload.changes.map(({ path, class: kind }) => ({ path: path.join("."), kind }));
   const classified = changes.map((change) => `${change.path} [${change.kind}]`).join("\n");
-  // A fresh project legitimately drifts from the init template (confirmations,
-  // TOTP, site URL), so remote auth values must reach classification, while
-  // the registry's declared baselines suppress the platform's own defaults.
+  // A fresh project legitimately drifts from the init template (confirmations, TOTP, site URL),
+  // so remote auth values must reach classification while the registry's declared baselines
+  // suppress the platform's own defaults.
   expect(
     changes.some((change) => change.path.startsWith("auth.") && change.kind !== "local_only"),
     classified,

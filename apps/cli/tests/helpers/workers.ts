@@ -22,10 +22,9 @@ import { mockOutput, mockProcessControl, mockRuntimeInfo, mockTty } from "./mock
 /**
  * Shared scaffolding for the `supabase experimental workers` command integration tests.
  *
- * Every worker command reads a real `supabase/config.toml` and a real worker
- * directory, so these tests run against a per-test temp project rather than a
- * mocked filesystem — the config-writing and packaging behaviour is most of
- * what is worth asserting. Only the network is faked.
+ * Every worker command reads a real `supabase/config.toml` and worker directory,
+ * so these tests run against a per-test temp project instead of a mocked
+ * filesystem; only the network is faked.
  */
 
 export const WORKERS_PROJECT_REF = "abcdefghijklmnopqrst";
@@ -34,10 +33,8 @@ export interface RecordedRequest {
   readonly method: string;
   readonly url: string;
   /**
-   * Query parameters, which `url` does not carry.
-   *
-   * `HttpClientRequest` keeps `urlParams` beside the URL rather than appended to
-   * it, so a test asserting what a GET actually asked for has to read this. The
+   * Query parameters, which `url` does not carry — `HttpClientRequest` keeps them
+   * separate, so a test asserting what a GET asked for must read this. The
    * analytics logs endpoint puts the whole SQL query here.
    */
   readonly urlParams: Readonly<Record<string, string>>;
@@ -218,12 +215,8 @@ export const workerLogsRoute = () => `/v1/projects/${WORKERS_PROJECT_REF}/analyt
 
 /**
  * One row as the logs endpoint returns it, matching the projection in
- * `workerLogsQuery`.
- *
- * Shaped from rows captured off a real project (see
- * `scratch/FINDINGS-worker-logs.md`), which is why `log_attributes` values are
- * all strings: the column is a `Map(String, String)`, so `status` really does
- * arrive as `"200"`.
+ * `workerLogsQuery`. `log_attributes` values are all strings — the column is a
+ * `Map(String, String)`, so `status` arrives as `"200"`.
  */
 export function workerLogRow(options: {
   readonly id?: string;
@@ -265,8 +258,7 @@ export function workerIngressLogRow(options: {
     ...(options.tsMs === undefined ? {} : { tsMs: options.tsMs }),
     ...(options.worker === undefined ? {} : { worker: options.worker }),
     stream: "worker_ingress_logs",
-    // Only method and path — status and duration are deliberately absent, as
-    // they are on the wire.
+    // Only method and path go in the message, matching the wire format.
     message: `${method} ${path}`,
     attributes: {
       method,
@@ -357,9 +349,9 @@ export interface WorkersSetupOptions {
   readonly format?: "text" | "json" | "stream-json";
   readonly interactive?: boolean;
   /**
-   * Whether stdin is a terminal. Defaults to `interactive`, so a text-mode test
-   * can prompt; set it false to model a piped stdin with a TTY stdout, which is
-   * what `printf 'api\n' | supabase experimental workers delete api` looks like.
+   * Whether stdin is a terminal; defaults to `interactive`. Set false to model a
+   * piped stdin with a TTY stdout, as in `printf 'api\n' | supabase experimental
+   * workers delete api`.
    */
   readonly stdinIsTty?: boolean;
   readonly linked?: boolean;
