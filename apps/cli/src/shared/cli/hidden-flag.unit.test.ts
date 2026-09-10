@@ -237,9 +237,6 @@ describe("hidden subcommands", () => {
   });
 
   it("still executes hidden subcommands by exact name", async () => {
-    // `db branch *` / `db remote *` are still Phase 0 proxy wrappers, so a
-    // successful proxy call is direct proof that cobra-style `Hidden` doesn't
-    // block exact-name dispatch through `effect/unstable/cli`.
     const proxy = mockGoProxy();
 
     await Effect.runPromise(
@@ -258,15 +255,8 @@ describe("hidden subcommands", () => {
   });
 
   it("still executes the native `db test` hidden alias by exact name (CLI-1962)", async () => {
-    // `db test` was ported off the Go proxy in CLI-1962, so it no longer calls
-    // `GoProxy` — this test only needs to prove dispatch still reaches the
-    // real (now-native) handler, not that the handler fully succeeds (this file's
-    // minimal layer doesn't wire the docker/db/telemetry services the native
-    // handler needs, matching how `start`/`stop` are treated above). A genuinely
-    // unresolved subcommand fails BEFORE any handler runs, with a distinct typed
-    // `UnknownSubcommand` CliError; the native handler instead defects on a
-    // missing service once dispatch has already succeeded — that defect is the
-    // proof, mirrored against a deliberately unknown sibling subcommand below.
+    // This test's minimal layer doesn't wire the services the native handler needs, so dispatch
+    // reaching the handler (a Die on a missing service, not success) is what's being proven.
     const proxy = mockGoProxy();
     const layer = Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()));
 
@@ -281,12 +271,7 @@ describe("hidden subcommands", () => {
       ) as Effect.Effect<unknown, never, never>,
     );
     expect((dbTestExit as { _tag: string })._tag).toBe("Failure");
-    // The real defect is `Error: Service not found: supabase/telemetry/Analytics`
-    // — asserting it directly (rather than a negative `not.toContain` on the
-    // near-empty JSON serialization of the defect) proves dispatch reached the
-    // native handler and it defected on a missing ambient service, not merely
-    // that the failure happens not to mention `UnknownSubcommand`.
-    expect(causeOf(dbTestExit).reasons[0]?._tag).toBe("Die"); // handler ran, then defected on a missing service
+    expect(causeOf(dbTestExit).reasons[0]?._tag).toBe("Die");
     expect(String(causeOf(dbTestExit).reasons[0]?.defect)).toContain(
       "Service not found: supabase/telemetry/Analytics",
     );
@@ -297,10 +282,7 @@ describe("hidden subcommands", () => {
         Effect.exit,
       ) as Effect.Effect<unknown, never, never>,
     );
-    // Effect CLI's raw `_tag` uses the corrected "UnknownSubcommand" spelling.
-    // This assertion checks the raw, un-normalized tag so it stays aligned with
-    // the upstream parser error value.
     expect(JSON.stringify(unknownExit)).toContain("UnknownSubcommand");
-    expect(causeOf(unknownExit).reasons[0]?._tag).toBe("Fail"); // typed CliError, pre-handler — dispatch never reached a handler
+    expect(causeOf(unknownExit).reasons[0]?._tag).toBe("Fail");
   });
 });

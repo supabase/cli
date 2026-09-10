@@ -31,8 +31,8 @@ export type DbConfigError =
   | DbConfigLoadError
   | ProjectRefNotLinkedError
   | InvalidProjectRefError
-  // Hard linked-ref load surfaces a real `.temp/project-ref` read error (Go's
-  // `failed to load project ref`) instead of masking it as not-linked.
+  // A hard linked-ref load surfaces a real `.temp/project-ref` read error instead of masking it
+  // as not-linked.
   | ProjectRefReadError
   | DbConfigLoginRoleNetworkError
   | DbConfigLoginRoleStatusError
@@ -48,39 +48,31 @@ export type DbConfigError =
   | DbConnectError
   // The `--linked` path resolves the access token lazily via
   // `CommandPlatformApiFactory.make` (only when minting a temp login role), so the
-  // auth-required / invalid-token / api-config errors surface from the resolver
-  // effect — not a layer-build channel. `--linked --password` skips `make`
-  // entirely and never raises these (`NewDbConfigWithPassword`).
+  // auth-required / invalid-token / api-config errors surface from the resolver effect — not a
+  // layer-build channel. `--linked --password` skips `make` entirely and never raises these.
   | CommandPlatformApiFactoryError
   // The lazy linked runtime rebuilds `commandSettingsLayer`, whose strict
   // profile resolution can fail inside the resolver effect the same way.
   | ProfileLoadError;
 
-// The `--linked` path builds a lazy Management API runtime (so `--local` /
-// `--db-url` never resolve an access token) and provides ALL of its own
-// requirements from the resolver's captured context, so `resolve`'s R stays
-// `never`. Access-token resolution is deferred to first API use, so its
-// auth-required error surfaces through the resolver effect (folded into
+// The `--linked` path builds a lazy Management API runtime (so `--local`/`--db-url` never
+// resolve an access token) and provides every one of its own requirements from the resolver's
+// captured context, so `resolve`'s R stays `never`. Access-token resolution is deferred to
+// first API use, so its auth-required error surfaces through the resolver effect (folded into
 // `DbConfigError`) rather than a layer-build error channel.
 interface DbConfigResolverShape {
   readonly resolve: (flags: DbConfigFlags) => Effect.Effect<ResolvedDbConfig, DbConfigError>;
   /**
-   * Resolves the IPv4 transaction pooler connection for a linked dump's
-   * container-level fallback (`RunWithPoolerFallback` →
-   * `ResolvePoolerConfigForFallback`). Returns `None` when the path is not
-   * pooler-eligible (`--linked` only) or no pooler URL is configured, so the
-   * caller keeps the original error.
+   * Resolves the IPv4 transaction pooler connection for a linked dump's container-level
+   * fallback. Returns `None` when the path is not pooler-eligible (`--linked` only) or no
+   * pooler URL is configured, so the caller keeps the original error.
    */
   readonly resolvePoolerFallback: (
     flags: DbConfigFlags,
   ) => Effect.Effect<Option.Option<PgConnInput>, DbConfigError>;
 }
 
-/**
- * Resolves a Postgres connection from the `--db-url` / `--local` / `--linked`
- * flags. Shared cross-command infra:
- * `db reset` / `db dump` will reuse it as they are ported.
- */
+/** Resolves a Postgres connection from the `--db-url` / `--local` / `--linked` flags. */
 export class DbConfigResolver extends Context.Service<DbConfigResolver, DbConfigResolverShape>()(
   "supabase/cli/DbConfigResolver",
 ) {}

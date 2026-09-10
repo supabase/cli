@@ -36,9 +36,8 @@ export class StackTargetError extends Data.TaggedError("ExperimentalStackTargetE
 }
 
 /**
- * Configuration and targeting are deliberately supplied by the CLI adapter.
- * Keeping this boundary independent of command handlers lets the later stack
- * commands reuse exactly the same project, name, id, and environment rules.
+ * Configuration and targeting are supplied by the CLI adapter so later stack
+ * commands can reuse the same project, name, id, and environment rules.
  */
 interface StackTargetResolverShape {
   readonly resolve: (input: {

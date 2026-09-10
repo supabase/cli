@@ -21,9 +21,6 @@ describe("isInternalAuthor", () => {
   );
 
   test.each(["admin", "write"])("treats push-capable permission %s as internal", (permission) => {
-    // A private org member surfaces only as CONTRIBUTOR/NONE via
-    // author_association, but their effective repo permission gives them
-    // away as a maintainer.
     expect(isInternalAuthor("CONTRIBUTOR", permission)).toBe(true);
     expect(isInternalAuthor("NONE", permission)).toBe(true);
   });
@@ -130,8 +127,6 @@ describe("evaluateGate", () => {
   });
 
   test("ignores an open, labeled issue from a different repository", () => {
-    // Cross-repo closing keyword (e.g. `Closes attacker/repo#1`): the issue is
-    // controlled by the contributor, so it must not satisfy the gate.
     const result = evaluateGate({
       repository: REPO,
       isInternal: false,
@@ -231,7 +226,6 @@ describe("evaluateAllOpenPrs", () => {
     expect(byNumber[6]?.pass).toBe(true);
     expect(byNumber[6]?.reason).toBe("internal");
     expect(closed.find((c) => c.number === 1)?.message).toContain(GATE_LABEL);
-    // Bots and public members are settled without a permission lookup.
     expect(permissionLookups).not.toContain("maint");
     expect(permissionLookups).not.toContain("dependabot");
   });
@@ -275,9 +269,6 @@ describe("fetchAuthorPermission", () => {
   });
 
   test("maps a 404 (non-collaborator fork author) to undefined", async () => {
-    // The endpoint 404s for users who are not collaborators — the common case
-    // for the external contributors the gate targets. It must map to external,
-    // not abort the run.
     stubFetch(404, { message: "Not Found" });
     const permission = await fetchAuthorPermission("t", "supabase", "cli", "ext");
     expect(permission).toBeUndefined();

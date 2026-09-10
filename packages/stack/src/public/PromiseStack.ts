@@ -24,7 +24,6 @@ import type { PreparedCapability, PrepareStackResult } from "./EffectStack.ts";
 import { InvalidStackConfigError } from "./Errors.ts";
 import { StackRuntimeEnvironment, type StackRuntimeEnvironmentValue } from "../state/Ownership.ts";
 
-// Promise methods are the deliberate outer boundary of this package.
 // oxlint-disable effecttsgo/async-function -- Promise facade methods must expose Promise/AsyncIterable APIs.
 // oxlint-disable effecttsgo/any-unknown-in-error-context -- Promise callers receive native rejection values.
 
@@ -73,9 +72,7 @@ type RuntimeRequirements =
   | Crypto.Crypto
   | ChildProcessSpawner.ChildProcessSpawner;
 
-// Canonical JSON decoding follows all schema transformations, including Redacted
-// declarations nested in records and arrays. At this explicit Promise boundary,
-// plain JSON strings become Effect Redacted values for the Effect handle.
+// Turns plain JSON config values into the Redacted values the Effect handle expects.
 const stackConfigJsonCodec = Schema.toCodecJson(StackConfigSchema);
 const decodePromiseConfig = (
   input: PromiseStackConfig,

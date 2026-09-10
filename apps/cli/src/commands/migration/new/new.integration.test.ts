@@ -78,9 +78,7 @@ describe("migration new", () => {
 
       const file = onlyMigration(tmp.current);
       expect(file).toMatch(/^\d{14}_create_widgets\.sql$/u);
-      // Empty file when stdin is a TTY (nothing is written).
       expect(readFileSync(join(migrationsDir(tmp.current), file), "utf8")).toBe("");
-      // The workdir-relative path prints, not the absolute write path.
       expect(stripAnsi(out.stdoutText)).toBe(
         `Created new migration at supabase/migrations/${file}\n`,
       );
@@ -95,7 +93,6 @@ describe("migration new", () => {
       yield* migrationNew({ migrationName: "from_stdin" });
 
       const file = onlyMigration(tmp.current);
-      // Byte-exact: the trailing newline is preserved (raw stdin bytes are copied verbatim).
       expect(readFileSync(join(migrationsDir(tmp.current), file), "utf8")).toBe(script);
       expect(stripAnsi(out.stdoutText)).toContain(`Created new migration at supabase/migrations/`);
     }).pipe(Effect.provide(layer));
@@ -211,11 +208,8 @@ describe("migration new", () => {
   it.live(
     "fails the command when piped stdin errors mid-copy (Go: failed to copy from stdin)",
     () => {
-      // The streaming copy returns "failed to copy from stdin" and exits non-zero on a stdin
-      // read error; it must surface that, not leave a truncated file.
-      // The Created-line print is already
-      // scheduled by the time the copy fails, so the Created line still prints to stdout
-      // BEFORE the copy error propagates to stderr / exit 1 — assert BOTH here.
+      // The Created line is already scheduled by the time the copy fails, so it still
+      // prints to stdout before the error propagates to stderr.
       const failingStdin = Layer.succeed(Stdin, {
         isTTY: false,
         readPipedBytes: Effect.succeed(Option.none()),

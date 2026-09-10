@@ -39,7 +39,7 @@ function sortSecrets(secrets: Secrets): Secrets {
   return [...secrets].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
-/** Type shape for the secrets response, used to drive `-o yaml|toml` key casing (see `apps/cli-go/pkg/api/types.gen.go`). */
+/** Struct shape for the secrets response; drives `-o yaml|toml` key casing. */
 const GO_SECRET_RESPONSE = goStruct([
   ["name", goString],
   ["updated_at", goPtr(goString)],
@@ -60,8 +60,6 @@ export const secretsList = Effect.fn("secrets.list")(function* (flags: SecretsLi
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
-  // Write the linked-project cache and persist the telemetry state file
-  // whether the main API call succeeds or fails.
   yield* Effect.gen(function* () {
     const fetching =
       output.format === "text" ? yield* output.task("Fetching secrets...") : undefined;
@@ -92,8 +90,6 @@ export const secretsList = Effect.fn("secrets.list")(function* (flags: SecretsLi
       return;
     }
 
-    // goFmt is undefined or "pretty" — defer to TS --output-format for JSON/stream-json,
-    // otherwise render the Glamour-styled table (Go --output pretty parity).
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("", { secrets: sorted });
       return;

@@ -31,25 +31,11 @@ import {
 import type { ComputeDeleteFlags } from "./delete.command.ts";
 
 /**
- * `supabase compute delete [name]` — delete the compute; its instances and image
- * are torn down asynchronously. Whether it exists is asked of the API, never of
- * a local file.
- *
- * Note what it does *not* remove: the compute's directory and its `config.toml`
- * entry stay on disk, so `push <name>` brings it straight back — which is why
- * the command says so.
- *
- * Being irreversible, an interactive session has to type the compute's name back
- * to proceed — the same "confirm by typing it" pattern as GitHub's own repo
- * deletion, rather than a bare y/n that is too easy to reflexively confirm.
- * `--yes`/`SUPABASE_YES` skips it for scripts, resolved through
- * `resolveYes` like every other confirming command rather than through a
- * local flag that would shadow the root one. It also makes an already-absent
- * compute a success: teardown run twice should not fail the second time.
- *
- * Without a terminal to prompt on there is no third option: `interactive` tracks
- * stdout, so merely redirecting output would otherwise delete unattended. This
- * refuses instead, and says which flag would have authorised it.
+ * `supabase compute delete [name]` — deletes the compute via the API
+ * (never checking local files); an already-absent compute counts as success. The
+ * compute's directory and `config.toml` entry stay on disk so `push <name>` can
+ * redeploy it. Interactive runs require typing the name to confirm (`--yes`/
+ * `SUPABASE_YES` skips it); without a terminal to prompt on, the command refuses.
  */
 export const computeDelete = Effect.fn("compute.delete")(function* (flags: ComputeDeleteFlags) {
   const output = yield* Output;
@@ -59,8 +45,6 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const tty = yield* Tty;
-  // `--yes` OR `SUPABASE_YES`, matching `projects delete` and every other
-  // command that guards a destructive step behind a prompt.
   const yes = yield* resolveYes;
 
   // The ref is resolved outside the finalizers because caching it is one of
@@ -136,12 +120,9 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
         });
       }
 
-      // The live tally when the API reports one, labelled "declared" when it
-      // does not. `spec.instances` is the target, which for a compute still
-      // provisioning differs from what is running — and a destructive prompt is
-      // the wrong place to overstate.
-      // Absent when the read was refused: the prompt still asks for the name,
-      // it just cannot quote a count it was not allowed to see.
+      // Uses the live instance count when known; otherwise falls back to the
+      // declared target so a still-provisioning compute doesn't understate what
+      // gets torn down. Both are absent when the read was refused.
       const live = deployed?.instances?.live;
       const declared = deployed?.spec.instances;
       const terminating =
@@ -156,8 +137,7 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
         `This permanently deletes "${name}" from project ${projectRef}.${terminating}\n`,
       );
       const typed = yield* output.promptText(`Type ${name} to confirm`);
-      // Trimmed: a trailing space from a paste is not a different answer, and
-      // making someone re-run a destructive command over one is just friction.
+      // Trimmed so a pasted trailing space doesn't force a re-run.
       if (typed.trim() !== name) {
         return yield* new ComputeDeleteNotConfirmedError({
           detail: `The confirmation did not match "${name}", so nothing was deleted.`,
@@ -166,9 +146,8 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
       }
     }
 
-    // Skipped only when the fetch actually said there is nothing there. An
-    // unreadable compute still gets the DELETE — that request is the one the
-    // credential is entitled to make, and the API treats a 404 on it as done.
+    // Skipped only when the GET confirmed nothing exists; an unreadable compute
+    // still gets the DELETE, since that's the request the credential may hold.
     if (deployed !== undefined || !lookup.readable) {
       const deleting = yield* output.task("Deleting compute...");
       yield* deleteCompute(api, projectRef, name).pipe(Effect.tapError(() => deleting.fail()));
@@ -212,10 +191,8 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
         `Deleted Compute ${aqua(name, process.stdout)} from project ${projectRef}\n`,
       );
 
-      // "Deleted" reads more final than it is *when there is something left* —
-      // so only say so when there is. For an orphan there is nothing local to
-      // keep, and pointing at `push` would send the user at a command that has
-      // no source to deploy.
+      // Says "Kept" only when something remains; an orphaned Compute service has no
+      // source or entry left, and pointing at `push` there would be a dead end.
       const kept = [
         ...(keptSource === undefined ? [] : [keptSource]),
         ...(keptEntry ? ["its supabase/config.toml entry"] : []),
@@ -226,7 +203,6 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
         // alone is not enough to redeploy from, so `push` would fail on the very
         // command this line recommends.
         if (keptSource !== undefined) {
-          // Trailer, like every other "what to run next" line in this shell.
           yield* emitSuccessTrailer(
             `Redeploy it with ${aqua(`supabase compute push ${name}${refSuffix}`)}.\n`,
           );

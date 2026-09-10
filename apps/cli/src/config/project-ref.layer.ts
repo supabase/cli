@@ -70,8 +70,7 @@ export const projectRefLayer = Layer.effect(
             }),
         ),
       );
-      // Go writes "Selected project: <ref>" to stderr (project_ref.go:50). In text mode
-      // `output.info` lands on stderr; in json/stream-json modes it is a no-op.
+      // In text mode `output.info` writes to stderr; in json/stream-json modes it's a no-op.
       yield* output.info(`Selected project: ${chosen}`);
       return chosen;
     });
@@ -105,7 +104,7 @@ export const projectRefLayer = Layer.effect(
           if (Option.isSome(cliSettings.projectId)) {
             return yield* assertValid(cliSettings.projectId.value);
           }
-          // Go skips the ref-file fallback for link (MemMapFs at link.go:30).
+          // `resolveForLink` skips the ref-file fallback that `resolve` uses.
           if (tty.stdinIsTty && output.interactive) {
             const chosen = yield* promptForProjectRef("Select a project:");
             return yield* assertValid(chosen);
@@ -124,16 +123,12 @@ export const projectRefLayer = Layer.effect(
           if (Option.isSome(cliSettings.projectId)) {
             return cliSettings.projectId;
           }
-          // Soft load: `projects list` ignores ALL project-ref resolution
-          // errors and only uses the value as a "linked" marker, so a real
-          // ref-file read error degrades to "not linked" here (unlike the
-          // hard `resolve`/`loadProjectRef` paths, which surface it).
+          // A ref-file read error degrades to "not linked" here, unlike `resolve`/
+          // `loadProjectRef`, since `projects list` only uses the value as a display marker.
           return yield* readRefFile.pipe(Effect.orElseSucceed(() => Option.none<string>()));
         }),
       loadProjectRef: (flagValue) =>
         Effect.gen(function* () {
-          // Resolution order: flag → env → ref file → hard "not linked"
-          // failure, with format validation, and NO interactive prompt.
           if (Option.isSome(flagValue) && flagValue.value.length > 0) {
             return yield* assertValid(flagValue.value);
           }

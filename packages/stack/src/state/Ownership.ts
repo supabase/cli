@@ -18,7 +18,7 @@ import { StackOwnershipConflictError, StackStateInvalidError } from "../public/E
 import { OwnerSessionIdSchema } from "../control/MaintenanceProtocol.ts";
 import { NetworkPortSchema } from "../public/Status.ts";
 
-/** The owner metadata format is deliberately fail-closed. */
+/** Bump this format string so owner metadata version mismatches fail closed. */
 const OWNERSHIP_FORMAT = "supabase-stack-owner-v1" as const;
 export const OWNER_LOCK_FORMAT = "supabase-stack-lease-v1" as const;
 
@@ -248,8 +248,8 @@ const metadataFrom = (value: unknown): Effect.Effect<OwnerMetadata, StackStateIn
 
 /**
  * Computes the one local endpoint for an identity. The complete digest is used
- * so two identities can never alias. The caller supplies a deliberately short
- * IPC root; no project path is embedded in the endpoint.
+ * so two identities can never alias. The caller supplies a short IPC root;
+ * no project path is embedded in the endpoint.
  */
 export const controlEndpointFor = (
   stackId: StackId | string,

@@ -130,11 +130,9 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  // Nowhere to ask means nothing to scaffold under: the name is the directory,
-  // the config key and the hostname, and none of those has a default.
   it.live.each([
     { label: "not interactive", setup: { interactive: false } },
-    // A TTY, but stdout was claimed by the payload, so a prompt would corrupt it.
+    // Stdout is a TTY, but claimed by the payload, so a prompt would corrupt it.
     { label: "-o json", setup: { goOutput: "json" as const } },
     // `printf 'orders\n' | supabase compute new`: stdout is still a
     // terminal, so `output.interactive` on its own would have fed the pipe

@@ -49,7 +49,6 @@ describe("resolveDbTargetFlags", () => {
     const result = resolveDbTargetFlags(["--local=false", "--linked"]);
     expect(result.setFlags).toEqual(["linked", "local"]);
     expect(result.setFlags).toHaveLength(2);
-    // connType: local wins over linked in Changed-first precedence
     expect(result.connType).toBe("local");
   });
 
@@ -66,34 +65,28 @@ describe("resolveDbTargetFlags", () => {
   });
 
   it("--db-url (key only, value as next arg) is still detected as changed", () => {
-    // `--db-url` matches the token exactly, even without `=value`.
     const result = resolveDbTargetFlags(["--db-url", "postgres://x"]);
     expect(result.connType).toBe("db-url");
     expect(result.setFlags).toEqual(["db-url"]);
   });
 
   it("setFlags order is always alphabetical [db-url, linked, local] regardless of argv order", () => {
-    // All three present — setFlags must be sorted to match cobra's %v rendering.
     const result = resolveDbTargetFlags(["--local", "--db-url=x", "--linked"]);
     expect(result.setFlags).toEqual(["db-url", "linked", "local"]);
   });
 
   it("Changed-first precedence: db-url > local > linked", () => {
-    // db-url wins when all three are present
     const all = resolveDbTargetFlags(["--db-url=x", "--linked", "--local"]);
     expect(all.connType).toBe("db-url");
 
-    // local wins over linked when db-url absent
     const localLinked = resolveDbTargetFlags(["--linked", "--local"]);
     expect(localLinked.connType).toBe("local");
 
-    // linked wins when only linked is present
     const linkedOnly = resolveDbTargetFlags(["--linked"]);
     expect(linkedOnly.connType).toBe("linked");
   });
 
   it("skips value token after bare --schema so --linked is not a false positive", () => {
-    // `--schema --linked` in space form: --linked is the VALUE of --schema, not a flag.
     const result = resolveDbTargetFlags(["db", "lint", "--schema", "--linked"]);
     expect(result.connType).toBeUndefined();
     expect(result.setFlags).toEqual([]);
@@ -106,68 +99,54 @@ describe("resolveDbTargetFlags", () => {
   });
 
   it("--schema=value (attached form) does NOT skip the next token", () => {
-    // `--schema=public --linked`: --linked is a real flag here.
     const result = resolveDbTargetFlags(["--schema=public", "--linked"]);
     expect(result.connType).toBe("linked");
     expect(result.setFlags).toEqual(["linked"]);
   });
 
   it("skips value token after bare -s (short for --schema)", () => {
-    // `-s --linked`: --linked is the VALUE of -s, not a flag.
     const result = resolveDbTargetFlags(["-s", "--linked"]);
     expect(result.connType).toBeUndefined();
     expect(result.setFlags).toEqual([]);
   });
 
   it("-svalue (attached short form) does NOT skip the next token", () => {
-    // `-spublic --linked`: --linked is a real flag.
     const result = resolveDbTargetFlags(["-spublic", "--linked"]);
     expect(result.connType).toBe("linked");
     expect(result.setFlags).toEqual(["linked"]);
   });
 
   it("skips value token after bare --output so following flags are not false positives", () => {
-    // --output is a value-consuming global flag.
     const result = resolveDbTargetFlags(["--output", "json", "--local"]);
     expect(result.connType).toBe("local");
     expect(result.setFlags).toEqual(["local"]);
   });
 
   it("--output-dir <value> does NOT mark --local as changed (value consumed)", () => {
-    // inspect report has --output-dir (StringVar, no short alias). In space form
-    // the next token is the dir value, not a flag. Without output-dir in the
-    // value-consuming set, --local would be falsely detected as changed.
     const result = resolveDbTargetFlags(["--output-dir", "--local"]);
     expect(result.connType).toBeUndefined();
     expect(result.setFlags).toEqual([]);
   });
 
   it("--output-dir=<value> (attached form) DOES mark --local as changed", () => {
-    // Attached form does not consume the next token, so --local is a real flag.
     const result = resolveDbTargetFlags(["--output-dir=./reports", "--local"]);
     expect(result.connType).toBe("local");
     expect(result.setFlags).toEqual(["local"]);
   });
 
   it("--schema -- --linked: -- consumed as schema value, --linked is a real flag (Go pflag parity)", () => {
-    // pflag: a bare value-consuming flag consumes the very next token as its
-    // value, even when that token is "--". Only a "--" with no pending value
-    // terminates the scan.
     const result = resolveDbTargetFlags(["db", "lint", "--schema", "--", "--linked"]);
     expect(result.connType).toBe("linked");
     expect(result.setFlags).toEqual(["linked"]);
   });
 
   it("bare -- with no pending skip still stops the scan", () => {
-    // --linked sets changed; bare -- terminates; --local after is not scanned.
     const result = resolveDbTargetFlags(["--linked", "--", "--local"]);
     expect(result.connType).toBe("linked");
     expect(result.setFlags).toEqual(["linked"]);
   });
 
   it("skips value token after bare -p so --local is the password value, not a target", () => {
-    // Go: `StringVarP(&dbPassword, "password", "p", …)` — `-p --local` means the
-    // password is `--local`, so `local` is not Changed (linked default applies).
     const result = resolveDbTargetFlags(["migration", "list", "-p", "--local"]);
     expect(result.connType).toBeUndefined();
     expect(result.setFlags).toEqual([]);
@@ -180,7 +159,6 @@ describe("resolveDbTargetFlags", () => {
   });
 
   it("-ppwd (attached short password) does NOT consume the next token", () => {
-    // Attached value: `--local` is a real selector.
     const result = resolveDbTargetFlags(["-ppwd", "--local"]);
     expect(result.connType).toBe("local");
     expect(result.setFlags).toEqual(["local"]);
@@ -194,21 +172,11 @@ describe("resolveDbTargetFlags", () => {
 });
 
 describe("VALUE_CONSUMING_LONG_FLAGS / VALUE_CONSUMING_SHORT_FLAGS completeness (CLI-1896 review)", () => {
-  // `telemetry/command-telemetry.ts`'s `extractChangedFlagNames`
-  // relies on these two sets to know which flag consumes the next raw-argv
-  // token as its value, across EVERY command (not just the db-target
-  // subset this file's other describe block covers) — see the doc comment on
-  // `VALUE_CONSUMING_LONG_FLAGS` in `db-target-flags.ts`. This scan is
-  // static-source-based (same technique as
-  // `shared/cli/code-structure.unit.test.ts`) rather than importing every
-  // command module, so it can only see flag names declared as a literal
-  // string argument to `Flag.string`/`Flag.integer`/`Flag.choice`/
-  // `Flag.choiceWithValue`/`Flag.float` — it cannot trace a name passed
-  // through a helper function (`issue.command.ts`'s
-  // `issueOptionalTextFlag`, and the shared `stringSliceFlag`
-  // builder — CLI-2005), so such files/flags are simply not discovered by the
-  // scan; their flag names are registered by hand in
-  // `VALUE_CONSUMING_LONG_FLAGS` instead.
+  // `extractChangedFlagNames` relies on these two sets across every command, not just the
+  // db-target subset this file's other describe block covers — see the doc comment on
+  // `VALUE_CONSUMING_LONG_FLAGS` in `db-target-flags.ts`. This scan is static-source-based
+  // rather than importing every command module, so it can only see flag names declared as a
+  // literal string; a name passed through a helper function is registered by hand instead.
   const commandsDir = fileURLToPath(new URL("../commands", import.meta.url));
   const INDIRECT_NAME_FILES = new Set(["issue.command.ts"]);
   const VALUE_FLAG_KINDS = ["string", "integer", "choice", "choiceWithValue", "float"];
@@ -241,9 +209,8 @@ describe("VALUE_CONSUMING_LONG_FLAGS / VALUE_CONSUMING_SHORT_FLAGS completeness 
       const current = calls[i]!;
       if (!VALUE_FLAG_KINDS.includes(current.kind)) continue;
 
-      // Name declared as a literal string (e.g. `Flag.string("schema")`).
-      // A name passed as an identifier (`Flag.string(name)`) doesn't match
-      // and is silently skipped — see INDIRECT_NAME_FILES above.
+      // Name declared as a literal string (e.g. `Flag.string("schema")`); a name passed as an
+      // identifier doesn't match and is silently skipped — see INDIRECT_NAME_FILES above.
       const remainder = source.slice(current.index);
       const nameMatch = remainder.match(/^Flag\.\w+\(\s*"([a-zA-Z0-9-]+)"/);
       if (!nameMatch) continue;

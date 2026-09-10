@@ -20,11 +20,9 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 
 /**
- * The resolved comparison/pull target for a command that accepts
- * `--project-ref` (currently `config diff`, `config pull`, `config push`, and
- * the top-level `pull` orchestrator): a project ref, plus the branch
- * name/UUID `--project-ref` carried when it named one — `undefined` for a
- * ref-shaped or linked-fallback target.
+ * The resolved comparison/pull target for a command that accepts `--project-ref`
+ * (`config diff`, `config pull`, `config push`, `pull`): a project ref, plus the branch
+ * name/UUID it was given, if any.
  */
 export interface ConfigTarget {
   readonly ref: string;
@@ -33,9 +31,8 @@ export interface ConfigTarget {
 
 /**
  * Builds the four target-resolution failures {@link resolveConfigTarget} can raise.
- * One type parameter, not four: every family's builder set is produced by
- * {@link configTargetErrorsFor}, whose return type unions the four minted classes, so
- * the resolver never has to infer them position-by-position.
+ * A single type parameter suffices because {@link configTargetErrorsFor} already unions
+ * the four minted classes into one type.
  */
 export interface ConfigTargetErrors<TError> {
   /**
@@ -60,17 +57,12 @@ export interface ConfigTargetErrors<TError> {
 type ConfigTargetErrorClass<E> = new (args: { readonly message: string }) => E;
 
 /**
- * Mints one calling command family's four target-resolution error classes from its
- * name prefix (`"ConfigDiff"`, `"ConfigPull"`, `"ConfigPush"`, `"Pull"`). The classes
- * stay per-family so `_tag`, telemetry fingerprint, and actionability remain family-owned
- * and distinct; only their (identical) definitions live here.
+ * Mints one calling command family's four target-resolution error classes from its name
+ * prefix, keeping `_tag`, fingerprint, and actionability family-owned from one definition.
  *
- * The tags are template-interpolated, so `error-tag-stability.unit.test.ts`'s static
- * regex scan cannot see them in THIS file — which is why every caller must re-export
- * each minted class from its own `*.errors.ts` under the family-prefixed name. That
- * test's `collectComputedTagDeclarations` walks `Object.entries(module)` on each of
- * those four caller files instead, constructing every exported class to read its real,
- * interpolated `_tag` off the instance.
+ * Every caller must re-export each minted class from its own `*.errors.ts` under the
+ * family-prefixed name; `error-tag-stability.unit.test.ts`'s static scan only sees the
+ * template-interpolated tags there.
  */
 export function mintConfigTargetErrors<Prefix extends string>(prefix: Prefix) {
   class BranchNotFoundError extends Data.TaggedError(`${prefix}BranchNotFoundError`)<{
@@ -105,11 +97,9 @@ export function mintConfigTargetErrors<Prefix extends string>(prefix: Prefix) {
 }
 
 /**
- * Wraps a family's four minted classes as the `errors` bundle
- * {@link resolveConfigTarget} takes. The message text is identical across every
- * family that resolves a branch-shaped `--project-ref`, so it lives here rather than being
- * restated in each handler. Four type parameters purely so the declared return type can
- * UNION them — the resolver itself then needs only one.
+ * Wraps a family's four minted classes as the `errors` bundle {@link resolveConfigTarget}
+ * takes. The message text is identical across every family, so it lives here instead of
+ * being restated per handler.
  */
 export function configTargetErrorsFor<
   TNotLinked,
@@ -138,33 +128,19 @@ export function configTargetErrorsFor<
 }
 
 /**
- * What {@link resolveConfigTarget} needs to know about a branch-lookup failure to
- * decide whether it was a 404. Every family's `mapResolveError` comes from
- * `mapHttpError`, whose failure union has exactly ONE arm carrying an HTTP status
- * (its `statusError` class, `{ status, body, message }`); the transport, request-validation,
- * and request-body arms carry none, and neither do the parent-ref resolver's failures.
- * Modelling `status` as optional is what lets that whole union satisfy this bound, and turns
- * the 404 test below into an ordinary typed field read instead of a `Predicate` duck-type
- * probe. `_tag` is required only so this is not a weak type.
+ * What {@link resolveConfigTarget} needs to know about a branch-lookup failure to decide
+ * whether it was a 404. `status` is optional because only one arm of the `mapHttpError`
+ * failure union carries an HTTP status; every other producer has none. `_tag` is required
+ * so the interface isn't a TypeScript weak type.
  */
 export interface ConfigTargetResolveFailure {
   readonly _tag: string;
   readonly status?: number | undefined;
 }
 
-/**
- * Reclassifies a status-shaped branch-lookup failure carrying a 404 as
- * `notFoundError`; every other status/network failure re-fails with its
- * original identity unchanged. A standalone generic function (rather than a
- * refinement passed to `Effect.catchIf`) so its own return type — a union of
- * two different `Effect` instantiations — is inferred directly from this
- * function's body instead of backward through `Effect.catch`'s inference.
- *
- * Deliberately NOT baked into `mapResolveError`: `config pull` shares ONE mapper across two
- * call sites (the branch lookup AND the `/v2/projects/{ref}/config` read — see
- * `pull.errors.ts`'s `ConfigPullReadNetworkError` doc comment), so folding the 404 rule
- * into the mapper would misreport a 404 from the unrelated config read as "branch not found".
- */
+// Not folded into `mapResolveError`: `config pull` shares one mapper across the branch
+// lookup and the config read, so treating every 404 as "branch not found" here would
+// misclassify a config-read 404.
 function reclassifyBranchNotFoundError<E extends ConfigTargetResolveFailure, C>(
   cause: E,
   notFoundError: C,
@@ -173,23 +149,11 @@ function reclassifyBranchNotFoundError<E extends ConfigTargetResolveFailure, C>(
 }
 
 /**
- * Resolves `--project-ref` to a {@link ConfigTarget}. `--project-ref`
- * accepts a project ref, or the name (or UUID) of a branch of the linked
- * project — `link`'s settled vocabulary (CLI-2167). A ref-shaped value
- * (exactly 20 lowercase letters) is always treated as a project ref.
+ * Resolves `--project-ref` to a {@link ConfigTarget}: a project ref, or the name/UUID of a
+ * branch on the linked project. A ref-shaped value (20 lowercase letters) is always a project ref.
  *
- * A UUID target resolves through `GET /v1/branches/{id}` directly, which
- * needs no parent ref at all, so it keeps the fully lazy parent resolution
- * below — the parent-scoped resolver is never evaluated for it, which is
- * exactly what lets it work in an unlinked directory.
- *
- * A NAME target, by contrast, needs the parent project ref to search under,
- * so it is resolved eagerly, BEFORE any spinner starts — mirroring `link`
- * (link.handler.ts:198-213): an unlinked directory (or a corrupt/stale linked
- * ref) must fail immediately with a link-grade error naming the value the
- * user passed, rather than falling through to `resolver.resolve`'s
- * interactive project picker rendering under a live "Resolving branch..."
- * spinner.
+ * A UUID branch needs no parent ref, so it works unlinked; a name branch resolves the parent
+ * ref eagerly, before any spinner starts, so an unlinked or stale link fails immediately.
  */
 export function resolveConfigTarget<TError, EResolve extends ConfigTargetResolveFailure>(
   requested: Option.Option<string>,
@@ -234,9 +198,8 @@ export function resolveConfigTarget<TError, EResolve extends ConfigTargetResolve
       );
       yield* resolving?.clear() ?? Effect.void;
 
-      // The resolved branch might not have a project ref yet (still
-      // provisioning) — never let an empty/placeholder ref reach the
-      // config-read call (mirrors link.handler.ts:248-256's guard).
+      // The resolved branch might not have a project ref yet (still provisioning); don't
+      // let an empty ref reach the config-read call.
       if (!BRANCH_PROJECT_REF_PATTERN.test(ref)) {
         return yield* Effect.fail(errors.branchNotReady(target));
       }

@@ -18,25 +18,22 @@ import type { ComputeListFlags } from "./list.command.ts";
 /**
  * `supabase compute list` — every compute in this project, deployed or not.
  *
- * A union of two sources, because either half alone is misleading: the
- * project's `[compute.*]` entries (scaffolded, maybe never deployed) and what
- * the API reports as deployed (including anything deployed from elsewhere, or
- * from a directory since deleted). A compute in the config with nothing deployed
- * shows as `not deployed`; a deployed compute with no local entry is called out,
- * since pushing it from here would have to guess its runtime.
+ * Merges two sources that are each misleading alone: the project's
+ * `[compute.*]` entries (maybe never deployed) and what the API reports as
+ * deployed (including compute pushed from elsewhere). A configured compute with
+ * nothing deployed shows as `not deployed`; a deployed compute with no local
+ * entry is called out, since pushing it from here would have to guess its runtime.
  *
- * The list endpoint deliberately makes no per-compute backend call, so it
- * carries no live instance tally — the `INSTANCES` column is the declared
- * count from the spec. `status` is where the live tally lives.
+ * `INSTANCES` is the declared count from the spec — the list endpoint makes no
+ * per-compute call, so it carries no live tally; `status` has that.
  */
 
 /**
- * No URL column. Every compute's URL is the same 40-odd characters of host and
- * prefix with the name on the end, which pushed the table past 130 columns to
- * carry one derivable field — `renderGlamourTable` sizes each column to its
- * widest cell and never wraps. `compute status` renders it, vertically, for the
- * same reason (see `compute.format.ts`), and every machine format still carries
- * `url` per compute.
+ * No URL column: every compute's URL is the same ~40 characters of host and
+ * prefix with just the name changing, which would push the table past 130
+ * columns for one derivable field. `compute status` renders it vertically for
+ * the same reason (see `compute.format.ts`); every machine format still
+ * carries `url` per compute.
  */
 const HEADERS = ["NAME", "RUNTIME", "SIZE", "STATE", "INSTANCES"] as const;
 
@@ -62,10 +59,9 @@ function stateLabel(row: ComputeRow): string {
 }
 
 /**
- * The API omits `spec.runtime` only for a context-only build, so for a deployed
- * compute its absence *is* "dockerfile". For one that has never been deployed
- * there is nothing to infer from — `push` would guess from marker files — so say
- * unknown rather than assert a runtime it may not have.
+ * The API omits `spec.runtime` only for a context-only build, so its absence
+ * on a deployed compute means "dockerfile". An undeployed compute has nothing to
+ * infer from, so this reports unknown rather than guessing.
  */
 function runtimeLabelFor(row: ComputeRow): string | undefined {
   if (row.deployed !== undefined) {
@@ -105,10 +101,9 @@ export const computeList = Effect.fn("compute.list")(function* (flags: ComputeLi
   const telemetryState = yield* TelemetryState;
   const settings = yield* CommandSettings;
 
-  // The ref is resolved outside the finalizers because caching it is one of
-  // them; everything that can fail on its own — loading `config.toml`,
-  // validating the name, resolving the compute — belongs inside, so those
-  // failures still flush telemetry. Same shape as `config/push`.
+  // Resolved here, outside the block below, since caching it is one of that
+  // block's own finalizers — everything else that can fail belongs inside so
+  // those failures still flush telemetry.
   const projectRef = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
@@ -155,10 +150,9 @@ export const computeList = Effect.fn("compute.list")(function* (flags: ComputeLi
         configured: row.configured,
         local: row.local,
         deployed: row.deployed !== undefined,
-        // Read the same way `runtimeLabel` reads it, so `-o json` and the text
-        // table cannot disagree: for a deployed compute an absent `spec.runtime`
-        // *means* dockerfile, and falling back to the local config there
-        // reported a stale runtime the deployment had moved off.
+        // Reads the same way `runtimeLabel` does, so `-o json` and the text
+        // table can't disagree: an absent `spec.runtime` on a deployed compute
+        // means dockerfile, not a stale local config value.
         runtime: runtimeLabelFor(row),
         size: row.deployed?.spec.size,
         state: stateLabel(row),
@@ -188,18 +182,10 @@ export const computeList = Effect.fn("compute.list")(function* (flags: ComputeLi
 
     yield* output.raw(renderGlamourTable([...HEADERS], rows.map(toCells)));
 
-    // Two different problems, and they need different advice. A compute with a
-    // local directory but no entry can be pushed — the runtime is the only
-    // unknown. One with nothing local at all cannot: `deployOneCompute` checks
-    // the source directory *before* inferring a runtime and fails with
-    // `ComputeSourceMissingError`, so telling that user about runtime guessing
-    // points them at the wrong prerequisite.
-    //
-    // Both are written the way this shell writes every other heads-up that is
-    // not a failure: a yellow `WARNING:` prefix, then the consequence on its own
-    // line (`start`'s Docker-on-Windows notice is the same two-line shape). A
-    // single long sentence re-flows differently at every terminal width, right
-    // under a table that lines its columns up.
+    // A local directory with no config entry can still be pushed (only the
+    // runtime is unknown); nothing local at all can't — `deployOneCompute`
+    // requires a source directory before it infers a runtime, so pointing that
+    // case at runtime guessing would name the wrong problem.
     const unconfigured = rows
       .filter((row) => row.deployed !== undefined && !row.configured && row.local)
       .map((row) => row.name);

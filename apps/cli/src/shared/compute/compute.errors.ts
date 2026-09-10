@@ -22,11 +22,9 @@ export class InvalidComputeNameError extends Data.TaggedError("InvalidComputeNam
 }
 
 /**
- * A bare `new` had no name to scaffold under, and nowhere to ask for one.
- *
- * The name is the one input this command cannot default — it is the directory,
- * the `config.toml` key and the hostname all at once — so with `-o` in force or
- * no interactive terminal there is nothing to do but say so.
+ * A bare `new` had no name to scaffold under, and nowhere to ask for one. The name is the one
+ * input this command can't default — it's the directory, the `config.toml` key, and the hostname
+ * all at once — so with `-o` or no interactive terminal there's nothing to do but say so.
  */
 export class MissingComputeNameError extends Data.TaggedError("MissingComputeNameError")<{
   readonly detail: string;
@@ -40,15 +38,11 @@ export class MissingComputeNameError extends Data.TaggedError("MissingComputeNam
 /**
  * A symlink in the compute source points outside the build context.
  *
- * The archive is everything the server gets — it runs no install step and has
- * no view of the surrounding repository — so a link whose target is not also
- * packaged arrives dangling. The catalog runtimes then boot without the
- * dependency and a Dockerfile build fails on the `COPY`, both of them minutes
- * later and with nothing naming the cause. Refused here instead.
- *
- * The common source is a package manager that hoists: a compute directory that
- * is a pnpm workspace member links its dependencies at the repository root
- * rather than under its own `node_modules`.
+ * The archive is everything the server gets, with no install step and no view of the surrounding
+ * repository, so a link whose target isn't also packaged arrives dangling — the catalog runtimes
+ * boot without the dependency, or a Dockerfile build fails on `COPY`, both minutes later with
+ * nothing naming the cause. Refused here instead. The common source is a package manager that
+ * hoists dependencies to the repository root, outside the compute's own `node_modules`.
  */
 export class ComputeSourceEscapingLinkError extends Data.TaggedError(
   "ComputeSourceEscapingLinkError",
@@ -72,10 +66,8 @@ export class NoComputeToDeployError extends Data.TaggedError("NoComputeToDeployE
 }
 
 /**
- * `config.toml` records a runtime this CLI does not offer.
- *
- * Raised by `push`, the command that reads a compute's runtime back out of
- * config; `new` writes one and never reads it.
+ * `config.toml` records a runtime this CLI does not offer. Raised by `push`, which reads a
+ * compute's runtime back out of config; `new` writes one but never reads it.
  */
 export class UnknownComputeRuntimeError extends Data.TaggedError("UnknownComputeRuntimeError")<{
   readonly detail: string;
@@ -145,10 +137,9 @@ export class ComputeSourceMissingError extends Data.TaggedError("ComputeSourceMi
 }
 
 /**
- * `--source` names a directory it is not allowed to name. Worth its own error
- * because the destination is where the starter files land, so a value that
- * resolves to the project root, `supabase/`, or anywhere outside the project has
- * to be refused before anything is written.
+ * `--source` names a directory it isn't allowed to name — the starter files land at the resolved
+ * destination, so a value resolving to the project root, `supabase/`, or anywhere outside the
+ * project must be refused before anything is written.
  */
 export class InvalidComputeSourceError extends Data.TaggedError("InvalidComputeSourceError")<{
   readonly detail: string;
@@ -213,10 +204,9 @@ export class ComputeNotDeployedError extends Data.TaggedError("ComputeNotDeploye
 }
 
 /**
- * Compute is in private alpha: the routes answer 404 for a project that is not
- * enrolled, which is indistinguishable from an unknown compute at the transport
- * level — so this is only raised for the collection endpoints, where there is
- * no compute name that could have been wrong.
+ * Compute are in private alpha: an unenrolled project's routes answer 404, indistinguishable at
+ * the transport level from an unknown compute — so this is only raised on collection endpoints,
+ * where there's no compute name that could have been wrong.
  */
 export class ComputeUnavailableError extends Data.TaggedError("ComputeUnavailableError")<{
   readonly detail: string;
@@ -228,11 +218,9 @@ export class ComputeUnavailableError extends Data.TaggedError("ComputeUnavailabl
 }
 
 /**
- * The project ref names no project this account can see.
- *
- * Separated from {@link ComputeUnavailableError} because both arrive as a 404
- * on the same routes, and telling someone to request alpha enrolment for a
- * project that does not exist sends them somewhere that cannot help.
+ * The project ref names no project this account can see. Separated from {@link
+ * ComputeUnavailableError} because both arrive as a 404 on the same routes, and suggesting alpha
+ * enrolment for a project that doesn't exist would send someone somewhere that can't help.
  */
 export class ComputeProjectNotFoundError extends Data.TaggedError("ComputeProjectNotFoundError")<{
   readonly detail: string;
@@ -244,12 +232,9 @@ export class ComputeProjectNotFoundError extends Data.TaggedError("ComputeProjec
 }
 
 /**
- * Any other status the Compute routes answered with.
- *
- * Classified from the status it carries rather than bucketed as a service
- * failure: a 401 is the user's to fix by logging in and a 403 by getting access,
- * and reporting either as `api_status` both misleads the user and blurs the
- * actionability signal for every Compute endpoint at once.
+ * Any other status the Compute routes answered with. Classified from the status it carries rather
+ * than bucketed as a generic service failure — a 401 is the user's to fix by logging in, a 403 by
+ * getting access, and reporting either as `api_status` would blur the actionability signal.
  */
 export class ComputeApiUnexpectedStatusError extends Data.TaggedError(
   "ComputeApiUnexpectedStatusError",
@@ -295,16 +280,12 @@ export class ComputeDeleteConfirmationRequiredError extends Data.TaggedError(
 }
 
 /**
- * The logs query itself failed.
- *
- * The analytics endpoint can answer **HTTP 200** with a populated `error` field,
- * so this is not reachable from a status code alone. It also covers the server's
- * 30-second query timeout, which arrives as a non-2xx.
- *
- * Classified apart from {@link ComputeApiUnexpectedStatusError} on purpose: the
- * SQL is this CLI's, not the user's input, so a rejected query means a projection
- * or a filter here is wrong. Its own fingerprint keeps that visible in telemetry
- * instead of grouped with transport noise from every other Compute route.
+ * The logs query itself failed. The analytics endpoint can answer HTTP 200 with a populated
+ * `error` field, so this isn't reachable from a status code alone; it also covers the server's
+ * 30-second query timeout, which arrives as a non-2xx. Kept apart from {@link
+ * ComputeApiUnexpectedStatusError} because the SQL here is the CLI's own, not user input — its
+ * own fingerprint keeps a broken projection or filter visible instead of blending into transport
+ * noise.
  */
 export class ComputeLogsQueryFailedError extends Data.TaggedError("ComputeLogsQueryFailedError")<{
   readonly detail: string;
@@ -328,10 +309,9 @@ export class ComputeLogsUsageExceededError extends Data.TaggedError(
 }
 
 /**
- * The analytics endpoints allow 10 requests per 60 seconds, which `--follow`
- * polls against — so 429 is an ordinary outcome here rather than an edge case,
- * and it gets its own error so the suggestion can name the poll interval as the
- * thing to slow down.
+ * The analytics endpoints allow 10 requests per 60 seconds, which `--follow` polls against — so
+ * 429 is an ordinary outcome here, not an edge case. Its own error lets the suggestion name the
+ * poll interval as the thing to slow down.
  */
 export class ComputeLogsRateLimitedError extends Data.TaggedError("ComputeLogsRateLimitedError")<{
   readonly detail: string;

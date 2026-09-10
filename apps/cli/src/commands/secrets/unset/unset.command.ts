@@ -37,7 +37,6 @@ export const secretsUnsetCommand = Command.make("unset", config).pipe(
   Command.withHandler((flags) =>
     secretsUnset(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
-  // `stdinLayer`: the confirmation prompt reads piped stdin via `promptYesNo`
-  // (`Console.ReadLine`, `console.go:38-61`) on a non-TTY stdin.
+  // `stdinLayer`: the confirmation prompt reads piped stdin via `promptYesNo` on a non-TTY stdin.
   Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["secrets", "unset"]), stdinLayer)),
 );

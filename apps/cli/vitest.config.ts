@@ -16,16 +16,11 @@ function dockerfileTextPlugin() {
   };
 }
 
-// Workspace packages such as @supabase/config publish a `bun` export
-// condition pointing at their TypeScript source (see
-// packages/config/package.json's `exports` map); without it, Vite's resolver
-// falls through to the `default` condition and loads the built `dist/*.js`
-// output instead — which is stale, or missing entirely on a fresh clone
-// before the package has been built. Extending (not replacing) Vite's
-// default condition lists keeps every other package's exports resolution
-// unchanged. Required on every inline `test.projects` entry below too:
-// Vitest builds a separate Vite config per project and does not inherit
-// these from the root config (see PR #6366 finding 0).
+// Workspace packages such as @supabase/config publish a `bun` export condition
+// pointing at their TypeScript source; without it, Vite falls through to `default`
+// and loads the built `dist/*.js`, which can be stale or missing. Each inline
+// `test.projects` entry below needs this too, since Vitest builds a separate Vite
+// config per project and does not inherit it from the root config.
 const workspacePackageResolve = { conditions: [...defaultClientConditions, "bun"] };
 const workspacePackageSsrResolve = { conditions: [...defaultServerConditions, "bun"] };
 

@@ -6,17 +6,15 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 
 /**
- * Opening a Postgres connection failed. Mirrors `pgx`/`pgconn` connect
- * failures surfaced by `utils.ConnectByConfig`. The `suggestion` carries the
- * `utils.CmdSuggestion` text when the connect path sets one.
+ * Opening a Postgres connection failed. `suggestion` carries actionable follow-up text when the
+ * connect path sets one.
  */
 export class DbConnectError extends Data.TaggedError("DbConnectError")<{
   readonly message: string;
   readonly suggestion?: string;
   /**
-   * True when the failure was dial-level (`isDialFailure`) rather than
-   * a server, auth, or config error — the fresh-db bootstrap's connect retry
-   * keys off this field (`db-setup.ts`, #6136).
+   * True when the failure was dial-level rather than a server, auth, or config error; the
+   * fresh-db bootstrap's connect retry keys off this field.
    */
   readonly retryable?: boolean;
 }> {
@@ -26,8 +24,7 @@ export class DbConnectError extends Data.TaggedError("DbConnectError")<{
 }
 
 /**
- * Executing a SQL statement against an open connection failed. Mirrors the
- * established `conn.Exec` error sites.
+ * Executing a SQL statement against an open connection failed.
  */
 export class DbExecError extends Data.TaggedError("DbExecError")<{
   readonly message: string;
@@ -37,23 +34,20 @@ export class DbExecError extends Data.TaggedError("DbExecError")<{
    */
   readonly statementIndex?: number;
   /**
-   * Postgres SQLSTATE (e.g. `42P01` undefined_table), extracted from the driver
-   * error's `cause` chain when present. Lets callers match Go's error-code checks
-   * (`pgerrcode.*`) instead of fuzzy message matching — e.g. suppressing only a
-   * missing migration-history table, not an undefined column.
+   * Postgres SQLSTATE (e.g. `42P01` undefined_table), extracted from the driver error's `cause`
+   * chain when present. Lets callers match on error code instead of fuzzy message matching — e.g.
+   * suppressing only a missing migration-history table, not an undefined column.
    */
   readonly code?: string;
   /**
-   * Postgres `Detail` field of a server ErrorResponse (`pgErr.Detail`).
-   * Only set for server errors that carry a non-empty detail; the migration-apply
-   * error context renders it on its own line, matching `ExecBatch`.
+   * Postgres `Detail` field of a server error response. Only set when the server reports one;
+   * the migration-apply error context renders it on its own line.
    */
   readonly detail?: string;
   /**
-   * Postgres error cursor of a server ErrorResponse (`pgErr.Position`): a
-   * 1-based index into the failing statement. Only set when the server reported a
-   * position > 0. The migration-apply error context uses it to render `^`
-   * caret under the error position (`markError`).
+   * Postgres error cursor of a server error response: a 1-based index into the failing
+   * statement, present only when the server reports one > 0. The migration-apply error context
+   * renders a `^` caret under it.
    */
   readonly position?: number;
 }> {
@@ -63,20 +57,10 @@ export class DbExecError extends Data.TaggedError("DbExecError")<{
 }
 
 /**
- * A server-side `COPY (...) TO STDOUT` stream failed. Mirrors
- * `copyToCSV`, where
- * `conn.CopyTo` returns `failed to copy output: %w`. Raised by the driver's
- * `copyToCsv`; the report handler maps a subsequent file-write failure to its
- * own `failed to create output file` error (the reference implementation raises that
- * one first, when it
- * opens the file before copying — the TS port collects the bytes first, so the
- * two messages still match on the matching failure).
- *
- * That "collect bytes first" ordering is also where the two sides diverge on
- * disk, not just in message text — Go opens the output file (`O_TRUNC`) before
- * running the query, so a failing query still leaves a file behind; TS never
- * writes one. See `inspect/report/SIDE_EFFECTS.md` ("Divergence on the query
- * that was in flight when `COPY` failed") for the file-residue consequences.
+ * A server-side `COPY (...) TO STDOUT` stream failed. The report handler maps a later
+ * file-write failure to its own separate error, since bytes are collected before the output
+ * file is opened. See `inspect/report/SIDE_EFFECTS.md`, "Divergence on the query that was in
+ * flight when `COPY` failed", for the on-disk consequences.
  */
 export class DbCopyError extends Data.TaggedError("DbCopyError")<{
   readonly message: string;

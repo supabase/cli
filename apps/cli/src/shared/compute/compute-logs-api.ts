@@ -79,17 +79,10 @@ const StructuredLogError = Schema.Struct({
 
 /**
  * The response envelope, declared here rather than reusing the generated
- * `V1GetProjectLogsOutput`.
- *
- * The generated schema is `optionalKey` on both fields but allows neither to be
- * `null` — while the endpoint sends exactly `{"result":[...],"error":null}` on
- * success and `{"result":null,"error":"..."}` on failure, because
- * `getAnalyticsResponse` normalises the unused half to an explicit `null`. Decoding
- * a real response against the generated schema therefore always fails.
- *
- * `error` stays `Unknown` so the string and structured forms are both accepted and
- * narrowed at the point of use; the generated struct also marks fields required
- * that real bodies omit.
+ * `V1GetProjectLogsOutput`: that schema forbids `null` on either field, while the endpoint
+ * always sends one of them as an explicit `null` (`getAnalyticsResponse` normalizes the
+ * unused half), so decoding a real response against it always fails. `error` stays `Unknown`
+ * so both the string and structured forms are accepted and narrowed at the point of use.
  */
 const LogsResponse = Schema.Struct({
   result: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.Unknown))),
@@ -203,9 +196,8 @@ export const fetchComputeLogs = Effect.fnUntraced(function* (
     });
   }
 
-  // The query orders `desc` to make `limit` mean "the most recent N". Sorting
-  // here rather than trusting that order: guest lines are ingested late and out
-  // of order, and once `--follow` merges overlapping windows the server's order
-  // stops being meaningful at all.
+  // The query orders `desc` to make `limit` mean "the most recent N", but sorting here rather
+  // than trusting that order: guest lines are ingested late and out of order, and once
+  // `--follow` merges overlapping windows the server's order stops being meaningful at all.
   return entries.sort((left, right) => left.timestampMs - right.timestampMs);
 });

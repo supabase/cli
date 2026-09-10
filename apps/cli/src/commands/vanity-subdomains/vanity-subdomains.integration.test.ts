@@ -67,9 +67,8 @@ function runtimeWith(opts: {
   });
 }
 
-// Builds an API mock where the given write endpoint is billing-gated (402) and
-// the project/entitlements lookups report no access to `vanity_subdomain`. Used
-// to exercise the upgrade-suggestion branch in `activate` and `check-availability`.
+// Mocks a billing-gated (402) write endpoint with entitlements reporting no access to
+// `vanity_subdomain`, for the upgrade-suggestion branch tests.
 function gatedApi(matchWrite: (url: string) => boolean) {
   return mockCommandPlatformApi({
     handler: (request) =>
@@ -192,7 +191,7 @@ describe("vanity-subdomains get", () => {
     return Effect.gen(function* () {
       yield* vanitySubdomainsGet({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("status: custom-domain-used");
-      // yaml.v3 lowercases the whole field name (CLI-1975).
+      // yaml.v3 lowercases the whole field name.
       expect(out.stdoutText).toContain("customdomain: example.com");
     }).pipe(Effect.provide(layer));
   });
@@ -204,8 +203,7 @@ describe("vanity-subdomains get", () => {
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsGet({ projectRef: Option.none() });
-      // Go declaration order (CustomDomain before Status) and a single
-      // trailing newline, matching BurntSushi (CLI-1975).
+      // CustomDomain precedes Status, with a single trailing newline.
       expect(out.stdoutText).toBe('CustomDomain = "example.com"\nStatus = "custom-domain-used"\n');
     }).pipe(Effect.provide(layer));
   });
@@ -423,9 +421,6 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Go marks --desired-subdomain required but cobra validates it only after
-  // PersistentPreRunE (gate → login → ref resolution), so the handler enforces
-  // it with cobra's exact wording after the ref resolves.
   it.live("fails with cobra's required-flag error when --desired-subdomain is omitted", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
@@ -444,8 +439,6 @@ describe("vanity-subdomains check-availability", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Cobra's MarkFlagRequired checks the flag was *changed*, not non-empty —
-  // an explicit empty value must pass the check and reach the API.
   it.live("passes an explicit empty --desired-subdomain through to the API", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_CHECK } });
@@ -504,7 +497,7 @@ describe("vanity-subdomains activate", () => {
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
-      // yaml.v3 lowercases the whole field name (CLI-1975).
+      // yaml.v3 lowercases the whole field name.
       expect(out.stdoutText).toContain("customdomain: example.com");
     }).pipe(Effect.provide(layer));
   });
@@ -596,14 +589,10 @@ describe("vanity-subdomains activate", () => {
         expect(errorJson).toContain("VanitySubdomainsActivateNetworkError");
         expect(errorJson).toContain("failed activate vanity subdomain");
       }
-      // A network failure is not a billing gate, so no upgrade is suggested.
       expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
-  // Go marks --desired-subdomain required but cobra validates it only after
-  // PersistentPreRunE (gate → login → ref resolution), so the handler enforces
-  // it with cobra's exact wording after the ref resolves.
   it.live("fails with cobra's required-flag error when --desired-subdomain is omitted", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
@@ -622,8 +611,6 @@ describe("vanity-subdomains activate", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Cobra's MarkFlagRequired checks the flag was *changed*, not non-empty —
-  // an explicit empty value must pass the check and reach the API.
   it.live("passes an explicit empty --desired-subdomain through to the API", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_ACTIVATE } });
@@ -751,10 +738,8 @@ describe("vanity-subdomains PersistentPostRun parity", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // In Go the missing-required-flag failure happens AFTER PersistentPreRunE
-  // completes, so PersistentPostRun still fires telemetry and writes the
-  // linked-project cache (`cmd/root.go:171-181,212-233`). The handler-level
-  // check sits inside both `Effect.ensuring` wrappers to match.
+  // The desired-subdomain check runs inside both `Effect.ensuring` wrappers, so telemetry
+  // still flushes and the cache still writes even though it fails before any API call.
   it.live(
     "flushes telemetry and writes linked-project cache on a missing --desired-subdomain",
     () => {

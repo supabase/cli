@@ -488,8 +488,7 @@ describe("native runtime", { timeout: 15_000 }, () => {
           resolveProcess: () =>
             Effect.succeed({
               startup: [oneShotProcess("startup-failed", 7)],
-              // This path is intentionally invalid: a correct runtime must
-              // fail on the startup process before attempting to spawn it.
+              // Invalid on purpose: the runtime must fail the startup process before spawning it.
               main: { executable: "/missing/native-main" },
             }),
           waitForReadiness: () =>
@@ -721,15 +720,12 @@ describe("native runtime", { timeout: 15_000 }, () => {
 
   // The helper below is a raw Node launcher fixture; its JSON is the same fd4
   // payload covered by NativeProcess integration, not product serialization.
-  it.live("kills the native process tree when its owner pipe closes under Bun and Node", () =>
+  const runProcessTreeScenario = (runtimeCommand: string) =>
     withPlatform(
       Effect.gen(function* () {
         const launcherArgs = defaultNativeProcessLauncher().args;
-        const runtimes = [{ command: process.execPath }, { command: "node" }] as const;
-        for (const runtime of runtimes) {
-          yield* Effect.gen(function* () {
-            const targetLauncher = { command: runtime.command, args: launcherArgs };
-            const descendantCode = `
+        const targetLauncher = { command: runtimeCommand, args: launcherArgs };
+        const descendantCode = `
           const net = require("node:net");
           const server = net.createServer();
           server.listen({ host: "127.0.0.1", port: 0 }, () => {
@@ -739,7 +735,7 @@ describe("native runtime", { timeout: 15_000 }, () => {
             }
           });
         `;
-            const targetCode = `
+        const targetCode = `
           const net = require("node:net");
           const { spawn } = require("node:child_process");
           process.stdout.on("error", () => {});
@@ -757,103 +753,108 @@ describe("native runtime", { timeout: 15_000 }, () => {
             });
           });
         `;
-            const ownerCode = `
+        const ownerCode = `
           const { spawn } = require("node:child_process");
           const launcherProcess = spawn(${JSON.stringify(targetLauncher.command)}, ${JSON.stringify(targetLauncher.args)}, {
             detached: true,
             stdio: ["ignore", "inherit", "inherit", "pipe", "pipe"]
           });
           launcherProcess.stdio[4].end(JSON.stringify({
-            executable: ${JSON.stringify(runtime.command)},
+            executable: ${JSON.stringify(runtimeCommand)},
             args: ["-e", ${JSON.stringify(targetCode)}]
           }));
           setInterval(() => {}, 1000);
         `;
-            const owner = yield* ChildProcess.make(process.execPath, ["-e", ownerCode], {
-              stdout: "pipe",
-              stderr: "pipe",
-              detached: true,
-            });
-            const stderr = yield* Ref.make("");
-            yield* owner.stderr.pipe(
-              Stream.decodeText,
-              Stream.runForEach((chunk) => Ref.update(stderr, (current) => current + chunk)),
-              Effect.forkChild({ startImmediately: true }),
-            );
-            const targetReady = yield* Deferred.make<string>();
-            const descendantReady = yield* Deferred.make<string>();
-            const outputFiber = yield* owner.stdout.pipe(
-              Stream.decodeText,
-              Stream.splitLines,
-              Stream.runForEach((line) =>
-                Effect.gen(function* () {
-                  if (line.startsWith("TARGET_READY ")) yield* Deferred.succeed(targetReady, line);
-                  else if (line.startsWith("DESC_READY "))
-                    yield* Deferred.succeed(descendantReady, line);
-                }),
+        const owner = yield* ChildProcess.make(process.execPath, ["-e", ownerCode], {
+          stdout: "pipe",
+          stderr: "pipe",
+          detached: true,
+        });
+        const stderr = yield* Ref.make("");
+        yield* owner.stderr.pipe(
+          Stream.decodeText,
+          Stream.runForEach((chunk) => Ref.update(stderr, (current) => current + chunk)),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const targetReady = yield* Deferred.make<string>();
+        const descendantReady = yield* Deferred.make<string>();
+        const outputFiber = yield* owner.stdout.pipe(
+          Stream.decodeText,
+          Stream.splitLines,
+          Stream.runForEach((line) =>
+            Effect.gen(function* () {
+              if (line.startsWith("TARGET_READY ")) yield* Deferred.succeed(targetReady, line);
+              else if (line.startsWith("DESC_READY "))
+                yield* Deferred.succeed(descendantReady, line);
+            }),
+          ),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const output = yield* Deferred.await(descendantReady).pipe(
+          Effect.timeoutOrElse({
+            duration: "3 seconds",
+            orElse: () =>
+              Effect.gen(function* () {
+                const diagnostics = yield* Ref.get(stderr);
+                return yield* new ProcessTreeTestError({
+                  message: `native launcher readiness timed out: ${diagnostics}`,
+                });
+              }),
+          }),
+        );
+        const targetLine = yield* Deferred.await(targetReady);
+        const targetPort = Number.parseInt(targetLine.slice("TARGET_READY ".length), 10);
+        const descendantPort = Number.parseInt(output.slice("DESC_READY ".length), 10);
+        expect(Number.isSafeInteger(targetPort)).toBe(true);
+        expect(Number.isSafeInteger(descendantPort)).toBe(true);
+        const targetSocket = yield* NodeSocket.makeNet({ host: "127.0.0.1", port: targetPort });
+        const descendantSocket = yield* NodeSocket.makeNet({
+          host: "127.0.0.1",
+          port: descendantPort,
+        });
+        const targetClosedSignal = yield* Deferred.make<void>();
+        const targetClosed = yield* targetSocket
+          .runRaw(() => Effect.void, {
+            onOpen: Deferred.succeed(targetClosedSignal, undefined),
+          })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(targetClosedSignal);
+        const descendantClosedSignal = yield* Deferred.make<void>();
+        const descendantClosed = yield* descendantSocket
+          .runRaw(() => Effect.void, {
+            onOpen: Deferred.succeed(descendantClosedSignal, undefined),
+          })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(descendantClosedSignal);
+        yield* owner.kill({ killSignal: "SIGKILL" });
+        yield* Fiber.join(targetClosed).pipe(
+          Effect.timeoutOrElse({
+            duration: "10 seconds",
+            orElse: () =>
+              Effect.fail(
+                new ProcessTreeTestError({ message: "target process tree did not close" }),
               ),
-              Effect.forkChild({ startImmediately: true }),
-            );
-            const output = yield* Deferred.await(descendantReady).pipe(
-              Effect.timeoutOrElse({
-                duration: "3 seconds",
-                orElse: () =>
-                  Effect.gen(function* () {
-                    const diagnostics = yield* Ref.get(stderr);
-                    return yield* new ProcessTreeTestError({
-                      message: `native launcher readiness timed out: ${diagnostics}`,
-                    });
-                  }),
-              }),
-            );
-            const targetLine = yield* Deferred.await(targetReady);
-            const targetPort = Number.parseInt(targetLine.slice("TARGET_READY ".length), 10);
-            const descendantPort = Number.parseInt(output.slice("DESC_READY ".length), 10);
-            expect(Number.isSafeInteger(targetPort)).toBe(true);
-            expect(Number.isSafeInteger(descendantPort)).toBe(true);
-            const targetSocket = yield* NodeSocket.makeNet({ host: "127.0.0.1", port: targetPort });
-            const descendantSocket = yield* NodeSocket.makeNet({
-              host: "127.0.0.1",
-              port: descendantPort,
-            });
-            const targetClosedSignal = yield* Deferred.make<void>();
-            const targetClosed = yield* targetSocket
-              .runRaw(() => Effect.void, {
-                onOpen: Deferred.succeed(targetClosedSignal, undefined),
-              })
-              .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
-            yield* Deferred.await(targetClosedSignal);
-            const descendantClosedSignal = yield* Deferred.make<void>();
-            const descendantClosed = yield* descendantSocket
-              .runRaw(() => Effect.void, {
-                onOpen: Deferred.succeed(descendantClosedSignal, undefined),
-              })
-              .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
-            yield* Deferred.await(descendantClosedSignal);
-            yield* owner.kill({ killSignal: "SIGKILL" });
-            yield* Fiber.join(targetClosed).pipe(
-              Effect.timeoutOrElse({
-                duration: "10 seconds",
-                orElse: () =>
-                  Effect.fail(
-                    new ProcessTreeTestError({ message: "target process tree did not close" }),
-                  ),
-              }),
-            );
-            yield* Fiber.join(descendantClosed).pipe(
-              Effect.timeoutOrElse({
-                duration: "10 seconds",
-                orElse: () =>
-                  Effect.fail(
-                    new ProcessTreeTestError({ message: "descendant process tree did not close" }),
-                  ),
-              }),
-            );
-            yield* Fiber.interrupt(outputFiber);
-          });
-        }
+          }),
+        );
+        yield* Fiber.join(descendantClosed).pipe(
+          Effect.timeoutOrElse({
+            duration: "10 seconds",
+            orElse: () =>
+              Effect.fail(
+                new ProcessTreeTestError({ message: "descendant process tree did not close" }),
+              ),
+          }),
+        );
+        yield* Fiber.interrupt(outputFiber);
       }),
-    ),
+    );
+
+  it.live("kills a Bun native process tree when its owner pipe closes", () =>
+    runProcessTreeScenario(process.execPath),
+  );
+
+  it.live("kills a Node native process tree when its owner pipe closes", () =>
+    runProcessTreeScenario("node"),
   );
 
   const ownerLossTargetCode = (signalAware: boolean): string => {

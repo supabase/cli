@@ -102,8 +102,6 @@ function postBody(api: { requests: ReadonlyArray<{ method: string; body?: unknow
   return api.requests.find((r) => r.method === "POST")?.body as Record<string, unknown> | undefined;
 }
 
-// Mirrors init.integration.test.ts's `findFailure`: pulls the first typed
-// error out of an `Exit`'s `Cause` without an `as` cast on the union member.
 function findFailure(exit: Exit.Exit<unknown, unknown>): Record<string, unknown> {
   expect(Exit.isFailure(exit)).toBe(true);
   if (!Exit.isFailure(exit)) {
@@ -351,8 +349,6 @@ describe("projects create integration", () => {
   it.live("treats --interactive=false as non-interactive even on a TTY", () => {
     const { layer, api } = setup({ stdinIsTty: true });
     return Effect.gen(function* () {
-      // On a TTY but with --interactive=false and a required flag missing, Go's
-      // PreRunE marks the flags required and never prompts.
       const exit = yield* Effect.exit(
         projectsCreate({
           ...BASE_FLAGS,
@@ -364,7 +360,6 @@ describe("projects create integration", () => {
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("ProjectsCreateMissingArgError");
       }
-      // No prompts and no org fetch happened.
       expect(api.requests.some((r) => r.method === "GET")).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -378,13 +373,11 @@ describe("projects create integration", () => {
     });
     return Effect.gen(function* () {
       yield* projectsCreate({ ...BASE_FLAGS });
-      // org list was fetched for the interactive prompt
       expect(api.requests.some((r) => r.method === "GET")).toBe(true);
       const body = postBody(api);
       expect(body?.name).toBe("my-proj");
       expect(body?.organization_slug).toBe("org-abc");
       expect(body?.region).toBe("us-west-2");
-      // blank password prompt generates a 16-char password
       expect(String(body?.db_pass)).toHaveLength(16);
       expect(out.stderrText).toContain("Selected org-id:");
       expect(out.stderrText).toContain("Selected region:");
@@ -487,7 +480,6 @@ describe("projects create integration", () => {
         dbPassword: Option.some("s3cret-pass"),
         region: Option.some("us-east-1"),
       });
-      // PascalCase field names at the top level — no table header.
       expect(out.stdoutText).toContain('Name = "alpha"');
     }).pipe(Effect.provide(layer));
   });
@@ -543,9 +535,8 @@ describe("projects create integration", () => {
         region: Option.some("us-east-1"),
         size: Option.some("micro"),
       });
-      // Struct fields serialize in alphabetical order; the cli-e2e replay
-      // server byte-compares the request body. JSON.parse → stringify
-      // round-trips key order, so this asserts the on-the-wire order.
+      // JSON.stringify preserves key order, so this pins the exact wire order rather than
+      // just deep-equality.
       const body = api.requests.find((r) => r.method === "POST")?.body;
       expect(JSON.stringify(body)).toBe(
         '{"db_pass":"s3cret-pass","desired_instance_size":"micro","name":"alpha","organization_slug":"acme","region":"us-east-1"}',
@@ -554,8 +545,8 @@ describe("projects create integration", () => {
   });
 
   it.live("tolerates a 201 response with a placeholder/short ref (lenient parse)", () => {
-    // The typed client rejects refs shorter than 20 chars; `executeRaw` must
-    // render the placeholder verbatim (cli-e2e fixtures embed `__PROJECT_REF__`).
+    // The typed client validates refs to be 20+ chars; `executeRaw` bypasses that to render
+    // placeholders verbatim.
     const { layer, out } = setup({
       byMethod: {
         POST: { status: 201, body: { ...CREATED, id: "__PROJECT_REF__", ref: "__PROJECT_REF__" } },
@@ -607,10 +598,6 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // The established --size enum is an 18-value list that does not include
-  // "nano" (or "pico") and rejects any other value at flag-parse time. TS
-  // previously listed "nano" as a valid choice, silently succeeding where
-  // it should error.
   it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([projectsCreateCommand]),
@@ -640,9 +627,8 @@ describe("projects create integration", () => {
   });
 });
 
-// Distinguishes "the --size flag itself was rejected at parse time" from any
-// other failure (e.g. a missing runtime service in this minimal test setup),
-// so the regression test above can't pass for the wrong reason.
+// Confirms the failure came from the `--size` flag itself, not an unrelated error (e.g. a missing
+// runtime service in this minimal setup), so the regression test can't pass for the wrong reason.
 function rejectsInvalidSizeChoice(error: unknown): boolean {
   if (typeof error !== "object" || error === null || !("errors" in error)) return false;
   const { errors } = error;

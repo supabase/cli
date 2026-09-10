@@ -1,11 +1,6 @@
 /**
- * Transcribed verbatim from `apps/cli-go/internal/utils/templates/initial_schemas/14.sql`
- * (Go `//go:embed templates/initial_schemas/14.sql`, `apps/cli-go/internal/utils/config.go:53-54`,
- * exported as `utils.InitialSchemaPg14Sql`). Run via `ExecBatch` against a fresh
- * PG14 (`db.major_version != 13`, `<= 14`) local database by `InitSchema14`
- * (`apps/cli-go/internal/db/start/start.go:256-266`), right after
- * {@link START_DB_GLOBALS_SQL}. Not a Go `text/template`. Do not hand-edit —
- * re-transcribe from the Go source if it changes.
+ * Baseline SQL run via `ExecBatch` against a fresh PG14 (`db.major_version != 13`, `<= 14`) local
+ * database, right after {@link START_DB_GLOBALS_SQL}.
  */
 export const START_DB_INITIAL_SCHEMA_14_SQL = `--
 -- PostgreSQL database dump

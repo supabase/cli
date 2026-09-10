@@ -1,16 +1,9 @@
 /**
- * Appending one `[section]` to a TOML file.
- *
- * `supabase/config.toml` belongs to the whole CLI: users hand-edit it, comment
- * it, and commit it. Round-tripping through `saveProjectConfig` preserves the
- * data but discards every comment and normalizes the formatting the user chose,
- * so the write here is textual — render the table, put it at the end, and leave
- * every other byte alone.
- *
- * Append-only by design: locating an existing table means being right about
- * multiline strings, the three ways to quote a key, and where one table ends.
- * Callers ask the decoded config whether an entry exists instead, so nothing
- * here has to find one.
+ * Appends one `[section]` to a TOML file textually rather than through a parse-and-rewrite
+ * round trip, since `saveProjectConfig` would discard the user's comments and formatting.
+ * Append-only by design: locating an existing table correctly means handling multiline
+ * strings and the three ways to quote a key, so callers ask the decoded config whether an
+ * entry exists instead.
  */
 
 /** A TOML bare key needs no quoting; anything else does. */
@@ -28,13 +21,10 @@ const TOML_NAMED_ESCAPES: Record<string, string> = {
 };
 
 /**
- * Escape a string for a TOML basic (double-quoted) string.
- *
- * Control characters need the same treatment as quotes and backslashes: TOML
- * forbids them raw inside a basic string, and a path is allowed to contain them
- * on Unix — a directory name with an embedded newline is legal. Writing one
- * through verbatim leaves `config.toml` unparseable after the scaffold is
- * already on disk.
+ * Escapes a string for a TOML basic (double-quoted) string. Control characters need the same
+ * treatment as quotes and backslashes: TOML forbids them raw, and a path may legally contain
+ * one (an embedded newline in a directory name) — writing it through verbatim would leave
+ * `config.toml` unparseable after the scaffold is already on disk.
  */
 function quote(value: string): string {
   let escaped = "";
@@ -54,14 +44,10 @@ function quote(value: string): string {
 }
 
 /**
- * Whether `value` is a number this module can render without lying about it.
- *
- * Bare-rendering is faithful only for a whole, finite, non-negative count —
- * which is what `[compute.<name>] instances` is bounded to. Everything else is
- * either valid TOML the schema refuses (`1.5`, `-1`, `1e21`) or a token TOML has
- * no reading for at all (`String(NaN)` is `NaN`, not `nan`; `String(Infinity)`
- * is `Infinity`, not `inf`). Only the second kind fails a re-parse, so the first
- * kind has to be stopped here.
+ * Whether `value` is a whole, non-negative, finite number `[compute.<name>] instances` can
+ * render without lying: `1.5`/`-1`/`1e21` are valid TOML the schema rejects, while
+ * `String(NaN)`/`String(Infinity)` render tokens TOML has no reading for at all. Only the
+ * second kind fails a re-parse, so the first kind must be stopped here.
  */
 export function isRenderableTomlNumber(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
@@ -73,29 +59,21 @@ export function tomlKey(key: string): string {
 }
 
 /**
- * `key = "value"`, or `key = value` for a number.
- *
- * A number has to be rendered bare: quoting it would write a TOML string, and
- * the config schema types `[compute.<name>] instances` as a number — so a quoted
- * count produces a `config.toml` that no longer loads at all.
- *
- * Rendering is all this does, and a bare number is only as good as the caller's.
- * `1.5` and `-1` render as perfectly valid TOML that the compute schema rejects,
- * so `planComputeEntry`'s re-parse — a syntax check, not a schema one — would
- * pass them straight through. {@link isRenderableTomlNumber} is the guard that
- * makes that impossible, and it runs before this does.
+ * `key = "value"`, or `key = value` for a number — quoting a count would write a TOML string,
+ * and the schema types `[compute.<name>] instances` as a number, so a quoted count would stop
+ * `config.toml` from loading at all. Rendering doesn't validate: {@link isRenderableTomlNumber}
+ * is the guard that keeps `1.5`/`-1` from reaching here, since `planComputeEntry`'s re-parse is
+ * a syntax check, not a schema one.
  */
 function renderPair(key: string, value: string | number): string {
   return `${tomlKey(key)} = ${typeof value === "number" ? String(value) : quote(value)}`;
 }
 
 /**
- * `text` with a `[header]` table holding `values` appended to the end.
- *
- * Cannot fail: the caller has already established that no such table exists, so
- * there is nothing to reconcile. A file that is empty (or only whitespace) gets
- * no leading blank line; an existing one gets exactly one, however it happened
- * to be terminated.
+ * `text` with a `[header]` table holding `values` appended to the end. Cannot fail: the
+ * caller has already established that no such table exists. An empty (or whitespace-only)
+ * file gets no leading blank line; an existing one gets exactly one, however it was
+ * terminated.
  */
 export function appendTomlSection(
   text: string,

@@ -45,7 +45,9 @@ What this means in practice:
   definitions must keep matching the Go binary they forward to).
 - **Do not write new comments, doc sections, or helper names framed as "Go parity" or "matches
   Go".** Describe behavior in its own terms. When touching code that carries old Go-parity
-  framing, clean it up opportunistically.
+  framing, clean it up opportunistically. The repo-wide comment policy is the `## Comments`
+  section of the root `AGENTS.md`; Go `file.go:NN` citations and "verified against Go" notes
+  are provenance and never belong in a comment.
 - For history: Go source for ported commands was deleted in CLI-1970; the last commit with it
   intact is `7b469f5b3` (`internal/start` was deleted separately in CLI-1966; its pin is
   `a253ccba2`). [ADR 0016](../../docs/adr/0016-port-completion-and-go-cli-authority-scope.md)

@@ -1,13 +1,8 @@
 /**
- * Port of Go's `WaitForHealthyService`/`IsServiceReady`
- * (`apps/cli-go/internal/db/start/start.go:192-231`,
- * `apps/cli-go/internal/status/status.go:147-168`): a single shared probe
- * across every still-unhealthy started container, on a 1-second constant
- * backoff, for up to `timeoutSeconds` retries (Go's default `serviceTimeout =
- * 30 * time.Second`) — NOT independent per-container timers. Each tick probes
- * every still-unhealthy container, narrows the "still watching" set to just
- * the ones that failed this round (a healthy container stops being probed),
- * and only the final timeout's failures surface to the caller.
+ * A single shared probe across every still-unhealthy started container, on a 1-second constant
+ * backoff for up to `timeoutSeconds` retries — not independent per-container timers. Each tick
+ * narrows the "still watching" set to just the containers that failed this round, and only the
+ * final timeout's failures surface to the caller.
  */
 
 import { Data, Duration, Effect, Schedule, Stream } from "effect";
@@ -27,39 +22,28 @@ import { kongAuthHeaders } from "../kong-auth.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/** Go's `serviceTimeout` (`apps/cli-go/internal/start/start.go:161`, deleted in CLI-1966; last present at commit a253ccba2). */
+/** Default retry budget when the caller doesn't specify one. */
 const HEALTH_CHECK_TIMEOUT_SECONDS = 30;
 
-/**
- * Go's `healthProbeTimeout` (`apps/cli-go/internal/status/status.go:209`): caps
- * a single HTTP readiness probe so a hung response cannot stall the
- * surrounding retry loop.
- */
+/** Caps a single HTTP readiness probe so a hung response cannot stall the retry loop. */
 const HTTP_PROBE_TIMEOUT_SECONDS = 10;
 
-/** `apps/cli-go/internal/status/status.go:161` — PostgREST does not support native Docker healthchecks. */
+/** PostgREST does not support native Docker healthchecks. */
 const POSTGREST_READY_PATH = "/rest-admin/v1/ready";
 
 /**
- * `apps/cli-go/internal/status/status.go:163-166` — Edge Runtime bypasses its
- * native Docker healthcheck too ("native health check logs too much
- * hyper::Error(IncompleteMessage)"), through the exact same
- * {@link checkHttpReady}/Kong-gateway path as PostgREST, just its own
- * path and container id. Go's `checkHTTPHead` even shares one lazily-built
- * `healthClient` across both call sites (`status.go:202-219`) — the closest
- * equivalent here is {@link HealthCheckPostgrestGateway} being reused
- * as-is (name notwithstanding — its shape is generic, not
- * PostgREST-specific) for both {@link WaitForHealthyServicesOptions.postgrest}
- * and {@link WaitForHealthyServicesOptions.edgeRuntime}.
+ * Edge Runtime also bypasses its native Docker healthcheck (too noisy) and goes through the
+ * same {@link checkHttpReady}/Kong-gateway path as PostgREST — hence
+ * {@link HealthCheckPostgrestGateway}'s generic shape being reused for both
+ * {@link WaitForHealthyServicesOptions.postgrest} and {@link WaitForHealthyServicesOptions.edgeRuntime}.
  */
 const EDGE_RUNTIME_READY_PATH = "/functions/v1/_internal/health";
 
 /** Identifies a single container's readiness failure this round. */
 export interface HealthCheckFailure {
   /**
-   * The container NAME (`supabase_<service>_<project id>`), not the opaque id
-   * `docker create` returns — both work with `docker container inspect`/`docker
-   * logs`, but only the name tells a user which service failed.
+   * The container name (`supabase_<service>_<project id>`), not the opaque id `docker create`
+   * returns — only the name tells a user which service failed.
    */
   readonly containerId: string;
   readonly reason: string;
@@ -74,18 +58,14 @@ class HealthCheckProbeError extends Data.TaggedError("HealthCheckProbeError")<{
   }
 }
 
-/**
- * The retry loop's final, and only surfaced, failure — mirrors Go returning
- * `errors.Join(errHealth...)` from the last failed `probe()` call once
- * `backoff.Retry` gives up (`start.go:210-214`).
- */
+/** The retry loop's final, and only surfaced, failure. */
 export class HealthCheckTimeoutError extends Data.TaggedError("HealthCheckTimeoutError")<{
   readonly message: string;
   readonly unhealthy: ReadonlyArray<HealthCheckFailure>;
   /**
-   * Kept out of {@link message} so `Output.fail` renders it unstyled and drops
-   * the generic "rerun with --debug" line: once an exact command is named,
-   * pointing at an HTTP request logger is a non-sequitur (as in CLI-1973).
+   * Kept out of {@link message} so `Output.fail` renders it unstyled and drops the generic
+   * "rerun with --debug" line: once an exact command is named, pointing at an HTTP request
+   * logger is a non-sequitur.
    */
   readonly suggestion?: string;
 }> {
@@ -95,32 +75,11 @@ export class HealthCheckTimeoutError extends Data.TaggedError("HealthCheckTimeou
 }
 
 /**
- * PostgREST's local Kong gateway coordinates, mirroring Go's
- * `fetcher.NewServiceGateway(utils.Config.Api.ExternalUrl,
- * utils.Config.Auth.SecretKey.Value, ...)` (`status.go:213-218`). TLS/CA trust
- * for a local https gateway is the caller's responsibility when composing the
- * `HttpClient.HttpClient` layer this module requires — same split as
- * `storage-gateway.ts`/`storageGatewayFetch`.
- *
- * `start.command.ts` composes the `HttpClient.HttpClient` this module
- * requires via `httpClientLayer` (itself `FetchHttpClient`-backed, and
- * on its own CA-unaware; see that layer's own header) — the same layer
- * `db reset`/`seed buckets` compose for the equivalent gateway calls.
- * `start.handler.ts` layers a CA-trusting override on top of that: when
- * `api.tls.enabled`, `apiExternalUrl` is `https://` against Kong's
- * self-signed local cert (`KONG_LOCAL_CA_CERT`, or a validated
- * `api.tls.cert_path` override), so before calling
- * {@link waitForHealthyServices} it resolves that same CA via
- * `storage-credentials.ts`'s `resolveStorageCredentials` (the
- * mechanism `seed buckets`/`storage`/`db reset` already use) and, when a
- * local CA resolves, overrides `FetchHttpClient.Fetch` with
- * `storageGatewayFetch` around the health-check call via
- * `Effect.provideService`. That override only takes effect against a
- * `FetchHttpClient`-backed `HttpClient.HttpClient` — exactly what
- * `httpClientLayer` provides — so a stack started with
- * `[api.tls] enabled = true` now gets a `checkHttpReady` probe that
- * trusts the local Kong CA instead of exhausting `waitForHealthyServices`'s
- * full 30s budget on a TLS verification failure.
+ * PostgREST's local Kong gateway coordinates. TLS/CA trust for a local https gateway is the
+ * caller's responsibility when composing the `HttpClient.HttpClient` layer this module requires
+ * — when `api.tls.enabled`, the caller resolves the local Kong CA and overrides the HTTP client
+ * around the health-check call, so `checkHttpReady` trusts it instead of exhausting the full
+ * retry budget on a TLS verification failure.
  */
 export interface HealthCheckPostgrestGateway {
   readonly containerId: string;
@@ -131,7 +90,7 @@ export interface HealthCheckPostgrestGateway {
 export interface WaitForHealthyServicesOptions {
   readonly timeoutSeconds?: number;
   readonly postgrest?: HealthCheckPostgrestGateway;
-  /** See {@link EDGE_RUNTIME_READY_PATH}'s doc comment for why this reuses the same gateway shape as {@link postgrest}. */
+  /** Reuses {@link postgrest}'s gateway shape; see {@link EDGE_RUNTIME_READY_PATH}. */
   readonly edgeRuntime?: HealthCheckPostgrestGateway;
   /** Each watched container's already-resolved image, keyed by container name. */
   readonly images?: ReadonlyMap<string, string>;
@@ -163,34 +122,21 @@ function makeExecFormatScanner() {
 }
 
 /**
- * Recovery advice for a timeout whose logs showed {@link EXEC_FORMAT_ERROR},
- * or `undefined` when no affected image can be named.
+ * Recovery advice for a timeout whose logs showed {@link EXEC_FORMAT_ERROR}, or `undefined` when
+ * no affected image can be named.
  *
  * `supabase stop` leads the sequence because a bare restart is a no-op on the
- * `--ignore-health-check` path: that path leaves the stack up by design, so the
- * next `supabase start` takes the already-running short-circuit and never
- * recreates the broken container. `stop` without `--no-backup` preserves the
- * database volume, and is harmless after the hard-fail path's own rollback.
- *
- * Both `supabase` steps resolve their own project the way this run did, so the
- * sequence names that requirement rather than embedding the resolved workdir:
- * a path rendered into a copy-pasteable command needs shell quoting, and the
- * correct quoting differs between POSIX shells and `cmd.exe`.
- *
- * `-f` because the container may still reference the image, and `runtime`
- * rather than a hardcoded `docker` because `spawnContainerCli` falls back to
- * Podman on hosts without Docker. The closing line covers the case re-pulling
- * cannot fix: a pinned version with no build for this host (supabase/cli#3718,
- * #4674), where the same image comes straight back.
+ * `--ignore-health-check` path, which leaves the stack up by design. `runtime` (not a hardcoded
+ * `docker`) accounts for a Podman-only host. The closing line covers what re-pulling cannot fix:
+ * a pinned image with no build for this host's architecture.
  */
 function execFormatRecoveryHint(
   containerIds: ReadonlyArray<string>,
   images: ReadonlyMap<string, string> | undefined,
   runtime: ContainerRuntime,
 ): string | undefined {
-  // Both names, always: a container and its image can be named after different
-  // things (`supabase_inbucket_*` runs `mailpit`), so naming only one leaves
-  // the reader guessing whether this is the same failure as the reason above.
+  // Both names, always: `supabase_inbucket_*` runs `mailpit`, so naming only the container would
+  // leave the reader guessing whether this is the same failure as the reason above.
   const affected = containerIds.flatMap((containerId) => {
     const image = images?.get(containerId);
     return image === undefined ? [] : [{ containerId, image }];
@@ -206,11 +152,7 @@ function execFormatRecoveryHint(
   ].join("\n");
 }
 
-/**
- * Go's `assertContainerHealthy` (`status.go:147-156`), reused verbatim via
- * {@link inspectContainerState} — the same primitive `status.handler.ts`
- * already uses for the exact same not-running/not-ready gating.
- */
+/** Not-running/not-ready gating, via the same {@link inspectContainerState} primitive `status.handler.ts` uses. */
 function checkContainerReady(spawner: Spawner, containerId: string): Effect.Effect<void, string> {
   return inspectContainerState(spawner, containerId).pipe(
     Effect.mapError((cause) => cause.message),
@@ -226,12 +168,7 @@ function checkContainerReady(spawner: Spawner, containerId: string): Effect.Effe
   );
 }
 
-/**
- * Go's `checkHTTPHead` (`status.go:211-229`): an HTTP HEAD through the local
- * Kong gateway, expecting exactly 200. Bypasses the Docker healthcheck
- * entirely — PostgREST "does not support native health checks"
- * (`status.go:159-161`).
- */
+/** An HTTP HEAD through the local Kong gateway, expecting exactly 200. */
 function checkHttpReady(
   gateway: HealthCheckPostgrestGateway,
   path: string,
@@ -252,15 +189,11 @@ function checkHttpReady(
 }
 
 /**
- * Go's `DockerStreamLogsOnce` (`apps/cli-go/internal/utils/docker.go:593-606`)
- * via `docker logs <id>`, teed to this process's stderr — best-effort: a
- * failure to stream logs must never mask the timeout error it was printed
- * alongside, so every failure here is swallowed.
+ * `docker logs <id>`, teed to this process's stderr. Best-effort: a failure to stream logs must
+ * never mask the timeout error it was printed alongside, so every failure here is swallowed.
  *
- * Resolves to whether the logs contained {@link EXEC_FORMAT_ERROR},
- * scanned off the bytes already being teed — no extra Docker call, no buffer —
- * and to the runtime that answered, so recovery advice can name the binary the
- * user actually has.
+ * Resolves to whether the logs contained {@link EXEC_FORMAT_ERROR}, scanned off the bytes already
+ * being teed, and to the runtime that answered, so recovery advice can name the right binary.
  */
 function streamContainerLogsOnce(
   spawner: Spawner,
@@ -312,7 +245,7 @@ interface ExecFormatScanResult {
   readonly runtime: ContainerRuntime | undefined;
 }
 
-/** Go's `fmt.Fprintln(os.Stderr, containerId, "container logs:")` (`start.go:218`) + the log dump itself. */
+/** Prints "<containerId> container logs:" then dumps the container's logs. */
 function dumpContainerLogs(
   spawner: Spawner,
   containerId: string,
@@ -326,13 +259,10 @@ function dumpContainerLogs(
 }
 
 /**
- * Waits for every container in `containerIds` to become ready, mirroring
- * Go's `WaitForHealthyService(ctx, timeout, started...)`. Resolves once all
- * are ready; fails with {@link HealthCheckTimeoutError} (carrying every
- * still-unhealthy container's last-seen reason) once the retry budget is
- * exhausted. The caller (`start.handler.ts`) decides whether
- * `--ignore-health-check` turns that failure into a warning instead of a hard
- * exit — this module only implements the polling contract.
+ * Waits for every container in `containerIds` to become ready. Resolves once all are ready;
+ * fails with {@link HealthCheckTimeoutError} (carrying every still-unhealthy container's
+ * last-seen reason) once the retry budget is exhausted. The caller decides whether
+ * `--ignore-health-check` turns that failure into a warning instead of a hard exit.
  */
 export function waitForHealthyServices(
   spawner: Spawner,
@@ -356,10 +286,8 @@ export function waitForHealthyServices(
   return Effect.gen(function* () {
     let stillWatching = containerIds;
 
-    // Mirrors Go's closure-captured `started` slice
-    // (`db/start/start.go:200-212`): each round narrows `stillWatching` to
-    // just the containers that failed, so a container that becomes healthy
-    // mid-run stops being probed on later rounds.
+    // Each round narrows `stillWatching` to just the containers that failed, so a container
+    // that becomes healthy mid-run stops being probed on later rounds.
     const probe: Effect.Effect<void, HealthCheckProbeError, HttpClient.HttpClient> = Effect.gen(
       function* () {
         const outcomes = yield* Effect.forEach(
@@ -386,20 +314,15 @@ export function waitForHealthyServices(
       },
     );
 
-    // `backoff.WithMaxRetries(backoff.NewConstantBackOff(time.Second),
-    // uint64(timeout.Seconds()))` (`db/start/start.go:192-198`): a 1-second
-    // constant delay, capped at `timeoutSeconds` retries after the initial
-    // attempt (~`timeoutSeconds` further seconds elapsed on total failure).
+    // A 1-second constant delay, capped at `timeoutSeconds` retries after the initial attempt.
     const schedule = Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(timeoutSeconds)]);
 
     yield* probe.pipe(
       Effect.retry(schedule),
       Effect.catch((probeError) =>
         Effect.gen(function* () {
-          // Go skips this dump on context cancellation (`start.go:215`,
-          // `!errors.Is(err, context.Canceled)`) — an interrupted fiber never
-          // reaches this `Effect.catch` handler at all, so no separate check
-          // is needed here.
+          // An interrupted fiber never reaches this `Effect.catch` handler, so no separate
+          // cancellation check is needed here.
           const scans = yield* Effect.forEach(probeError.failures, (failure) =>
             dumpContainerLogs(spawner, failure.containerId).pipe(
               Effect.map((scan) => ({ ...scan, containerId: failure.containerId })),
@@ -415,10 +338,6 @@ export function waitForHealthyServices(
           );
           return yield* Effect.fail(
             new HealthCheckTimeoutError({
-              // Go's `assertContainerHealthy` embeds the id INSIDE the message
-              // (`errors.Errorf("%s container is not running: %s", …)`,
-              // `status.go:150,154`) — a bare space, not an `<id>: ` prefix, so the
-              // joined `errors.Join` text is `<id> container is not ready: <health>`.
               message: probeError.failures
                 .map((failure) => `${failure.containerId} ${failure.reason}`)
                 .join("\n"),
@@ -436,10 +355,8 @@ export function waitForHealthyServices(
 const SHADOW_READY_CONNECT_TIMEOUT_SECONDS = 2;
 
 /**
- * One round's verdict. `fatal` is what makes an exited container fail fast
- * instead of burning the remaining budget: nothing about a dead container can
- * change on a later round, whereas a refused connect (or a transient `docker
- * container inspect` failure) is just "not ready yet".
+ * One round's verdict. `fatal` makes an exited container fail fast instead of burning the
+ * remaining budget: nothing about a dead container can change on a later round.
  */
 interface ShadowReadyFailure {
   readonly reason: string;
@@ -452,12 +369,10 @@ const shadowNotReady = (reason: string): ShadowReadyFailure => ({
 });
 
 /**
- * A single short-lived connect attempt against the shadow, dialled exactly the
- * way `connectShadowDatabase` (`shadow-database.ts`) dials it — same
- * `isLocal`/`dnsResolver` pair, so a config that authenticates for the probe
- * authenticates for the real connection too. `Effect.scoped` closes the session
- * the moment the probe resolves: the caller opens (and owns) its own connection
- * afterwards through `connectShadowDatabase`.
+ * A single short-lived connect attempt, dialled the same way `connectShadowDatabase` does (same
+ * `isLocal`/`dnsResolver` pair), so a config that authenticates for the probe authenticates for
+ * the real connection too. `Effect.scoped` closes the session the moment the probe resolves; the
+ * caller opens its own connection afterwards.
  */
 const probeShadowConnect = (
   connConfig: PgConnInput,
@@ -492,8 +407,8 @@ export function waitForShadowReady(
 ): Effect.Effect<void, HealthCheckTimeoutError, DbConnection> {
   const timeoutSeconds = opts.timeoutSeconds ?? HEALTH_CHECK_TIMEOUT_SECONDS;
 
-  // Twice the second-counted budget: 500ms spacing would otherwise exhaust
-  // `timeoutSeconds` retries in half the wall time of the old 1s poll.
+  // Twice the second-counted budget: 500ms spacing would otherwise exhaust `timeoutSeconds`
+  // retries in half the wall time of a 1-second poll.
   const schedule = Schedule.max([
     Schedule.spaced("500 millis"),
     Schedule.recurs(timeoutSeconds * 2),

@@ -41,10 +41,9 @@ export const computeStatus = Effect.fn("compute.status")(function* (flags: Compu
   const telemetryState = yield* TelemetryState;
   const settings = yield* CommandSettings;
 
-  // The ref is resolved outside the finalizers because caching it is one of
-  // them; everything that can fail on its own — loading `config.toml`,
-  // validating the name, resolving the compute — belongs inside, so those
-  // failures still flush telemetry. Same shape as `config/push`.
+  // Resolved here, outside the block below, since caching it is one of that
+  // block's own finalizers — everything else that can fail belongs inside so
+  // those failures still flush telemetry.
   const projectRef = yield* resolver.resolve(flags.projectRef);
   const refSuffix = computeProjectRefSuffix(flags.projectRef);
 
@@ -75,13 +74,10 @@ export const computeStatus = Effect.fn("compute.status")(function* (flags: Compu
       record.spec.exposure === "public"
         ? computeUrl(projectRef, settings.projectHost, name)
         : undefined;
-    // Reported only when an entry or the directory establishes it. With neither,
-    // the path is an inference about a compute that may have been deployed from
-    // another checkout.
-    //
-    // `sourceResolved` matters for the entry half: when the configured `source`
-    // could not be resolved, `sourceDir` is the *default* directory standing in
-    // for it, and printing that would name a path the entry does not.
+    // Reported only when an entry or the directory establishes it; with
+    // neither, the path is an inference about a compute deployed elsewhere.
+    // `sourceResolved` matters for the entry half: when `source` couldn't be
+    // resolved, `sourceDir` is the default directory standing in for it.
     const sourceDisplay =
       (compute.entry !== undefined && compute.sourceResolved) || compute.sourceExists
         ? displayPath(path, project.projectRoot, compute.sourceDir)
@@ -110,10 +106,9 @@ export const computeStatus = Effect.fn("compute.status")(function* (flags: Compu
       return;
     }
 
-    // One structured emission, in the structured branch only. Calling
-    // `output.success` before this check emitted the payload twice: the JSON
-    // layer appends each success to stdout, so `JSON.parse` failed, and
-    // `stream-json` saw two terminal result events.
+    // Checked after `emitComputeMachineOutput`: calling `output.success` before
+    // it emitted the payload twice, since the JSON layer appends each success
+    // to stdout.
     if (output.format !== "text") {
       yield* output.success("", payload);
       return;
@@ -128,8 +123,8 @@ export const computeStatus = Effect.fn("compute.status")(function* (flags: Compu
       ["Access", record.spec.exposure],
       [
         // Every number in the tally line comes from the tally: mixing
-        // `instances.ready` with `spec.instances` compares a snapshot against
-        // the desired count, which mid-scale renders fractions like `3/1 ready`.
+        // `instances.ready` with `spec.instances` would render fractions like
+        // `3/1 ready` mid-scale.
         "Instances",
         record.instances !== undefined
           ? `${record.instances.ready}/${record.instances.declared} ready, ${record.instances.live} live, ${record.instances.stale} stale`
@@ -137,8 +132,6 @@ export const computeStatus = Effect.fn("compute.status")(function* (flags: Compu
       ],
       ["URL", url ?? ""],
       ["Project", projectRef],
-      // `renderComputeDetails` drops empty-valued rows, so an unknown
-      // source omits the row rather than printing a guess.
       ["Source", sourceDisplay ?? ""],
     ];
 
@@ -150,8 +143,7 @@ export const computeStatus = Effect.fn("compute.status")(function* (flags: Compu
     // Not while it is being torn down: deletion is asynchronous, so a push here
     // races the tombstone or resurrects the very compute the user is removing.
     if (record.buildState === "failed" && record.deleting !== true) {
-      // Trailer, like every other "what to run next" line in this shell: the
-      // command reports a failed build but exits 0, so the trailer flushes.
+      // A trailer, since the command reports a failed build but exits 0.
       yield* emitSuccessTrailer(
         `Fix the issue, then re-run ${aqua(`supabase compute push ${name}${refSuffix}`)}.\n`,
       );

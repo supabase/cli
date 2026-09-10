@@ -55,10 +55,9 @@ function flags(overrides: Partial<Parameters<typeof computeLogs>[0]> = {}) {
 }
 
 /**
- * Follow options that drive the loop instantly and stop after N polls.
- *
- * The real schedule is spaced in seconds; `recurs` also gives the tail an end, so
- * a test does not have to deliver a signal just to finish.
+ * Follow options that drive the loop instantly and stop after N polls: the real
+ * schedule is spaced in seconds, and `recurs` gives the tail an end so a test
+ * doesn't need to deliver a signal to finish.
  */
 function followFor(polls: number) {
   return {
@@ -72,10 +71,8 @@ function logsResponse(rows: ReadonlyArray<unknown>) {
 }
 
 /**
- * The query parameters the handler actually sent.
- *
- * Read off the recorded request rather than the URL: `HttpClientRequest` keeps
- * `urlParams` beside the URL rather than appended to it.
+ * The query parameters the handler actually sent, read off the recorded
+ * request rather than the URL: `HttpClientRequest` keeps `urlParams` separate.
  */
 function sentQuery(request: { readonly urlParams: Readonly<Record<string, string>> }) {
   return request.urlParams;

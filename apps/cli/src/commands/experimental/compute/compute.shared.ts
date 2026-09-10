@@ -19,15 +19,13 @@ import {
 } from "../../../shared/compute/compute.errors.ts";
 
 /**
- * What every `supabase compute` command needs before it does anything: where
- * the project is, what `[compute]` says, and which compute is being acted on.
+ * What every `supabase compute` command needs before it does
+ * anything: where the project is, what `[compute]` says, and which compute is
+ * being acted on.
  *
- * The project directory is `CommandSettings.workdir` rather than an ancestor
- * walk from the current directory. That is the resolved workdir every other
- * command acts on — `--workdir`/`SUPABASE_WORKDIR` when given, else the
- * ancestor walk Go's own `getProjectRoot` performs — so `supabase compute`
- * answers to the same flag as its siblings instead of inventing a second notion
- * of "which project".
+ * The project directory is `CommandSettings.workdir`, the same resolved
+ * workdir every other command acts on, so `compute` answers to the same
+ * `--workdir`/`SUPABASE_WORKDIR` flag as its siblings.
  */
 
 export interface ComputeProject {
@@ -45,21 +43,12 @@ const loadComputeProjectWith = Effect.fnUntraced(function* (options: {
   const settings = yield* CommandSettings;
   const path = yield* Path.Path;
 
-  // tomlOnly (the [compute.*] entry writer) keeps `search: false` unconditionally:
-  // it and the workdir's own default resolution probe the same config.toml, so the
-  // second climb is redundant. The JSON-capable read must thread the predicate — the
-  // default workdir resolution only probes config.toml, so a config.json-only project
-  // invoked from a subdirectory relies on this climb to be found at all (CLI-2285).
-  //
-  // `compute new api --workdir ./bare-dir` inside another project is why
-  // `projectRoot` must be DERIVED from this same search rather than always
-  // `settings.workdir`: with an explicit workdir the predicate yields `false`
-  // (see `shouldSearchAncestors`), so `paths` is null and `projectRoot`
-  // falls back to `settings.workdir` exactly as before — that scaffold-into-a-
-  // bare-directory behavior is preserved verbatim. Only a DEFAULTED workdir can
-  // ever climb here, and when it does, `projectRoot` must climb WITH `configPath`
-  // — otherwise a discovered ancestor's `[compute.*]` entries would resolve their
-  // `source` against a non-project directory.
+  // `tomlOnly` skips the ancestor search (redundant with the default
+  // resolution); the JSON-capable read needs it so a config.json-only project
+  // run from a subdirectory is still found. `projectRoot` is derived from the
+  // same search, not `settings.workdir`, so a climb takes `configPath` with it
+  // — otherwise a discovered ancestor's `[compute.*]` entries would resolve
+  // `source` against the wrong directory.
   const search = options.tomlOnly ? false : shouldSearchAncestors(settings);
   const paths = yield* findCliProjectPaths(settings.workdir, { search });
   const projectRoot = paths?.projectRoot ?? settings.workdir;
@@ -81,11 +70,11 @@ const loadComputeProjectWith = Effect.fnUntraced(function* (options: {
 
 /**
  * The project as a reader sees it, following the loader's normal
- * JSON-over-TOML selection. `config.json` is a supported project format, so a
- * command that only reads `[compute.*]` has to honour it — otherwise a JSON
- * project deploys with a guessed runtime and default size and instance counts
- * instead of the ones it configured, and a compute whose `source` sits outside
- * `supabase/compute/` is not discovered at all.
+ * JSON-over-TOML selection.
+ *
+ * A command that only reads `[compute.*]` still has to honour `config.json`,
+ * or a JSON project deploys with a guessed runtime and default size/instance
+ * counts instead of the ones it configured.
  */
 export const loadComputeProject = loadComputeProjectWith({ tomlOnly: false });
 
@@ -93,16 +82,9 @@ export const loadComputeProject = loadComputeProjectWith({ tomlOnly: false });
  * The project as the `[compute.<name>]` entry writer needs to see it: TOML
  * only.
  *
- * `commitComputeEntry` is a TOML text editor. Without `tomlOnly` the loader
- * prefers `supabase/config.json` when one exists, `configPath` becomes the JSON
- * file, and the writer appends a `[compute.<name>]` table to it — leaving the
- * project config unparseable after the scaffold is already on disk.
- * `functions new` avoids the same trap by resolving `supabase/config.toml`
- * directly; this is that, through the loader.
- *
- * A JSON-authoritative project is refused by `compute new` before prompts or
- * filesystem writes; the TOML entry writer is never allowed to create an
- * ignored sidecar configuration.
+ * `commitComputeEntry` is a TOML text editor; without `tomlOnly` a JSON
+ * project's `configPath` would resolve to `config.json`, and appending a
+ * `[compute.<name>]` table there would make the file unparseable.
  */
 export const loadComputeProjectForEntryWrite = Effect.fnUntraced(function* () {
   const settings = yield* CommandSettings;
@@ -122,16 +104,11 @@ export const loadComputeProjectForEntryWrite = Effect.fnUntraced(function* () {
 /**
  * As {@link loadComputeProject}, but never failing on the project config.
  *
- * For commands that only *report* on local state — `status` and `delete` —
- * which act on the remote compute and consult the project purely to add the
- * optional source detail. Making it a prerequisite stranded a deployed compute
- * behind an unrelated local parse error, even when `--project-ref` named the
- * project explicitly and nothing local was going to be touched.
- *
- * A config that will not load reads the same as a project with no
- * `[compute.*]` entries: no entry, no configured source, so no source row.
- * Same degrade-rather-than-fail shape as
- * {@link describeComputeForReporting}, which does it for the source path.
+ * `status` and `delete` act on the remote compute and consult the project only
+ * for the optional source detail; making config loading a prerequisite would
+ * strand a deployed compute behind an unrelated local parse error. A config
+ * that fails to load degrades to "no `[compute.*]` entries", same shape as
+ * {@link describeComputeForReporting} for the source path.
  */
 export const loadComputeProjectForReporting = Effect.fnUntraced(function* () {
   const loaded = yield* loadComputeProject.pipe(Effect.option);
@@ -162,10 +139,9 @@ interface ResolvedCompute {
   /**
    * Whether anything local actually establishes {@link sourceDir}.
    *
-   * `sourceDir` is always computable — with no entry it falls back to the default
-   * directory — so it cannot on its own tell a compute whose code is on this
-   * machine from one deployed out of another checkout. Commands that print local
-   * paths need that difference before they state one as fact.
+   * `sourceDir` is always computable — with no entry it falls back to the
+   * default directory — so on its own it can't distinguish local code from a
+   * compute deployed out of another checkout.
    */
   readonly sourceExists: boolean;
   /**
@@ -179,22 +155,12 @@ interface ResolvedCompute {
 }
 
 /**
- * Effectful because resolving `sourceDir` confines it to the project, and that
- * verdict needs the filesystem: `source` comes from a committed `config.toml`,
- * and a directory inside the project can symlink anywhere outside it.
- */
-/**
  * As {@link describeCompute}, but never failing on the source path.
  *
- * For commands that only *report* on local state — `status` and `delete` — where
- * the source is a detail of the output, not a prerequisite. Making confinement
- * mandatory there stranded the remote compute: a `source` that resolves outside
- * the project (an in-project directory that became a symlink, say) failed the
- * describe before either API call, so `delete` could not remove a compute whose
- * local files it was never going to touch.
- *
- * `push` keeps the strict version, because there the source *is* what gets
- * packaged and uploaded.
+ * `status` and `delete` treat the source as an output detail, not a
+ * prerequisite, so a `source` resolving outside the project (e.g. a symlink)
+ * degrades instead of blocking them. `push` keeps the strict version since
+ * there the source is what gets packaged and uploaded.
  */
 export const describeComputeForReporting = Effect.fnUntraced(function* (
   project: ComputeProject,
@@ -205,10 +171,8 @@ export const describeComputeForReporting = Effect.fnUntraced(function* (
   if (Option.isSome(described)) {
     return described.value;
   }
-  // The path is unusable, which for reporting purposes reads the same as having
-  // nothing local at all. `sourceResolved: false` keeps callers from printing
-  // this stand-in as the source the entry names — it is the default directory,
-  // not the path that failed.
+  // Unusable path reads the same as no local source. `sourceResolved: false`
+  // stops callers from printing this default-directory stand-in as the entry's source.
   return {
     name,
     entry: project.section.compute[name],
@@ -266,12 +230,9 @@ export const discoverComputeNames = Effect.fnUntraced(function* (project: Comput
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  // No compute root at all is a project that has never scaffolded one, and the
-  // config entries below may still name compute living elsewhere — so absence
-  // reads as nothing here. Any other reason propagates: a root the CLI cannot
-  // list is not a project with no compute in it, and answering a bare `push`
-  // with "deployed everything" after silently skipping them is the worst
-  // possible reading of it.
+  // Missing compute root reads as "no compute here", since a project can still
+  // name compute elsewhere via `source`. Any other read error propagates rather
+  // than silently reporting an empty `push` as "deployed everything".
   const entries = yield* fs
     .readDirectory(project.computeDir)
     .pipe(

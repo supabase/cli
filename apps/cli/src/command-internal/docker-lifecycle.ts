@@ -16,39 +16,27 @@ import { CLI_WORKDIR_LABEL } from "./docker-ids.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/**
- * Listing containers or volumes by Docker label failed. Wraps the established
- * `Docker.ContainerList`/`Docker.VolumeList` errors (see
- * `checkServiceHealth`/`DockerRemoveAll`), which
- * wrap as `"failed to list containers: %w"` / equivalent.
- */
+/** Listing containers or volumes by Docker label failed. */
 export class DockerLifecycleListError extends Data.TaggedError("DockerLifecycleListError")<{
   readonly message: string;
 }> {
-  // `docker ps`/`docker volume ls` never fail because nothing matches the
-  // label filter — an empty match is a successful, empty result. Every real
-  // failure here is therefore a container-runtime problem: neither
-  // docker/podman could be spawned, or the daemon itself rejected the call.
+  // An empty match from `docker ps`/`docker volume ls` is a successful empty result, not a
+  // failure — so every real failure here means the runtime itself is broken.
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dockerNotRunning;
   }
 }
 
 /**
- * Inspecting a single container's state failed for a reason other than "not
- * found" — except `assertContainerHealthy` (and this port, matching it,
- * see `status.handler.ts`) never special-cases a missing container either: an
- * absent container is just another non-zero `docker container inspect` exit,
- * which is by far the dominant real trigger of this error (the user hasn't
- * run `supabase start` yet) — same fix as the other "stack isn't running"
- * errors elsewhere in this codebase.
+ * Inspecting a single container's state failed. A missing container isn't special-cased — an
+ * absent container is just another non-zero `docker container inspect` exit, and by far the most
+ * common cause is that `supabase start` hasn't been run yet.
  */
 export class DockerLifecycleInspectError extends Data.TaggedError("DockerLifecycleInspectError")<{
   readonly message: string;
   /**
-   * Set at the container boundary when neither runtime can be spawned or the
-   * daemon is unreachable. Every other inspect failure (the dominant "stack
-   * isn't running yet" case) keeps the `startStack` classification.
+   * True when neither runtime could be spawned or the daemon is unreachable; every other inspect
+   * failure keeps the `startStack` classification.
    */
   readonly daemonDown?: boolean;
 }> {
@@ -77,17 +65,9 @@ function splitNonEmptyLines(text: string): ReadonlyArray<string> {
 }
 
 /**
- * Shared `docker ps --filter label=<filterValue> [--filter label=…] [--all] --format
- * <formatArg>` spawn: one Docker CLI invocation is one underlying `GET
- * /containers/json` Docker Engine API request regardless of `--format`
- * (`--format` only controls how the CLI renders the already-returned JSON
- * response client-side) — every exported listing function below funnels
- * through here so two differently-formatted needs never accidentally cost
- * two real requests. See {@link listContainerIdsAndNames}'s doc
- * comment for why that distinction matters for Go-parity request-log tests.
- *
- * Multiple `labelFilters` are ANDed by Docker itself (repeating `--filter label=` narrows the
- * match), so scoping a listing to a second label costs no extra request either.
+ * Shared `docker ps` spawn behind every listing function below, so two differently-formatted
+ * needs (`{{.ID}}` vs `{{.Names}}`) never cost two separate invocations. Multiple `labelFilters`
+ * are ANDed by Docker itself, so scoping to a second label adds no extra cost either.
  */
 function spawnDockerPsLines(
   spawner: Spawner,
@@ -118,11 +98,10 @@ function spawnDockerPsLines(
             }),
         ),
       );
-      // Concurrency is required, not cosmetic: sequential `Effect.all` would
-      // await `exitCode` (resolved by Node's "exit" event) before subscribing
-      // to `stdout`/`stderr` at all. Node's "exit" can fire before a fast
-      // process's stdio pipes are drained, so a late subscriber sees an
-      // already-ended, empty stream instead of the buffered bytes.
+      // Concurrency is required, not cosmetic: sequential `Effect.all` would await `exitCode`
+      // before subscribing to `stdout`/`stderr`, and Node's "exit" event can fire before a fast
+      // process's stdio pipes are drained — a late subscriber would see an already-ended, empty
+      // stream.
       const [exitCode, stdout, stderr] = yield* Effect.all(
         [
           child.exitCode.pipe(Effect.map(Number)),
@@ -152,10 +131,9 @@ function spawnDockerPsLines(
 }
 
 /**
- * `Docker.ContainerList(ctx, container.ListOptions{All, Filters})`
- * via `docker ps --filter
- * label=<filterValue>`. `all: false` mirrors `status`'s running-only list;
- * `all: true` mirrors `stop`'s "every container regardless of state" list.
+ * Lists containers by project label via `docker ps --filter label=<filterValue>`. `all: false`
+ * matches `status`'s running-only list; `all: true` matches `stop`'s "every container regardless
+ * of state" list.
  */
 export const listContainersByLabel = (
   spawner: Spawner,
@@ -174,10 +152,8 @@ export const listContainersByLabel = (
 /**
  * A single `docker ps` result row's id, name, and staging workdir together.
  *
- * `workdir` is `CLI_WORKDIR_LABEL`'s value read straight off the container (see
- * that constant's doc comment) — empty when the container carries no such label, which
- * `cleanupStartSecrets` treats as "fall back to the caller's own workdir" (a
- * container `start` created before this label existed, or created by a Go binary).
+ * `workdir` is empty when the container carries no {@link CLI_WORKDIR_LABEL} —
+ * `cleanupStartSecrets` treats that as "fall back to the caller's own workdir".
  */
 export interface ContainerIdName {
   readonly id: string;
@@ -186,20 +162,9 @@ export interface ContainerIdName {
 }
 
 /**
- * Combined-format sibling of {@link listContainersByLabel}: fetches a
- * container's id, name, AND staging workdir from a SINGLE `docker ps --format
- * "{{.ID}}\t{{.Names}}\t{{.Label \"com.supabase.cli.workdir\"}}"` invocation,
- * rather than one call per field. Go's SDK-based `Docker.ContainerList` gets
- * all of this (and every other field) from the one Engine API response it
- * already makes; two separately-`--format`ted CLI calls here would silently
- * double the real Docker request count relative to Go even though each call's
- * own output is individually correct — exactly the bug the cli-e2e-ci
- * request-log parity harness caught for `stop` (an extra `GET /containers/json`
- * versus Go's single call). Used by {@link dockerRemoveAll}, which needs
- * ids to stop containers, for callers (`stop`, `start`'s rollback) that ALSO
- * need names and workdirs for {@link cleanupStartSecrets} — see that
- * function's doc comment and {@link dockerRemoveAll}'s
- * `onContainersRemoved` parameter.
+ * Combined-format sibling of {@link listContainersByLabel}: fetches a container's id, name, and
+ * staging workdir from a single `docker ps` invocation instead of one call per field, since each
+ * `docker ps` is a real Docker Engine API request.
  */
 export const listContainerIdsAndNames = (
   spawner: Spawner,
@@ -222,12 +187,9 @@ export const listContainerIdsAndNames = (
   );
 
 /**
- * `Docker.ContainerInspect(ctx, containerId)` via `docker container inspect <id> --format
- * {{json .State}}`. `assertContainerHealthy` does not special-case a
- * missing container — it wraps whatever error `ContainerInspect` returns,
- * so every non-zero exit, including "no such
- * container", propagates as `DockerLifecycleInspectError` carrying the
- * real Docker stderr text.
+ * Inspects a container's state via `docker container inspect <id> --format {{json .State}}`.
+ * A missing container isn't special-cased — every non-zero exit, including "no such container",
+ * propagates as {@link DockerLifecycleInspectError} carrying the real Docker stderr text.
  */
 export const inspectContainerState = (spawner: Spawner, containerId: string) =>
   Effect.scoped(
@@ -251,8 +213,7 @@ export const inspectContainerState = (spawner: Spawner, containerId: string) =>
           });
         }),
       );
-      // Concurrency is required, not cosmetic — see the matching comment in
-      // `listContainersByLabel` above.
+      // Concurrency is required, not cosmetic; see `spawnDockerPsLines` above.
       const [exitCode, stdout, stderr] = yield* Effect.all(
         [
           child.exitCode.pipe(Effect.map(Number)),
@@ -297,13 +258,9 @@ function parseContainerState(stdout: string): {
     parsed = {};
   }
   const state = isJsonRecord(parsed) ? parsed : {};
-  // `assertContainerHealthy` gates
-  // on the boolean `resp.State.Running`, not the status string — Docker's
-  // inspect `State` struct exposes both independently, and a paused or
-  // restarting container reports `Running: true` alongside a non-"running"
-  // `Status` (`"paused"`/`"restarting"`). `status` is kept as-is for the
-  // "container is not running: <status>" message text,
-  // which still reads the string, but the gate itself must read the boolean.
+  // A paused or restarting container reports `Running: true` in Docker's inspect `State`
+  // alongside a non-"running" `Status` string, so callers must gate on the boolean, not the
+  // status text; `status` is kept only for error message text.
   const status = typeof state["Status"] === "string" ? state["Status"] : "";
   const running = state["Running"] === true;
   const health = state["Health"];
@@ -318,11 +275,7 @@ function isJsonRecord(value: unknown): value is { readonly [key: string]: unknow
   return typeof value === "object" && value !== null;
 }
 
-/**
- * `Docker.VolumeList(ctx, volume.ListOptions{Filters})`
- * (`docker.go` — used by the `stop` post-run volume-suggestion check) via
- * `docker volume ls --filter label=<filterValue>`.
- */
+/** Lists volumes by project label via `docker volume ls --filter label=<filterValue>`. */
 export const listVolumesByLabel = (spawner: Spawner, projectIdFilter: string) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -346,8 +299,7 @@ export const listVolumesByLabel = (spawner: Spawner, projectIdFilter: string) =>
             }),
         ),
       );
-      // Concurrency is required, not cosmetic — see the matching comment in
-      // `listContainersByLabel` above.
+      // Concurrency is required, not cosmetic; see `spawnDockerPsLines` above.
       const [exitCode, stdout, stderr] = yield* Effect.all(
         [
           child.exitCode.pipe(Effect.map(Number)),

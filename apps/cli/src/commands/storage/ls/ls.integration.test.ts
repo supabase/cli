@@ -54,7 +54,6 @@ describe("storage ls", () => {
         Effect.exit,
       );
       expect(Exit.isSuccess(exit)).toBe(true);
-      // Only the prefix-matching bucket is printed, with a trailing slash.
       expect(out.stdoutText).toBe("test/\n");
     });
   });
@@ -149,8 +148,8 @@ describe("storage ls", () => {
       );
       expect(Exit.isSuccess(exit)).toBe(true);
       const lines = out.stdoutText.split("\n").filter(Boolean);
-      // Default path is `ss:///` → remotePath `/`, so basePath is `/` and file
-      // paths get a leading slash; an empty bucket is reported bare as `<bucket>/`.
+      // Default path `ss:///` → remotePath `/`, so paths get a leading slash and an empty
+      // bucket is reported bare as `<bucket>/`.
       expect(lines).toContain("test/");
       expect(lines).toContain("/private/folder/abstract.pdf");
     });
@@ -227,8 +226,8 @@ describe("storage ls", () => {
   });
 
   it.live("lists the project given via --project-ref, overriding VALID_REF", () => {
-    // `opts.projectRef` (the fake's own fallback) is left at its default
-    // (VALID_REF) — the flag must win over it and drive the gateway host.
+    // The fake's own fallback stays at its default (VALID_REF); the flag must win and drive
+    // the gateway host.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, requests, linkedCache } = setupStorage(tmp.current, {
       routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
@@ -267,9 +266,8 @@ describe("storage ls", () => {
   });
 
   it.live("signs --local requests with a SUPABASE_AUTH_SERVICE_ROLE_KEY from supabase/.env", () => {
-    // The storage frame loads the project dotenv itself (no db reset / seed
-    // caller hands one in), so the auth override must reach the resolver from
-    // that walk too. Pin the ambient var away so only the dotenv value counts.
+    // The storage frame loads the project dotenv itself, so the auth override must reach the
+    // resolver from that walk. Pin the ambient var away so only the dotenv value counts.
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -300,7 +298,6 @@ describe("storage ls", () => {
     return Effect.gen(function* () {
       const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // No streamed stdout lines in json mode; a single result carries the paths.
       expect(out.stdoutText).toBe("");
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["paths"]).toEqual(["test/"]);
@@ -324,7 +321,6 @@ describe("storage ls", () => {
         Effect.exit,
       );
       expect(Exit.isSuccess(exit)).toBe(true);
-      // json/stream-json suppress the pagination notice.
       expect(out.stderrText).not.toContain("Loading page");
     });
   });
@@ -332,10 +328,6 @@ describe("storage ls", () => {
   it.live(
     "fails with a missing-project error when --workdir names a config-less subdirectory of a real ancestor project",
     () => {
-      // CLI-2285 regression, `loadStorageConfig`'s shared path: the
-      // ancestor project genuinely has a valid config.toml, and the
-      // subdirectory genuinely has none of its own — an EXPLICIT --workdir
-      // must never silently climb to the ancestor's config.
       writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
       const sub = join(tmp.current, "nested", "dir");
       mkdirSync(sub, { recursive: true });
@@ -356,10 +348,9 @@ describe("storage ls", () => {
   it.live(
     "a remote (--linked) target with the same config-less explicit workdir still succeeds",
     () => {
-      // The missing-project hard-fail is LOCAL-only: `resolveStorageCredentials`
-      // never reads local config on the remote path (Management API credentials
-      // only), so a config-less explicit workdir poses none of the "retargets a
-      // different local stack" risk the local-target hard-fail guards against.
+      // The missing-project hard-fail is local-only: `resolveStorageCredentials` never reads
+      // local config on the remote path, so a config-less workdir poses none of the risk the
+      // local-target hard-fail guards against.
       writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
       const sub = join(tmp.current, "nested", "dir");
       mkdirSync(sub, { recursive: true });
@@ -383,11 +374,9 @@ describe("storage ls", () => {
   it.live(
     "hints at the ancestor's --workdir when it genuinely has a project (shared helper propagation)",
     () => {
-      // Confirms `missingProjectConfigMessageEffect`'s "Did you mean"
-      // hint is not `config diff`-specific wiring — the full regression and
-      // its negative counterpart are pinned in
-      // config/diff/diff.integration.test.ts; this only proves the shared
-      // helper reaches storage's own missing-project message too.
+      // Confirms `missingProjectConfigMessageEffect`'s "Did you mean" hint isn't `config
+      // diff`-specific — the full regression is pinned in config/diff/diff.integration.test.ts;
+      // this only proves the shared helper reaches storage's message too.
       writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
       const sub = join(tmp.current, "nested", "dir");
       mkdirSync(sub, { recursive: true });

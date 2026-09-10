@@ -764,13 +764,6 @@ describe("gen types", () => {
   it.live(
     "fails instead of picking up an ancestor project's configured api schemas when --workdir names a subdirectory with no config of its own",
     () => {
-      // CLI-2285 regression: an explicit --workdir is authoritative and must
-      // never let the schema-resolution config load climb past it — the
-      // ancestor (root) genuinely declares [api].schemas and the
-      // subdirectory genuinely has no supabase/ of its own. Silently falling
-      // back to the built-in "public" default (dropping the ancestor's
-      // schemas without a hint) would write a wrong types file at exit 0, so
-      // this now hard-fails before any network call instead.
       const root = mkdtempSync(join(tmpdir(), "supabase-gen-types-ancestor-"));
       writeConfig(
         root,
@@ -806,10 +799,6 @@ describe("gen types", () => {
   it.live(
     "a defaulted workdir still picks up an ancestor project's configured api schemas from a subdirectory",
     () => {
-      // Complements the regression above: a DEFAULTED (unset) --workdir must
-      // keep climbing so the ancestor's declared [api].schemas still resolves
-      // from a config-less subdirectory — proving the hard-fail fix above
-      // didn't break the legitimate default-climb case.
       const root = mkdtempSync(join(tmpdir(), "supabase-gen-types-ancestor-"));
       writeConfig(
         root,
@@ -844,12 +833,6 @@ describe("gen types", () => {
       Effect.tryPromise({
         try: () =>
           withSslProbeServer(async (port) => {
-            // The --db-url branch's config load exists only to fall back to
-            // a declared [api].schemas when --schema is absent — with an
-            // explicit --schema that load's result is unused, so it's
-            // skipped entirely, and a config-less explicit --workdir (here,
-            // a subdirectory of an unrelated ancestor project) must not
-            // fail an invocation that never needed the config.
             const docker = captureDockerRun();
             const root = mkdtempSync(join(tmpdir(), "supabase-gen-types-ancestor-"));
             writeConfig(
@@ -875,8 +858,6 @@ describe("gen types", () => {
               ).pipe(Effect.provide(layer)),
             );
 
-            // The explicit --schema wins, not the (unreachable) ancestor's
-            // declared schema.
             expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public")).toBe(true);
           }),
         catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
@@ -913,11 +894,6 @@ describe("gen types", () => {
   it.live(
     "surfaces a real error message when supabase/config.toml is malformed, not the raw CliConfigParseError tag",
     () => {
-      // CLI-2285 Round 3: `loadConfigForRef` now catches `CliConfigParseError`
-      // and maps it to `GenTypesParseConfigError` with a real message.
-      // Before this fix the raw `CliConfigParseError` tag propagated unmapped,
-      // so an assertion that only checked `Exit.isFailure` would not catch a
-      // re-regression of that leak — the message content itself is the point.
       const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-malformed-"));
       writeConfig(workdir, 'project_id = "unterminated\n');
       const { layer, api } = setup({
@@ -971,27 +947,15 @@ describe("gen types", () => {
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        // cobra sorts the violating-flag set alphabetically (sort.Strings) —
-        // "linked" before "local" — regardless of check order.
         expect(String(exit.cause)).toContain(
           "if any flags in the group [local linked project-id db-url] are set none of the others can be; [linked local] were all set",
         );
       }
-      // The root's `PersistentPreRunE` has already installed the telemetry
-      // context by the time cobra validates flag groups (`cmd/root.go:93-163`,
-      // `command.go:1000-1010`), so a mutex rejection still flushes telemetry.
       expect(telemetry.flushed).toBe(true);
     });
   });
 
   it.live("does not misdetect a mutex flag consumed as -s's value (pflag consumption)", () => {
-    // `-s` is a pflag string-slice shorthand: a bare `-s` consumes the very
-    // next argv token unconditionally, even a flag-shaped one — pflag hands
-    // `-s` the (oddly named, but valid) value `"--linked"`, leaving only
-    // `--local` Changed. Simulates what the real Effect parser produces for
-    // this argv (both `local` and `linked` parse as independently true,
-    // since its tokenizer is unaware of pflag's value consumption); only the
-    // pflag-faithful scan can tell them apart.
     // `childExitCode: 1` fails the local target's `container inspect`, keeping the
     // downstream failure deterministic before the real SSL probe can reach whatever
     // is listening on the local db port.
@@ -1102,8 +1066,6 @@ describe("gen types", () => {
           "--postgrest-v9-compat must used together with --db-url",
         );
       }
-      // The guard runs after the telemetry context is already installed, so
-      // this restored guard must still flush telemetry on rejection.
       expect(telemetry.flushed).toBe(true);
     });
   });
@@ -1160,8 +1122,6 @@ describe("gen types", () => {
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        // pflag's `Changed` is true once a flag is passed explicitly, even as
-        // `--linked=false`, so cobra still trips the mutex group.
         expect(String(exit.cause)).toContain(
           "if any flags in the group [linked project-id postgrest-v9-compat] are set none of the others can be; [linked project-id] were all set",
         );
@@ -1182,16 +1142,9 @@ describe("gen types", () => {
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        // Go rejects the duration at flag-parse time, before PreRunE and the
-        // mutex groups, so the parse error wins over the linked/query-timeout
-        // mutex violation.
         expect(String(exit.cause)).toContain('invalid duration "bogus"');
         expect(String(exit.cause)).not.toContain("if any flags in the group");
       }
-      // pflag's `DurationVar` rejects this at flag-parse time, before the
-      // root's `PersistentPreRunE` ever installs the telemetry context
-      // (`cmd/root.go:93-163`) — unlike the guards below, this rejection must
-      // NOT flush telemetry.
       expect(telemetry.flushed).toBe(false);
     });
   });
@@ -1206,9 +1159,6 @@ describe("gen types", () => {
     return Effect.gen(function* () {
       yield* genTypes(defaultFlags({ queryTimeout: "20s" })).pipe(Effect.provide(layer));
 
-      // Go neither errors nor warns here — only one flag of the
-      // linked/project-id/query-timeout mutex group is set, and the remote
-      // TypeScript path simply never reads the timeout.
       expect(out.stderrText).not.toContain("--query-timeout");
       expect(api.requests).toContainEqual({
         method: "generateTypescriptTypes",
@@ -1256,11 +1206,6 @@ describe("gen types", () => {
               ).pipe(Effect.provide(layer)),
             );
 
-            // Unlike an explicit --linked/--project-id, the implicit fallback never
-            // sets the "linked"/"project-id" mutex keys, so --query-timeout and
-            // --swift-access-control clear every guard here and reach pg-meta — the
-            // SIDE_EFFECTS.md defaults-invariant note is scoped to the explicit
-            // paths for exactly this reason.
             expect(dbConfig.resolves[0]?.adHocProjectRef).toBe(false);
             expect(docker.env.has("PG_QUERY_TIMEOUT_SECS=20")).toBe(true);
             expect(docker.env.has("PG_CONN_TIMEOUT_SECS=20")).toBe(true);
@@ -1282,8 +1227,6 @@ describe("gen types", () => {
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        // Go runs the command's PreRunE before cobra's flag-group validation
-        // (spf13/cobra command.go:1000-1010), so the PreRunE error wins.
         expect(String(exit.cause)).toContain(
           "--postgrest-v9-compat must used together with --db-url",
         );
@@ -1326,9 +1269,6 @@ describe("gen types", () => {
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        // Cobra validates the groups in lexicographically sorted key order, so
-        // the linked/project-id/postgrest-v9-compat group reports before the
-        // local/linked/project-id/db-url group even though both are violated.
         expect(String(exit.cause)).toContain(
           "if any flags in the group [linked project-id postgrest-v9-compat] are set none of the others can be; [postgrest-v9-compat project-id] were all set",
         );
@@ -1370,8 +1310,6 @@ describe("gen types", () => {
             onSpawn: docker.onSpawn,
           });
 
-          // Go has no "--swift-access-control requires --lang swift" guard —
-          // the value is always forwarded to pg-meta regardless of language.
           await Effect.runPromise(
             genTypes(
               defaultFlags({ local: true, lang: "python", swiftAccessControl: "public" }),
@@ -1499,8 +1437,6 @@ describe("gen types", () => {
             ).toBe(true);
             expect(dbConfig.resolves).toHaveLength(1);
             expect(dbConfig.resolves[0]?.connType).toBe("linked");
-            // --project-id is an ad-hoc remote ref: the resolver must not inherit
-            // the workdir's ambient password / saved pooler URL.
             expect(dbConfig.resolves[0]?.adHocProjectRef).toBe(true);
             const linkedProjectRef = dbConfig.resolves[0]?.linkedProjectRef;
             expect(
@@ -1544,7 +1480,6 @@ describe("gen types", () => {
 
           expect(dbConfig.resolves).toHaveLength(1);
           expect(dbConfig.resolves[0]?.connType).toBe("linked");
-          // --linked is the workdir's own project: keep workdir-scoped credentials.
           expect(dbConfig.resolves[0]?.adHocProjectRef).toBe(false);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
@@ -2513,8 +2448,6 @@ describe("gen types", () => {
           const { layer, api, dbConfig } = setup({
             args: ["gen", "types", "--lang", "python", "--project-id", VALID_REF],
             childStdout: ["class PublicMovies(BaseModel):"],
-            // The Management API's 404 wording is not guaranteed; a generic body
-            // must still route to the branch config endpoint.
             getProject: () => Effect.fail(statusApiError(404, `{"message":"Not found"}`)),
             getABranchConfig: ({ branch_id_or_ref }) =>
               Effect.succeed({
@@ -2656,8 +2589,6 @@ describe("gen types", () => {
           );
           expect(child.spawned[2]?.args).toContain(resolvePgmetaImage());
           expect(child.spawned[2]?.args.slice(-2)).toEqual(["node", "dist/server/server.js"]);
-          // The local/db-url paths have no project ref, so they must not
-          // populate the linked-project cache.
           expect(linkedProjectCache.cached).toBe(false);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
@@ -3426,9 +3357,6 @@ describe("gen types", () => {
     }),
   );
 
-  // The SSL probe does not special-case `--debug`: a successful probe
-  // returns true regardless, so the bundle is passed to pgmeta regardless of
-  // the flag.
   it.live("passes the CA bundle env var in --debug mode when TLS is supported", () =>
     Effect.tryPromise({
       try: () =>

@@ -13,15 +13,9 @@ import {
 export class MigrationFetchWriteError extends Data.TaggedError("MigrationFetchWriteError")<{
   readonly message: string;
   /**
-   * Absolute paths of migration files this fetch had already written, in remote-history
-   * order, before THIS failure — populated whenever a later row in the same fetch fails
-   * validation or the write itself (a tampered/malformed remote row, or a mid-loop write
-   * failure), after earlier rows already wrote successfully. `undefined`/omitted when
-   * nothing had been written yet (e.g. the very first row failed, or the failure happened
-   * before the write loop even started). Read by `pull.aggregate.ts`'s
-   * `pullFailedStepResult` (via `hasWrittenSoFar`) so `supabase pull`'s
-   * `migration_history` step can report partial progress instead of always claiming
-   * `written: []` on a failed fetch.
+   * Absolute paths of migration files already written before this failure, in
+   * remote-history order; omitted if nothing had been written yet. Read by
+   * `pull.aggregate.ts` to report partial progress instead of an empty list.
    */
   readonly writtenSoFar?: ReadonlyArray<string>;
 }> {

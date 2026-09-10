@@ -1,37 +1,6 @@
 /**
  * Storage container spec builder, plus the vector-bucket env helper
- * `appendStorageVectorEnv`.
- *
- * Enabled gate: `isStorageEnabled` — `config.storage.enabled &&
- * !isContainerExcluded(storageImage, excluded)`. Gating itself is the
- * caller's responsibility (`start.services.ts`'s `storage` catalog entry,
- * `enabledGate: "storage.enabled"`); this module only builds the container
- * spec once called.
- *
- * `imageTransformationEnabled` (below) is a COMPOUND value (`storage.enabled`
- * is already implied by the fact Storage itself is starting) &&
- * `config.storage.image_transformation?.enabled &&
- * !isContainerExcluded(imgproxyImage, excluded)`, NOT the bare
- * `config.storage.image_transformation?.enabled` field alone. The caller
- * must compute this compound boolean exactly once and pass the SAME value
- * both here (`ENABLE_IMAGE_TRANSFORMATION`) and to the decision of whether
- * to actually start the ImgProxy container
- * (`imgproxy.service.ts`'s `buildImgproxyContainerSpec` precondition)
- * — the two must never disagree.
- *
- * `s3ProtocolEnabled` is `config.storage.s3_protocol.enabled` directly (no
- * exclusion factor — S3 protocol support is a Storage feature flag, not a
- * separate container). The embedded default config template always sets
- * `[storage.s3_protocol]\nenabled = true` and is merged in as the base layer
- * before any real config loads, so this section is always present in
- * practice. `@supabase/config`'s schema mirrors this by decoding
- * `storage.s3_protocol` unconditionally (never `optionalKey`, unlike
- * `image_transformation`), so the raw decoded boolean needs no extra
- * PRESENCE check — but the caller is still responsible for applying
- * `SUPABASE_STORAGE_S3_PROTOCOL_ENABLED`/`SUPABASE_STORAGE_VECTOR_ENABLED`
- * (the same override mechanism `imageTransformationEnabled`'s own compound
- * gate already accounts for) before passing
- * `s3ProtocolEnabled`/`vectorBucketsEnabled` in.
+ * `appendStorageVectorEnv`. Gated on `config.storage.enabled` by the caller.
  */
 
 import type { CliConfig } from "@supabase/config";
@@ -53,15 +22,12 @@ const STORAGE_DOCKER_PATH = "/mnt";
 export interface StorageVectorEnvInput {
   /** The `db` container's own Docker name (`serviceContainerName("db", projectId)`). */
   readonly dbHost: string;
-  /** See `startInternalDbPassword` (`../../../shared/db-bootstrap/internal-db-connection.ts`). */
+  /** See {@link startInternalDbPassword}. */
   readonly dbPassword: string;
   readonly projectEnvValues?: Readonly<Record<string, string>>;
 }
 
-/**
- * Only called when `config.storage.vector.enabled` — note the TOML key is
- * `[storage.vector]`, not `vector_buckets`.
- */
+/** Called only when `config.storage.vector.enabled` — the TOML key is `[storage.vector]`, not `vector_buckets`. */
 export function appendStorageVectorEnv(
   env: Readonly<Record<string, string>>,
   input: StorageVectorEnvInput,
@@ -90,10 +56,8 @@ export function appendStorageVectorEnv(
 
 export interface StorageEnvInput {
   /**
-   * The storage target-migration pin, resolved from a version-pin file, not
-   * from `@supabase/config`'s schema. Out of scope for this builder (like
-   * `image`); the caller resolves it and typically passes `""` when the
-   * file is absent.
+   * The storage target-migration pin, resolved by the caller from a version-pin file (not from
+   * `@supabase/config`'s schema); typically `""` when the file is absent.
    */
   readonly targetMigration: string;
   /** `LocalConfigValues.anonKey`. */
@@ -106,7 +70,7 @@ export interface StorageEnvInput {
   readonly jwks: string;
   /** The `db` container's own Docker name (`serviceContainerName("db", projectId)`). */
   readonly dbHost: string;
-  /** See `startInternalDbPassword` (`../../../shared/db-bootstrap/internal-db-connection.ts`). */
+  /** See {@link startInternalDbPassword}. */
   readonly dbPassword: string;
   /** `config.storage.file_size_limit`, e.g. `"50MiB"` — converted to a byte count via `ramInBytes`. */
   readonly fileSizeLimit: CliConfig["storage"]["file_size_limit"];
@@ -116,22 +80,22 @@ export interface StorageEnvInput {
   readonly s3AccessKeyId: string;
   /** `LocalConfigValues.storageS3SecretAccessKey`. */
   readonly s3SecretAccessKey: string;
-  /** The compound image-transformation-enabled boolean — see this file's header for why this is NOT the bare config field. */
+  /**
+   * The compound image-transformation-enabled boolean (`image_transformation?.enabled` plus
+   * image exclusion), not the bare config field. Must equal the value used to decide whether the
+   * ImgProxy container itself starts.
+   */
   readonly imageTransformationEnabled: boolean;
   /** The ImgProxy container's own Docker name (`serviceContainerName("imgproxy", projectId)`). */
   readonly imgproxyHost: string;
-  /** `config.storage.s3_protocol.enabled` — see this file's header for why no extra presence check is needed. */
+  /** `config.storage.s3_protocol.enabled`; the schema decodes this key unconditionally, so no separate presence check is needed. */
   readonly s3ProtocolEnabled: boolean;
   /** `config.storage.vector.enabled`. */
   readonly vectorBucketsEnabled: boolean;
   readonly projectEnvValues?: Readonly<Record<string, string>>;
 }
 
-/**
- * Pure env-var builder, split out from {@link buildStorageContainerSpec}
- * so the full env set — including the conditional vector-bucket branch — is
- * unit-testable without constructing a whole container spec.
- */
+/** Builds the env vars for the Storage container, including the conditional vector-bucket branch. */
 export function buildStorageEnv(input: StorageEnvInput): Record<string, string> {
   const env: Record<string, string> = {
     DB_MIGRATIONS_FREEZE_AT: input.targetMigration,
@@ -171,11 +135,11 @@ export function buildStorageEnv(input: StorageEnvInput): Record<string, string> 
 }
 
 export interface StorageContainerSpecInput {
-  /** The sanitized project id — see `serviceContainerName`'s callers. */
+  /** The sanitized project id. */
   readonly projectId: string;
-  /** `container.HostConfig.NetworkMode`/`network.NetworkingConfig` target — the `--network-id` override or `utils.NetId`. */
+  /** `container.HostConfig.NetworkMode`'s target; resolved once per `start` run, not per-container. */
   readonly networkId: string;
-  /** `utils.Config.Storage.Image`, already resolved/pulled by the caller (`image-prepull.ts`). */
+  /** `config.storage.image`, already resolved/pulled by the caller. */
   readonly image: string;
   readonly targetMigration: string;
   readonly fileSizeLimit: CliConfig["storage"]["file_size_limit"];
@@ -243,7 +207,6 @@ export function buildStorageContainerSpec(input: StorageContainerSpecInput): Sta
         },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
-    // The Storage network alias.
     networkAliases: ["storage"],
     labels: {},
   };

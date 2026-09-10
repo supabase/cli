@@ -32,8 +32,6 @@ size = "2gb"
     );
   });
 
-  // However the file happened to be terminated, the new table is separated by
-  // exactly one blank line.
   test.each([
     ['project_id = "demo"', "no trailing newline"],
     ['project_id = "demo"\n', "one trailing newline"],
@@ -50,8 +48,6 @@ size = "2gb"
     );
   });
 
-  // A path may legally contain a newline on Unix. Writing it through verbatim
-  // would leave config.toml unparseable, after the directory is already on disk.
   test("escapes control characters in a written value", () => {
     const after = appendTomlSection("", "compute.api", { source: "packages/od\nd\tname" });
 
@@ -65,8 +61,6 @@ size = "2gb"
     );
   });
 
-  // Quoting a count would write a TOML string, and the config schema types
-  // `instances` as a number — so the rendered file would stop loading entirely.
   test("writes a number bare rather than quoting it", () => {
     expect(appendTomlSection("", "compute.api", { size: "2gb", instances: 3 })).toBe(
       '[compute.api]\nsize = "2gb"\ninstances = 3\n',

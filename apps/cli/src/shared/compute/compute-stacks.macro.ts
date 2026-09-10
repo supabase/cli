@@ -12,13 +12,9 @@ import {
 export type ComputeStack = Readonly<Record<string, string>>;
 
 /**
- * Fails unless every offered runtime has a non-empty stack, and every stack
- * belongs to an offered runtime.
- *
- * The two lists are declared separately — `COMPUTE_RUNTIMES` drives `--runtime`
- * and the type union, the directory holds the content — so this is what stops
- * them drifting into a runtime users can pick that scaffolds nothing. It runs
- * as the macro is expanded, which is to say at build time.
+ * Fails unless every offered runtime has a non-empty stack and every stack matches an offered
+ * runtime — the two lists (`COMPUTE_RUNTIMES` and this directory) are declared separately, so this
+ * is what stops them drifting apart. Runs at build time, as the macro is expanded.
  */
 export class ComputeStacksValidationError extends Data.TaggedError("ComputeStacksValidationError")<{
   readonly message: string;
@@ -61,20 +57,12 @@ function validateComputeStacks(
 /**
  * Every runtime's starter files, discovered by reading `./stacks/`.
  *
- * Expanded as a Bun macro, so this runs while the importing module is
- * transpiled and its return value is inlined as a literal — a compiled binary
- * carries the content with no `stacks/` directory beside it and no `--define`
- * to forget at a build site. Adding a runtime is adding a directory; nothing
- * here names the files.
- *
- * Bun expands macros in the runtime transpiler too, so running from source
- * behaves the same. Vitest does not implement them, and degrades to calling
- * this as an ordinary function against the source tree — which is why the path
- * comes from `import.meta.url` rather than Bun's `import.meta.dir`, undefined
- * once the test runner has bundled the module.
- *
- * Failure here fails the build. Bun reports it as a macro that could not be
- * coerced to AST, so the reason is logged first to make the diagnostic legible.
+ * Expanded as a Bun macro so the content is inlined into the transpiled output — a compiled
+ * binary needs no `stacks/` directory beside it. Bun expands macros in the source-tree transpiler
+ * too, but Vitest doesn't, so it calls this as an ordinary function against the source tree —
+ * hence `import.meta.url` rather than `import.meta.dir`, which is undefined once bundled.
+ * Throwing here fails the build; Bun reports only that the macro couldn't be coerced to AST, so
+ * the reason is logged first to keep the diagnostic legible.
  */
 export const loadComputeStacks = (root: string) =>
   Effect.gen(function* () {

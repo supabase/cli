@@ -12,25 +12,21 @@ export type LoginEncryptedPayload = {
 
 interface LoginCryptoShape {
   /**
-   * Generates a P-256 (prime256v1) ECDH keypair and the uncompressed,
-   * hex-encoded public key sent to the dashboard. Mirrors Go's
-   * `LoginEncryption.generateKeys` + `encodedPublicKey` (`login.go:71-84`).
+   * Generates a P-256 (prime256v1) ECDH keypair and the uncompressed, hex-encoded public key
+   * sent to the dashboard.
    */
   readonly generateKeyPair: Effect.Effect<
     { readonly ecdh: ECDH; readonly publicKeyHex: string },
     LoginCryptoError
   >;
-  /** Fresh login session UUID (`uuid.New().String()`, `login.go:187`). */
+  /** Fresh login session UUID. */
   readonly generateSessionId: Effect.Effect<string>;
   /**
-   * Default token name `cli_<user>@<host>_<unix>`, falling back to `cli_<unix>`
-   * when the username/hostname lookup fails (`login.go:249-271`).
+   * Default token name `cli_<user>@<host>_<unix>`, falling back to `cli_<unix>` when the
+   * username/hostname lookup fails.
    */
   readonly defaultTokenName: Effect.Effect<string>;
-  /**
-   * Derives the ECDH shared secret and AES-256-GCM decrypts the access token.
-   * Mirrors `decryptAccessToken` (`login.go:86-128`).
-   */
+  /** Derives the ECDH shared secret and AES-256-GCM decrypts the access token. */
   readonly decryptToken: (
     ecdh: ECDH,
     payload: LoginEncryptedPayload,

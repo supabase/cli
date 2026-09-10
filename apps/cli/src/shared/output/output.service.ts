@@ -25,13 +25,10 @@ interface OutputSelectBehavior {
   readonly placeholder?: string;
   readonly maxItems?: number;
   /**
-   * Which stream the interactive picker itself renders to. Defaults to `"stdout"`
-   * (clack's own default, matching every existing caller). Pass `"stderr"` for a
-   * command whose own stdout is a machine-readable payload even in text mode (e.g.
-   * `gen bearer-jwt`'s signed token) — matching Go's own convention of always
-   * rendering interactive prompts to stderr (`internal/utils/prompt.go`'s
-   * `PromptChoice`: `tea.WithOutput(os.Stderr)`, "Interactive prompts should always
-   * be written to stderr").
+   * Which stream the interactive picker renders to. Defaults to `"stdout"`
+   * (clack's default). Pass `"stderr"` when the command's own stdout is a
+   * machine-readable payload even in text mode (e.g. `gen bearer-jwt`'s
+   * signed token).
    */
   readonly stream?: "stdout" | "stderr";
 }
@@ -97,9 +94,10 @@ interface OutputShape {
   /**
    * Writes a raw chunk to stdout or stderr without framing.
    *
-   * Reserved for byte-exact parity output (Go-format encoders, Glamour-styled tables)
-   * where structured framing would change the bytes on the wire. Routes through the active
-   * output layer so tests can capture it without monkey-patching `process.stdout` / `process.stderr`.
+   * Reserved for byte-exact output (machine-format encoders, Glamour-styled
+   * tables) where structured framing would change the bytes on the wire.
+   * Routes through the active output layer so tests can capture it without
+   * monkey-patching `process.stdout`/`process.stderr`.
    */
   readonly raw: (text: string, stream?: "stdout" | "stderr") => Effect.Effect<void>;
   /**

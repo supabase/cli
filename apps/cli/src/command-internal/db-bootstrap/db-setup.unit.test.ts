@@ -26,18 +26,12 @@ import {
 const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
 /**
- * Fingerprints unique to each transcribed SQL constant — see `db-setup.ts`'s
- * templates. No trailing `;`: `splitAndTrim` strips it from every
- * executed statement before `session.exec` sees it.
+ * Fingerprints unique to each transcribed SQL constant, with no trailing `;` (`splitAndTrim`
+ * strips it before `session.exec` sees it).
  *
- * `GLOBALS`/`SCHEMA_13`/`REVOKE_PRIVILEGES` are checked as SUBSTRINGS: each is
- * embedded inside a larger executed block (a preceding comment, a `DO`-style
- * conditional, or the sibling `alter default privileges` line). `SCHEMA_14`
- * is checked with `.endsWith` instead — `CREATE SCHEMA IF NOT EXISTS graphql`
- * is itself preceded by a comment block (so a plain equality check would
- * fail), but a naive substring check would also match 14.sql's unrelated
- * `CREATE SCHEMA IF NOT EXISTS graphql_public` statement, since `graphql` is
- * a prefix of `graphql_public`.
+ * `GLOBALS`/`SCHEMA_13`/`REVOKE_PRIVILEGES` are checked as substrings, since each is embedded in
+ * a larger executed block. `SCHEMA_14` is checked with `.endsWith` instead: a substring check
+ * would also match 14.sql's unrelated `graphql_public` schema statement.
  */
 const GLOBALS_FINGERPRINT = "CREATE ROLE anon";
 const SCHEMA_13_FINGERPRINT =
@@ -88,10 +82,7 @@ function mockDockerRun(opts: { exitCode?: number } = {}) {
         stderr: "",
       });
     },
-    // `runStartMigrateJob` (`db-setup.ts`) discards stdout via `runStream` (not
-    // `runCapture`), matching Go's `io.Discard` writer for these one-shot jobs — this
-    // suite's `docker.runs`/`captureOptsCalls` assertions track THIS method's calls, not
-    // `runCapture`'s (which nothing under test still calls).
+    // Tracks `runStream`'s calls (not `runCapture`'s): `runStartMigrateJob` calls `runStream`.
     runStream: (runOpts, streamOpts) => {
       runs.push(runOpts);
       captureOptsCalls.push({ teeStderr: streamOpts.teeStderr });
@@ -102,10 +93,8 @@ function mockDockerRun(opts: { exitCode?: number } = {}) {
 }
 
 /**
- * A `ChildProcessSpawner` where `docker image inspect <image>` always exits 0 (image
- * already cached) — feeds `runStartMigrateJob`'s own per-image `ensureImagesCached`
- * resolve (see `db-setup.ts`), so every job's `image` resolves to the SAME raw string this
- * suite's `baseInput` already asserts on, without needing a real Docker daemon.
+ * A `ChildProcessSpawner` where `docker image inspect <image>` always exits 0, so every job's
+ * image resolves to the raw string `baseInput` asserts on, without a real Docker daemon.
  */
 function mockAlwaysCachedSpawner(): ChildProcessSpawner.ChildProcessSpawner["Service"] {
   return ChildProcessSpawner.make((_command) =>
@@ -460,10 +449,6 @@ describe("startSetupLocalDatabase", () => {
     it.effect(
       "the auth job's GOTRUE_SITE_URL reflects the caller's resolved siteUrl, not the raw config value",
       () => {
-        // `siteUrl` is already SUPABASE_AUTH_SITE_URL-overridden by the caller
-        // (`start.handler.ts`'s `values.authSiteUrl`) — the one-shot auth
-        // migration job must agree with the long-running GoTrue container,
-        // not fall back to reading the un-overridden `config.auth.site_url`.
         const workdir = makeWorkdir();
         const { session } = fakeSession();
         const out = mockOutput();
@@ -640,8 +625,6 @@ describe("startSetupLocalDatabase", () => {
         const docker = mockDockerRun();
         return run(baseInput(workdir, session, { majorVersion: 14 }), out, docker).pipe(
           Effect.map(() => {
-            // Go's `SeedGlobals` prints before attempting the read (`pkg/migration/
-            // seed.go:84-97`) — a missing roles.sql is tolerated, not skipped.
             expect(out.rawChunks.map((c) => c.text)).toContain(
               "Seeding globals from roles.sql...\n",
             );
@@ -727,9 +710,8 @@ describe("resolveDbSetupPrelude", () => {
 });
 
 /**
- * `supabase start` on an EXISTING volume never replays migrations, so this
- * convergence is the only thing that can reconcile the volume's pg_net with the
- * current `[experimental.webhooks]` setting — in both directions, and without ever
+ * On an existing volume, `supabase start` never replays migrations, so this convergence is the
+ * only thing that reconciles the volume's pg_net with the current webhooks setting, without
  * dropping an extension a user's own migration created.
  */
 describe("runDatabaseWebhooksSetup", () => {
@@ -837,8 +819,7 @@ describe("runDatabaseWebhooksSetup", () => {
   ])(
     "preserves pg_net when an applied history row records $description for statements",
     ({ historyValue }) => {
-      // Older volumes store NULL/`{}` in `schema_migrations.statements`. That is
-      // incomplete evidence, not proof the migration did not install pg_net.
+      // Older volumes store NULL/`{}` for `schema_migrations.statements`.
       const { execSql, effect } = converge(false, { appliedStatements: [historyValue] });
       return effect.pipe(
         Effect.map(() => {
@@ -849,7 +830,6 @@ describe("runDatabaseWebhooksSetup", () => {
   );
 
   it.effect("preserves pg_net when the migration history cannot be read", () => {
-    // Erring toward not dropping: an unreadable history is treated as ownership.
     const { execSql, effect } = converge(false, { historyUnavailable: true });
     return effect.pipe(
       Effect.map(() => {

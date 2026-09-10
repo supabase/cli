@@ -64,8 +64,6 @@ function flags(overrides: Partial<ComputePushFlags> = {}): ComputePushFlags {
     names: ["api"],
     instances: Option.none(),
     exposure: Option.none(),
-    // Mirrors the command default: a push waits for the build, and only the
-    // scenarios that are about the early return opt out of it.
     noWait: false,
     projectRef: Option.none(),
     ...overrides,
@@ -851,10 +849,6 @@ describe("compute push", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  // Every "run this next" string here is copy-pasted verbatim. From an unlinked
-  // checkout — or one linked elsewhere — dropping the `--project-ref` the user
-  // typed either fails to resolve or silently addresses a same-named compute in
-  // whatever project this checkout points at.
   describe("carries an explicit --project-ref into its hints", () => {
     const unlinked = (repoDir: string, routeOverrides = {}) =>
       setupCompute({
@@ -1701,8 +1695,7 @@ describe("compute push", () => {
                 name: "api",
                 runtime: "node",
                 buildState: "building",
-                // The compute was already live, so the platform echoes the image
-                // it is still serving.
+                // The platform echoes the image a re-pushed compute is still serving.
                 imageVersion: "v7",
               }),
             },

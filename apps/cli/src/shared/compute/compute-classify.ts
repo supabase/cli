@@ -18,12 +18,10 @@ const MARKERS: ReadonlyArray<{
   readonly runtime: ComputeRuntime;
   readonly files: ReadonlyArray<string>;
 }> = [
-  // An explicit Dockerfile always wins: it is a deliberate signal, not an
-  // inference.
+  // An explicit Dockerfile always wins: it's a signal, not an inference.
   { runtime: "dockerfile", files: ["Dockerfile"] },
-  // Deno is checked before plain `package.json` because a Deno project can
-  // still have one (editor tooling, a stray dependency) while a Node project
-  // has no `deno.json`.
+  // Deno is checked before plain `package.json` because a Deno project can still have one
+  // (editor tooling, a stray dependency) while a Node project has no `deno.json`.
   { runtime: "deno", files: ["deno.json", "deno.jsonc", "deno.lock"] },
   { runtime: "node", files: ["package.json"] },
 ];

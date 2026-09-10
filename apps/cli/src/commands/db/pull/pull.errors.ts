@@ -36,15 +36,10 @@ export class DbPullEngineConflictError extends Data.TaggedError("DbPullEngineCon
 export class DbPullWriteError extends Data.TaggedError("DbPullWriteError")<{
   readonly message: string;
   /**
-   * Absolute path(s) of migration file(s) `runDbPull` had already written to disk
-   * before THIS failure — populated when the remote migration-history update
-   * (`updateMigrationHistory`, the "Update remote migration history table?" step)
-   * fails AFTER the migration file write it's meant to record already succeeded.
-   * `undefined`/omitted for every other `DbPullWriteError` (a failed file write
-   * itself never reaches this field, since nothing new was written in that case).
-   * Read by `pull.aggregate.ts`'s `pullFailedStepResult` (via `hasWrittenSoFar`) so
-   * `supabase pull`'s `db` step can report the on-disk migration instead of always
-   * claiming `written: []` on a failed pull.
+   * Absolute path(s) already written to disk before this failure — set when the remote
+   * migration-history update fails after the migration file write it's meant to record
+   * already succeeded. Read by `pull.aggregate.ts`'s `pullFailedStepResult` so a failed
+   * pull can still report the on-disk migration instead of `written: []`.
    */
   readonly writtenSoFar?: ReadonlyArray<string>;
 }> {
@@ -63,10 +58,9 @@ export class DbPullDumpError extends Data.TaggedError("DbPullDumpError")<{
   readonly message: string;
   readonly suggestion?: string;
   /**
-   * Set when the failure is opening/truncating the local migration file before
-   * any pg_dump attempt — a filesystem permission problem, not a database
-   * connection failure. The actual pg_dump-run failures leave it unset and keep
-   * the `dbConnection` classification.
+   * Set when the failure is opening/truncating the local migration file before any
+   * pg_dump attempt (a filesystem problem, not a connection failure); pg_dump-run
+   * failures leave it unset and keep the `dbConnection` classification.
    */
   readonly fileOpen?: boolean;
 }> {

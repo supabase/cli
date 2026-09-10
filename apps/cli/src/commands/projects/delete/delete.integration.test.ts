@@ -159,7 +159,6 @@ describe("projects delete integration", () => {
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("ProjectsDeleteRefRequiredError");
       }
-      // No ref resolved → no linked-project cache write.
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -172,8 +171,6 @@ describe("projects delete integration", () => {
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("ProjectsDeleteCancelledError");
       }
-      // Established non-TTY behavior: still prints the label and echoes the
-      // (empty) scanned line before the No default cancels.
       expect(out.stderrText).toContain("Do you want to delete project ");
       expect(out.stderrText).toContain("? This action is irreversible. [y/N] \n");
       expect(hasMethod(api, "DELETE")).toBe(false);
@@ -186,7 +183,6 @@ describe("projects delete integration", () => {
     const { layer, out, api } = setup({ yes: false });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
-      // Established `--yes` branch bytes.
       expect(out.stderrText).toContain("Do you want to delete project ");
       expect(out.stderrText).toContain("? This action is irreversible. [y/N] y\n");
       expect(hasMethod(api, "DELETE")).toBe(true);
@@ -205,7 +201,6 @@ describe("projects delete integration", () => {
     const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "y\n" });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
-      // The piped answer is echoed to stderr, matching the non-TTY prompt.
       expect(out.stderrText).toContain("[y/N] y\n");
       expect(hasMethod(api, "DELETE")).toBe(true);
     }).pipe(Effect.provide(layer));

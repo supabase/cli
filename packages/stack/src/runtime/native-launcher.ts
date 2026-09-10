@@ -134,9 +134,8 @@ export const runNativeLauncher = (): void => {
     }
   };
 
-  // The supervisor normally signals the launcher process group, but forwarding
-  // graceful signals to the workload keeps the launcher alive long enough to
-  // observe the workload's exit and reap it. SIGKILL remains handled by the
+  // Forwarding graceful signals to the workload rather than the whole process group keeps the
+  // launcher alive long enough to observe and reap its exit. SIGKILL still goes through the
   // owner-pipe path and cannot be intercepted here.
   const forwardSignal = (signal: NodeJS.Signals): void => {
     if (groupTerminated || gracefulForwarded) return;
@@ -179,11 +178,9 @@ export const runNativeLauncher = (): void => {
     gracefulTimeout = setTimeout(() => terminateGroup("SIGKILL"), specGracefulStopTimeoutMs);
   };
 
-  // Register the owner pipe before waiting for the launch payload. EOF means
-  // the owner process disappeared without running a normal scope finalizer.
-  // Bun does not reliably surface EOF for a net.Socket created from this
-  // descriptor, while Node's filesystem stream can hold a libuv worker open
-  // after its owner exits. Select the descriptor adapter for the host runtime.
+  // Register the owner pipe before the launch payload: EOF means the owner vanished without
+  // running a scope finalizer. Bun doesn't reliably surface EOF for an fd-based Socket, while
+  // Node's fs stream can hold a libuv worker open after exit, so pick the adapter per runtime.
   const ownerPipe =
     process.versions.bun === undefined
       ? new Socket({ fd: 3, readable: true, writable: false })
@@ -203,10 +200,9 @@ export const runNativeLauncher = (): void => {
 
   let payload: Buffer;
   try {
-    // The parent writes a finite JSON payload and closes fd4. A synchronous
-    // read avoids a Bun pipe-read stream that can fail to deliver `end` after
-    // the parent closes the sink, while the owner stream remains registered for
-    // loss detection once the workload is running.
+    // The parent writes a finite JSON payload and closes fd4; a synchronous read avoids a Bun
+    // pipe-read stream that can fail to deliver `end` once the sink closes, while the owner-pipe
+    // stream stays registered for loss detection once the workload is running.
     payload = readFileSync(4);
   } catch {
     process.exit(127);

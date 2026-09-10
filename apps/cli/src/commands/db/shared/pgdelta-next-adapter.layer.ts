@@ -262,15 +262,9 @@ function normalizePgDeltaNextDiagnostics<Subject>(
 }
 
 /**
- * Turns `planSchemaFiles`' skipped statements into coverage diagnostics so they
- * travel the ONE diagnostic report path every consumer already renders and
- * enforces — warned by default, blocking under `--strict-coverage`. Built here,
- * where `skipped` originates, so no consumer has to remember to look at the
- * separate `skipped` field (nothing did, and the statements vanished silently).
- * The per-diagnostic message deliberately carries the raw statement verbatim:
- * it is the user's own declarative file content (already on their machine), and
- * a redacted message would leave `--strict-coverage`/debug failures
- * unactionable. The default aggregate warning still names files only.
+ * Routes `planSchemaFiles`' skipped statements through the shared diagnostic-report path,
+ * warned by default and blocking under `--strict-coverage`, instead of an unread `skipped`
+ * field; the raw statement is kept verbatim since it's already the user's own file content.
  */
 function skippedStatementDiagnostics(
   skipped: readonly { readonly file: string; readonly stmt: string }[],

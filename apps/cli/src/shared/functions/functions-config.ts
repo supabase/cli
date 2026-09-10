@@ -5,30 +5,25 @@ import { loadCliConfig } from "@supabase/config/effect";
 import { normalizeProjectId } from "./functions-docker.ts";
 
 /**
- * Everything the native `functions` Docker paths (`deploy`/`download`/`serve`)
- * need from project config resolution. In the
- * CLI this also runs the same `Config.Validate`/dotenv pipeline
- * `start`/`stop`/`status` already go through — see {@link FunctionsGoConfigCompat}.
- * Callers that omit the hook keep the plain `loadCliConfig` behavior.
+ * Config resolution context shared by the `functions` Docker paths
+ * (`deploy`, `download`, `serve`). Callers that inject
+ * {@link FunctionsGoConfigCompat} additionally run the config/dotenv
+ * validation pipeline `start`/`stop`/`status` already share; callers that
+ * omit it keep the plain `loadCliConfig` behavior.
  */
 interface FunctionsCliConfigContext {
   readonly loaded: LoadedCliConfig | null;
-  /** Go's post-`loadNestedEnv` merged env (ambient-wins). `undefined` when the hook is not injected. */
+  /** Merged env with ambient values winning; `undefined` when the hook is not injected. */
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
-  /** Go's `Config.ProjectId`, sanitized, after `Config.Validate` in the CLI. */
+  /** Sanitized project id, resolved after config validation. */
   readonly projectId: string;
   readonly denoVersion: number | undefined;
 }
 
 /**
- * Go-parity hook, injected so this shared module never imports the command
- * tree's validation/dotenv machinery directly — same rationale as
- * `download.ts`'s `styleEmphasis`/`styleAqua`. `undefined` disables the hook.
- *
- * A single method (not one hook per step) so the command-tree implementation can
- * delegate its dotenv/config-load work to `local-project-context.ts`'s
- * `loadLocalProjectContext` end to end — the same pipeline `start`/
- * `stop`/`status` already share — rather than re-implementing it here.
+ * Hook that lets a caller run its own config/dotenv validation pipeline
+ * without this shared module importing the command tree's validation
+ * machinery directly. `undefined` disables the hook.
  */
 export interface FunctionsGoConfigCompat {
   readonly load: (input: {
@@ -47,12 +42,9 @@ export interface FunctionsGoConfigCompat {
 }
 
 /**
- * Go: `flags.LoadConfig` (`internal/utils/flags/config_path.go:10-14` ->
- * `pkg/config/config.go:579-611,878`) — loads dotenv, decodes config.toml
- * (merging template defaults + env even when the file is absent), and ends in
- * `Config.Validate`, unconditionally, before any Docker/API work. Only the
- * CLI (`goConfigCompat` set) runs that Go-parity dotenv/validate
- * pipeline; callers without the hook keep the plain `loadCliConfig` behavior.
+ * Loads project config for a `functions` command. Callers that provide
+ * `goConfigCompat` run its dotenv/config-validate pipeline before any
+ * Docker/API work; callers that don't fall back to `loadCliConfig`.
  */
 export const loadFunctionsCliConfig = Effect.fnUntraced(function* (input: {
   readonly projectRoot: string;
@@ -67,18 +59,9 @@ export const loadFunctionsCliConfig = Effect.fnUntraced(function* (input: {
     return {
       loaded,
       projectEnvValues: undefined,
-      // `input.projectRef` is a definite string for every current caller
-      // (`deploy`/`download` always resolve one first); the `basename`
-      // fallback only matters if this ever runs with `projectRef`
-      // `undefined` and no `project_id` in the file — matching Go's `Eject`
-      // basename default (`pkg/config/config.go:561-570`) and the compat
-      // branch's own `resolveLocalProjectId` fallback below.
-      // Sanitized like the compat branch's (`sanitizeProjectId`, run
-      // inside its validate pipeline): this id feeds `dockerProjectLabels`'
-      // raw label values as well as `localDockerId`'s (self-sanitizing)
-      // resource names, and an unsanitized `project_id = "My Project"` would
-      // label the container `My Project` while its network/volume are named
-      // `..._My_Project` — breaking label-based cleanup filters.
+      // Falls back to `basename` only when `projectRef` is undefined and the
+      // config lacks `project_id`. Sanitized because it also feeds Docker
+      // label/resource names, where an unsanitized value breaks cleanup filters.
       projectId: normalizeProjectId(
         loaded?.config.project_id ?? input.projectRef ?? basename(input.projectRoot),
       ),

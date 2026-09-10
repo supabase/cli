@@ -5,15 +5,10 @@ import { CLI_UPGRADE_GUIDE_URL } from "../cli/version.ts";
 import { ComputeApiNetworkError, ComputeApiUnexpectedStatusError } from "./compute.errors.ts";
 
 /**
- * Status handling shared by every Compute API seam.
- *
- * The compute routes and the analytics logs endpoint sit on different API
- * families but fail the same three ways — the request never left, the server
- * answered something unexpected, or the body could not be read.
- *
- * Route-specific status meaning stays with its route rather than here.
- * `projectScoped404` is the example: it disambiguates a `/v2/projects/{ref}/workers` 404 by
- * response body and means nothing anywhere else.
+ * Status handling shared by every Compute API seam: the compute routes and the analytics logs
+ * endpoint fail the same three ways (the request never left, the server answered something
+ * unexpected, or the body couldn't be read). Route-specific status meaning — like
+ * `projectScoped404`, which disambiguates a `/v2/projects/{ref}/workers` 404 by body — stays with its own route.
  */
 
 /**

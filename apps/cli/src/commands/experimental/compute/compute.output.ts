@@ -9,34 +9,11 @@ import {
 import { ComputeEnvNotSupportedError } from "./compute.errors.ts";
 
 /**
- * Emits a command's payload in the format `-o`/`--output` asked for.
- *
- * `-o` is a global flag nearly every command family on this shell honours, so
- * ignoring it would print human text to a stdout the user asked to be
- * machine-readable.
- *
- * The struct-shaped encoders elsewhere reproduce a payload shape their command
- * is required to match. `compute` has none, so it serialises through the generic
- * encoders and shapes its payload as the command reads best.
- *
- * Returns whether it emitted anything, so the caller can skip its text
- * rendering — `output.success` writes to stdout in text mode and would corrupt
- * the payload otherwise.
- */
-/**
  * Which `-o` values these commands answer with a payload.
  *
- * An allowlist, because the emitter's last branch is TOML: a denylist made every
- * value it had not heard of serialise as TOML, so the next format the global
- * flag learns would silently emit TOML from every compute command until somebody
- * remembered to exclude it. `pretty` is the human default, and `table`/`csv` are
- * accepted by the global flag only because `db query` reads them — every
- * resource command falls through to its own text rendering for those, which is
- * what an unrecognised value should do too.
- *
- * `env` is in the set so it reaches the refusal below rather than falling
- * through to text: it is a format these commands *recognise* and cannot encode,
- * which is a different answer from one they have never heard of.
+ * An allowlist, not a denylist, so an unrecognized future `-o` value falls
+ * through to text instead of silently serializing as TOML. `env` is included
+ * so it reaches the refusal below rather than being treated as unrecognized.
  */
 const PAYLOAD_FORMATS = new Set(["json", "yaml", "toml", "env"]);
 
@@ -88,14 +65,10 @@ export const computeMachineOutputRequested = Effect.fnUntraced(function* () {
  * The format a run actually renders in, with `-o` given priority over
  * `--output-format`.
  *
- * `-o pretty|table|csv` encode nothing and fall through to the text rendering,
- * and an explicit `-o` outranks `--output-format` when both are set. Branching
- * on `output.format` alone therefore emitted JSON for `-o pretty
- * --output-format json`, which asked for exactly the opposite.
- *
- * `-o json|yaml|toml|env` are absent from the result on purpose: those are
- * handled by `emitComputeMachineOutput`, which runs before any of this and
- * owns its own stdout.
+ * `-o pretty|table|csv` fall through to text, so branching on `output.format`
+ * alone would wrongly emit JSON for `-o pretty --output-format json`.
+ * `-o json|yaml|toml|env` are excluded because `emitComputeMachineOutput`
+ * already owns those and their stdout.
  */
 export const computeRenderFormat = Effect.fnUntraced(function* () {
   const output = yield* Output;
@@ -105,13 +78,11 @@ export const computeRenderFormat = Effect.fnUntraced(function* () {
 });
 
 /**
- * Refuse `-o env` before the command does anything.
+ * Refuses `-o env` before the command does anything.
  *
- * `env` is a flat `KEY=value` list and every compute payload has structure a
- * flat list cannot hold — a collection, or a nested instance tally. So it is
- * refused for the whole command family rather than per payload, and refused up
- * front: discovering it at emit time means failing after the work is done, which
- * for `push` is after the remote project has already changed.
+ * Every compute payload has structure a flat `KEY=value` list cannot hold.
+ * Refused up front rather than at emit time, since for `push` that would mean
+ * failing only after the remote project has already changed.
  */
 export const rejectComputeEnvOutput = Effect.fnUntraced(function* () {
   if (Option.getOrUndefined(yield* OutputFlag) === "env") {
@@ -122,21 +93,14 @@ export const rejectComputeEnvOutput = Effect.fnUntraced(function* () {
 });
 
 /**
- * The `--project-ref` a retry suggestion has to carry, or `""` when the ref came
+ * The `--project-ref` a retry suggestion has to carry, or `""` when it came
  * from the link.
  *
- * A suggested command is copy-pasted verbatim, so one that drops an explicit
- * `--project-ref` re-resolves to whatever *this* checkout is linked to. On
- * `delete --yes` that is a same-named compute in a project the user never named,
- * removed without a prompt.
- *
- * Keyed off the flag rather than the resolved ref: when the link supplied it,
- * appending it again is noise on a command that already resolves correctly.
- *
- * An empty `--project-ref ""` counts as "not supplied", the same reading
- * `ProjectRefResolver` gives it before falling back to the environment or
- * the linked-project file. Carrying it through would suggest a command ending
- * in a valueless `--project-ref`, which cannot be pasted back.
+ * Dropping an explicit `--project-ref` from a copy-pasted suggestion would
+ * re-resolve to whichever project is currently linked — for `delete --yes`,
+ * a same-named compute deleted without a prompt. Keyed off the flag, not the
+ * resolved ref, so a link-supplied ref isn't echoed back as noise; an empty
+ * flag value counts as "not supplied", matching `ProjectRefResolver`.
  */
 export const computeProjectRefSuffix = (projectRef: Option.Option<string>): string =>
   Option.isSome(projectRef) && projectRef.value.length > 0

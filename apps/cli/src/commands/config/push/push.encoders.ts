@@ -1,18 +1,16 @@
 /**
- * Pure encoders that turn the changes routed to one `config push` resource
- * into a v1 update-request body.
+ * Pure encoders that turn the changes routed to one `config push` resource into a v1
+ * update-request body.
  *
- * Encoders take the whole local AND remote projections, not just the
- * changed leaves, because several endpoints need companion values the API
- * requires together (`db_schema` when enabling the Data API, both CIDR
- * arrays, the iceberg/vector containers' required inner keys, the active SMS
- * provider's credential set). The change list decides *which* keys ship; a
- * companion's value always prefers the project's CURRENT (`remote`) value
- * over a schema-materialized local default, so an undeclared companion never
- * gets clobbered with a default the user never asked for. Only when `remote`
- * doesn't report a companion at all does resolution fall through to `local`
- * (and, for the storage feature containers only, the decoded `config`) — and
- * that fallback is disclosed via `forced`, never applied silently.
+ * Encoders take the whole local and remote projections, not just the changed leaves, because
+ * several endpoints need companion values the API requires together (`db_schema` when enabling
+ * the Data API, both CIDR arrays, the iceberg/vector containers' required inner keys, the active
+ * SMS provider's credential set). The change list decides *which* keys ship; a companion's value
+ * always prefers the project's current (`remote`) value over a schema-materialized local
+ * default, so an undeclared companion never gets clobbered with a default the user never asked
+ * for. Only when `remote` doesn't report a companion at all does resolution fall through to
+ * `local` (and, for the storage feature containers only, the decoded `config`) — and that
+ * fallback is disclosed via `forced`, never applied silently.
  */
 
 import type { CliConfig, ConfigChange, ProjectConfig } from "@supabase/config";
@@ -52,10 +50,9 @@ export interface PushEncoderInput {
 }
 
 /**
- * The storage encoder's own input: adds the decoded `config` as the LAST
- * resort for the `storage.analytics`/`storage.vector` containers' required
- * inner keys, which the local projection prunes entirely once disabled
- * (CLI-2314 readiness). No other encoder needs this fourth tier.
+ * The storage encoder's own input: adds the decoded `config` as the last resort for the
+ * `storage.analytics`/`storage.vector` containers' required inner keys, which the local
+ * projection prunes entirely once disabled. No other encoder needs this fourth tier.
  */
 export interface StorageEncoderInput extends PushEncoderInput {
   readonly config: CliConfig;
@@ -133,9 +130,8 @@ export interface AuthEncoderInput extends PushEncoderInput {
   readonly now: Date;
 }
 
-// --- shared reasons (D5; everything else is a defensive fallback that the
-// mapping registry's own schema validation should make unreachable) --------
-
+// Everything else is a defensive fallback that the mapping registry's own schema validation
+// should make unreachable.
 const REASON_API_ENABLE_NEEDS_SCHEMA =
   "enabling the Data API needs at least one schema in api.schemas";
 const REASON_SMS_ACTIVE_PROVIDER_ONLY =
@@ -153,8 +149,6 @@ const REASON_API_DISABLED =
 const REASON_COMPANION_TYPE_MISMATCH =
   "a required companion value has an unexpected type and could not be sent";
 const REASON_NO_ENCODER = "config push has no encoder for this property";
-
-// --- generic path/value helpers ---------------------------------------------
 
 function findChange(
   changes: ReadonlyArray<ConfigChange>,
@@ -226,7 +220,8 @@ function resolveStorageFeatureLeaf(
   return fromConfig === undefined ? resolved : { value: fromConfig, source: "config" };
 }
 
-/** Records a companion as `forced` when it was NOT itself a routed change AND `remote` didn't report it. */
+/** Records a companion as `forced` when it wasn't itself a routed change and `remote` didn't
+ *  report it. */
 function pushForced(
   forced: Array<{ path: ReadonlyArray<string>; value: unknown }>,
   path: ReadonlyArray<string>,
@@ -245,11 +240,9 @@ function findSecretDecision(
 }
 
 /**
- * The paths a dropped container's `unencodable` entries must cover: its
- * ordinary routed changes, PLUS its own secret's path when that secret was
- * about to be sent — so a container triggered purely by a `send` secret
- * (no ordinary field change at all) is never silently dropped with nothing
- * reported.
+ * The paths a dropped container's `unencodable` entries must cover: its ordinary routed
+ * changes, plus its own secret's path when that secret was about to be sent — so a container
+ * triggered purely by a `send` secret is never silently dropped with nothing reported.
  */
 function unencodableTargets(
   containerChanges: ReadonlyArray<ConfigChange>,
@@ -363,8 +356,6 @@ function makeLeafAdder(
   };
 }
 
-// --- api ---------------------------------------------------------------------
-
 function encodeApiBodyImpl(input: PushEncoderInput): PushEncoded<ApiUpdateBody> {
   const { changes, local, remote } = input;
   const encoded: Array<ReadonlyArray<string>> = [];
@@ -376,14 +367,10 @@ function encodeApiBodyImpl(input: PushEncoderInput): PushEncoded<ApiUpdateBody> 
   const extraSearchPathChange = findChange(changes, ["api", "extra_search_path"]);
   const maxRowsChange = findChange(changes, ["api", "max_rows"]);
 
-  // Whether the Data API is currently disabled and staying that way: `enabled`
-  // itself is not a routed change, and its resolved (remote-preferred) value
-  // is `false`. Every OTHER api.* change is then meaningless to send — there
-  // is no live Data API for the platform to apply it to — so each routes to
-  // `unencodable` instead of either silently riding along inside the `""`
-  // disable sentinel (a schemas-only change would otherwise be swallowed by
-  // it) or being sent on its own to an endpoint that ignores it while
-  // disabled.
+  // Whether the Data API is currently disabled and staying that way: `enabled` itself is not a
+  // routed change, and its resolved (remote-preferred) value is `false`. Every other api.*
+  // change is then meaningless to send, so each routes to `unencodable` instead of either riding
+  // along inside the `""` disable sentinel or being sent to an endpoint that ignores it.
   const apiDisabled =
     enabledChange === undefined &&
     asBoolean(resolveLeaf(changes, ["api", "enabled"], remote, local).value) === false;
@@ -466,8 +453,6 @@ function encodeApiBodyImpl(input: PushEncoderInput): PushEncoded<ApiUpdateBody> 
 
 export const encodeApiBody = withExhaustiveness(encodeApiBodyImpl);
 
-// --- db.settings ---------------------------------------------------------
-
 function encodeDbSettingsBodyImpl(input: PushEncoderInput): PushEncoded<DbSettingsUpdateBody> {
   const { changes } = input;
   const body: Record<string, string | number | boolean> = {};
@@ -504,8 +489,6 @@ function encodeDbSettingsBodyImpl(input: PushEncoderInput): PushEncoded<DbSettin
 }
 
 export const encodeDbSettingsBody = withExhaustiveness(encodeDbSettingsBodyImpl);
-
-// --- db.network_restrictions -----------------------------------------------
 
 function encodeNetworkRestrictionsBodyImpl(
   input: PushEncoderInput,
@@ -559,8 +542,6 @@ function encodeNetworkRestrictionsBodyImpl(
 
 export const encodeNetworkRestrictionsBody = withExhaustiveness(encodeNetworkRestrictionsBodyImpl);
 
-// --- db.ssl_enforcement -----------------------------------------------------
-
 function encodeSslEnforcementBodyImpl(
   input: PushEncoderInput,
 ): PushEncoded<SslEnforcementUpdateBody> {
@@ -589,8 +570,6 @@ function encodeSslEnforcementBodyImpl(
 }
 
 export const encodeSslEnforcementBody = withExhaustiveness(encodeSslEnforcementBodyImpl);
-
-// --- storage -----------------------------------------------------------------
 
 interface StorageIcebergCatalogBody {
   readonly enabled: boolean;
@@ -778,8 +757,6 @@ function encodeStorageBodyImpl(input: StorageEncoderInput): PushEncoded<StorageU
 
 export const encodeStorageBody = withExhaustiveness(encodeStorageBodyImpl);
 
-// --- auth ----------------------------------------------------------------
-
 /** `undefined` on a non-string or an unparseable duration — never `0`, so an invalid
  *  declared value routes to `unencodable` (via `REASON_INVALID_DURATION`) instead of
  *  silently pushing a zero duration. */
@@ -853,10 +830,9 @@ function encodeSmtpContainer(
     }
     return undefined;
   }
-  // A companion that DID resolve but to the wrong runtime type (never
-  // expected from a schema-typed `ProjectConfig`, but `remote` is untyped
-  // JSON off the wire) must never be silently coerced to `""`/`"0"` below —
-  // it makes the whole group unencodable instead.
+  // A companion that resolved but to the wrong runtime type (never expected from a schema-typed
+  // `ProjectConfig`, but `remote` is untyped JSON off the wire) must never be silently coerced
+  // to `""`/`"0"` below — it makes the whole group unencodable instead.
   if (
     typeof hostR.value !== "string" ||
     typeof portR.value !== "number" ||
@@ -1004,9 +980,9 @@ function encodeExternalProviderContainer(
     }
     return undefined;
   }
-  // Each companion resolved to SOME value above — but a wrong runtime type
-  // (client_id/url expect a string, email_optional/skip_nonce_check expect a
-  // boolean) must never be silently coerced to `""`/`false` below.
+  // Each companion resolved to some value above — but a wrong runtime type (client_id/url
+  // expect a string, email_optional/skip_nonce_check expect a boolean) must never be silently
+  // coerced to `""`/`false` below.
   if (
     typeof clientIdR.value !== "string" ||
     (urlR !== undefined && typeof urlR.value !== "string") ||
@@ -1068,11 +1044,10 @@ function encodeActiveSmsProviderBody(
     return asString(resolution.value) ?? "";
   };
   const secretFor = (key: string) => findSecretDecision(secrets, ["auth", "sms", provider, key]);
-  // Collected locally rather than pushed straight to `secretsEncoded`: a
-  // provider's own secret is applied to `body` INSIDE the switch below,
-  // before the `resolutions.some(source === "none")` check that can still
-  // discard the whole body — only merged into the caller's list once that
-  // check has passed (mirrors `forced`, pushed the same way just below).
+  // Collected locally rather than pushed straight to `secretsEncoded`: a provider's own secret
+  // is applied to `body` inside the switch below, before the `resolutions.some(source ===
+  // "none")` check that can still discard the whole body — only merged into the caller's list
+  // once that check has passed (mirrors `forced`, pushed the same way just below).
   const sentSecretPaths: Array<ReadonlyArray<string>> = [];
   const applySecret = (body: Record<string, unknown>, key: string) => {
     const secret = secretFor(key);
@@ -1162,13 +1137,12 @@ export interface PushAuthLeafSpec {
 }
 
 /**
- * The auth encoder's flat leaf mappings — declared once here so
- * `encodeAuthBody` and its key-name drift guard
- * (`push.encoders.unit.test.ts`) iterate the SAME source of truth rather than
- * risk disagreeing with each other about an `apiKey`. Every entry not
- * covered here (the smtp/captcha/hook/external-provider/sms-provider
- * containers, the email template/notification loops) builds its `apiKey`
- * from a string template instead of a static path — see those functions.
+ * The auth encoder's flat leaf mappings — declared once here so `encodeAuthBody` and its
+ * key-name drift guard (`push.encoders.unit.test.ts`) iterate the same source of truth rather
+ * than risk disagreeing with each other about an `apiKey`. Every entry not covered here (the
+ * smtp/captcha/hook/external-provider/sms-provider containers, the email template/notification
+ * loops) builds its `apiKey` from a string template instead of a static path — see those
+ * functions.
  */
 export const PUSH_AUTH_LEAF_MAP: ReadonlyArray<PushAuthLeafSpec> = [
   // core scalars
@@ -1404,10 +1378,9 @@ function encodeAuthBodyImpl(
   const unencodable: Array<{ path: ReadonlyArray<string>; reason: string }> = [];
   const extras: Array<{ path: ReadonlyArray<string>; label: "content" }> = [];
   const forced: Array<{ path: ReadonlyArray<string>; value: unknown }> = [];
-  // Secret paths a container actually placed a plaintext for — NOT every
-  // `send` decision: a container dropped as `unencodable` never reaches the
-  // point where its own secret gets assigned to `body`, so this can be a
-  // strict subset of `secrets.filter(status === "send")`.
+  // Secret paths a container actually placed a plaintext for, not every `send` decision: a
+  // container dropped as `unencodable` never reaches the point where its own secret gets
+  // assigned to `body`, so this can be a strict subset of `secrets.filter(status === "send")`.
   const secretsEncoded: Array<ReadonlyArray<string>> = [];
   const leaf = makeLeafAdder(changes, body, encoded, unencodable);
 

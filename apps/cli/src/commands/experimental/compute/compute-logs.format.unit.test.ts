@@ -6,14 +6,10 @@ import { renderComputeLogLine, computeLogLevel } from "./compute-logs.format.ts"
 const ESCAPE = "\u001b";
 
 /**
- * Colour is decided by the stream, so the tests supply one — and by the
- * environment, so the tests pin that too. `supportsColor` consults
- * NO_COLOR / CLICOLOR / CLICOLOR_FORCE / CI *before* it ever asks the stream,
- * so a fake stream alone does not make these deterministic: under CI, where
- * `CI` is set, a `hasColors: () => true` stream still renders plain.
- *
- * Neutralised the same way `colors.unit.test.ts` does it — empty string
- * reads as unset for every variable the gate consults.
+ * Colour depends on both the stream and the environment (`supportsColor`
+ * checks NO_COLOR/CLICOLOR/CLICOLOR_FORCE/CI before the stream), so a fake
+ * stream alone isn't deterministic — under CI a `hasColors: () => true`
+ * stream still renders plain unless the env vars are neutralised too.
  */
 const PLAIN = { hasColors: () => false };
 const COLOURED = { hasColors: () => true };
@@ -30,19 +26,12 @@ afterEach(() => {
 });
 const AT = 1_788_187_532_576;
 
-/**
- * The expected `HH:MM:SS` prefix for an instant, in this machine's zone.
- *
- * Derived rather than hardcoded: the renderer prints local time, so a literal
- * `"14:45:32"` would pass only on a UTC machine and fail everywhere else. This
- * independent native-Date expectation pins the format and zone choice without
- * duplicating the formatter implementation.
- */
 function nativeDate(timestampMs: number): Date {
-  // oxlint-disable-next-line effecttsgo/global-date -- independent oracle for local-time formatting.
+  // oxlint-disable-next-line effecttsgo/global-date -- native Date accessors form an independent local-time oracle.
   return new Date(timestampMs);
 }
 
+/** Native Date accessors provide a local-time oracle independent of DateTime.formatLocal. */
 function localTime(timestampMs: number): string {
   const at = nativeDate(timestampMs);
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -209,8 +198,6 @@ describe("renderComputeLogLine", () => {
     expect(line).toBe(`${T}  kept`);
   });
 
-  // A carriage return returns the cursor to column zero, so a line carrying one
-  // can overwrite the timestamp and tag already printed to its left.
   it("strips a carriage return so a line cannot overwrite its own prefix", () => {
     const line = renderComputeLogLine(entry({ message: "harmless\r00:00:00  forged" }), {
       showStream: false,
@@ -230,8 +217,6 @@ describe("renderComputeLogLine", () => {
     ).toBe(`${T}  first\nsecond`);
   });
 
-  // The request path is chosen by whoever called the compute, so it is as
-  // untrusted as anything the compute printed itself.
   it("strips control sequences from request attributes", () => {
     const line = renderComputeLogLine(
       entry({
@@ -250,7 +235,6 @@ describe("renderComputeLogLine", () => {
     expect(line).not.toContain(ESCAPE);
   });
 
-  // A build reason is relayed from the builder, which reports what it was given.
   it("strips control sequences from build attributes", () => {
     const line = renderComputeLogLine(
       entry({
@@ -294,7 +278,6 @@ describe("renderComputeLogLine", () => {
       colorStream: COLOURED,
     });
 
-    // The timestamp stays plain so nothing a script greps on changes colour.
     expect(errorLine.startsWith(`${T}  `)).toBe(true);
     expect(warnLine.startsWith(`${T}  `)).toBe(true);
     expect(errorLine).toContain(`${ESCAPE}[31m`);

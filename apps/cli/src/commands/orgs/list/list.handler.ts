@@ -33,10 +33,9 @@ export const orgsList = Effect.fn("orgs.list")(function* (_flags: OrgsListFlags)
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    // Spinner runs only in text mode — it would corrupt machine-readable
-    // stdout. The output-routing branches below dispatch on `goFmt`, but the
-    // spinner uses `output.format` because `--output pretty` keeps the format
-    // as "text" while requiring the table render; both paths need the spinner.
+    // Spinner only runs in text mode, since it would corrupt machine-readable stdout. It
+    // gates on output.format rather than goFmt because --output pretty keeps the format
+    // "text" while still rendering the table.
     const fetching =
       output.format === "text" ? yield* output.task("Fetching organizations...") : undefined;
     const orgs: Organizations = yield* api.v1.listAllOrganizations().pipe(
@@ -65,8 +64,7 @@ export const orgsList = Effect.fn("orgs.list")(function* (_flags: OrgsListFlags)
       return;
     }
 
-    // goFmt is undefined or "pretty" — defer to TS --output-format for
-    // JSON/stream-json, otherwise render the Glamour-styled table.
+    // goFmt is unset or "pretty" here; fall through to --output-format or the table.
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("", { organizations: orgs });
       return;

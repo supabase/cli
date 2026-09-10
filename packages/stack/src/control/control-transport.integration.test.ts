@@ -300,7 +300,8 @@ describe("control transport", () => {
         yield* withServer(
           ({ endpoint }) =>
             Effect.gen(function* () {
-              if (endpoint.kind !== "unix") return;
+              if (endpoint.kind !== "unix")
+                return yield* Effect.die("control fixture did not select a Unix endpoint");
               const fs = yield* FileSystem.FileSystem;
               const path = yield* Path.Path;
               const info = yield* fs.stat(path.dirname(endpoint.path));
@@ -320,8 +321,8 @@ describe("control transport", () => {
         );
         const fs = yield* FileSystem.FileSystem;
         const directory = yield* Ref.get(directoryPath);
-        expect(directory).toBeDefined();
-        expect(yield* fs.exists(directory!)).toBe(false);
+        if (directory === undefined) return yield* Effect.die("control directory was not recorded");
+        expect(yield* fs.exists(directory)).toBe(false);
       }),
     ),
   );

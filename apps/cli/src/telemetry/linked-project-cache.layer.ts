@@ -19,31 +19,18 @@ function readString(obj: unknown, key: string): string {
 }
 
 /**
- * Writes `<workdir>/supabase/.temp/linked-project.json` after a `--project-ref`
- * has been resolved. Mirrors Go's `ensureProjectGroupsCached`
- * (`apps/cli-go/cmd/root.go:213-234`):
+ * Writes `<workdir>/supabase/.temp/linked-project.json` after a `--project-ref` has been
+ * resolved. No write if the cache already exists (`supabase link` is authoritative), and any
+ * API/filesystem/parse error is swallowed.
  *
- *  - No write if the cache already exists (`supabase link` is authoritative).
- *  - Best-effort: any API / filesystem / parse error is swallowed.
- *  - Body shape matches `LinkedProject` from
- *    `apps/cli-go/internal/telemetry/project.go:15-20`.
+ * Bypasses `CommandPlatformApi`'s strict schema decode by calling the API directly with
+ * `HttpClient`. The generated `V1ProjectWithDatabaseResponse` schema enforces a 20-char
+ * project-ref length that the cli-e2e replay fixtures (which store `__PROJECT_REF__`
+ * placeholders) cannot satisfy; the cache only needs four string fields and doesn't validate them.
  *
- * Bypasses `CommandPlatformApi`'s strict schema decode by calling the API
- * directly with `HttpClient`. The generated `V1ProjectWithDatabaseResponse`
- * schema enforces a 20-char project-ref length that the cli-e2e replay
- * fixtures (which store `__PROJECT_REF__` placeholders) cannot satisfy.
- * The cache only needs four string fields and doesn't validate them.
- *
- * DELIBERATE TS DIVERGENCE FROM GO (PR #6168 review): unlike
- * `ensureProjectGroupsCached`, which unconditionally caches whatever `ref`
- * it's given, this additionally skips the write when `<workdir>/supabase/.temp/project-ref`
- * exists, is non-empty, and names a DIFFERENT ref than `ref` — see the inline
- * comment at the check itself for the exact failure mode this closes. This
- * cache now feeds `resolveLinkedParentRef`'s parent chain (CLI-2167
- * follow-up), so correctness there is prioritized over exact
- * telemetry-cache parity with Go (Go-authority scoping, ADR 0016) — Go never
- * reads this file back for anything, so this file has no comparable
- * behavior to preserve there.
+ * Also skips the write when `<workdir>/supabase/.temp/project-ref` exists, is non-empty, and
+ * names a different ref than `ref` — see the inline comment at the check itself for the failure
+ * mode this closes. This cache feeds `resolveLinkedParentRef`'s parent chain.
  */
 export const linkedProjectCacheLayer = Layer.effect(
   LinkedProjectCache,
@@ -54,14 +41,10 @@ export const linkedProjectCacheLayer = Layer.effect(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const analytics = yield* Analytics;
-    // Go's `ensureProjectGroupsCached` GETs `/v1/projects/{ref}` through
-    // `GetSupabase()`'s identityTransport (`cmd/root.go:226`, `api.go:128-134`),
-    // so the X-Gotrue-Id on that response stitches the session identity. For a
-    // password-only `db lint`/`db advisors --linked` run this cache GET can be the
-    // ONLY Management API response, so it must stitch too. Consume the single
-    // per-command stitcher service (shared with the typed client + advisor GETs)
-    // so the alias + persist fire at most once per command, matching Go's one
-    // root-context `sync.Once`.
+    // The X-Gotrue-Id on this GET's response stitches the session identity — for a password-only
+    // `db lint`/`db advisors --linked` run, this cache GET can be the only Management API
+    // response, so it must stitch too. Consumes the single per-command stitcher service (shared
+    // with the typed client + advisor GETs) so the alias + persist fire at most once per command.
     const { stitch } = yield* IdentityStitch;
 
     return LinkedProjectCache.of({
@@ -77,36 +60,25 @@ export const linkedProjectCacheLayer = Layer.effect(
           const exists = yield* fs.exists(cachePath).pipe(Effect.orElseSucceed(() => false));
           if (exists) return;
 
-          // The cache must describe the LINKED WORKDIR's own state, not
-          // whatever ref the calling command happens to have resolved (PR
-          // #6168 review): a mid-flight `link --project-ref B` failure still
-          // reaches this fill via `Effect.ensuring`, and if `getProject(B)`
-          // returns 200 (e.g. B is merely paused, not gone/forbidden), this
-          // would otherwise cache B as the linked project even though
-          // `project-ref` itself was never updated to B — `link`'s own
-          // mandatory write happens BEFORE this fill can ever fire, so a
-          // `project-ref` naming something else here means the workdir is
-          // still actually linked to that something else. Skip the write
-          // entirely when the file names a DIFFERENT ref: a deliberate TS
-          // divergence from Go's `ensureProjectGroupsCached`, which caches
-          // whatever ref it's given unconditionally — this cache now feeds
-          // `resolveLinkedParentRef`'s parent chain, so correctness
-          // there outweighs 1:1 telemetry-cache parity (Go-authority
-          // scoping, ADR 0016). A file that's absent entirely keeps today's
-          // behavior (falls through to the write below) — the read side
-          // (`resolveLinkedParentRef`) already refuses to trust a
-          // cache with no `project-ref` file at all, so there is nothing to
-          // protect there yet.
+          // The cache must describe the linked workdir's own state, not whatever ref the calling
+          // command happens to have resolved: a mid-flight `link --project-ref B` failure still
+          // reaches this fill via `Effect.ensuring`, and if `getProject(B)` returns 200 (e.g. B
+          // is merely paused, not gone/forbidden), this would otherwise cache B as the linked
+          // project even though `project-ref` itself was never updated to B — `link`'s own
+          // mandatory write happens before this fill can ever fire, so a `project-ref` naming
+          // something else here means the workdir is still actually linked to that something
+          // else. Skip the write entirely when the file names a different ref. A file that's
+          // absent entirely falls through to the write below — the read side
+          // (`resolveLinkedParentRef`) already refuses to trust a cache with no `project-ref`
+          // file at all, so there is nothing to protect there yet.
           const fileRef = yield* readProjectRefFile(fs, path, resolvedWorkdir).pipe(
             Effect.orElseSucceed(() => Option.none<string>()),
           );
           if (Option.isSome(fileRef) && fileRef.value !== ref) return;
 
-          // Resolve token: an explicit reconciled-profile token wins outright
-          // (Some → use, None → the reconciled profile HAS no token, so skip
-          // like Go's failed lookup — never fall back to the stale profile's
-          // token, review r3684524241); otherwise env wins over keyring/file
-          // lookup (Go-parity).
+          // An explicit reconciled-profile token wins outright (`Some` → use, `None` → the
+          // reconciled profile has no token, so skip rather than fall back to a stale profile's
+          // token); otherwise env wins over keyring/file lookup.
           const tokenOpt =
             accessToken ??
             (Option.isSome(cliSettings.accessToken)
@@ -122,8 +94,7 @@ export const linkedProjectCacheLayer = Layer.effect(
             HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
           );
           const response = yield* httpClient.execute(request);
-          // Stitch identity from the response (Go's identityTransport fires on
-          // every response regardless of status), before the status gate.
+          // Stitch identity from the response before the status gate, regardless of status.
           yield* stitch(response);
           if (response.status !== 200) return;
           const body = yield* response.json;
@@ -138,12 +109,9 @@ export const linkedProjectCacheLayer = Layer.effect(
           yield* fs.makeDirectory(path.dirname(cachePath), { recursive: true });
           yield* fs.writeFileString(cachePath, JSON.stringify(linked));
 
-          // Go's CacheProjectAndIdentifyGroups (telemetry/project.go:66-88) does
-          // not just write the file — on the same cache miss it also publishes the
-          // org/project group metadata via GroupIdentify before the post-run
-          // cli_command_executed capture. Reproduce both calls (same payload shape
-          // as the link handler) so the first linked run after a port doesn't drop
-          // the group properties Go sends. Best-effort like Go (wrapped in ignore).
+          // On the same cache miss, also publish the org/project group metadata via
+          // `groupIdentify` (same payload shape as the link handler) before the post-run
+          // `cli_command_executed` capture. Best-effort, wrapped in `Effect.ignore` below.
           if (linked.organization_id.length > 0) {
             yield* analytics.groupIdentify(GroupOrganization, linked.organization_id, {
               organization_slug: linked.organization_slug,

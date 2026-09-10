@@ -18,12 +18,6 @@ import { ExperimentalRequiredError } from "../../command-internal/experimental-g
 import { storageCommand } from "./storage.command.ts";
 import { StorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
 
-// The experimental gate runs before mutual-exclusivity checks. So
-// `supabase storage ls --linked --local` without `--experimental` must
-// surface the experimental-gate error, not the mutex error — this suite
-// proves that ordering is wired into the actual `.command.ts` handler
-// pipeline for all four leaves, not just the shared helper in isolation.
-
 const tempRoot = useTempWorkdir("supabase-storage-experimental-int-");
 
 const testRoot = Command.make("supabase").pipe(
@@ -38,11 +32,8 @@ function setup(args: ReadonlyArray<string>) {
     CliOutput.layer(textCliOutputFormatter()),
     out.layer,
     Layer.succeed(CliArgs, { args }),
-    // `storageGatewayRuntimeLayer`'s cliSettings/credentials layers read
-    // real env/files when built. Neither check under test ever reaches that
-    // lazy factory, but isolate ambient env and homeDir defensively anyway —
-    // same rationale as the sibling experimental-gate tests (ssl-enforcement,
-    // postgres-config, network-bans).
+    // Isolates ambient env/homeDir defensively even though neither check here reaches
+    // storageGatewayRuntimeLayer's lazy cliSettings/credentials factory.
     isolatedHomeLayer(tempRoot.current, { SUPABASE_NO_KEYRING: "1" }),
     mockProcessControl().layer,
     mockTty({ stdinIsTty: false, stdoutIsTty: false }),

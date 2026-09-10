@@ -510,10 +510,8 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  // `pretty` is the human default; `table` and `csv` are accepted by the global
-  // flag for `db query`'s benefit, and every resource command is meant to ignore
-  // them and render text. Falling through to the TOML encoder is the trap the
-  // payload allowlist closes.
+  // `table`/`csv` are accepted by the global flag for `db query`'s benefit; every
+  // other resource command, including this one, renders text for them too.
   it.live.each(["pretty", "table", "csv"] as const)(
     "renders text rather than TOML for -o %s",
     (goOutput) =>
@@ -552,10 +550,8 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  // CLI-2285: `loadComputeProject`'s JSON-capable read must thread the
-  // ancestor-search predicate — the workdir's own default resolution only
-  // probes config.toml, so a config.json-only project invoked from a
-  // subdirectory relied on this second climb to be found at all.
+  // The default workdir resolution only probes config.toml, so a config.json-only
+  // project invoked from a subdirectory relies on this second climb to be found.
   it.live(
     "discovers a config.json-only project's [compute.*] entry from a subdirectory when --workdir is defaulted",
     () =>

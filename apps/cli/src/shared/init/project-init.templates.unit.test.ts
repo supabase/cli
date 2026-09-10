@@ -13,9 +13,8 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const goCliRoot = join(here, "../../../../cli-go");
-// Vendored copies of Go's `internal/init/templates/` scaffold files (deleted in
-// CLI-1970; last present at commit 7b469f5b3). The dotted file names are
-// de-dotted so git/tooling don't interpret the fixtures themselves.
+// Vendored copies of the Go CLI's init-template scaffold files. Dotted file
+// names are de-dotted so git/tooling don't interpret the fixtures themselves.
 const goTemplatesFixtureDir = join(here, "testdata/go-templates");
 
 function normalizeNewlines(text: string): string {
@@ -30,12 +29,11 @@ function readVendoredTemplate(name: string): string {
   return normalizeNewlines(readFileSync(join(goTemplatesFixtureDir, name), "utf8"));
 }
 
-// Go renders its config.toml scaffold through text/template (config.Eject), so an action
-// containing a backtick raw string — {{ (backtick){{ .Code }}(backtick) }} in the template
-// source — is rendered to the literal string it quotes: {{ .Code }} in the ejected file.
-// This is the only text/template construct emulated here beyond the substituted fields;
-// the "models every template action" test below fails loudly if the Go scaffold ever
-// gains a construct this suite does not resolve.
+// Go's config.toml scaffold renders through text/template (`config.Eject`), so
+// an action wrapping a backtick raw string — {{ `{{ .Code }}` }} in the
+// source — is rendered to the literal string it quotes: `{{ .Code }}` in the
+// ejected file. This is the only text/template construct emulated here; the
+// "models every template action" test below fails loudly if that ever changes.
 function resolveGoTemplateEscapes(template: string): string {
   return template.replace(/\{\{\s*`([^`]*)`\s*\}\}/g, "$1");
 }
@@ -46,15 +44,15 @@ function renderExpectedGoEject(): string {
     resolveGoTemplateEscapes(readGoTemplate("pkg", "config", "templates", "config.toml"))
       .replace("{{ .ProjectId }}", "demo-project")
       .replace("{{ .Experimental.OrioleDBVersion }}", "15.1.0.150")
-      // supabase init always opts new projects into pg-delta; the Go template renders
-      // this from a flag set only on the init path (false when deriving defaults).
+      // supabase init always opts new projects into pg-delta; the Go template
+      // renders this from a flag only set on the init path.
       .replace("{{ .Experimental.PgDeltaInitEnabled }}", "true")
   );
 }
 
-// The residual Go scaffold still describes `auto_expose_new_tables` as unset-means-revoked and
-// deprecated. Platform projects never stopped auto-exposing new entities, so the native template
-// documents unset-means-exposed with `false` as the opt-out instead.
+// The Go scaffold still describes `auto_expose_new_tables` as unset-means-
+// revoked and deprecated; the native template documents unset-means-exposed
+// instead, since platform projects never stopped auto-exposing new entities.
 const GO_AUTO_EXPOSE_COMMENT = `# without explicit GRANTs. When unset, new entities are NOT auto-exposed, matching the new cloud
 # default. Set to \`true\` to keep the legacy behaviour of auto-exposing new entities; this is
 # deprecated and the field is removed on 2026-10-30 once the always-revoked behaviour is permanent.
@@ -81,10 +79,9 @@ describe("project init templates", () => {
   });
 
   it("models every template action in the Go scaffold, so parity cannot silently drift", () => {
-    // After escape resolution and field substitution, the only {{ ... }} occurrences left
-    // must be the GoTrue OTP placeholders quoted by the backtick escapes. Anything else
-    // means the Go template gained a construct this suite does not emulate yet — update
-    // resolveGoTemplateEscapes/renderExpectedGoEject to match config.Eject before shipping.
+    // Anything beyond the GoTrue OTP placeholder means the Go template gained
+    // a construct this suite doesn't emulate; update `resolveGoTemplateEscapes`
+    // to match before shipping.
     const unresolvedActions = renderExpectedGoEject().match(/\{\{[^}]*\}\}/g) ?? [];
     expect(new Set(unresolvedActions)).toEqual(new Set(["{{ .Code }}"]));
   });
@@ -120,12 +117,9 @@ describe("project init templates", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// `config pull` (CLI-2064) surgical-editor round trip: `applyConfigEdits` (`@supabase/config`)
-// must edit the scaffold this module renders exactly as intended, and nothing else — line-level
-// diffing is what actually proves that, rather than trusting the editor's own report of what it
-// touched.
-// ---------------------------------------------------------------------------
+// `applyConfigEdits` must edit the scaffold exactly as intended and nothing
+// else; line-level diffing proves that, rather than trusting the editor's
+// own report of what it touched.
 
 interface DiffOp {
   readonly kind: "equal" | "removed" | "added";
@@ -211,9 +205,9 @@ describe("config pull surgical editor round trip over the rendered scaffold", ()
     }
 
     const ops = diffLines(source.split("\n"), outcome.text.split("\n"));
-    // The trailing blank line the block insertion adds can be aligned by the LCS against the
-    // file's pre-existing final blank, so blank lines are excluded here; their exact placement
-    // is pinned byte-for-byte by the tail assertion below instead.
+    // Blank lines are excluded: the block insertion's trailing blank can align
+    // with the file's pre-existing final blank via LCS. The tail assertions
+    // below pin blank-line placement byte-for-byte instead.
     const changed = ops.filter((op) => op.kind !== "equal" && op.line !== "");
 
     expect(changed).toEqual([

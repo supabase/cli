@@ -12,13 +12,10 @@ import { dbDump } from "./dump.handler.ts";
 import { dbDumpRuntimeLayer } from "./dump.layers.ts";
 
 /**
- * `db dump` streams the pg_dump SQL to stdout (or `--file`) in every output
- * format — there is no `--output-format` for it, so there is no machine
- * envelope. A *run* failure (non-zero container exit) would otherwise let
- * `withJsonErrorHandling` append a JSON error object to stdout after the SQL
- * has already been written, corrupting machine consumers. In json/stream-json
- * mode send the diagnostic to stderr and exit 1 instead; text mode keeps
- * normal error rendering.
+ * `db dump` has no `--output-format` machine envelope; it streams pg_dump SQL to
+ * stdout (or `--file`) in every mode. A run failure (nonzero container exit) sends the
+ * diagnostic to stderr and exits 1 in json/stream-json mode instead of letting
+ * `withJsonErrorHandling` corrupt already-written SQL with a JSON error object.
  */
 const onRunFailure = (error: DbDumpRunError) =>
   Effect.gen(function* () {
@@ -34,13 +31,9 @@ const config = {
     Flag.withDescription("Prints the pg_dump script that would be executed."),
     Flag.withDefault(false),
   ),
-  // The boolean flags in mutually-exclusive groups (`data-only`/`role-only`/
-  // `keep-comments` and the `db-url`/`linked`/`local` target group) are
-  // modelled as `Option` so presence tracks whether the flag was explicitly
-  // set: group validation and dump's target selection key off that, not the
-  // value, so e.g. `--data-only=false` still counts as set. Handlers read the
-  // value via `Option.getOrElse(..., () => false)` where the value actually
-  // matters.
+  // Mutually-exclusive-group flags (data-only/role-only/keep-comments, and the
+  // db-url/linked/local target group) are modelled as `Option` so presence, not
+  // value, drives validation — `--data-only=false` still counts as set.
   dataOnly: Flag.boolean("data-only").pipe(
     Flag.withDescription("Dumps only data records."),
     Flag.optional,
@@ -53,8 +46,7 @@ const config = {
     Flag.withAlias("x"),
     Flag.withDescription("List of schema.tables to exclude from data-only dump."),
     Flag.atLeast(0),
-    // --exclude/-x is a CSV string-slice value; use the shared pflag-faithful
-    // helper so quoted commas survive and malformed CSV fails at parse time.
+    // CSV string-slice value; quoted commas survive, malformed CSV fails at parse time.
     Flag.mapTryCatch(
       (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
@@ -129,17 +121,11 @@ export const dbDumpCommand = Command.make("dump", config).pipe(
           linked: flags.linked,
           local: flags.local,
           "project-ref": flags.projectRef,
-          // `password` must never be added to `safeFlags` — it is a credential and
-          // must always reach telemetry as `<redacted>`.
+          // Never add `password` to `safeFlags`; it must stay `<redacted>` in telemetry.
           password: flags.password,
           schema: flags.schema,
         },
-        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
-        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
-        // others) are unmarked, so it stays redacted.
-        // Map dump's shorthand flags to their canonical names so a shorthand
-        // invocation (`-s`/`-x`/`-f`/`-p`) is reported in telemetry under the
-        // long name.
+        // Not on the established `--project-ref` safeFlags allowlist, so it stays redacted.
         aliases: { s: "schema", x: "exclude", f: "file", p: "password" },
       }),
       Effect.catchTag("DbDumpRunError", onRunFailure),

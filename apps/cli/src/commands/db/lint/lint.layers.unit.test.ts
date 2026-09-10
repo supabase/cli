@@ -1,25 +1,14 @@
 /**
- * Layer-exposure tests for `dbLintRuntimeLayer` and
- * `dbAdvisorsRuntimeLayer`.
+ * Layer-exposure tests for `dbLintRuntimeLayer` and `dbAdvisorsRuntimeLayer`.
  *
- * These tests verify that `IdentityStitch` is exposed at the top level of
- * each runtime layer (i.e., is a member of the layer's provided-services set)
- * so that `withCommandTelemetry` can read `stitchedDistinctId()` via
- * `Effect.serviceOption(IdentityStitch)` and attribute the
- * `cli_command_executed` event to the gotrue id.
+ * Verifies `IdentityStitch` is exposed at the top level of each runtime layer, not just
+ * provided to child layers — `Layer.provide(A, B)` satisfies A's dependency on B but does
+ * not expose B to sibling layers inside a `Layer.mergeAll`. Losing that top-level exposure
+ * would silently mis-attribute the `cli_command_executed` event to the device id instead
+ * of the gotrue id.
  *
- * The bug this guards against: `Layer.provide(A, B)` satisfies A's dep on B but
- * does NOT expose B to sibling layers inside a `Layer.mergeAll`. If
- * `identityStitchLayer` is only provided to child layers (db-config,
- * linked-project-cache, platform-api-factory) and NOT added to the top-level
- * `Layer.mergeAll`, then `serviceOption(IdentityStitch)` returns `None`
- * and the event is mis-attributed to the device id.
- *
- * In-process runtime construction: we stub every ambient service the layers
- * require from the root runtime (Analytics, TelemetryRuntime, FileSystem, Path,
- * RuntimeInfo, Tty, Output, and all legacy flag services) so the full composed
- * layer can be built and queried without a real Postgres connection, API, or
- * filesystem state.
+ * Stubs every ambient service the layers need from the root runtime so the full composed
+ * layer builds without a real Postgres connection, API, or filesystem.
  */
 
 import { describe, expect, it } from "@effect/vitest";
@@ -107,8 +96,8 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the REAL commandSettingsLayer against
-    // the real filesystem — see isolatedHomeLayer's docs.
+    // The runtime layer under test builds the real `commandSettingsLayer` against the
+    // real filesystem — see `isolatedHomeLayer`'s docs.
     isolatedHomeLayer(tempRoot.current),
     mockTty(),
     mockProcessControl().layer,

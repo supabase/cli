@@ -3,16 +3,14 @@ function pad2(value: number): string {
 }
 
 /**
- * Reproduces `utils.FormatTimestamp` from `apps/cli-go/internal/utils/render.go:17`:
- * parse RFC3339; on success format as UTC "YYYY-MM-DD HH:MM:SS"; on failure
- * return the input verbatim.
+ * Parses an RFC3339 timestamp and formats it as UTC "YYYY-MM-DD HH:MM:SS";
+ * returns the input verbatim on parse failure.
  */
 export function formatTimestamp(value: string): string {
   if (value.length === 0) return value;
-  // Go uses time.Parse(time.RFC3339, value). Date.parse accepts a broader format
-  // surface, so we additionally require the year-month-day prefix to weed out
-  // values like "2026-02-08 16:44:07" (already-formatted) that Date.parse would
-  // happily accept but Go's strict RFC3339 parser would reject.
+  // `Date.parse` accepts a broader format surface than strict RFC3339, so this
+  // requires the year-month-day-T prefix to reject already-formatted values
+  // like "2026-02-08 16:44:07" that `Date.parse` would otherwise accept.
   if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) {
     return value;
   }

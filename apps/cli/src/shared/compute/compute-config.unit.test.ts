@@ -57,8 +57,8 @@ describe("readComputeSection", () => {
     });
   });
 
-  // `push` has to send a count with every deploy, so a value the API would
-  // reject is dropped here and the default used instead.
+  // `push` sends a count with every deploy, so a value the API would reject is dropped here
+  // and the default used instead.
   test.each([
     ["a float", 1.5],
     ["a negative", -1],
@@ -73,10 +73,9 @@ describe("readComputeSection", () => {
     expect(readComputeSection({ api: { instances: 0 } }).compute["api"]?.instances).toBe(0);
   });
 
-  // Unlike the instance count, an unrecognized exposure is kept and carried to
-  // `push`, which names the values it accepts. Dropping it here would deploy the
-  // compute at the default exposure — public — which is the opposite of what a
-  // misspelled `private` was asking for.
+  // Unlike the instance count, an unrecognized exposure is kept and carried to `push`, which
+  // names the values it accepts — dropping it here would deploy at the default (public)
+  // exposure, the opposite of what a misspelled `private` was asking for.
   test("keeps an exposure it does not recognize, for push to refuse by name", () => {
     expect(readComputeSection({ api: { exposure: "privat" } }).compute["api"]?.exposure).toBe(
       "privat",

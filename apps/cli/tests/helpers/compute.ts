@@ -19,10 +19,9 @@ import { mockOutput, mockProcessControl, mockRuntimeInfo, mockTty } from "./mock
 /**
  * Shared scaffolding for the `supabase compute` command integration tests.
  *
- * Every compute command reads a real `supabase/config.toml` and a real compute
- * directory, so these tests run against a per-test temp project rather than a
- * mocked filesystem — the config-writing and packaging behaviour is most of
- * what is worth asserting. Only the network is faked.
+ * Every compute command reads a real `supabase/config.toml` and compute
+ * directory, so these tests run against a per-test temp project instead of a
+ * mocked filesystem; only the network is faked.
  */
 
 export const COMPUTE_PROJECT_REF = "abcdefghijklmnopqrst";
@@ -31,10 +30,8 @@ export interface RecordedRequest {
   readonly method: string;
   readonly url: string;
   /**
-   * Query parameters, which `url` does not carry.
-   *
-   * `HttpClientRequest` keeps `urlParams` beside the URL rather than appended to
-   * it, so a test asserting what a GET actually asked for has to read this. The
+   * Query parameters, which `url` does not carry — `HttpClientRequest` keeps them
+   * separate, so a test asserting what a GET asked for must read this. The
    * analytics logs endpoint puts the whole SQL query here.
    */
   readonly urlParams: Readonly<Record<string, string>>;
@@ -255,8 +252,8 @@ export const computeLogsRoute = () =>
  * One row as the logs endpoint returns it, matching the projection in
  * `computeLogsQuery`.
  *
- * `log_attributes` values are all strings because the column is a
- * `Map(String, String)`, so `status` really does arrive as `"200"`.
+ * `log_attributes` values are all strings — the column is a
+ * `Map(String, String)`, so `status` arrives as `"200"`.
  */
 export function computeLogRow(options: {
   readonly id?: string;
@@ -298,8 +295,7 @@ export function computeIngressLogRow(options: {
     ...(options.tsMs === undefined ? {} : { tsMs: options.tsMs }),
     ...(options.compute === undefined ? {} : { compute: options.compute }),
     stream: "worker_ingress_logs",
-    // Only method and path — status and duration are deliberately absent, as
-    // they are on the wire.
+    // Only method and path go in the message, matching the wire format.
     message: `${method} ${path}`,
     attributes: {
       method,
@@ -400,9 +396,9 @@ export interface ComputeSetupOptions {
   readonly format?: "text" | "json" | "stream-json";
   readonly interactive?: boolean;
   /**
-   * Whether stdin is a terminal. Defaults to `interactive`, so a text-mode test
-   * can prompt; set it false to model a piped stdin with a TTY stdout, which is
-   * what `printf 'api\n' | supabase compute delete api` looks like.
+   * Whether stdin is a terminal; defaults to `interactive`. Set false to model a
+   * piped stdin with a TTY stdout, as in `printf 'api\n' | supabase compute
+   * delete api`.
    */
   readonly stdinIsTty?: boolean;
   readonly linked?: boolean;

@@ -18,20 +18,11 @@ import { loginApiLayer } from "../../command-internal/login-api.layer.ts";
 import { loginCryptoLayer } from "../../command-internal/login-crypto.layer.ts";
 import { templateServiceLayer } from "./bootstrap.templates.ts";
 
-// `bootstrap` is a meta-orchestrator: it needs the full Management-API stack
-// (create / api-keys / link cores), the browser-login stack (ensure-login), and
-// the GitHub template service. `Layer.provide` does not share to siblings inside
-// a `Layer.mergeAll` (CLAUDE.md invariant 5), so every sub-layer that requires
-// `CommandSettings` / `HttpClient` / `CommandCredentials` is fed those explicitly.
-// Shared sub-layers are memoised by reference so the merge reuses one keyring
-// reader / one debug-logging HTTP wrapper / one config loader.
-//
-// `Output`, `Analytics`, `Stdio`, `Tty`, `RuntimeInfo`, `ProcessControl`, and
-// `BunServices` (`FileSystem` / `Path` / `ChildProcessSpawner`) come from the root
-// layer (`cli/root.ts` + `runCli`). `DebugLogger` is
-// NOT provided by the root, so every base layer that reads it for `--debug` traces
-// (`commandSettingsLayer`, `httpClientLayer`, `commandCredentialsLayer`,
-// `commandPlatformApiLayer`) is fed `debugLoggerLayer` here — matching `login.layers.ts`.
+// `bootstrap` needs the full Management-API stack, the browser-login stack, and the GitHub
+// template service. `Layer.provide` doesn't share to siblings inside `Layer.mergeAll` (CLAUDE.md
+// invariant 5), so every sub-layer needing `CommandSettings`/`HttpClient`/`CommandCredentials` is
+// fed those explicitly; shared sub-layers are memoised by reference so the merge reuses one
+// instance of each. `DebugLogger` isn't provided by the root layer, so it's fed here too.
 const debugLogger = debugLoggerLayer;
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLogger));
 const httpClient = httpClientLayer.pipe(Layer.provide(debugLogger));
@@ -63,17 +54,13 @@ export const bootstrapRuntimeLayer = Layer.mergeAll(
   ),
   telemetryStateLayer,
   dbConnectionLayer,
-  // Exposed bare (not just used to feed sibling sub-layers, as elsewhere in this
-  // file) because `bootstrap.handler.ts` now calls `resolveLinkedConn`
-  // (CLI-1953's IPv4-pooler-fallback push connection) directly, which reads it.
+  // Exposed bare, not just fed to sibling sub-layers, because `bootstrap.handler.ts` calls
+  // `resolveLinkedConn` directly and reads it.
   debugLogger,
-  // The one per-command identity stitcher (a single root-context `sync.Once`),
-  // exposed at top level so `withCommandTelemetry` can read
-  // `stitchedDistinctId()` and attribute the cli_command_executed event to the
-  // gotrue id. The SAME reference is provided to platformApi / linkedProjectCache
-  // above, so memoisation gives all transports one `stitchAttempted` guard —
-  // aliasing/persisting at most once. Its Analytics / TelemetryRuntime /
-  // FileSystem / Path deps are ambient (root runtime). Mirrors advisors.layers.ts.
+  // Exposed at top level so `withCommandTelemetry` can read `stitchedDistinctId()` and attribute
+  // `cli_command_executed` to the gotrue id. The same reference is provided to
+  // platformApi/linkedProjectCache above, so memoisation gives every transport one
+  // stitch-attempted guard, aliasing/persisting at most once.
   identityStitchLayer,
   loginApiLayer.pipe(Layer.provide(httpClient), Layer.provide(cliSettings)),
   loginCryptoLayer,

@@ -14,8 +14,6 @@ export const init = Effect.fn("init")(function* (flags: InitFlags) {
   const workdir = yield* WorkdirFlag;
 
   if (flags.useOrioledb && !experimental) {
-    // Go marks `experimental` required in PreRun (`cmd/init.go:32-36`), so cobra's
-    // `ValidateRequiredFlags` fails with its standard required-flag message.
     return yield* Effect.fail(
       new InitExperimentalRequiredError({
         message: `required flag(s) "experimental" not set`,
@@ -28,24 +26,17 @@ export const init = Effect.fn("init")(function* (flags: InitFlags) {
     force: flags.force,
     useOrioledb: flags.useOrioledb,
     interactive: flags.interactive,
-    // `--yes` OR `SUPABASE_YES` (`viper.GetBool("YES")`, root.go:318-320):
-    // auto-accepts the `-i` IDE prompts with the established stderr echo
-    // instead of prompting anyway (CLI-1974).
+    // `--yes`/`SUPABASE_YES` auto-accepts the `-i` IDE prompts with the established stderr
+    // echo instead of prompting.
     yes: yield* resolveYes,
     withVscodeSettings: flags.withVscodeWorkspace || flags.withVscodeSettings,
     withIntellijSettings: flags.withIntellijSettings,
   });
 
   if (!result.created) {
-    // The message embeds the `*os.PathError` from the `O_EXCL` open of
-    // `utils.ConfigPath`, which is *relative* — so the path in the message is
-    // always `supabase/config.toml` regardless of cwd or `--workdir`. The
-    // rendering is platform-specific: `ConfigPath` is built with
-    // `filepath.Join` (`utils/misc.go:82`), so Windows prints a backslash,
-    // and the `O_EXCL` open fails there with `ERROR_FILE_EXISTS`, which
-    // `syscall.Errno.Error()` renders as `The file exists.` — vs the POSIX
-    // `EEXIST` text (`file exists`) on Linux/macOS. The Windows literal
-    // follows from the same code path via documented Go/Win32 semantics.
+    // The path in this message is always the relative `supabase/config.toml`, regardless of
+    // cwd or `--workdir`. Windows uses a backslash and "The file exists."; POSIX uses a
+    // forward slash and "file exists".
     const message =
       runtimeInfo.platform === "win32"
         ? "failed to create config file: open supabase\\config.toml: The file exists."

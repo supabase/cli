@@ -20,10 +20,8 @@ import { migrationConfirm } from "../commands/migration/migration.prompt.ts";
 import type { MigrationFetchFlags } from "../commands/migration/fetch/fetch.command.ts";
 import { MigrationFetchWriteError } from "../commands/migration/fetch/fetch.errors.ts";
 
-// `MigrationFetchFlags` is `runMigrationFetch`'s own parameter type, defined alongside the
-// standalone `migration fetch` command that also constructs it — re-exported here so an
-// in-process caller (`pull`) can build one without reaching into `commands/migration/**`
-// directly.
+// Re-exported so an in-process caller (`pull`) can build a `MigrationFetchInput` without
+// reaching into `commands/migration/**` directly.
 export type { MigrationFetchFlags };
 
 export interface MigrationFetchInput {
@@ -48,9 +46,7 @@ export const runMigrationFetch = Effect.fnUntraced(function* (input: MigrationFe
   const path = yield* Path.Path;
   const dnsResolver = yield* DnsResolverFlag;
 
-  // Flag-group mutual-exclusion first: cobra's `MarkFlagsMutuallyExclusive` validates at
-  // parse time, ahead of the root `PersistentPreRunE` (same ordering as `migration down`/
-  // `repair`).
+  // Validated first, before any other work — same ordering as `migration down`/`repair`.
   if (target.setFlags.length > 1) {
     return yield* Effect.fail(
       new MigrationTargetFlagsError({
@@ -107,16 +103,11 @@ export const runMigrationFetch = Effect.fnUntraced(function* (input: MigrationFe
   const fetchBody = Effect.gen(function* () {
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
 
-    // Create the migrations dir if missing, then prompt before overwriting a
-    // non-empty migrations dir (default YES). Cancel → cancellation.
     yield* fs
       .makeDirectory(migrationsDir, { recursive: true })
       .pipe(Effect.mapError((cause) => new MigrationFetchWriteError({ message: cause.message })));
-    // The overwrite prompt is gated on directory emptiness, which aborts on
-    // ANY read failure before fetching/writing.
-    // Only a missing directory counts as "empty"; a read error (e.g. an unreadable dir)
-    // must propagate — collapsing it to empty would skip the confirmation and clobber
-    // existing migrations.
+    // Only a missing directory counts as "empty"; any other read error must propagate —
+    // collapsing it to empty would skip the confirmation and risk clobbering existing migrations.
     const existing = yield* fs.readDirectory(migrationsDir).pipe(
       Effect.catchTag("PlatformError", (cause) =>
         cause.reason._tag === "NotFound"
@@ -159,12 +150,10 @@ export const runMigrationFetch = Effect.fnUntraced(function* (input: MigrationFe
 
     const written: Array<string> = [];
     for (const file of migrations) {
-      // The version/name come from the remote `schema_migrations` table. A
-      // tampered/hostile remote could supply path separators or `..` in EITHER field to
-      // escape the migrations dir on write (CWE-22). The raw column values write
-      // verbatim, with no digit check, so reject only the
-      // actual traversal vectors — separators and `..` segments — in both fields. This
-      // keeps a signed version like `-1` writable while closing the vector.
+      // The version/name come from the remote `schema_migrations` table. A hostile remote could
+      // supply path separators or `..` in either field to escape the migrations dir on write
+      // (CWE-22); reject only those traversal vectors so a signed version like `-1` stays
+      // writable.
       const escapes = (segment: string) =>
         /[/\\]/u.test(segment) || segment.split(/[/\\]/u).includes("..");
       if (escapes(file.version) || escapes(file.name)) {
@@ -177,7 +166,6 @@ export const runMigrationFetch = Effect.fnUntraced(function* (input: MigrationFe
       }
       const name = `${file.version}_${file.name}.sql`;
       const filePath = path.join(migrationsDir, name);
-      // The written form joins statements with `;\n`, plus a trailing `;\n`.
       const contents = `${file.statements.join(";\n")};\n`;
       yield* fs.writeFileString(filePath, contents, { mode: 0o644 }).pipe(
         Effect.mapError(

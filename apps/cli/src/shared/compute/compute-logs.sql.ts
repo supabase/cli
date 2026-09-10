@@ -10,12 +10,9 @@ import { DateTime } from "effect";
  */
 
 /**
- * The three streams that share the Compute Logflare source, keyed by the word the
- * `--kind` flag exposes.
- *
- * `worker_guest_logs` is an internal name; `app` is what a user means. The
- * mapping lives here rather than in the command so the flag and the query cannot
- * drift apart.
+ * The three streams that share the Compute Logflare source, keyed by the word the `--kind`
+ * flag exposes (`worker_guest_logs` is internal; `app` is what a user means). Lives here
+ * rather than in the command so the flag and the query cannot drift apart.
  */
 export const COMPUTE_LOG_STREAMS = {
   app: "worker_guest_logs",
@@ -26,12 +23,9 @@ export const COMPUTE_LOG_STREAMS = {
 export type ComputeLogKindChoice = keyof typeof COMPUTE_LOG_STREAMS;
 
 /**
- * The `--kind` words, in the order help lists them.
- *
- * Lives beside {@link COMPUTE_LOG_STREAMS} and is checked against it, so the flag
- * cannot offer a word the query has no stream for. Without that link an added
- * choice would index the map as `undefined` and reach the SQL as an empty
- * stream name rather than failing to compile.
+ * The `--kind` words, in the order help lists them. Checked against {@link COMPUTE_LOG_STREAMS}
+ * so the flag can't offer a word the query has no stream for — without that link, an added
+ * choice would index the map as `undefined` and reach the SQL as an empty stream name.
  */
 export const COMPUTE_LOG_KINDS = [
   "app",
@@ -54,36 +48,26 @@ const COMPUTE_LOG_NAME_ATTRIBUTE = "worker";
 const COMPUTE_LOG_STREAM_ATTRIBUTE = "source";
 
 /**
- * The server clamps a span of *more than* 24 hours, so the default window sits
- * just under the boundary rather than on it.
- *
- * Being clamped is worse than being rejected: the server rewrites `end` to
- * `start + 24h`, so an over-wide request silently returns an *older* slice than
- * the one asked for.
+ * The server clamps a span of more than 24 hours, so the default window sits just under the
+ * boundary. Being clamped is worse than being rejected: the server rewrites `end` to
+ * `start + 24h`, so an over-wide request silently returns an older slice than the one asked for.
  */
 export const COMPUTE_LOG_WINDOW_MINUTES = 23 * 60 + 59;
 
 /**
- * How often `--follow` re-queries.
- *
- * **Set by the rate limit, not by responsiveness.** The v1 analytics endpoints
- * allow 10 requests per 60 seconds, so the two-second poll a live tail suggests
- * would 429 within the first ten seconds. Six seconds is the arithmetic floor;
- * ten leaves room for the initial history query, the deployed-compute check, and a
- * retry inside the same window.
+ * How often `--follow` re-queries — set by the rate limit, not by responsiveness. The v1
+ * analytics endpoints allow 10 requests per 60 seconds, so a two-second poll would 429 within
+ * the first ten seconds; ten seconds leaves room for the initial history query, the
+ * deployed-compute check, and a retry inside the same window.
  */
 export const COMPUTE_LOG_POLL_SECONDS = 10;
 
 /**
- * How far behind the newest line seen the next window starts.
- *
- * Guest lines are relayed CloudWatch -> subscription filter -> Lambda -> Logflare
- * and arrive **late and out of order**, so a cursor sitting exactly on the newest
- * timestamp drops every straggler permanently. The window is deliberately
- * re-asked for ground it has already covered; `id` dedupe absorbs the overlap.
- *
- * Wider than one poll interval, so a line delayed by a full cycle is still
- * inside the next window.
+ * How far behind the newest line seen the next window starts. Guest lines are relayed
+ * CloudWatch -> subscription filter -> Lambda -> Logflare and arrive late and out of order, so
+ * a cursor sitting exactly on the newest timestamp would drop every straggler permanently —
+ * the window re-asks for ground already covered, and `id` dedupe absorbs the overlap. Wider
+ * than one poll interval, so a line delayed a full cycle still lands inside the next window.
  */
 const COMPUTE_LOG_CURSOR_GRACE_SECONDS = 60;
 
@@ -106,14 +90,11 @@ export function logWindow(now: DateTime.Utc): { readonly start: string; readonly
 }
 
 /**
- * The window for one `--follow` poll: from just before the newest line seen, up
- * to now.
- *
- * Clamped to the same sub-24h span as {@link logWindow}. That matters when a tail
- * is left running past a laptop suspend: without the clamp the resumed poll would
- * ask for a wider span, and the server answers an over-wide request by rewriting
- * `end` to `start + 24h` — returning an *older* slice rather than a truncated one,
- * so a resumed tail would silently start replaying yesterday.
+ * The window for one `--follow` poll: from just before the newest line seen, up to now.
+ * Clamped to the same sub-24h span as {@link logWindow} — a tail left running past a laptop
+ * suspend would otherwise resume with a wider span, and the server answers that by rewriting
+ * `end` to `start + 24h`, returning an older slice rather than a truncated one, so a resumed
+ * tail would silently start replaying yesterday.
  */
 export function followWindow(
   now: DateTime.Utc,
@@ -146,23 +127,13 @@ function quote(value: string): string {
 }
 
 /**
- * The logs query for one compute.
- *
- * Two things about the projection are load-bearing:
- *
- * - **The filter is `log_attributes`, not the `source` column.** Compute rows carry
- *   an empty top-level `source`, because the Workers Logflare source is not
- *   enrolled as a category in the generic logs path — so `where source =
- *   'worker_guest_logs'` matches nothing. The stream survives only in
- *   `log_attributes['source']`.
- * - **The `in (...)` list is a tenancy guard, not a convenience.** With `source`
- *   empty there is nothing else keeping a non-compute row that happens to carry a
- *   `worker` attribute out of the result.
- *
- * `toUnixTimestamp64Milli` rather than a formatter: ClickHouse's `%M` is the
- * *month name*, and bare `toString(timestamp)` yields
- * `2026-08-31 14:45:32.576000000` — space-separated, nine decimals, no zone.
- * Epoch milliseconds have no such trap and sort as a number.
+ * The logs query for one compute. Two things about the projection are load-bearing: the filter
+ * is `log_attributes`, not the `source` column, since compute rows carry an empty top-level
+ * `source` (the stream survives only in `log_attributes['source']`); and the `in (...)` list
+ * is a tenancy guard, not a convenience — with `source` empty, it's the only thing keeping a
+ * non-compute row with a `worker` attribute out of the result. `toUnixTimestamp64Milli` rather
+ * than a formatter, since ClickHouse's `%M` is the month name and bare `toString(timestamp)`
+ * has no zone.
  */
 export function computeLogsQuery(options: {
   readonly name: string;

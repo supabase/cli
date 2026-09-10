@@ -16,12 +16,9 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import { networkRestrictionsCommand } from "./network-restrictions.command.ts";
 
-// See postgres-config.experimental-gate.integration.test.ts for the full
-// rationale: this proves `--experimental` is wired into the actual
-// `.command.ts` handler pipeline AND runs before
-// `managementApiRuntimeLayer`'s eager access-token resolution
-// (the `IsExperimental` check precedes `IsManagementAPI` in
-// `apps/cli-go/cmd/root.go:91-109`).
+// See postgres-config.experimental-gate.integration.test.ts for the rationale: proves the
+// --experimental gate runs in the command pipeline before managementApiRuntimeLayer's eager
+// access-token resolution.
 
 const tempRoot = useTempWorkdir("supabase-network-restrictions-experimental-int-");
 
@@ -39,23 +36,19 @@ function setup() {
     out,
     api,
     cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-    // `RuntimeInfo` is ambient (not provided by `managementApiRuntimeLayer`
-    // itself), so the real `commandCredentialsLayer` built inline inside the
-    // command for the "gate open" case resolves ITS `RuntimeInfo` from this
-    // layer. Point homeDir at this test's isolated tempRoot so the layer's
-    // file-based token fallback (`<homeDir>/.supabase/access-token`) can't pick
-    // up a stray token left at the shared default `/tmp/supabase-cli-test-home`.
+    // managementApiRuntimeLayer doesn't provide RuntimeInfo itself; the real
+    // commandCredentialsLayer built inline for the gate-open case resolves it from here, so
+    // point homeDir at this test's tempRoot to avoid picking up a stray token from the shared
+    // default test home.
     runtimeInfo: mockRuntimeInfo({ homeDir: tempRoot.current }),
   });
   const layer = Layer.mergeAll(
     runtime,
     CliOutput.layer(textCliOutputFormatter()),
-    // The "gate open" case reaches the real `managementApiRuntimeLayer`
-    // (provided inline inside the command, not by this test's mocked runtime),
-    // which reads credentials/env directly — an ambient SUPABASE_ACCESS_TOKEN,
-    // SUPABASE_EXPERIMENTAL, or OS keyring entry on the machine running the
-    // test would make these assertions non-deterministic. Wipe process.env
-    // down to just this and disable the keyring fallback.
+    // The gate-open case reaches the real managementApiRuntimeLayer (provided inline, not
+    // by this test's mocked runtime), which reads credentials/env directly — an ambient
+    // access token, SUPABASE_EXPERIMENTAL, or keyring entry would make these assertions
+    // non-deterministic.
     processEnvLayer({ SUPABASE_NO_KEYRING: "1" }),
     Layer.succeed(
       TelemetryRuntime,
@@ -118,13 +111,7 @@ describe("network-restrictions experimental gate (Go PersistentPreRunE parity)",
   it.live(
     "update: malformed --db-allow-cidr CSV fails at parse time with pflag's exact diagnostic, before the gate",
     () => {
-      // pflag's `readAsCSV` error aborts cobra's `ParseFlags` BEFORE
-      // `PersistentPreRunE`'s experimental-gate check, so the parse error
-      // must win even with `--experimental` unset. The rendered line — what
-      // `runCli`'s `handledProgram` writes to stderr via `normalizeCause` —
-      // matches pflag's own diagnostic (pflag v1.0.10 `errors.go:116`
-      // wrapping `encoding/csv`; `"1.2.3.0/24` is 11 bytes → EOF at column
-      // 12).
+      // `"1.2.3.0/24` is 11 bytes, so pflag's CSV reader hits EOF at column 12.
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(

@@ -65,11 +65,9 @@ function mockDbConnection(session: DbSession) {
 }
 
 /**
- * A `DbConnection` whose `connect` fails with `DbConnectError` on
- * the first `failTimes` calls, then succeeds with `session` on every call
- * after that (`failTimes: Number.POSITIVE_INFINITY` never succeeds at all) —
- * for pinning {@link connectShadowDatabase}'s retry-schedule ATTEMPT
- * COUNT precisely, not merely "it eventually succeeds"/"it eventually fails".
+ * A `DbConnection` whose `connect` fails with `DbConnectError` on the first `failTimes` calls,
+ * then succeeds with `session` on every call after that. Lets tests pin
+ * {@link connectShadowDatabase}'s retry-schedule attempt count precisely.
  */
 function mockFlakyDbConnection(session: DbSession, failTimes: number) {
   let attempts = 0;
@@ -114,10 +112,8 @@ function mockSpawner() {
     Effect.sync(() => {
       const args = command._tag === "StandardCommand" ? command.args : [];
       spawned.push(args);
-      // `ensureNetwork` probes with `network inspect` before ever creating one — report
-      // it as missing so a `createShadowDatabase` call actually reaches `network create`,
-      // rather than short-circuiting on the pre-check the way an always-exit-0 mock would (the
-      // ONLY caller of this mock that ever spawns `network`/`create` args at all).
+      // `ensureNetwork` probes with `network inspect` first; report it as missing so
+      // `createShadowDatabase` actually reaches `network create` instead of short-circuiting.
       const exitCode = args[0] === "network" && args[1] === "inspect" ? 1 : 0;
       const stdout = args[0] === "create" ? "shadow-container-id-0123456789abcdef" : "";
       return ChildProcessSpawner.makeHandle({
@@ -139,10 +135,8 @@ function mockSpawner() {
 }
 
 /**
- * A spawner that fails to even launch a process — for both `docker` and
- * `podman` — mirroring the "daemon not on PATH" scenario `health-check.unit.test.ts`
- * scripts for `waitForHealthyServices`. Every `spawner.spawn` call fails
- * before ever returning a handle, so `spawnContainerCliWithRuntime`
+ * A spawner that fails to even launch a process, for both `docker` and `podman`. Every
+ * `spawner.spawn` call fails before returning a handle, so `spawnContainerCliWithRuntime`
  * exhausts both runtimes and surfaces `ContainerRuntimeNotFoundError`.
  */
 function mockUnspawnableSpawner() {
@@ -204,12 +198,7 @@ describe("createShadowDatabase / removeShadowDatabase", () => {
           expect(networkCreateIdx).toBeLessThan(createIdx);
           expect(mock.spawned[createIdx]).not.toContain("--name");
           expect(mock.spawned[createIdx]).toContain("--rm");
-          // Go's `NewContainerConfig("-c", "max_worker_processes=0")` splice
-          // (`CreateShadowDatabase`, `diff.go:140`) is not a bare docker flag — it's rendered
-          // into the entrypoint script's own `docker-entrypoint.sh postgres -D /etc/postgresql
-          // <args>` line (the script is the LAST `docker create` argv element, `cmd`'s second
-          // entry). Assert it lands there, not merely that the literal string appears somewhere
-          // in argv.
+          // The flag is rendered into the entrypoint script, the last `docker create` argv element.
           const script = mock.spawned[createIdx]?.at(-1) ?? "";
           expect(script).toContain(
             `exec docker-entrypoint.sh postgres -D /etc/postgresql ${SHADOW_ENTRYPOINT_ARGS}`,
@@ -310,11 +299,6 @@ describe("connectShadowDatabase", () => {
 
         const resolvedSession = yield* Fiber.join(fiber);
         expect(resolvedSession).toBe(session);
-        // 3 failed attempts, then the 4th that finally succeeds — pins the EXACT
-        // attempt count (a `Schedule.min` regression would also "eventually
-        // succeed" here, since 3 retries is well under either combinator's
-        // ceiling — see the always-failing case below for the test that
-        // actually distinguishes `min` from `max`).
         expect(mock.attempts).toBe(4);
       }).pipe(Effect.provide(mock.layer));
     },
@@ -324,13 +308,6 @@ describe("connectShadowDatabase", () => {
     "gives up after exactly 11 attempts (1 initial + 10 retries) instead of retrying forever — pins Schedule.max over Schedule.min",
     () => {
       const { session } = fakeSession();
-      // Never succeeds — pegs the retry schedule to its hard 10-retry ceiling.
-      // `Schedule.max` (the correct combinator: recur while BOTH inputs can
-      // still recur) stops here because `Schedule.recurs(10)` is exhausted. A
-      // regression to `Schedule.min` (recur while EITHER input can still
-      // recur) would keep recurring forever on `Schedule.spaced`'s unbounded
-      // side, so this fiber would never complete — `Fiber.join` below would
-      // hang/time out rather than resolve, catching exactly that swap.
       const mock = mockFlakyDbConnection(session, Number.POSITIVE_INFINITY);
       return Effect.gen(function* () {
         const fiber = yield* connectShadowDatabase(shadowConnConfig).pipe(
@@ -511,8 +488,6 @@ describe("buildShadowSetupDatabaseInput", () => {
             },
           },
         );
-        // Go's `container[:12]` — the future callers this was exported for (`migration
-        // squash`) need this exact same derivation, not a re-implementation.
         expect(built.dbHost).toBe("shadow-conta");
         expect(built.session).toBe(session);
         expect(built.workdir).toBe("/proj");
@@ -801,9 +776,7 @@ describe("setupShadowDatabase / migrateShadowDatabase", () => {
     () => {
       const workdir = tempRoot.current;
       const mock = mockSpawner();
-      // One shared, ordered log — recording both events into separate booleans (the prior
-      // version of this test) would still pass if the two steps were swapped, since both
-      // would still end up `true`; only an ordered log actually proves the sequence.
+      // An ordered log, not separate booleans, so the events must occur in this order to pass.
       const events: Array<string> = [];
       const dbConnection = Layer.succeed(DbConnection, {
         connect: () =>
@@ -823,9 +796,7 @@ describe("setupShadowDatabase / migrateShadowDatabase", () => {
             return realFs.readDirectory(dir, opts);
           },
         });
-        // No `supabase/migrations` directory exists — Go's `ListLocalMigrations` on a
-        // missing dir resolves to an empty list (not an error), so this exercises the
-        // ordering guarantee (list BEFORE connect) rather than a failure path.
+        // No `supabase/migrations` directory exists.
         yield* migrateShadowDatabase(mock.spawner, {
           fs,
           path,
@@ -842,12 +813,6 @@ describe("setupShadowDatabase / migrateShadowDatabase", () => {
           },
           setup: baseShadowSetup(),
         });
-        // ONE connect, matching Go's single-connection flow: the default baseline state
-        // (`SHADOW_BASELINE_COLD`) requires no snapshot, so baseline + template +
-        // migrations all share one session — the split-session shape is reserved for the
-        // cache's own snapshotting cold provision (`snapshotRequired: true`), whose disk-level
-        // export must close the session before stopping the container. The ordering under test
-        // is unaffected — the migration listing still precedes the connect.
         expect(events).toEqual(["list", "connect"]);
       }).pipe(
         Effect.provide(

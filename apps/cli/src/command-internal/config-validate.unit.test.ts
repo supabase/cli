@@ -26,13 +26,6 @@ import {
   validateResolvedConfig,
 } from "./config-validate.ts";
 
-// Starter suite for the symbols relocated from `db-config.toml-read.ts` in an earlier
-// commit (see the module header in `config-validate.ts`). The bulk of `Config.Validate`
-// behavioral coverage — direct calls to `validateResolvedConfig`, covering every branch
-// this module owns regardless of which caller (D or L) exercises it — lives further down this
-// file; it was consolidated here from `local-config-values.unit.test.ts`, where it used
-// to be exercised only indirectly through `resolveLocalConfigValues`.
-
 describe("parseGoBool", () => {
   it("accepts Go's strconv.ParseBool true forms", () => {
     for (const value of ["1", "t", "T", "TRUE", "true", "True"]) {
@@ -110,13 +103,9 @@ describe("CLERK_DOMAIN_PATTERN", () => {
   });
 });
 
-// Direct coverage for the containment behavior CLI-2339 centralized into this function — every
-// caller (`config push`'s `loadAuthEmailContent`, `db-config.toml-read.ts`,
-// `local-config-values.ts`, `start.handler.ts`'s eager pre-Docker pass) now shares it, so
-// pinning it here directly is cheaper than re-deriving it through every caller's own fixtures.
-// `push.auth-email-content.unit.test.ts` keeps its own equivalent coverage through
-// `loadAuthEmailContent` (CLI-2320's original suite, still exercising the same behavior
-// through a real caller); this block is the new, function-level home CLI-2339 introduces.
+// Direct coverage for the containment check shared by every caller (config push's
+// loadAuthEmailContent, db-config.toml-read.ts, local-config-values.ts, start.handler.ts's
+// pre-Docker pass), cheaper to pin here than to re-derive through every caller's own fixtures.
 describe("resolveEmailTemplateContentPath", () => {
   let projectRoot = "";
   let outsideDir = "";
@@ -200,10 +189,6 @@ describe("resolveEmailTemplateContentPath", () => {
   );
 
   it("accepts an in-root sibling path whose name literally starts with two dots, distinct from a .. escape", () => {
-    // This is the exact boundary `isPathContainedInRoot`'s `rel !== ".." &&
-    // !rel.startsWith(".." + sep)` check exists to draw: `..templates` is a real, distinct
-    // directory name one level under the root — not a `..` parent-traversal segment — and must
-    // resolve normally.
     const base = setup();
     const dotDir = join(base, "..templates");
     mkdirSync(dotDir, { recursive: true });
@@ -223,14 +208,6 @@ describe("resolveEmailTemplateContentPath", () => {
   });
 
   it("resolves a missing in-root file behind a symlinked project root instead of raising the containment error", () => {
-    // The CLI-2339 fix: `canonicalPathForContainment` walks up to the deepest EXISTING
-    // ancestor and canonicalizes THAT, then lexically re-appends the missing leaf — so a
-    // project root reached through a symlink (`symlinkedRoot` here) still canonicalizes to the
-    // same base as the candidate. CLI-2320's original `realOrLexicalPath` fell back to a fully
-    // LEXICAL `resolve(candidate)` the moment the leaf was missing, while `root` itself was
-    // always realpath'd unconditionally — comparing a resolved root against an unresolved
-    // candidate through the symlink would have reported a false "resolves outside the project
-    // root" for this exact case.
     const realDir = mkdtempSync(join(tmpdir(), "config-validate-email-content-real-"));
     const linkContainer = mkdtempSync(join(tmpdir(), "config-validate-email-content-link-"));
     const symlinkedRoot = join(linkContainer, "project-root");
@@ -245,21 +222,9 @@ describe("resolveEmailTemplateContentPath", () => {
     }
   });
 
-  // Direct regression coverage for the CLI-2339 follow-up fix: `canonicalPathForContainment`
-  // now tells apart "this path component genuinely doesn't exist yet" from "this path exists but
-  // couldn't be canonicalized" (a dangling symlink, an EACCES-blocked target, or a symlink loop).
-  // Before this fix, ALL THREE were wrongly treated as "doesn't exist" — meaning a dangling/broken
-  // in-root symlink pointing outside the project root was silently ACCEPTED as in-root instead of
-  // rejected (verified exploitable via `start`'s Kong `rw` Docker bind mount). Only the dangling
-  // case above is deterministic on every OS/CI environment without special permissions; the other
-  // two are covered per their own comments below.
   it.each(["template", "notification"] as const)(
     "rejects a %s content_path that is an in-root dangling symlink pointing to a nonexistent target outside the project root",
     (section) => {
-      // The core regression case: `lstatSync` shows the symlink itself genuinely exists, but its
-      // target does not — before the fix, that combination was wrongly folded into "doesn't exist"
-      // (the same bucket as a plain missing file), silently laundering the escape as an ordinary
-      // missing-file resolution instead of rejecting it.
       const base = setup();
       outsideDir = mkdtempSync(join(tmpdir(), "config-validate-email-content-outside-"));
       const neverCreatedOutsideTarget = join(outsideDir, "never-created.html");
@@ -278,16 +243,8 @@ describe("resolveEmailTemplateContentPath", () => {
   it.each(["template", "notification"] as const)(
     "rejects a %s content_path that is an in-root symlink whose outside target sits behind an unsearchable (EACCES) directory",
     (section) => {
-      // A target one level inside a chmod-000 directory makes BOTH `realpathSync` and (per
-      // POSIX pathname resolution, since finding the target's own dirent also needs search
-      // permission on its parent) `lstatSync` fail with EACCES, not ENOENT — this must never be
-      // laundered into "doesn't exist" either. This still fails closed (never returns a path
-      // silently treated as in-root) in every environment this was verified against, including as
-      // an unprivileged, non-root user (the only case that actually exercises the EACCES branch —
-      // as root, chmod 000 is a no-op and the target resolves normally, hitting the ordinary
-      // out-of-root rejection instead). Skip only if this environment doesn't enforce the
-      // permission at all (e.g. running as root) — the deterministic dangling-symlink case above
-      // already covers the core regression without needing any permission trick.
+      // Skipped when this environment doesn't enforce chmod 000 (e.g. running as root); the
+      // dangling-symlink case above already covers the core regression without a permission trick.
       const base = setup();
       outsideDir = mkdtempSync(join(tmpdir(), "config-validate-email-content-outside-"));
       const unsearchableDir = join(outsideDir, "locked");
@@ -311,9 +268,6 @@ describe("resolveEmailTemplateContentPath", () => {
         const symlinkPath = join(base, "unsearchable.html");
         symlinkSync(target, symlinkPath);
 
-        // Converges on the exact same specific error as every other containment-rejection case,
-        // not just "fails closed somehow": the guarded `lstatSync` fallback now folds its own
-        // thrown EACCES into the ordinary out-of-root rejection instead of letting it escape raw.
         expect(() => resolveContentPath(section, "./unsearchable.html", base)).toThrow(
           ConfigValidateError,
         );
@@ -327,13 +281,6 @@ describe("resolveEmailTemplateContentPath", () => {
   );
 
   it("accepts a genuinely in-root file behind an unsearchable (EACCES) directory, even when the project root itself is reached through a symlink", () => {
-    // Regression test for the CLI-2345 Fix A: `canonicalizeExistingPath`'s inner `lstatSync`-
-    // throws catch now returns `undefined` (deferring to the ancestor walk-up in
-    // `canonicalPathForContainment`) instead of the raw lexical `path`. Before this fix, a
-    // genuinely in-root file sitting behind an unsearchable (chmod 000) ancestor directory could
-    // be wrongly rejected as "resolves outside the project root" whenever the project root
-    // itself was reached through a symlink (e.g. macOS's `/tmp` -> `/private/tmp`), because the
-    // lexical (unresolved) candidate path was compared against a fully-canonicalized base.
     const realDir = mkdtempSync(join(tmpdir(), "config-validate-email-content-real-"));
     const linkContainer = mkdtempSync(join(tmpdir(), "config-validate-email-content-link-"));
     const symlinkedRoot = join(linkContainer, "project-root");
@@ -369,11 +316,6 @@ describe("resolveEmailTemplateContentPath", () => {
   it.each(["template", "notification"] as const)(
     "rejects a %s content_path that is an in-root symlink pointing to an unstattable (ENAMETOOLONG) target name, without relying on directory permissions",
     (section) => {
-      // A permission-free sibling to the EACCES test above, which can silently lose coverage in
-      // any environment that doesn't enforce chmod 000 (root, some containers, Windows): an
-      // over-long filename component makes both `realpathSync` and `lstatSync` throw ENAMETOOLONG
-      // (not ENOENT), so this exercises the guarded fallback on filesystems/platforms where
-      // symlink creation is available to this process.
       const base = setup();
       outsideDir = mkdtempSync(join(tmpdir(), "config-validate-email-content-outside-"));
       const tooLongName = `${"a".repeat(300)}.html`;
@@ -398,16 +340,8 @@ describe("resolveEmailTemplateContentPath", () => {
   it.each(["template", "notification"] as const)(
     "rejects an in-root %s symlink loop instead of hanging or crashing",
     (section) => {
-      // `canonicalPathForContainment` cannot canonicalize a genuine cycle at all — past
-      // `MAX_SYMLINK_FOLLOW_DEPTH` hops it gives up and returns the (lexical, never
-      // realpath-dereferenced) path as-is, per its own contract. Containment then compares that
-      // unverified lexical path against the fully-canonicalized project root. A project root
-      // reached through no symlink of its own could coincidentally still compare equal (since
-      // there's nothing to dereference), so this deliberately reuses the same symlinked-root
-      // fixture as the "missing leaf behind a symlinked project root" test above — guaranteeing
-      // a real canonicalization gap between the root and the un-canonicalizable loop path,
-      // deterministically on every OS, rather than depending on incidental symlinks somewhere in
-      // the ambient tmpdir (e.g. macOS's own /tmp -> /private/tmp).
+      // Reuses the symlinked-root fixture (rather than relying on incidental ambient-tmpdir
+      // symlinks) so there's a guaranteed canonicalization gap between root and the loop path.
       const realDir = mkdtempSync(join(tmpdir(), "config-validate-email-content-real-"));
       const linkContainer = mkdtempSync(join(tmpdir(), "config-validate-email-content-link-"));
       const symlinkedRoot = join(linkContainer, "project-root");
@@ -433,12 +367,6 @@ describe("resolveEmailTemplateContentPath", () => {
   );
 
   it("never selects an unstattable notification legacy-fallback twin behind an unsearchable (EACCES) supabase/ directory", () => {
-    // Regression test for the CLI-2345 Fix B, specific to `resolveNotificationContentPath`
-    // (via its `probeFile` tri-state helper): the legacy `supabase/`-relative twin must
-    // only ever be selected on a CONFIRMED "exists". Before this fix, when the root-resolved
-    // path was confirmed missing but the legacy twin was itself unstattable (blocked here by an
-    // unsearchable `supabase/` directory, not confirmed to exist), the old code wrongly silently
-    // selected the unverified legacy twin anyway.
     const base = setup();
     const supabaseDir = join(base, "supabase");
     mkdirSync(supabaseDir);
@@ -458,10 +386,9 @@ describe("resolveEmailTemplateContentPath", () => {
 
       const resolved = resolveContentPath("notification", "notification.html", base);
 
-      // Proves it did NOT silently retarget to the unverified/unstattable legacy twin
-      // (`<base>/supabase/notification.html`, blocked by the chmod on its parent): the result
-      // must be the ROOT-RESOLVED path. This function only resolves a path — it doesn't validate
-      // that the file exists — so a non-throw here is expected, not a gap.
+      // The result must be the root-resolved path, not the unverified legacy twin; this
+      // function only resolves a path, it doesn't check that the file exists, so a non-throw
+      // here is expected.
       expect(resolved).toBe(join(realpathSync(base), "notification.html"));
     } finally {
       chmodSync(supabaseDir, 0o755);
@@ -503,15 +430,13 @@ function minimalAuthInput(overrides: Partial<AuthInput> = {}): AuthInput {
   };
 }
 
-// Moved from `local-config-values.unit.test.ts`: these describe blocks exercise checks
-// that now live entirely inside `validateResolvedConfig` and can be phrased as direct
-// calls with a hand-built `ConfigValidationInput` — no `CliConfig`/schema decode, no
-// env-override machinery, no file I/O, no `document` threading. Everything that still needs
-// one of those (value derivation, env-override mechanics, the 3 I/O checks' actual file reads)
-// stays in `local-config-values.unit.test.ts`.
+// These describe blocks call `validateResolvedConfig` directly with a hand-built
+// `ConfigValidationInput` — no `CliConfig`/schema decode, no env-override machinery, no file
+// I/O, no `document` threading. Everything that still needs one of those (value derivation,
+// env-override mechanics, the 3 I/O checks' actual file reads) stays in
+// `local-config-values.unit.test.ts`.
 describe("validateResolvedConfig", () => {
-  // db.major_version switch. The env-override
-  // (SUPABASE_DB_MAJOR_VERSION) variants stay in local-config-values.unit.test.ts.
+  // The env-override (SUPABASE_DB_MAJOR_VERSION) variant lives in local-config-values.unit.test.ts.
   describe("db.major_version", () => {
     it("rejects a configured major_version of 0", () => {
       expect(() =>
@@ -538,7 +463,6 @@ describe("validateResolvedConfig", () => {
     });
   });
 
-  // unconditional, no storage.enabled-style gate.
   describe("storage.buckets", () => {
     it("rejects a bucket name Go's ValidateBucketName refuses", () => {
       expect(() =>
@@ -557,9 +481,7 @@ describe("validateResolvedConfig", () => {
     });
   });
 
-  // edge_runtime.deno_version switch, unconditional, not gated on
-  // edge_runtime.enabled (there is no such field on ConfigValidationInput at all). The
-  // env-override (SUPABASE_EDGE_RUNTIME_DENO_VERSION) variants stay in
+  // The env-override (SUPABASE_EDGE_RUNTIME_DENO_VERSION) variant lives in
   // local-config-values.unit.test.ts.
   describe("edge_runtime.deno_version", () => {
     it("rejects a configured deno_version of 0", () => {
@@ -581,17 +503,13 @@ describe("validateResolvedConfig", () => {
     });
 
     it("rejects an invalid deno_version even when edge_runtime is disabled", () => {
-      // There is no `edgeRuntime.enabled`-style gate on `ConfigValidationInput` at
-      // all — this is identical to the "rejects a configured deno_version of 0" case above,
-      // which is itself the point: Go never gates this check on edge_runtime.enabled.
       expect(() => validateResolvedConfig(minimalInput({ edgeRuntimeDenoVersion: 0 }))).toThrow(
         "Missing required field in config: edge_runtime.deno_version",
       );
     });
   });
 
-  // analytics.gcp_*, gated on enabled && backend === "bigquery". The
-  // env-override (SUPABASE_ANALYTICS_*) variants stay in local-config-values.unit.test.ts.
+  // The env-override (SUPABASE_ANALYTICS_*) variants live in local-config-values.unit.test.ts.
   describe("analytics (BigQuery backend required fields)", () => {
     it("rejects an enabled bigquery backend without gcp_project_id", () => {
       expect(() =>
@@ -692,7 +610,6 @@ describe("validateResolvedConfig", () => {
     });
   });
 
-  // experimental.validate(), unconditional, internally gated.
   describe("experimental.*", () => {
     it("rejects a present [experimental.webhooks] section with enabled omitted", () => {
       expect(() =>
@@ -761,9 +678,8 @@ describe("validateResolvedConfig", () => {
     });
   });
 
-  // auth.site_url, checked first inside `if c.Auth.Enabled`. An absent
-  // `auth` section on `ConfigValidationInput` IS "auth disabled" from this function's
-  // perspective. The SUPABASE_AUTH_ENABLED/SUPABASE_AUTH_SITE_URL env-override variants stay in
+  // An absent `auth` section means auth is disabled, from this function's perspective. The
+  // SUPABASE_AUTH_ENABLED/SUPABASE_AUTH_SITE_URL env-override variants live in
   // local-config-values.unit.test.ts.
   describe("auth.site_url", () => {
     it("rejects an explicit empty site_url when auth is enabled", () => {
@@ -785,7 +701,6 @@ describe("validateResolvedConfig", () => {
     });
   });
 
-  // auth.captcha, checked right after auth.site_url.
   describe("auth.captcha", () => {
     it("rejects an enabled captcha without a provider", () => {
       expect(() =>
@@ -840,8 +755,6 @@ describe("validateResolvedConfig", () => {
     });
   });
 
-  // auth.passkey/auth.webauthn, right after the (caller-side) signing-keys
-  // read.
   describe("auth.passkey / auth.webauthn", () => {
     it("rejects passkey.enabled without an [auth.webauthn] section", () => {
       expect(() =>
@@ -908,9 +821,8 @@ describe("validateResolvedConfig", () => {
     });
 
     it("does not throw when auth carries no passkey data at all", () => {
-      // Distinct from the previous test only in the original (L-level) caller's derivation —
-      // "webauthn absent from the document" vs. "no document was threaded through at all".
-      // Both collapse to `passkey: undefined` at this shared, direct-call layer.
+      // Distinct from the previous test only in the original caller's derivation; both
+      // collapse to `passkey: undefined` here.
       expect(() =>
         validateResolvedConfig(minimalInput({ auth: minimalAuthInput() })),
       ).not.toThrow();
@@ -921,7 +833,6 @@ describe("validateResolvedConfig", () => {
     });
   });
 
-  // auth.email.smtp, gated on the raw table being present AND enabled.
   describe("auth.email.smtp", () => {
     it("rejects a present [auth.email.smtp] table with no fields", () => {
       expect(() =>
@@ -1010,7 +921,6 @@ describe("validateResolvedConfig", () => {
     });
   });
 
-  // auth.hook.*, caller pre-filters to enabled-only.
   describe("auth.hook.*", () => {
     it("rejects an enabled hook without a uri", () => {
       expect(() =>
@@ -1124,8 +1034,6 @@ describe("validateResolvedConfig", () => {
       ).toThrow("auth.hook.custom_access_token.uri should be a HTTP, HTTPS, or pg-functions URI");
     });
 
-    // Parses with `url.Parse` semantics before the scheme switch and fails the whole
-    // load on a malformed URI, rather than treating any `http:`/`https:` prefix as valid.
     it("rejects a hook uri that fails Go's url.Parse (malformed IPv6 host)", () => {
       expect(() =>
         validateResolvedConfig(
@@ -1139,8 +1047,8 @@ describe("validateResolvedConfig", () => {
     });
 
     it("does not throw for a disabled hook, however incomplete", () => {
-      // The caller pre-filters to enabled-only hooks — a disabled hook is simply absent from
-      // `hooks`, matching an empty array here.
+      // The caller pre-filters to enabled-only hooks, so a disabled hook is simply absent — an
+      // empty array here.
       expect(() =>
         validateResolvedConfig(minimalInput({ auth: minimalAuthInput({ hooks: [] }) })),
       ).not.toThrow();
@@ -1151,7 +1059,6 @@ describe("validateResolvedConfig", () => {
     });
   });
 
-  // auth.mfa.*, fixed totp/phone/web_authn order.
   describe("auth.mfa.*", () => {
     it.each([
       ["totp", "auth.mfa.totp.enroll_enabled requires verify_enabled"],
@@ -1186,8 +1093,6 @@ describe("validateResolvedConfig", () => {
     });
   });
 
-  // auth.third_party.*, fixed provider order, caller
-  // pre-filters to enabled-only.
   describe("auth.third_party.*", () => {
     it("rejects firebase enabled without a project_id", () => {
       expect(() =>
@@ -1305,8 +1210,6 @@ describe("validateResolvedConfig", () => {
     });
   });
 
-  // every [functions.*] key, unconditional, not
-  // gated on auth.enabled.
   describe("functions.*", () => {
     it("rejects a function slug Go's ValidateFunctionSlug refuses", () => {
       expect(() => validateResolvedConfig(minimalInput({ functionSlugs: ["1bad"] }))).toThrow(
@@ -1331,8 +1234,7 @@ describe("validateResolvedConfig", () => {
     });
   });
 
-  // only the "exactly one of cert/key set" presence rule; the actual
-  // file reads and the disabled-skip/env-override tests stay in
+  // The actual file reads and the disabled-skip/env-override tests stay in
   // local-config-values.unit.test.ts.
   describe("api.tls", () => {
     it("rejects cert_path set without key_path", () => {
@@ -1364,29 +1266,20 @@ describe("validateResolvedConfig", () => {
     });
   });
 
-  // Direct-shared-level regression/divergence coverage (Part C) — behavior that's either new
-  // (the D fix) or only meaningfully testable at this exact layer (the captcha enum), not a
-  // move from either caller's own suite.
+  // Coverage for behavior only meaningfully testable at this shared layer (e.g. the captcha
+  // enum), not moved from either caller's own suite.
   describe("Config.Validate divergence regression coverage", () => {
     it("throws the Go-parity missing-required message for db.major_version = 0 (regression for the D fix in 0c62a914)", () => {
-      // D used to fall through to the generic "Invalid db.major_version: 0" message; both D
-      // and L now go through this exact branch, so pin it directly here too, not just via
-      // D's/L's own suites.
       expect(() =>
         validateResolvedConfig({ ...minimalInput(), db: { port: 5432, majorVersion: 0 } }),
       ).toThrow("Missing required field in config: db.major_version");
     });
 
     it("throws Go's decode-time enum message for an invalid auth.captcha.provider, regardless of enabled", () => {
-      // This scenario is only meaningful at this direct shared-validator level: it's
-      // unreachable through L's real CliConfig-typed flow — `@supabase/config`'s schema
-      // (packages/config/src/auth/captcha.ts, stringEnum(["hcaptcha", "turnstile"])) already
-      // narrows `provider` to "hcaptcha" | "turnstile" | undefined before it ever reaches
-      // `resolveLocalConfigValues`, so an invalid provider value would fail schema
-      // decoding first, on a completely different code path. D's real TOML flow CAN reach
-      // this branch (an untyped raw string) — D's own suite
-      // (`db-config.toml-read.unit.test.ts`) covers that separately. This test's job is
-      // only to pin the shared function's own behavior directly.
+      // Unreachable through L's real flow: `@supabase/config`'s schema already narrows
+      // `provider` to "hcaptcha" | "turnstile" | undefined, so an invalid value fails schema
+      // decoding first. D's real TOML flow can reach this branch; its own suite covers that
+      // separately. This test pins the shared function's own behavior directly.
       expect(() =>
         validateResolvedConfig(
           minimalInput({

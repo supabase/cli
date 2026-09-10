@@ -1,35 +1,14 @@
 name: Verify Install Channels
 
-# Post-publish end-to-end verification that the *published* install channels
-# (Homebrew, Scoop, and the curl|bash install script) actually install the
-# just-released CLI and serve artifacts whose checksums match what the channel
-# manifests declare. Runs automatically after every brew/scoop publish (called
-# from release-shared.yml's `verify-install-channels` job) and can also be
-# dispatched manually against any already-published version when debugging an
-# install regression.
+# Post-publish verification that the published install channels (Homebrew, Scoop, curl|bash)
+# install the just-released CLI and serve artifacts matching the channel manifests' checksums.
+# Runs automatically after every brew/scoop publish, and can also be dispatched manually against
+# an already-published version.
 #
-# Exists primarily to catch regressions like CLI v2.107.0, where the Homebrew
-# formula and Scoop manifest shipped sha256 checksums that did not match the
-# tarballs on the GitHub Release, so `brew install` / `scoop install` failed
-# for every user with "Formula reports different checksum". brew, scoop, and
-# the install script all verify the declared checksum against the downloaded
-# bytes before installing, so a real install reproduces that failure exactly
-# instead of trusting the manifest the publish step wrote.
-#
-# Each leg goes beyond `supabase --version` (handled by the Bun wrapper without
-# touching the sidecar) and directly checks that the `supabase-go` sidecar
-# binary is present and executable in the channel's install directory, so a
-# package that omits or misplaces it fails here instead of silently shipping
-# a CLI whose still-Go-proxied commands (see docs/go-cli-porting-status.md)
-# would fail for every user.
-#
-# This used to run `supabase completion bash`, since that command was
-# Go-proxied. It no longer is (CLI-1965 ported shell completion to native
-# TypeScript, and the Go CLI's own completion command was subsequently
-# removed too), so that probe silently stopped testing the sidecar at all.
-# Checking for the sidecar file directly instead of routing through some
-# still-proxied command avoids repeating that mistake as more commands get
-# natively ported.
+# Performs a real install so a manifest/tarball checksum mismatch (as in CLI v2.107.0) reproduces
+# here instead of being trusted from the publish step. Each leg also directly checks that the
+# `supabase-go` sidecar binary is present and executable in the install directory, checking the
+# file rather than a CLI command, since a command could later be natively ported off the sidecar.
 
 on:
   workflow_call:
@@ -68,10 +47,8 @@ permissions:
 
 jobs:
   homebrew:
-    # macOS and Linux exercise different stanzas of the formula
-    # (`on_macos` vs `on_linux`), each with its own URL + sha256, so both must
-    # install for the tap to be considered verified. Homebrew is preinstalled
-    # on GitHub-hosted Ubuntu runners.
+    # macOS and Linux exercise different formula stanzas (`on_macos` vs `on_linux`), each with
+    # its own URL + sha256, so both must install for the tap to be considered verified.
     name: Homebrew ${{ inputs.brew_name }} (${{ matrix.runner }})
     strategy:
       fail-fast: false
@@ -84,14 +61,11 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
       BREW_NAME: ${{ inputs.brew_name }}
-      # Don't auto-update Homebrew itself before installing; `brew install
-      # <user>/<tap>/<formula>` taps supabase/homebrew-tap from its git HEAD
-      # regardless, so the freshly-pushed formula is picked up either way.
+      # Skips Homebrew's own auto-update; `brew install <user>/<tap>/<formula>` taps
+      # supabase/homebrew-tap from git HEAD regardless, so the fresh formula is picked up anyway.
       #
-      # NB: do NOT set HOMEBREW_NO_INSTALL_FROM_API here. It only affects the
-      # homebrew/core + cask taps (third-party taps are always read from git),
-      # and on Linux runners it forces a large, slow local checkout of
-      # homebrew/core that makes this job hang for 10+ minutes.
+      # Do not also set HOMEBREW_NO_INSTALL_FROM_API: it only affects homebrew/core + cask taps,
+      # and on Linux it forces a slow homebrew/core checkout that hangs this job for 10+ minutes.
       HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
       - name: Set up Homebrew on PATH
@@ -205,9 +179,8 @@ jobs:
           scoop bucket add supabase https://github.com/supabase/scoop-bucket
           scoop install "supabase/$env:SCOOP_NAME"
       - name: Verify supabase --version
-        # Force bash so ${VERSION} expands the same way it does on the other
-        # legs — windows-latest defaults to pwsh, which treats it as an empty
-        # PowerShell variable (env vars are `$env:VAR`).
+        # Force bash so ${VERSION} expands the same way as the other legs — windows-latest
+        # defaults to pwsh, which treats it as an empty PowerShell variable.
         shell: bash
         run: |
           set -euo pipefail

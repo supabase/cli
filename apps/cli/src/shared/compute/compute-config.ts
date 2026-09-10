@@ -31,12 +31,9 @@ export interface ComputeSection {
 }
 
 /**
- * The compute is already recorded in `config.toml`.
- *
- * `compute new` creates a compute; changing one that exists is a different
- * operation, and the file is the user's to edit. Refusing is also what keeps
- * writes here append-only — amending an entry in place is what required knowing
- * enough TOML to find and rewrite it safely.
+ * The compute is already recorded in `config.toml`. `compute new` creates a compute; changing
+ * one that exists is a different operation, and the file is the user's to edit. Refusing also
+ * keeps writes append-only, avoiding the need to find and rewrite an entry in place.
  */
 export class ComputeAlreadyConfiguredError extends Data.TaggedError(
   "ComputeAlreadyConfiguredError",
@@ -50,17 +47,11 @@ export class ComputeAlreadyConfiguredError extends Data.TaggedError(
 }
 
 /**
- * Appending the new table would leave `config.toml` unparseable.
- *
- * `appendTomlSection` renders one table and puts it at the end, which is only
- * valid when the existing file is valid TOML that does not already seal the
- * `compute` key. A config whose `[compute]` is an inline table (`compute = {}`)
- * is the case in point: TOML inline tables cannot be extended, so appending
- * `[compute.api]` produces a file nothing can read.
- *
- * Rather than enumerate the representations that break, the plan is parsed
- * before it is returned. Anything that does not round-trip is refused while the
- * refusal is still free — `new` calls this before it writes the scaffold.
+ * Appending the new table would leave `config.toml` unparseable — e.g. a `[compute]` that's
+ * already an inline table (`compute = {}`) can't be extended, so appending `[compute.api]`
+ * produces a file nothing can read. Rather than enumerate every representation that breaks,
+ * the plan is parsed before it's returned and anything that doesn't round-trip is refused,
+ * before `new` writes the scaffold.
  */
 export class ComputeConfigWriteUnsafeError extends Data.TaggedError(
   "ComputeConfigWriteUnsafeError",
@@ -77,18 +68,12 @@ const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
 /**
- * As {@link stringOrUndefined}, but an explicitly empty string survives.
- *
- * For `exposure`, "recorded but unusable" must not read as "not recorded".
- * Absent means the `public` default, so folding `exposure = ""` into `undefined`
- * hands a config that plainly tried to say something to the most open setting
- * there is — the exact silent-widening `push`'s `resolveExposure` exists to
- * refuse. Kept verbatim so it reaches that check like any other value the CLI
- * does not recognize.
- *
- * `runtime`, `size` and `source` keep the collapsing reader: their fallbacks are
- * a marker-file guess, a default size and the conventional directory, none of
- * which widens anything.
+ * As {@link stringOrUndefined}, but an explicitly empty string survives. For `exposure`,
+ * "recorded but unusable" must not read as "not recorded": absent means the `public` default,
+ * so folding `exposure = ""` into `undefined` would silently widen a config that plainly
+ * tried to say something to the most open setting there is. `runtime`, `size`, and `source`
+ * keep the collapsing reader, since their fallbacks (a marker-file guess, a default size, the
+ * conventional directory) don't widen anything.
  */
 const recordedStringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" ? value : undefined;
@@ -128,9 +113,8 @@ export function readComputeSection(compute: unknown): ComputeSection {
     entries[key] = {
       runtime: stringOrUndefined(value["runtime"]),
       size: stringOrUndefined(value["size"]),
-      // Left as whatever string was written, empty included: `push` is what
-      // names the accepted values, and dropping an unrecognized one here would
-      // silently deploy a compute at the default exposure instead.
+      // Left as written, empty included: `push` names the accepted values, and dropping an
+      // unrecognized one here would silently deploy at the default exposure instead.
       exposure: recordedStringOrUndefined(value["exposure"]),
       instances: instanceCountOrUndefined(value["instances"]),
       source: stringOrUndefined(value["source"]),
@@ -147,11 +131,10 @@ export interface ComputeEntryWrite {
 }
 
 /**
- * Render `config.toml` with `[compute.<name>]` appended, without writing it.
- *
- * Split from the write so callers can find out an entry already exists before
- * they scaffold anything: `new` writes the starter files first, and a failure
- * after that would leave a directory nothing records.
+ * Renders `config.toml` with `[compute.<name>]` appended, without writing it. Split from the
+ * write so callers can find out an entry already exists before they scaffold anything: `new`
+ * writes the starter files first, and a failure after that would leave a directory nothing
+ * records.
  */
 export const planComputeEntry = Effect.fnUntraced(function* (options: {
   readonly configPath: string;
@@ -163,9 +146,8 @@ export const planComputeEntry = Effect.fnUntraced(function* (options: {
 }) {
   const fs = yield* FileSystem.FileSystem;
 
-  // Append-only, so an entry that is already there cannot be amended. The
-  // decoded config is the authority on whether one exists — a question the
-  // parser has answered, and one no amount of regex over the file text answers
+  // Append-only, so an entry that already exists cannot be amended. The decoded config is
+  // the authority on whether one exists — regex over the file text can't answer that
   // reliably for a dotted or inline entry.
   if (options.existingCompute[options.name] !== undefined) {
     return yield* new ComputeAlreadyConfiguredError({
@@ -174,10 +156,9 @@ export const planComputeEntry = Effect.fnUntraced(function* (options: {
     });
   }
 
-  // Before rendering, because the re-parse below cannot catch this. A number
-  // like `1.5` or `-1` renders as valid TOML that only the *schema* rejects, so
-  // it would sail through a syntax check and land in the user's config as a
-  // `[compute]` section the loader then refuses.
+  // Before rendering, since the re-parse below is a syntax check only: `1.5` or `-1` render
+  // as valid TOML that only the schema rejects, so they'd sail through and land in the
+  // user's config as a `[compute]` section the loader then refuses.
   const unrenderable = Object.entries(options.patch).find(
     ([, value]) => typeof value === "number" && !isRenderableTomlNumber(value),
   );
@@ -193,9 +174,9 @@ export const planComputeEntry = Effect.fnUntraced(function* (options: {
   const header = `compute.${tomlKey(options.name)}`;
   const next = appendTomlSection(text, header, options.patch);
 
-  // The rendered file has to parse, and the new table has to be readable back
-  // out of it. Appending text is a syntactic operation on a file this code did
-  // not write, so the only honest check is to read the result.
+  // The rendered file has to parse and the new table has to be readable back out of it —
+  // appending is a syntactic operation on a file this code didn't write, so reading the
+  // result back is the only honest check.
   const parsed = yield* Effect.try({
     try: () => SmolToml.parse(next),
     catch: (cause) =>

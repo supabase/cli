@@ -21,16 +21,12 @@ export class ComputeArchiveCompressionError extends Data.TaggedError(
 }
 
 /**
- * Package a compute's source directory into the `.tar.gz` build context the
- * Compute API's upload slot expects.
- *
- * Nothing is excluded. For a `dockerfile` compute the archive is the build
- * context, so it has to be what the user's own `Dockerfile` expects to find;
- * for a catalog runtime the server synthesizes `FROM <base>` + `COPY` with no
- * install step of its own, so an installed `node_modules/` is a dependency of
- * the deploy rather than noise in it. The packaged size is reported back so a
- * directory that has grown past what anyone meant to upload is visible before
- * the upload rather than after it.
+ * Packages a compute's source directory into the `.tar.gz` build context the Compute API's
+ * upload slot expects. Nothing is excluded: for a `dockerfile` compute the archive is the
+ * build context the user's own `Dockerfile` expects, and for a catalog runtime the server
+ * synthesizes `FROM <base>` + `COPY` with no install step, so `node_modules/` is a deploy
+ * dependency rather than noise. Packaged size is reported back so growth is visible before
+ * the upload rather than after.
  */
 
 interface PackagedCompute {
@@ -39,13 +35,11 @@ interface PackagedCompute {
 }
 
 /**
- * Where a symlink points, relative to the packaged tree — or `undefined` when it
- * points outside it.
- *
- * A link is stored rather than followed, so the target has to be packaged too
- * for the link to mean anything on the other end. Targets are also rewritten
- * relative to the link's own directory: an absolute one is a path on this
- * machine and would not resolve anywhere else.
+ * Where a symlink points, relative to the packaged tree, or `undefined` when it points
+ * outside it. A link is stored rather than followed, so the target has to be packaged too for
+ * the link to mean anything on the other end. Targets are rewritten relative to the link's
+ * own directory, since an absolute one is a path on this machine that wouldn't resolve
+ * anywhere else.
  */
 function confinedLinkTarget(input: {
   readonly path: Path.Path;
@@ -64,13 +58,11 @@ function confinedLinkTarget(input: {
 }
 
 /**
- * Seconds since the epoch, as a USTAR octal field can hold them.
- *
- * A filesystem timestamp is not always a sane one. A pre-1970 mtime is negative
- * — a botched `touch` and some archive extractors both produce them — and a
- * corrupt one decodes to an `Invalid Date` whose `getTime()` is `NaN`. Neither
- * is representable, and neither is worth failing a deploy over, so both collapse
- * to the epoch rather than reaching `writeOctal`'s range check.
+ * Seconds since the epoch, as a USTAR octal field can hold them. A filesystem timestamp
+ * isn't always a sane one: a pre-1970 mtime is negative (a botched `touch` or some archive
+ * extractors produce them), and a corrupt one decodes to an `Invalid Date` with `NaN`. Neither
+ * is worth failing a deploy over, so both collapse to the epoch instead of reaching
+ * `writeOctal`'s range check.
  */
 function tarMtime(modified: Option.Option<Date>): number {
   if (Option.isNone(modified)) {
@@ -81,12 +73,10 @@ function tarMtime(modified: Option.Option<Date>): number {
 }
 
 /**
- * Every entry under `root`, as tar entries.
- *
- * Filesystem errors propagate rather than being skipped: an entry missing from
- * the archive means deploying an application with a hole in it, reported as a
- * success. A directory the walk cannot read, a file it cannot open and an entry
- * that vanishes mid-walk are all that case.
+ * Every entry under `root`, as tar entries. Filesystem errors propagate rather than being
+ * skipped: an entry missing from the archive means deploying an application with a hole in
+ * it, reported as a success — an unreadable directory, an unopenable file, or an entry that
+ * vanishes mid-walk are all that case.
  */
 const collectEntries = (
   path: Path.Path,
@@ -108,12 +98,10 @@ const collectEntries = (
       const relativePath = relativeDir === "" ? name : `${relativeDir}/${name}`;
       const absolutePath = path.join(root, relativePath);
 
-      // `readLink` succeeds only for symlinks, so it stands in for the `lstat`
-      // this FileSystem service does not expose (the same probe
-      // `sql-files-glob.ts` uses). Storing the link rather than following
-      // it is what keeps a pnpm-installed `node_modules` from being inlined file
-      // by file, keeps a broken link from vanishing, and stops a link pointing at
-      // an ancestor from being walked into.
+      // `readLink` succeeds only for symlinks, standing in for the `lstat` this FileSystem
+      // service doesn't expose. Storing the link rather than following it keeps a
+      // pnpm-installed `node_modules` from being inlined file by file, keeps a broken link
+      // from vanishing, and stops a link pointing at an ancestor from being walked into.
       const linkTarget = yield* fs.readLink(absolutePath).pipe(Effect.option);
       if (Option.isSome(linkTarget)) {
         const confined = confinedLinkTarget({
@@ -155,10 +143,9 @@ const collectEntries = (
       }
 
       const contents = yield* fs.readFile(absolutePath);
-      // The executable bit is the only permission that changes what the image
-      // does; everything else is normalized so the same tree packages
-      // identically on every machine. `mode` is a plain number here, unlike the
-      // `Option`-wrapped `mtime` above.
+      // The executable bit is the only permission that changes what the image does;
+      // everything else is normalized so the same tree packages identically on every
+      // machine. `mode` is a plain number here, unlike the `Option`-wrapped `mtime` above.
       const executable = (info.mode & 0o111) !== 0;
       entries.push({
         path: relativePath,

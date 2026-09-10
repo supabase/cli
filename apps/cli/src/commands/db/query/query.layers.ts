@@ -14,17 +14,10 @@ import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 /**
  * Runtime layer for `supabase db query`.
  *
- * The `--local` / `--db-url` paths go through `DbConfigResolver` +
- * `DbConnection` (auth-free). The `--linked` path POSTs to the Management
- * API over raw HTTP, so it needs `CommandCredentials` / `HttpClient` /
- * `ProjectRefResolver` / `CommandSettings` (plus `TelemetryState` /
- * `CommandRuntime` / `LinkedProjectCache`) — supplied by
- * `linkedDbResolverRuntimeLayer`. That runtime exposes the access token
- * **lazily** via `CommandPlatformApiFactory` rather than the eager `CommandPlatformApi`
- * stack, so building the runtime resolves no token: `db query --local` /
- * `--db-url` run without a login (the handler's `--linked` branch checks
- * `getAccessToken` itself), matching the token requirement only kicking in
- * on the `--linked` path.
+ * The `--local`/`--db-url` paths go through `DbConfigResolver` + `DbConnection` (auth-free). The
+ * `--linked` path POSTs to the Management API, supplied by `linkedDbResolverRuntimeLayer`, which
+ * exposes the access token lazily so building the runtime resolves no token — `--local`/`--db-url`
+ * run without a login, since only the handler's `--linked` branch checks `getAccessToken`.
  */
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 
@@ -32,10 +25,8 @@ const dbConfig = dbConfigLayer.pipe(
   Layer.provide(cliSettings),
   Layer.provide(dbConnectionLayer),
   Layer.provide(debugLoggerLayer),
-  // The linked db-config resolver + the linked-resolver runtime both snapshot
-  // the single `IdentityStitch`; provide the SAME layer reference to
-  // each so Effect memoises one shared instance. Without it the bundled
-  // binary panics with a missing-service error (CLAUDE.md invariant 5).
+  // The linked db-config resolver and the linked-resolver runtime both need the same
+  // `IdentityStitch` instance; provide the same layer reference to each so Effect memoizes it.
   Layer.provide(identityStitchLayer),
 );
 

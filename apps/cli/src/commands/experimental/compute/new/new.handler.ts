@@ -68,18 +68,11 @@ function defaultFirst<T>(values: ReadonlyArray<T>, defaultValue: T): Array<T> {
 }
 
 /**
- * Whether this run has a terminal to ask on.
- *
- * `-o json|yaml|toml|env` leaves `output.format` as `text`, and the prompts go
- * through Clack, which writes its terminal UI to stdout with no stream
- * override — so a machine format is as non-interactive as a redirected stdout,
- * whichever flag asked for it.
- *
- * `output.interactive` only tracks *stdout*, so on its own it still let
- * `printf 'api\n' | supabase compute new` feed the pipe straight
- * into the name prompt instead of taking the documented non-interactive path. A
- * prompt is only answerable from a keyboard, so stdin has to be a terminal too
- * — the same pair `compute delete` guards its confirmation with.
+ * Whether this run has a terminal to ask on. `-o json|yaml|toml|env` leaves
+ * `output.format` as `text` but still writes Clack's UI to stdout, so it's as
+ * non-interactive as a redirected stdout. `output.interactive` only tracks
+ * stdout, so piped stdin also needs `tty.stdinIsTty` — a prompt is only
+ * answerable from a keyboard.
  */
 const canPromptFor = Effect.fnUntraced(function* (machineOutput: boolean) {
   const output = yield* Output;
@@ -90,12 +83,9 @@ const canPromptFor = Effect.fnUntraced(function* (machineOutput: boolean) {
 /**
  * The compute name, asked for when the command line did not carry one.
  *
- * The name is the one input here that cannot be defaulted — it is the
- * directory, the `config.toml` key and the hostname — so a bare
- * `supabase compute new` asks rather than failing the parse. The
- * prompt validates against everything the command would otherwise refuse a
- * moment later, so a mistyped or already-recorded name is corrected in place
- * instead of ending the run.
+ * The name can't be defaulted — it's the directory, the config key, and the
+ * hostname — so a bare invocation asks rather than failing the parse. The
+ * prompt validates the same rules the command would otherwise enforce later.
  */
 const resolveName = Effect.fnUntraced(function* (options: {
   readonly explicit: Option.Option<string>;
@@ -180,11 +170,10 @@ const resolveSize = Effect.fnUntraced(function* (options: {
 });
 
 /**
- * Recorded on every scaffold, not just when it is asked for: `push` sends a
- * complete spec each time, so a compute whose `exposure` is absent from
- * `config.toml` is deployed public by the next bare `push`. Writing the value
- * down — default included, the way `runtime` and `size` are — is what makes
- * `--exposure private` stick past the deploy that chose it.
+ * Recorded on every scaffold, not just when asked for: `push` sends a
+ * complete spec each time, so an absent `exposure` in `config.toml` deploys
+ * public on the next bare `push`. Writing the value down, default included,
+ * is what makes `--exposure private` stick.
  */
 const resolveExposure = Effect.fnUntraced(function* (options: {
   readonly explicit: Option.Option<ComputeExposure>;
@@ -214,14 +203,10 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
 /**
  * The instance count to record, and whether to record it at all.
  *
- * Not prompted for, unlike the other dials: how many instances a compute needs is
- * an operational answer nobody has while scaffolding it, so the flag records
- * one when it is given and the file stays quiet when it is not.
- *
- * `undefined` — meaning "write no key" — for the default count, because an
- * absent `instances` and `instances = 1` mean the same thing to `push`, and a
- * scaffold should not commit a line that says nothing. A `0` is not that: it
- * scales the compute to nothing, so it is written like any other explicit count.
+ * Not prompted for, unlike the other dials — nobody knows the right instance
+ * count while scaffolding. `undefined` (write no key) for the default, since
+ * an absent `instances` and `instances = 1` mean the same thing to `push`; a
+ * `0` is a real choice (scale to nothing), so it's always written.
  */
 function recordedInstances(explicit: Option.Option<number>): number | undefined {
   const instances = Option.getOrUndefined(explicit);
@@ -282,21 +267,18 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       });
     }
 
-    // Resolved before anything is written, so cancelling any prompt leaves
-    // nothing behind — the name included. With nowhere to ask, the defaults
-    // stand; only the name has nothing to fall back to.
+    // Resolved before anything is written, so cancelling any prompt leaves nothing
+    // behind. With nowhere to ask, the defaults stand — only the name has no fallback.
     const runtime = yield* resolveRuntime({ explicit: flags.runtime, canPrompt });
     const size = yield* resolveSize({ explicit: flags.size, canPrompt });
     const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
     const instances = recordedInstances(flags.instances);
 
-    // Validated before anything is written: this is the directory the starter
-    // files land in, so a value naming the project root, `supabase/`, or
-    // anywhere outside the project must never get as far as the write below.
-    //
-    // `--source` resolves against the directory the user typed it in, the way a
-    // shell would read it: `--source generated` from `apps/web` means
-    // `apps/web/generated`.
+    // Validated before anything is written: this is the directory the starter files
+    // land in, so a value naming the project root, `supabase/`, or anywhere outside
+    // the project must never reach the write below. `--source` resolves against the
+    // directory the user typed it in, the way a shell would: `--source generated`
+    // from `apps/web` means `apps/web/generated`.
     const destination = Option.isSome(flags.source)
       ? yield* resolveComputeSource({
           projectRoot: project.projectRoot,
@@ -308,20 +290,17 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
           target: path.join(project.computeDir, name),
           subject: `The default directory for "${name}"`,
           // The default directory is `supabase/compute/<name>` with a validated
-          // name, so it cannot be the project root, `supabase/`, or a directory
-          // the CLI owns. A symlink escaping the project is the only way it
-          // reaches this failure, so that is what the suggestion names.
+          // name, so only a symlink escaping the project can reach this
+          // failure — which is what the suggestion names.
           suggestion:
             "supabase/compute, or a directory above it, is a symlink leading outside the project. Replace it with a real directory, or pass --source to scaffold somewhere else inside the project.",
         });
 
-    // Nothing here replaces what is already on disk. Scaffolding over an
-    // existing directory would have to delete it first, and a command whose job
-    // is to create a compute has no business removing whatever happens to share
-    // its name — so it says what is in the way and leaves the choice to the user.
+    // Nothing here replaces what is already on disk: scaffolding over an existing
+    // directory would have to delete it first, which isn't this command's job — it
+    // names what's in the way and leaves the choice to the user.
     if (!(yield* destinationIsFree(destination))) {
-      // Absolute when `--workdir`/`SUPABASE_WORKDIR` was set explicitly — same
-      // rule as the success message below — since a project-root-relative
+      // Absolute when `--workdir` was set explicitly, since a project-root-relative
       // path would be misleading once `--workdir` differs from cwd.
       const shown = cliSettings.explicitWorkdir
         ? destination
@@ -332,15 +311,14 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       });
     }
 
-    // Recorded as forward slashes whatever platform wrote it. `config.toml` is
-    // committed and shared, and `path.relative` yields `packages\api` on
-    // Windows — a backslash the POSIX resolvers on every other machine read as
-    // a literal character in a filename rather than a separator.
+    // Recorded as forward slashes whatever platform wrote it: `config.toml` is
+    // shared, and `path.relative` yields backslashes on Windows that POSIX
+    // resolvers elsewhere would read as a literal filename character.
     const source = Option.isSome(flags.source)
       ? path.relative(project.projectRoot, destination).split(path.sep).join("/")
       : undefined;
 
-    // Planned before anything is written. Every way this can fail is knowable
+    // Planned before anything is written: every way this can fail is knowable
     // from the current config.toml, so finding out afterwards would leave a
     // scaffold on disk that nothing records.
     const configWrite = yield* planComputeEntry({
@@ -366,12 +344,10 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
 
     yield* commitComputeEntry(configWrite);
 
-    // Relative to the project root when the workdir was defaulted — the
-    // common case, where it also reads as relative to the terminal the
-    // command was run from. An explicit `--workdir` breaks that: the project
-    // root can be nowhere near the actual cwd, so a relative path here would
-    // point somewhere the user never typed. The absolute path is unambiguous
-    // either way.
+    // Relative to the project root when the workdir was defaulted, since it also
+    // reads as relative to the terminal the command ran from. An explicit
+    // `--workdir` breaks that — the project root can be nowhere near the actual
+    // cwd — so the absolute path is used instead.
     const sourceDisplay = cliSettings.explicitWorkdir
       ? destination
       : displayPath(path, project.projectRoot, destination);

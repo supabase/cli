@@ -1,21 +1,9 @@
 /**
- * A minimal USTAR writer, for the `.tar.gz` build context `supabase compute
- * push` uploads.
- *
- * Shelling out to `tar` would be shorter, but the CLI ships as a single
- * compiled binary to machines where `tar` may be BSD tar, GNU tar, or absent
- * (Windows), and each writes a different archive for the same directory. The
- * server only ever untars what we send, so producing the bytes here keeps the
- * upload identical on every platform and keeps packaging out of the process
- * table.
- *
- * `Bun.Archive` — which this repo already uses to build the pgdata baseline
- * marker, `pgDataBaselineMarkerTar` — is not the same tool. It builds
- * from path-to-contents pairs and exposes no per-entry metadata: every entry
- * comes out as a regular file with mode `0644` and the current wall-clock time,
- * so a symlink cannot be stored at all, an executable loses its bit, and the
- * same tree packages to different bytes on every run. A single-file marker
- * needs none of that; a build context needs all of it.
+ * A minimal USTAR writer for the `.tar.gz` build context `supabase compute push`
+ * uploads, needed because shelling out to `tar` isn't portable (BSD tar, GNU tar, and no tar
+ * at all on Windows produce different bytes for the same directory) and `Bun.Archive` builds
+ * from path-to-contents pairs with no per-entry metadata, so symlinks and the executable bit
+ * would be lost.
  */
 
 import { Data, Effect } from "effect";
@@ -51,19 +39,11 @@ export interface TarEntry {
 const MAX_OCTAL_FIELD = 8 ** 11 - 1;
 
 /**
- * USTAR stores numbers as zero-padded octal followed by a NUL.
- *
- * A value too large for the field renders one digit too long and spills into the
- * next field, producing an archive that reads back with a plausible but wrong
- * size — corruption no reader can detect. Real tars switch to base-256 here;
- * this writer refuses instead, because a build context carrying an 8 GiB file is
- * already a mistake worth naming rather than silently mangling.
- *
- * The range is checked, not just the rendered width, because the width check
- * alone does not catch a value that is not a whole non-negative number:
- * `(-1).toString(8)` is `"-1"` and `NaN.toString(8)` is `"NaN"`, both of which
- * pad to exactly `length - 1` characters and slip through while writing a field
- * no tar can parse.
+ * USTAR stores numbers as zero-padded octal followed by a NUL. A value too large for the
+ * field spills a digit into the next one — corruption no reader can detect — so this refuses
+ * rather than switching to base-256 like real tars do. The range is checked, not just the
+ * width, because `(-1)` and `NaN` both render to exactly `length - 1` characters and would
+ * otherwise slip through.
  */
 const writeOctal = Effect.fnUntraced(function* (
   block: Uint8Array,
@@ -112,9 +92,7 @@ function byteLength(value: string): number {
   return encoder.encode(value).length;
 }
 
-/**
- * A path USTAR cannot represent.
- */
+/** A path USTAR cannot represent; typed so push renders an actionable failure. */
 export class TarPathTooLongError extends Data.TaggedError("TarPathTooLongError")<{
   readonly path: string;
 }> {

@@ -8,11 +8,9 @@ import { formatBytes, packageComputeDirectory } from "./compute-package.ts";
 import { TarFieldOutOfRangeError, TarPathTooLongError } from "./tar.ts";
 
 /**
- * Whether the current user can still read `path` after it was chmod-ed shut.
- *
- * Root ignores the permission bits, and CI sometimes runs as root, so the
- * permission-denied tests below assert the opposite outcome instead of skipping
- * — either way the behaviour under test is pinned.
+ * Whether the current user can still read `path` after it was chmod-ed shut. Root ignores
+ * permission bits, and CI sometimes runs as root, so the permission-denied tests below assert
+ * the opposite outcome instead of skipping — either way the behavior under test is pinned.
  */
 /** Entry paths, USTAR typeflags and mtimes, read back out of the archive. */
 function readEntries(

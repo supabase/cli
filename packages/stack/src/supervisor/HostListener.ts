@@ -247,10 +247,9 @@ const bind = <T extends HttpServer | NetServer>(
     return Effect.sync(() => {
       if (settled) return;
       settled = true;
-      // `listen` may still be completing when the waiting fiber is interrupted. Keep a temporary
-      // error sink while asking Node to close the exact server so a late bind failure cannot become
-      // an uncaught process error. `close` throws synchronously when no handle exists; in that case
-      // the server has no owned resources left to release.
+      // `listen` may still be completing when the fiber is interrupted. Close the server with a
+      // temporary error sink so a late bind failure can't become an uncaught process error;
+      // `close` throws synchronously if no handle exists, meaning there's nothing left to release.
       teardown();
     });
   });
@@ -362,7 +361,7 @@ const isIpv6 = (address: string): boolean => isIP(address) === 6;
 export const hostListenerCoversAddress = (listener: HostListener, address: string): boolean => {
   if (listener.address === address) return true;
   if (listener.address === "0.0.0.0" && isIpv4(address)) return true;
-  // IPv6 wildcard listeners are explicitly dual-stack in bind().
+  // IPv6 wildcard listeners are dual-stack in bind().
   if (listener.address === "::" && (isIpv6(address) || isIpv4(address))) return true;
   return false;
 };

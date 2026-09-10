@@ -18,16 +18,11 @@ import {
 } from "./compute.errors.ts";
 
 /**
- * The seam every compute command talks to: `/v2/projects/{ref}/workers` on the
- * Management API.
- *
- * The routes are deliberately few — list, get, mint an upload slot, deploy,
- * delete — so this module is thin, and what it mostly adds is status handling.
- * A 404 is overloaded on these routes: it is the answer for a project outside
- * the alpha's allow-list, for a project ref that names nothing, and for a
- * compute that is not deployed. A 404 on a named compute is reported by the
- * caller as "not deployed"; one on a collection endpoint, where no compute name
- * could have been wrong, is split by its body — see {@link projectScoped404}.
+ * The seam every compute command talks to: `/v2/projects/{ref}/workers` on the Management API. A
+ * 404 here is overloaded — a project outside the alpha's allow-list, an unknown project ref, and
+ * an undeployed compute all answer the same way. A named-compute 404 is reported as "not deployed";
+ * a collection-endpoint 404, where no compute name could be wrong, is split by its body instead —
+ * see {@link projectScoped404}.
  */
 
 /** The compute shape the API returns, flattened out of its JSON:API envelope. */
@@ -89,9 +84,8 @@ const computeSuggestion =
   "Compute is in private alpha. Ask in the Supabase dashboard to have this project enrolled.";
 
 /**
- * The `error.code` a 404 carries, which is the only thing separating a project
- * outside the alpha's allow-list from one that does not exist. Both answer 404
- * on the same routes; the bodies differ:
+ * The `error.code` a 404 carries — the only way to tell an unenrolled project from one that
+ * doesn't exist, since both answer 404 on the same routes:
  *
  * - not enrolled -> `{"error":{"code":"generic_not_found","message":"Workers are not available for this project"}}`
  * - no such project -> `{"error":{"code":"not_found","message":"Not Found"}}`
@@ -101,12 +95,9 @@ const NotFoundBody = Schema.Struct({
 });
 
 /**
- * Which of the two a project-scoped 404 was.
- *
- * Only `not_found` is read as a missing project — an unrecognized body keeps
- * the enrolment answer, because that is what the alpha's allow-list has
- * historically returned and guessing the other way would send someone to check
- * a ref that is fine.
+ * Which of the two a project-scoped 404 was. Only `not_found` is read as a missing project — an
+ * unrecognized body defaults to the enrolment answer, since guessing the other way would send
+ * someone to check a ref that's actually fine.
  */
 const projectScoped404 = Effect.fnUntraced(function* (options: {
   readonly projectRef: string;
@@ -224,14 +215,9 @@ export const createComputeUpload = Effect.fnUntraced(function* (
 });
 
 /**
- * PUT the archive straight at the presigned slot. The bytes never pass through
- * the Management API, so this goes out with no Supabase credentials attached —
- * the signature in the URL is the authorization.
- *
- * That signature is why `httpClientLayer` redacts query strings before
- * logging them — under `--debug` this URL is a write-capable credential. Done
- * there rather than here, so the client stays injectable and every presigned URL
- * is covered rather than this one call site.
+ * PUTs the archive straight at the presigned slot, with no Supabase credentials attached — the
+ * signature in the URL is the authorization. That's also why `httpClientLayer` redacts query
+ * strings before logging: under `--debug` this URL is a write-capable credential.
  */
 export const uploadBuildContext = Effect.fnUntraced(function* (
   slot: ComputeUploadSlot,
@@ -239,9 +225,8 @@ export const uploadBuildContext = Effect.fnUntraced(function* (
 ) {
   const client = yield* HttpClient.HttpClient;
 
-  // The slot names its own method; the API documents `PUT` and nothing else is
-  // meaningful for a presigned object-store destination, so anything unexpected
-  // falls back to it rather than assembling a request we cannot build.
+  // The slot names its own method; anything other than `POST` falls back to `PUT`, the only
+  // method documented for a presigned object-store destination.
   const request = (
     slot.method.toUpperCase() === "POST"
       ? HttpClientRequest.post(slot.url)
@@ -343,25 +328,18 @@ export const deleteCompute = Effect.fnUntraced(function* (
 });
 
 /**
- * The build runs asynchronously — deploy answers 202 and the compute reaches
- * `active` or `failed` later — so `push` polls `get` until `build_state` leaves
- * `building`.
- *
- * The schedule is a parameter so tests can drive the same loop without waiting
- * on wall-clock delays.
+ * The build runs asynchronously — deploy answers 202 and the compute reaches `active` or `failed`
+ * later — so `push` polls `get` until `build_state` leaves `building`. Overridable so tests can
+ * drive the loop without waiting on wall-clock delays.
  */
 const COMPUTE_BUILD_POLL_SCHEDULE = Schedule.spaced("2 seconds").pipe(
   Schedule.upTo({ duration: "10 minutes" }),
 );
 
 /**
- * How long one poll read is allowed to keep failing before the deploy is called
- * off.
- *
- * Bounded by elapsed time, not attempts: unspaced attempts are exhausted by a
- * two-second blip, abandoning a build the server is still running. Half a minute
- * of spaced retries rides that out, and anything still failing after it is the
- * real error.
+ * How long one poll read may keep failing before the deploy is called off. Bounded by elapsed
+ * time rather than attempts, so a brief network blip can't exhaust the retries and abandon a
+ * build the server is still running.
  */
 const COMPUTE_POLL_READ_RETRY = Schedule.spaced("2 seconds").pipe(
   Schedule.upTo({ duration: "30 seconds" }),
@@ -373,19 +351,14 @@ export const awaitComputeBuild = Effect.fnUntraced(function* (
   name: string,
   options: {
     readonly schedule?: Schedule.Schedule<unknown>;
-    /**
-     * Retry schedule for one poll read. A parameter for the same reason
-     * `schedule` is: it is spaced in seconds, and a test exercising the
-     * transient-failure path should not wait on a real clock to do it.
-     */
+    /** Retry schedule for one poll read; overridable so a test can exercise the transient-failure path without a real clock. */
     readonly retrySchedule?: Schedule.Schedule<unknown>;
     /** Called with each poll's result, for progress reporting. */
     readonly onPoll?: (compute: ComputeRecord) => Effect.Effect<void>;
     /**
-     * ` --project-ref <ref>` to append to the suggestion below, when the caller
-     * reached this project through the flag rather than the link. The suggestion
-     * is copy-pasted verbatim, so dropping it re-resolves against whatever this
-     * checkout happens to be linked to.
+     * ` --project-ref <ref>` to append to the suggestion below, when the caller reached this
+     * project via the flag rather than a link. The suggestion is copied verbatim, so omitting it
+     * would re-resolve against whatever this checkout happens to be linked to.
      */
     readonly refSuffix?: string;
   } = {},

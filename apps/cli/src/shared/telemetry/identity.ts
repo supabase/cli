@@ -81,9 +81,9 @@ export function makeTelemetryIdentity(persisted: string | undefined): TelemetryI
 }
 
 /**
- * Logout-only: forget the user AND rotate the device id, severing the link
- * between this device and the logged-out user's person graph. A later login
- * as a different account then aliases a fresh device.
+ * Logout-only: forgets the user and rotates the device id, severing the link between this
+ * device and the logged-out user's person graph. A later login as a different account then
+ * aliases a fresh device.
  */
 export const resetIdentity = Effect.fnUntraced(function* (configDir: string) {
   const identity = yield* resolveIdentity(configDir);

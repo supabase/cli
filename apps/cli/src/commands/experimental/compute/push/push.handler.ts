@@ -63,27 +63,11 @@ import {
 import type { ComputePushFlags } from "./push.command.ts";
 
 /**
- * `supabase compute push [name...]` — build (when there is code to build) and
- * deploy the compute into the linked project. Registered under `deploy` as an
- * alias, for anyone reaching for the `supabase functions` verb out of habit.
- *
- * The runtime, size, exposure and source directory come from `[compute.<name>]`
- * in `supabase/config.toml`. A directory pushed without ever running `new` gets
- * its runtime guessed from marker files instead — reported, with a nudge to pin
- * it down rather than re-guess on every push.
- *
- * A `dockerfile` compute is tarred and uploaded, and the build happens
- * server-side from that context, never on your machine. A catalog runtime with
- * code takes the same path, with the base image and a copy synthesized in place
- * of your Dockerfile. Every runtime this CLI offers has code to package, so
- * there is no path here that skips the upload.
- *
- * The command waits for that server-side build by default, so a plain push
- * reports the build's verdict rather than only that the deploy was accepted.
- * The build routinely runs for minutes, though, which makes every successful
- * deploy as slow as the slowest one — so `--no-wait` returns as soon as the
- * platform accepts the deploy, for an inner-loop redeploy or a CI step that
- * only needs the spec on file.
+ * `supabase compute push [name...]` — deploys the named compute
+ * (or every compute, if none are named), reading runtime, size, exposure, and
+ * source from `[compute.<name>]`; an unrecorded runtime is guessed and
+ * reported. Builds run server-side from an uploaded context and are waited on
+ * by default; `--no-wait` returns once the deploy is accepted.
  */
 
 const resolveRuntime = Effect.fnUntraced(function* (options: {
@@ -133,11 +117,8 @@ const resolveSize = Effect.fnUntraced(function* (options: {
 
 /**
  * `--instances` for one deploy, then the recorded count, then
- * {@link DEFAULT_COMPUTE_INSTANCES}. Never left unset, because every deploy sends
- * a complete spec and an omitted count rescales the compute.
- *
- * No unparseable case to report: the config schema and the flag are both bounded
- * to a non-negative integer before the handler runs.
+ * {@link DEFAULT_COMPUTE_INSTANCES}. Never left unset, since every deploy sends
+ * a complete spec and an omitted count would rescale the compute.
  */
 function resolveInstances(options: {
   readonly recorded: number | undefined;
@@ -148,20 +129,11 @@ function resolveInstances(options: {
 
 /**
  * `--exposure` for one deploy, then the recorded exposure, then
- * {@link DEFAULT_COMPUTE_EXPOSURE}. Never left unset, because every deploy sends a
- * complete spec and an omitted exposure would re-expose a compute somebody had
- * deliberately made private.
- *
- * `--exposure` is a `Flag.choice`, so only a recorded value can be unrecognized
- * — and that is refused rather than coerced, the same way `resolveSize` treats a
- * size it does not know: silently deploying a `private`-typo'd compute as public
- * is the one outcome nobody asked for.
- *
- * The flag decides one deploy and nothing writes it down, so an override the
- * config does not already agree with is reported the way `resolveRuntime`
- * reports a guess: on stderr, naming the line to set. Without it, taking a
- * compute off the internet with `--exposure private` lasts exactly until the next
- * bare `push` puts it back.
+ * {@link DEFAULT_COMPUTE_EXPOSURE}. Never left unset, since an omitted exposure
+ * would re-expose a compute made private. An unrecognized recorded value is
+ * refused rather than coerced, and a diverging override is reported on
+ * stderr, since it applies to this deploy only and the next bare `push` would
+ * otherwise revert it.
  */
 const resolveExposure = Effect.fnUntraced(function* (options: {
   readonly name: string;
@@ -171,9 +143,7 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
 }) {
   if (Option.isSome(options.override)) {
     const chosen = options.override.value;
-    // What a later bare `push` would resolve to: the recorded value if the CLI
-    // knows it, the default if there is none, and `undefined` for one it cannot
-    // read — which is not `chosen` either, so that case is nudged too.
+    // What a later bare `push` would resolve to, so a diverging override can be flagged.
     const withoutTheFlag =
       options.recorded === undefined
         ? DEFAULT_COMPUTE_EXPOSURE
@@ -216,12 +186,9 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
 /**
  * What to do about a compute whose source directory is not there at all.
  *
- * `supabase compute new` is only an answer for a name the config has never
- * heard of — `new` refuses any name already under `[compute.<name>]`, so
- * offering it to a configured compute would answer with a second error. A
- * configured compute is missing a directory, not a config entry, and when the
- * entry pins an explicit `source` the path itself is as likely to be the
- * mistake as the absent directory.
+ * `compute new` refuses any name already configured, so it isn't an answer
+ * here — the compute's directory is missing, not its config entry. When the
+ * entry pins an explicit `source`, the path itself may be the mistake.
  */
 function missingSourceSuggestion(input: {
   readonly name: string;
@@ -241,12 +208,9 @@ function missingSourceSuggestion(input: {
 /**
  * What to do about a source directory that exists but holds nothing to deploy.
  *
- * Deliberately does not point at `supabase compute new`. That command refuses
- * any name already present in `config.toml`, which is where a pushed compute
- * almost always comes from, and it refuses a directory that exists and is not
- * empty — so for both callers here it would answer with a second error rather
- * than a fix. The directory is already in place and already wired up; the only
- * thing missing is the code.
+ * Doesn't point at `compute new`: it refuses any configured name and any
+ * non-empty directory, so both callers here would get a second error instead
+ * of a fix. The directory is already wired up; only the code is missing.
  */
 function addYourCode(sourceDisplay: string): string {
   return `Add your compute's code to ${sourceDisplay}, then run this command again.`;
@@ -282,10 +246,8 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
 
   const sourceDisplay = displayPath(path, project.projectRoot, compute.sourceDir);
 
-  // Checked before the runtime is resolved, not after: with no recorded
-  // runtime, `resolveRuntime` classifies the directory and announces what it
-  // guessed. Doing that first meant reporting an inference about a path that
-  // does not exist, and only then failing on the path.
+  // Checked before the runtime is resolved: without this, an unrecorded runtime
+  // would be classified and announced for a path that doesn't exist.
   {
     const sourceMissing = new ComputeSourceMissingError({
       detail: `There is no compute source at ${sourceDisplay}.`,
@@ -296,11 +258,8 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
         entry: compute.entry,
       }),
     });
-    // Only "no such path" means the compute was never scaffolded. A permission
-    // or I/O error on the directory is a different problem with a different
-    // fix, and answering it with "there is no compute source, run `compute new`"
-    // both misdiagnoses it and points at a directory that already exists — so
-    // every other reason propagates as itself.
+    // Only "no such path" means the compute was never scaffolded; every other
+    // reason (permission, I/O) propagates as itself rather than misdiagnosing it.
     const info = yield* fs
       .stat(compute.sourceDir)
       .pipe(
@@ -310,10 +269,8 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
             : Effect.fail(error),
         ),
       );
-    // Something is there, it is just not a directory. Reporting that as "there
-    // is no compute source" is false twice over: the path is occupied, and
-    // `compute new` refuses a destination that exists and is not a directory,
-    // so the scaffold suggestion would answer with a second error.
+    // Something is there, it's just not a directory — reporting "no compute
+    // source" would be false, and the path is occupied besides.
     if (info.type !== "Directory") {
       return yield* new ComputeSourceMissingError({
         detail: `${sourceDisplay} is not a directory.`,
@@ -353,9 +310,8 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     override: input.instances,
   });
 
-  // Resolved before anything is packaged or uploaded, alongside the runtime and
-  // size, so a config that records an exposure this CLI does not know is refused
-  // while the refusal is still free.
+  // Resolved before anything is packaged or uploaded, so an unrecognized
+  // exposure is refused while the refusal is still free.
   const exposure = yield* resolveExposure({
     name,
     recorded: compute.entry?.exposure,
@@ -377,10 +333,8 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
       "stderr",
     );
 
-    // The guard above counts directory entries, so a tree of nothing but empty
-    // subdirectories reaches here and packages to zero files. For a catalog
-    // runtime that deploys an image with no handler in it — the exact "nothing
-    // to deploy" case that guard exists to refuse.
+    // The guard above only counts directory entries, so a tree of nothing but
+    // empty subdirectories still reaches here and packages to zero files.
     if (packaged.fileCount === 0) {
       return yield* new ComputeSourceMissingError({
         detail: `${sourceDisplay} holds no files to deploy, only empty directories.`,
@@ -436,10 +390,8 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
               : Effect.void,
         }).pipe(Effect.tapError(() => deploying.fail()));
 
-  // Checked whether or not the build was waited on: the verdict can arrive on
-  // the deploy response as readily as on a poll. A spec already in `failed` is
-  // a refusal the command should report as one, rather than exiting zero on a
-  // compute that will never come up.
+  // Checked regardless of whether the build was waited on: the verdict can
+  // arrive on the deploy response as readily as on a poll.
   if (settled.buildState === "failed") {
     yield* deploying.clear();
     return yield* new ComputeBuildFailedError({
@@ -457,21 +409,16 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
       ? computeUrl(projectRef, settings.projectHost, name)
       : undefined;
 
-  // Dropped while the build is still running, rather than passed through.
-  // `image_version` is optional-but-permitted on the deploy response, so a
-  // re-push of a compute that is already serving can echo the image it is
-  // serving *now* — the previous build's, not this one's. Rendered beside
-  // `State building` that names an image this deploy did not produce, and a
-  // script reading `image_version` next to `build_state: "building"` would take
-  // it for the new one. Only reachable under `--no-wait`; the default polls
-  // until the build leaves `building`, so `settled` carries the real image.
+  // Dropped while still building: `image_version` on the deploy response can
+  // echo a compute's previously serving image, not this deploy's, and a script
+  // reading it beside `build_state: "building"` would mistake it for the new
+  // one. Only reachable under `--no-wait` — the default polls until it settles.
   const imageVersion = settled.buildState === "building" ? undefined : settled.imageVersion;
 
   // Suppressed when `-o` is in play: the payload owns stdout, and these lines
   // would land in the middle of it.
   if (output.format === "text" && !input.machineOutput) {
-    // Declarative line first, then the details — the shape every other command
-    // that reports a completed remote change uses. `renderComputeDetails` drops
+    // Declarative line first, then the details. `renderComputeDetails` drops
     // empty-valued rows, so optional fields need no conditional spreads.
     yield* output.raw(`Deployed Compute ${aqua(name, process.stdout)} to project ${projectRef}\n`);
     yield* output.raw(
@@ -492,21 +439,10 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
       ]),
     );
     if (settled.buildState === "building") {
-      // A success trailer rather than an inline stderr line: this is a "what to
-      // run next" hint, which `stop`, `bootstrap`, `migration repair` and
-      // `gen signing-key` all route through `emitSuccessTrailer` so it prints
-      // once at the end of the run instead of scrolling away. It matters here
-      // more than for those: pushing several compute would otherwise bury each
-      // compute's hint under the next compute's packaging and deploy output.
-      //
-      // One short sentence per line, with the command aqua'd the way every
-      // other follow-up hint in this shell writes them. The single wrapped
-      // paragraph this replaced re-flowed differently at every terminal width
-      // and buried the command mid-sentence.
-      //
-      // No "drop `--no-wait` next time" line to go with it: reaching here means
-      // the caller asked not to wait, so the only thing left to tell them is
-      // where the build's verdict will show up.
+      // A success trailer, not an inline stderr line, so pushing several compute
+      // doesn't bury each hint under the next compute's output. One short
+      // sentence per line, since a single wrapped paragraph re-flowed
+      // unpredictably and buried the command mid-sentence.
       yield* emitSuccessTrailer(
         `\nYour build was submitted successfully.\n` +
           `Run ${aqua(`supabase compute status ${name}${input.refSuffix}`)} to check on it.\n`,
@@ -520,9 +456,9 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     size: settled.spec.size,
     exposure: settled.spec.exposure,
     instances: settled.spec.instances,
-    // Omitted rather than present-and-undefined: `-o toml` hands the payload to
-    // smol-toml, which cannot represent undefined and would throw *after* the
-    // upload and deploy had completed. Same reason `url` is spread below.
+    // Omitted rather than present-and-undefined: `-o toml` hands this to
+    // smol-toml, which can't represent undefined and would throw after the
+    // deploy completed. Same reason `url` is spread below.
     ...(imageVersion === undefined ? {} : { image_version: imageVersion }),
     build_state: settled.buildState,
     ...(url === undefined ? {} : { url }),
@@ -530,16 +466,10 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
 });
 
 /**
- * Names the compute a failed run never got to.
- *
- * The loop stops on the first failure, so everything after it was never
- * attempted — and the error itself only names the compute that broke. Left
- * unsaid, the user has to reconstruct the remainder from argument order, or
- * from the discovery walk's ordering when the push was a bare `push`.
- *
- * Written on stderr in every format, unlike the per-compute announcements: a
- * machine-format run is a CI run, which is exactly where nobody is watching the
- * loop and "what still needs deploying" is the question the failure raises.
+ * Names the compute a failed run never got to. The loop stops on the first
+ * failure, and the error itself only names the compute that broke, so this is
+ * how the remaining names get reported. Written on stderr in every format,
+ * since a machine-format run is a CI run where nobody is watching the loop.
  */
 const reportUnattempted = Effect.fnUntraced(function* (skipped: ReadonlyArray<string>) {
   if (skipped.length === 0) {
@@ -552,21 +482,12 @@ const reportUnattempted = Effect.fnUntraced(function* (skipped: ReadonlyArray<st
 });
 
 /**
- * Names the compute whose builds the run left running.
- *
- * Under `--no-wait` a compute is accepted while its build is still in flight, and
- * its follow-up hint goes out as a success trailer. `runCli` drains trailers
- * only on exit code 0 (`shared/cli/run.ts`, `afterSuccess`), so a later compute
- * failing discards every hint the run had queued — including for builds that are
- * still running on the platform, which the failure does nothing to stop.
- *
- * Reported here instead, on the path that actually runs. Same stderr-in-every-
- * format rule as {@link reportUnattempted} and the same reason: a machine-format
- * run is a CI run, and "what is still in flight" is as much a part of the
- * failure's answer as "what never started".
- *
- * Empty on a waiting run, without needing to check the flag: a compute the run
- * waited for has left `building` by the time it returns.
+ * Names the compute whose builds the run left running. Under `--no-wait` a
+ * compute's follow-up hint goes out as a success trailer, but trailers only
+ * drain on exit code 0 — so a later failure would otherwise discard the hint
+ * for a build still running on the platform. Reported here instead, on the
+ * path that actually runs, using the same stderr-in-every-format rule as
+ * {@link reportUnattempted}.
  */
 const reportStillBuilding = Effect.fnUntraced(function* (building: ReadonlyArray<string>) {
   if (building.length === 0) {
@@ -577,18 +498,13 @@ const reportStillBuilding = Effect.fnUntraced(function* (building: ReadonlyArray
 });
 
 /**
- * `supabase compute push [name...]` — deploy the named compute, or every compute
- * in the project when none are named, mirroring `supabase functions deploy`.
+ * `supabase compute push [name...]` — deploys the named compute,
+ * or every compute when none are named.
  *
- * Deploys run one at a time rather than concurrently: each is a server-side
- * container build, and interleaving several would both hammer the alpha's
- * per-project capacity and shred the progress output. The first failure stops
- * the run, because a build that failed is usually the thing to fix before
- * spending minutes on the rest.
- *
- * Under `--no-wait` that serialization only covers the package/upload/deploy
- * legs; the builds themselves then run concurrently on the platform, which is
- * what the caller asked for by opting out of the wait.
+ * Deploys run one at a time: each is a server-side container build, and several
+ * at once would hammer the alpha's per-project capacity. The first failure
+ * stops the run; under `--no-wait`, only the package/upload/deploy legs are
+ * serialized — the builds themselves run concurrently.
  */
 export const computePush = Effect.fn("compute.push")(function* (
   flags: ComputePushFlags,
@@ -603,10 +519,9 @@ export const computePush = Effect.fn("compute.push")(function* (
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  // The ref is resolved outside the finalizers because caching it is one of
-  // them; everything that can fail on its own — loading `config.toml`,
-  // validating names, discovering compute — belongs inside, so a malformed
-  // config still flushes telemetry. Same shape as `config/push`.
+  // Resolved here, outside the block below, since caching it is one of that
+  // block's own finalizers — everything else that can fail belongs inside so
+  // those failures still flush telemetry.
   const projectRef = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
@@ -656,18 +571,9 @@ export const computePush = Effect.fn("compute.push")(function* (
     const stillBuilding: Array<string> = [];
     for (const [index, name] of names.entries()) {
       if (names.length > 1 && !machineOutput && output.format === "text") {
-        // stderr, unblanked and labelled, the way `functions deploy` announces
-        // each function: a bare name with a leading blank line put a section
-        // header into whatever was consuming stdout.
-        //
-        // Counted, because each compute's package/upload/build takes minutes and
-        // the name alone says nothing about how much of the run is left.
-        //
-        // Text only, on both axes: `machineOutput` tracks `-o`, which leaves
-        // `output.format` as `text`, so neither check covers the other. This is
-        // progress rather than an outcome, and `--output-format json` asked for
-        // a stream of events — unlike the unattempted-compute report below,
-        // which every format gets because it says what still needs deploying.
+        // Progress, not an outcome, so this is text-only on both axes:
+        // `machineOutput` tracks `-o` (which leaves `output.format` as `text`),
+        // and `--output-format json` asked for a stream of events instead.
         yield* output.raw(
           `Deploying Compute ${index + 1}/${names.length}: ${aqua(name)}\n`,
           "stderr",
@@ -687,8 +593,6 @@ export const computePush = Effect.fn("compute.push")(function* (
           ? {}
           : { pollRetrySchedule: options.pollRetrySchedule }),
       }).pipe(
-        // In flight before what never started: one is a thing the user now has
-        // to follow, the other a thing they have to re-run.
         Effect.tapError(() =>
           reportStillBuilding(stillBuilding).pipe(
             Effect.andThen(reportUnattempted(names.slice(index + 1))),

@@ -17,8 +17,6 @@ describe("computeLogsQuery", () => {
 
     expect(sql).toContain("log_attributes['worker'] = 'api'");
     expect(sql).toContain("log_attributes['source'] in (");
-    // The load-bearing negative: compute rows carry an empty top-level `source`,
-    // so a predicate on that column matches nothing at all.
     expect(sql).not.toMatch(/(?:^|\s)where source =/);
     expect(sql).not.toMatch(/(?:^|\s)and source =/);
   });
@@ -26,8 +24,6 @@ describe("computeLogsQuery", () => {
   it("constrains to the known streams even when none was requested", () => {
     const sql = computeLogsQuery({ name: "api", streams: ALL_COMPUTE_LOG_STREAMS, tail: 10 });
 
-    // With `source` empty this list is the only thing keeping a non-compute row
-    // that happens to carry a `worker` attribute out of the results.
     expect(sql).toContain("'worker_guest_logs'");
     expect(sql).toContain("'worker_ingress_logs'");
     expect(sql).toContain("'worker_api_logs'");
@@ -48,8 +44,6 @@ describe("computeLogsQuery", () => {
     const sql = computeLogsQuery({ name: "api", streams: ALL_COMPUTE_LOG_STREAMS, tail: 1 });
 
     expect(sql).toContain("toUnixTimestamp64Milli(timestamp) as ts_ms");
-    // `%M` is ClickHouse's month name, and bare toString has no zone — neither
-    // belongs in this query.
     expect(sql).not.toContain("formatDateTime");
     expect(sql).not.toContain("toString(timestamp)");
   });
@@ -84,8 +78,6 @@ describe("logWindow", () => {
   it("always returns both bounds", () => {
     const window = logWindow(DateTime.makeUnsafe("2026-08-31T12:00:00.000Z"));
 
-    // A lone bound yields a one-minute window server-side, and sending neither is
-    // an outright error, so there is no valid single-bound call.
     expect(window.start).toBeDefined();
     expect(window.end).toBeDefined();
   });
@@ -97,8 +89,6 @@ describe("logWindow", () => {
       DateTime.toEpochMillis(DateTime.makeUnsafe(window.end)) -
       DateTime.toEpochMillis(DateTime.makeUnsafe(window.start));
 
-    // Being clamped is worse than being rejected: the server rewrites `end` to
-    // `start + 24h`, returning an older slice than the one asked for.
     expect(spanMs).toBeLessThan(24 * 60 * 60 * 1000);
     expect(COMPUTE_LOG_WINDOW_MINUTES).toBeLessThan(24 * 60);
   });
@@ -111,9 +101,8 @@ describe("logWindow", () => {
 });
 
 /**
- * The grace and the clamp are written as literals rather than read from the
- * module. Deriving the expectation from the constant under test would keep these
- * green through exactly the change they exist to catch.
+ * The grace and clamp are written as literals rather than read from the module, so a change
+ * to the constant under test doesn't silently keep these green.
  */
 describe("followWindow", () => {
   const now = DateTime.makeUnsafe("2026-08-31T12:00:00.000Z");
@@ -122,8 +111,6 @@ describe("followWindow", () => {
     const cursor = DateTime.makeUnsafe("2026-08-31T11:59:30.000Z");
     const window = followWindow(now, cursor);
 
-    // Guest lines are relayed late and out of order, so a window starting exactly
-    // on the cursor drops every straggler permanently.
     expect(window.start).toBe("2026-08-31T11:58:30.000Z");
     expect(DateTime.toEpochMillis(DateTime.makeUnsafe(window.start))).toBe(
       DateTime.toEpochMillis(cursor) - 60_000,

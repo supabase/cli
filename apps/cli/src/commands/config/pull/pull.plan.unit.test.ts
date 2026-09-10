@@ -431,11 +431,9 @@ describe("expandConfigPullChangeSet", () => {
   });
 
   test("absorbs a sibling ADR 0021 gates as unmanaged, once the gate itself is projected (CLI-2064 live-bug repro)", () => {
-    // Mirrors the live dogfooding bug exactly: `[auth.sms.twilio]` disabled
-    // locally with empty credential placeholders, remote has it enabled with
-    // real credentials. Round 1 only sees `enabled` (the sids are gated out
-    // as unmanaged pre-write); the fixpoint's round 2 must absorb both sids
-    // once projecting `enabled: true` un-gates them.
+    // [auth.sms.twilio] is disabled locally with empty placeholders; remote has it enabled with
+    // real credentials. Round 1 only sees `enabled` (the sids are unmanaged pre-write); round 2
+    // must absorb both once `enabled: true` un-gates them.
     const baseConfig = {
       auth: { sms: { twilio: { enabled: false, account_sid: "", message_service_sid: "" } } },
     } as unknown as EffectiveConfig;
@@ -451,8 +449,6 @@ describe("expandConfigPullChangeSet", () => {
       local: { config: baseConfig, document: baseDocument },
       remote,
     });
-    // Sanity on the PRE-fixpoint diff — this is the bug: only `enabled` is a
-    // change, the sids are excluded as unmanaged.
     expect(initialChangeSet.changes.map((c) => c.path)).toEqual([
       ["auth", "sms", "twilio", "enabled"],
     ]);
@@ -479,16 +475,13 @@ describe("expandConfigPullChangeSet", () => {
         "auth.sms.twilio.message_service_sid",
       ]),
     );
-    // The fixpoint's own residual (what the caller's planner-defect/unpushable
-    // check consumes) shows NOTHING left drifting — every absorbed write
-    // actually converges once applied.
+    // The residual (what the planner-defect/unpushable check consumes) shows nothing left
+    // drifting: every absorbed write converges once applied.
     expect(result.residual.changes).toEqual([]);
     expect(result.residual.unmanaged).toEqual([]);
   });
 
   test("generalizes to a second, independent registry family (`auth.captcha`)", () => {
-    // A different `DISABLED_SENTINEL_PRUNES` family — confirms the fixpoint
-    // isn't special-cased to SMS providers.
     const baseConfig = {
       auth: { captcha: { enabled: false, provider: "hcaptcha" } },
     } as unknown as EffectiveConfig;
@@ -565,9 +558,6 @@ describe("expandConfigPullChangeSet", () => {
       (c) => c.path.join(".") === "auth.sms.twilio.account_sid",
     );
     expect(accountSidChange?.envVariables).toEqual(["MY_VAR"]);
-    // Never projected (it's env-sourced, so `pull.plan.ts`'s own skip rule
-    // would never write it either) — it stays a residual, expected, not the
-    // "planner defect" the caller's own check would otherwise raise.
     expect(result.residual.changes.map((c) => c.path.join("."))).toEqual([
       "auth.sms.twilio.account_sid",
     ]);
@@ -689,11 +679,9 @@ describe("dropConfigPullUnvalidatableFamilies", () => {
     ]);
 
     expect(result.writes).toEqual([unrelatedWrite]);
-    // The dropped family's own `dual_scope`/`unpushable` warnings are gone —
-    // both described a write that no longer landed. The unrelated
-    // `duplicates_root` warning (a DIFFERENT path) and the path-less
-    // `uncommitted_changes` warning both survive untouched, and the new
-    // `would_invalidate` warning is appended last.
+    // The dropped family's dual_scope/unpushable warnings are gone; the unrelated
+    // duplicates_root warning (a different path) and the path-less uncommitted_changes warning
+    // survive untouched, with the new would_invalidate warning appended last.
     expect(result.warnings).toEqual([
       { kind: "duplicates_root", path: ["api", "max_rows"] },
       { kind: "uncommitted_changes" },

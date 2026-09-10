@@ -1,26 +1,18 @@
 /**
  * Text rendering for the compute commands.
  *
- * Two conventions this shell holds and `supabase compute` follows rather than
- * inventing its own: results are written with `output.raw` as plain text, with
- * no `intro`/`outro` framing, which no other handler here uses, and tabular
- * output goes through `renderGlamourTable`, so `compute list` sits beside
- * `functions list` and `projects list` looking like them.
+ * Results are written with `output.raw` as plain text with no `intro`/`outro`
+ * framing, and tabular output goes through `renderGlamourTable`, matching
+ * `functions list` and `projects list`.
  */
 
 /**
  * `Label   value` detail lines for a single compute.
  *
- * Vertical rather than a one-row `renderGlamourTable` because a compute's values
- * include a URL and a source path: `branches get` gets away with laying its
- * seven narrow columns out horizontally, and these would not fit. Labels are
- * Title Case to match the other vertical key/value view this CLI renders,
- * `supabase status` (`status-pretty.ts`), rather than inventing a third
- * casing.
- *
- * Rows whose value is empty are dropped: several fields are optional strings in
- * the API contract (`state_reason`, for one), so an empty one would otherwise
- * render as a label, two spaces of padding and nothing else.
+ * Vertical rather than a `renderGlamourTable` row because a compute's values
+ * include a URL and a source path that would not fit in narrow columns. Rows
+ * with an empty value (e.g. `state_reason`, an optional API field) are
+ * dropped rather than rendered as a bare label.
  */
 export function renderComputeDetails(rows: ReadonlyArray<readonly [string, string]>): string {
   const present = rows.filter(([, value]) => value !== "");
