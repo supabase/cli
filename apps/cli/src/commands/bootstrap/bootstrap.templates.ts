@@ -14,15 +14,11 @@ export interface StarterTemplate {
 }
 
 interface TemplateServiceShape {
-  /**
-   * Fetches and decodes `samples.json` from the `supabase-community/supabase-samples`
-   * repo (`ListSamples`). Returns the declared starter templates.
-   */
+  /** Fetches and decodes `samples.json` from the `supabase-community/supabase-samples` repo. */
   readonly listSamples: Effect.Effect<ReadonlyArray<StarterTemplate>, BootstrapTemplateListError>;
   /**
-   * Downloads every file under a `https://github.com/<owner>/<repo>/tree/<ref>/<root>`
-   * template URL into `targetDir`, preserving the directory layout below `<root>`
-   * (`downloadSample`). Concurrency matches the established job queue (5).
+   * Downloads every file under a `https://github.com/<owner>/<repo>/tree/<ref>/<root>` template
+   * URL into `targetDir`, preserving the directory layout below `<root>`, with concurrency 5.
    */
   readonly download: (
     templateUrl: string,
@@ -75,8 +71,7 @@ export const templateServiceLayer = Layer.effect(
     const path = yield* Path.Path;
     const output = yield* Output;
 
-    // Go reads `GITHUB_TOKEN` directly (`utils.GetGitHubClient`) to raise the
-    // anonymous GitHub API rate limit. When unset, requests are anonymous.
+    // Raises the anonymous GitHub API rate limit when set; requests are anonymous otherwise.
     const githubToken = process.env["GITHUB_TOKEN"];
 
     const contentsRequest = (owner: string, repo: string, contentPath: string, ref: string) => {
@@ -183,10 +178,9 @@ export const templateServiceLayer = Layer.effect(
           for (const entry of listing) {
             const entryPath = entry.path ?? "";
             if (entry.type === "file") {
-              // Strip `<root>` on a path-segment boundary so a sibling directory that
-              // merely shares the prefix (e.g. `examples/app-2` under `root="examples/app"`)
-              // is never mis-sliced. The contents API only returns children of the queried
-              // directory, but matching on `root + "/"` is the obviously-correct form.
+              // Strip `<root>` on a path-segment boundary so a sibling directory that merely
+              // shares the prefix (e.g. `examples/app-2` under `root="examples/app"`) is never
+              // mis-sliced.
               const relative =
                 root === ""
                   ? entryPath
@@ -208,9 +202,8 @@ export const templateServiceLayer = Layer.effect(
                   message: `failed to download template: entry escapes target directory: ${entryPath}`,
                 });
               }
-              // GitHub returns a null `download_url` for files over 1 MB and for
-              // submodules; without an explicit guard the `?? ""` fallback would issue
-              // `GET ""` and surface a confusing transport error instead of a clear one.
+              // GitHub returns a null `download_url` for files over 1 MB and submodules; without
+              // this guard, the `?? ""` fallback would issue `GET ""` with a confusing error.
               if (entry.download_url == null || entry.download_url.length === 0) {
                 return yield* new BootstrapTemplateDownloadError({
                   message: `failed to download template: unsupported entry (no download URL): ${entryPath}`,

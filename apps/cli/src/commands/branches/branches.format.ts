@@ -9,12 +9,6 @@ import { renderGlamourTable } from "../../output/glamour-table.ts";
 import { apiKeysToEnv } from "../../command-internal/api-keys.format.ts";
 import { formatTimestamp } from "../../command-internal/timestamp.format.ts";
 
-// ---------------------------------------------------------------------------
-// Pure formatters — no Effect / no service dependencies, kept unit-testable.
-// Match the established byte output for `branches list`, `branches create`,
-// `branches get`.
-// ---------------------------------------------------------------------------
-
 const LIST_HEADERS = [
   "ID",
   "NAME",
@@ -39,17 +33,12 @@ const GET_HEADERS = [
 type Branch = typeof BranchResponse.Type;
 
 /**
- * Established markdown-table-to-glamour render pipeline: the markdown
- * intermediate wraps each cell in backticks and escapes `|` with `\|`;
- * glamour decodes the escape sequence back to a literal `|` and strips the
- * backticks. `renderGlamourTable` lays out cells directly, so raw values are
- * passed through — including any literal `|` in the name / git branch — and
- * the byte output matches the established fixture.
+ * Renders the `branches list` table. Cell values pass through raw (including any literal `|` in
+ * the name or git branch); `renderGlamourTable` lays out cells directly rather than through a
+ * markdown/glamour escape roundtrip.
  *
- * `activeRef`, when given, marks the row whose `project_ref` matches by
- * rendering its NAME cell as `<name> (active)`. TS-only QoL
- * (CLI-2167 follow-up, no Go counterpart): the pretty table only, never the
- * `-o json|yaml|toml` / `--output-format json|stream-json` payloads.
+ * `activeRef`, when given, renders the matching row's NAME cell as `<name> (active)` — the
+ * pretty table only, never the `-o json|yaml|toml`/`--output-format json|stream-json` payloads.
  */
 export function renderBranchesListTable(
   branches: ReadonlyArray<Branch>,
@@ -69,8 +58,8 @@ export function renderBranchesListTable(
 }
 
 /**
- * Pretty-table render: one row with 7 columns. `db_user` / `db_pass` /
- * `jwt_secret` render as `******` when the API returns nil/undefined.
+ * Pretty-table render: one row with 7 columns. `db_user`/`db_pass`/`jwt_secret` render as
+ * `******` when the API returns null.
  */
 export function renderBranchGetTable(detail: typeof V1GetABranchConfigOutput.Type): string {
   const rows = [
@@ -104,17 +93,10 @@ export type PoolerParseResult =
   | { readonly ok: false; readonly error: string };
 
 /**
- * Removes the `[YOUR-PASSWORD]` placeholder text from the connection string
- * (it confuses pgconn's strict URL parser) and then parses the host/port/user.
- *
- * On failure, returns a structured result with the parse error description —
- * not the raw connection string. The established WARNING line carries the
- * pgconn parse error message (e.g. `failed to parse pooler URL: parse "...":
- * invalid port`), never the URL itself. Returning the URL would leak the
- * pooler username, host, and port into stderr logs.
- *
- * This display-only parser intentionally does not enforce the profile-domain or
- * tenant-ref guards used by `poolerConfigFromConnectionString`.
+ * Removes the `[YOUR-PASSWORD]` placeholder before parsing host/port/user, since it isn't valid
+ * URL syntax. On failure, returns a structured error description, never the raw connection
+ * string, since that would leak the pooler username, host, and port into stderr logs. Doesn't
+ * enforce the profile-domain or tenant-ref guards used by `poolerConfigFromConnectionString`.
  */
 export function parsePoolerConnectionString(connString: string): PoolerParseResult {
   const sanitized = connString.replaceAll(POOLER_PASSWORD_PLACEHOLDER, "");
@@ -122,9 +104,8 @@ export function parsePoolerConnectionString(connString: string): PoolerParseResu
   try {
     url = new URL(sanitized);
   } catch {
-    // Node's URL constructor embeds the input string in its error message.
-    // Return a stable description with no input fragments so the warning
-    // line on stderr never leaks the pooler URL.
+    // Node's URL constructor embeds the input in its error message; return a stable
+    // description with no input fragments so the warning line never leaks the pooler URL.
     return { ok: false, error: "invalid URL" };
   }
   if (url.protocol !== "postgresql:" && url.protocol !== "postgres:") {
@@ -161,11 +142,11 @@ interface PgConfig {
 }
 
 /**
- * Established URL shape:
+ * Renders:
  *
  *   postgresql://<urlencode(user):urlencode(pass)>@<host>:<port>/<pathEscape(db)>?connect_timeout=10[&k=urlencode(v)]
  *
- * IPv6 hosts get wrapped in square brackets. ConnectTimeout defaults to 10.
+ * IPv6 hosts are wrapped in square brackets; `connect_timeout` defaults to 10.
  */
 export function toPostgresUrl(config: PgConfig, connectTimeoutSeconds: number = 10): string {
   const params = new URLSearchParams();
@@ -190,10 +171,7 @@ type Detail = typeof V1GetABranchConfigOutput.Type;
 
 export interface StandardEnvsResult {
   readonly envs: Record<string, string>;
-  /**
-   * Set when the pooler URL failed to parse, so the caller can print the
-   * established `fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)` line.
-   */
+  /** Set when the pooler URL failed to parse, so the caller can print the established WARNING line. */
   readonly poolerWarning?: string;
 }
 
