@@ -32,7 +32,6 @@ const writeProfile = (name: string, content: string): string => {
 describe("loadProfile", () => {
   it.effect("resolves built-in profile names case-insensitively (Go strings.EqualFold)", () =>
     Effect.gen(function* () {
-      // Binary-verified: `--profile SUPABASE-LOCAL` targets localhost:8080.
       expect(yield* load("SUPABASE-LOCAL")).toBe("http://localhost:8080");
       expect(yield* load("supabase")).toBe("https://api.supabase.com");
       expect(yield* load("supabase-staging")).toBe("https://api.supabase.green");
@@ -50,8 +49,7 @@ describe("loadProfile", () => {
 
   it.effect("fails on a token without a supported extension (flag-shaped tokens)", () =>
     Effect.gen(function* () {
-      // `--profile --metadata-url …`: pflag binds the flag-shaped token and Go
-      // fails viper's extension gate (binary-verified, PR #5974 round 7).
+      // --profile --metadata-url …
       expect(yield* loadError("--metadata-url")).toBe(
         `failed to read profile: Unsupported Config Type ""`,
       );
@@ -63,8 +61,6 @@ describe("loadProfile", () => {
 
   it.effect("uses Go filepath.Ext semantics for dot-files (`.yml` IS extension `yml`)", () =>
     Effect.gen(function* () {
-      // Node's `path.extname(".yml")` is "" — Go's filepath.Ext is ".yml", so
-      // viper accepts the type and fails at the open() instead.
       expect(yield* loadError(join(tempRoot, ".yml"))).toBe(
         `failed to read profile: open ${join(tempRoot, ".yml")}: no such file or directory`,
       );
@@ -105,8 +101,6 @@ describe("loadProfile", () => {
   it.effect("accepts mixed-case keys like viper's insensitive decode (probed on go1.26)", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      // `Name:` / `API_URL:` decode exactly like their lowercase spellings
-      // (viper `insensitiviseMap`; review r3689635101).
       const file = writeProfile(
         "mixed-case.yml",
         [
@@ -125,13 +119,12 @@ describe("loadProfile", () => {
   it.effect("returns the full endpoint set for built-in and YAML profiles", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      // Built-in: endpoints come from the `allProfiles` table.
       const builtin = yield* loadProfile("supabase-staging", fs);
       expect(builtin.projectHost).toBe("supabase.red");
       expect(builtin.poolerHost).toBe("supabase.green");
       expect(builtin.dashboardUrl).toBe("https://supabase.green/dashboard");
-      // YAML: `project_host`/`dashboard_url` are required, `pooler_host` is
-      // `omitempty` and stays empty when absent (disables the MITM assertion).
+      // pooler_host is omitted below; it's optional and stays empty (disables the MITM
+      // assertion).
       const file = writeProfile(
         "endpoints.yml",
         [
@@ -169,11 +162,7 @@ describe("loadProfile", () => {
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        // Built-in: EqualFold match resolves to the canonical (lower-case)
-        // table name — the keyring account Go reads.
         expect((yield* loadProfile("SUPABASE-LOCAL", fs)).name).toBe("supabase-local");
-        // File profile: `UnmarshalExact` populates Name from the required
-        // `name:` key, NOT from the file path.
         const file = writeProfile(
           "named.yml",
           [
@@ -189,8 +178,6 @@ describe("loadProfile", () => {
 
   it.effect("rejects unknown keys with mapstructure's padded UnmarshalExact block", () =>
     Effect.gen(function* () {
-      // Byte-captured from the Go binary (`od -c`, PR #5974 round 7): keys
-      // sorted, every line padded with spaces to the longest line's width.
       const file = writeProfile(
         "extra-keys.yml",
         [
@@ -214,8 +201,6 @@ describe("loadProfile", () => {
     "reports missing required fields with the validator's padded lines, in struct order",
     () =>
       Effect.gen(function* () {
-        // Byte-captured from the Go binary: `invalid profile: ` + one line per
-        // failing field (struct order), padded to the longest line's width.
         const file = writeProfile("incomplete.yml", "name: incomplete\n");
         const lines = [
           "invalid profile: Key: 'Profile.APIURL' Error:Field validation for 'APIURL' failed on the 'required' tag",
@@ -247,8 +232,6 @@ describe("loadProfile", () => {
     "weakly stringifies scalars like viper, so `api_url: 123` fails http_url, not decoding",
     () =>
       Effect.gen(function* () {
-        // Binary-verified: viper decodes with WeaklyTypedInput, so the int
-        // reaches go-playground/validator and fails the `http_url` tag.
         const file = writeProfile(
           "typebad.yml",
           [
@@ -286,8 +269,6 @@ describe("loadProfile", () => {
 
   it.effect("fails a malformed YAML file closed with viper's parse prefix", () =>
     Effect.gen(function* () {
-      // Detail text comes from the JS yaml package (documented micro-
-      // divergence); the class — abort before any request — matches Go.
       const file = writeProfile("malformed.yml", "name: [broken\n  api_url");
       const message = yield* loadError(file);
       expect(message).toMatch(/^failed to read profile: While parsing config: /);

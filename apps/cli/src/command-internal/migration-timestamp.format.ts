@@ -1,11 +1,7 @@
 /**
- * Port of Go's `utils.FormatTimestampVersion` (`internal/utils/render.go:21`):
- * parse a `YYYYMMDDHHMMSS` migration version with the strict `time.Parse`
- * layout `20060102150405` and reformat it as `YYYY-MM-DD HH:MM:SS`. On any parse
- * failure Go returns the input unchanged, so non-timestamp versions (`0`, `1`,
- * non-numeric, out-of-range dates) pass through verbatim.
- *
- * Pure — no Effect / service dependencies.
+ * Parses a `YYYYMMDDHHMMSS` migration version and reformats it as `YYYY-MM-DD HH:MM:SS`.
+ * Returns the input unchanged when it isn't a valid timestamp (non-numeric, wrong length,
+ * or an impossible calendar date).
  */
 export function formatTimestampVersion(version: string): string {
   const match = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/u.exec(version);
@@ -23,9 +19,8 @@ export function formatTimestampVersion(version: string): string {
   const hour = Number(hh);
   const minute = Number(min);
   const second = Number(ss);
-  // Range-check each field, then a calendar round-trip so impossible dates
-  // (e.g. Feb 30, month 13) fall back to passthrough exactly like Go's
-  // `time.Parse`, which errors rather than normalising overflow.
+  // Reject out-of-range fields, then round-trip through Date.UTC so impossible dates
+  // (e.g. Feb 30) fall back to passthrough instead of silently normalizing overflow.
   if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) {
     return version;
   }
@@ -40,26 +35,16 @@ export function formatTimestampVersion(version: string): string {
   return `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
 }
 
-/**
- * Go's `math.MaxInt` on a 64-bit build (== `math.MaxInt64`) — the sentinel that
- * pins the exhausted side of a migration-version two-pointer merge.
- */
+/** Int64 max; the sentinel for the exhausted side of a migration-version merge. */
 export const MIGRATION_VERSION_MAX = 9223372036854775807n;
 
-/** Go's `math.MinInt64` — `strconv.Atoi`'s lower bound (`ParseInt(s, 10, 0)`). */
+/** Int64 min: the lower bound accepted for a migration version. */
 const MIGRATION_VERSION_MIN = -9223372036854775808n;
 
 /**
- * Parses a migration version like Go's `strconv.Atoi` (`makeTable` /
- * `assertRemoteInSync`): `Atoi` == `ParseInt(s, 10, 0)`, so it accepts an optional
- * leading `+`/`-` sign and base-10 digits within the int64 range, and rejects empty,
- * whitespace, floats, and `0x`/`0b` forms. A non-parseable or out-of-range version
- * returns `undefined` (Go's `Atoi` error → `continue`). Signs only ever appear on
- * malformed history rows (e.g. `-1`); Go still validates and orders them by signed
- * int — so `migration repair -1 --status reverted` can delete that text row, and the
- * two-pointer merge sorts `-1` before `0`. BigInt keeps the full int64 range exact:
- * `Number` loses precision above `Number.MAX_SAFE_INTEGER` (e.g. `Number("9999999999999999")`
- * rounds to 1e16), which would mis-order versions Go accepts.
+ * Parses a migration version as a signed base-10 integer within the int64 range; returns
+ * `undefined` for anything else. Uses `BigInt`, since `Number` loses precision above
+ * `Number.MAX_SAFE_INTEGER` and would mis-order large version numbers.
  */
 export const parseMigrationVersion = (value: string): bigint | undefined => {
   if (!/^[+-]?\d+$/u.test(value)) return undefined;
@@ -72,11 +57,8 @@ export const compareMigrationVersions = (a: string, b: string): number =>
   a < b ? -1 : a > b ? 1 : 0;
 
 /**
- * Orders bare version strings the way `ORDER BY version` returns them, for the
- * walks that compare version lists rather than paths. `version` is a `text`
- * column, so Postgres orders it lexically and a prefix always precedes its
- * extension — exactly what `sortMigrationPathsByVersion`
- * (`migration-history.ts`) reproduces for the path-shaped walks.
+ * Orders bare version strings the way Postgres's `ORDER BY version` does: lexically, so a
+ * version string's extension always sorts after its prefix.
  */
 export function sortMigrationVersions(versions: ReadonlyArray<string>): ReadonlyArray<string> {
   return [...versions].sort(compareMigrationVersions);
