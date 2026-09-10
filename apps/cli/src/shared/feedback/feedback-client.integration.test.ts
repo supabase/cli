@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Fiber, Option } from "effect";
+import { Effect, Fiber } from "effect";
 import { feedbackClientLayer } from "./feedback-client.layer.ts";
 import type { FeedbackSubmission } from "./feedback-client.service.ts";
 import { FeedbackClient } from "./feedback-client.service.ts";
@@ -200,71 +200,6 @@ describe("feedbackClientLayer", () => {
 
         expect(error._tag).toBe("FeedbackBackendError");
         expect(error.message).toContain("no delete token");
-      }).pipe(Effect.provide(layerWith(transport)));
-    });
-  });
-
-  describe("preview", () => {
-    it.live("requests the feedback text with the token filter and capability headers", () => {
-      const transport = recordingFetch(() => jsonResponse([{ feedback: "my papercut" }]));
-      return Effect.gen(function* () {
-        const client = yield* FeedbackClient;
-        const preview = yield* client.preview(TOKEN, { projectRef: PROJECT_REF, userId: USER_ID });
-
-        expect(preview).toEqual(Option.some("my papercut"));
-        const { request } = transport.requests[0]!;
-        expect(request.method).toBe("GET");
-        const url = new URL(request.url);
-        expect(url.pathname).toBe("/rest/v1/interfaces_feedback");
-        expect(url.searchParams.get("select")).toBe("feedback");
-        expect(url.searchParams.get("delete_token")).toBe(`eq.${TOKEN}`);
-        expect(request.headers.get("apikey")).toBe(TEST_ENV.key);
-        expect(request.headers.get("x-feedback-token")).toBe(TOKEN);
-        expect(request.headers.get("x-feedback-project-ref")).toBe(PROJECT_REF);
-        expect(request.headers.get("x-feedback-user-id")).toBe(USER_ID);
-      }).pipe(Effect.provide(layerWith(transport)));
-    });
-
-    it.live("sends no context headers when no ref or user id is provided", () => {
-      const transport = recordingFetch(() => jsonResponse([{ feedback: "context-free" }]));
-      return Effect.gen(function* () {
-        const client = yield* FeedbackClient;
-        yield* client.preview(TOKEN);
-
-        const { request } = transport.requests[0]!;
-        expect(request.headers.get("x-feedback-token")).toBe(TOKEN);
-        expect(request.headers.has("x-feedback-project-ref")).toBe(false);
-        expect(request.headers.has("x-feedback-user-id")).toBe(false);
-      }).pipe(Effect.provide(layerWith(transport)));
-    });
-
-    it.live("returns None when the token matches no row", () => {
-      const transport = recordingFetch(() => jsonResponse([]));
-      return Effect.gen(function* () {
-        const client = yield* FeedbackClient;
-        const preview = yield* client.preview(TOKEN, { projectRef: PROJECT_REF });
-
-        expect(Option.isNone(preview)).toBe(true);
-      }).pipe(Effect.provide(layerWith(transport)));
-    });
-
-    // A thrown-fetch variant would work too, but postgrest-js retries
-    // idempotent GETs on network errors with ~7s of backoff — a non-retryable
-    // PostgREST error response exercises the same mapping without the wait.
-    it.live("maps a PostgREST error response to FeedbackBackendError", () => {
-      const transport = recordingFetch(() =>
-        jsonResponse(
-          { message: "canceling statement due to statement timeout", code: "57014" },
-          500,
-        ),
-      );
-      return Effect.gen(function* () {
-        const client = yield* FeedbackClient;
-        const error = yield* client.preview(TOKEN).pipe(Effect.flip);
-
-        expect(error._tag).toBe("FeedbackBackendError");
-        expect(error.operation).toBe("preview");
-        expect(error.reason).toBe("response");
       }).pipe(Effect.provide(layerWith(transport)));
     });
   });

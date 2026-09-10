@@ -57,7 +57,7 @@ describe("feedbackFetch", () => {
     const inner = recordingInnerFetch();
     const fetch = feedbackFetch({ dnsResolver: "native", logger, innerFetch: inner.fetch });
 
-    // The preview/delete URL carries the capability token as a PostgREST
+    // The delete URL carries the capability token as a PostgREST
     // filter; the debug log must never reproduce it.
     const url =
       "https://feedback.supabase.co/rest/v1/interfaces_feedback" +

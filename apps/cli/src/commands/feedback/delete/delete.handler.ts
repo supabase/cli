@@ -5,7 +5,6 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { OutputFlag, resolveYes } from "../../../command-internal/global-flags.ts";
 import { BRANCH_UUID_PATTERN } from "../../../command-internal/ref-patterns.ts";
-import { stripControlChars } from "../../../command-internal/http-errors.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
@@ -74,25 +73,9 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
       userId: telemetryRuntime.identity.current(),
     };
 
-    const looking = yield* output.task("Looking up feedback...");
-    const preview = yield* client.preview(token, rowContext).pipe(settleFeedbackTask(looking));
-
-    if (Option.isNone(preview)) {
-      return yield* Effect.fail(new FeedbackNotFoundError({ message: FEEDBACK_NOT_FOUND_MESSAGE }));
-    }
-    const feedbackText = preview.value;
-
-    // Suppressed under `-o json` as well: stdout must stay payload-only, and
-    // the payload already carries the feedback text. The text is
-    // backend-stored input from whoever submitted the row — anyone holding a
-    // token can be handed one — so control characters (ESC/CSI/OSC, C1, bidi
-    // overrides) are stripped before the terminal interprets them; a forged
-    // confirmation display or a clipboard write must not be possible from a
-    // preview. The structured payloads carry the text verbatim.
-    if (goFmt !== "json" && output.format === "text") {
-      yield* output.info(`Found feedback: "${stripControlChars(feedbackText)}"`);
-    }
-
+    // The CLI never reads the row (CLI-2406 removes the backend read path
+    // too), so the prompt runs before the row's existence is known; a wrong
+    // token is reported as "not found" after the DELETE matches zero rows.
     // `--yes`/`SUPABASE_YES` auto-confirms; otherwise prompt. Non-interactive
     // contexts fail loudly with NonInteractiveError rather than silently
     // deleting — pass --yes there. `output.interactive` is stdout-derived and
@@ -136,7 +119,8 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
     const deleting = yield* output.task("Deleting feedback...");
     const { deleted } = yield* client.delete(token, rowContext).pipe(settleFeedbackTask(deleting));
 
-    // The preview matched but the delete didn't: the row disappeared in between.
+    // Zero rows matched: wrong token, already deleted, or a project-ref/user-id
+    // context mismatch — the backend cannot tell these apart.
     if (!deleted) {
       return yield* Effect.fail(new FeedbackNotFoundError({ message: FEEDBACK_NOT_FOUND_MESSAGE }));
     }
@@ -144,12 +128,12 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
     // `-o json` takes priority over `--output-format` (CLI Agent Guide invariant 6):
     // stdout carries the machine payload only. `pretty` (or unset) falls through.
     if (goFmt === "json") {
-      yield* output.raw(encodeGoJson({ feedback: feedbackText }));
+      yield* output.raw(encodeGoJson({ deleted: true }));
       return;
     }
 
     if (output.format !== "text") {
-      yield* output.success("Feedback deleted.", { feedback: feedbackText });
+      yield* output.success("Feedback deleted.");
       return;
     }
     yield* output.success("Feedback deleted.");

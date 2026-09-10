@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer } from "effect";
 import type { Database } from "./database.types.ts";
 import type { FeedbackSubmission } from "./feedback-client.service.ts";
 import { FeedbackBackendError, FeedbackClient } from "./feedback-client.service.ts";
@@ -8,10 +8,11 @@ import { FeedbackBackendError, FeedbackClient } from "./feedback-client.service.
  * Feedback backend connection config. The keys are publishable (anon) keys,
  * safe to commit. Submissions go exclusively through the SECURITY DEFINER
  * `submit_interfaces_feedback` RPC (there is no insert grant on the table),
- * which returns a server-generated delete token exactly once. Reads and
- * deletes are gated by RLS policies that compare the row's `delete_token`
- * against the `x-feedback-token` request header — plus a matching
- * `x-feedback-project-ref` header when the row was submitted with one.
+ * which returns a server-generated delete token exactly once. Deletes are
+ * gated by an RLS policy that compares the row's `delete_token` against the
+ * `x-feedback-token` request header — plus matching `x-feedback-project-ref`
+ * / `x-feedback-user-id` headers when the row was submitted with them. The
+ * CLI never reads a row; CLI-2406 removes the backend read path.
  */
 interface FeedbackEnvironment {
   readonly url: string;
@@ -59,7 +60,7 @@ type RpcArgs = Database["public"]["Functions"]["submit_interfaces_feedback"]["Ar
 // `user_id` is the gotrue user UUID the handler read from the persisted
 // telemetry identity — best-effort attribution, omitted when logged out or
 // when telemetry consent is denied. A row submitted with it additionally
-// requires the matching `x-feedback-user-id` header on preview/delete (RLS).
+// requires the matching `x-feedback-user-id` header on delete (RLS).
 function toRpcArgs(submission: FeedbackSubmission): RpcArgs {
   const { context } = submission;
   return {
@@ -143,23 +144,6 @@ export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer
                 ),
           ),
         ),
-
-      preview: (token, context) =>
-        run("preview", (signal) => {
-          let request = client
-            .from("interfaces_feedback")
-            .select("feedback")
-            .eq("delete_token", token)
-            .setHeader("x-feedback-token", token)
-            .abortSignal(signal);
-          if (context?.projectRef !== undefined) {
-            request = request.setHeader("x-feedback-project-ref", context.projectRef);
-          }
-          if (context?.userId !== undefined) {
-            request = request.setHeader("x-feedback-user-id", context.userId);
-          }
-          return request;
-        }).pipe(Effect.map(({ data }) => Option.fromNullishOr(data?.[0]?.feedback))),
 
       delete: (token, context) =>
         run("delete", (signal) => {

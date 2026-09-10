@@ -52,9 +52,6 @@ function writeLinkedProjectRef(workdir: string, ref: string, opts: { asDirectory
 }
 
 interface MockClientOpts {
-  /** Feedback text the preview finds; leave unset for a zero-row (not found) preview. */
-  previewText?: string;
-  previewFailWith?: string;
   /** Whether the delete matches a row; defaults to true. */
   deleteMatches?: boolean;
   deleteFailWith?: string;
@@ -67,26 +64,12 @@ interface RecordedCall {
 }
 
 function mockFeedbackClient(opts: MockClientOpts = {}) {
-  const previewCalls: Array<RecordedCall> = [];
   const deleteCalls: Array<RecordedCall> = [];
   return {
     layer: Layer.succeed(
       FeedbackClient,
       FeedbackClient.of({
         submit: () => Effect.die("submit is not reachable from feedback delete"),
-        preview: (token, context) =>
-          Effect.suspend(() => {
-            previewCalls.push({ token, projectRef: context?.projectRef, userId: context?.userId });
-            return opts.previewFailWith !== undefined
-              ? Effect.fail(
-                  new FeedbackBackendError({
-                    message: opts.previewFailWith,
-                    operation: "preview",
-                    reason: "transport",
-                  }),
-                )
-              : Effect.succeed(Option.fromNullishOr(opts.previewText));
-          }),
         delete: (token, context) =>
           Effect.suspend(() => {
             deleteCalls.push({ token, projectRef: context?.projectRef, userId: context?.userId });
@@ -102,7 +85,6 @@ function mockFeedbackClient(opts: MockClientOpts = {}) {
           }),
       }),
     ),
-    previewCalls,
     deleteCalls,
   };
 }
@@ -123,7 +105,7 @@ function setupFeedbackDelete(
   } = {},
 ) {
   const out = mockOutput(opts.output ?? { promptConfirmResponses: [true] });
-  const client = mockFeedbackClient(opts.client ?? { previewText: "my papercut" });
+  const client = mockFeedbackClient(opts.client ?? {});
   const telemetryState = mockTelemetryStateTracked();
   const layer = Layer.mergeAll(
     out.layer,
@@ -169,18 +151,16 @@ function setupFeedbackDeleteHandler(
 }
 
 describe("feedback delete", () => {
-  it.live("previews the feedback, confirms, and deletes it", () => {
+  it.live("confirms and deletes the feedback", () => {
     const { layer, out, client, telemetryState } = setupFeedbackDelete();
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs());
 
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({ type: "info", message: 'Found feedback: "my papercut"' }),
-      );
+      // The CLI never reads the row: nothing is shown ahead of the prompt.
+      expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "info" }));
       expect(out.promptConfirmCalls).toEqual([
         { message: "Permanently delete this feedback?", opts: { defaultValue: false } },
       ]);
-      expect(client.previewCalls).toEqual([{ token: TOKEN, projectRef: undefined }]);
       expect(client.deleteCalls).toEqual([{ token: TOKEN, projectRef: undefined }]);
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "Feedback deleted." }),
@@ -188,47 +168,6 @@ describe("feedback delete", () => {
       // telemetry.json is refreshed on every invocation by the telemetry-state
       // finalizer every command runs.
       expect(telemetryState.flushCount).toBe(1);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("strips terminal control sequences from the text-mode preview", () => {
-    // A malicious submitter can hand another user its token; the stored text
-    // must not be able to forge the confirmation display (CSI clear + fake
-    // line), write the clipboard (OSC 52), or reorder the line (bidi override).
-    const hostile =
-      "\x1b[2J\x1b[HPermanently delete ALL feedback?" +
-      "\x1b]52;c;aGVsbG8=\x07" +
-      "\u202esecret\u202c" +
-      " legit\x00tail\r";
-    const { layer, out } = setupFeedbackDelete({
-      client: { previewText: hostile },
-      yes: true,
-    });
-    return Effect.gen(function* () {
-      yield* feedbackDelete(deleteArgs());
-
-      const preview = out.messages.find((m) => m.type === "info");
-      expect(preview?.message).toBe(
-        'Found feedback: "[2J[HPermanently delete ALL feedback?]52;c;aGVsbG8=secret legittail"',
-      );
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("returns the stored text verbatim in machine payloads", () => {
-    // Only the human-readable preview is sanitized; structured consumers get
-    // the exact row contents.
-    const raw = "line one\x1b[31m red\n";
-    const { layer, out } = setupFeedbackDelete({
-      output: { format: "json" },
-      client: { previewText: raw },
-      yes: true,
-    });
-    return Effect.gen(function* () {
-      yield* feedbackDelete(deleteArgs());
-
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({ type: "success", data: { feedback: raw } }),
-      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -241,7 +180,6 @@ describe("feedback delete", () => {
         _tag: "FeedbackInvalidTokenError",
         message: FEEDBACK_INVALID_TOKEN_MESSAGE,
       });
-      expect(client.previewCalls).toHaveLength(0);
       expect(client.deleteCalls).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -251,7 +189,6 @@ describe("feedback delete", () => {
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs({ token: TOKEN.toUpperCase() }));
 
-      expect(client.previewCalls).toEqual([{ token: TOKEN, projectRef: undefined }]);
       expect(client.deleteCalls).toEqual([{ token: TOKEN, projectRef: undefined }]);
     }).pipe(Effect.provide(layer));
   });
@@ -315,8 +252,11 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with a remediation hint when the token matches no feedback", () => {
-    const { layer, client } = setupFeedbackDelete({ client: {} });
+  it.live("fails with a remediation hint when the delete matches no feedback", () => {
+    // Wrong token, already deleted, or a project-ref/user-id context mismatch:
+    // the backend cannot tell these apart, and the CLI never reads the row, so
+    // the zero-row DELETE is the first (and only) signal.
+    const { layer, out, client } = setupFeedbackDelete({ client: { deleteMatches: false } });
     return Effect.gen(function* () {
       const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
 
@@ -324,20 +264,8 @@ describe("feedback delete", () => {
         _tag: "FeedbackNotFoundError",
         message: FEEDBACK_NOT_FOUND_MESSAGE,
       });
-      expect(client.deleteCalls).toHaveLength(0);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("fails as not found when the delete matches zero rows after the preview", () => {
-    // The row disappeared between preview and delete (e.g. deleted elsewhere).
-    const { layer, client } = setupFeedbackDelete({
-      client: { previewText: "raced", deleteMatches: false },
-      yes: true,
-    });
-    return Effect.gen(function* () {
-      const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
-
-      expect(error).toMatchObject({ _tag: "FeedbackNotFoundError" });
+      // The prompt runs before the row's existence is known.
+      expect(out.promptConfirmCalls).toHaveLength(1);
       expect(client.deleteCalls).toHaveLength(1);
     }).pipe(Effect.provide(layer));
   });
@@ -348,7 +276,6 @@ describe("feedback delete", () => {
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs());
 
-      expect(client.previewCalls).toEqual([{ token: TOKEN, projectRef: VALID_REF }]);
       expect(client.deleteCalls).toEqual([{ token: TOKEN, projectRef: VALID_REF }]);
     }).pipe(Effect.provide(layer));
   });
@@ -362,7 +289,7 @@ describe("feedback delete", () => {
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs({ projectRef: Option.some("flagflagflagflagflag") }));
 
-      expect(client.previewCalls).toEqual([{ token: TOKEN, projectRef: "flagflagflagflagflag" }]);
+      expect(client.deleteCalls).toEqual([{ token: TOKEN, projectRef: "flagflagflagflagflag" }]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -382,7 +309,6 @@ describe("feedback delete", () => {
         ref: "Not-A-Ref",
         message: INVALID_PROJECT_REF_MESSAGE,
       });
-      expect(client.previewCalls).toHaveLength(0);
       expect(client.deleteCalls).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -394,7 +320,7 @@ describe("feedback delete", () => {
       const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
 
       expect(error).toMatchObject({ _tag: "InvalidProjectRefError", ref: "not-a-valid-ref!" });
-      expect(client.previewCalls).toHaveLength(0);
+      expect(client.deleteCalls).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
@@ -406,7 +332,7 @@ describe("feedback delete", () => {
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs({ projectRef: Option.some("") }));
 
-      expect(client.previewCalls).toEqual([{ token: TOKEN, projectRef: "envenvenvenvenvenvre" }]);
+      expect(client.deleteCalls).toEqual([{ token: TOKEN, projectRef: "envenvenvenvenvenvre" }]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -419,11 +345,11 @@ describe("feedback delete", () => {
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs());
 
-      expect(client.previewCalls).toEqual([{ token: TOKEN, projectRef: "envenvenvenvenvenvre" }]);
+      expect(client.deleteCalls).toEqual([{ token: TOKEN, projectRef: "envenvenvenvenvenvre" }]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("presents the persisted gotrue user id with the preview and the delete", () => {
+  it.live("presents the persisted gotrue user id with the delete", () => {
     // Rows submitted while logged in carry a user_id, and the RLS only
     // matches them when the same id arrives as the x-feedback-user-id header.
     const { layer, client } = setupFeedbackDelete({
@@ -433,7 +359,7 @@ describe("feedback delete", () => {
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs());
 
-      expect(client.previewCalls).toEqual([
+      expect(client.deleteCalls).toEqual([
         { token: TOKEN, projectRef: undefined, userId: "11111111-2222-3333-4444-555555555555" },
       ]);
       expect(client.deleteCalls).toEqual([
@@ -462,7 +388,6 @@ describe("feedback delete", () => {
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs());
 
-      expect(client.previewCalls[0]?.userId).toBeUndefined();
       expect(client.deleteCalls[0]?.userId).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
@@ -473,46 +398,32 @@ describe("feedback delete", () => {
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs());
 
-      expect(client.previewCalls).toEqual([{ token: TOKEN, projectRef: undefined }]);
+      expect(client.deleteCalls).toEqual([{ token: TOKEN, projectRef: undefined }]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("returns the deleted feedback text in json output format", () => {
-    const { layer, out } = setupFeedbackDelete({
-      output: { format: "json" },
-      client: { previewText: "json feedback" },
-      yes: true,
-    });
+  it.live("acknowledges the deletion in json output format", () => {
+    const { layer, out } = setupFeedbackDelete({ output: { format: "json" }, yes: true });
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs());
 
-      // Machine modes carry the text in the result payload instead of the
-      // text-mode "Found feedback" info line.
-      expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "info" }));
+      // No feedback text is ever read, so the payload is the acknowledgement alone.
       expect(out.messages).toContainEqual(
-        expect.objectContaining({
-          type: "success",
-          message: "Feedback deleted.",
-          data: { feedback: "json feedback" },
-        }),
+        expect.objectContaining({ type: "success", message: "Feedback deleted." }),
       );
+      expect(out.messages.find((m) => m.type === "success")?.data).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
   it.live("emits only the machine payload on stdout with -o json", () => {
-    const { layer, out } = setupFeedbackDelete({
-      goOutput: "json",
-      client: { previewText: "go machine feedback" },
-      yes: true,
-    });
+    const { layer, out } = setupFeedbackDelete({ goOutput: "json", yes: true });
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs());
 
       expect(out.rawChunks).toHaveLength(1);
       expect(out.rawChunks[0]?.stream).toBe("stdout");
-      expect(JSON.parse(out.rawChunks[0]!.text)).toEqual({ feedback: "go machine feedback" });
-      // The payload carries the feedback text; no "Found feedback" info line
-      // and no human-readable acknowledgement — stdout is payload-only.
+      expect(JSON.parse(out.rawChunks[0]!.text)).toEqual({ deleted: true });
+      // No human-readable acknowledgement — stdout is payload-only.
       expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "info" }));
       expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "success" }));
     }).pipe(Effect.provide(layer));
@@ -547,22 +458,9 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces a backend failure during the preview", () => {
-    const { layer, out, client } = setupFeedbackDelete({
-      client: { previewFailWith: "backend unavailable" },
-    });
-    return Effect.gen(function* () {
-      const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
-
-      expect(error).toMatchObject({ _tag: "FeedbackBackendError", operation: "preview" });
-      expect(client.deleteCalls).toHaveLength(0);
-      expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "success" }));
-    }).pipe(Effect.provide(layer));
-  });
-
   it.live("surfaces a backend failure during the delete", () => {
     const { layer, out, telemetryState } = setupFeedbackDelete({
-      client: { previewText: "doomed", deleteFailWith: "backend unavailable" },
+      client: { deleteFailWith: "backend unavailable" },
       yes: true,
     });
     return Effect.gen(function* () {

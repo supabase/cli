@@ -53,9 +53,7 @@ export function formatNamedRef(name: string | undefined, ref: string): string {
 // equivalent U+009B), bidi override chars (can reorder/hide terminal text),
 // and Unicode line separators — defense-in-depth against escape injection,
 // spoofing, and log-line fracturing. `\n` and `\t` are kept for JSON readability.
-// Exported for the `feedback delete` preview, which renders untrusted
-// submitter text uncapped.
-export function stripControlChars(input: string): string {
+function stripControlChars(input: string): string {
   let out = "";
   for (let i = 0; i < input.length; i++) {
     const code = input.charCodeAt(i);

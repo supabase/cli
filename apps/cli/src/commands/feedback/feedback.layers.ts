@@ -22,12 +22,12 @@ interface FeedbackFetchOptions {
   readonly resolver?: DohFetchOptions["resolver"];
 }
 
-// The preview/delete requests carry the row's capability token as a
+// The delete request carries the row's capability token as a
 // `delete_token=eq.<uuid>` PostgREST filter. Unlike the Management API (whose
 // credentials ride in never-logged headers), that puts a secret in the URL —
 // redact it before the gated stderr write so `--debug` output pasted into
-// issues, CI logs, or support threads never grants read/delete authority over
-// the row. The transport still receives the original URL.
+// issues, CI logs, or support threads never grants delete authority over the
+// row. The transport still receives the original URL.
 function redactDeleteToken(url: string): string {
   const parsed = new URL(url);
   if (!parsed.searchParams.has("delete_token")) return url;

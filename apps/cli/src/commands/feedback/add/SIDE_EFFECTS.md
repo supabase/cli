@@ -132,7 +132,7 @@ event); the shared stream-json layer emits these for every `output.task`.
   is granted; opted-out or logged-out runs omit it. The lookup is a synchronous
   in-memory read — no auth or network dependency is added. A row submitted with
   a `user_id` additionally requires the matching `x-feedback-user-id` header to
-  preview/delete it later (`feedback delete` sends it automatically).
+  delete it later (`feedback delete` sends it automatically).
 - Project-ref resolution order: `--project-ref` (an empty value counts as
   unset) → `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/project-ref`
   (written by `supabase link`) → `null`, the same order as `feedback delete`.

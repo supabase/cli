@@ -64,10 +64,7 @@ test(
       const deleted = await runDelete(token ?? "");
       cleaned = deleted.exitCode === 0;
       expect(deleted.exitCode, deleted.stderr).toBe(0);
-      expect(JSON.parse(deleted.stdout)).toEqual({
-        feedback: message,
-        message: "Feedback deleted.",
-      });
+      expect(JSON.parse(deleted.stdout)).toEqual({ message: "Feedback deleted." });
     } finally {
       // Best-effort teardown: a failing run must not leave its row on the
       // staging feedback project. Inert when the round trip already deleted

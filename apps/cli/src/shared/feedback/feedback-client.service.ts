@@ -1,4 +1,4 @@
-import type { Effect, Option } from "effect";
+import type { Effect } from "effect";
 import { Context, Data } from "effect";
 import {
   actionability,
@@ -28,10 +28,10 @@ export interface FeedbackSubmission {
 }
 
 /**
- * Row-context values presented as `x-feedback-*` headers on preview/delete.
- * The RLS policies require each one when (and only when) the row was
- * submitted with it — extra context against a context-free row is ignored, so
- * sending whatever is available is always safe.
+ * Row-context values presented as `x-feedback-*` headers on delete. The RLS
+ * policy requires each one when (and only when) the row was submitted with
+ * it — extra context against a context-free row is ignored, so sending
+ * whatever is available is always safe.
  */
 interface FeedbackRowContext {
   readonly projectRef?: string;
@@ -55,7 +55,7 @@ interface FeedbackSubmitReceipt {
  */
 export class FeedbackBackendError extends Data.TaggedError("FeedbackBackendError")<{
   readonly message: string;
-  readonly operation: "submit" | "preview" | "delete";
+  readonly operation: "submit" | "delete";
   readonly reason: "response" | "transport";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -75,15 +75,10 @@ interface FeedbackClientShape {
     submission: FeedbackSubmission,
   ) => Effect.Effect<FeedbackSubmitReceipt, FeedbackBackendError>;
   /**
-   * The feedback text of the row the token unlocks, or `None` when no row
-   * matches (wrong token, already deleted, or a project-ref/user-id context
-   * mismatch — the backend cannot distinguish these).
+   * `deleted: false` means the delete matched zero rows: wrong token, already
+   * deleted, or a project-ref/user-id context mismatch — the backend cannot
+   * distinguish these. The CLI never reads a row (CLI-2406).
    */
-  readonly preview: (
-    token: string,
-    context?: FeedbackRowContext,
-  ) => Effect.Effect<Option.Option<string>, FeedbackBackendError>;
-  /** `deleted: false` means the delete matched zero rows (same causes as `preview` → `None`). */
   readonly delete: (
     token: string,
     context?: FeedbackRowContext,

@@ -86,8 +86,7 @@ function mockFeedbackClient(opts: { failWith?: string } = {}) {
                 submissions.push(submission);
                 return { deleteToken: MOCK_DELETE_TOKEN };
               }),
-        // `feedback add` never previews or deletes.
-        preview: () => Effect.die("preview is not reachable from feedback add"),
+        // `feedback add` never deletes.
         delete: () => Effect.die("delete is not reachable from feedback add"),
       }),
     ),
