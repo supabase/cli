@@ -32,6 +32,7 @@ import {
   resolveGotrueRateLimit,
   resolveGotrueSessions,
   resolveGotrueWeb3,
+  strToArr,
 } from "../../../command-internal/local-config-values.ts";
 import {
   collectDotenvPrivateKeys,
@@ -92,32 +93,6 @@ const parseEnv = (contents: string): Record<string, Redacted.Redacted<string>> =
 
 const envKeyPattern = /^[A-Z_][A-Z0-9_]*$/u;
 const defaultStudioApiUrl = "http://127.0.0.1";
-
-const envString = (
-  name: string,
-  value: string | undefined,
-  env: Readonly<Record<string, string>>,
-) => envOverride(name, value, env) ?? value;
-const envBool = (
-  name: string,
-  value: boolean,
-  field: string,
-  env: Readonly<Record<string, string>>,
-) => envOverrideBool(name, value, field, env);
-const envUint = (
-  name: string,
-  value: number,
-  field: string,
-  env: Readonly<Record<string, string>>,
-) => envOverrideUint(name, field, value, env);
-const envArray = (
-  name: string,
-  value: ReadonlyArray<string>,
-  env: Readonly<Record<string, string>>,
-): ReadonlyArray<string> => {
-  const override = envOverride(name, undefined, env);
-  return override === undefined ? value : override.split(",");
-};
 
 const validateEnvKeys = (
   values: Readonly<Record<string, Redacted.Redacted<string>>>,
@@ -447,37 +422,36 @@ const authSettings = (
     };
   }
 
-  const provider = (value: Record<string, unknown>) => value;
   const sms = {
     ...pick(resolvedSms, ["enable_signup", "enable_confirmations", "template", "max_frequency"]),
-    twilio: provider({
+    twilio: {
       enabled: resolvedSms.twilio.enabled,
       account_sid: resolvedSms.twilio.account_sid,
       message_service_sid: resolvedSms.twilio.message_service_sid,
       auth_token: secret(resolvedSms.twilio.auth_token),
-    }),
-    twilio_verify: provider({
+    },
+    twilio_verify: {
       enabled: resolvedSms.twilio_verify.enabled,
       account_sid: resolvedSms.twilio_verify.account_sid,
       message_service_sid: resolvedSms.twilio_verify.message_service_sid,
       auth_token: secret(resolvedSms.twilio_verify.auth_token),
-    }),
-    messagebird: provider({
+    },
+    messagebird: {
       enabled: resolvedSms.messagebird.enabled,
       originator: resolvedSms.messagebird.originator,
       access_key: secret(resolvedSms.messagebird.access_key),
-    }),
-    textlocal: provider({
+    },
+    textlocal: {
       enabled: resolvedSms.textlocal.enabled,
       sender: resolvedSms.textlocal.sender,
       api_key: secret(resolvedSms.textlocal.api_key),
-    }),
-    vonage: provider({
+    },
+    vonage: {
       enabled: resolvedSms.vonage.enabled,
       from: resolvedSms.vonage.from,
       api_key: secret(resolvedSms.vonage.api_key),
       api_secret: secret(resolvedSms.vonage.api_secret),
-    }),
+    },
     ...(auth.sms.test_otp === undefined ? {} : { test_otp: auth.sms.test_otp }),
   };
 
@@ -713,13 +687,18 @@ const resolveAuthOverrides = (
     template: resolvedEmailTemplate,
     notification: resolvedEmailNotification,
   };
+  const additionalRedirectUrls = envOverride(
+    "SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS",
+    undefined,
+    env,
+  );
   const resolvedSmtp =
     smtp === undefined
       ? undefined
       : {
           enabled: smtp.enabled,
           host: smtp.host,
-          port: smtp.port,
+          ...(smtp.port === 0 ? {} : { port: smtp.port }),
           user: smtp.user,
           pass: smtp.pass,
           admin_email: smtp.adminEmail,
@@ -727,75 +706,75 @@ const resolveAuthOverrides = (
         };
   const thirdParty = {
     firebase: {
-      enabled: envBool(
+      enabled: envOverrideBool(
         "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
         auth.third_party.firebase.enabled,
         "auth.third_party.firebase.enabled",
         env,
       ),
-      project_id: envString(
+      project_id: envOverride(
         "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
         auth.third_party.firebase.project_id,
         env,
       ),
     },
     auth0: {
-      enabled: envBool(
+      enabled: envOverrideBool(
         "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
         auth.third_party.auth0.enabled,
         "auth.third_party.auth0.enabled",
         env,
       ),
-      tenant: envString(
+      tenant: envOverride(
         "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
         auth.third_party.auth0.tenant,
         env,
       ),
-      tenant_region: envString(
+      tenant_region: envOverride(
         "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT_REGION",
         auth.third_party.auth0.tenant_region,
         env,
       ),
     },
     aws_cognito: {
-      enabled: envBool(
+      enabled: envOverrideBool(
         "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
         auth.third_party.aws_cognito.enabled,
         "auth.third_party.aws_cognito.enabled",
         env,
       ),
-      user_pool_id: envString(
+      user_pool_id: envOverride(
         "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
         auth.third_party.aws_cognito.user_pool_id,
         env,
       ),
-      user_pool_region: envString(
+      user_pool_region: envOverride(
         "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
         auth.third_party.aws_cognito.user_pool_region,
         env,
       ),
     },
     clerk: {
-      enabled: envBool(
+      enabled: envOverrideBool(
         "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
         auth.third_party.clerk.enabled,
         "auth.third_party.clerk.enabled",
         env,
       ),
-      domain: envString(
+      domain: envOverride(
         "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
         auth.third_party.clerk.domain,
         env,
       ),
     },
     workos: {
-      enabled: envBool(
+      enabled: envOverrideBool(
         "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
         auth.third_party.workos.enabled,
         "auth.third_party.workos.enabled",
         env,
       ),
-      issuer_url: envString(
+      issuer_url: envOverride(
         "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
         auth.third_party.workos.issuer_url,
         env,
@@ -804,58 +783,59 @@ const resolveAuthOverrides = (
   };
   return {
     ...auth,
-    enabled: envBool("SUPABASE_AUTH_ENABLED", auth.enabled, "auth.enabled", env),
-    site_url: envString("SUPABASE_AUTH_SITE_URL", auth.site_url, env) ?? auth.site_url,
-    additional_redirect_urls: envArray(
-      "SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS",
-      auth.additional_redirect_urls,
+    enabled: envOverrideBool("SUPABASE_AUTH_ENABLED", auth.enabled, "auth.enabled", env),
+    site_url: envOverride("SUPABASE_AUTH_SITE_URL", auth.site_url, env),
+    additional_redirect_urls:
+      additionalRedirectUrls === undefined
+        ? auth.additional_redirect_urls
+        : strToArr(additionalRedirectUrls),
+    jwt_expiry: envOverrideUint(
+      "SUPABASE_AUTH_JWT_EXPIRY",
+      "auth.jwt_expiry",
+      auth.jwt_expiry,
       env,
     ),
-    jwt_expiry: envUint("SUPABASE_AUTH_JWT_EXPIRY", auth.jwt_expiry, "auth.jwt_expiry", env),
-    jwt_issuer: envString("SUPABASE_AUTH_JWT_ISSUER", auth.jwt_issuer, env),
-    signing_keys_path: envString("SUPABASE_AUTH_SIGNING_KEYS_PATH", auth.signing_keys_path, env),
-    enable_refresh_token_rotation: envBool(
+    enable_refresh_token_rotation: envOverrideBool(
       "SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION",
       auth.enable_refresh_token_rotation,
       "auth.enable_refresh_token_rotation",
       env,
     ),
-    refresh_token_reuse_interval: envUint(
+    refresh_token_reuse_interval: envOverrideUint(
       "SUPABASE_AUTH_REFRESH_TOKEN_REUSE_INTERVAL",
-      auth.refresh_token_reuse_interval,
       "auth.refresh_token_reuse_interval",
+      auth.refresh_token_reuse_interval,
       env,
     ),
-    enable_manual_linking: envBool(
+    enable_manual_linking: envOverrideBool(
       "SUPABASE_AUTH_ENABLE_MANUAL_LINKING",
       auth.enable_manual_linking,
       "auth.enable_manual_linking",
       env,
     ),
-    enable_signup: envBool(
+    enable_signup: envOverrideBool(
       "SUPABASE_AUTH_ENABLE_SIGNUP",
       auth.enable_signup,
       "auth.enable_signup",
       env,
     ),
-    enable_anonymous_sign_ins: envBool(
+    enable_anonymous_sign_ins: envOverrideBool(
       "SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS",
       auth.enable_anonymous_sign_ins,
       "auth.enable_anonymous_sign_ins",
       env,
     ),
-    minimum_password_length: envUint(
+    minimum_password_length: envOverrideUint(
       "SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH",
-      auth.minimum_password_length,
       "auth.minimum_password_length",
+      auth.minimum_password_length,
       env,
     ),
     password_requirements: envOverrideAuthPasswordRequirements(auth.password_requirements, env),
-    publishable_key: envString("SUPABASE_AUTH_PUBLISHABLE_KEY", auth.publishable_key, env),
-    secret_key: envString("SUPABASE_AUTH_SECRET_KEY", auth.secret_key, env),
-    jwt_secret: envString("SUPABASE_AUTH_JWT_SECRET", auth.jwt_secret, env),
-    anon_key: envString("SUPABASE_AUTH_ANON_KEY", auth.anon_key, env),
-    service_role_key: envString("SUPABASE_AUTH_SERVICE_ROLE_KEY", auth.service_role_key, env),
+    publishable_key: envOverride("SUPABASE_AUTH_PUBLISHABLE_KEY", auth.publishable_key, env),
+    secret_key: envOverride("SUPABASE_AUTH_SECRET_KEY", auth.secret_key, env),
+    anon_key: envOverride("SUPABASE_AUTH_ANON_KEY", auth.anon_key, env),
+    service_role_key: envOverride("SUPABASE_AUTH_SERVICE_ROLE_KEY", auth.service_role_key, env),
     rate_limit: resolveGotrueRateLimit(auth.rate_limit, env),
     captcha: resolveAuthCaptcha(authDocument, auth.captcha, env),
     hook: hookResolved,
@@ -884,25 +864,30 @@ const resolveEffectiveCliConfig = (
   const mail = config.local_smtp;
   const pooler = db.pooler;
   const edge = config.edge_runtime;
+  const apiSchemasOverride = envOverride("SUPABASE_API_SCHEMAS", undefined, env);
+  const apiExtraSearchPathOverride = envOverride("SUPABASE_API_EXTRA_SEARCH_PATH", undefined, env);
   const imagePresent = section(section(document, "storage"), "image_transformation") !== undefined;
   const resolvedApi = {
     ...api,
-    enabled: envBool("SUPABASE_API_ENABLED", api.enabled, "api.enabled", env),
+    enabled: envOverrideBool("SUPABASE_API_ENABLED", api.enabled, "api.enabled", env),
     port: resolvedPort("SUPABASE_API_PORT", api.port, "api.port", env),
-    schemas: envArray("SUPABASE_API_SCHEMAS", api.schemas, env),
-    extra_search_path: envArray("SUPABASE_API_EXTRA_SEARCH_PATH", api.extra_search_path, env),
+    schemas: apiSchemasOverride === undefined ? api.schemas : strToArr(apiSchemasOverride),
+    extra_search_path:
+      apiExtraSearchPathOverride === undefined
+        ? api.extra_search_path
+        : strToArr(apiExtraSearchPathOverride),
     max_rows: envOverrideApiMaxRows(api.max_rows, env),
     tls: {
       ...api.tls,
-      enabled: envBool("SUPABASE_API_TLS_ENABLED", api.tls.enabled, "api.tls.enabled", env),
-      cert_path: envString("SUPABASE_API_TLS_CERT_PATH", api.tls.cert_path, env),
-      key_path: envString("SUPABASE_API_TLS_KEY_PATH", api.tls.key_path, env),
+      enabled: envOverrideBool("SUPABASE_API_TLS_ENABLED", api.tls.enabled, "api.tls.enabled", env),
+      cert_path: envOverride("SUPABASE_API_TLS_CERT_PATH", api.tls.cert_path, env),
+      key_path: envOverride("SUPABASE_API_TLS_KEY_PATH", api.tls.key_path, env),
     },
-    external_url: envString("SUPABASE_API_EXTERNAL_URL", api.external_url, env),
+    external_url: envOverride("SUPABASE_API_EXTERNAL_URL", api.external_url, env),
     auto_expose_new_tables:
       api.auto_expose_new_tables !== undefined ||
       envOverride("SUPABASE_API_AUTO_EXPOSE_NEW_TABLES", undefined, env) !== undefined
-        ? envBool(
+        ? envOverrideBool(
             "SUPABASE_API_AUTO_EXPOSE_NEW_TABLES",
             api.auto_expose_new_tables ?? false,
             "api.auto_expose_new_tables",
@@ -912,14 +897,16 @@ const resolveEffectiveCliConfig = (
   };
   const resolvedStorage = {
     ...storage,
-    enabled: envBool("SUPABASE_STORAGE_ENABLED", storage.enabled, "storage.enabled", env),
-    file_size_limit:
-      envString("SUPABASE_STORAGE_FILE_SIZE_LIMIT", String(storage.file_size_limit), env) ??
+    enabled: envOverrideBool("SUPABASE_STORAGE_ENABLED", storage.enabled, "storage.enabled", env),
+    file_size_limit: envOverride(
+      "SUPABASE_STORAGE_FILE_SIZE_LIMIT",
       String(storage.file_size_limit),
+      env,
+    ),
     image_transformation: imagePresent
       ? {
           ...storage.image_transformation,
-          enabled: envBool(
+          enabled: envOverrideBool(
             "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
             storage.image_transformation?.enabled ?? false,
             "storage.image_transformation.enabled",
@@ -929,7 +916,7 @@ const resolveEffectiveCliConfig = (
       : undefined,
     s3_protocol: {
       ...storage.s3_protocol,
-      enabled: envBool(
+      enabled: envOverrideBool(
         "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
         storage.s3_protocol.enabled,
         "storage.s3_protocol.enabled",
@@ -938,7 +925,7 @@ const resolveEffectiveCliConfig = (
     },
     analytics: {
       ...storage.analytics,
-      enabled: envBool(
+      enabled: envOverrideBool(
         "SUPABASE_STORAGE_ANALYTICS_ENABLED",
         storage.analytics.enabled,
         "storage.analytics.enabled",
@@ -965,7 +952,7 @@ const resolveEffectiveCliConfig = (
     },
     vector: {
       ...storage.vector,
-      enabled: envBool(
+      enabled: envOverrideBool(
         "SUPABASE_STORAGE_VECTOR_ENABLED",
         storage.vector.enabled,
         "storage.vector.enabled",
@@ -987,7 +974,12 @@ const resolveEffectiveCliConfig = (
   };
   const resolvedEdge = {
     ...edge,
-    enabled: envBool("SUPABASE_EDGE_RUNTIME_ENABLED", edge.enabled, "edge_runtime.enabled", env),
+    enabled: envOverrideBool(
+      "SUPABASE_EDGE_RUNTIME_ENABLED",
+      edge.enabled,
+      "edge_runtime.enabled",
+      env,
+    ),
     policy: envOverrideEdgeRuntimePolicy(edge.policy, env),
     deno_version: envOverrideDenoVersion(edge.deno_version, env),
     inspector_port: resolvedPort(
@@ -999,7 +991,12 @@ const resolveEffectiveCliConfig = (
   };
   const resolvedAnalytics = {
     ...analytics,
-    enabled: envBool("SUPABASE_ANALYTICS_ENABLED", analytics.enabled, "analytics.enabled", env),
+    enabled: envOverrideBool(
+      "SUPABASE_ANALYTICS_ENABLED",
+      analytics.enabled,
+      "analytics.enabled",
+      env,
+    ),
     backend: envOverrideAnalyticsBackend(analytics.backend, env),
     vector_port:
       resolvedPort(
@@ -1008,42 +1005,67 @@ const resolveEffectiveCliConfig = (
         "analytics.vector_port",
         env,
       ) || undefined,
-    gcp_project_id: envString("SUPABASE_ANALYTICS_GCP_PROJECT_ID", analytics.gcp_project_id, env),
-    gcp_project_number: envString(
+    gcp_project_id: envOverride("SUPABASE_ANALYTICS_GCP_PROJECT_ID", analytics.gcp_project_id, env),
+    gcp_project_number: envOverride(
       "SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER",
       analytics.gcp_project_number,
       env,
     ),
-    gcp_jwt_path: envString("SUPABASE_ANALYTICS_GCP_JWT_PATH", analytics.gcp_jwt_path, env),
+    gcp_jwt_path: envOverride("SUPABASE_ANALYTICS_GCP_JWT_PATH", analytics.gcp_jwt_path, env),
   };
   const resolvedPooler = {
     ...pooler,
-    enabled: envBool("SUPABASE_DB_POOLER_ENABLED", pooler.enabled, "db.pooler.enabled", env),
+    enabled: envOverrideBool(
+      "SUPABASE_DB_POOLER_ENABLED",
+      pooler.enabled,
+      "db.pooler.enabled",
+      env,
+    ),
     port: resolvedPort("SUPABASE_DB_POOLER_PORT", pooler.port, "db.pooler.port", env),
     pool_mode: envOverridePoolMode(pooler.pool_mode, env),
     default_pool_size: envOverrideDefaultPoolSize(pooler.default_pool_size, env),
     max_client_conn: envOverrideMaxClientConn(pooler.max_client_conn, env),
   };
-  const authEnabled = envBool("SUPABASE_AUTH_ENABLED", config.auth.enabled, "auth.enabled", env);
+  const authEnabled = envOverrideBool(
+    "SUPABASE_AUTH_ENABLED",
+    config.auth.enabled,
+    "auth.enabled",
+    env,
+  );
+  // JWT security settings apply to non-Auth workloads too, so resolve them
+  // regardless of whether the Auth capability is enabled.
+  const authResolved = {
+    ...(authEnabled ? resolveAuthOverrides(config.auth, document, env) : config.auth),
+    enabled: authEnabled,
+    jwt_issuer: envOverride("SUPABASE_AUTH_JWT_ISSUER", config.auth.jwt_issuer, env),
+    signing_keys_path: envOverride(
+      "SUPABASE_AUTH_SIGNING_KEYS_PATH",
+      config.auth.signing_keys_path,
+      env,
+    ),
+    jwt_secret: envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, env),
+  };
   return {
     ...config,
     api: resolvedApi,
-    auth: authEnabled
-      ? resolveAuthOverrides(config.auth, document, env)
-      : { ...config.auth, enabled: false },
+    auth: authResolved,
     db: {
       ...db,
       port: resolvedPort("SUPABASE_DB_PORT", db.port, "db.port", env),
       major_version: envOverrideMajorVersion(db.major_version, env),
-      health_timeout:
-        envString("SUPABASE_DB_HEALTH_TIMEOUT", db.health_timeout, env) ?? db.health_timeout,
+      health_timeout: envOverride("SUPABASE_DB_HEALTH_TIMEOUT", db.health_timeout, env),
       settings: resolveDbSettingsEnvOverrides(db.settings, env),
       pooler: resolvedPooler,
     },
     edge_runtime: resolvedEdge,
     realtime: {
       ...realtime,
-      enabled: envBool("SUPABASE_REALTIME_ENABLED", realtime.enabled, "realtime.enabled", env),
+      enabled: envOverrideBool(
+        "SUPABASE_REALTIME_ENABLED",
+        realtime.enabled,
+        "realtime.enabled",
+        env,
+      ),
       ip_version: envOverrideRealtimeIpVersion(realtime.ip_version, env),
       max_header_length: envOverrideRealtimeMaxHeaderLength(realtime.max_header_length, env),
     },
@@ -1051,14 +1073,19 @@ const resolveEffectiveCliConfig = (
     analytics: resolvedAnalytics,
     studio: {
       ...studio,
-      enabled: envBool("SUPABASE_STUDIO_ENABLED", studio.enabled, "studio.enabled", env),
+      enabled: envOverrideBool("SUPABASE_STUDIO_ENABLED", studio.enabled, "studio.enabled", env),
       port: resolvedPort("SUPABASE_STUDIO_PORT", studio.port, "studio.port", env),
-      api_url: envString("SUPABASE_STUDIO_API_URL", studio.api_url, env) ?? studio.api_url,
-      openai_api_key: envString("SUPABASE_STUDIO_OPENAI_API_KEY", studio.openai_api_key, env),
+      api_url: envOverride("SUPABASE_STUDIO_API_URL", studio.api_url, env),
+      openai_api_key: envOverride("SUPABASE_STUDIO_OPENAI_API_KEY", studio.openai_api_key, env),
     },
     local_smtp: {
       ...mail,
-      enabled: envBool("SUPABASE_LOCAL_SMTP_ENABLED", mail.enabled, "local_smtp.enabled", env),
+      enabled: envOverrideBool(
+        "SUPABASE_LOCAL_SMTP_ENABLED",
+        mail.enabled,
+        "local_smtp.enabled",
+        env,
+      ),
       port: resolvedPort("SUPABASE_LOCAL_SMTP_PORT", mail.port, "local_smtp.port", env),
       smtp_port: resolvedPort(
         "SUPABASE_LOCAL_SMTP_SMTP_PORT",
@@ -1072,8 +1099,8 @@ const resolveEffectiveCliConfig = (
         "local_smtp.pop3_port",
         env,
       ),
-      admin_email: envString("SUPABASE_LOCAL_SMTP_ADMIN_EMAIL", mail.admin_email, env),
-      sender_name: envString("SUPABASE_LOCAL_SMTP_SENDER_NAME", mail.sender_name, env),
+      admin_email: envOverride("SUPABASE_LOCAL_SMTP_ADMIN_EMAIL", mail.admin_email, env),
+      sender_name: envOverride("SUPABASE_LOCAL_SMTP_SENDER_NAME", mail.sender_name, env),
     },
   };
 };

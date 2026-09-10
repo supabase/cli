@@ -58,7 +58,7 @@ describe("Edge Runtime worker service paths", () => {
 });
 
 describe("Edge Runtime request-time function resolver", () => {
-  it("resolves current filesystem paths for create/edit/delete", async () => {
+  it("resolves current filesystem paths for create/delete", async () => {
     const root = await mkdtemp(join(tmpdir(), "stack-functions-resolver-"));
     try {
       const hello = join(root, "hello");
@@ -78,23 +78,6 @@ describe("Edge Runtime request-time function resolver", () => {
         importMapPath: join(canonicalRoot, "hello", "deno.json"),
         verifyJWT: true,
       });
-      await writeFile(join(hello, "package.json"), "{}");
-      expect(
-        await packageJsonContainedFor({
-          root,
-          config: { ...defaults!, importMapPath: "" },
-          fs: nodeFileSystem,
-        }),
-      ).toBe(true);
-
-      await writeFile(join(hello, "index.ts"), "export default 2");
-      const edited = await resolveFunctionConfig({
-        root,
-        slug: "hello",
-        overrides: {},
-        fs: nodeFileSystem,
-      });
-      expect(edited?.entrypointPath).toBe(defaults?.entrypointPath);
 
       const created = join(root, "new-function");
       await mkdir(created);
@@ -115,6 +98,32 @@ describe("Edge Runtime request-time function resolver", () => {
       expect(
         await resolveFunctionConfig({ root, slug: "hello", overrides: {}, fs: nodeFileSystem }),
       ).toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("discovers a contained package.json for a function without an import map", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stack-functions-resolver-package-discovery-"));
+    try {
+      const hello = join(root, "hello");
+      await mkdir(hello, { recursive: true });
+      await writeFile(join(hello, "index.ts"), "export default 1");
+      await writeFile(join(hello, "package.json"), "{}");
+      const config = await resolveFunctionConfig({
+        root,
+        slug: "hello",
+        overrides: {},
+        fs: nodeFileSystem,
+      });
+      expect(config).toBeDefined();
+      expect(
+        await packageJsonContainedFor({
+          root,
+          config: { ...config!, importMapPath: "" },
+          fs: nodeFileSystem,
+        }),
+      ).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

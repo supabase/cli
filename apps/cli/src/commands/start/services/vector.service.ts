@@ -19,6 +19,7 @@ import {
   slimWgetWaitCommand,
 } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
 import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
+import { platformDefaultDockerHost } from "../../../command-internal/hostname.ts";
 import { renderStartVectorYaml } from "../lib/template-render.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
@@ -82,11 +83,6 @@ export function shouldMountRootDockerSocket(host: string): boolean {
     (host.includes("/.colima/") && host.endsWith("/docker.sock")) ||
     host.endsWith("/.colima/docker.sock")
   );
-}
-
-/** The platform-default Docker host; `platform` defaults to `process.platform`. */
-export function platformDefaultDockerHost(platform: NodeJS.Platform = process.platform): string {
-  return platform === "win32" ? "npipe:////./pipe/docker_engine" : "unix:///var/run/docker.sock";
 }
 
 export interface VectorDockerSocketPlan {

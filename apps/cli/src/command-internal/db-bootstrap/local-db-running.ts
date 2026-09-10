@@ -1,4 +1,6 @@
-import { Data, Effect, type FileSystem, Option, type Path, Stream } from "effect";
+import http from "node:http";
+
+import { Context, Data, Effect, type FileSystem, Layer, Option, type Path, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import {
@@ -10,6 +12,9 @@ import { isContainerNotFoundMessage, spawnContainerCli } from "../container-cli.
 import { readDbToml } from "../db-config.toml-read.ts";
 import { resolveLocalProjectId, localDbContainerId } from "../docker-ids.ts";
 import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "../docker-suggest.ts";
+import { redactHttpUrl } from "../../auth/http-debug.layer.ts";
+import { DebugLogger } from "../debug-logger.service.ts";
+import { resolveDockerDaemonEndpoint } from "../hostname.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -29,6 +34,246 @@ export class LocalDbRunningError extends Data.TaggedError("LocalDbRunningError")
   }
 }
 
+/**
+ * Direct Engine-API access to the locally addressable Docker daemon, so
+ * {@link isLocalDbRunning} does not depend on a spawnable, responsive
+ * `docker` CLI binary (issue #6110). `containerExists`: `Option.some(true)` —
+ * an Engine-identified 200 with a valid inspect payload; `Option.some(false)`
+ * — an Engine-identified 404; `Option.none()` — anything else (non-addressable
+ * endpoint, transport failure, silent socket, the 5s wall-clock bound
+ * expiring, non-Engine responder, abnormal
+ * status, malformed body), telling the caller to fall back to the container
+ * CLI, which preserves the established wording, daemon-down classification,
+ * and Podman fallback.
+ */
+export class LocalDockerEngine extends Context.Service<
+  LocalDockerEngine,
+  {
+    readonly containerExists: (containerId: string) => Effect.Effect<Option.Option<boolean>>;
+  }
+>()("supabase/cli/LocalDockerEngine") {}
+
+/**
+ * The local socket path for a `unix://`/`npipe://` daemon endpoint
+ * (`npipe:////./pipe/X` -> `\\.\pipe\X`), as `node:http`'s `socketPath`
+ * accepts it. Every other scheme returns `undefined` — tcp/ssh/fd endpoints
+ * may need TLS material or transports only the `docker` CLI carries, so
+ * callers keep shelling out. Exported for tests (npipe is Windows-only).
+ */
+export function dockerEndpointSocketPath(endpoint: string): string | undefined {
+  if (endpoint.startsWith("unix://")) {
+    const socketPath = endpoint.slice("unix://".length);
+    return socketPath.length > 0 ? socketPath : undefined;
+  }
+  if (endpoint.startsWith("npipe://")) {
+    const pipePath = endpoint.slice("npipe://".length);
+    return pipePath.length > 0 ? pipePath.replaceAll("/", "\\") : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * How the endpoint is named in {@link localDockerEngineLayer}'s decline line:
+ * by its scheme alone.
+ *
+ * That is the whole reason the probe declined — `tcp`, `ssh` and `fd` are not
+ * local sockets — and it is the one part of a `DOCKER_HOST` that cannot carry
+ * a credential. The rest can: `ssh://user:secret@host` is a supported spelling,
+ * and once a password holds an unencoded `@`, `/`, `?` or `#` there is no
+ * telling it apart from an ordinary host and path, so none of it is printed.
+ */
+function describeEndpoint(endpoint: string | undefined): string {
+  if (endpoint === undefined) {
+    return "unresolved context";
+  }
+  // Anchored on `://`, so a value with no scheme cannot report its own first
+  // segment as one — that segment is the username in `user:secret@host`.
+  const scheme = /^[a-zA-Z][a-zA-Z0-9+.-]*(?=:\/\/)/.exec(endpoint);
+  if (scheme === null) {
+    return "no scheme";
+  }
+  const name = scheme[0].toLowerCase();
+  // A socket scheme only reaches the decline branch with nothing after it, so
+  // naming it alone would read as a contradiction.
+  return name === "unix" || name === "npipe" ? `${name}, no socket path` : name;
+}
+
+/**
+ * Socket-inactivity deadline: a connected-but-silent endpoint degrades to the
+ * container-CLI fallback instead of parking the command (#6110's hang shape).
+ */
+const ENGINE_PROBE_TIMEOUT_MS = 2000;
+
+/**
+ * Absolute wall-clock deadline for one probe. The socket timeout above is
+ * inactivity-based, so a peer trickling bytes could evade it; past this bound
+ * the probe is interrupted (aborting the request) and falls back.
+ */
+const ENGINE_PROBE_DEADLINE_MS = 5000;
+
+/**
+ * Body bound (an inspect payload is a few KB); past it the probe stops
+ * reading and falls back.
+ */
+const ENGINE_MAX_RESPONSE_BYTES = 64 * 1024;
+
+/**
+ * Docker sets `Api-Version`/`Server: Docker/<v>` on every response, 404s
+ * included (Podman's compat API sends `Api-Version` too). A 200/404 without
+ * them is some other service on the socket, not an answer — fall back.
+ */
+const isEngineResponse = (response: http.IncomingMessage): boolean =>
+  response.headers["api-version"] !== undefined ||
+  String(response.headers["server"] ?? "").startsWith("Docker/");
+
+/**
+ * `GET /containers/<id>/json` over a local socket / named pipe. Total: every
+ * terminal state settles exactly once, and anything that is not an
+ * Engine-identified 200/404 settles `Option.none()`. `agent: false` keeps the
+ * one-shot connection out of the process-global pool, so nothing outlives the
+ * probe.
+ */
+const inspectContainerOverSocket = (
+  socketPath: string,
+  containerId: string,
+): Effect.Effect<Option.Option<boolean>> =>
+  Effect.callback((resume, signal) => {
+    let settled = false;
+    const settle = (result: Option.Option<boolean>) => {
+      if (settled) return;
+      settled = true;
+      resume(Effect.succeed(result));
+    };
+    const settleNone = () => {
+      settle(Option.none());
+    };
+
+    let request: http.ClientRequest;
+    try {
+      request = http.request(
+        {
+          socketPath,
+          method: "GET",
+          path: `/containers/${encodeURIComponent(containerId)}/json`,
+          // HTTP/1.1 requires a Host header; "docker" is what Docker's SDKs send.
+          headers: { Host: "docker" },
+          agent: false,
+          timeout: ENGINE_PROBE_TIMEOUT_MS,
+          signal,
+        },
+        (response) => {
+          const chunks: Array<Buffer> = [];
+          let size = 0;
+          response.on("data", (chunk: Buffer) => {
+            size += chunk.length;
+            if (size > ENGINE_MAX_RESPONSE_BYTES) {
+              response.destroy();
+              settleNone();
+              return;
+            }
+            chunks.push(chunk);
+          });
+          response.on("error", settleNone);
+          // A dropped connection can surface as `close` without `end` (no
+          // `error` guaranteed); the latch no-ops the ordinary post-`end` close.
+          response.on("close", settleNone);
+          response.on("end", () => {
+            if (!isEngineResponse(response)) {
+              settleNone();
+              return;
+            }
+            const status = response.statusCode ?? 0;
+            if (status === 404) {
+              settle(Option.some(false));
+              return;
+            }
+            if (status !== 200) {
+              settleNone();
+              return;
+            }
+            // A 200 must carry a JSON-object inspect payload to count as "present".
+            let payload: unknown;
+            try {
+              payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+            } catch {
+              payload = undefined;
+            }
+            if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+              settleNone();
+              return;
+            }
+            settle(Option.some(true));
+          });
+        },
+      );
+      request.on("error", settleNone);
+      // Node leaves the in-flight socket alive on `timeout` — destroy it. Also
+      // the universal backstop; deliberately no `request.on("close")`: under
+      // Bun that fires mid-response, between `data` and `end`.
+      request.on("timeout", () => {
+        request.destroy();
+        settleNone();
+      });
+      request.end();
+    } catch {
+      // A transport that cannot even be constructed is a transport failure too.
+      settleNone();
+      return;
+    }
+
+    return Effect.sync(() => {
+      settled = true;
+      request.destroy();
+    });
+  });
+
+/**
+ * Production {@link LocalDockerEngine}: resolves the endpoint the way the
+ * `docker` CLI itself would (`DOCKER_HOST` -> context store -> platform
+ * default), inside `Effect.suspend` so every execution sees the current
+ * environment. With `DebugLogger` provided (the db families provide it), the
+ * probe's socket and fallback decisions surface under `--debug` — otherwise
+ * this is the one HTTP call the debug side channel cannot see. An endpoint it
+ * cannot address is named by {@link describeEndpoint}, never printed.
+ */
+export const localDockerEngineLayer: Layer.Layer<LocalDockerEngine> = Layer.effect(
+  LocalDockerEngine,
+  Effect.gen(function* () {
+    const debugLogger = yield* Effect.serviceOption(DebugLogger);
+    const debug = (line: string) =>
+      Option.isSome(debugLogger) ? debugLogger.value.debug(line) : Effect.void;
+    const httpLine = (url: string) =>
+      Option.isSome(debugLogger) ? debugLogger.value.http("GET", redactHttpUrl(url)) : Effect.void;
+    return LocalDockerEngine.of({
+      containerExists: (containerId) =>
+        Effect.suspend(() => {
+          const endpoint = resolveDockerDaemonEndpoint();
+          const socketPath =
+            endpoint === undefined ? undefined : dockerEndpointSocketPath(endpoint);
+          if (socketPath === undefined) {
+            return debug(
+              `local db engine probe: endpoint not directly addressable (${describeEndpoint(endpoint)}) — using the container CLI`,
+            ).pipe(Effect.as(Option.none()));
+          }
+          return httpLine(`${endpoint}/containers/${containerId}/json`).pipe(
+            Effect.andThen(inspectContainerOverSocket(socketPath, containerId)),
+            Effect.timeoutOrElse({
+              duration: ENGINE_PROBE_DEADLINE_MS,
+              orElse: () => Effect.succeed(Option.none<boolean>()),
+            }),
+            Effect.tap((answer) =>
+              Option.isNone(answer)
+                ? debug(
+                    "local db engine probe: no definitive Engine answer — falling back to the container CLI",
+                  )
+                : Effect.void,
+            ),
+          );
+        }),
+    });
+  }),
+);
+
 const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
   const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
   const bytes = new Uint8Array(total);
@@ -41,10 +286,15 @@ const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
 };
 
 /**
- * Inspects the local Postgres container. Resolves `true` when it exists and `false` when the
- * container-CLI reports the container is missing (recognizing both Docker's and Podman's
- * not-found wording). Any other inspect failure (e.g. an unreachable Docker daemon) fails with
- * {@link LocalDbRunningError} rather than being treated as "not running".
+ * Answers whether the local Postgres container exists. Resolves `true` when it exists, `false`
+ * when it definitively does not, and fails with {@link LocalDbRunningError} on any other inspect
+ * failure (e.g. an unreachable daemon) rather than treating it as "not running".
+ *
+ * Asks the Engine API first ({@link LocalDockerEngine}) so a stalled `docker` binary can't block
+ * the probe, and falls back to the container-CLI spawn (Podman fallback, daemon-down
+ * classification) only when the Engine gives no definitive answer. `resolveDbToml` is a
+ * best-effort read: only `projectId` is needed, and an unreadable `.env` falls back to the
+ * workdir basename.
  */
 export function isLocalDbRunning(
   spawner: Spawner,
@@ -52,7 +302,7 @@ export function isLocalDbRunning(
   path: Path.Path,
   workdir: string,
   configuredProjectId: string | undefined,
-): Effect.Effect<boolean, LocalDbRunningError> {
+): Effect.Effect<boolean, LocalDbRunningError, LocalDockerEngine> {
   return Effect.scoped(
     Effect.gen(function* () {
       // Config was already validated (and any unresolved-env WARN already printed) by the
@@ -70,6 +320,10 @@ export function isLocalDbRunning(
         workdir,
       );
       const containerId = localDbContainerId(projectId);
+      // Engine probe first; `Option.none()` falls through to the CLI spawn below.
+      const engine = yield* LocalDockerEngine;
+      const engineAnswer = yield* engine.containerExists(containerId);
+      if (Option.isSome(engineAnswer)) return engineAnswer.value;
       // Discard stdout (the inspect JSON) so the unconsumed pipe can never
       // deadlock; only the exit code + stderr matter.
       const child = yield* spawnContainerCli(spawner, ["container", "inspect", containerId], {

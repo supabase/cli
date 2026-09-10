@@ -207,6 +207,16 @@ export function envOverridePort(
  */
 export function envOverride(
   name: string,
+  configured: string,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): string;
+export function envOverride(
+  name: string,
+  configured: string | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): string | undefined;
+export function envOverride(
+  name: string,
   configured: string | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): string | undefined {

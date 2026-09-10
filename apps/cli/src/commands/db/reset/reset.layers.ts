@@ -1,4 +1,5 @@
 import { Layer } from "effect";
+import { localDockerEngineLayer } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { commandCredentialsLayer } from "../../../auth/command-credentials.layer.ts";
@@ -75,5 +76,7 @@ export const dbResetRuntimeLayer = Layer.mergeAll(
   // remote `db reset` that reaches the confirmation prompt fails with a missing-service defect.
   stdinLayer,
   dockerRunLayer,
+  // Backs `isLocalDbRunning`'s direct Engine-API probe (+ its `--debug` trace).
+  localDockerEngineLayer.pipe(Layer.provide(debugLoggerLayer)),
   commandRuntimeLayer(["db", "reset"]),
 );

@@ -87,18 +87,38 @@ function hostFromTcpEndpoint(endpoint: string): string | undefined {
 }
 
 /**
+ * The platform's default Docker daemon socket, which the `"default"` context stands for.
+ */
+export function platformDefaultDockerHost(platform: NodeJS.Platform = process.platform): string {
+  return platform === "win32" ? "npipe:////./pipe/docker_engine" : "unix:///var/run/docker.sock";
+}
+
+/**
+ * The daemon endpoint the `docker` CLI itself would dial, without spawning it: `DOCKER_HOST`, else
+ * the active context's stored endpoint (`"default"` meaning the platform socket). `undefined` for
+ * an unreadable non-default context, in which case direct-transport callers fall back to the CLI.
+ */
+export function resolveDockerDaemonEndpoint(): string | undefined {
+  const dockerHost = process.env["DOCKER_HOST"];
+  if (dockerHost !== undefined && dockerHost.length > 0) {
+    return dockerHost;
+  }
+  const contextName = currentDockerContextName();
+  if (contextName === DEFAULT_CONTEXT_NAME) {
+    return platformDefaultDockerHost();
+  }
+  return dockerContextEndpointHost(contextName);
+}
+
+/**
  * Resolves the hostname used for local Supabase service connections:
  *
- * 1. `SUPABASE_SERVICES_HOSTNAME` env override — for dev containers or when
- *    the Docker daemon isn't reachable on the container's own loopback.
- * 2. The Docker daemon host when `DOCKER_HOST` is a `tcp://host:port` endpoint.
- * 3. Otherwise, the active Docker context's daemon endpoint when it's a
- *    `tcp://` one. The `docker`/`podman` binary this module's callers shell
- *    out to already resolves the active context itself, so without this step
- *    a remote daemon could be inspected correctly while printing unusable
- *    `127.0.0.1` URLs for it.
- * 4. `127.0.0.1` otherwise (the default unix-socket daemon, or an
- *    unresolvable/malformed context).
+ * 1. `SUPABASE_SERVICES_HOSTNAME` env override, for dev containers or when the Docker daemon
+ *    isn't reachable on the container's own loopback.
+ * 2. The active daemon endpoint's host when it is `tcp://host:port`, resolved by
+ *    {@link resolveDockerDaemonEndpoint} the same way the `docker`/`podman` binary resolves it, so
+ *    a remote daemon is never inspected correctly while printing unusable `127.0.0.1` URLs.
+ * 3. `127.0.0.1` otherwise (default unix-socket daemon, non-tcp endpoint, or unresolvable context).
  *
  * Shared by every command that connects to the local Supabase stack.
  */
@@ -107,13 +127,9 @@ export function getHostname(): string {
   if (override !== undefined && override.length > 0) {
     return override;
   }
-  const dockerHost = process.env["DOCKER_HOST"];
-  if (dockerHost !== undefined && dockerHost.length > 0) {
-    return hostFromTcpEndpoint(dockerHost) ?? LOCAL_HOST;
-  }
-  const contextEndpoint = dockerContextEndpointHost(currentDockerContextName());
-  if (contextEndpoint !== undefined) {
-    const host = hostFromTcpEndpoint(contextEndpoint);
+  const endpoint = resolveDockerDaemonEndpoint();
+  if (endpoint !== undefined) {
+    const host = hostFromTcpEndpoint(endpoint);
     if (host !== undefined) {
       return host;
     }

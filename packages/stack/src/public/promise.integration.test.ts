@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { CAPABILITY_NAMES, type CapabilityStatus } from "./Capability.ts";
 import { Effect, Redacted, Stream } from "effect";
 import type { EffectStack, PrepareStackOptions, StartStackOptions } from "./EffectStack.ts";
-import type { StackLogEntry } from "./Logs.ts";
+import type { LogQuery, StackLogEntry } from "./Logs.ts";
 import { StackIdSchema } from "./StackId.ts";
 import type { ArtifactPreparationStatus, StackStatus } from "./Status.ts";
 import { InvalidStackConfigError, StackVersionUnsupportedError } from "./Errors.ts";
@@ -121,14 +121,41 @@ describe("Promise stack facade", () => {
   });
 
   it("returns log batches and follows from their cursor", async () => {
-    const stack = adaptEffectStack(effectStack());
+    const initial: StackLogEntry = {
+      cursor: { opaque: "v1_0" },
+      timestamp: "2026-01-01T00:00:00.000Z",
+      source: "auth",
+      stream: "stdout",
+      message: "initial",
+    };
+    const followedEntry: StackLogEntry = {
+      ...initial,
+      cursor: { opaque: "v1_1" },
+      message: "followed",
+    };
+    let logsQuery: LogQuery | undefined;
+    let followQuery: LogQuery | undefined;
+    const stack = adaptEffectStack({
+      ...effectStack(),
+      logs: (query) =>
+        Effect.sync(() => {
+          logsQuery = query;
+          return { entries: [initial], cursor: { opaque: "v1_0" }, running: true };
+        }),
+      followLogs: (query) => {
+        followQuery = query;
+        return Stream.succeed(followedEntry);
+      },
+    });
     const first = await stack.logs({ capabilities: ["auth"], tail: 20 });
-    expect(first.entries.every((entry) => entry.source === "auth")).toBe(true);
+    expect(first.entries).toEqual([initial]);
+    expect(logsQuery).toEqual({ capabilities: ["auth"], tail: 20 });
     const followed = [];
     for await (const entry of stack.followLogs({ capabilities: ["auth"], cursor: first.cursor })) {
       followed.push(entry);
     }
-    expect(followed.every((entry) => entry.source === "auth")).toBe(true);
+    expect(followed).toEqual([followedEntry]);
+    expect(followQuery).toEqual({ capabilities: ["auth"], cursor: { opaque: "v1_0" } });
   });
 
   it("unwraps every credential secret without a lifecycle close operation", async () => {
