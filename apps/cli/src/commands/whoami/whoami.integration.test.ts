@@ -1,8 +1,10 @@
 import type { V1GetProfileOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Stdio } from "effect";
 
 import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
+import { InvalidOutputFormatError } from "../../command-internal/go-output-flag.ts";
+import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { ErrorActionabilityId } from "../../shared/telemetry/error-actionability.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
@@ -17,6 +19,7 @@ import {
   WhoamiOutputFlagUnsupportedError,
   WhoamiUnexpectedStatusError,
 } from "./whoami.errors.ts";
+import { whoamiHandler } from "./whoami.command.ts";
 import { whoami } from "./whoami.handler.ts";
 
 type Profile = typeof V1GetProfileOutput.Type;
@@ -81,19 +84,23 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits stable CLI identity fields for --output-format json", () => {
+  it.live("emits the bare CLI identity contract for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* whoami({});
-      expect(JSON.parse(out.stdoutText)).toEqual({
+      const payload = JSON.parse(out.stdoutText);
+      expect(payload).toEqual({
         id: SAMPLE_PROFILE.gotrue_id,
         email: SAMPLE_PROFILE.primary_email,
         username: SAMPLE_PROFILE.username,
       });
+      expect(payload).not.toHaveProperty("message");
+      expect(payload).not.toHaveProperty("gotrue_id");
+      expect(payload).not.toHaveProperty("primary_email");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits stable CLI identity fields for --output-format stream-json", () => {
+  it.live("emits the bare CLI identity contract for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* whoami({});
@@ -108,10 +115,14 @@ describe("whoami integration", () => {
           timestamp: expect.any(String),
         },
       ]);
+      const data = out.events[0]?.data;
+      expect(data).not.toHaveProperty("message");
+      expect(data).not.toHaveProperty("gotrue_id");
+      expect(data).not.toHaveProperty("primary_email");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps an HTTP error to WhoamiUnexpectedStatusError", () => {
+  it.live("points an unauthorized profile request at re-authenticating", () => {
     const { layer } = setup({ status: 401, response: { message: "Unauthorized" } });
     return Effect.gen(function* () {
       const error = findError(yield* whoami({}).pipe(Effect.exit));
@@ -119,7 +130,22 @@ describe("whoami integration", () => {
       if (error instanceof WhoamiUnexpectedStatusError) {
         expect(error.status).toBe(401);
         expect(error.body).toContain("Unauthorized");
-        expect(error.message).toContain("unexpected get profile status 401");
+        expect(error.message).toBe(
+          "Authentication failed: your access token is invalid or has expired. Run `supabase login` to re-authenticate.",
+        );
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("preserves the generic message for other HTTP errors", () => {
+    const { layer } = setup({ status: 503, response: { message: "Unavailable" } });
+    return Effect.gen(function* () {
+      const error = findError(yield* whoami({}).pipe(Effect.exit));
+      expect(error).toBeInstanceOf(WhoamiUnexpectedStatusError);
+      if (error instanceof WhoamiUnexpectedStatusError) {
+        expect(error.status).toBe(503);
+        expect(error.body).toContain("Unavailable");
+        expect(error.message).toContain("unexpected get profile status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -183,6 +209,31 @@ describe("whoami integration", () => {
       for (const value of GLOBAL_OUTPUT_FORMATS) {
         yield* run(value);
       }
+    });
+  });
+
+  it.live("routes -o table/csv through the command's unsupported-output error", () => {
+    const run = (goOutput: "table" | "csv") => {
+      const { layer, api } = setup({ goOutput });
+      return Effect.gen(function* () {
+        const error = findError(yield* whoamiHandler({}).pipe(Effect.exit));
+        expect(error).toBeInstanceOf(WhoamiOutputFlagUnsupportedError);
+        expect(error).not.toBeInstanceOf(InvalidOutputFormatError);
+        expect(api.requests).toHaveLength(0);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            commandRuntimeLayer(["whoami"]),
+            Stdio.layerTest({ args: Effect.succeed(["whoami", "-o", goOutput]) }),
+          ),
+        ),
+      );
+    };
+
+    return Effect.gen(function* () {
+      yield* run("table");
+      yield* run("csv");
     });
   });
 

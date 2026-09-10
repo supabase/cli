@@ -10,7 +10,7 @@ import { whoami } from "./whoami.handler.ts";
 const config = {};
 export type WhoamiFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-const whoamiHandler = (flags: WhoamiFlags) =>
+export const whoamiHandler = (flags: WhoamiFlags) =>
   whoami(flags).pipe(
     withCommandTelemetry({
       flags,
