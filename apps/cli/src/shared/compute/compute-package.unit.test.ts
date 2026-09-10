@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function -- Vitest callbacks await filesystem-backed Effect programs.
+// oxlint-disable effecttsgo/node-builtin-import -- temporary filesystem fixtures use native setup APIs.
 import {
   accessSync,
   chmodSync,
@@ -184,6 +186,7 @@ describe("packageComputeDirectory", () => {
   test("packages a file with a pre-epoch mtime, timestamped at the epoch", async () => {
     const file = join(dir, "a.txt");
     writeFileSync(file, "a");
+    // oxlint-disable-next-line effecttsgo/global-date -- filesystem timestamp fixture
     utimesSync(file, new Date(-86_400_000), new Date(-86_400_000));
 
     const result = await pack(dir);

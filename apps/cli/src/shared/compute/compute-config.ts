@@ -1,5 +1,4 @@
-import { dirname } from "node:path";
-import { Data, Effect, FileSystem } from "effect";
+import { Data, Effect, FileSystem, Path } from "effect";
 import * as SmolToml from "smol-toml";
 import {
   actionability,
@@ -169,12 +168,10 @@ export const planComputeEntry = Effect.fnUntraced(function* (options: {
   // parser has answered, and one no amount of regex over the file text answers
   // reliably for a dotted or inline entry.
   if (options.existingCompute[options.name] !== undefined) {
-    return yield* Effect.fail(
-      new ComputeAlreadyConfiguredError({
-        detail: `"${options.name}" is already configured in ${options.configPath}.`,
-        suggestion: `Edit [compute.${options.name}] in ${options.configPath} yourself, or pick a different compute name.`,
-      }),
-    );
+    return yield* new ComputeAlreadyConfiguredError({
+      detail: `"${options.name}" is already configured in ${options.configPath}.`,
+      suggestion: `Edit [compute.${options.name}] in ${options.configPath} yourself, or pick a different compute name.`,
+    });
   }
 
   // Before rendering, because the re-parse below cannot catch this. A number
@@ -185,12 +182,10 @@ export const planComputeEntry = Effect.fnUntraced(function* (options: {
     ([, value]) => typeof value === "number" && !isRenderableTomlNumber(value),
   );
   if (unrenderable !== undefined) {
-    return yield* Effect.fail(
-      new ComputeConfigWriteUnsafeError({
-        detail: `Recording "${options.name}" would write ${unrenderable[0]} = ${String(unrenderable[1])} to ${options.configPath}, which is not a whole, non-negative count.`,
-        suggestion: `Pass a whole number of zero or more, or add [compute.${options.name}] to ${options.configPath} yourself.`,
-      }),
-    );
+    return yield* new ComputeConfigWriteUnsafeError({
+      detail: `Recording "${options.name}" would write ${unrenderable[0]} = ${String(unrenderable[1])} to ${options.configPath}, which is not a whole, non-negative count.`,
+      suggestion: `Pass a whole number of zero or more, or add [compute.${options.name}] to ${options.configPath} yourself.`,
+    });
   }
 
   const exists = yield* fs.exists(options.configPath);
@@ -217,12 +212,10 @@ export const planComputeEntry = Effect.fnUntraced(function* (options: {
     Array.isArray(compute) ||
     !(options.name in compute)
   ) {
-    return yield* Effect.fail(
-      new ComputeConfigWriteUnsafeError({
-        detail: `Recording "${options.name}" in ${options.configPath} would not take effect, because its [compute] section cannot be extended by appending a table.`,
-        suggestion: `Add [compute.${options.name}] to ${options.configPath} yourself.`,
-      }),
-    );
+    return yield* new ComputeConfigWriteUnsafeError({
+      detail: `Recording "${options.name}" in ${options.configPath} would not take effect, because its [compute] section cannot be extended by appending a table.`,
+      suggestion: `Add [compute.${options.name}] to ${options.configPath} yourself.`,
+    });
   }
 
   return {
@@ -238,6 +231,7 @@ export const planComputeEntry = Effect.fnUntraced(function* (options: {
  */
 export const commitComputeEntry = Effect.fnUntraced(function* (write: ComputeEntryWrite) {
   const fs = yield* FileSystem.FileSystem;
-  yield* fs.makeDirectory(dirname(write.configPath), { recursive: true });
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.dirname(write.configPath), { recursive: true });
   yield* fs.writeFileString(write.configPath, write.text);
 });

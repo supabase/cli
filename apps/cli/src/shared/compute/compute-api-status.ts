@@ -50,15 +50,13 @@ export const unexpectedStatus = Effect.fnUntraced(function* (options: {
   readonly body: string;
 }) {
   const trimmed = options.body.trim();
-  return yield* Effect.fail(
-    new ComputeApiUnexpectedStatusError({
-      status: options.status,
-      detail: `The Compute API answered ${options.status} while trying to ${options.operation}${
-        trimmed === "" ? "" : `: ${trimmed}`
-      }.`,
-      suggestion: "Retry shortly; if it persists, report it with `supabase issue`.",
-    }),
-  );
+  return yield* new ComputeApiUnexpectedStatusError({
+    status: options.status,
+    detail: `The Compute API answered ${options.status} while trying to ${options.operation}${
+      trimmed === "" ? "" : `: ${trimmed}`
+    }.`,
+    suggestion: "Retry shortly; if it persists, report it with `supabase issue`.",
+  });
 });
 
 export const decodeBody = <A, I>(

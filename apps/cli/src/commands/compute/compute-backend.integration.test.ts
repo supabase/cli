@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/node-builtin-import -- integration fixture owns an isolated native filesystem.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

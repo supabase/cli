@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/node-builtin-import -- integration fixture owns an isolated native filesystem.
 import { rmSync } from "node:fs";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";

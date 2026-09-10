@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/node-builtin-import -- integration fixture owns an isolated native filesystem.
+// oxlint-disable effecttsgo/prefer-schema-over-json -- fixture asserts raw config and API JSON.
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";

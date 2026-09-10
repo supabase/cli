@@ -1,4 +1,4 @@
-import { Effect, Option, Ref, Schedule } from "effect";
+import { Clock, DateTime, Effect, Option, Ref, Schedule } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../shared/cli/success-trailer.ts";
 import { aqua } from "../../../command-internal/colors.ts";
@@ -143,7 +143,7 @@ function toPayloadEntry(entry: ComputeLogEntry) {
     id: entry.id,
     // Both forms: the ISO string is what a human or `jq` wants to read, the raw
     // epoch value is what a script sorts or diffs on without reparsing.
-    timestamp: new Date(entry.timestampMs).toISOString(),
+    timestamp: DateTime.formatIso(DateTime.makeUnsafe(entry.timestampMs)),
     timestamp_ms: entry.timestampMs,
     stream: entry.stream,
     message: entry.message,
@@ -226,7 +226,7 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
               const level = computeLogLevel(entry);
               yield* output.event({
                 type: "log-entry",
-                timestamp: new Date(entry.timestampMs).toISOString(),
+                timestamp: DateTime.formatIso(DateTime.makeUnsafe(entry.timestampMs)),
                 service: name,
                 stream: level === "error" || level === "warn" ? "stderr" : "stdout",
                 // The composed sentence, the same one text mode renders: a
@@ -250,7 +250,7 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
 
       // Before any request, so a slow history query or deployed-compute check
       // cannot widen what `followFloorMs` below treats as "already there".
-      const startedAtMs = Date.now();
+      const startedAtMs = yield* Clock.currentTimeMillis;
 
       // `--tail 0` is "no history". On its own that is a no-op, but it is the shape
       // `--follow` will want, and issuing a `limit 0` query would be a 400.
@@ -263,7 +263,7 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
                 name,
                 streams,
                 tail: flags.tail,
-                window: logWindow(new Date()),
+                window: logWindow(yield* DateTime.nowAsDate),
               }).pipe(Effect.tapError(() => fetching.fail()));
               yield* fetching.clear();
               return rows;
@@ -287,12 +287,10 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
         );
         yield* checking.clear();
         if (Option.isNone(deployed)) {
-          return yield* Effect.fail(
-            new ComputeNotDeployedError({
-              detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
-              suggestion: `Deploy it with \`supabase compute push ${name}${refSuffix}\`.`,
-            }),
-          );
+          return yield* new ComputeNotDeployedError({
+            detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
+            suggestion: `Deploy it with \`supabase compute push ${name}${refSuffix}\`.`,
+          });
         }
       }
 
@@ -354,7 +352,9 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
       // previous run would stay silent on the next one.
       const skipNoticeShown = yield* Ref.make(false);
       const newestSeenMs = yield* Ref.make(
-        entries.length === 0 ? Date.now() : entries[entries.length - 1]!.timestampMs,
+        entries.length === 0
+          ? yield* Clock.currentTimeMillis
+          : entries[entries.length - 1]!.timestampMs,
       );
 
       // `--tail 0` asked for no history, and `followWindow` deliberately reaches
@@ -370,7 +370,7 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
         // burst bigger than a page needs several. Walk `end` backwards while
         // pages come back full; a short page means the window is drained.
         const collected: Array<ComputeLogEntry> = [];
-        let end = new Date();
+        let end = yield* DateTime.nowAsDate;
         // A short page is the only proof the window is empty below this point.
         // Both other exits — the page budget running out, and a full page too
         // narrow to walk past — leave rows unfetched underneath.
@@ -388,7 +388,7 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
             break;
           }
           // Rows arrive oldest-first, so the next page ends where this one began.
-          const nextEnd = new Date(rows[0]!.timestampMs);
+          const nextEnd = DateTime.toDateUtc(DateTime.makeUnsafe(rows[0]!.timestampMs));
           // A full page whose rows all share one timestamp cannot narrow the
           // window: re-requesting it would return the same page forever.
           if (nextEnd.getTime() >= end.getTime()) {

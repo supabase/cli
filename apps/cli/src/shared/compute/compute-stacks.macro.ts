@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/node-builtin-import -- synchronous build macro runs in Bun's host boundary.
+// oxlint-disable effecttsgo/global-console -- macro diagnostics must be visible during generation.
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";

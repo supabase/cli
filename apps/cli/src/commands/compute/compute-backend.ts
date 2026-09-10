@@ -24,14 +24,24 @@ const firstExplicitWorkdir = (args: ReadonlyArray<string>): string | undefined =
   return undefined;
 };
 
+const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
+
 const parseDocument = (
   path: string,
   content: string,
 ): Effect.Effect<unknown, ComputeRoutingError> =>
-  Effect.try({
-    try: () => (path.endsWith(".json") ? JSON.parse(content) : SmolToml.parse(content)),
-    catch: (cause) => new ComputeRoutingError({ message: `Unable to parse ${path}`, cause }),
-  });
+  path.endsWith(".json")
+    ? decodeJson(content).pipe(
+        Effect.mapError(
+          (cause) => new ComputeRoutingError({ message: `Unable to parse ${path}`, cause }),
+        ),
+      )
+    : Effect.try({
+        try: () => SmolToml.parse(content),
+        catch: (cause) => new ComputeRoutingError({ message: `Unable to parse ${path}`, cause }),
+      });
+
+const decodeJson = (content: unknown) => Schema.decodeUnknownEffect(UnknownFromJsonString)(content);
 
 const readComputeSetting = (
   path: string,
@@ -95,7 +105,7 @@ export const resolveComputeEnabled = (input: {
     return yield* resolveExperimentalFeature({
       feature: "compute",
       configValue: configValue({ ...input, args: routingArgs }).pipe(
-        Effect.catchTag("ComputeRoutingError", () => Effect.succeed(undefined)),
+        Effect.catchTag("ComputeRoutingError", () => Effect.succeed(false)),
       ),
       env: input.env,
     }).pipe(Effect.catchTag("ExperimentalFeatureFlagError", () => Effect.succeed(false)));

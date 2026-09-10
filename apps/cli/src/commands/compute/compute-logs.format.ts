@@ -1,3 +1,4 @@
+import { DateTime } from "effect";
 import { red, yellow, type ColorStream } from "../../command-internal/colors.ts";
 import { COMPUTE_LOG_STREAMS } from "../../shared/compute/compute-logs.sql.ts";
 import type { ComputeLogEntry } from "../../shared/compute/compute-logs-api.ts";
@@ -114,8 +115,6 @@ function colourise(text: string, level: ComputeLogLevel | undefined, stream: Col
   return level === "warn" ? yellow(text, stream) : text;
 }
 
-const pad2 = (value: number): string => String(value).padStart(2, "0");
-
 /**
  * `HH:MM:SS` in the reader's own timezone.
  *
@@ -133,8 +132,13 @@ const pad2 = (value: number): string => String(value).padStart(2, "0");
  * width the message needs.
  */
 function formatLogTime(timestampMs: number): string {
-  const at = new Date(timestampMs);
-  return `${pad2(at.getHours())}:${pad2(at.getMinutes())}:${pad2(at.getSeconds())}`;
+  return DateTime.formatLocal(DateTime.makeUnsafe(timestampMs), {
+    locale: "en-GB",
+    hourCycle: "h23",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 /**

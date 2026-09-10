@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function -- Vitest callbacks await filesystem-backed Effect programs.
+// oxlint-disable effecttsgo/node-builtin-import -- temporary filesystem fixtures use native setup APIs.
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -104,6 +106,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- this helper intentionally runs heterogeneous expected failures.
   const run = (effect: Effect.Effect<void, unknown, never>) => Effect.runPromise(effect);
 
   /** plan + commit — the pairing `new` performs once it has decided to write. */

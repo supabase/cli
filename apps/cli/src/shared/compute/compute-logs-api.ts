@@ -51,17 +51,17 @@ export interface ComputeLogEntry {
 /**
  * The widest instant a JavaScript `Date` can hold, either side of the epoch.
  *
- * `ts_ms` feeds `new Date(...).toISOString()` when a payload is built, which is
- * unconditional — text runs construct it too. Outside this range that call
- * throws `RangeError`, turning a recoverable bad row into a defect, so the bound
- * belongs on the schema where it fails through `decodeBody` as an unreadable
- * response instead.
+ * `ts_ms` feeds `DateTime.formatIso(...)` when a payload is built, which is
+ * unconditional — text runs format it too. Outside this range that call throws
+ * `RangeError`, turning a recoverable bad row into a defect, so the bound belongs
+ * on the schema where it fails through `decodeBody` as an unreadable response
+ * instead.
  */
 const MAX_DATE_MS = 8_640_000_000_000_000;
 
 const ComputeLogRow = Schema.Struct({
   id: Schema.String,
-  ts_ms: Schema.Number.pipe(
+  ts_ms: Schema.Finite.pipe(
     Schema.check(
       Schema.isGreaterThanOrEqualTo(-MAX_DATE_MS),
       Schema.isLessThanOrEqualTo(MAX_DATE_MS),
@@ -109,7 +109,10 @@ const describeLogError = Effect.fnUntraced(function* (error: unknown) {
   const structured = yield* Schema.decodeUnknownEffect(StructuredLogError)(error).pipe(
     Effect.option,
   );
-  return Option.isSome(structured) ? structured.value.message : JSON.stringify(error);
+  if (Option.isSome(structured)) return structured.value.message;
+  return yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(error).pipe(
+    Effect.orElseSucceed(() => "Unknown server error"),
+  );
 });
 
 export const fetchComputeLogs = Effect.fnUntraced(function* (
@@ -140,33 +143,27 @@ export const fetchComputeLogs = Effect.fnUntraced(function* (
     .pipe(Effect.mapError(mapRequestError(operation)));
 
   if (response.status === 402) {
-    return yield* Effect.fail(
-      new ComputeLogsUsageExceededError({
-        detail: `The log query allowance for project ${projectRef} is exhausted.`,
-        suggestion: "Enable additional usage for this project in the dashboard, then retry.",
-      }),
-    );
+    return yield* new ComputeLogsUsageExceededError({
+      detail: `The log query allowance for project ${projectRef} is exhausted.`,
+      suggestion: "Enable additional usage for this project in the dashboard, then retry.",
+    });
   }
   // The analytics endpoints allow 10 requests per 60 seconds, which is well
   // inside what a tight `--follow` poll would spend.
   if (response.status === 429) {
-    return yield* Effect.fail(
-      new ComputeLogsRateLimitedError({
-        detail: "The logs API is rate limiting this project (10 requests per minute).",
-        suggestion: "Wait a minute before retrying, and avoid running several tails at once.",
-      }),
-    );
+    return yield* new ComputeLogsRateLimitedError({
+      detail: "The logs API is rate limiting this project (10 requests per minute).",
+      suggestion: "Wait a minute before retrying, and avoid running several tails at once.",
+    });
   }
   // The route gates on the same private-alpha allow-list as the rest of the
   // family, and answers 404 for a project outside it.
   if (response.status === 404) {
-    return yield* Effect.fail(
-      new ComputeUnavailableError({
-        detail: `Logs are not available for project ${projectRef}.`,
-        suggestion:
-          "Compute is in private alpha. Ask in the Supabase dashboard to have this project enrolled.",
-      }),
-    );
+    return yield* new ComputeUnavailableError({
+      detail: `Logs are not available for project ${projectRef}.`,
+      suggestion:
+        "Compute is in private alpha. Ask in the Supabase dashboard to have this project enrolled.",
+    });
   }
   if (response.status !== 200) {
     // A rejected query or the server's 30-second timeout lands here rather than
@@ -185,12 +182,10 @@ export const fetchComputeLogs = Effect.fnUntraced(function* (
   // a populated `error`, so reading `result` first reports success on a failure.
   if (decoded.error !== undefined && decoded.error !== null) {
     const described = yield* describeLogError(decoded.error);
-    return yield* Effect.fail(
-      new ComputeLogsQueryFailedError({
-        detail: `The logs API could not run this query: ${described}.`,
-        suggestion: "Retry shortly; if it persists, report it with `supabase issue`.",
-      }),
-    );
+    return yield* new ComputeLogsQueryFailedError({
+      detail: `The logs API could not run this query: ${described}.`,
+      suggestion: "Retry shortly; if it persists, report it with `supabase issue`.",
+    });
   }
 
   // `result` is optional in the contract, so absent, null and [] all mean "no

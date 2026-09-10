@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Path } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { aqua, yellow } from "../../../command-internal/colors.ts";
 import { displayPath } from "../../../shared/compute/compute-paths.ts";
@@ -98,6 +98,7 @@ function toCells(row: ComputeRow): ReadonlyArray<string> {
 
 export const computeList = Effect.fn("compute.list")(function* (flags: ComputeListFlags) {
   const output = yield* Output;
+  const path = yield* Path.Path;
   const api = yield* CommandPlatformApi;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
@@ -111,7 +112,7 @@ export const computeList = Effect.fn("compute.list")(function* (flags: ComputeLi
   const projectRef = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
-    const project = yield* loadComputeProject();
+    const project = yield* loadComputeProject;
 
     // Up front, like the rest of the family: this payload always carries a
     // `compute` array, so `-o env` can never encode it, and finding that out at
@@ -203,7 +204,7 @@ export const computeList = Effect.fn("compute.list")(function* (flags: ComputeLi
       .filter((row) => row.deployed !== undefined && !row.configured && row.local)
       .map((row) => row.name);
     if (unconfigured.length > 0) {
-      const configDisplay = displayPath(project.projectRoot, project.configPath);
+      const configDisplay = displayPath(path, project.projectRoot, project.configPath);
       yield* output.raw(
         `${yellow("WARNING:")} ${nameList(unconfigured)} deployed but not in ${configDisplay}.\n` +
           `Pushing from here would have to guess the runtime.\n`,

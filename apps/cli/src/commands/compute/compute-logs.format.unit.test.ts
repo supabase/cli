@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/global-date -- fixed timestamp fixtures cover local display formatting.
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, beforeEach, vi } from "vitest";
 import type { ComputeLogEntry } from "../../shared/compute/compute-logs-api.ts";
@@ -34,9 +35,9 @@ const AT = Date.parse("2026-08-31T14:45:32.576Z");
  * The expected `HH:MM:SS` prefix for an instant, in this machine's zone.
  *
  * Derived rather than hardcoded: the renderer prints local time, so a literal
- * `"14:45:32"` would pass only on a UTC machine and fail everywhere else. Written
- * with the same field accessors the renderer uses, so what it pins is the format
- * and the zone choice, not an arithmetic that could drift with the clock.
+ * `"14:45:32"` would pass only on a UTC machine and fail everywhere else. This
+ * independent native-Date expectation pins the format and zone choice without
+ * duplicating the formatter implementation.
  */
 function localTime(timestampMs: number): string {
   const at = new Date(timestampMs);
@@ -157,6 +158,17 @@ describe("renderComputeLogLine", () => {
     if (offsetMinutes !== 0) {
       expect(line.startsWith(`${utc}  `)).toBe(false);
     }
+  });
+
+  it("renders host-local midnight with an explicit zero-padded hour", () => {
+    const midnight = new Date(AT);
+    midnight.setHours(0, 0, 0, 0);
+    const line = renderComputeLogLine(entry({ timestampMs: midnight.getTime() }), {
+      showStream: false,
+      colorStream: PLAIN,
+    });
+
+    expect(line.startsWith("00:00:00  ")).toBe(true);
   });
 
   it("renders a blank guest line as a blank line, not a dropped entry", () => {

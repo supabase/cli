@@ -1,6 +1,5 @@
-import { join } from "node:path";
 import { findCliProjectPaths, loadCliConfig } from "@supabase/config/effect";
-import { Effect, FileSystem, Option, Predicate } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate } from "effect";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { shouldSearchAncestors } from "../../command-internal/workdir-search.ts";
 import {
@@ -41,6 +40,7 @@ const loadComputeProjectWith = Effect.fnUntraced(function* (options: {
   readonly tomlOnly: boolean;
 }) {
   const settings = yield* CommandSettings;
+  const path = yield* Path.Path;
 
   // tomlOnly (the [compute.*] entry writer) keeps `search: false` unconditionally:
   // it and the workdir's own default resolution probe the same config.toml, so the
@@ -60,7 +60,7 @@ const loadComputeProjectWith = Effect.fnUntraced(function* (options: {
   const search = options.tomlOnly ? false : shouldSearchAncestors(settings);
   const paths = yield* findCliProjectPaths(settings.workdir, { search });
   const projectRoot = paths?.projectRoot ?? settings.workdir;
-  const supabaseDir = join(projectRoot, "supabase");
+  const supabaseDir = path.join(projectRoot, "supabase");
 
   // `search: false`: the climb (if any) already happened above; reading
   // `projectRoot`'s own config.toml again must never climb a second time.
@@ -70,9 +70,9 @@ const loadComputeProjectWith = Effect.fnUntraced(function* (options: {
   return {
     projectRoot,
     supabaseDir,
-    configPath: loaded?.path ?? join(supabaseDir, "config.toml"),
+    configPath: loaded?.path ?? path.join(supabaseDir, "config.toml"),
     section,
-    computeDir: computeRootDir(projectRoot),
+    computeDir: computeRootDir(path, projectRoot),
   } satisfies ComputeProject;
 });
 
@@ -84,7 +84,7 @@ const loadComputeProjectWith = Effect.fnUntraced(function* (options: {
  * instead of the ones it configured, and a compute whose `source` sits outside
  * `supabase/compute/` is not discovered at all.
  */
-export const loadComputeProject = () => loadComputeProjectWith({ tomlOnly: false });
+export const loadComputeProject = loadComputeProjectWith({ tomlOnly: false });
 
 /**
  * The project as the `[compute.<name>]` entry writer needs to see it: TOML
@@ -102,7 +102,7 @@ export const loadComputeProject = () => loadComputeProjectWith({ tomlOnly: false
  * writer's alone — reads go through {@link loadComputeProject} — and it
  * closes when config writing is overhauled.
  */
-export const loadComputeProjectForEntryWrite = () => loadComputeProjectWith({ tomlOnly: true });
+export const loadComputeProjectForEntryWrite = loadComputeProjectWith({ tomlOnly: true });
 
 /**
  * As {@link loadComputeProject}, but never failing on the project config.
@@ -119,20 +119,21 @@ export const loadComputeProjectForEntryWrite = () => loadComputeProjectWith({ to
  * {@link describeComputeForReporting}, which does it for the source path.
  */
 export const loadComputeProjectForReporting = Effect.fnUntraced(function* () {
-  const loaded = yield* loadComputeProject().pipe(Effect.option);
+  const loaded = yield* loadComputeProject.pipe(Effect.option);
   if (Option.isSome(loaded)) {
     return loaded.value;
   }
 
   const settings = yield* CommandSettings;
+  const path = yield* Path.Path;
   const projectRoot = settings.workdir;
-  const supabaseDir = join(projectRoot, "supabase");
+  const supabaseDir = path.join(projectRoot, "supabase");
   return {
     projectRoot,
     supabaseDir,
-    configPath: join(supabaseDir, "config.toml"),
+    configPath: path.join(supabaseDir, "config.toml"),
     section: readComputeSection(undefined),
-    computeDir: computeRootDir(projectRoot),
+    computeDir: computeRootDir(path, projectRoot),
   } satisfies ComputeProject;
 });
 
@@ -184,6 +185,7 @@ export const describeComputeForReporting = Effect.fnUntraced(function* (
   project: ComputeProject,
   name: string,
 ) {
+  const path = yield* Path.Path;
   const described = yield* describeCompute(project, name).pipe(Effect.option);
   if (Option.isSome(described)) {
     return described.value;
@@ -195,8 +197,8 @@ export const describeComputeForReporting = Effect.fnUntraced(function* (
   return {
     name,
     entry: project.section.compute[name],
-    defaultDir: computeDir(project.projectRoot, name),
-    sourceDir: computeDir(project.projectRoot, name),
+    defaultDir: computeDir(path, project.projectRoot, name),
+    sourceDir: computeDir(path, project.projectRoot, name),
     sourceExists: false,
     sourceResolved: false,
   } satisfies ResolvedCompute;
@@ -204,8 +206,9 @@ export const describeComputeForReporting = Effect.fnUntraced(function* (
 
 export const describeCompute = Effect.fnUntraced(function* (project: ComputeProject, name: string) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const entry = project.section.compute[name];
-  const defaultDir = computeDir(project.projectRoot, name);
+  const defaultDir = computeDir(path, project.projectRoot, name);
   const sourceDir = yield* computeSourceDir({
     projectRoot: project.projectRoot,
     defaultDir,
@@ -228,12 +231,10 @@ export const describeCompute = Effect.fnUntraced(function* (project: ComputeProj
 export const validateComputeName = Effect.fnUntraced(function* (name: string) {
   const invalid = validateComputeNameMessage(name);
   if (invalid !== undefined) {
-    return yield* Effect.fail(
-      new InvalidComputeNameError({
-        detail: `"${name}" is not a valid compute name. ${invalid}`,
-        suggestion: "Compute names become hostnames, so they must be DNS labels.",
-      }),
-    );
+    return yield* new InvalidComputeNameError({
+      detail: `"${name}" is not a valid compute name. ${invalid}`,
+      suggestion: "Compute names become hostnames, so they must be DNS labels.",
+    });
   }
   return name;
 });
@@ -248,6 +249,7 @@ export const validateComputeName = Effect.fnUntraced(function* (name: string) {
  */
 export const discoverComputeNames = Effect.fnUntraced(function* (project: ComputeProject) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
   // No compute root at all is a project that has never scaffolded one, and the
   // config entries below may still name compute living elsewhere — so absence
@@ -268,7 +270,7 @@ export const discoverComputeNames = Effect.fnUntraced(function* (project: Comput
   const scaffolded: Array<string> = [];
   for (const entry of entries) {
     // Only a name that vanished between the listing and this stat is skipped.
-    const info = yield* fs.stat(join(project.computeDir, entry)).pipe(
+    const info = yield* fs.stat(path.join(project.computeDir, entry)).pipe(
       Effect.map(Option.some),
       Effect.catchTag("PlatformError", (error) =>
         Predicate.isTagged(error.reason, "NotFound") ? Effect.succeedNone : Effect.fail(error),

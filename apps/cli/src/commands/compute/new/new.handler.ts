@@ -1,5 +1,4 @@
-import { join, relative, sep } from "node:path";
-import { Effect, FileSystem, Option } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../shared/cli/success-trailer.ts";
 import { aqua, bold } from "../../../command-internal/colors.ts";
@@ -124,12 +123,10 @@ const resolveName = Effect.fnUntraced(function* (options: {
     });
   }
 
-  return yield* Effect.fail(
-    new MissingComputeNameError({
-      detail: "Compute name is required in non-interactive mode.",
-      suggestion: "Pass a compute name, for example `supabase compute new api`.",
-    }),
-  );
+  return yield* new MissingComputeNameError({
+    detail: "Compute name is required in non-interactive mode.",
+    suggestion: "Pass a compute name, for example `supabase compute new api`.",
+  });
 });
 
 const resolveRuntime = Effect.fnUntraced(function* (options: {
@@ -252,6 +249,7 @@ const destinationIsFree = Effect.fnUntraced(function* (target: string) {
 
 export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewFlags) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const output = yield* Output;
   const telemetryState = yield* TelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
@@ -263,7 +261,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       Effect.mapError((error) => new ComputeNewWorkdirError({ message: error.message })),
     );
 
-    const project = yield* loadComputeProjectForEntryWrite();
+    const project = yield* loadComputeProjectForEntryWrite;
 
     // Decided once, before the first prompt rather than beside the last, since
     // the name is now asked for too — every prompt below shares the answer.
@@ -279,12 +277,10 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     // runtime and size prompts never run for a name that was going to be
     // refused anyway; the name prompt rejects it up front for the same reason.
     if (project.section.compute[name] !== undefined) {
-      return yield* Effect.fail(
-        new ComputeAlreadyConfiguredError({
-          detail: `"${name}" is already configured in ${project.configPath}.`,
-          suggestion: `Edit [compute.${name}] in ${project.configPath} yourself, or pick a different compute name.`,
-        }),
-      );
+      return yield* new ComputeAlreadyConfiguredError({
+        detail: `"${name}" is already configured in ${project.configPath}.`,
+        suggestion: `Edit [compute.${name}] in ${project.configPath} yourself, or pick a different compute name.`,
+      });
     }
 
     // A DEFAULTED workdir's reader (`compute list`/`push`/`status`, used
@@ -300,18 +296,16 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     // this only runs for a defaulted workdir, and only costs an extra read
     // when it is.
     if (!cliSettings.explicitWorkdir) {
-      const discovered = yield* loadComputeProject().pipe(Effect.option);
+      const discovered = yield* loadComputeProject.pipe(Effect.option);
       if (
         Option.isSome(discovered) &&
         discovered.value.projectRoot !== project.projectRoot &&
         discovered.value.section.compute[name] !== undefined
       ) {
-        return yield* Effect.fail(
-          new ComputeAlreadyConfiguredError({
-            detail: `"${name}" is already configured in ${discovered.value.configPath}.`,
-            suggestion: `Run this command from ${discovered.value.projectRoot} to manage it there, or pick a different compute name.`,
-          }),
-        );
+        return yield* new ComputeAlreadyConfiguredError({
+          detail: `"${name}" is already configured in ${discovered.value.configPath}.`,
+          suggestion: `Run this command from ${discovered.value.projectRoot} to manage it there, or pick a different compute name.`,
+        });
       }
     }
 
@@ -338,7 +332,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         })
       : yield* confineComputePath({
           projectRoot: project.projectRoot,
-          target: join(project.computeDir, name),
+          target: path.join(project.computeDir, name),
           subject: `The default directory for "${name}"`,
           // The default directory is `supabase/compute/<name>` with a validated
           // name, so it cannot be the project root, `supabase/`, or a directory
@@ -358,13 +352,11 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       // path would be misleading once `--workdir` differs from cwd.
       const shown = cliSettings.explicitWorkdir
         ? destination
-        : displayPath(project.projectRoot, destination);
-      return yield* Effect.fail(
-        new ComputeDirectoryExistsError({
-          detail: `${shown} already exists and is not empty.`,
-          suggestion: `Remove ${shown} yourself if you meant to replace it, or pick a different compute name.`,
-        }),
-      );
+        : displayPath(path, project.projectRoot, destination);
+      return yield* new ComputeDirectoryExistsError({
+        detail: `${shown} already exists and is not empty.`,
+        suggestion: `Remove ${shown} yourself if you meant to replace it, or pick a different compute name.`,
+      });
     }
 
     // Recorded as forward slashes whatever platform wrote it. `config.toml` is
@@ -372,7 +364,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     // Windows — a backslash the POSIX resolvers on every other machine read as
     // a literal character in a filename rather than a separator.
     const source = Option.isSome(flags.source)
-      ? relative(project.projectRoot, destination).split(sep).join("/")
+      ? path.relative(project.projectRoot, destination).split(path.sep).join("/")
       : undefined;
 
     // Planned before anything is written. Every way this can fail is knowable
@@ -396,7 +388,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     yield* fs.makeDirectory(destination, { recursive: true });
 
     for (const [filename, contents] of Object.entries(COMPUTE_STACKS[runtime])) {
-      yield* fs.writeFileString(join(destination, filename), contents);
+      yield* fs.writeFileString(path.join(destination, filename), contents);
     }
 
     yield* commitComputeEntry(configWrite);
@@ -409,7 +401,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     // either way.
     const sourceDisplay = cliSettings.explicitWorkdir
       ? destination
-      : displayPath(project.projectRoot, destination);
+      : displayPath(path, project.projectRoot, destination);
 
     const payload = {
       compute_name: name,

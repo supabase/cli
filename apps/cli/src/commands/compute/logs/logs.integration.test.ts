@@ -1,3 +1,7 @@
+// oxlint-disable effecttsgo/node-builtin-import -- integration fixture owns an isolated native filesystem.
+// oxlint-disable effecttsgo/global-date -- integration fixture uses fixed host timestamps.
+// oxlint-disable effecttsgo/global-date-in-effect -- integration fixture controls elapsed-time inputs.
+// oxlint-disable effecttsgo/prefer-schema-over-json -- fixture asserts raw logs API JSON.
 import { rmSync } from "node:fs";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option, Schedule } from "effect";

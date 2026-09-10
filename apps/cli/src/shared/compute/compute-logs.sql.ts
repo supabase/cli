@@ -1,3 +1,5 @@
+import { DateTime } from "effect";
+
 /**
  * The ClickHouse query `supabase compute logs` sends, and the two
  * literals it turns on.
@@ -106,7 +108,9 @@ export function isoLogTimestamp(date: Date): string {
  */
 export function logWindow(now: Date): { readonly start: string; readonly end: string } {
   return {
-    start: isoLogTimestamp(new Date(now.getTime() - COMPUTE_LOG_WINDOW_MINUTES * 60_000)),
+    start: DateTime.formatIso(
+      DateTime.makeUnsafe(now.getTime() - COMPUTE_LOG_WINDOW_MINUTES * 60_000),
+    ),
     end: isoLogTimestamp(now),
   };
 }
@@ -127,8 +131,10 @@ export function followWindow(
 ): { readonly start: string; readonly end: string } {
   const earliest = now.getTime() - COMPUTE_LOG_WINDOW_MINUTES * 60_000;
   return {
-    start: isoLogTimestamp(
-      new Date(Math.max(newestSeenMs - COMPUTE_LOG_CURSOR_GRACE_SECONDS * 1000, earliest)),
+    start: DateTime.formatIso(
+      DateTime.makeUnsafe(
+        Math.max(newestSeenMs - COMPUTE_LOG_CURSOR_GRACE_SECONDS * 1000, earliest),
+      ),
     ),
     end: isoLogTimestamp(now),
   };

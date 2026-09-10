@@ -112,8 +112,7 @@ const projectScoped404 = Effect.fnUntraced(function* (options: {
   readonly projectRef: string;
   readonly body: string;
 }) {
-  const parsed = yield* Effect.try(() => JSON.parse(options.body) as unknown).pipe(
-    Effect.flatMap((json) => Schema.decodeUnknownEffect(NotFoundBody)(json)),
+  const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(NotFoundBody))(options.body).pipe(
     Effect.option,
   );
 
@@ -139,12 +138,11 @@ export const listCompute = Effect.fnUntraced(function* (api: ApiClient, projectR
     .pipe(Effect.mapError(mapRequestError(operation)));
 
   if (response.status === 404) {
-    return yield* Effect.fail(
-      yield* projectScoped404({
-        projectRef,
-        body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-      }),
-    );
+    const error = yield* projectScoped404({
+      projectRef,
+      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
+    });
+    return yield* error;
   }
   if (response.status !== 200) {
     return yield* unexpectedStatus({
@@ -201,12 +199,11 @@ export const createComputeUpload = Effect.fnUntraced(function* (
     .pipe(Effect.mapError(mapRequestError(operation)));
 
   if (response.status === 404) {
-    return yield* Effect.fail(
-      yield* projectScoped404({
-        projectRef,
-        body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-      }),
-    );
+    const error = yield* projectScoped404({
+      projectRef,
+      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
+    });
+    return yield* error;
   }
   if (response.status !== 201 && response.status !== 200) {
     return yield* unexpectedStatus({
@@ -270,14 +267,12 @@ export const uploadBuildContext = Effect.fnUntraced(function* (
 
   if (response.status < 200 || response.status >= 300) {
     const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    return yield* Effect.fail(
-      new ComputeUploadFailedError({
-        detail: `Uploading the build context failed with status ${response.status}${
-          body.trim() === "" ? "" : `: ${body.trim()}`
-        }.`,
-        suggestion: "Re-run the same command; the upload slot is minted fresh each time.",
-      }),
-    );
+    return yield* new ComputeUploadFailedError({
+      detail: `Uploading the build context failed with status ${response.status}${
+        body.trim() === "" ? "" : `: ${body.trim()}`
+      }.`,
+      suggestion: "Re-run the same command; the upload slot is minted fresh each time.",
+    });
   }
 });
 
@@ -305,12 +300,11 @@ export const deployCompute = Effect.fnUntraced(function* (
     .pipe(Effect.mapError(mapRequestError(operation)));
 
   if (response.status === 404) {
-    return yield* Effect.fail(
-      yield* projectScoped404({
-        projectRef,
-        body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-      }),
-    );
+    const error = yield* projectScoped404({
+      projectRef,
+      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
+    });
+    return yield* error;
   }
   if (response.status !== 202 && response.status !== 200 && response.status !== 201) {
     return yield* unexpectedStatus({
@@ -421,12 +415,10 @@ export const awaitComputeBuild = Effect.fnUntraced(function* (
   );
 
   if (settled === undefined) {
-    return yield* Effect.fail(
-      new ComputeBuildTimeoutError({
-        detail: `"${name}" was still building when this command stopped waiting.`,
-        suggestion: `Check on it with \`supabase compute status ${name}${options.refSuffix ?? ""}\`.`,
-      }),
-    );
+    return yield* new ComputeBuildTimeoutError({
+      detail: `"${name}" was still building when this command stopped waiting.`,
+      suggestion: `Check on it with \`supabase compute status ${name}${options.refSuffix ?? ""}\`.`,
+    });
   }
 
   return settled;

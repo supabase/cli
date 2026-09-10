@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/global-date -- fixed Date inputs exercise pure wire-window helpers.
 import { describe, expect, it } from "@effect/vitest";
 import { validateComputeNameMessage } from "./compute-runtimes.ts";
 import {

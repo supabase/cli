@@ -1,5 +1,4 @@
-import { join } from "node:path";
-import { Effect, FileSystem } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 import { DEFAULT_COMPUTE_RUNTIME, type ComputeRuntime } from "./compute-runtimes.ts";
 
 /**
@@ -31,10 +30,11 @@ const MARKERS: ReadonlyArray<{
 
 export const classifyComputeDir = Effect.fnUntraced(function* (dir: string) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
   for (const marker of MARKERS) {
     for (const file of marker.files) {
-      const found = yield* fs.exists(join(dir, file)).pipe(Effect.orElseSucceed(() => false));
+      const found = yield* fs.exists(path.join(dir, file)).pipe(Effect.orElseSucceed(() => false));
       if (found) {
         return { runtime: marker.runtime, reason: `found ${file}` } satisfies ComputeClassification;
       }

@@ -1,8 +1,10 @@
+// oxlint-disable effecttsgo/async-function -- Vitest callbacks await filesystem-backed Effect programs.
+// oxlint-disable effecttsgo/node-builtin-import -- temporary filesystem fixtures use native setup APIs.
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, FileSystem } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   displayPath,
@@ -21,17 +23,27 @@ const PROJECT = "/repo";
  * deepest existing ancestor — which is what lets the `/repo` cases below stay
  * pure string scenarios.
  */
-const runFs = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
+const runFs = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) =>
   Effect.runPromise(effect.pipe(Effect.provide(BunServices.layer)));
+const runPath = <A>(fn: (path: Path.Path) => A): A =>
+  Effect.runSync(
+    Effect.gen(function* () {
+      return fn(yield* Path.Path);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
 describe("compute directories", () => {
   test("resolve under supabase/compute/", () => {
-    expect(computeRootDir(PROJECT)).toBe(join(PROJECT, "supabase", "compute"));
-    expect(computeDir(PROJECT, "api")).toBe(join(PROJECT, "supabase", "compute", "api"));
+    expect(runPath((path) => computeRootDir(path, PROJECT))).toBe(
+      join(PROJECT, "supabase", "compute"),
+    );
+    expect(runPath((path) => computeDir(path, PROJECT, "api"))).toBe(
+      join(PROJECT, "supabase", "compute", "api"),
+    );
   });
 
   test("a recorded source wins and is anchored to the project root", async () => {
-    const defaultDir = computeDir(PROJECT, "api");
+    const defaultDir = runPath((path) => computeDir(path, PROJECT, "api"));
     const sourceDir = (configuredSource: string | undefined) =>
       runFs(computeSourceDir({ projectRoot: PROJECT, defaultDir, name: "api", configuredSource }));
 
@@ -48,7 +60,7 @@ describe("compute directories", () => {
       const error = await runFs(
         computeSourceDir({
           projectRoot: PROJECT,
-          defaultDir: computeDir(PROJECT, "api"),
+          defaultDir: runPath((path) => computeDir(path, PROJECT, "api")),
           name: "api",
           configuredSource,
         }).pipe(Effect.flip),
@@ -61,11 +73,13 @@ describe("compute directories", () => {
 
 describe("displayPath", () => {
   test("prefers the relative form, and falls back to absolute when it would climb out", () => {
-    expect(displayPath(PROJECT, join(PROJECT, "supabase", "compute", "api"))).toBe(
-      join("supabase", "compute", "api"),
-    );
-    expect(displayPath(PROJECT, PROJECT)).toBe(".");
-    expect(displayPath(join(PROJECT, "deep", "deeper"), "/elsewhere/api")).toBe("/elsewhere/api");
+    expect(
+      runPath((path) => displayPath(path, PROJECT, join(PROJECT, "supabase", "compute", "api"))),
+    ).toBe(join("supabase", "compute", "api"));
+    expect(runPath((path) => displayPath(path, PROJECT, PROJECT))).toBe(".");
+    expect(
+      runPath((path) => displayPath(path, join(PROJECT, "deep", "deeper"), "/elsewhere/api")),
+    ).toBe("/elsewhere/api");
   });
 });
 

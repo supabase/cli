@@ -1,6 +1,5 @@
 import { gzipSync } from "node:zlib";
-import { isAbsolute, relative, resolve } from "node:path";
-import { Effect, FileSystem, Option } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import { ComputeSourceEscapingLinkError } from "./compute.errors.ts";
 import { createTar, type TarEntry, TarFieldOutOfRangeError, TarPathTooLongError } from "./tar.ts";
@@ -33,16 +32,19 @@ interface PackagedCompute {
  * machine and would not resolve anywhere else.
  */
 function confinedLinkTarget(input: {
+  readonly path: Path.Path;
   readonly root: string;
   readonly linkDir: string;
   readonly target: string;
 }): string | undefined {
-  const resolved = resolve(input.linkDir, input.target);
-  const fromRoot = relative(input.root, resolved);
-  if (fromRoot.startsWith("..") || isAbsolute(fromRoot)) {
+  const resolved = input.path.resolve(input.linkDir, input.target);
+  const fromRoot = input.path.relative(input.root, resolved);
+  if (fromRoot.startsWith("..") || input.path.isAbsolute(fromRoot)) {
     return undefined;
   }
-  return isAbsolute(input.target) ? relative(input.linkDir, resolved) : input.target;
+  return input.path.isAbsolute(input.target)
+    ? input.path.relative(input.linkDir, resolved)
+    : input.target;
 }
 
 /**
@@ -71,6 +73,7 @@ function tarMtime(modified: Option.Option<Date>): number {
  * that vanishes mid-walk are all that case.
  */
 const collectEntries = (
+  path: Path.Path,
   root: string,
   relativeDir: string,
 ): Effect.Effect<
@@ -80,14 +83,14 @@ const collectEntries = (
 > =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const absoluteDir = relativeDir === "" ? root : `${root}/${relativeDir}`;
+    const absoluteDir = relativeDir === "" ? root : path.join(root, relativeDir);
 
     const names = yield* fs.readDirectory(absoluteDir);
     const entries: Array<TarEntry> = [];
 
     for (const name of [...names].sort()) {
       const relativePath = relativeDir === "" ? name : `${relativeDir}/${name}`;
-      const absolutePath = `${root}/${relativePath}`;
+      const absolutePath = path.join(root, relativePath);
 
       // `readLink` succeeds only for symlinks, so it stands in for the `lstat`
       // this FileSystem service does not expose (the same probe
@@ -98,18 +101,17 @@ const collectEntries = (
       const linkTarget = yield* fs.readLink(absolutePath).pipe(Effect.option);
       if (Option.isSome(linkTarget)) {
         const confined = confinedLinkTarget({
+          path,
           root,
           linkDir: absoluteDir,
           target: linkTarget.value,
         });
         if (confined === undefined) {
-          return yield* Effect.fail(
-            new ComputeSourceEscapingLinkError({
-              detail: `${relativePath} links to ${linkTarget.value}, which is outside the compute source and cannot be packaged with it.`,
-              suggestion:
-                "Install the compute's dependencies inside its own directory, or point `source` at a directory that contains everything the build needs.",
-            }),
-          );
+          return yield* new ComputeSourceEscapingLinkError({
+            detail: `${relativePath} links to ${linkTarget.value}, which is outside the compute source and cannot be packaged with it.`,
+            suggestion:
+              "Install the compute's dependencies inside its own directory, or point `source` at a directory that contains everything the build needs.",
+          });
         }
         entries.push({
           path: relativePath,
@@ -127,7 +129,7 @@ const collectEntries = (
 
       if (info.type === "Directory") {
         entries.push({ path: `${relativePath}/`, contents: new Uint8Array(0), mode: 0o755, mtime });
-        entries.push(...(yield* collectEntries(root, relativePath)));
+        entries.push(...(yield* collectEntries(path, root, relativePath)));
         continue;
       }
 
@@ -154,7 +156,8 @@ const collectEntries = (
   });
 
 export const packageComputeDirectory = Effect.fnUntraced(function* (dir: string) {
-  const entries = yield* collectEntries(dir, "");
+  const path = yield* Path.Path;
+  const entries = yield* collectEntries(path, dir, "");
 
   // `createTar` throws for anything USTAR cannot represent: a path component
   // over 100 bytes, or a size past the 8 GiB an octal field holds. Both are

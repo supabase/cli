@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Path } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../shared/cli/success-trailer.ts";
 import { aqua } from "../../../command-internal/colors.ts";
@@ -53,6 +53,7 @@ import type { ComputeDeleteFlags } from "./delete.command.ts";
  */
 export const computeDelete = Effect.fn("compute.delete")(function* (flags: ComputeDeleteFlags) {
   const output = yield* Output;
+  const path = yield* Path.Path;
   const api = yield* CommandPlatformApi;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
@@ -108,15 +109,13 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
     // it asked for. Interactively the error stays: somebody typed this command
     // and wants to hear the compute was not there.
     if (lookup.readable && deployed === undefined && !yes) {
-      return yield* Effect.fail(
-        new ComputeNotDeployedError({
-          detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
-          // `status`'s wording, inherited, pointed the wrong way here: somebody
-          // deleting "api" and hearing "nothing is deployed" does not want to
-          // deploy it — they want to see what *is* deployed.
-          suggestion: `See what is deployed with \`supabase compute list${refSuffix}\`.`,
-        }),
-      );
+      return yield* new ComputeNotDeployedError({
+        detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
+        // `status`'s wording, inherited, pointed the wrong way here: somebody
+        // deleting "api" and hearing "nothing is deployed" does not want to
+        // deploy it — they want to see what *is* deployed.
+        suggestion: `See what is deployed with \`supabase compute list${refSuffix}\`.`,
+      });
     }
 
     if (!yes) {
@@ -131,12 +130,10 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
       // meaningful from a keyboard, so stdin has to be a terminal too — the same
       // pair `projects delete` guards its prompt with.
       if (output.format !== "text" || machineOutput || !output.interactive || !tty.stdinIsTty) {
-        return yield* Effect.fail(
-          new ComputeDeleteConfirmationRequiredError({
-            detail: `Deleting "${name}" from project ${projectRef} needs confirmation, and there is no interactive terminal to ask on.`,
-            suggestion: `Re-run \`supabase compute delete ${name} --yes${refSuffix}\` to confirm without a prompt.`,
-          }),
-        );
+        return yield* new ComputeDeleteConfirmationRequiredError({
+          detail: `Deleting "${name}" from project ${projectRef} needs confirmation, and there is no interactive terminal to ask on.`,
+          suggestion: `Re-run \`supabase compute delete ${name} --yes${refSuffix}\` to confirm without a prompt.`,
+        });
       }
 
       // The live tally when the API reports one, labelled "declared" when it
@@ -162,12 +159,10 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
       // Trimmed: a trailing space from a paste is not a different answer, and
       // making someone re-run a destructive command over one is just friction.
       if (typed.trim() !== name) {
-        return yield* Effect.fail(
-          new ComputeDeleteNotConfirmedError({
-            detail: `The confirmation did not match "${name}", so nothing was deleted.`,
-            suggestion: `Re-run \`supabase compute delete ${name}${refSuffix}\` and type the name exactly, or pass --yes.`,
-          }),
-        );
+        return yield* new ComputeDeleteNotConfirmedError({
+          detail: `The confirmation did not match "${name}", so nothing was deleted.`,
+          suggestion: `Re-run \`supabase compute delete ${name}${refSuffix}\` and type the name exactly, or pass --yes.`,
+        });
       }
     }
 
@@ -183,7 +178,7 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
     // A compute deployed from another checkout has neither a local entry nor a
     // local directory, so there is nothing here that was kept.
     const keptSource = compute.sourceExists
-      ? displayPath(project.projectRoot, compute.sourceDir)
+      ? displayPath(path, project.projectRoot, compute.sourceDir)
       : undefined;
     const keptEntry = compute.entry !== undefined;
 

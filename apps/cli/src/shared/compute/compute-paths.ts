@@ -1,5 +1,4 @@
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { Effect, FileSystem, Option } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 import { InvalidComputeSourceError } from "./compute.errors.ts";
 
 /**
@@ -38,14 +37,14 @@ const RESERVED_SUPABASE_DIRS = ["functions", "migrations", ".temp"];
 const RESERVED_SUPABASE_FILES = ["config.toml", "config.json"];
 
 /** `supabase/compute/` — where compute live, resolved against the project. */
-export function computeRootDir(projectRoot: string): string {
-  return join(projectRoot, "supabase", COMPUTE_DIR);
+export function computeRootDir(path: Path.Path, projectRoot: string): string {
+  return path.join(projectRoot, "supabase", COMPUTE_DIR);
 }
 
 /** Whether `candidate` is `parent` itself or sits underneath it. */
-function isAtOrUnder(parent: string, candidate: string): boolean {
-  const rel = relative(resolve(parent), resolve(candidate));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+function isAtOrUnder(path: Path.Path, parent: string, candidate: string): boolean {
+  const rel = path.relative(path.resolve(parent), path.resolve(candidate));
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
 /**
@@ -58,21 +57,22 @@ function isAtOrUnder(parent: string, candidate: string): boolean {
  */
 const canonicalize = Effect.fnUntraced(function* (target: string) {
   const fs = yield* FileSystem.FileSystem;
-  const absolute = resolve(target);
+  const path = yield* Path.Path;
+  const absolute = path.resolve(target);
   const pending: Array<string> = [];
   let cursor = absolute;
 
   for (;;) {
     const real = yield* fs.realPath(cursor).pipe(Effect.option);
     if (Option.isSome(real)) {
-      return pending.length === 0 ? real.value : join(real.value, ...pending);
+      return pending.length === 0 ? real.value : path.join(real.value, ...pending);
     }
-    const parent = dirname(cursor);
+    const parent = path.dirname(cursor);
     if (parent === cursor) {
       // Walked to the filesystem root without finding anything that exists.
       return absolute;
     }
-    pending.unshift(basename(cursor));
+    pending.unshift(path.basename(cursor));
     cursor = parent;
   }
 });
@@ -97,6 +97,7 @@ export const confineComputePath = Effect.fnUntraced(function* (options: {
   readonly subject: string;
   readonly suggestion: string;
 }) {
+  const path = yield* Path.Path;
   const refuse = (why: string) =>
     Effect.fail(
       new InvalidComputeSourceError({
@@ -107,24 +108,24 @@ export const confineComputePath = Effect.fnUntraced(function* (options: {
 
   const projectRoot = yield* canonicalize(options.projectRoot);
   const target = yield* canonicalize(options.target);
-  const supabaseDir = join(projectRoot, "supabase");
+  const supabaseDir = path.join(projectRoot, "supabase");
 
   if (target === projectRoot) {
     return yield* refuse("is the project root itself");
   }
-  if (!isAtOrUnder(projectRoot, target)) {
+  if (!isAtOrUnder(path, projectRoot, target)) {
     return yield* refuse("resolves outside the project");
   }
   if (target === supabaseDir) {
     return yield* refuse("is the supabase directory itself");
   }
   for (const owned of RESERVED_SUPABASE_DIRS) {
-    if (isAtOrUnder(join(supabaseDir, owned), target)) {
+    if (isAtOrUnder(path, path.join(supabaseDir, owned), target)) {
       return yield* refuse(`is inside supabase/${owned}/, which the Supabase CLI already owns`);
     }
   }
   for (const owned of RESERVED_SUPABASE_FILES) {
-    if (target === join(supabaseDir, owned)) {
+    if (target === path.join(supabaseDir, owned)) {
       return yield* refuse(`is supabase/${owned}, which the Supabase CLI already owns`);
     }
   }
@@ -147,6 +148,7 @@ export const resolveComputeSource = Effect.fnUntraced(function* (options: {
   readonly cwd: string;
   readonly raw: string;
 }) {
+  const path = yield* Path.Path;
   const suggestion =
     "Point --source at a directory inside the project, for example --source packages/api.";
 
@@ -157,25 +159,23 @@ export const resolveComputeSource = Effect.fnUntraced(function* (options: {
   // than part of the name, comes off. An argument that is nothing but
   // whitespace is refused rather than trimmed into something else.
   if (options.raw.trim() === "") {
-    return yield* Effect.fail(
-      new InvalidComputeSourceError({
-        detail: `--source "${options.raw}" is empty.`,
-        suggestion,
-      }),
-    );
+    return yield* new InvalidComputeSourceError({
+      detail: `--source "${options.raw}" is empty.`,
+      suggestion,
+    });
   }
 
   return yield* confineComputePath({
     projectRoot: options.projectRoot,
-    target: resolve(options.cwd, options.raw.replace(/[/\\]+$/, "")),
+    target: path.resolve(options.cwd, options.raw.replace(/[/\\]+$/, "")),
     subject: `--source "${options.raw}"`,
     suggestion,
   });
 });
 
 /** A compute's default directory: `supabase/compute/<name>/`. */
-export function computeDir(projectRoot: string, name: string): string {
-  return join(computeRootDir(projectRoot), name);
+export function computeDir(path: Path.Path, projectRoot: string, name: string): string {
+  return path.join(computeRootDir(path, projectRoot), name);
 }
 
 /**
@@ -195,12 +195,13 @@ export const computeSourceDir = Effect.fnUntraced(function* (options: {
   readonly name: string;
   readonly configuredSource: string | undefined;
 }) {
+  const path = yield* Path.Path;
   const configured = options.configuredSource;
   const recorded = configured !== undefined && configured !== "";
 
   return yield* confineComputePath({
     projectRoot: options.projectRoot,
-    target: recorded ? resolve(options.projectRoot, configured) : options.defaultDir,
+    target: recorded ? path.resolve(options.projectRoot, configured) : options.defaultDir,
     subject: recorded
       ? `[compute.${options.name}] source "${configured}"`
       : `The default directory for "${options.name}"`,
@@ -216,8 +217,8 @@ export const computeSourceDir = Effect.fnUntraced(function* (options: {
  * absolute form when the relative one would climb out of the tree, where `../../`
  * chains stop being clearer than the truth.
  */
-export function displayPath(cwd: string, target: string): string {
-  const rel = relative(resolve(cwd), resolve(target));
+export function displayPath(path: Path.Path, cwd: string, target: string): string {
+  const rel = path.relative(path.resolve(cwd), path.resolve(target));
   if (rel === "") {
     return ".";
   }

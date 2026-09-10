@@ -115,6 +115,7 @@ function byteLength(value: string): number {
  * carries its own classification, and the static identifier keeps the
  * fingerprint stable through minification.
  */
+// oxlint-disable-next-line effecttsgo/extends-native-error -- synchronous archive writer boundary uses classified native errors.
 export class TarPathTooLongError extends Error {
   static readonly [ErrorActionabilityFingerprintId] = "TarPathTooLongError";
 
@@ -135,6 +136,7 @@ export class TarPathTooLongError extends Error {
  * Untagged for the same reason as {@link TarPathTooLongError}: `createTar` is a
  * pure function, and the caller's error channel is where this surfaces.
  */
+// oxlint-disable-next-line effecttsgo/extends-native-error -- synchronous archive writer boundary uses classified native errors.
 export class TarFieldOutOfRangeError extends Error {
   static readonly [ErrorActionabilityFingerprintId] = "TarFieldOutOfRangeError";
 

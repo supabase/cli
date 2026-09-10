@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Path } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../shared/cli/success-trailer.ts";
 import { aqua } from "../../../command-internal/colors.ts";
@@ -34,6 +34,7 @@ import type { ComputeStatusFlags } from "./status.command.ts";
  */
 export const computeStatus = Effect.fn("compute.status")(function* (flags: ComputeStatusFlags) {
   const output = yield* Output;
+  const path = yield* Path.Path;
   const api = yield* CommandPlatformApi;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
@@ -63,12 +64,10 @@ export const computeStatus = Effect.fn("compute.status")(function* (flags: Compu
     yield* fetching.clear();
 
     if (Option.isNone(found)) {
-      return yield* Effect.fail(
-        new ComputeNotDeployedError({
-          detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
-          suggestion: `Deploy it with \`supabase compute push ${name}${refSuffix}\`.`,
-        }),
-      );
+      return yield* new ComputeNotDeployedError({
+        detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
+        suggestion: `Deploy it with \`supabase compute push ${name}${refSuffix}\`.`,
+      });
     }
 
     const record = found.value;
@@ -85,7 +84,7 @@ export const computeStatus = Effect.fn("compute.status")(function* (flags: Compu
     // for it, and printing that would name a path the entry does not.
     const sourceDisplay =
       (compute.entry !== undefined && compute.sourceResolved) || compute.sourceExists
-        ? displayPath(project.projectRoot, compute.sourceDir)
+        ? displayPath(path, project.projectRoot, compute.sourceDir)
         : undefined;
 
     const payload = {

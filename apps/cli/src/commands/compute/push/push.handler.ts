@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Predicate, type Schedule } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate, type Schedule } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import { Output } from "../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../shared/cli/success-trailer.ts";
@@ -90,12 +90,10 @@ const resolveRuntime = Effect.fnUntraced(function* (options: {
   if (options.recorded !== undefined) {
     const recorded = parseComputeRuntime(options.recorded);
     if (recorded === undefined) {
-      return yield* Effect.fail(
-        new UnknownComputeRuntimeError({
-          detail: `supabase/config.toml records an unknown runtime "${options.recorded}" for "${options.name}".`,
-          suggestion: `Set [compute.${options.name}] runtime to one of: ${COMPUTE_RUNTIMES.join(", ")}.`,
-        }),
-      );
+      return yield* new UnknownComputeRuntimeError({
+        detail: `supabase/config.toml records an unknown runtime "${options.recorded}" for "${options.name}".`,
+        suggestion: `Set [compute.${options.name}] runtime to one of: ${COMPUTE_RUNTIMES.join(", ")}.`,
+      });
     }
     return recorded;
   }
@@ -121,12 +119,10 @@ const resolveSize = Effect.fnUntraced(function* (options: {
   }
   const recorded = parseComputeSize(options.recorded);
   if (recorded === undefined) {
-    return yield* Effect.fail(
-      new UnknownComputeSizeError({
-        detail: `supabase/config.toml records an unknown size "${options.recorded}" for "${options.name}".`,
-        suggestion: `Set [compute.${options.name}] size to one of: ${COMPUTE_SIZES.join(", ")}.`,
-      }),
-    );
+    return yield* new UnknownComputeSizeError({
+      detail: `supabase/config.toml records an unknown size "${options.recorded}" for "${options.name}".`,
+      suggestion: `Set [compute.${options.name}] size to one of: ${COMPUTE_SIZES.join(", ")}.`,
+    });
   }
   return recorded;
 });
@@ -199,18 +195,16 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
   }
   const recorded = parseComputeExposure(options.recorded);
   if (recorded === undefined) {
-    return yield* Effect.fail(
-      new UnknownComputeExposureError({
-        // A blank value gets its own sentence: `an unknown exposure ""` reads
-        // like a parser quirk, when what actually happened is that the key is
-        // there and says nothing.
-        detail:
-          options.recorded.trim() === ""
-            ? `supabase/config.toml records a blank exposure for "${options.name}".`
-            : `supabase/config.toml records an unknown exposure "${options.recorded}" for "${options.name}".`,
-        suggestion: `Set [compute.${options.name}] exposure to one of: ${COMPUTE_EXPOSURES.join(", ")}.`,
-      }),
-    );
+    return yield* new UnknownComputeExposureError({
+      // A blank value gets its own sentence: `an unknown exposure ""` reads
+      // like a parser quirk, when what actually happened is that the key is
+      // there and says nothing.
+      detail:
+        options.recorded.trim() === ""
+          ? `supabase/config.toml records a blank exposure for "${options.name}".`
+          : `supabase/config.toml records an unknown exposure "${options.recorded}" for "${options.name}".`,
+      suggestion: `Set [compute.${options.name}] exposure to one of: ${COMPUTE_EXPOSURES.join(", ")}.`,
+    });
   }
   return recorded;
 });
@@ -274,6 +268,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
   readonly machineOutput: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
   const settings = yield* CommandSettings;
@@ -281,7 +276,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
   const { project, name, projectRef } = input;
   const compute = yield* describeCompute(project, name);
 
-  const sourceDisplay = displayPath(project.projectRoot, compute.sourceDir);
+  const sourceDisplay = displayPath(path, project.projectRoot, compute.sourceDir);
 
   // Checked before the runtime is resolved, not after: with no recorded
   // runtime, `resolveRuntime` classifies the directory and announces what it
@@ -293,7 +288,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
       suggestion: missingSourceSuggestion({
         name,
         sourceDisplay,
-        configPath: displayPath(project.projectRoot, project.configPath),
+        configPath: displayPath(path, project.projectRoot, project.configPath),
         entry: compute.entry,
       }),
     });
@@ -316,12 +311,10 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     // `compute new` refuses a destination that exists and is not a directory,
     // so the scaffold suggestion would answer with a second error.
     if (info.type !== "Directory") {
-      return yield* Effect.fail(
-        new ComputeSourceMissingError({
-          detail: `${sourceDisplay} is not a directory.`,
-          suggestion: `Replace it with a directory holding your compute's code, then run this command again.`,
-        }),
-      );
+      return yield* new ComputeSourceMissingError({
+        detail: `${sourceDisplay} is not a directory.`,
+        suggestion: `Replace it with a directory holding your compute's code, then run this command again.`,
+      });
     }
     // An empty directory packages and deploys perfectly happily, producing an
     // image with nothing in it — a success message for a compute that cannot
@@ -332,12 +325,10 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     // opposite things from the user.
     const contents = yield* fs.readDirectory(compute.sourceDir);
     if (contents.length === 0) {
-      return yield* Effect.fail(
-        new ComputeSourceMissingError({
-          detail: `${sourceDisplay} is empty, so there is nothing to deploy.`,
-          suggestion: addYourCode(sourceDisplay),
-        }),
-      );
+      return yield* new ComputeSourceMissingError({
+        detail: `${sourceDisplay} is empty, so there is nothing to deploy.`,
+        suggestion: addYourCode(sourceDisplay),
+      });
     }
   }
 
@@ -386,12 +377,10 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     // runtime that deploys an image with no handler in it — the exact "nothing
     // to deploy" case that guard exists to refuse.
     if (packaged.fileCount === 0) {
-      return yield* Effect.fail(
-        new ComputeSourceMissingError({
-          detail: `${sourceDisplay} holds no files to deploy, only empty directories.`,
-          suggestion: addYourCode(sourceDisplay),
-        }),
-      );
+      return yield* new ComputeSourceMissingError({
+        detail: `${sourceDisplay} holds no files to deploy, only empty directories.`,
+        suggestion: addYourCode(sourceDisplay),
+      });
     }
 
     const uploading = yield* output.task("Uploading build context...");
@@ -448,14 +437,12 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
   // compute that will never come up.
   if (settled.buildState === "failed") {
     yield* deploying.clear();
-    return yield* Effect.fail(
-      new ComputeBuildFailedError({
-        detail: `The build for "${name}" failed${
-          settled.stateReason === undefined ? "" : `: ${settled.stateReason}`
-        }.`,
-        suggestion: `Fix the issue, then re-run \`supabase compute push ${name}${input.refSuffix}\`.`,
-      }),
-    );
+    return yield* new ComputeBuildFailedError({
+      detail: `The build for "${name}" failed${
+        settled.stateReason === undefined ? "" : `: ${settled.stateReason}`
+      }.`,
+      suggestion: `Fix the issue, then re-run \`supabase compute push ${name}${input.refSuffix}\`.`,
+    });
   }
 
   yield* deploying.clear();
@@ -606,6 +593,7 @@ export const computePush = Effect.fn("compute.push")(function* (
   } = {},
 ) {
   const output = yield* Output;
+  const path = yield* Path.Path;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
@@ -617,7 +605,7 @@ export const computePush = Effect.fn("compute.push")(function* (
   const projectRef = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
-    const project = yield* loadComputeProject();
+    const project = yield* loadComputeProject;
 
     const requested =
       flags.names.length > 0
@@ -625,15 +613,14 @@ export const computePush = Effect.fn("compute.push")(function* (
         : yield* discoverComputeNames(project);
 
     if (requested.length === 0) {
-      return yield* Effect.fail(
-        new NoComputeToDeployError({
-          detail: `No compute were named, and none were found in ${displayPath(
-            project.projectRoot,
-            project.computeDir,
-          )}.`,
-          suggestion: "Scaffold one with `supabase compute new <name>`.",
-        }),
-      );
+      return yield* new NoComputeToDeployError({
+        detail: `No compute were named, and none were found in ${displayPath(
+          path,
+          project.projectRoot,
+          project.computeDir,
+        )}.`,
+        suggestion: "Scaffold one with `supabase compute new <name>`.",
+      });
     }
 
     const names = [...new Set(requested)];
