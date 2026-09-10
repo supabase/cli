@@ -119,20 +119,13 @@ export const stop = Effect.fn("stop")(function* (flags: StopFlags) {
       yield* output.raw("Stopping containers...\n");
     }
 
-    // `dockerRemoveAll` runs list -> stop -> container prune -> conditional volume prune ->
-    // network prune (see `docker-remove-all.ts`); its 5 stage-tagged failures are remapped into
-    // `stop`'s own tagged errors below.
+    // Stages: list -> stop -> container prune -> volume prune (when requested) -> network prune;
+    // each stage's failure is remapped to a `stop` error below.
     //
-    // `onContainersRemoved` fires only once container prune confirms removal, so
-    // `cleanupStartSecrets` reclaims exactly the directories for containers this run tore down.
-    // Each container's own `CLI_WORKDIR_LABEL` locates its directory, since `stop --all`/
-    // `--project-id <other>` may be tearing down a different project's containers than this
-    // invocation's own `--workdir`.
-    //
-    // Runs via `Effect.ensuring` (in `Effect.suspend`, so `removedContainers` is read at
-    // finalizer-run time) because a later prune stage can still fail after containers are
-    // already confirmed removed — a plain statement here would skip cleanup and leak secret
-    // directories.
+    // `onContainersRemoved` fires only after container prune confirms removal, and each container's
+    // own `CLI_WORKDIR_LABEL` locates its secrets directory (`--all`/`--project-id` may tear down
+    // another project's containers). The cleanup runs via `Effect.ensuring` so a later prune-stage
+    // failure can't skip it and leak secret directories.
     let removedContainers: ReadonlyArray<ContainerIdName> = [];
     yield* dockerRemoveAll(
       spawner,
