@@ -18,6 +18,8 @@ reference. Published `apps/cli` and `packages/config` are not private; `apps/doc
 root-owned. Effect lint covers `packages/stack`, `apps/cli/src/commands/experimental/stack`, and
 `apps/cli/src/command-internal/experimental-feature.ts`; use the root scripts for it.
 
+### Config Naming Vocabulary
+
 The config vocabulary is settled: `CliConfig` is the local config document, `ProjectConfig` is
 the hosted-project subset, and `CliSettings` is CLI runtime settings. Use `Cli*` for local
 checkout concepts and bare `Project*` for hosted concepts; helpers follow the family they serve.
@@ -110,8 +112,9 @@ pnpm run test:live
 
 ## Pull requests
 
-Use conventional-commit titles: `<type>(<scope>): <subject>`. Valid scopes are listed
-in [`commitlint.config.js`](commitlint.config.js). Non-release changes use `chore`, `docs`, `test`,
+Use conventional-commit titles: `<type>(<scope>): <subject>`. Valid scopes are listed in
+[`commitlint.config.js`](commitlint.config.js); keep its list synchronized with the mirrored
+scope list in [the PR lint workflow](.github/workflows/lint-pull-request.yml). Non-release changes use `chore`, `docs`, `test`,
 or `ci` rather than release-triggering types. Do not put validation,
 test plans, or check lists in PR descriptions. Public PRs, issues, and code comments must omit
 internal metrics (percentages, ratios, or relative changes are fine), vendor/legal/pricing/strategy
