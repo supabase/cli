@@ -4,6 +4,7 @@ import { CommandSettings } from "../../config/command-settings.service.ts";
 import { pathHasUncommittedChanges } from "../../command-internal/git-status.ts";
 import { mapHttpError } from "../../command-internal/http-errors.ts";
 import { MigrationsReadError } from "../../command-internal/migration.errors.ts";
+import { unsupportedOutputFlagMessage } from "../../command-internal/go-output-flag.ts";
 import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
 import { MachineErrorContext } from "../../shared/output/machine-error-context.service.ts";
 import { resolveYes, OutputFlag } from "../../command-internal/global-flags.ts";
@@ -248,8 +249,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     // a net-new TS command with no Go parity contract (CLI-2156).
     if (Option.isSome(goOutputFlag)) {
       return yield* new PullOutputFlagUnsupportedError({
-        message:
-          "the -o/--output flag is not supported by pull; use --output-format json|stream-json instead.",
+        message: unsupportedOutputFlagMessage("pull"),
       });
     }
 

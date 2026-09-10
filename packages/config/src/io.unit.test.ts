@@ -84,6 +84,7 @@ describe("config io", () => {
           db: {
             major_version: 16,
           },
+          experimental: { stack: true },
         }),
       );
 
@@ -91,6 +92,7 @@ describe("config io", () => {
       expect(loaded.format).toBe("json");
       expect(loaded.config.project_id).toBe("abc123");
       expect(loaded.config.db.major_version).toBe(16);
+      expect(loaded.config.experimental.stack).toBe(true);
       expect(loaded.config.api.enabled).toBe(true);
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -433,6 +435,9 @@ describe("config io", () => {
 
 [db]
 major_version = 16
+
+[experimental]
+stack = true
 `,
       );
 
@@ -463,6 +468,9 @@ major_version = 16
 
 [db]
 major_version = 16
+
+[experimental]
+stack = true
 `,
       );
 
@@ -501,6 +509,9 @@ major_version = 16
 
 [db]
 major_version = 16
+
+[experimental]
+stack = true
 `,
       );
 
@@ -508,6 +519,7 @@ major_version = 16
       expect(loaded?.format).toBe("toml");
       expect(loaded?.config.project_id).toBe("toml-ref");
       expect(loaded?.config.db.major_version).toBe(16);
+      expect(loaded?.config.experimental.stack).toBe(true);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

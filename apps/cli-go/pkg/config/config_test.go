@@ -309,6 +309,70 @@ instances = 3
 
 		assert.NoError(t, config.Load("", fsys))
 	})
+
+	for _, tt := range []struct {
+		name       string
+		configData string
+		projectID  string
+		want       bool
+	}{
+		{
+			name:       "base true",
+			configData: "[experimental]\nstack = true\n",
+			want:       true,
+		},
+		{
+			name:       "base false",
+			configData: "[experimental]\nstack = false\n",
+			want:       false,
+		},
+		{
+			name:       "remote true",
+			configData: "[remotes.prod]\nproject_id = \"abcdefghijklmnopqrst\"\n[remotes.prod.experimental]\nstack = true\n",
+			projectID:  "abcdefghijklmnopqrst",
+			want:       true,
+		},
+		{
+			name:       "remote false",
+			configData: "[remotes.prod]\nproject_id = \"abcdefghijklmnopqrst\"\n[remotes.prod.experimental]\nstack = false\n",
+			projectID:  "abcdefghijklmnopqrst",
+			want:       false,
+		},
+	} {
+		t.Run("accepts experimental stack "+tt.name, func(t *testing.T) {
+			t.Setenv("SUPABASE_EXPERIMENTAL_STACK", "")
+			config := NewConfig()
+			config.ProjectId = tt.projectID
+			fsys := fs.MapFS{
+				"supabase/config.toml": &fs.MapFile{Data: []byte(tt.configData)},
+			}
+
+			require.NoError(t, config.Load("", fsys))
+			assert.Equal(t, tt.want, config.Experimental.Stack)
+		})
+	}
+
+	t.Run("does not emit experimental stack", func(t *testing.T) {
+		config := NewConfig()
+		config.Experimental.Stack = true
+
+		encodedToml, err := ToTomlBytes(config.Experimental)
+		require.NoError(t, err)
+		var encoded map[string]any
+		_, err = toml.Decode(string(encodedToml), &encoded)
+		require.NoError(t, err)
+		assert.NotContains(t, encoded, "stack")
+
+		var buf bytes.Buffer
+		require.NoError(t, config.Eject(&buf))
+		var rendered map[string]any
+		_, err = toml.Decode(buf.String(), &rendered)
+		require.NoError(t, err)
+		experimental, ok := rendered["experimental"].(map[string]any)
+		if assert.True(t, ok) {
+			assert.NotContains(t, experimental, "stack")
+		}
+	})
 }
 
 func TestRemoteOverride(t *testing.T) {
@@ -317,8 +381,12 @@ func TestRemoteOverride(t *testing.T) {
 		config.ProjectId = "bvikqvbczudanvggcord"
 		// Setup in-memory fs
 		fsys := fs.MapFS{
-			"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
-			"supabase/templates/invite.html": &fs.MapFile{},
+			"supabase/config.toml":                                  &fs.MapFile{Data: testInitConfigEmbed},
+			"supabase/templates/invite.html":                        &fs.MapFile{},
+			"supabase/templates/password_changed_notification.html": &fs.MapFile{},
+			"certs/my-cert.pem":                                     &fs.MapFile{},
+			"certs/my-key.pem":                                      &fs.MapFile{},
+			"supabase/signing_keys.json":                            &fs.MapFile{Data: []byte("[]")},
 		}
 		// Run test
 		t.Setenv("SUPABASE_AUTH_SITE_URL", "http://preview.com")
@@ -335,8 +403,12 @@ func TestRemoteOverride(t *testing.T) {
 		config.ProjectId = "vpefcjyosynxeiebfscx"
 		// Setup in-memory fs
 		fsys := fs.MapFS{
-			"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
-			"supabase/templates/invite.html": &fs.MapFile{},
+			"supabase/config.toml":                                  &fs.MapFile{Data: testInitConfigEmbed},
+			"supabase/templates/invite.html":                        &fs.MapFile{},
+			"supabase/templates/password_changed_notification.html": &fs.MapFile{},
+			"certs/my-cert.pem":                                     &fs.MapFile{},
+			"certs/my-key.pem":                                      &fs.MapFile{},
+			"supabase/signing_keys.json":                            &fs.MapFile{Data: []byte("[]")},
 		}
 		// Run test
 		t.Setenv("SUPABASE_AUTH_SITE_URL", "http://preview.com")
@@ -353,8 +425,12 @@ func TestRemoteOverride(t *testing.T) {
 		config := NewConfig()
 		// Setup in-memory fs
 		fsys := fs.MapFS{
-			"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
-			"supabase/templates/invite.html": &fs.MapFile{},
+			"supabase/config.toml":                                  &fs.MapFile{Data: testInitConfigEmbed},
+			"supabase/templates/invite.html":                        &fs.MapFile{},
+			"supabase/templates/password_changed_notification.html": &fs.MapFile{},
+			"certs/my-cert.pem":                                     &fs.MapFile{},
+			"certs/my-key.pem":                                      &fs.MapFile{},
+			"supabase/signing_keys.json":                            &fs.MapFile{Data: []byte("[]")},
 		}
 		// Run test
 		t.Setenv("TWILIO_AUTH_TOKEN", "token")

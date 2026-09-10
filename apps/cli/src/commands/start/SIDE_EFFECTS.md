@@ -1,5 +1,13 @@
 # `supabase start`
 
+This document describes the legacy backend. With `SUPABASE_EXPERIMENTAL_STACK=1`, or
+`[experimental] stack = true` when the environment override is unset or empty, `supabase start`
+uses the new [`supabase stack start` implementation](../experimental/stack/start/SIDE_EFFECTS.md).
+`SUPABASE_EXPERIMENTAL_STACK=0` forces the legacy backend. See [backend selection](../../../docs/stack-commands.md).
+Backend selection happens before command parsing. When the environment override is unset or empty,
+an unreadable, malformed, or invalid project configuration falls back to the legacy backend; an
+invalid environment override remains an error.
+
 This command talks directly to Docker via subprocess (`docker`/`podman`) to bring up
 the local dev stack sequentially, one container at a time — it does not use Docker
 Compose, and it does not go through `@supabase/stack/effect`'s orchestration model

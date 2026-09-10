@@ -106,7 +106,7 @@ async function destroyStack(home: string, stackId: string) {
   });
 }
 
-describe("experimental stack start (compiled e2e)", () => {
+describe("stack start (compiled e2e)", () => {
   let home: ReturnType<typeof makeTempHome> | undefined;
   let projectDir: string | undefined;
   let stackId: string | undefined;
@@ -149,14 +149,11 @@ describe("experimental stack start (compiled e2e)", () => {
       await mkdir(path.join(projectDir, "supabase"), { recursive: true });
       await writeFile(path.join(projectDir, "supabase", "config.toml"), minimalConfig);
 
-      const result = await runSupabase(
-        ["experimental", "stack", "start", "--runtime", "native", "--eager"],
-        {
-          cwd: projectDir,
-          home: home.dir,
-          exitTimeoutMs: START_TIMEOUT_MS,
-        },
-      );
+      const result = await runSupabase(["stack", "start", "--runtime", "native", "--eager"], {
+        cwd: projectDir,
+        home: home.dir,
+        exitTimeoutMs: START_TIMEOUT_MS,
+      });
       expect(result.exitCode, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0);
       const idMatch = result.stdout.match(/Stack ([0-9a-f]{64})/u);
       expect(idMatch, `stdout:\n${result.stdout}`).not.toBeNull();
@@ -177,7 +174,7 @@ describe("experimental stack start (compiled e2e)", () => {
       await access(path.join(databasePath, "PG_VERSION"));
 
       await rm(path.join(projectRoot, "supabase", "config.toml"));
-      const stop = await runSupabase(["experimental", "stack", "stop", "--stack-id", idText], {
+      const stop = await runSupabase(["stack", "stop", "--stack-id", idText], {
         cwd: projectRoot,
         home: homeDir.dir,
         exitTimeoutMs: CLEANUP_TIMEOUT_MS,

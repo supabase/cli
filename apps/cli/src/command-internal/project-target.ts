@@ -65,11 +65,12 @@ type ConfigTargetErrorClass<E> = new (args: { readonly message: string }) => E;
  * stay per-family so `_tag`, telemetry fingerprint, and actionability remain family-owned
  * and distinct; only their (identical) definitions live here.
  *
- * The tags are template-interpolated, so `error-actionability-coverage.unit.test.ts`'s
- * static AST scan cannot see them in THIS file — which is why every caller must re-export
- * each minted class from its own `*.errors.ts` under the family-prefixed name. That file
- * still declares other string-literal tags, so its coverage `it()` still registers, and the
- * runtime half of the guard walks `Object.entries(module)` and verifies these four there.
+ * The tags are template-interpolated, so `error-tag-stability.unit.test.ts`'s static
+ * regex scan cannot see them in THIS file — which is why every caller must re-export
+ * each minted class from its own `*.errors.ts` under the family-prefixed name. That
+ * test's `collectComputedTagDeclarations` walks `Object.entries(module)` on each of
+ * those four caller files instead, constructing every exported class to read its real,
+ * interpolated `_tag` off the instance.
  */
 export function mintConfigTargetErrors<Prefix extends string>(prefix: Prefix) {
   class BranchNotFoundError extends Data.TaggedError(`${prefix}BranchNotFoundError`)<{

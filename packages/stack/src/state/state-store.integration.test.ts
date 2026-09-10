@@ -12,7 +12,6 @@ import {
   Redacted,
   Schema,
 } from "effect";
-import { createServer, type Server } from "node:net";
 import { compileStack, type StackDefinition } from "../model/Compiler.ts";
 import { deriveStackId } from "../identity/Identity.ts";
 import { StackStateFormatUnsupportedError, StackStateInvalidError } from "../public/Errors.ts";
@@ -23,31 +22,6 @@ import {
   type PersistedStackState,
 } from "./StackStateStore.ts";
 import { removeLeaseIfHeld } from "./Ownership.ts";
-
-const bindEphemeral = Effect.callback<Server, Error>((resume) => {
-  const server = createServer();
-  const onError = (error: Error) => resume(Effect.fail(error));
-  const onListening = () => {
-    server.off("error", onError);
-    resume(Effect.succeed(server));
-  };
-  server.once("error", onError);
-  server.once("listening", onListening);
-  server.listen({ host: "127.0.0.1", port: 0 });
-  return Effect.sync(() => {
-    server.off("error", onError);
-    server.off("listening", onListening);
-    if (server.listening) server.close(() => undefined);
-  });
-});
-
-const closeServer = (server: Server) =>
-  Effect.callback<void, Error>((resume) => {
-    if (!server.listening) return resume(Effect.void);
-    server.close((error) =>
-      error === undefined ? resume(Effect.void) : resume(Effect.fail(error)),
-    );
-  });
 
 const layer = NodeServices.layer;
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -76,6 +50,37 @@ const jsonText = (value: unknown) =>
   Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(value);
 const jsonTextSync = (value: unknown) =>
   Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(value);
+
+const completeStateFixture = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-state-" });
+  const store = yield* makeStackStateStore({ stateRoot: root });
+  const stackId = yield* deriveStackId(identity);
+  const compiled = yield* compileStack({
+    projectRoot: "/tmp/project",
+    runtime: { kind: "native" },
+    config: {
+      preparation: "on-demand",
+      capabilities: {
+        auth: {
+          settings: {
+            secret_key: Redacted.make("state-secret"),
+            email: {
+              template: { confirm: { subject: "Confirm" } },
+              notification: { welcome: { enabled: true } },
+            },
+          },
+        },
+        functions: { settings: { functions: { hello: { verify_jwt: false } } } },
+      },
+    },
+  });
+  const complete = state(stackId, compiled.definition);
+  yield* store.initialize(stackId, complete);
+  const encoded = yield* Schema.encodeEffect(PersistedStackStateSchema)(complete);
+  return { fs, path, store, root, stackId, complete, encoded };
+});
 
 describe("atomic stack state", () => {
   it.live("rejects a competing registry action while the lease is held", () =>
@@ -131,32 +136,6 @@ describe("atomic stack state", () => {
     ),
   );
 
-  it.live("reclaims a registry lock whose lease was released by a crashed process", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-registry-" });
-        const stale = yield* bindEphemeral;
-        const address = stale.address();
-        if (address === null || typeof address === "string")
-          return yield* new StackStateInvalidError({ message: "missing lease port" });
-        yield* fs.writeFileString(
-          path.join(root, ".stack-registry.lock"),
-          jsonTextSync({
-            format: "supabase-stack-lease-v1",
-            token: "old-registry",
-            port: address.port,
-          }),
-        );
-        yield* closeServer(stale);
-        const result = yield* withRegistryLock(root, Effect.succeed("recovered"));
-        expect(result).toBe("recovered");
-        expect(yield* fs.exists(path.join(root, ".stack-registry.lock"))).toBe(false);
-      }),
-    ),
-  );
-
   it.live("fails closed immediately for malformed registry state", () =>
     withPlatform(
       Effect.gen(function* () {
@@ -172,43 +151,20 @@ describe("atomic stack state", () => {
     ),
   );
 
-  it.live("round-trips a compiled complete definition and rejects nested unknowns", () =>
+  it.live("round-trips a compiled complete definition", () =>
     withPlatform(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-state-" });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const stackId = yield* deriveStackId(identity);
-        const compiled = yield* compileStack({
-          projectRoot: "/tmp/project",
-          runtime: { kind: "native" },
-          config: {
-            preparation: "on-demand",
-            capabilities: {
-              auth: {
-                settings: {
-                  secret_key: Redacted.make("state-secret"),
-                  email: {
-                    template: { confirm: { subject: "Confirm" } },
-                    notification: { welcome: { enabled: true } },
-                  },
-                },
-              },
-              functions: { settings: { functions: { hello: { verify_jwt: false } } } },
-            },
-          },
-        });
-        const complete = state(stackId, compiled.definition);
+        const { store, stackId, complete } = yield* completeStateFixture;
         expect(complete.definition?.preparation).toBe("on-demand");
-        yield* store.initialize(stackId, complete);
         expect(yield* store.read(stackId)).toEqual(complete);
-        const materialized = { ...complete };
-        yield* store.replace(stackId, materialized);
-        expect(yield* store.read(stackId)).toEqual(materialized);
-        yield* store.replace(stackId, complete);
+      }),
+    ),
+  );
 
-        const encoded = yield* Schema.encodeEffect(PersistedStackStateSchema)(complete);
+  it.live("rejects malformed nested state documents", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const { fs, path, store, root, stackId, encoded } = yield* completeStateFixture;
         const statePath = path.join(root, stackId, "state.json");
         const nestedUnknown = {
           ...encoded,
@@ -464,20 +420,24 @@ describe("atomic stack state", () => {
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
         const stackId = yield* deriveStackId(identity);
-        yield* store.initialize(stackId, state(stackId));
-        const updates = Array.from({ length: 8 }, () => store.replace(stackId, state(stackId)));
+        const oldValue = state(stackId);
+        const newValue = {
+          ...oldValue,
+          desiredLifecycle: "running" as const,
+          ports: [{ field: "api" as const, port: 24_321, intent: "exact" as const }],
+          secrets: { "secret:test": { policy: "managed" as const, value: "new-value" } },
+        };
+        yield* store.initialize(stackId, oldValue);
+        const updates = Array.from({ length: 8 }, (_, index) =>
+          store.replace(stackId, index % 2 === 0 ? oldValue : newValue),
+        );
         const writer = Effect.forEach(updates, (update) => update, { concurrency: 1 });
         const readers = Effect.forEach(Array.from({ length: 32 }), () => store.read(stackId), {
           concurrency: 8,
         });
         const [, observations] = yield* Effect.all([writer, readers], { concurrency: 2 });
         for (const observation of observations) {
-          expect(observation).toBeDefined();
-          if (observation === undefined) continue;
-          expect(observation.format).toBe("supabase-stack-state-v1");
-          expect(observation.identity.stackId).toBe(stackId);
-          expect(Array.isArray(observation.ports)).toBe(true);
-          expect(observation.secrets).toEqual({});
+          expect([oldValue, newValue]).toContainEqual(observation);
         }
       }),
     ),

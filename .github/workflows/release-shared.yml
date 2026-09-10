@@ -55,6 +55,8 @@ on:
         required: false
       LINEAR_CLI_BETA_RELEASE_ACCESS_KEY:
         required: false
+      SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN:
+        required: false
 jobs:
   build-blacksmith:
     name: Build CLI artifacts (Blacksmith)
@@ -261,12 +263,23 @@ jobs:
         run: pnpm run test:smoke -- --version "${VERSION}" --tag "${NPM_TAG}"
         working-directory: apps/cli
 
+  live-e2e-gate:
+    name: Verify live e2e before stable publication
+    if: ${{ inputs.channel == 'stable' && !inputs.dry_run }}
+    uses: ./.github/workflows/live-e2e-gate.yml
+    with:
+      sha: ${{ github.sha }}
+    # Forward the one secret required by live-e2e-gate.yml.
+    secrets:
+      SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
+
   publish:
     needs:
       - build-github
       - smoke-test
       - smoke-test-macos
-    if: ${{ !inputs.dry_run }}
+      - live-e2e-gate
+    if: ${{ !cancelled() && !inputs.dry_run && needs.build-github.result == 'success' && needs.smoke-test.result == 'success' && needs.smoke-test-macos.result == 'success' && (inputs.channel != 'stable' || needs.live-e2e-gate.result == 'success') }}
     # npm provenance verification rejects non-GitHub-hosted runners with
     # E422 ("Unsupported GitHub Actions runner environment: self-hosted").
     # Blacksmith runners count as self-hosted from sigstore's POV, so the
@@ -362,12 +375,11 @@ jobs:
         run: |
           set -euo pipefail
           tag="v${VERSION}"
-          channel="${CHANNEL}"
           note_ref="refs/notes/semantic-release-${tag}"
           if git ls-remote origin "${note_ref}" | grep -q .; then
             echo "Channel note ${note_ref} already on origin; skipping push."
           else
-            git notes --ref="${note_ref}" add -f -m "{\"channels\":[\"${channel}\"]}" "${tag}^{commit}"
+            git notes --ref="${note_ref}" add -f -m "{\"channels\":[\"${CHANNEL}\"]}" "${tag}^{commit}"
             git push origin "${note_ref}"
           fi
 

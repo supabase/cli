@@ -267,6 +267,16 @@ export function envOverridePort(
  */
 export function envOverride(
   name: string,
+  configured: string,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): string;
+export function envOverride(
+  name: string,
+  configured: string | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): string | undefined;
+export function envOverride(
+  name: string,
   configured: string | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): string | undefined {
@@ -381,7 +391,7 @@ export class InvalidAnalyticsBackendEnvOverrideError extends Error {
  * declared type is a plain `string`, not the literal union, so a call-site ternary would
  * re-widen the result.
  */
-function envOverrideAnalyticsBackend(
+export function envOverrideAnalyticsBackend(
   configured: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   skipEnvOverride = false,

@@ -88,6 +88,12 @@ const stackId = StackIdSchema.make(
   "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 );
 
+const expectPresent = <A>(value: A | undefined, description: string): A => {
+  expect(value, description).toBeDefined();
+  if (value === undefined) throw new Error(`Expected ${description}`);
+  return value;
+};
+
 const runningStatus: StackStatus = {
   id: stackId,
   lifecycle: "running",
@@ -1821,13 +1827,12 @@ describe("Effect stack lifecycle handoff", () => {
             environment: env,
           });
           const owner = yield* readOwnerMetadata(env.stateRoot, stack.id, env);
-          expect(owner).toBeDefined();
-          if (owner === undefined) return;
+          const originalOwner = expectPresent(owner, "owner metadata");
           const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
           const incompatibleOwner = yield* Schema.encodeEffect(
             Schema.fromJsonString(Schema.Unknown),
           )({
-            ...owner,
+            ...originalOwner,
             rpcRelease: "stack-rpc-v0@0.0.1",
           }).pipe(
             Effect.mapError(
@@ -1857,7 +1862,7 @@ describe("Effect stack lifecycle handoff", () => {
           const status = yield* restarted.start({ config: lifecycleConfig() });
           const currentOwner = yield* readOwnerMetadata(env.stateRoot, stack.id, env);
           expect(currentOwner?.rpcRelease).toBe(STACK_RPC_RELEASE);
-          expect(currentOwner?.ownerSessionId).not.toBe(owner.ownerSessionId);
+          expect(currentOwner?.ownerSessionId).not.toBe(originalOwner.ownerSessionId);
           expect(status.id).toBe(stack.id);
           expect(status.runtime).toEqual({ kind: "native" });
           expect((yield* restarted.status()).lifecycle).toBe("running");
@@ -2062,12 +2067,11 @@ describe("Effect stack lifecycle handoff", () => {
         const ownerHandle = yield* openStack(stack.id);
         yield* Effect.addFinalizer(() => ownerHandle.stop().pipe(Effect.ignore));
         const owner = yield* readOwnerMetadata(env.stateRoot, stack.id, env);
-        expect(owner).toBeDefined();
-        if (owner === undefined) return;
+        const currentOwner = expectPresent(owner, "owner metadata");
         const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
         const incompatibleOwner = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
           {
-            ...owner,
+            ...currentOwner,
             rpcRelease: "stack-rpc-v0@0.0.1",
           },
         ).pipe(

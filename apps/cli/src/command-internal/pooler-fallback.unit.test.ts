@@ -51,6 +51,7 @@ function captureOutput() {
           message: () => Effect.void,
           stop: () => Effect.void,
         }),
+      result: () => Effect.void,
       success: () => Effect.void,
       fail: () => Effect.void,
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>

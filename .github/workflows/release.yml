@@ -191,6 +191,7 @@ jobs:
     # to the calling job, so this must be declared here even though the propose
     # job uses an App token for its actual PR creation.
     permissions:
+      actions: read
       contents: write
       id-token: write
       pull-requests: write
@@ -213,6 +214,7 @@ jobs:
       DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
       LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY: ${{ secrets.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY }}
       LINEAR_CLI_BETA_RELEASE_ACCESS_KEY: ${{ secrets.LINEAR_CLI_BETA_RELEASE_ACCESS_KEY }}
+      SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
 
   # Republishes the supabase.com CLI reference, restoring the job the Go
   # `tools/bumpdoc` ran before the monorepo merge (71b543255) deleted it — the

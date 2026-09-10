@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -14,12 +14,12 @@
+@@ -19,12 +19,12 @@
  service_role_key = ""
  
  [rate_limit]

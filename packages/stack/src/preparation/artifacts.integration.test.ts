@@ -53,6 +53,27 @@ const sourceWriting = (bytes: Uint8Array = archive): ArtifactSource => ({
     ),
 });
 
+const replacesMalformedMetadata = (label: string, metadata: string | undefined) =>
+  withPlatform(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: `supabase-stack-artifact-${label}-metadata-`,
+      });
+      const target = `${root}/${request.key}`;
+      yield* fs.makeDirectory(`${target}/bin`, { recursive: true });
+      yield* fs.writeFileString(`${target}/bin/postgres`, "unverified postgres");
+      if (metadata !== undefined) yield* fs.writeFileString(`${target}/.artifact.json`, metadata);
+
+      const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+      const prepared = yield* store.prepare(request);
+
+      expect(prepared.outcome).toBe("downloaded");
+      expect(yield* fs.readFileString(`${target}/bin/postgres`)).toBe("native postgres");
+      expect(yield* fs.exists(`${target}/.artifact.json`)).toBe(true);
+    }),
+  );
+
 describe("verified native artifact preparation", () => {
   it.live("downloads and atomically publishes an executable artifact tree", () =>
     withPlatform(
@@ -102,68 +123,11 @@ describe("verified native artifact preparation", () => {
   );
 
   it.live("replaces a cached tree with unknown artifact metadata", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-unknown-metadata-",
-        });
-        const target = `${root}/${request.key}`;
-        yield* fs.makeDirectory(`${target}/bin`, { recursive: true });
-        yield* fs.writeFileString(`${target}/bin/postgres`, "unverified postgres");
-        yield* fs.writeFileString(
-          `${target}/.artifact.json`,
-          '{"format":"supabase-stack-artifact-v0"}',
-        );
-        let called = false;
-        const source: ArtifactSource = {
-          checksum: () => Effect.succeed(archiveSha256),
-          materialize: (entry, destination) =>
-            Effect.sync(() => {
-              called = true;
-              return entry;
-            }).pipe(Effect.andThen(sourceWriting().materialize(entry, destination, archiveSha256))),
-        };
-        const store = yield* makeArtifactStore({ cacheRoot: root, source });
-
-        const prepared = yield* store.prepare(request);
-
-        expect(prepared.outcome).toBe("downloaded");
-        expect(called).toBe(true);
-        expect(yield* fs.readFileString(`${target}/bin/postgres`)).toBe("native postgres");
-      }),
-    ),
+    replacesMalformedMetadata("unknown", '{"format":"supabase-stack-artifact-v0"}'),
   );
 
   it.live("replaces a cached tree with missing artifact metadata", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-missing-metadata-",
-        });
-        const target = `${root}/${request.key}`;
-        yield* fs.makeDirectory(`${target}/bin`, { recursive: true });
-        yield* fs.writeFileString(`${target}/bin/postgres`, "unverified postgres");
-        let called = false;
-        const source: ArtifactSource = {
-          checksum: () => Effect.succeed(archiveSha256),
-          materialize: (entry, destination) =>
-            Effect.sync(() => {
-              called = true;
-              return entry;
-            }).pipe(Effect.andThen(sourceWriting().materialize(entry, destination, archiveSha256))),
-        };
-        const store = yield* makeArtifactStore({ cacheRoot: root, source });
-
-        const prepared = yield* store.prepare(request);
-
-        expect(prepared.outcome).toBe("downloaded");
-        expect(called).toBe(true);
-        expect(yield* fs.readFileString(`${target}/bin/postgres`)).toBe("native postgres");
-        expect(yield* fs.exists(`${target}/.artifact.json`)).toBe(true);
-      }),
-    ),
+    replacesMalformedMetadata("missing", undefined),
   );
 
   it.live("reuses a cache hit after required file contents are modified", () =>

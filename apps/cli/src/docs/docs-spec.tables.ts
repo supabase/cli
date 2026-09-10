@@ -68,6 +68,7 @@ export const DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
   "supabase-snippets": ["management-api"],
   "supabase-ssl-enforcement": ["management-api"],
   "supabase-sso": ["management-api"],
+  "supabase-stack": ["local-dev"],
   "supabase-start": ["local-dev"],
   "supabase-status": ["local-dev"],
   "supabase-stop": ["local-dev"],
@@ -76,6 +77,7 @@ export const DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
   "supabase-test": ["local-dev"],
   "supabase-unlink": ["local-dev"],
   "supabase-vanity-subdomains": ["management-api"],
+  "supabase-whoami": ["management-api"],
 };
 
 /** Leaves that require `--experimental`. */
@@ -189,6 +191,8 @@ export const DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
   "supabase-migration-squash local": "true",
   "supabase-migration-up local": "true",
   "supabase-seed-buckets local": "true",
+  "supabase-stack-start preparation": "background",
+  "supabase-stack-start runtime": "auto",
   "supabase-storage-cp cache-control": "max-age=3600",
   "supabase-storage-cp content-type": "auto-detect",
   "supabase-storage-cp jobs": "1",
