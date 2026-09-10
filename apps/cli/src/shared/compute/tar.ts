@@ -18,10 +18,10 @@
  * needs none of that; a build context needs all of it.
  */
 
+import { Data, Effect } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
-  ErrorActionabilityFingerprintId,
   ErrorActionabilityId,
 } from "../telemetry/error-actionability.ts";
 
@@ -65,14 +65,19 @@ const MAX_OCTAL_FIELD = 8 ** 11 - 1;
  * pad to exactly `length - 1` characters and slip through while writing a field
  * no tar can parse.
  */
-function writeOctal(block: Uint8Array, offset: number, length: number, value: number): void {
+const writeOctal = Effect.fnUntraced(function* (
+  block: Uint8Array,
+  offset: number,
+  length: number,
+  value: number,
+) {
   const digits = Math.floor(value);
   const text = digits.toString(8).padStart(length - 1, "0");
   if (digits < 0 || !Number.isSafeInteger(digits) || text.length > length - 1) {
-    throw new TarFieldOutOfRangeError(value);
+    return yield* new TarFieldOutOfRangeError({ value });
   }
   writeAscii(block, offset, text);
-}
+});
 
 function writeAscii(block: Uint8Array, offset: number, value: string): void {
   for (let index = 0; index < value.length; index++) {
@@ -108,22 +113,13 @@ function byteLength(value: string): number {
 }
 
 /**
- * Thrown for a path USTAR cannot represent. A plain `Error` rather than a
- * tagged one because `createTar` is a pure synchronous function with no Effect
- * semantics of its own; the caller's own error channel is where this surfaces.
- * It is still user-actionable — renaming the offending file fixes it — so it
- * carries its own classification, and the static identifier keeps the
- * fingerprint stable through minification.
+ * A path USTAR cannot represent.
  */
-// oxlint-disable-next-line effecttsgo/extends-native-error -- synchronous archive writer boundary uses classified native errors.
-export class TarPathTooLongError extends Error {
-  static readonly [ErrorActionabilityFingerprintId] = "TarPathTooLongError";
-
-  constructor(path: string) {
-    super(
-      `"${path}" is too long for a tar archive (over 100 bytes with no directory boundary to split on)`,
-    );
-    this.name = "TarPathTooLongError";
+export class TarPathTooLongError extends Data.TaggedError("TarPathTooLongError")<{
+  readonly path: string;
+}> {
+  get detail(): string {
+    return `"${this.path}" is too long for a tar archive (over 100 bytes with no directory boundary to split on)`;
   }
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -132,19 +128,13 @@ export class TarPathTooLongError extends Error {
 }
 
 /**
- * Thrown for a number USTAR's octal fields cannot hold — see {@link writeOctal}.
- * Untagged for the same reason as {@link TarPathTooLongError}: `createTar` is a
- * pure function, and the caller's error channel is where this surfaces.
+ * A number USTAR's octal fields cannot hold — see {@link writeOctal}.
  */
-// oxlint-disable-next-line effecttsgo/extends-native-error -- synchronous archive writer boundary uses classified native errors.
-export class TarFieldOutOfRangeError extends Error {
-  static readonly [ErrorActionabilityFingerprintId] = "TarFieldOutOfRangeError";
-
-  constructor(value: number) {
-    super(
-      `${value} cannot be written to a tar header field (values must be whole numbers from 0 to ${MAX_OCTAL_FIELD})`,
-    );
-    this.name = "TarFieldOutOfRangeError";
+export class TarFieldOutOfRangeError extends Data.TaggedError("TarFieldOutOfRangeError")<{
+  readonly value: number;
+}> {
+  get detail(): string {
+    return `${this.value} cannot be written to a tar header field (values must be whole numbers from 0 to ${MAX_OCTAL_FIELD})`;
   }
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -152,27 +142,31 @@ export class TarFieldOutOfRangeError extends Error {
   }
 }
 
-function header(entry: TarEntry, typeflag: "0" | "2" | "5", size: number): Uint8Array {
+const header = Effect.fnUntraced(function* (
+  entry: TarEntry,
+  typeflag: "0" | "2" | "5",
+  size: number,
+) {
   const block = new Uint8Array(BLOCK_SIZE);
   const split = splitPath(entry.path);
   if (split === undefined) {
-    throw new TarPathTooLongError(entry.path);
+    return yield* new TarPathTooLongError({ path: entry.path });
   }
 
   const encodedName = encoder.encode(split.name);
   block.set(encodedName, 0);
-  writeOctal(block, 100, 8, entry.mode ?? 0o644);
-  writeOctal(block, 108, 8, 0); // uid
-  writeOctal(block, 116, 8, 0); // gid
-  writeOctal(block, 124, 12, size);
-  writeOctal(block, 136, 12, entry.mtime ?? 0);
+  yield* writeOctal(block, 100, 8, entry.mode ?? 0o644);
+  yield* writeOctal(block, 108, 8, 0); // uid
+  yield* writeOctal(block, 116, 8, 0); // gid
+  yield* writeOctal(block, 124, 12, size);
+  yield* writeOctal(block, 136, 12, entry.mtime ?? 0);
   // The checksum field is treated as spaces while the checksum is computed.
   block.fill(0x20, 148, 156);
   block[156] = typeflag.charCodeAt(0);
   if (entry.linkTarget !== undefined) {
     const encodedTarget = encoder.encode(entry.linkTarget);
     if (encodedTarget.length > 100) {
-      throw new TarPathTooLongError(entry.linkTarget);
+      return yield* new TarPathTooLongError({ path: entry.linkTarget });
     }
     block.set(encodedTarget, 157);
   }
@@ -190,7 +184,7 @@ function header(entry: TarEntry, typeflag: "0" | "2" | "5", size: number): Uint8
   block[155] = 0x20;
 
   return block;
-}
+});
 
 function padding(size: number): number {
   const remainder = size % BLOCK_SIZE;
@@ -203,7 +197,7 @@ function padding(size: number): number {
  * directory, and everything else as a regular file. The archive ends with the
  * two zero blocks every reader expects.
  */
-export function createTar(entries: ReadonlyArray<TarEntry>): Uint8Array {
+export const createTar = Effect.fnUntraced(function* (entries: ReadonlyArray<TarEntry>) {
   const blocks: Array<Uint8Array> = [];
   let total = 0;
 
@@ -217,7 +211,7 @@ export function createTar(entries: ReadonlyArray<TarEntry>): Uint8Array {
     const isDirectory = !isSymlink && entry.path.endsWith("/");
     // A link's target lives in the header, so it carries no content blocks.
     const size = isDirectory || isSymlink ? 0 : entry.contents.length;
-    push(header(entry, isSymlink ? "2" : isDirectory ? "5" : "0", size));
+    push(yield* header(entry, isSymlink ? "2" : isDirectory ? "5" : "0", size));
     if (size > 0) {
       push(entry.contents);
       const pad = padding(size);
@@ -236,4 +230,4 @@ export function createTar(entries: ReadonlyArray<TarEntry>): Uint8Array {
     offset += block.length;
   }
   return archive;
-}
+});

@@ -1,8 +1,24 @@
 import { gzipSync } from "node:zlib";
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Data, Effect, FileSystem, Option, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import { ComputeSourceEscapingLinkError } from "./compute.errors.ts";
-import { createTar, type TarEntry, TarFieldOutOfRangeError, TarPathTooLongError } from "./tar.ts";
+import { createTar, type TarEntry } from "./tar.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../telemetry/error-actionability.ts";
+
+export class ComputeArchiveCompressionError extends Data.TaggedError(
+  "ComputeArchiveCompressionError",
+)<{
+  readonly detail: string;
+  readonly cause: unknown;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.internalPanic;
+  }
+}
 
 /**
  * Package a compute's source directory into the `.tar.gz` build context the
@@ -159,22 +175,14 @@ export const packageComputeDirectory = Effect.fnUntraced(function* (dir: string)
   const path = yield* Path.Path;
   const entries = yield* collectEntries(path, dir, "");
 
-  // `createTar` throws for anything USTAR cannot represent: a path component
-  // over 100 bytes, or a size past the 8 GiB an octal field holds. Both are
-  // user-actionable, and both declare themselves so, which only takes effect if
-  // they reach the failure channel — `withJsonErrorHandling` catches failures
-  // and not defects, so a defect exits `--output-format json` with no
-  // structured error at all.
+  const tar = yield* createTar(entries);
   const archive = yield* Effect.try({
-    try: () => gzipSync(createTar(entries)),
-    catch: (cause) => {
-      if (cause instanceof TarPathTooLongError || cause instanceof TarFieldOutOfRangeError) {
-        return cause;
-      }
-      // Anything else here really is a bug, so let it stay a defect rather than
-      // dressing it up as a failure the user could act on.
-      throw cause;
-    },
+    try: () => gzipSync(tar),
+    catch: (cause) =>
+      new ComputeArchiveCompressionError({
+        detail: "The compute source archive could not be compressed.",
+        cause,
+      }),
   });
 
   return {

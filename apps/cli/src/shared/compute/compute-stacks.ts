@@ -13,4 +13,4 @@ import type { ComputeRuntime } from "./compute-runtimes.ts";
  * directory: a new runtime is a new directory, with nothing to wire up here.
  * `compute-stacks.macro.ts` explains how that survives compilation.
  */
-export const COMPUTE_STACKS: Record<ComputeRuntime, ComputeStack> = readComputeStacks();
+export const COMPUTE_STACKS: Record<ComputeRuntime, ComputeStack> = await readComputeStacks();

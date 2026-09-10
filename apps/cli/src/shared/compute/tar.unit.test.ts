@@ -1,4 +1,6 @@
-import { describe, expect, test } from "vitest";
+import { it } from "@effect/vitest";
+import { Effect } from "effect";
+import { describe, expect } from "vitest";
 import { createTar, TarFieldOutOfRangeError, TarPathTooLongError } from "./tar.ts";
 
 const decoder = new TextDecoder();
@@ -14,123 +16,152 @@ function value(archive: Uint8Array, block: number, offset: number, length: numbe
 }
 
 describe("createTar", () => {
-  test("writes a readable ustar header for a file", () => {
-    const archive = createTar([
-      { path: "index.js", contents: encoder.encode("hello"), mode: 0o644, mtime: 1_700_000_000 },
-    ]);
+  it.live("writes a readable ustar header for a file", () =>
+    Effect.gen(function* () {
+      const archive = yield* createTar([
+        { path: "index.js", contents: encoder.encode("hello"), mode: 0o644, mtime: 1_700_000_000 },
+      ]);
 
-    expect(value(archive, 0, 0, 100)).toBe("index.js");
-    expect(value(archive, 0, 100, 8)).toBe("0000644");
-    expect(value(archive, 0, 124, 12)).toBe("00000000005");
-    expect(value(archive, 0, 136, 12)).toBe("14524770400");
-    expect(field(archive, 0, 156, 1)).toBe("0");
-    expect(value(archive, 0, 257, 6)).toBe("ustar");
-  });
+      expect(value(archive, 0, 0, 100)).toBe("index.js");
+      expect(value(archive, 0, 100, 8)).toBe("0000644");
+      expect(value(archive, 0, 124, 12)).toBe("00000000005");
+      expect(value(archive, 0, 136, 12)).toBe("14524770400");
+      expect(field(archive, 0, 156, 1)).toBe("0");
+      expect(value(archive, 0, 257, 6)).toBe("ustar");
+    }),
+  );
 
-  test("computes a checksum the standard algorithm reproduces", () => {
-    const archive = createTar([{ path: "a.txt", contents: encoder.encode("a") }]);
-    const header = archive.subarray(0, 512);
+  it.live("computes a checksum the standard algorithm reproduces", () =>
+    Effect.gen(function* () {
+      const archive = yield* createTar([{ path: "a.txt", contents: encoder.encode("a") }]);
+      const header = archive.subarray(0, 512);
 
-    const recorded = Number.parseInt(value(archive, 0, 148, 8), 8);
-    let computed = 0;
-    for (let index = 0; index < 512; index++) {
-      // The checksum field itself counts as spaces.
-      computed += index >= 148 && index < 156 ? 0x20 : (header[index] ?? 0);
-    }
+      const recorded = Number.parseInt(value(archive, 0, 148, 8), 8);
+      let computed = 0;
+      for (let index = 0; index < 512; index++) {
+        computed += index >= 148 && index < 156 ? 0x20 : (header[index] ?? 0);
+      }
 
-    expect(recorded).toBe(computed);
-  });
+      expect(recorded).toBe(computed);
+    }),
+  );
 
-  test("pads content to a 512-byte boundary and ends with two zero blocks", () => {
-    const archive = createTar([{ path: "a.txt", contents: encoder.encode("hello") }]);
+  it.live("pads content to a 512-byte boundary and ends with two zero blocks", () =>
+    Effect.gen(function* () {
+      const archive = yield* createTar([{ path: "a.txt", contents: encoder.encode("hello") }]);
 
-    // header + one padded content block + two trailing zero blocks
-    expect(archive.length).toBe(512 * 4);
-    expect(decoder.decode(archive.subarray(512, 517))).toBe("hello");
-    expect(archive.subarray(512 * 2).every((byte) => byte === 0)).toBe(true);
-  });
+      expect(archive.length).toBe(512 * 4);
+      expect(decoder.decode(archive.subarray(512, 517))).toBe("hello");
+      expect(archive.subarray(512 * 2).every((byte) => byte === 0)).toBe(true);
+    }),
+  );
 
-  test("emits directory entries with no content and the directory typeflag", () => {
-    const archive = createTar([
-      { path: "nested/", contents: new Uint8Array(0), mode: 0o755 },
-      { path: "nested/a.txt", contents: encoder.encode("a") },
-    ]);
+  it.live("emits directory entries with no content and the directory typeflag", () =>
+    Effect.gen(function* () {
+      const archive = yield* createTar([
+        { path: "nested/", contents: new Uint8Array(0), mode: 0o755 },
+        { path: "nested/a.txt", contents: encoder.encode("a") },
+      ]);
 
-    expect(field(archive, 0, 156, 1)).toBe("5");
-    expect(value(archive, 0, 124, 12)).toBe("00000000000");
-    // The directory has no content block, so the next header follows immediately.
-    expect(value(archive, 1, 0, 100)).toBe("nested/a.txt");
-  });
+      expect(field(archive, 0, 156, 1)).toBe("5");
+      expect(value(archive, 0, 124, 12)).toBe("00000000000");
+      expect(value(archive, 1, 0, 100)).toBe("nested/a.txt");
+    }),
+  );
 
-  test("stores a symlink as a link entry with no content blocks", () => {
-    const archive = createTar([
-      { path: "link.txt", contents: new Uint8Array(0), linkTarget: "target.txt", mode: 0o777 },
-    ]);
+  it.live("stores a symlink as a link entry with no content blocks", () =>
+    Effect.gen(function* () {
+      const archive = yield* createTar([
+        { path: "link.txt", contents: new Uint8Array(0), linkTarget: "target.txt", mode: 0o777 },
+      ]);
 
-    expect(field(archive, 0, 156, 1)).toBe("2");
-    expect(value(archive, 0, 157, 100)).toBe("target.txt");
-    expect(value(archive, 0, 124, 12)).toBe("00000000000");
-    // Header plus the two trailing zero blocks — no content block in between.
-    expect(archive.length).toBe(512 * 3);
-  });
+      expect(field(archive, 0, 156, 1)).toBe("2");
+      expect(value(archive, 0, 157, 100)).toBe("target.txt");
+      expect(value(archive, 0, 124, 12)).toBe("00000000000");
+      expect(archive.length).toBe(512 * 3);
+    }),
+  );
 
-  test("a symlink entry wins over the trailing-slash directory rule", () => {
-    const archive = createTar([{ path: "dir", contents: new Uint8Array(0), linkTarget: ".." }]);
+  it.live("a symlink entry wins over the trailing-slash directory rule", () =>
+    Effect.gen(function* () {
+      const archive = yield* createTar([
+        { path: "dir", contents: new Uint8Array(0), linkTarget: ".." },
+      ]);
+      expect(field(archive, 0, 156, 1)).toBe("2");
+    }),
+  );
 
-    expect(field(archive, 0, 156, 1)).toBe("2");
-  });
+  it.live("refuses a link target too long for the header field", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        createTar([
+          { path: "link", contents: new Uint8Array(0), linkTarget: `${"t".repeat(120)}.txt` },
+        ]),
+      );
+      expect(error).toBeInstanceOf(TarPathTooLongError);
+    }),
+  );
 
-  test("refuses a link target too long for the header field", () => {
-    expect(() =>
-      createTar([
-        { path: "link", contents: new Uint8Array(0), linkTarget: `${"t".repeat(120)}.txt` },
-      ]),
-    ).toThrow(TarPathTooLongError);
-  });
+  it.live("splits a long path across the prefix and name fields", () =>
+    Effect.gen(function* () {
+      const deep = `${"d".repeat(120)}/${"f".repeat(60)}.txt`;
+      const archive = yield* createTar([{ path: deep, contents: new Uint8Array(0) }]);
 
-  test("splits a long path across the prefix and name fields", () => {
-    const deep = `${"d".repeat(120)}/${"f".repeat(60)}.txt`;
-    const archive = createTar([{ path: deep, contents: new Uint8Array(0) }]);
+      expect(value(archive, 0, 345, 155)).toBe("d".repeat(120));
+      expect(value(archive, 0, 0, 100)).toBe(`${"f".repeat(60)}.txt`);
+    }),
+  );
 
-    expect(value(archive, 0, 345, 155)).toBe("d".repeat(120));
-    expect(value(archive, 0, 0, 100)).toBe(`${"f".repeat(60)}.txt`);
-  });
+  it.live("refuses a value too large for an octal header field rather than truncating it", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        createTar([{ path: "a.txt", contents: new Uint8Array(1), mtime: 8 ** 11 }]),
+      );
+      expect(error).toBeInstanceOf(TarFieldOutOfRangeError);
 
-  test("refuses a value too large for an octal header field rather than truncating it", () => {
-    // One past the 11-digit octal ceiling. Encoding it would spill a digit into
-    // the next field and read back as a plausible but wrong number.
-    expect(() =>
-      createTar([{ path: "a.txt", contents: new Uint8Array(1), mtime: 8 ** 11 }]),
-    ).toThrow(TarFieldOutOfRangeError);
+      yield* createTar([{ path: "a.txt", contents: new Uint8Array(1), mtime: 8 ** 11 - 1 }]);
+    }),
+  );
 
-    expect(() =>
-      createTar([{ path: "a.txt", contents: new Uint8Array(1), mtime: 8 ** 11 - 1 }]),
-    ).not.toThrow();
-  });
+  it.live("can evaluate one archive Effect more than once", () =>
+    Effect.gen(function* () {
+      const archive = createTar([{ path: "a.txt", contents: encoder.encode("a") }]);
+      const first = yield* archive;
+      const second = yield* archive;
 
-  // Each of these renders to exactly the field width once padded, so the width
-  // check alone waves it through and the header goes out unparseable: GNU tar
-  // rejects the whole archive, which surfaces server-side after the upload
-  // rather than here.
-  test.each([
-    ["a pre-epoch mtime", -1],
-    ["an mtime from an invalid date", Number.NaN],
-    ["an infinite mtime", Number.POSITIVE_INFINITY],
-  ])("refuses %s rather than writing a field no tar can parse", (_label, mtime) => {
-    expect(() => createTar([{ path: "a.txt", contents: new Uint8Array(1), mtime }])).toThrow(
-      TarFieldOutOfRangeError,
-    );
-  });
+      expect(first).not.toBe(second);
+      expect(first).toEqual(second);
+    }),
+  );
 
-  test("refuses a negative mode rather than writing a field no tar can parse", () => {
-    expect(() => createTar([{ path: "a.txt", contents: new Uint8Array(1), mode: -1 }])).toThrow(
-      TarFieldOutOfRangeError,
-    );
-  });
+  it.live.each([
+    { label: "a pre-epoch mtime", mtime: -1 },
+    { label: "an mtime from an invalid date", mtime: Number.NaN },
+    { label: "an infinite mtime", mtime: Number.POSITIVE_INFINITY },
+  ])("refuses $label rather than writing a field no tar can parse", ({ mtime }) =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        createTar([{ path: "a.txt", contents: new Uint8Array(1), mtime }]),
+      );
+      expect(error).toBeInstanceOf(TarFieldOutOfRangeError);
+    }),
+  );
 
-  test("refuses a path component too long to represent", () => {
-    expect(() =>
-      createTar([{ path: `${"f".repeat(120)}.txt`, contents: new Uint8Array(0) }]),
-    ).toThrow(TarPathTooLongError);
-  });
+  it.live("refuses a negative mode rather than writing a field no tar can parse", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        createTar([{ path: "a.txt", contents: new Uint8Array(1), mode: -1 }]),
+      );
+      expect(error).toBeInstanceOf(TarFieldOutOfRangeError);
+    }),
+  );
+
+  it.live("refuses a path component too long to represent", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        createTar([{ path: `${"f".repeat(120)}.txt`, contents: new Uint8Array(0) }]),
+      );
+      expect(error).toBeInstanceOf(TarPathTooLongError);
+    }),
+  );
 });

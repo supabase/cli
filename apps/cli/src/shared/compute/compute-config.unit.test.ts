@@ -1,9 +1,9 @@
-// oxlint-disable effecttsgo/async-function -- Vitest callbacks await filesystem-backed Effect programs.
 // oxlint-disable effecttsgo/node-builtin-import -- temporary filesystem fixtures use native setup APIs.
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
+import { it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
@@ -106,9 +106,6 @@ describe("planComputeEntry + commitComputeEntry", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- this helper intentionally runs heterogeneous expected failures.
-  const run = (effect: Effect.Effect<void, unknown, never>) => Effect.runPromise(effect);
-
   /** plan + commit — the pairing `new` performs once it has decided to write. */
   const writeComputeEntry = (options: Parameters<typeof planComputeEntry>[0]) =>
     planComputeEntry(options).pipe(Effect.flatMap(commitComputeEntry));
@@ -116,181 +113,194 @@ describe("planComputeEntry + commitComputeEntry", () => {
   // The re-parse below is a syntax check, not a schema one: `instances = 1.5`
   // is perfectly valid TOML that the compute schema rejects, so it would reach
   // the user's config and only fail later, when the loader refuses the file.
-  test.each([
-    ["a fraction", 1.5],
-    ["a negative count", -1],
-    ["a value past the safe integer range", 1e21],
-    ["not a number at all", Number.NaN],
-  ])("refuses %s rather than rendering it", async (_label, instances) => {
-    const exit = await Effect.runPromise(
-      writeComputeEntry({
-        configPath,
-        name: "api",
-        existingCompute: {},
-        patch: { runtime: "node", instances },
-      }).pipe(Effect.provide(BunServices.layer), Effect.exit),
-    );
+  it.live.each([
+    { label: "a fraction", instances: 1.5 },
+    { label: "a negative count", instances: -1 },
+    { label: "a value past the safe integer range", instances: 1e21 },
+    { label: "not a number at all", instances: Number.NaN },
+  ])("refuses $label rather than rendering it", ({ instances }) =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        writeComputeEntry({
+          configPath,
+          name: "api",
+          existingCompute: {},
+          patch: { runtime: "node", instances },
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
 
-    expect(Exit.isFailure(exit)).toBe(true);
-    // Refused before anything reaches disk, the way every other unsafe write is.
-    expect(existsSync(configPath)).toBe(false);
-  });
+      expect(Exit.isFailure(exit)).toBe(true);
+      // Refused before anything reaches disk, the way every other unsafe write is.
+      expect(existsSync(configPath)).toBe(false);
+    }),
+  );
 
-  test("writes a whole, non-negative count unquoted", async () => {
-    await run(
-      writeComputeEntry({
+  it.live("writes a whole, non-negative count unquoted", () =>
+    Effect.gen(function* () {
+      yield* writeComputeEntry({
         configPath,
         name: "api",
         existingCompute: {},
         patch: { runtime: "node", instances: 0 },
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
+      }).pipe(Effect.provide(BunServices.layer));
 
-    expect(readFileSync(configPath, "utf8")).toContain("instances = 0");
-  });
+      expect(readFileSync(configPath, "utf8")).toContain("instances = 0");
+    }),
+  );
 
-  test("creates the file when there is none yet", async () => {
-    await run(
-      writeComputeEntry({
+  it.live("creates the file when there is none yet", () =>
+    Effect.gen(function* () {
+      yield* writeComputeEntry({
         configPath,
         name: "api",
         existingCompute: {},
         patch: { runtime: "node" },
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
+      }).pipe(Effect.provide(BunServices.layer));
 
-    expect(readFileSync(configPath, "utf8")).toBe('[compute.api]\nruntime = "node"\n');
-  });
+      expect(readFileSync(configPath, "utf8")).toBe('[compute.api]\nruntime = "node"\n');
+    }),
+  );
 
-  test("appends to an existing file without touching the rest of it", async () => {
-    writeFileSync(configPath, '# keep me\nproject_id = "demo"\n');
+  it.live("appends to an existing file without touching the rest of it", () =>
+    Effect.gen(function* () {
+      writeFileSync(configPath, '# keep me\nproject_id = "demo"\n');
 
-    await run(
-      writeComputeEntry({
+      yield* writeComputeEntry({
         configPath,
         name: "api",
         existingCompute: {},
         patch: { runtime: "node", size: "4gb" },
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
+      }).pipe(Effect.provide(BunServices.layer));
 
-    expect(readFileSync(configPath, "utf8")).toBe(
-      '# keep me\nproject_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "4gb"\n',
-    );
-  });
+      expect(readFileSync(configPath, "utf8")).toBe(
+        '# keep me\nproject_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "4gb"\n',
+      );
+    }),
+  );
 
   // `new` creates a compute; changing one that exists is a `config.toml` edit and
   // the file is the user's. Refusing is also what keeps writes append-only.
-  test("refuses a compute that is already configured, leaving the file alone", async () => {
-    const before = '# hand-written\n[compute.api]\nruntime = "node" # mine\n';
-    writeFileSync(configPath, before);
+  it.live("refuses a compute that is already configured, leaving the file alone", () =>
+    Effect.gen(function* () {
+      const before = '# hand-written\n[compute.api]\nruntime = "node" # mine\n';
+      writeFileSync(configPath, before);
 
-    const error = await run(
-      writeComputeEntry({
-        configPath,
-        name: "api",
-        existingCompute: { api: { runtime: "node" } },
-        patch: { runtime: "deno" },
-      }).pipe(Effect.provide(BunServices.layer), Effect.flip),
-    );
+      const error = yield* Effect.flip(
+        writeComputeEntry({
+          configPath,
+          name: "api",
+          existingCompute: { api: { runtime: "node" } },
+          patch: { runtime: "deno" },
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
 
-    expect(error).toBeInstanceOf(ComputeAlreadyConfiguredError);
-    expect(readFileSync(configPath, "utf8")).toBe(before);
-  });
+      expect(error).toBeInstanceOf(ComputeAlreadyConfiguredError);
+      expect(readFileSync(configPath, "utf8")).toBe(before);
+    }),
+  );
 
   // How the entry is written — dotted, inline or a table — does not matter. The
   // decoded config says it exists, which is the whole question, and answering it
   // from the parser rather than the file text is what removed the need to know
   // any TOML beyond how to render a value.
-  test.each([
-    ["dotted keys", 'compute.api.runtime = "node"\n'],
-    ["an inline table", 'compute = { api = { runtime = "node" } }\n'],
-    ["a value spanning lines", '[compute.api]\nruntime = [\n  "node",\n]\n'],
-    ["a header inside a multiline string", 'notes = """\n[compute.api]\nstill inside"""\n'],
-  ])("refuses an entry written as %s without reading the file text", async (_label, before) => {
-    writeFileSync(configPath, before);
+  it.live.each([
+    { label: "dotted keys", before: 'compute.api.runtime = "node"\n' },
+    { label: "an inline table", before: 'compute = { api = { runtime = "node" } }\n' },
+    { label: "a value spanning lines", before: '[compute.api]\nruntime = [\n  "node",\n]\n' },
+    {
+      label: "a header inside a multiline string",
+      before: 'notes = """\n[compute.api]\nstill inside"""\n',
+    },
+  ])("refuses an entry written as $label without reading the file text", ({ before }) =>
+    Effect.gen(function* () {
+      writeFileSync(configPath, before);
 
-    const error = await run(
-      writeComputeEntry({
-        configPath,
-        name: "api",
-        existingCompute: { api: { runtime: "node" } },
-        patch: { runtime: "node" },
-      }).pipe(Effect.provide(BunServices.layer), Effect.flip),
-    );
+      const error = yield* Effect.flip(
+        writeComputeEntry({
+          configPath,
+          name: "api",
+          existingCompute: { api: { runtime: "node" } },
+          patch: { runtime: "node" },
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
 
-    expect(error).toBeInstanceOf(ComputeAlreadyConfiguredError);
-    expect(readFileSync(configPath, "utf8")).toBe(before);
-  });
+      expect(error).toBeInstanceOf(ComputeAlreadyConfiguredError);
+      expect(readFileSync(configPath, "utf8")).toBe(before);
+    }),
+  );
 
   // An inline `[compute]` is sealed: TOML forbids extending it, so appending
   // `[compute.api]` renders a file nothing can parse. The name is absent from
   // the decoded section, so the already-configured check cannot catch this —
   // reading the rendered plan back is what does.
-  test.each([
-    ["an empty inline compute table", "compute = {}\n"],
-    [
-      "an inline compute table holding another compute",
-      'compute = { web = { runtime = "node" } }\n',
-    ],
-  ])("refuses to append to %s, leaving the file alone", async (_label, before) => {
-    writeFileSync(configPath, before);
+  it.live.each([
+    { label: "an empty inline compute table", before: "compute = {}\n" },
+    {
+      label: "an inline compute table holding another compute",
+      before: 'compute = { web = { runtime = "node" } }\n',
+    },
+  ])("refuses to append to $label, leaving the file alone", ({ before }) =>
+    Effect.gen(function* () {
+      writeFileSync(configPath, before);
 
-    const error = await run(
-      writeComputeEntry({
-        configPath,
-        name: "api",
-        existingCompute: {},
-        patch: { runtime: "node" },
-      }).pipe(Effect.provide(BunServices.layer), Effect.flip),
-    );
+      const error = yield* Effect.flip(
+        writeComputeEntry({
+          configPath,
+          name: "api",
+          existingCompute: {},
+          patch: { runtime: "node" },
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
 
-    expect(error).toBeInstanceOf(ComputeConfigWriteUnsafeError);
-    expect(readFileSync(configPath, "utf8")).toBe(before);
-  });
+      expect(error).toBeInstanceOf(ComputeConfigWriteUnsafeError);
+      expect(readFileSync(configPath, "utf8")).toBe(before);
+    }),
+  );
 
   // The backstop is not limited to the inline case: a config.toml that does not
   // parse to begin with cannot be appended to safely either, and finding that
   // out after the scaffold is written is exactly what the plan/commit split
   // exists to avoid.
-  test("refuses a config.toml that does not parse, leaving the file alone", async () => {
-    const before = "this is not = = toml\n";
-    writeFileSync(configPath, before);
+  it.live("refuses a config.toml that does not parse, leaving the file alone", () =>
+    Effect.gen(function* () {
+      const before = "this is not = = toml\n";
+      writeFileSync(configPath, before);
 
-    const error = await run(
-      writeComputeEntry({
-        configPath,
-        name: "api",
-        existingCompute: {},
-        patch: { runtime: "node" },
-      }).pipe(Effect.provide(BunServices.layer), Effect.flip),
-    );
+      const error = yield* Effect.flip(
+        writeComputeEntry({
+          configPath,
+          name: "api",
+          existingCompute: {},
+          patch: { runtime: "node" },
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
 
-    expect(error).toBeInstanceOf(ComputeConfigWriteUnsafeError);
-    expect(readFileSync(configPath, "utf8")).toBe(before);
-  });
+      expect(error).toBeInstanceOf(ComputeConfigWriteUnsafeError);
+      expect(readFileSync(configPath, "utf8")).toBe(before);
+    }),
+  );
 
   // Why rendering is separate from writing: `new` writes the starter files before
   // it records anything, so a failure that could only surface at the write would
   // leave a scaffold on disk that nothing records.
-  test("renders without writing, and only writes when committed", async () => {
-    writeFileSync(configPath, 'project_id = "demo"\n');
+  it.live("renders without writing, and only writes when committed", () =>
+    Effect.gen(function* () {
+      writeFileSync(configPath, 'project_id = "demo"\n');
 
-    const write = await Effect.runPromise(
-      planComputeEntry({
+      const write = yield* planComputeEntry({
         configPath,
         name: "api",
         existingCompute: {},
         patch: { runtime: "node" },
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
+      }).pipe(Effect.provide(BunServices.layer));
 
-    expect(write.text).toContain("[compute.api]");
-    expect(readFileSync(configPath, "utf8")).toBe('project_id = "demo"\n');
+      expect(write.text).toContain("[compute.api]");
+      expect(readFileSync(configPath, "utf8")).toBe('project_id = "demo"\n');
 
-    await run(commitComputeEntry(write).pipe(Effect.provide(BunServices.layer)));
-    expect(readFileSync(configPath, "utf8")).toContain("[compute.api]");
-  });
+      yield* commitComputeEntry(write).pipe(Effect.provide(BunServices.layer));
+      expect(readFileSync(configPath, "utf8")).toContain("[compute.api]");
+    }),
+  );
 });
 
 describe("readComputeSection blank values", () => {
