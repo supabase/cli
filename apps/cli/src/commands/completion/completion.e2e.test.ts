@@ -4,11 +4,8 @@ import { runSupabase } from "../../../tests/helpers/cli.ts";
 const E2E_TIMEOUT_MS = 30_000;
 
 describe("supabase completion", () => {
-  // Golden-path e2e: `--no-descriptions` used to be rejected by Effect's argv
-  // parser (`UnrecognizedOption`) before the flag reached the completion
-  // command at all. The script is generated natively in TS — only a real
-  // subprocess run proves the TS parser accepts the flag AND that the
-  // handler actually selects the no-desc variant of the native template.
+  // Only a real subprocess run proves the argv parser accepts --no-descriptions and the
+  // handler selects the no-desc template variant.
   test(
     "bash --no-descriptions is accepted and produces the native no-descriptions script",
     { timeout: E2E_TIMEOUT_MS },
@@ -22,9 +19,7 @@ describe("supabase completion", () => {
     },
   );
 
-  // Minimal cross-shell smoke coverage: proves the default (with-descriptions)
-  // code path also works end-to-end through a real subprocess, for a shell
-  // other than bash.
+  // Smoke-tests the default code path end-to-end for a shell other than bash.
   test(
     "zsh with no flags produces the native default script",
     { timeout: E2E_TIMEOUT_MS },
