@@ -7,7 +7,7 @@ import { Cause, Effect, Exit, Option, Redacted } from "effect";
 
 import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { StackConfigError, loadStackConfig } from "./stack-config.ts";
-import { createStackConfigProject } from "./stack-config.test-fixtures.ts";
+import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
 
 function withEnvironment<A, E, R>(
   values: Readonly<Record<string, string | undefined>>,
@@ -161,20 +161,25 @@ enabled = false
 `,
       { supabaseEnv: "SUPABASE_AUTH_SIGNING_KEYS_PATH=keys.json\n" },
     );
-    return Effect.gen(function* () {
-      const config = yield* load(root);
-      expect(config.capabilities?.auth).toEqual({ enabled: false });
-      expect(config.security?.jwt?.issuer).toBe("https://issuer.example.test");
-      const signing = config.security?.jwt?.signing;
-      expect(signing?.kind).toBe("symmetric");
-      if (signing?.kind !== "symmetric") throw new Error("symmetric signing missing");
-      expect(Redacted.value(signing.secret)).toBe("01234567890123456789012345678901");
-      const signingPath = yield* load(signingPathRoot);
-      expect(signingPath.security?.jwt?.signing).toEqual({
-        kind: "jwks-file",
-        path: "supabase/keys.json",
-      });
-    });
+    return withEnvVar(
+      "SUPABASE_AUTH_ENABLED",
+      undefined,
+      Effect.gen(function* () {
+        const config = yield* load(root);
+        expect(config.capabilities?.auth).toEqual({ enabled: false });
+        expect(config.security?.jwt?.issuer).toBe("https://issuer.example.test");
+        const signing = config.security?.jwt?.signing;
+        expect(signing?.kind).toBe("symmetric");
+        if (signing?.kind !== "symmetric") throw new Error("symmetric signing missing");
+        expect(Redacted.value(signing.secret)).toBe("01234567890123456789012345678901");
+        const signingPath = yield* load(signingPathRoot);
+        expect(signingPath.capabilities?.auth).toEqual({ enabled: false });
+        expect(signingPath.security?.jwt?.signing).toEqual({
+          kind: "jwks-file",
+          path: "supabase/keys.json",
+        });
+      }),
+    );
   });
 
   it.effect("rejects an env-enabled SMTP section without a port", () => {

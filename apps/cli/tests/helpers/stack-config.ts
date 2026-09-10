@@ -1,8 +1,6 @@
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
 import { mkdirSync, writeFileSync, mkdtempSync } from "node:fs";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
 import { join } from "node:path";
-import { useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
+import { useTempWorkdir } from "./command-mocks.ts";
 
 export const stackConfigTempRoot = useTempWorkdir("supabase-stack-config-");
 

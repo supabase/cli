@@ -9,7 +9,10 @@ import { Cause, Effect, Exit, Option, Path, Redacted } from "effect";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 
 import { StackConfigError, loadStackConfig } from "./stack-config.ts";
-import { createStackConfigProject, stackConfigTempRoot } from "./stack-config.test-fixtures.ts";
+import {
+  createStackConfigProject,
+  stackConfigTempRoot,
+} from "../../../../tests/helpers/stack-config.ts";
 
 const load = (projectRoot: string) =>
   loadStackConfig(projectRoot).pipe(Effect.provide(BunServices.layer));

@@ -422,37 +422,36 @@ const authSettings = (
     };
   }
 
-  const provider = (value: Record<string, unknown>) => value;
   const sms = {
     ...pick(resolvedSms, ["enable_signup", "enable_confirmations", "template", "max_frequency"]),
-    twilio: provider({
+    twilio: {
       enabled: resolvedSms.twilio.enabled,
       account_sid: resolvedSms.twilio.account_sid,
       message_service_sid: resolvedSms.twilio.message_service_sid,
       auth_token: secret(resolvedSms.twilio.auth_token),
-    }),
-    twilio_verify: provider({
+    },
+    twilio_verify: {
       enabled: resolvedSms.twilio_verify.enabled,
       account_sid: resolvedSms.twilio_verify.account_sid,
       message_service_sid: resolvedSms.twilio_verify.message_service_sid,
       auth_token: secret(resolvedSms.twilio_verify.auth_token),
-    }),
-    messagebird: provider({
+    },
+    messagebird: {
       enabled: resolvedSms.messagebird.enabled,
       originator: resolvedSms.messagebird.originator,
       access_key: secret(resolvedSms.messagebird.access_key),
-    }),
-    textlocal: provider({
+    },
+    textlocal: {
       enabled: resolvedSms.textlocal.enabled,
       sender: resolvedSms.textlocal.sender,
       api_key: secret(resolvedSms.textlocal.api_key),
-    }),
-    vonage: provider({
+    },
+    vonage: {
       enabled: resolvedSms.vonage.enabled,
       from: resolvedSms.vonage.from,
       api_key: secret(resolvedSms.vonage.api_key),
       api_secret: secret(resolvedSms.vonage.api_secret),
-    }),
+    },
     ...(auth.sms.test_otp === undefined ? {} : { test_otp: auth.sms.test_otp }),
   };
 
@@ -785,7 +784,7 @@ const resolveAuthOverrides = (
   return {
     ...auth,
     enabled: envOverrideBool("SUPABASE_AUTH_ENABLED", auth.enabled, "auth.enabled", env),
-    site_url: envOverride("SUPABASE_AUTH_SITE_URL", auth.site_url, env) ?? auth.site_url,
+    site_url: envOverride("SUPABASE_AUTH_SITE_URL", auth.site_url, env),
     additional_redirect_urls:
       additionalRedirectUrls === undefined
         ? auth.additional_redirect_urls
@@ -796,8 +795,6 @@ const resolveAuthOverrides = (
       auth.jwt_expiry,
       env,
     ),
-    jwt_issuer: envOverride("SUPABASE_AUTH_JWT_ISSUER", auth.jwt_issuer, env),
-    signing_keys_path: envOverride("SUPABASE_AUTH_SIGNING_KEYS_PATH", auth.signing_keys_path, env),
     enable_refresh_token_rotation: envOverrideBool(
       "SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION",
       auth.enable_refresh_token_rotation,
@@ -837,7 +834,6 @@ const resolveAuthOverrides = (
     password_requirements: envOverrideAuthPasswordRequirements(auth.password_requirements, env),
     publishable_key: envOverride("SUPABASE_AUTH_PUBLISHABLE_KEY", auth.publishable_key, env),
     secret_key: envOverride("SUPABASE_AUTH_SECRET_KEY", auth.secret_key, env),
-    jwt_secret: envOverride("SUPABASE_AUTH_JWT_SECRET", auth.jwt_secret, env),
     anon_key: envOverride("SUPABASE_AUTH_ANON_KEY", auth.anon_key, env),
     service_role_key: envOverride("SUPABASE_AUTH_SERVICE_ROLE_KEY", auth.service_role_key, env),
     rate_limit: resolveGotrueRateLimit(auth.rate_limit, env),
@@ -902,9 +898,11 @@ const resolveEffectiveCliConfig = (
   const resolvedStorage = {
     ...storage,
     enabled: envOverrideBool("SUPABASE_STORAGE_ENABLED", storage.enabled, "storage.enabled", env),
-    file_size_limit:
-      envOverride("SUPABASE_STORAGE_FILE_SIZE_LIMIT", String(storage.file_size_limit), env) ??
+    file_size_limit: envOverride(
+      "SUPABASE_STORAGE_FILE_SIZE_LIMIT",
       String(storage.file_size_limit),
+      env,
+    ),
     image_transformation: imagePresent
       ? {
           ...storage.image_transformation,
@@ -1034,19 +1032,19 @@ const resolveEffectiveCliConfig = (
     "auth.enabled",
     env,
   );
-  const authResolved = authEnabled
-    ? resolveAuthOverrides(config.auth, document, env)
-    : {
-        ...config.auth,
-        enabled: false,
-        jwt_issuer: envOverride("SUPABASE_AUTH_JWT_ISSUER", config.auth.jwt_issuer, env),
-        signing_keys_path: envOverride(
-          "SUPABASE_AUTH_SIGNING_KEYS_PATH",
-          config.auth.signing_keys_path,
-          env,
-        ),
-        jwt_secret: envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, env),
-      };
+  // JWT security settings apply to non-Auth workloads too, so resolve them
+  // regardless of whether the Auth capability is enabled.
+  const authResolved = {
+    ...(authEnabled ? resolveAuthOverrides(config.auth, document, env) : config.auth),
+    enabled: authEnabled,
+    jwt_issuer: envOverride("SUPABASE_AUTH_JWT_ISSUER", config.auth.jwt_issuer, env),
+    signing_keys_path: envOverride(
+      "SUPABASE_AUTH_SIGNING_KEYS_PATH",
+      config.auth.signing_keys_path,
+      env,
+    ),
+    jwt_secret: envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, env),
+  };
   return {
     ...config,
     api: resolvedApi,
@@ -1055,8 +1053,7 @@ const resolveEffectiveCliConfig = (
       ...db,
       port: resolvedPort("SUPABASE_DB_PORT", db.port, "db.port", env),
       major_version: envOverrideMajorVersion(db.major_version, env),
-      health_timeout:
-        envOverride("SUPABASE_DB_HEALTH_TIMEOUT", db.health_timeout, env) ?? db.health_timeout,
+      health_timeout: envOverride("SUPABASE_DB_HEALTH_TIMEOUT", db.health_timeout, env),
       settings: resolveDbSettingsEnvOverrides(db.settings, env),
       pooler: resolvedPooler,
     },
@@ -1078,7 +1075,7 @@ const resolveEffectiveCliConfig = (
       ...studio,
       enabled: envOverrideBool("SUPABASE_STUDIO_ENABLED", studio.enabled, "studio.enabled", env),
       port: resolvedPort("SUPABASE_STUDIO_PORT", studio.port, "studio.port", env),
-      api_url: envOverride("SUPABASE_STUDIO_API_URL", studio.api_url, env) ?? studio.api_url,
+      api_url: envOverride("SUPABASE_STUDIO_API_URL", studio.api_url, env),
       openai_api_key: envOverride("SUPABASE_STUDIO_OPENAI_API_KEY", studio.openai_api_key, env),
     },
     local_smtp: {
