@@ -33,11 +33,13 @@ The CLI resolves supported environment overrides into a complete plain config
 document and validates that effective document with `@supabase/config` before
 projecting it into the stack runtime shape. Package validation errors are
 reported with field paths and generic values so secrets are not exposed. The
-stack projection then wraps consumed secrets, decrypts only the values needed
-by enabled runtime features, and preserves `env(NAME)` function references
-until runtime settings are assembled. Disabled runtime features do not cause
-their secrets to be consumed, and the CLI preserves optional-section presence
-metadata while projecting the validated document.
+stack projection then wraps consumed secrets, decrypts values at capability
+boundaries, and preserves `env(NAME)` function references until runtime settings
+are assembled. Provider secrets are resolved when the Auth capability is enabled;
+disabled capabilities skip their unconsumed secrets. JWT issuer and signing
+overrides are always applied because stack security consumes them even when Auth
+itself is disabled. The CLI preserves optional-section presence metadata while
+projecting the validated document.
 
 Text output includes the stack id, lifecycle, endpoints, and dormant
 capabilities. Structured output includes the same status fields. The command reads configured

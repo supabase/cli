@@ -442,6 +442,31 @@ describe("runtime input owner", () => {
     ),
   );
 
+  it.live("fails when REST needs signing keys from a missing JWKS file", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+          prefix: "runtime-input-rest-jwt-missing-",
+        });
+        const base = yield* compiledState(root, {
+          capabilities: {
+            auth: { enabled: false },
+            rest: { enabled: true },
+          },
+          security: { jwt: { signing: { kind: "jwks-file", path: "missing.json" } } },
+        });
+        if (base.definition === undefined) return yield* Effect.die("compiled definition missing");
+        expect(base.definition.capabilities.auth.enabled).toBe(false);
+        expect(base.definition.capabilities.rest.enabled).toBe(true);
+        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+        const failed = yield* owner.resolve(base, "rest:rest").pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(errorOf(failed)).toBeInstanceOf(StackPreparationError);
+        expect(errorOf(failed)?.message).toContain("Unable to resolve Auth signing keys");
+      }),
+    ),
+  );
+
   it.live("sanitizes OIDC URL labels in transport failures", () =>
     withPlatform(
       Effect.gen(function* () {
