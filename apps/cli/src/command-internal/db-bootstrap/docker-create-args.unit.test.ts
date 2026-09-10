@@ -8,10 +8,8 @@ import {
   type StartContainerSpec,
 } from "./docker-create-args.ts";
 
-// Mirrors the Logflare/analytics container (`start.go:350-394`): the fullest
-// worked example in the Go source — Hostname, Entrypoint+Cmd, exec-form
-// Healthcheck with StartPeriod, ExposedPorts alongside a matching
-// PortBinding, RestartPolicy, and network aliases.
+// Exercises every optional field: Hostname, Entrypoint+Cmd, exec-form Healthcheck with
+// StartPeriod, ExposedPorts alongside a matching PortBinding, RestartPolicy, network aliases.
 const full: StartContainerSpec = {
   image: "supabase/logflare:1.0.0",
   containerName: "supabase_analytics_proj",
@@ -147,7 +145,6 @@ describe("buildStartContainerCreateArgs", () => {
     const args = buildStartContainerCreateArgs(full);
     expect(args).toContain("DB_PASSWORD");
     expect(args.some((a) => a.includes("super-secret"))).toBe(false);
-    // Every -e argument is a bare key: no '=' anywhere in an -e value.
     const envValues = args.flatMap((a, i) => (args[i - 1] === "-e" ? [a] : []));
     expect(envValues.every((v) => !v.includes("="))).toBe(true);
   });
@@ -166,7 +163,6 @@ describe("buildStartContainerCreateArgs", () => {
     const dockerHostIndex = args.indexOf("DOCKER_HOST=http://host.docker.internal:2375");
     expect(dockerHostIndex).toBeGreaterThan(-1);
     expect(args[dockerHostIndex - 1]).toBe("-e");
-    // The genuine secret alongside it must still stay key-only.
     expect(args).toContain("API_KEY");
     expect(args.some((a) => a.includes("super-secret"))).toBe(false);
   });
@@ -177,9 +173,7 @@ describe("buildStartContainerCreateArgs", () => {
     expect(isDockerClientEnvKey("DOCKER_CERT_PATH")).toBe(true);
     expect(isDockerClientEnvKey("DOCKER_CONTEXT")).toBe(true);
     expect(isDockerClientEnvKey("DOCKER_API_VERSION")).toBe(true);
-    // `docker/cli`'s `EnvOverrideConfigDir` (`cli/config/config.go:25`) — also read by
-    // `getHostname`'s `dockerConfigDir()`, so a project-dotenv-only override must reach
-    // `process.env` the same way `DOCKER_HOST`/`DOCKER_CONTEXT` already do (review: PRRT_kwDOErm0O86Vk-ex).
+    // Also read by `getHostname`'s `dockerConfigDir()`.
     expect(isDockerClientEnvKey("DOCKER_CONFIG")).toBe(true);
     expect(isDockerClientEnvKey("DB_PASSWORD")).toBe(false);
   });
@@ -279,7 +273,6 @@ describe("buildStartContainerCreateArgs", () => {
     const args = buildStartContainerCreateArgs(spec);
     expect(args.some((a) => a.includes("top-secret-content"))).toBe(false);
     expect(args.some((a) => a.includes("/etc/secret.yml"))).toBe(false);
-    // Only the spec's own `binds` entries are ever emitted — secretFiles contributes nothing.
     expect(args.filter((a) => a === "-v")).toHaveLength(1);
   });
 });
