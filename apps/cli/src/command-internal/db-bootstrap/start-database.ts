@@ -1,19 +1,11 @@
 /**
- * The one function both `supabase start` and `db start` call to bring up the local Postgres
- * container, so the two callers share one sequence to test and maintain instead of
- * independently-typed copies that could drift.
+ * The single bring-up sequence for the local Postgres container, shared by `supabase start` and
+ * `db start`: volume probe, image resolve and network ensure, create and start, health wait
+ * (swallowed only for `fromBackup`), fresh-volume setup (skipped for `fromBackup`), then
+ * `initCurrentBranch`. `--ignore-health-check` and rollback are the caller's concern.
  *
- * Call order: pre-create volume-existence probe (+ the `fromBackup`-on-an-existing-volume guard)
- * -> image resolve + network ensure -> container create+start -> health wait (swallowed only when
- * `fromBackup` is set) -> the fresh-volume setup pipeline (skipped entirely when `fromBackup` is
- * set) -> `initCurrentBranch`, unconditionally, on every path that doesn't already return or fail
- * above. `--ignore-health-check` and rollback are the caller's own concern, not this function's.
- *
- * `resolvePostgresImage` and `setup.jwks` are caller-supplied `Effect`s, not plain values, because
- * their timing differs between callers: `db start` resolves both lazily, right where they're
- * needed, while `supabase start` already resolved them earlier in its own prelude (for its
- * pre-pull and its other services respectively) and just threads the same values through — see
- * each field's own doc comment.
+ * `resolvePostgresImage` and `setup.jwks` are caller-supplied `Effect`s because `db start`
+ * resolves them lazily while `supabase start` threads values it already resolved.
  */
 
 import { Data, Effect, type FileSystem, type Path, Result } from "effect";

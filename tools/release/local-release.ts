@@ -22,7 +22,7 @@ const REGISTRY = `http://localhost:${PORT}`;
 const root = path.resolve(import.meta.dir, "../..");
 const tokenPath = path.join(root, "tmp", "verdaccio-token");
 
-// All seven platform packages that appear in optionalDependencies.
+// Every platform package that appears in optionalDependencies.
 const PLATFORM_PACKAGES = [
   "cli-darwin-arm64",
   "cli-darwin-x64",

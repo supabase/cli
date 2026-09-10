@@ -1,15 +1,10 @@
 /**
- * The shadow-database provisioning primitives: create, health-wait, platform-baseline setup, and
- * migrations replay. Exposed individually rather than fused, since callers compose different
- * subsets — `migration squash` needs create -> health-wait -> connect -> setup only, while `db
- * diff --use-pgadmin` needs create -> health-wait -> migrations replay. The composed diff/pull
- * shape lives in `commands/db/shared/shadow-source.ts` instead, so this module never pulls in the
- * diff engines.
+ * Shadow-database primitives (create, health-wait, baseline setup, migrations replay), exposed
+ * individually because callers compose different subsets; the fused diff/pull shape lives in
+ * `commands/db/shared/shadow-source.ts` so this module never imports the diff engines.
  *
- * The shadow container is created with no name and no network alias, unlike every other
- * container this codebase creates. Its PG15+ one-shot setup jobs still need a hostname to reach
- * it over the shared Docker network, so `dbHost: container.slice(0, 12)` (the container id's own
- * 12-char short form) is used instead.
+ * The shadow container has no name or network alias, so its one-shot setup jobs reach it by the
+ * container id's 12-char short form as hostname.
  */
 
 import {

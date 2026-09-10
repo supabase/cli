@@ -61,24 +61,15 @@ const resolveSoftLinkedRef = Effect.fnUntraced(function* () {
 });
 
 /**
- * Resolves the current linked-state display (project or branch) for
- * `status`, without requiring a link. Never fails — every step degrades
- * rather than propagating an error:
+ * Resolves the linked-state display (project or branch) for `status` without requiring a link.
+ * Never fails; each step degrades instead:
  *
- * - Not linked → `{ linked: false }`.
- * - The cache confirms the linked ref is its own parent → a plain project
- *   link, zero API calls.
- * - The cache names a different parent and the ref came from the
- *   `project-ref` file → a branch link. Attempts the best-effort
- *   {@link findBranchName} lookup, but degrades to "assumed branch, name
- *   unknown" rather than a plain line on any failure, so the user still sees
- *   they're on a branch when the lookup can't run.
- * - Same divergence, but the ref came from `SUPABASE_PROJECT_ID` (env) — the
- *   cache belongs to the workdir, not necessarily to what the env var points
- *   at, so the branch claim additionally requires the lookup to positively
- *   confirm it; otherwise it degrades to the plain `{ linked: true,
- *   projectRef }` shape.
- * - No cache at all → the plain shape, with zero API calls.
+ * - No link, or no cache: the plain shape, with zero API calls.
+ * - The cache says the linked ref is its own parent: a plain project link.
+ * - The cache names a different parent: a branch link. With the ref from the `project-ref` file,
+ *   a failed {@link findBranchName} lookup still reports "branch, name unknown"; with the ref
+ *   from `SUPABASE_PROJECT_ID` the cache may not describe it, so the branch claim needs the
+ *   lookup to confirm it and otherwise degrades to the plain shape.
  */
 export const resolveLinkedState = Effect.fnUntraced(function* () {
   const cliSettings = yield* CommandSettings;

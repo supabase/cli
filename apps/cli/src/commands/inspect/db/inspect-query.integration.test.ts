@@ -139,7 +139,7 @@ interface SetupOpts {
   connectFails?: boolean;
   queryFails?: boolean;
   dnsResolver?: "native" | "https";
-  /** Raw CLI args slice — drives Changed-based flag detection (cobra parity). */
+  /** Raw CLI args slice; drives explicitly-passed flag detection. */
   cliArgs?: ReadonlyArray<string>;
 }
 

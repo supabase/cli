@@ -11,27 +11,18 @@ import { BRANCH_PROJECT_REF_PATTERN } from "./ref-patterns.ts";
 import { goUrlParse } from "./storage-url.ts";
 
 /**
- * Single home for config validation, consolidating two independent implementations:
+ * Single home for config validation, shared by the two config readers:
  *
- * - **D** = `db-config.toml-read.ts` — raw smol-toml document + `EnvLookup`, Effect-based,
- *   fails with `DbConfigLoadError`. Feeds ~15 db/migration commands via `db-config.layer.ts`.
- * - **L** = `local-config-values.ts` — decoded `@supabase/config` `CliConfig`, synchronous
- *   `node:fs`, throws plain `Error`. Feeds `status-values.ts` and `stop/stop.handler.ts`.
+ * - **D** = `db-config.toml-read.ts`: raw TOML document, Effect-based, fails with
+ *   `DbConfigLoadError`.
+ * - **L** = `local-config-values.ts`: decoded `@supabase/config` `CliConfig`, synchronous,
+ *   throws `Error`.
  *
- * Per-command reimplementations of any branch {@link validateResolvedConfig} owns are
- * forbidden — hoist here instead (see `apps/cli/AGENTS.md`'s "Hoist Before You Duplicate").
- *
- * A few branches stay caller-only and are never routed through this module:
- * `remotes[*].project_id` and `auth.sms`/`auth.external` are D-only (L instead relies on
- * `@supabase/config`'s own schema, or needs the raw pre-decode document); `auth.jwt_secret`
- * length checking lives in each caller's own key-generation flow.
- *
- * D and L each call {@link validateResolvedConfig} exactly once, positioned after their own
- * per-section I/O reads (signing keys, `api.tls` cert/key, email template content) and, for D,
- * before its own inline sms/external checks. This means an error from a pure branch this
- * module owns always surfaces ahead of a caller-only I/O or sms/external error, even in the
- * rare case where both would independently fail — an accepted, narrow ordering gap, not a bug
- * to fix by splitting this function into multiple calls.
+ * Per-command reimplementations of any branch {@link validateResolvedConfig} owns are forbidden;
+ * hoist here instead. A few branches stay caller-only: `remotes[*].project_id` and
+ * `auth.sms`/`auth.external` need the raw pre-decode document, and `auth.jwt_secret` length lives
+ * in each key-generation flow. Each reader calls {@link validateResolvedConfig} once, after its
+ * own I/O reads, so an error from a branch here surfaces before a caller-only I/O error.
  */
 
 // Re-exported under this module's established name; `ref-patterns.ts` is the canonical
@@ -624,26 +615,15 @@ function isPathContainedInRoot(root: string, candidatePath: string): boolean {
 const MAX_SYMLINK_FOLLOW_DEPTH = 40;
 
 /**
- * Canonicalizes `path` when it exists, or returns `undefined` when it genuinely doesn't — the
- * signal {@link canonicalPathForContainment} needs to decide whether to keep walking up
- * towards an existing ancestor.
+ * Canonicalizes `path` when it exists (per `lstatSync`), or returns `undefined` so
+ * {@link canonicalPathForContainment} keeps walking up to an existing ancestor.
  *
- * "Exists" is decided with `lstatSync` (which doesn't dereference `path`), not by whether
- * `realpathSync` succeeded — a dangling symlink, an unsearchable symlink target (`EACCES`), or
- * a symlink loop (`ELOOP`) all make `realpathSync` throw even though `path` exists on disk.
- * Such a symlink is followed one hop by hand (`readlinkSync`, bounded by
- * {@link MAX_SYMLINK_FOLLOW_DEPTH}) and its target canonicalized in turn, so containment
- * always sees where the symlink actually points. A symlink chain still unresolved at the depth
- * bound returns the lexical path as-is, so a genuine loop is rejected rather than laundered
- * into an accept by the ancestor walk-up.
- *
- * `lstatSync` can itself fail for reasons unrelated to the path's own existence (an unreadable
- * ancestor directory, a too-long name, or — on some platforms — a directory needing search
- * permission on itself to resolve its own name). That's treated the same as "doesn't exist
- * yet": {@link canonicalPathForContainment}'s walk-up resolves the deepest ancestor it can and
- * re-appends the unresolvable tail lexically, so an honest in-root path behind a restricted
- * ancestor isn't falsely rejected, while an escaping symlink whose target sits behind the same
- * kind of restricted component is still rejected on its own target's ancestor.
+ * `realpathSync` can throw for a path that exists (dangling symlink, `EACCES` target, `ELOOP`),
+ * so such a symlink is followed one hop by hand, bounded by {@link MAX_SYMLINK_FOLLOW_DEPTH},
+ * and its target canonicalized in turn; a chain still unresolved at the bound returns the lexical
+ * path so a loop is rejected rather than accepted. An `lstatSync` failure unrelated to the path
+ * itself (unreadable ancestor, over-long name) counts as "doesn't exist yet", so an honest in-root
+ * path behind a restricted ancestor isn't falsely rejected.
  */
 function canonicalizeExistingPath(path: string, depth: number): string | undefined {
   try {

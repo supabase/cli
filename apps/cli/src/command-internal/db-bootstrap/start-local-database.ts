@@ -1,15 +1,11 @@
 /**
- * A plain local-database start — the shared entrypoint `supabase db start` and the declarative
- * `--local` paths' `ensureLocalDatabaseStarted` both call. Self-contained: resolves every service
- * it needs itself, emits progress via `output.raw` only, and never flushes telemetry — that stays
- * the top-level command's own concern.
+ * Plain local-database start shared by `supabase db start` and the declarative `--local` paths.
+ * Self-contained: resolves its own services, reports progress via `output.raw` only, and never
+ * flushes telemetry.
  *
- * Unlike `resetLocalDatabase`, "the database is already running" is a normal, successful outcome
- * here, not a failure — and the two real callers want different observable behavior on it: `db
- * start` prints "Postgres database is already running.", while the declarative seam stays silent.
- * So this function never prints the terminal-state line itself; it returns a
- * {@link StartLocalDatabaseResult} discriminator and leaves the print (or lack of one) to the
- * caller.
+ * "Already running" is a success here, and callers print it differently (`db start` prints a
+ * message, the declarative seam stays silent), so this returns a
+ * {@link StartLocalDatabaseResult} discriminator instead of printing the terminal line itself.
  */
 
 import { Effect, FileSystem, Option, Path } from "effect";

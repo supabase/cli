@@ -313,16 +313,10 @@ export function connectFailureMessage(target: ConnectFailureTarget, error: unkno
 const IPV6_DIAL_CODES = new Set(["ENETUNREACH", "EHOSTUNREACH", "EADDRNOTAVAIL"]);
 
 /**
- * Whether the error chain carries a node dial failure whose errno + `address` fields identify
- * an unreachable IPv6 target. This is the structured complement to
- * {@link isIPv6ConnectivityError}: node system errors carry the dialed address as a field
- * (`connect EHOSTUNREACH 2600:…:5432` has `code` and `address`) rather than embedding it in
- * the message text. Narrower than `isIPv6ConnectivityErrorCause` — it never treats `ENOTFOUND`
- * (a plain DNS miss, e.g. a typo'd host) as IPv6. Use this one for the connect suggestion; the
- * container-level pooler fallback keeps the broader `isIPv6ConnectivityErrorCause`. Like
- * {@link deepestConnectCause}, an `AggregateError` descends into only its last child.
- * Depth-bounded recursion (no `seen` set): a pathological cause cycle re-walks at most 8
- * levels, which is cheap and cannot loop.
+ * Whether the error chain holds a node dial failure whose `code` and `address` fields identify
+ * an unreachable IPv6 target: the structured complement to {@link isIPv6ConnectivityError}, and
+ * narrower than `isIPv6ConnectivityErrorCause` since a DNS miss (`ENOTFOUND`) is never IPv6.
+ * Descends into an `AggregateError`'s last child only, at most 8 levels deep.
  */
 function hasIPv6DialCause(error: unknown, depth = 0): boolean {
   if (depth > 8 || typeof error !== "object" || error === null) return false;
