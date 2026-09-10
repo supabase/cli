@@ -48,6 +48,7 @@ import {
   UnknownComputeSizeError,
   ComputeBuildFailedError,
   ComputeSourceMissingError,
+  MissingComputeExposureError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
@@ -165,6 +166,7 @@ function resolveInstances(options: {
 const resolveExposure = Effect.fnUntraced(function* (options: {
   readonly name: string;
   readonly recorded: string | undefined;
+  readonly configured: boolean;
   readonly override: Option.Option<ComputeExposure>;
 }) {
   if (Option.isSome(options.override)) {
@@ -176,20 +178,19 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
       options.recorded === undefined
         ? DEFAULT_COMPUTE_EXPOSURE
         : parseComputeExposure(options.recorded);
-    if (withoutTheFlag !== chosen) {
+    if (!options.configured || withoutTheFlag !== chosen) {
       const output = yield* Output;
       // stderr, so it never lands inside a payload stdout is carrying — and
       // unguarded by format, like the runtime nudge: a CI run is exactly where
       // a one-deploy exposure quietly reverting matters most.
-      yield* output.raw(
-        `--exposure ${chosen} applies to this deploy only: supabase/config.toml ${
-          options.recorded === undefined
-            ? `records no exposure for ${options.name}`
-            : `records exposure = "${options.recorded}"`
-        }, so the next bare push will not use ${chosen}. ` +
-          `Set [compute.${options.name}] exposure = "${chosen}" in supabase/config.toml.\n`,
-        "stderr",
-      );
+      const message = options.configured
+        ? `--exposure ${chosen} applies to this deploy only: supabase/config.toml ${
+            options.recorded === undefined
+              ? `records no exposure for ${options.name}`
+              : `records exposure = "${options.recorded}"`
+          }, so the next bare push will not use ${chosen}. Set [compute.${options.name}] exposure = "${chosen}" in supabase/config.toml.\n`
+        : `--exposure ${chosen} is required for an unconfigured source directory. Record it under [compute.${options.name}] exposure for future pushes.\n`;
+      yield* output.raw(message, "stderr");
     }
     return chosen;
   }
@@ -358,6 +359,7 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
   const exposure = yield* resolveExposure({
     name,
     recorded: compute.entry?.exposure,
+    configured: compute.entry !== undefined,
     override: input.exposure,
   });
 
@@ -617,7 +619,7 @@ export const computePush = Effect.fn("compute.push")(function* (
 
     if (requested.length === 0) {
       return yield* new NoComputeToDeployError({
-        detail: `No compute were named, and none were found in ${displayPath(
+        detail: `No Compute services were named, and none were found in ${displayPath(
           path,
           project.projectRoot,
           project.computeDir,
@@ -627,6 +629,20 @@ export const computePush = Effect.fn("compute.push")(function* (
     }
 
     const names = [...new Set(requested)];
+    const refSuffix = computeProjectRefSuffix(flags.projectRef);
+
+    if (Option.isNone(flags.exposure)) {
+      for (const name of names) {
+        if (project.section.compute[name] !== undefined) continue;
+        const compute = yield* describeCompute(project, name);
+        if (compute.entry === undefined && compute.sourceExists) {
+          return yield* new MissingComputeExposureError({
+            detail: `No exposure is configured for the unconfigured compute "${name}".`,
+            suggestion: `Run \`supabase compute push ${name} --exposure public${refSuffix}\` or \`supabase compute push ${name} --exposure private${refSuffix}\`.`,
+          });
+        }
+      }
+    }
 
     // Before the first deploy, not after the last one: this payload always
     // carries a `compute` array, so `-o env` can never encode it, and finding
@@ -634,9 +650,6 @@ export const computePush = Effect.fn("compute.push")(function* (
     yield* rejectComputeEnvOutput();
 
     const machineOutput = yield* computeMachineOutputRequested();
-    // Computed once for the whole run, the way `status` and `delete` do: an
-    // explicit `--project-ref` has to survive into every hint this push emits.
-    const refSuffix = computeProjectRefSuffix(flags.projectRef);
     const deployed: Array<Record<string, unknown>> = [];
     // Accepted, but not finished: their builds outlive a failure further down
     // the loop, so the failure path has to name them. See `reportStillBuilding`.

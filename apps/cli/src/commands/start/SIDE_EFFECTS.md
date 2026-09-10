@@ -2,7 +2,7 @@
 
 This document describes the legacy backend. With `SUPABASE_EXPERIMENTAL_STACK=1`, or
 `[experimental] stack = true` when the environment override is unset or empty, `supabase start`
-uses the new [`supabase stack start` implementation](../stack/start/SIDE_EFFECTS.md).
+uses the new [`supabase stack start` implementation](../experimental/stack/start/SIDE_EFFECTS.md).
 `SUPABASE_EXPERIMENTAL_STACK=0` forces the legacy backend. See [backend selection](../../../docs/stack-commands.md).
 Backend selection happens before command parsing. When the environment override is unset or empty,
 an unreadable, malformed, or invalid project configuration falls back to the legacy backend; an

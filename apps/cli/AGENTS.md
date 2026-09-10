@@ -265,6 +265,28 @@ when a change is intentional, update the tests and `SIDE_EFFECTS.md` in the same
 This contract does not constrain internal refactors, new flags/features, or bug fixes that leave
 the established surface unchanged — treat those like any other TypeScript workspace.
 
+### Experimental feature registration
+
+Experimental command implementations live under `src/commands/experimental/`,
+while `src/cli/root.ts` owns their public paths. Resolve opt-in booleans with
+`command-internal/experimental-feature.ts`: environment `1`/`0` overrides the
+project setting, and an unset or empty value uses the config. Invalid environment
+values are typed failures on applicable command paths. Keep config-discovery
+failure policy explicit and cover TOML, JSON, precedence, and disabled behavior.
+
+An opt-in family must be absent from the command tree, help, and completion when
+disabled, without hint stubs. Mark enabled help as experimental and keep the family
+out of stable generated command documentation. Environment opt-ins do not write
+project configuration.
+
+Experimental command paths may change outside the stable compatibility promise.
+Before renaming a family, identify published config, disk, server, and telemetry
+boundaries and record the approved compatibility decision in the PR; do not infer
+that experimental means never shipped. For the Compute transition, no local
+compatibility aliases or migrations are required. Its Compute error tags
+intentionally start new fingerprints; server-owned contracts remain unchanged.
+Update tests, generated schemas, and side-effect documentation with the change.
+
 ---
 
 ## CLI Invariants

@@ -4,10 +4,10 @@
 
 This command is registered only when `experimental.compute` is enabled. Set
 `SUPABASE_EXPERIMENTAL_COMPUTE=1` to enable it, or `0` to disable it; an unset
-or empty variable uses the project configuration, and any other non-empty value
-leaves the Compute command tree unregistered. When disabled, it is absent from
+or empty variable uses the project configuration. Any other non-empty value
+reports an invalid feature-flag value before command parsing. When disabled, it is absent from
 help and completion; direct invocation follows the normal unknown-command path
-and the command handler does not run.
+and the command handler does not run. See the [Compute command guide](../../../../../docs/compute-commands.md).
 
 > **No live test yet.** `compute` runs against the v2 Management API, which the
 > supabase/cli-e2e-ci supabox stack is not expected to serve, so a `*.live.test.ts`
@@ -51,14 +51,14 @@ and the command handler does not run.
 
 ## Environment Variables
 
-| Variable                        | Purpose                                                                                                                          | Required?                                                                                                                                                                                                                             |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SUPABASE_EXPERIMENTAL_COMPUTE` | command registration (`1` enable, `0` disable; unset/empty uses `experimental.compute`; other non-empty values disable the tree) | no                                                                                                                                                                                                                                    |
-| `SUPABASE_ACCESS_TOKEN`         | auth token (bypasses credential file/keyring lookup)                                                                             | no (falls back to keyring → `~/.supabase/access-token`)                                                                                                                                                                               |
-| `SUPABASE_PROFILE`              | built-in profile name or YAML file path                                                                                          | no (falls back to `~/.supabase/profile` -> `supabase`)                                                                                                                                                                                |
-| `SUPABASE_PROJECT_ID`           | project ref, consulted after `--project-ref`                                                                                     | no (falls back to `supabase/.temp/project-ref`, then the picker)                                                                                                                                                                      |
-| `SUPABASE_WORKDIR`              | project directory the command acts on                                                                                            | no (falls back to `--workdir`, then the ancestor walk) — read exactly as given when SET (flag or env), with **no ancestor search**; a DEFAULTED workdir may still resolve an ancestor project's config from a subdirectory (CLI-2285) |
-| `SUPABASE_HOME`                 | directory holding `telemetry.json`                                                                                               | no (falls back to `~/.supabase`)                                                                                                                                                                                                      |
+| Variable                        | Purpose                                                                                                                    | Required?                                                                                                                                                                                                                             |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_EXPERIMENTAL_COMPUTE` | command registration (`1` enable, `0` disable; unset/empty uses `experimental.compute`; other non-empty values are errors) | no                                                                                                                                                                                                                                    |
+| `SUPABASE_ACCESS_TOKEN`         | auth token (bypasses credential file/keyring lookup)                                                                       | no (falls back to keyring → `~/.supabase/access-token`)                                                                                                                                                                               |
+| `SUPABASE_PROFILE`              | built-in profile name or YAML file path                                                                                    | no (falls back to `~/.supabase/profile` -> `supabase`)                                                                                                                                                                                |
+| `SUPABASE_PROJECT_ID`           | project ref, consulted after `--project-ref`                                                                               | no (falls back to `supabase/.temp/project-ref`, then the picker)                                                                                                                                                                      |
+| `SUPABASE_WORKDIR`              | project directory the command acts on                                                                                      | no (falls back to `--workdir`, then the ancestor walk) — read exactly as given when SET (flag or env), with **no ancestor search**; a DEFAULTED workdir may still resolve an ancestor project's config from a subdirectory (CLI-2285) |
+| `SUPABASE_HOME`                 | directory holding `telemetry.json`                                                                                         | no (falls back to `~/.supabase`)                                                                                                                                                                                                      |
 
 ## Telemetry Events Fired
 

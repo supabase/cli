@@ -4,22 +4,23 @@
 
 This command is registered only when `experimental.compute` is enabled. Set
 `SUPABASE_EXPERIMENTAL_COMPUTE=1` to enable it, or `0` to disable it; an unset
-or empty variable uses the project configuration, and any other non-empty value
-leaves the Compute command tree unregistered. When disabled, it is absent from
+or empty variable uses the project configuration. Any other non-empty value
+reports an invalid feature-flag value before command parsing. When disabled, it is absent from
 help and completion; direct invocation follows the normal unknown-command path
-and the command handler does not run.
+and the command handler does not run. See the [Compute command guide](../../../../../docs/compute-commands.md).
 
 > **Local-disk only.** Nothing is deployed and no Management API route is
 > called; `compute push` is what talks to the platform.
 
 ## Files Read
 
-| Path                                     | Format     | When                                                                                                        |
-| ---------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`         | TOML       | always — decoded to refuse a compute that is already recorded, then re-read as text to append the new entry |
-| `<destination>/`                         | dir        | always, to refuse a destination that is not empty                                                           |
-| `<SUPABASE_HOME or ~/.supabase>/profile` | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`        |
-| `<SUPABASE_PROFILE>` (YAML)              | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command |
+| Path                                     | Format     | When                                                                                                                                                          |
+| ---------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`         | TOML       | when present and no authoritative JSON config was found — decoded to check existing entries, then read as text for the edit                                   |
+| `<workdir>/supabase/config.json`         | JSON       | writer checks existence/selection only; the feature gate reads contents when the environment override is unset or empty. Includes defaulted-workdir ancestors |
+| `<destination>/`                         | dir        | always, to refuse a destination that is not empty                                                                                                             |
+| `<SUPABASE_HOME or ~/.supabase>/profile` | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`                                                          |
+| `<SUPABASE_PROFILE>` (YAML)              | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command                                                   |
 
 ## Files Written
 
@@ -32,17 +33,18 @@ and the command handler does not run.
 
 Compute resources are recorded in `config.toml` only. The project config loader prefers
 `supabase/config.json` when one exists, but the entry writer is a TOML text
-editor, so this command pins the loader to `config.toml` (`tomlOnly`). In a
-project that has a `config.json`, the compute is therefore written to
-`config.toml` — which that loader lists in `ignoredPaths` — and the `config.json`
-is left byte-for-byte alone. A rendered edit that would not parse is refused
+editor. Before prompting or writing, this command refuses a project whose
+authoritative configuration is `config.json`, including a JSON-only ancestor
+found from a defaulted workdir. It cannot append deployment settings to a TOML
+file that readers would ignore. JSON projects can configure Compute entries and
+source files manually. A rendered TOML edit that would not parse is refused
 before anything reaches disk.
 
-`<workdir>` above is exact: the loader is pinned to it (`search: false`, the
-same resolver `start`/`stop`/`status` use) and never climbs to an ancestor. A
-`--workdir` pointing at a bare directory inside another Supabase project
-therefore records the compute in that directory's own `config.toml` — created if
-absent — rather than in the ancestor project's.
+The TOML writer is pinned to `<workdir>` with `search: false`. Before loading
+that file, a defaulted workdir also probes ancestor project paths to refuse
+JSON-authoritative projects. An explicit `--workdir` or `SUPABASE_WORKDIR`
+never searches ancestors: pointing it at a bare directory records the Compute
+entry in that directory's own `config.toml`, created if absent.
 
 The name is prompted for when the command line does not carry one, and the
 prompt refuses a name that is not a DNS label or that `config.toml` already
@@ -89,6 +91,7 @@ root.
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success                                                                                                                                         |
 | `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`ComputeNewWorkdirError`) — beats every prompt and filesystem write |
+| `1`  | authoritative project config is JSON (`ComputeJsonConfigUnsupportedError`)                                                                      |
 | `1`  | invalid compute name — the name must be a DNS label                                                                                             |
 | `1`  | no name given, and nowhere to ask for one — stdin or stdout is not a terminal, or `-o` is in force                                              |
 | `1`  | bad `--source`: outside the project, or a path the CLI owns                                                                                     |
@@ -98,12 +101,12 @@ root.
 
 ## Environment Variables
 
-| Variable                        | Purpose                                                                                                                          | Required?                                              |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `SUPABASE_EXPERIMENTAL_COMPUTE` | command registration (`1` enable, `0` disable; unset/empty uses `experimental.compute`; other non-empty values disable the tree) | no                                                     |
-| `SUPABASE_PROFILE`              | built-in profile name or YAML file path                                                                                          | no (falls back to `~/.supabase/profile` -> `supabase`) |
-| `SUPABASE_WORKDIR`              | project directory the command acts on                                                                                            | no (falls back to `--workdir`, then the ancestor walk) |
-| `SUPABASE_HOME`                 | directory holding `telemetry.json`                                                                                               | no (falls back to `~/.supabase`)                       |
+| Variable                        | Purpose                                                                                                                    | Required?                                              |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `SUPABASE_EXPERIMENTAL_COMPUTE` | command registration (`1` enable, `0` disable; unset/empty uses `experimental.compute`; other non-empty values are errors) | no                                                     |
+| `SUPABASE_PROFILE`              | built-in profile name or YAML file path                                                                                    | no (falls back to `~/.supabase/profile` -> `supabase`) |
+| `SUPABASE_WORKDIR`              | project directory the command acts on                                                                                      | no (falls back to `--workdir`, then the ancestor walk) |
+| `SUPABASE_HOME`                 | directory holding `telemetry.json`                                                                                         | no (falls back to `~/.supabase`)                       |
 
 ## Telemetry Events Fired
 

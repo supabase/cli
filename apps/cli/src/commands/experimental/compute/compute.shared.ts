@@ -13,7 +13,10 @@ import {
   computeSourceDir,
 } from "../../../shared/compute/compute-paths.ts";
 import { validateComputeNameMessage } from "../../../shared/compute/compute-runtimes.ts";
-import { InvalidComputeNameError } from "../../../shared/compute/compute.errors.ts";
+import {
+  ComputeJsonConfigUnsupportedError,
+  InvalidComputeNameError,
+} from "../../../shared/compute/compute.errors.ts";
 
 /**
  * What every `supabase compute` command needs before it does anything: where
@@ -97,12 +100,24 @@ export const loadComputeProject = loadComputeProjectWith({ tomlOnly: false });
  * `functions new` avoids the same trap by resolving `supabase/config.toml`
  * directly; this is that, through the loader.
  *
- * A JSON project therefore gets a `config.toml` written beside its
- * `config.json`, which the loader lists in `ignoredPaths`. That gap is the
- * writer's alone — reads go through {@link loadComputeProject} — and it
- * closes when config writing is overhauled.
+ * A JSON-authoritative project is refused by `compute new` before prompts or
+ * filesystem writes; the TOML entry writer is never allowed to create an
+ * ignored sidecar configuration.
  */
-export const loadComputeProjectForEntryWrite = loadComputeProjectWith({ tomlOnly: true });
+export const loadComputeProjectForEntryWrite = Effect.fnUntraced(function* () {
+  const settings = yield* CommandSettings;
+  const path = yield* Path.Path;
+  const paths = yield* findCliProjectPaths(settings.workdir, {
+    search: shouldSearchAncestors(settings),
+  });
+  if (paths !== null && path.basename(paths.configPath) === "config.json") {
+    return yield* new ComputeJsonConfigUnsupportedError({
+      detail: `This project is configured by ${paths.configPath}, which the compute new command cannot edit safely.`,
+      suggestion: `Create the source files manually and add the compute entry to ${paths.configPath}, or convert the whole project configuration to TOML before scaffolding it.`,
+    });
+  }
+  return yield* loadComputeProjectWith({ tomlOnly: true });
+});
 
 /**
  * As {@link loadComputeProject}, but never failing on the project config.

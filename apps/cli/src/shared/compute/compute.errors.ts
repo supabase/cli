@@ -105,12 +105,33 @@ export class UnknownComputeExposureError extends Data.TaggedError("UnknownComput
   }
 }
 
+export class MissingComputeExposureError extends Data.TaggedError("MissingComputeExposureError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 export class ComputeDirectoryExistsError extends Data.TaggedError("ComputeDirectoryExistsError")<{
   readonly detail: string;
   readonly suggestion: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
+  }
+}
+
+/** A compute scaffold cannot safely edit a JSON-authoritative project config. */
+export class ComputeJsonConfigUnsupportedError extends Data.TaggedError(
+  "ComputeJsonConfigUnsupportedError",
+)<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
   }
 }
 

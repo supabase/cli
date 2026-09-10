@@ -23,6 +23,7 @@ import {
   ComputeSourceEscapingLinkError,
   ComputeSourceMissingError,
   ComputeUploadFailedError,
+  MissingComputeExposureError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { computePush } from "./push.handler.ts";
 import type { ComputePushFlags } from "./push.command.ts";
@@ -282,17 +283,88 @@ describe("compute push", () => {
       const { layer, out, http } = setupCompute({ workdir: repo.dir, routes: routes() });
 
       return yield* Effect.gen(function* () {
-        yield* push();
+        yield* push({ exposure: Option.some("private") });
 
         expect(out.stderrText).toContain("guessed node");
         expect(out.stderrText).toContain("found package.json");
+        expect(out.stderrText).toContain("is required for an unconfigured source directory");
 
         const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
         expect((yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.runtime).toBe(
           "node",
         );
+        expect((yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.exposure).toBe(
+          "private",
+        );
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("refuses an unconfigured source without an explicit exposure", () =>
+    Effect.gen(function* () {
+      const repo = yield* project({
+        "supabase/config.toml": `project_id = "demo"\n`,
+        "supabase/compute/api/package.json": "{}\n",
+      });
+      const { layer, http, out } = setupCompute({ workdir: repo.dir, routes: routes() });
+      return yield* Effect.gen(function* () {
+        const error = yield* push().pipe(Effect.flip);
+        expect(Predicate.isTagged(error, "MissingComputeExposureError")).toBe(true);
+        expect(http.requests).toHaveLength(0);
+        expect(out.stderrText).not.toContain("guessed");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "refuses a mixed batch before deployment and lets the user target the unconfigured service",
+    () =>
+      Effect.gen(function* () {
+        const repo = yield* project({
+          "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "private"\n`,
+          "supabase/compute/web/package.json": "{}\n",
+        });
+        const { layer, http, out } = setupCompute({
+          workdir: repo.dir,
+          routes: routes({
+            [`POST ${computeRoute("/web/uploads")}`]: { status: 201, body: uploadSlot },
+            [`POST ${computeRoute("/web/deploy")}`]: {
+              status: 202,
+              body: {
+                data: computeResource({
+                  name: "web",
+                  runtime: "node",
+                  exposure: "public",
+                  buildState: "active",
+                }),
+              },
+            },
+          }),
+        });
+
+        return yield* Effect.gen(function* () {
+          const error = yield* push({
+            names: [],
+            projectRef: Option.some(COMPUTE_PROJECT_REF),
+          }).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(MissingComputeExposureError);
+          expect(error).toMatchObject({
+            suggestion: expect.stringContaining(
+              `push web --exposure public --project-ref ${COMPUTE_PROJECT_REF}`,
+            ),
+          });
+          expect(http.requests).toHaveLength(0);
+          expect(out.stderrText).not.toContain("guessed");
+          expect(out.stderrText).not.toContain("Deploying Compute");
+
+          yield* push({ names: ["web"], exposure: Option.some("public"), noWait: true });
+          const deployments = http.requests.filter((request) => request.url.endsWith("/deploy"));
+          expect(deployments).toHaveLength(1);
+          expect(deployments[0]?.url).toContain(computeRoute("/web/deploy"));
+          const body = yield* decodeDeploy(deployments[0]?.body ?? "{}");
+          expect(body.data.attributes.spec.exposure).toBe("public");
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
   // `[compute.*] runtime` and `size` are plain strings in the config schema, so

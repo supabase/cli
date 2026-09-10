@@ -4,10 +4,10 @@
 
 This command is registered only when `experimental.compute` is enabled. Set
 `SUPABASE_EXPERIMENTAL_COMPUTE=1` to enable it, or `0` to disable it; an unset
-or empty variable uses the project configuration, and any other non-empty value
-leaves the Compute command tree unregistered. When disabled, it is absent from
+or empty variable uses the project configuration. Any other non-empty value
+reports an invalid feature-flag value before command parsing. When disabled, it is absent from
 help and completion; direct invocation follows the normal unknown-command path
-and the command handler does not run.
+and the command handler does not run. See the [Compute command guide](../../../../../docs/compute-commands.md).
 
 > **No live test yet.** `compute` runs against the v2 Management API, which the
 > supabase/cli-e2e-ci supabox stack is not expected to serve, so a `*.live.test.ts`
@@ -48,28 +48,29 @@ run reports the accepted spec the deploy response returned.
 
 ## Exit Codes
 
-| Code | Condition                                                            |
-| ---- | -------------------------------------------------------------------- |
-| `0`  | success                                                              |
-| `1`  | no compute named and none found in the project                       |
-| `1`  | config records a runtime, size or exposure the CLI does not know     |
-| `1`  | a compute's source is missing, not a directory, or empty             |
-| `1`  | a compute's source directory cannot be read                          |
-| `1`  | a compute's source links to a path outside itself                    |
-| `1`  | build context upload failed                                          |
-| `1`  | the build reached `failed`, or never left `building`                 |
-| `1`  | with `--no-wait`: the deploy was answered with `build_state: failed` |
-| `1`  | API error, or project not enrolled in the alpha                      |
+| Code | Condition                                                                                             |
+| ---- | ----------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                               |
+| `1`  | no compute named and none found in the project                                                        |
+| `1`  | a selected unconfigured source directory has no explicit `--exposure` (`MissingComputeExposureError`) |
+| `1`  | config records a runtime, size or exposure the CLI does not know                                      |
+| `1`  | a compute's source is missing, not a directory, or empty                                              |
+| `1`  | a compute's source directory cannot be read                                                           |
+| `1`  | a compute's source links to a path outside itself                                                     |
+| `1`  | build context upload failed                                                                           |
+| `1`  | the build reached `failed`, or never left `building`                                                  |
+| `1`  | with `--no-wait`: the deploy was answered with `build_state: failed`                                  |
+| `1`  | API error, or project not enrolled in the alpha                                                       |
 
 ## Environment Variables
 
-| Variable                        | Purpose                                                                                                                          | Required?                                                                                                                                                                                                                             |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SUPABASE_EXPERIMENTAL_COMPUTE` | command registration (`1` enable, `0` disable; unset/empty uses `experimental.compute`; other non-empty values disable the tree) | no                                                                                                                                                                                                                                    |
-| `SUPABASE_ACCESS_TOKEN`         | auth token (bypasses credential file/keyring lookup)                                                                             | no (falls back to keyring → `~/.supabase/access-token`)                                                                                                                                                                               |
-| `SUPABASE_PROFILE`              | built-in profile name or YAML file path                                                                                          | no (falls back to `~/.supabase/profile` -> `supabase`)                                                                                                                                                                                |
-| `SUPABASE_WORKDIR`              | project directory the command acts on                                                                                            | no (falls back to `--workdir`, then the ancestor walk) — read exactly as given when SET (flag or env), with **no ancestor search**; a DEFAULTED workdir may still resolve an ancestor project's config from a subdirectory (CLI-2285) |
-| `SUPABASE_HOME`                 | directory holding `telemetry.json`                                                                                               | no (falls back to `~/.supabase`)                                                                                                                                                                                                      |
+| Variable                        | Purpose                                                                                                                    | Required?                                                                                                                                                                                                                             |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_EXPERIMENTAL_COMPUTE` | command registration (`1` enable, `0` disable; unset/empty uses `experimental.compute`; other non-empty values are errors) | no                                                                                                                                                                                                                                    |
+| `SUPABASE_ACCESS_TOKEN`         | auth token (bypasses credential file/keyring lookup)                                                                       | no (falls back to keyring → `~/.supabase/access-token`)                                                                                                                                                                               |
+| `SUPABASE_PROFILE`              | built-in profile name or YAML file path                                                                                    | no (falls back to `~/.supabase/profile` -> `supabase`)                                                                                                                                                                                |
+| `SUPABASE_WORKDIR`              | project directory the command acts on                                                                                      | no (falls back to `--workdir`, then the ancestor walk) — read exactly as given when SET (flag or env), with **no ancestor search**; a DEFAULTED workdir may still resolve an ancestor project's config from a subdirectory (CLI-2285) |
+| `SUPABASE_HOME`                 | directory holding `telemetry.json`                                                                                         | no (falls back to `~/.supabase`)                                                                                                                                                                                                      |
 
 ## Telemetry Events Fired
 
@@ -105,12 +106,18 @@ part of the question the failure raises. The second report also covers a real
 gap, since `runCli` drains success trailers only on exit code 0, so a failing
 run discards every follow-up hint it had queued.
 
+A source directory without a `[compute.<name>]` entry requires explicit
+`--exposure public` or `--exposure private`; a bare push fails with
+`MissingComputeExposureError` before any selected Compute is packaged, uploaded,
+or deployed. A
+configured entry retains its existing exposure default.
+
 `--exposure` decides one deploy and nothing writes it down, so an override the
 config does not already agree with is reported on stderr, naming the
 `[compute.<name>] exposure` line to add. Unguarded by format, like the
-runtime-guess nudge: every deploy sends a complete spec, so a compute taken off
-the internet by the flag goes back on it at the next bare push, and a CI run is
-where that matters most. Silent when the config already resolves to the same
+runtime-guess nudge: every deploy sends a complete spec, so an override does not
+change the configuration used by a later push. An unconfigured source directory
+continues to require an explicit exposure on every push. Silent when the config already resolves to the same
 exposure, case included.
 
 Under `--no-wait` the `Image` row and the payload's `image_version` are omitted

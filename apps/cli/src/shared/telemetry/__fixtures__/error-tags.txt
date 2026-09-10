@@ -53,6 +53,7 @@ ComputeDeleteNotConfirmedError
 ComputeDirectoryExistsError
 ComputeEnvNotSupportedError
 ComputeFollowNotSupportedError
+ComputeJsonConfigUnsupportedError
 ComputeLogsQueryFailedError
 ComputeLogsRateLimitedError
 ComputeLogsUsageExceededError
@@ -336,6 +337,7 @@ MigrationSquashWriteError
 MigrationTargetFlagsError
 MigrationVaultError
 MigrationsReadError
+MissingComputeExposureError
 MissingComputeNameError
 NetworkBansEnvNotSupportedError
 NetworkBansGetNetworkError

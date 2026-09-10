@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, FileSystem, Path, Schema } from "effect";
+import { Effect, Option, FileSystem, Path, Predicate, Schema } from "effect";
 import { makeComputeProject, setupCompute } from "../../../../../tests/helpers/compute.ts";
 import {
   ComputeAlreadyConfiguredError,
@@ -11,6 +11,7 @@ import {
   InvalidComputeSourceError,
   MissingComputeNameError,
   ComputeDirectoryExistsError,
+  ComputeJsonConfigUnsupportedError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { computeNew } from "./new.handler.ts";
 import { ComputeNewWorkdirError } from "./new.errors.ts";
@@ -160,7 +161,7 @@ describe("compute new", () => {
           return yield* Effect.die("expected MissingComputeNameError");
         }
         // The retry has to name the path the command is actually registered at;
-        // `supabase compute new` is an unknown command.
+        // `supabase compute new` requires an explicit compute name.
         expect(error.suggestion).toContain("supabase compute new");
         expect(out.promptTextCalls).toEqual([]);
         expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute"))).toBe(false);
@@ -401,40 +402,30 @@ describe("compute new", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  // CLI-2285 review follow-up: a DEFAULTED workdir's reader (`compute
-  // list`/`push`/`status`) can climb to discover a config.json-only ancestor
-  // project, but this command's own TOML-only writer never climbs — without
-  // an extra check, `new` would silently write a same-named duplicate at the
-  // subdirectory instead of refusing it the way it already refuses a
-  // duplicate at its own root.
-  it.live(
-    "refuses a name the reader would discover in a config.json-only ancestor project (defaulted workdir)",
-    () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const fs = yield* FileSystem.FileSystem;
-        const created = yield* makeComputeProject({
-          "supabase/config.json": yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
-            {
-              project_id: "demo",
-              compute: { api: { runtime: "node", size: "2gb" } },
-            },
-          ),
-        });
-        const sub = path.join(created.dir, "nested", "dir");
-        yield* fs.makeDirectory(sub, { recursive: true });
-        const { layer } = setupCompute({ workdir: sub, explicitWorkdir: false });
+  it.live("refuses a JSON-only ancestor even when the name is already configured", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const created = yield* makeComputeProject({
+        "supabase/config.json": yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+          project_id: "demo",
+          compute: { api: { runtime: "node", size: "2gb" } },
+        }),
+      });
+      const sub = path.join(created.dir, "nested", "dir");
+      yield* fs.makeDirectory(sub, { recursive: true });
+      const { layer } = setupCompute({ workdir: sub, explicitWorkdir: false });
 
-        return yield* Effect.gen(function* () {
-          const error = yield* computeNew(
-            flags({ name: Option.some("api"), runtime: Option.some("deno") }),
-          ).pipe(Effect.flip);
+      return yield* Effect.gen(function* () {
+        const error = yield* computeNew(
+          flags({ name: Option.some("api"), runtime: Option.some("deno") }),
+        ).pipe(Effect.flip);
 
-          expect(error).toBeInstanceOf(ComputeAlreadyConfiguredError);
-          // Nothing was scaffolded at the subdirectory either.
-          expect(yield* fs.exists(path.join(sub, "supabase"))).toBe(false);
-        }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+        expect(Predicate.isTagged(error, "ComputeJsonConfigUnsupportedError")).toBe(true);
+        // Nothing was scaffolded at the subdirectory either.
+        expect(yield* fs.exists(path.join(sub, "supabase"))).toBe(false);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
   it.live(
@@ -719,33 +710,54 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  // The project config loader prefers `supabase/config.json` when one exists,
-  // and the entry writer is a TOML text editor. Without `tomlOnly` the two
-  // disagree: the plan targets the JSON file and appends a `[compute.api]`
-  // table to it, leaving the project config unparseable — after the scaffold is
-  // already on disk.
-  it.live("leaves config.json alone in a project that has one", () =>
+  it.live.each([false, true])(
+    "refuses JSON before prompts or writes (TOML present: %s)",
+    (withToml) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const configJson = '{"project_id":"demo"}\n';
+        const repo = yield* makeComputeProject({
+          "supabase/config.json": configJson,
+          ...(withToml ? { "supabase/config.toml": CONFIG_WITH_COMMENTS } : {}),
+        });
+        const { layer, out } = setupCompute({ workdir: repo.dir });
+        return yield* Effect.gen(function* () {
+          const error = yield* computeNew(flags({ name: Option.none() })).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(ComputeJsonConfigUnsupportedError);
+          expect(out.promptTextCalls).toEqual([]);
+          expect(out.promptSelectCalls).toEqual([]);
+          expect(yield* fs.readFileString(path.join(repo.dir, "supabase", "config.json"))).toBe(
+            configJson,
+          );
+          const tomlPath = path.join(repo.dir, "supabase", "config.toml");
+          if (withToml) expect(yield* fs.readFileString(tomlPath)).toBe(CONFIG_WITH_COMMENTS);
+          else expect(yield* fs.exists(tomlPath)).toBe(false);
+          expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute"))).toBe(false);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("refuses an unconfigured JSON-only ancestor before asking for a name", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
-      const configJson = `${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({ project_id: "demo" })}\n`;
-      const repo = yield* project({ "supabase/config.json": configJson });
-      const { layer } = setupCompute({ workdir: repo.dir });
-
+      const configJson = '{"project_id":"demo"}\n';
+      const repo = yield* makeComputeProject({ "supabase/config.json": configJson });
+      const child = path.join(repo.dir, "nested");
+      yield* fs.makeDirectory(child);
+      const { layer, out } = setupCompute({ workdir: child, explicitWorkdir: false });
       return yield* Effect.gen(function* () {
-        yield* computeNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
-
-        const jsonPath = path.join(repo.dir, "supabase", "config.json");
-        expect(yield* fs.readFileString(jsonPath)).toBe(configJson);
-        const decoded = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
-          yield* fs.readFileString(jsonPath),
+        const error = yield* computeNew(flags({ name: Option.none() })).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(ComputeJsonConfigUnsupportedError);
+        expect(out.promptTextCalls).toEqual([]);
+        expect(out.promptSelectCalls).toEqual([]);
+        expect(yield* fs.readFileString(path.join(repo.dir, "supabase", "config.json"))).toBe(
+          configJson,
         );
-        expect(decoded).toEqual({ project_id: "demo" });
-
-        // The compute is recorded in config.toml, which is the TOML editor's file.
-        expect(yield* repo.config).toBe(
-          `${CONFIG_WITH_COMMENTS}\n[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n`,
-        );
+        expect(yield* fs.readDirectory(child)).toEqual([]);
+        expect(yield* fs.exists(path.join(repo.dir, "supabase", "config.toml"))).toBe(false);
+        expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute"))).toBe(false);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );

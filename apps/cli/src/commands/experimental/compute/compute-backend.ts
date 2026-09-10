@@ -2,8 +2,11 @@ import { CliConfigSchema, findCliProjectPaths } from "@supabase/config/effect";
 import { Data, Effect, FileSystem, Option, Path, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
-import { resolveExperimentalFeature } from "../../../command-internal/experimental-feature.ts";
-import { hasRootVersionFlag, rootFlagTokens } from "../../../shared/cli/run.ts";
+import {
+  ExperimentalFeatureFlagError,
+  resolveExperimentalFeature,
+} from "../../../command-internal/experimental-feature.ts";
+import { extractCommandPath, hasRootVersionFlag, rootFlagTokens } from "../../../shared/cli/run.ts";
 
 const computeRoutingSchema = Schema.Struct({
   experimental: Schema.optionalKey(
@@ -95,18 +98,24 @@ export const resolveComputeEnabled = (input: {
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
   readonly env: Readonly<Record<string, string | undefined>>;
-}): Effect.Effect<boolean, never, FileSystem.FileSystem | Path.Path> =>
+}): Effect.Effect<boolean, ExperimentalFeatureFlagError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const routingArgs =
       input.args[0] === "__complete" || input.args[0] === "__completeNoDesc"
         ? input.args.slice(0, -1)
         : input.args;
     if (hasRootVersionFlag(routingArgs)) return false;
+    const commandPath = extractCommandPath(routingArgs);
+    const completePath =
+      commandPath[0] === "__complete" || commandPath[0] === "__completeNoDesc"
+        ? commandPath.slice(1)
+        : commandPath;
+    if (completePath[0] !== undefined && completePath[0] !== "compute") return false;
     return yield* resolveExperimentalFeature({
       feature: "compute",
       configValue: configValue({ ...input, args: routingArgs }).pipe(
         Effect.catchTag("ComputeRoutingError", () => Effect.succeed(false)),
       ),
       env: input.env,
-    }).pipe(Effect.catchTag("ExperimentalFeatureFlagError", () => Effect.succeed(false)));
+    });
   });

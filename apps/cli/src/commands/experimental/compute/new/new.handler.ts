@@ -44,7 +44,6 @@ import {
   ComputeDirectoryExistsError,
 } from "../../../../shared/compute/compute.errors.ts";
 import {
-  loadComputeProject,
   loadComputeProjectForEntryWrite,
   validateComputeName,
   type ComputeProject,
@@ -261,7 +260,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       Effect.mapError((error) => new ComputeNewWorkdirError({ message: error.message })),
     );
 
-    const project = yield* loadComputeProjectForEntryWrite;
+    const project = yield* loadComputeProjectForEntryWrite();
 
     // Decided once, before the first prompt rather than beside the last, since
     // the name is now asked for too — every prompt below shares the answer.
@@ -281,32 +280,6 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         detail: `"${name}" is already configured in ${project.configPath}.`,
         suggestion: `Edit [compute.${name}] in ${project.configPath} yourself, or pick a different compute name.`,
       });
-    }
-
-    // A DEFAULTED workdir's reader (`compute list`/`push`/`status`, used
-    // via `loadComputeProject`) can discover a config.json-only
-    // ancestor project by climbing (CLI-2285); this command's own writer
-    // above is TOML-only and never climbs, so the two can disagree about
-    // which project is "the" project. When they do, and that ancestor
-    // already configures this name, writing a same-named compute here would
-    // silently create a second, disagreeing `[compute.<name>]` under a
-    // different root instead of the collision already refused above for
-    // this command's OWN root. An explicit `--workdir`/`SUPABASE_WORKDIR`
-    // never has this gap — both views are pinned to the same root then — so
-    // this only runs for a defaulted workdir, and only costs an extra read
-    // when it is.
-    if (!cliSettings.explicitWorkdir) {
-      const discovered = yield* loadComputeProject.pipe(Effect.option);
-      if (
-        Option.isSome(discovered) &&
-        discovered.value.projectRoot !== project.projectRoot &&
-        discovered.value.section.compute[name] !== undefined
-      ) {
-        return yield* new ComputeAlreadyConfiguredError({
-          detail: `"${name}" is already configured in ${discovered.value.configPath}.`,
-          suggestion: `Run this command from ${discovered.value.projectRoot} to manage it there, or pick a different compute name.`,
-        });
-      }
     }
 
     // Resolved before anything is written, so cancelling any prompt leaves
