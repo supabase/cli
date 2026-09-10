@@ -73,6 +73,32 @@ export function dockerEndpointSocketPath(endpoint: string): string | undefined {
 }
 
 /**
+ * How the endpoint is named in {@link localDockerEngineLayer}'s decline line:
+ * by its scheme alone.
+ *
+ * That is the whole reason the probe declined — `tcp`, `ssh` and `fd` are not
+ * local sockets — and it is the one part of a `DOCKER_HOST` that cannot carry
+ * a credential. The rest can: `ssh://user:secret@host` is a supported spelling,
+ * and once a password holds an unencoded `@`, `/`, `?` or `#` there is no
+ * telling it apart from an ordinary host and path, so none of it is printed.
+ */
+function describeEndpoint(endpoint: string | undefined): string {
+  if (endpoint === undefined) {
+    return "unresolved context";
+  }
+  // Anchored on `://`, so a value with no scheme cannot report its own first
+  // segment as one — that segment is the username in `user:secret@host`.
+  const scheme = /^[a-zA-Z][a-zA-Z0-9+.-]*(?=:\/\/)/.exec(endpoint);
+  if (scheme === null) {
+    return "no scheme";
+  }
+  const name = scheme[0].toLowerCase();
+  // A socket scheme only reaches the decline branch with nothing after it, so
+  // naming it alone would read as a contradiction.
+  return name === "unix" || name === "npipe" ? `${name}, no socket path` : name;
+}
+
+/**
  * Socket-inactivity deadline: a connected-but-silent endpoint degrades to the
  * container-CLI fallback instead of parking the command (#6110's hang shape).
  */
@@ -206,8 +232,9 @@ const inspectContainerOverSocket = (
  * `docker` CLI itself would (`DOCKER_HOST` -> context store -> platform
  * default), inside `Effect.suspend` so every execution sees the current
  * environment. With `DebugLogger` provided (the db families provide it), the
- * probe's endpoint and fallback decisions surface under `--debug` — otherwise
- * this is the one HTTP call the debug side channel cannot see.
+ * probe's socket and fallback decisions surface under `--debug` — otherwise
+ * this is the one HTTP call the debug side channel cannot see. An endpoint it
+ * cannot address is named by {@link describeEndpoint}, never printed.
  */
 export const localDockerEngineLayer: Layer.Layer<LocalDockerEngine> = Layer.effect(
   LocalDockerEngine,
@@ -225,7 +252,7 @@ export const localDockerEngineLayer: Layer.Layer<LocalDockerEngine> = Layer.effe
             endpoint === undefined ? undefined : dockerEndpointSocketPath(endpoint);
           if (socketPath === undefined) {
             return debug(
-              `local db engine probe: endpoint not directly addressable (${endpoint === undefined ? "unresolved context" : redactHttpUrl(endpoint)}) — using the container CLI`,
+              `local db engine probe: endpoint not directly addressable (${describeEndpoint(endpoint)}) — using the container CLI`,
             ).pipe(Effect.as(Option.none()));
           }
           return httpLine(`${endpoint}/containers/${containerId}/json`).pipe(

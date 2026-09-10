@@ -303,10 +303,21 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
                 l.includes("/containers/supabase_db_engine-probe/json"),
             ),
           ).toBe(true);
-          yield* withDockerHost("ssh://user@remote-host", traced);
+          // Plainly, then with a password a URL parser mis-locates, then with
+          // no scheme for one to anchor on at all.
+          yield* withDockerHost("ssh://user:hunter2@remote-host", traced);
           expect(
-            lines.some((l) => l.startsWith("debug:") && l.includes("not directly addressable")),
+            lines.some(
+              (l) => l.startsWith("debug:") && l.includes("not directly addressable (ssh)"),
+            ),
           ).toBe(true);
+          expect(lines.some((l) => l.includes("hunter2") || l.includes("remote-host"))).toBe(false);
+          yield* withDockerHost("tcp://user:#hunter3@10.0.0.5:2376", traced);
+          expect(lines.some((l) => l.includes("not directly addressable (tcp)"))).toBe(true);
+          expect(lines.some((l) => l.includes("hunter3") || l.includes("10.0.0.5"))).toBe(false);
+          yield* withDockerHost("deploy:hunter4@10.0.0.5:2376", traced);
+          expect(lines.some((l) => l.includes("not directly addressable (no scheme)"))).toBe(true);
+          expect(lines.some((l) => l.includes("hunter4") || l.includes("deploy"))).toBe(false);
           const missingDir = mkdtempSync(join(tmpdir(), "ldbgone-"));
           yield* withDockerHost(`unix://${join(missingDir, "never-created.sock")}`, traced).pipe(
             Effect.ensuring(
