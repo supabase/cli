@@ -1,4 +1,5 @@
 import { Layer } from "effect";
+import { localDockerEngineLayer } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
@@ -33,6 +34,8 @@ const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
 export const dbStartRuntimeLayer = Layer.mergeAll(
   cliSettings,
   telemetryStateLayer,
+  // Backs `isLocalDbRunning`'s direct Engine-API probe (+ its `--debug` trace).
+  localDockerEngineLayer.pipe(Layer.provide(debugLoggerLayer)),
   commandRuntimeLayer(["db", "start"]),
   dockerRunLayer,
   dbConnectionLayer,

@@ -46,6 +46,7 @@ import {
   PGDATA_PATH,
 } from "../../src/command-internal/db-bootstrap/pgdata-snapshot.ts";
 import { projectRefLayer } from "../../src/config/project-ref.layer.ts";
+import { LocalDockerEngine } from "../../src/command-internal/db-bootstrap/local-db-running.ts";
 import { LinkedProjectCache } from "../../src/telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../src/telemetry/telemetry-state.service.ts";
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
@@ -82,6 +83,15 @@ export const DEFAULT_USER_AGENT = "SupabaseCLI/0.0.0-dev";
 
 export const mockLinkedProjectCacheLayer = Layer.succeed(LinkedProjectCache, {
   cache: () => Effect.void,
+});
+
+/**
+ * Hermetic default: the Engine probe never answers, so tests exercise their
+ * mocked container-CLI spawner instead of dialing the machine's real Docker
+ * socket. Direct-path tests provide their own definitive `LocalDockerEngine`.
+ */
+export const mockLocalDockerEngineUnavailableLayer = Layer.succeed(LocalDockerEngine, {
+  containerExists: () => Effect.succeed(Option.none()),
 });
 
 export const mockTelemetryStateLayer = Layer.succeed(TelemetryState, {

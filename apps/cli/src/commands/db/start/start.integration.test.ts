@@ -16,6 +16,7 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
+  mockLocalDockerEngineUnavailableLayer,
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
@@ -27,6 +28,7 @@ import {
   NetworkIdFlag,
 } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
+import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import { DbConnection, type DbSession } from "../../../command-internal/db-connection.service.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
@@ -323,6 +325,7 @@ function setup(opts: SetupOpts = {}) {
     cliSettings,
     telemetry.layer,
     child.layer,
+    mockLocalDockerEngineUnavailableLayer,
     alwaysReadyHttpClientLayer,
     dbConnection,
     dockerRunLayer.pipe(Layer.provide(child.layer), Layer.provide(mockProcessControl().layer)),
@@ -373,6 +376,25 @@ describe("db start", () => {
       expect(existsSync(currentBranchPath(tempRoot.current))).toBe(false);
     });
   });
+
+  it.live(
+    "reports an already-running database from the direct Engine-API answer without touching the container CLI",
+    () => {
+      const { layer, out, child } = setup({});
+      return Effect.gen(function* () {
+        yield* dbStart(DEFAULT_FLAGS).pipe(
+          Effect.provide(
+            Layer.succeed(LocalDockerEngine, {
+              containerExists: () => Effect.succeed(Option.some(true)),
+            }),
+          ),
+          Effect.provide(layer),
+        );
+        expect(out.stderrText).toContain("Postgres database is already running.");
+        expect(child.spawned).toEqual([]);
+      });
+    },
+  );
 
   it.live(
     "starts the database on a fresh volume: creates the container, runs the SetupLocalDatabase-equivalent pipeline, and writes _current_branch",

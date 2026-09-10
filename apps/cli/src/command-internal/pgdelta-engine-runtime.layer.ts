@@ -13,6 +13,7 @@ import { pgDeltaNextEngineLayer } from "../commands/db/shared/pgdelta-engine.nex
 import { pgDeltaNextAdapterLayer } from "../commands/db/shared/pgdelta-next-adapter.layer.ts";
 import { pgDeltaNextShadowLayer } from "../commands/db/shared/pgdelta-next-shadow.layer.ts";
 import { declarativeSeamLayer } from "../commands/db/shared/pgdelta.seam.layer.ts";
+import { localDockerEngineLayer } from "./db-bootstrap/local-db-running.ts";
 
 /** The in-process pg-delta engine — the only implementation. */
 const pgDeltaEngineLayer = pgDeltaNextEngineLayer;
@@ -43,11 +44,14 @@ export const migraRuntimeLayer = Layer.mergeAll(
   pgDeltaSslProbeLayer,
 );
 const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
+const localDockerEngine = localDockerEngineLayer.pipe(Layer.provide(debugLoggerLayer));
 const seam = declarativeSeamLayer.pipe(
   Layer.provide(pgDeltaCommandSettingsRuntimeLayer),
   Layer.provide(dbConnectionLayer),
   Layer.provide(dockerRunLayer),
   Layer.provide(httpClient),
+  // Backs the seam's `isLocalDbRunning`/`startLocalDatabase` Engine-API probe.
+  Layer.provide(localDockerEngine),
 );
 const nextShadow = pgDeltaNextShadowLayer.pipe(
   Layer.provide(dockerRunLayer),
@@ -71,4 +75,6 @@ export const pgDeltaCommandRuntimeLayer = Layer.mergeAll(
   seam,
   engine,
   pgDeltaCommandSettingsRuntimeLayer,
+  // Exposed for handlers' own direct `isLocalDbRunning` calls (`db diff --use-pgadmin`).
+  localDockerEngine,
 );
