@@ -237,6 +237,54 @@ pnpm test
 
 If a workspace exposes a different script set, use that workspace's `package.json` as the source of truth.
 
+## Comments
+
+Comments exist for the next reader, not as the author's audit trail. Code states what happens; a comment states only the why that the code cannot carry. Most code needs no comment at all.
+
+### When to comment
+
+Write a comment only for one of these:
+
+- An invariant or constraint the types cannot express and that a later edit could silently break.
+- A workaround for an external quirk (Docker, Postgres, an OS, a library), naming the symptom it avoids.
+- A decision that would otherwise read as a bug, in one or two sentences.
+- A pointer to where the full rationale lives: an ADR under `docs/adr/`, a `SIDE_EFFECTS.md`, a `docs/` page, or an upstream issue URL.
+
+If the rationale needs more than three lines, it does not belong in a comment. Move it to an ADR or a docs page and leave a one-line pointer.
+
+### How to comment
+
+- Prefer JSDoc (`/** … */`) on exported symbols. Lead with a one-sentence summary. Use `@param`, `@returns`, `@throws`, `@see`, `@deprecated`, `@example`, and `{@link}` where they carry the information more compactly than prose; skip `@param`/`@returns` when the name and type already say it.
+- Skip JSDoc on internal helpers whose name and signature are self-explanatory. A helper that needs a paragraph to explain wants a better name or a smaller scope, not a comment.
+- Keep inline `//` comments to one or two lines, placed above the statement they explain.
+- Describe behavior in its own terms and in the present tense.
+- Published packages (`@supabase/config`) ship JSDoc to consumers through `.d.ts`, so every public export there carries a one-line summary.
+- This repo is public. Nothing internal (see "Pull Requests") goes into a comment.
+
+### Never write
+
+- Narration of the code: "loop over the rows", "return early if empty", "call the API".
+- Provenance and history: Go file:line citations, commit SHAs, PR numbers, review-round notes, "previously", "no longer", "was renamed", "deleted in …". Git holds history.
+- Evidence trails: "verified empirically", "confirmed by grepping every call site", "surveyed N call sites". Encode the evidence as a test instead.
+- Ticket IDs as provenance. `CLI-1234` belongs only in a `TODO(CLI-1234):` or when it is the only home a decision has and no ADR exists.
+- Emphasis: ALL-CAPS words, "deliberately", "DELIBERATE divergence", "crucially", "exactly". State the constraint once, plainly.
+- Meta-commentary on the code's own shape: "not exported, callers reference it structurally", "hoisted to file scope so both suites share it", "kept separate on purpose".
+- Section banners such as `// ---- Helpers ----`. Reorder or split the file instead.
+- Restatements of docs. If a `SIDE_EFFECTS.md` or an ADR already explains it, link it.
+- Go-parity framing. See "Source of Truth" in `apps/cli/AGENTS.md`.
+
+### Tests
+
+The test name carries the intent. Comment only non-obvious fixture setup, in one line. Do not annotate assertions with the reasoning behind them; put that reasoning into the test name or a more specific assertion.
+
+### Directive comments
+
+`// oxlint-disable-next-line`, `// @ts-expect-error`, `/// <reference …>`, shebangs, and similar are instructions to tools, not prose. Keep them, and give every lint disable a short reason after `--`.
+
+### Size check
+
+A source file whose comment lines exceed a quarter of its code lines almost certainly holds prose that belongs in docs. Trim it before merging.
+
 ## Workspace graph and task execution
 
 This repo uses pnpm workspaces and Turbo for task execution and dependency
