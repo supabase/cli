@@ -70,17 +70,10 @@ describe("supabase sso", () => {
     },
   );
 
-  // `add`'s `--type` has no `Flag.optional` (see `add.command.ts`) — it is a
-  // required flag — so a missing/invalid `--type` used to dump the full help
-  // doc to stdout AND print the error twice on stderr. No auth/network call
-  // ever happens for either case: flag parsing fails before the handler runs.
-  //
-  // A missing required flag and an invalid choice value get different
-  // treatment: usage-silencing is set BEFORE required-flag validation runs,
-  // so a missing `--type` is a single clean stderr line with no usage
-  // block — but `Flag.choice` validation happens during parsing, BEFORE
-  // that point, so an invalid `--type` value still shows a usage block,
-  // always on stderr, never stdout.
+  // Usage-silencing is set before required-flag validation, so a missing
+  // `--type` prints a single clean stderr line with no usage block — but
+  // `Flag.choice` validation runs during parsing, before that point, so an
+  // invalid `--type` value still shows a usage block.
   test(
     "add without --type: stdout stays clean, stderr is a single Go-parity line (no usage block)",
     { timeout: E2E_TIMEOUT_MS },
