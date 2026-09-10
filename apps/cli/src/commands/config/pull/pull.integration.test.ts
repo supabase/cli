@@ -43,14 +43,8 @@ import {
 } from "./pull.handler.ts";
 import type { ConfigPullFlags } from "./pull.command.ts";
 
-/**
- * Setup + fixtures mirror `../diff/diff.integration.test.ts` — same temp
- * workdir helper, same mocked platform API/output/telemetry/linked-project
- * services, same `v2Response()` schema-defaults fixture (an empty
- * config.toml diffs clean against it). The core smoke cases below are
- * structured so a follow-up pass can extend the `setup()` options and add
- * more `describe`/`it.live` blocks without refactoring this shape.
- */
+// Setup mirrors ../diff/diff.integration.test.ts: same temp workdir helper, mocked
+// services, and v2Response() fixture.
 
 const tempRoot = useTempWorkdir("supabase-config-pull-int-");
 
@@ -89,14 +83,12 @@ function writeProjectEnv(dotenv: string): void {
   writeFileSync(join(dir, ".env"), dotenv);
 }
 
-/** Save/restore a `process.env` var around an Effect — mirrors
- * `push.integration.test.ts`'s `withDotenvPrivateKey` pattern. Set directly
- * on `process.env` (not `supabase/.env`) — `pull.handler.ts`'s
- * schema-validation gate resolves `env(VAR)` EXACTLY like the loader
- * (`decodeCliConfigDocumentForValidationEffect`, `@supabase/config/internal`:
- * process env layered with the project's own `.env`/`.env.local`), so either
- * source works for both the initial load and the gate alike; a bare
- * `process.env` var is the simplest one to set/restore from a test. */
+/**
+ * Save/restore a `process.env` var around an Effect. Set directly on `process.env` rather than
+ * `supabase/.env`: the schema-validation gate resolves `env(VAR)` the same way the loader does
+ * (process env layered with the project's own `.env` files), so either source works, and
+ * `process.env` is simplest to set/restore in a test.
+ */
 function withProcessEnv<A, E, R>(
   name: string,
   value: string | undefined,
@@ -115,11 +107,8 @@ function withProcessEnv<A, E, R>(
   );
 }
 
-/** Schema-valid v2 project-config body whose managed values all sit at the
- * local schema defaults, so an empty config.toml diffs clean against it —
- * copied from `diff.integration.test.ts` (same rationale: the largest,
- * most transform-heavy mapping surface must run end to end and classify
- * cleanly). */
+/** Schema-valid v2 project-config body whose managed values all sit at the local schema
+ *  defaults, so an empty config.toml diffs clean against it. */
 function v2Response(
   opts: {
     readonly ref?: string;
@@ -286,13 +275,9 @@ const BRANCH_CONFIG = {
 };
 
 /**
- * Wraps `base` so every `promptConfirm` call first runs `onConfirm` (a
- * synchronous side effect) before delegating to the real mock — used ONLY to
- * simulate a concurrent edit landing on disk WHILE the confirmation prompt is
- * "on screen" (the TOCTOU case `pull.handler.ts` step 12 guards against).
- * Standard Effect composition: `Layer.effect` requiring `Output` gets
- * `Layer.provide`d the base layer, producing a new `Layer<Output>` with no
- * outstanding requirement.
+ * Wraps `base` so every `promptConfirm` call runs `onConfirm` first, simulating a concurrent
+ * edit landing on disk while the confirmation prompt is on screen (the TOCTOU case
+ * `pull.handler.ts`'s write step guards against).
  */
 function withConfirmSideEffect(
   base: Layer.Layer<Output>,
@@ -312,12 +297,9 @@ function withConfirmSideEffect(
 }
 
 /**
- * Fakes the `git status --porcelain -- config.toml` subprocess the dirty
- * guard (`git-status.ts`) issues — pattern copied from
- * `git-status.unit.test.ts`'s own `mockSpawner`. Listed AFTER
- * `buildTestRuntime` in the layer merge (below) so it overrides the
- * real spawner `BunServices.layer` provides (last-wins, same precedent as
- * `signing-key.integration.test.ts`'s `mockGitCheckIgnore`).
+ * Fakes the `git status --porcelain -- config.toml` subprocess the dirty guard issues. Listed
+ * after `buildTestRuntime` in the layer merge below so it overrides the real spawner
+ * (last-wins).
  */
 function mockGitStatusSpawner(
   opts: { readonly dirty?: boolean; readonly spawnFails?: boolean } = {},
@@ -562,23 +544,11 @@ describe("config pull integration", () => {
   it.live(
     "a first-pull auth.oauth_server.enabled no longer trips the ADR 0021 unpushable warning (CLI-2314)",
     () => {
-      // Before CLI-2314, `applyPushUnmanagedOmissions` dropped the WHOLE
-      // `auth.oauth_server` subtree from the DOCUMENT arm unconditionally,
-      // so writing `enabled` here on a first pull immediately reclassified
-      // it as `unmanaged` — this test used to pin that "written here, but
-      // config push cannot send it back" warning. `enabled` is now an
-      // ordinary comparable path: writing it converges local and remote
-      // exactly, so no residual `unmanaged` entry exists to warn about, and
-      // it stays genuinely round-trippable. (Its siblings —
-      // `allow_dynamic_registration`/`authorization_url_path` — are still
-      // pruned while the container is declared disabled, see the
-      // "declared-but-unpushable" tests below, but that pruning runs
-      // symmetrically on both the local and remote arms, keyed on each
-      // side's OWN `enabled` value, so a value pull ever writes for them can
-      // never itself be the one that goes unmanaged: the remote only ever
-      // reports a real value for them while its own `enabled` is `true`,
-      // and pull always converges local's `enabled` to match in the same
-      // run.)
+      // `enabled` is now an ordinary comparable path: writing it converges local and remote
+      // exactly, so no residual `unmanaged` entry exists to warn about. Its siblings
+      // (`allow_dynamic_registration`/`authorization_url_path`) are still pruned while the
+      // container is disabled, but symmetrically on both arms, so a pull never writes a value
+      // for them that itself goes unmanaged.
       const { layer, out } = setup({
         toml: 'project_id = "test"\n',
         yes: true,
@@ -610,19 +580,12 @@ describe("config pull integration", () => {
   it.live(
     "a first-pull auth.rate_limit.email_sent DOES trip the ADR 0021 unpushable warning, for a sparse remote (review round, CLI-2314)",
     () => {
-      // `applyDisabledSentinels`'s cross-section rule (`project-config.ts`,
-      // search "Cross-section rule: the email rate limit") deletes
-      // `auth.rate_limit.email_sent` whenever `auth.email.smtp.enabled`
-      // decodes explicitly `false` — checked on BOTH arms. The stock fixture
-      // reports `smtp_host: ""` (an ordinary "not configured" response),
-      // which decodes `enabled: false` explicitly and would prune
-      // `email_sent` on the API arm too, leaving nothing to diff — deleting
-      // `smtp_host` from the response instead (never mentioning it, a
-      // genuinely SPARSE shape) is what spares `email_sent` there. Combined
-      // with the LOCAL document never declaring `[auth.email.smtp]` either
-      // (so `applyRawPresenceMask` re-masks the just-written value on the
-      // residual check), this reproduces the one live trigger for the
-      // "unpushable" warning today.
+      // applyDisabledSentinels's cross-section rule deletes auth.rate_limit.email_sent whenever
+      // auth.email.smtp.enabled decodes false, on both arms. The stock fixture's smtp_host: ""
+      // would decode enabled: false and prune email_sent on the API arm too; omitting smtp_host
+      // entirely (a genuinely sparse response) is what spares it there. Combined with the local
+      // document never declaring [auth.email.smtp], this reproduces the one live trigger for the
+      // unpushable warning.
       const { layer, out } = setup({
         toml: 'project_id = "test"\n',
         yes: true,
@@ -672,7 +635,7 @@ describe("config pull integration", () => {
       yield* configPull(noFlags);
       expect(readFileSync(configPath(), "utf8")).toBe(before);
       expect(out.promptConfirmCalls).toHaveLength(1);
-      // No `[remotes.*]` suffix for a root-bound write (CLI-2064 item F.5).
+      // No [remotes.*] suffix for a root-bound write.
       expect(out.promptConfirmCalls[0]?.message).toBe(
         `Apply 1 change(s) to ${join("supabase", "config.toml")}?`,
       );
@@ -712,12 +675,11 @@ describe("config pull integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       const rendered = JSON.stringify(exit);
       expect(rendered).toContain("ConfigPullLoadConfigError");
-      // A DEFAULTED workdir with no project keeps the established
-      // `supabase init` suggestion — only an EXPLICIT --workdir/SUPABASE_WORKDIR
-      // gets the resolved-path wording (see the CLI-2285 regression below).
+      // A defaulted workdir with no project keeps the supabase init suggestion; only an
+      // explicit --workdir/SUPABASE_WORKDIR gets the resolved-path wording.
       expect(rendered).toContain("supabase init");
-      // The load runs before any network call or target resolution, so the
-      // linked-project cache never fires — no ref ever resolved.
+      // The load runs before any network call or target resolution, so the linked-project
+      // cache never fires.
       expect(api.requests).toHaveLength(0);
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();
@@ -727,13 +689,8 @@ describe("config pull integration", () => {
   it.live(
     "does not climb to an ancestor project's config when --workdir names a subdirectory with no config of its own",
     () => {
-      // CLI-2285 regression: an explicit --workdir is authoritative and must
-      // never let `loadCliConfig` climb past it — a `config pull --workdir
-      // ./sub` from a project whose subdirectory has no supabase/ of its
-      // own must not silently overwrite an unrelated PARENT project's
-      // config. The ancestor (tempRoot) genuinely has a valid config.toml
-      // (captured below to prove it is never touched) and the subdirectory
-      // genuinely has none.
+      // The ancestor (tempRoot) genuinely has a valid config.toml (captured below to prove
+      // it's never touched); the subdirectory genuinely has none.
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
       const sub = join(tempRoot.current, "nested", "dir");
       mkdirSync(sub, { recursive: true });
@@ -746,14 +703,11 @@ describe("config pull integration", () => {
         const rendered = JSON.stringify(exit);
         expect(rendered).toContain("ConfigPullLoadConfigError");
         expect(rendered).toContain("file not found");
-        // An EXPLICIT workdir never gets the ancestor-search-exhausted
-        // `supabase init` hint — it names the resolved directory instead, and
-        // points at the flag/env var that must change.
+        // An explicit workdir skips the ancestor-search "supabase init" hint; it names the
+        // resolved directory and the flag/env var to change instead.
         expect(rendered).not.toContain("supabase init");
         expect(rendered).toContain("--workdir/SUPABASE_WORKDIR");
         expect(rendered).toContain(sub);
-        // Nothing was written to disk anywhere — the ancestor config file
-        // stays byte-identical and untouched.
         expect(statSync(path).mtimeMs).toBe(beforeStat.mtimeMs);
         expect(readFileSync(path, "utf8")).toBe(beforeStat.contents);
       }).pipe(Effect.provide(layer));
@@ -763,9 +717,6 @@ describe("config pull integration", () => {
   it.live(
     "an explicit --workdir naming a directory that does not exist at all fails before any config load",
     () => {
-      // Distinct from the "exists but holds no project" regression above:
-      // this path was never created, so `validateWorkdirIsDirectory`
-      // must fail first, and nothing is ever written to disk.
       const missing = join(tempRoot.current, "does-not-exist");
       const { layer, api } = setup({ workdir: missing, explicitWorkdir: true });
       return Effect.gen(function* () {
@@ -775,15 +726,10 @@ describe("config pull integration", () => {
         expect(rendered).toContain("ConfigPullWorkdirError");
         expect(rendered).toContain("failed to change workdir: chdir");
         expect(api.requests).toHaveLength(0);
-        // Nothing was written to disk — the missing directory stays missing.
         expect(existsSync(missing)).toBe(false);
       }).pipe(Effect.provide(layer));
     },
   );
-
-  // -------------------------------------------------------------------------
-  // Scope resolution / --remote-label (CLI-2064 §1.1).
-  // -------------------------------------------------------------------------
 
   it.live(
     "reuses an existing [remotes.*] block regardless of its own label when its project_id matches the target",
@@ -894,8 +840,7 @@ describe("config pull integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
         expect(rendered).toContain("ConfigPullRemoteLabelCollisionError");
-        // CLI-2064 item E: names the ACTUALLY conflicting block (`other`),
-        // not the requested-but-unused label.
+        // Names the actually conflicting block (`other`), not the requested-but-unused label.
         expect(rendered).toContain("[remotes.other] already tracks project");
         expect(rendered).toContain(VALID_REF);
         expect(readFileSync(configPath(), "utf8")).toBe(before);
@@ -958,10 +903,6 @@ describe("config pull integration", () => {
   it.live(
     "a branch-named target that collides with an existing, differently-tracked block fails with a collision error, and the file stays untouched (CLI-2064 item A)",
     () => {
-      // Before item A's fix, a branch named "staging" landing on an
-      // unrelated `[remotes.staging]` block returned `created: true` and the
-      // handler REPLACED that block's own `project_id`, stranding its stale
-      // overrides.
       const before = [
         'project_id = "test"',
         "[remotes.staging]",
@@ -1009,10 +950,6 @@ describe("config pull integration", () => {
     },
   );
 
-  // -------------------------------------------------------------------------
-  // Destination line ordering.
-  // -------------------------------------------------------------------------
-
   it.live(
     "the destination line prints to stderr before any network call, and survives a failed fetch",
     () => {
@@ -1024,10 +961,6 @@ describe("config pull integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
-
-  // -------------------------------------------------------------------------
-  // Atomicity.
-  // -------------------------------------------------------------------------
 
   it.live("no temp file is left behind in supabase/ after a successful write", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
@@ -1043,12 +976,9 @@ describe("config pull integration", () => {
   it.live(
     "an editor refusal (an edit path through an inline table) leaves the file byte-identical and fails with ConfigPullUnsupportedLayoutError",
     () => {
-      // A genuine duplicate `[api]` table header (the plan's own example
-      // fixture) is rejected by `smol-toml` itself at LOAD time — the load
-      // step (`loadCliConfig`) would fail first with a parse error, never
-      // reaching `applyConfigEdits`. An inline table is the reachable
-      // equivalent: valid, loadable TOML whose surgical text-span editor
-      // still refuses to edit through it (`inline_table_on_path`).
+      // A genuine duplicate [api] table header would be rejected by smol-toml itself at load
+      // time, never reaching applyConfigEdits. An inline table is the reachable equivalent:
+      // valid, loadable TOML whose surgical text-span editor still refuses to edit through it.
       const before = 'project_id = "test"\napi = { max_rows = 500 }\n';
       const { layer } = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
@@ -1056,8 +986,7 @@ describe("config pull integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         const rendered = JSON.stringify(exit);
         expect(rendered).toContain("ConfigPullUnsupportedLayoutError");
-        // CLI-2064 item F.3: prose, not the raw reason token, plus a
-        // remediation sentence.
+        // Prose, not the raw reason token, plus a remediation sentence.
         expect(rendered).toContain("an inline table on this path");
         expect(rendered).toContain("Rewrite it as a standard [table] section, then rerun.");
         expect(rendered).not.toContain("inline_table_on_path");
@@ -1065,10 +994,6 @@ describe("config pull integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
-
-  // -------------------------------------------------------------------------
-  // Never-written classes.
-  // -------------------------------------------------------------------------
 
   it.live("a local-only declared property survives the write and is reported skipped", () => {
     const before = [
@@ -1196,9 +1121,8 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         yield* configPull(noFlags);
         const after = readFileSync(configPath(), "utf8");
-        // The `site_url` key stays byte-identical — the remote's env()-spelled
-        // value is never written — while the unrelated `max_rows` change,
-        // which carries no such risk, is written normally.
+        // site_url stays byte-identical since the remote's env()-spelled value is never
+        // written, while the unrelated max_rows change is written normally.
         expect(after).toContain('site_url = "https://local.example.com"');
         expect(after).toContain("max_rows = 1000");
         const success = out.messages.find((message) => message.type === "success");
@@ -1216,10 +1140,6 @@ describe("config pull integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
-
-  // -------------------------------------------------------------------------
-  // Warnings (CLI-2064 §1.3, ADR 0023).
-  // -------------------------------------------------------------------------
 
   it.live("writing a dual-scope property to the config root warns before the prompt", () => {
     const before = 'project_id = "test"\n[auth]\nsite_url = "https://custom.example.com"\n';
@@ -1267,17 +1187,11 @@ describe("config pull integration", () => {
   it.live(
     "a remote block's write that duplicates the config root's own value warns of redundancy",
     () => {
-      // Bonus coverage for §1.3's OTHER redundancy warning (`array_drift`'s
-      // sibling `duplicates_root`) — `array_drift` itself (an array-valued
-      // `remote_only` write into a block the root ALSO declares) turns out to
-      // be unreachable through the real loader: `applyRemoteOverride`'s
-      // overlay merge always inherits a root-declared path as "declared" in
-      // whatever document the diff is computed against, so a write the root
-      // also declares can only ever classify as "update", never
-      // "remote_only" (verified directly against `@supabase/config` — see
-      // the coverage-gaps note in the test report). It stays covered at the
-      // planner-unit level (`pull.plan.unit.test.ts`) via a synthetic
-      // changeSet/rootDocument pair the real loader cannot produce together.
+      // array_drift (an array-valued remote_only write into a block the root also declares) is
+      // unreachable through the real loader: applyRemoteOverride's overlay merge always
+      // inherits a root-declared path as "declared", so such a write can only classify as
+      // "update", never "remote_only". It's covered instead at the planner-unit level
+      // (pull.plan.unit.test.ts) via a synthetic changeSet/rootDocument pair.
       const before = [
         'project_id = "test"',
         "[api]",
@@ -1299,16 +1213,11 @@ describe("config pull integration", () => {
     },
   );
 
-  // -------------------------------------------------------------------------
-  // Uncommitted changes / dirty guard (CLI-2064 §1.4).
-  // -------------------------------------------------------------------------
-
   it.live(
     "uncommitted changes abort without --force in text+non-tty mode, leaving the file untouched",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
-      // `--yes` is set to prove it does NOT override the dirty guard — only
-      // `--force` does.
+      // --yes is set to prove it doesn't override the dirty guard; only --force does.
       const { layer } = setup({ toml: before, gitDirty: true, yes: true });
       return Effect.gen(function* () {
         const exit = yield* configPull(noFlags).pipe(Effect.exit);
@@ -1438,12 +1347,6 @@ describe("config pull integration", () => {
     },
   );
 
-  // -------------------------------------------------------------------------
-  // Zero-drift block creation (CLI-2064 bug B): a branch/`--remote-label`
-  // target with NOTHING to write still creates its `[remotes.*]` block, so
-  // block reuse engages on every later run instead of repeating forever.
-  // -------------------------------------------------------------------------
-
   it.live(
     "a zero-drift branch target still creates its [remotes.*] block; a second run reuses it and writes nothing",
     () => {
@@ -1459,8 +1362,7 @@ describe("config pull integration", () => {
         expect(first.out.promptConfirmCalls).toHaveLength(1);
         expect(first.out.promptConfirmCalls[0]?.message).toContain("Create [remotes.staging] in");
         expect(first.out.promptConfirmCalls[0]?.message).toContain(join("supabase", "config.toml"));
-        // The block-only body states its one action too (CLI-2064 item F.6),
-        // not only the confirmation prompt above.
+        // The block-only body states its one action too, not only the confirmation prompt above.
         expect(first.out.stdoutText).toContain(
           `New block [remotes.staging] will be created (project_id = ${BRANCH_REF}).`,
         );
@@ -1545,10 +1447,6 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
-  // --yes / convergence / TOCTOU.
-  // -------------------------------------------------------------------------
-
   it.live("--yes skips the confirmation prompt entirely, even on a real TTY", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({ toml: before, yes: true, stdinIsTty: true });
@@ -1597,10 +1495,6 @@ describe("config pull integration", () => {
     },
   );
 
-  // -------------------------------------------------------------------------
-  // -o/--output rejection (CLI-2156).
-  // -------------------------------------------------------------------------
-
   it.live("every -o/--output value is rejected before any config load or network call", () => {
     const values = GLOBAL_OUTPUT_FORMATS;
     const run = (goOutput: (typeof values)[number]) => {
@@ -1625,10 +1519,6 @@ describe("config pull integration", () => {
       }
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Target resolution (mirrors `../diff/diff.integration.test.ts`).
-  // -------------------------------------------------------------------------
 
   it.live("a branch-named target resolves via the linked parent project", () => {
     const { layer, api, out } = setup({
@@ -1783,10 +1673,6 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
-  // Remaining local-load / config-read status branches (branch coverage).
-  // -------------------------------------------------------------------------
-
   it.live("a malformed config aborts before any network call, even with a branch target", () => {
     const { layer, api, telemetry } = setup({ toml: "not [valid toml\n" });
     return Effect.gen(function* () {
@@ -1899,10 +1785,6 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
-  // config.json project.
-  // -------------------------------------------------------------------------
-
   it.live(
     "a config.json project is rewritten preserving key order and indent, changing only the drifted property",
     () => {
@@ -1918,11 +1800,6 @@ describe("config pull integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
-
-  // -------------------------------------------------------------------------
-  // Narrow branch-coverage fill-ins (spinner-suppression, decode failures,
-  // malformed response shapes, and the write/re-read error paths).
-  // -------------------------------------------------------------------------
 
   it.live("a branch-lookup transport failure maps to the read network error", () => {
     const { layer } = setup({ toml: 'project_id = "test"\n', branchByName: "fail" });
@@ -2057,9 +1934,8 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull(noFlags).pipe(Effect.exit);
       chmodSync(dir, 0o700);
-      // Running as root (some CI/container setups) bypasses the permission
-      // bit entirely — skip the assertion rather than assert a false
-      // negative when that's the environment this runs under.
+      // Running as root (some CI/container setups) bypasses the permission bit, so skip the
+      // assertion instead of asserting a false negative.
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit)).toContain("ConfigPullWriteError");
       }
@@ -2125,11 +2001,9 @@ describe("config pull integration", () => {
   });
 
   it.live("a single declared-but-unpushable property surfaces in the unmanaged note", () => {
-    // `enabled` is declared `false` (matching the remote, so it produces no
-    // change — it's now an ordinary comparable path, CLI-2314). Its sibling
-    // `allow_dynamic_registration` is what still demonstrates
-    // declared-but-unpushable: `DISABLED_SENTINEL_PRUNES` drops it from the
-    // local projection while the container is disabled.
+    // enabled matches the remote and produces no change; its sibling allow_dynamic_registration
+    // is what demonstrates declared-but-unpushable, since DISABLED_SENTINEL_PRUNES drops it from
+    // the local projection while the container is disabled.
     const before = [
       'project_id = "test"',
       "[auth.oauth_server]",
@@ -2165,12 +2039,10 @@ describe("config pull integration", () => {
   it.live(
     "declared-but-unpushable properties surface in the unmanaged note, pluralized when there's more than one",
     () => {
-      // `enabled` is declared `false`, matching the remote (an ordinary
-      // comparable path, CLI-2314, that produces no change here). Its two
-      // siblings, `allow_dynamic_registration` and `authorization_url_path`,
-      // are what `DISABLED_SENTINEL_PRUNES` still drops from the local
-      // projection while the container is disabled — both surface as
-      // unpushable, exercising the pluralized note.
+      // enabled matches the remote and produces no change here; its two siblings
+      // (allow_dynamic_registration, authorization_url_path) are what DISABLED_SENTINEL_PRUNES
+      // drops from the local projection while the container is disabled, exercising the
+      // pluralized note.
       const before = [
         'project_id = "test"',
         "[auth.oauth_server]",
@@ -2235,14 +2107,6 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
-  // Fixpoint expansion + schema-validation gate (CLI-2064's live-dogfooding
-  // bug: pulling a value that GATES declared-but-unpushable siblings used to
-  // write only the gate, leaving its now-required siblings stale and
-  // bricking the next config load — ADR 0023 "written file always
-  // re-loads").
-  // -------------------------------------------------------------------------
-
   const TWILIO_AUTH_TOKEN_VAR = "SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN";
   const TWILIO_BEFORE =
     'project_id = "test"\n' +
@@ -2295,11 +2159,8 @@ describe("config pull integration", () => {
           expect(out.stdoutText).not.toContain("requires values pull cannot write");
           expect(out.stdoutText).toContain("3 changes written.");
 
-          // The written file reloads cleanly (this is the actual CLI-2064 bug:
-          // before this fix, writing only `enabled` bricked the next load with
-          // "Missing required field in config: auth.sms.twilio.account_sid").
-          // A second `config pull` run against the SAME remote converges to
-          // nothing left to write for this family.
+          // The written file reloads cleanly. A second config pull run against the same remote
+          // converges to nothing left to write for this family.
           const second = setup({
             toml: after,
             yes: true,
@@ -2324,20 +2185,16 @@ describe("config pull integration", () => {
           body: v2Response({
             attributes: (attributes) => ({
               ...attributes,
-              // An unrelated change so this run has something ELSE to write
-              // and confirm — proving the drop is scoped to the twilio
-              // family, not the whole run.
+              // An unrelated change so this run has something else to write, proving the drop
+              // is scoped to the twilio family, not the whole run.
               api: { ...(attributes["api"] as Record<string, unknown>), max_rows: 250 },
               auth: {
                 ...(attributes["auth"] as Record<string, unknown>),
                 sms_provider: "twilio",
                 sms_twilio_account_sid: "ACreal0000000000000000000000000",
-                // `sms_twilio_message_service_sid` is deliberately absent —
-                // the remote never reports it, so it can never be written;
-                // `message_service_sid` stays `""` after the fixpoint
-                // absorbs `account_sid`, and the projected file would fail
-                // to decode ("Missing required field in config:
-                // auth.sms.twilio.message_service_sid") once `enabled` is
+                // sms_twilio_message_service_sid is deliberately absent: the remote never
+                // reports it, so message_service_sid stays "" after the fixpoint absorbs
+                // account_sid, and the projected file would fail to decode once enabled is
                 // written.
               },
             }),
@@ -2349,9 +2206,8 @@ describe("config pull integration", () => {
         const after = readFileSync(configPath(), "utf8");
         // The unrelated change still wrote.
         expect(after).toContain("max_rows = 250");
-        // The whole twilio family (including `account_sid`, which the
-        // fixpoint DID classify as writable) was dropped, not just the
-        // sibling that made the family unwritable.
+        // The whole twilio family (including account_sid, which the fixpoint did classify as
+        // writable) was dropped, not just the sibling that made it unwritable.
         expect(after).toContain("enabled = false");
         expect(after).not.toContain("ACreal0000000000000000000000000");
         expect(out.stdoutText).toContain(
@@ -2363,18 +2219,16 @@ describe("config pull integration", () => {
         expect(out.stdoutText).toContain("auth.sms.twilio was not changed: it requires");
         expect(out.stdoutText).toContain("auth.sms.twilio.message_service_sid");
 
-        // The written file reloads cleanly — it was never actually touched
-        // for the twilio family, and the rest of the file is still valid.
-        // (`openConfigPullSource` re-reads and re-decodes the SAME
-        // config path this run just wrote; a failing decode would fail
-        // this `yield*`, failing the test.)
+        // The written file reloads cleanly — it was never touched for the twilio family.
+        // openConfigPullSource re-reads and re-decodes the same path; a failing decode would
+        // fail this yield*.
         const configText = readFileSync(configPath(), "utf8");
         const reloaded = yield* openConfigPullSource();
         expect(reloaded.loaded.config.auth.sms.twilio.enabled).toBe(false);
 
-        // A second run reports the SAME drift + the SAME skip (converged for
-        // the writable subset — the unrelated change has nothing left to
-        // write, the twilio family is drifting exactly as before).
+        // A second run reports the same drift and skip: the writable subset has converged
+        // (nothing left for the unrelated change), while the twilio family drifts exactly as
+        // before.
         const second = setup({
           toml: configText,
           yes: true,
@@ -2488,26 +2342,11 @@ describe("config pull integration", () => {
     },
   );
 
-  // -------------------------------------------------------------------------
-  // Review findings (T0/T1): the schema-validation gate resolves env() EXACTLY
-  // like the loader (process env + project dotenv), a remote destination
-  // validates the overlay-merged projection too, and a decode failure that
-  // already existed BEFORE this pull's own writes is never attributed to the
-  // plan.
-  // -------------------------------------------------------------------------
-
   it.live(
     "a numeric env() value resolvable only via the project's supabase/.env validates and writes normally, nothing dropped (review T0)",
     () => {
-      // Before the fix, the validation gate resolved `env(...)` against bare
-      // `process.env` only — `PULL_TEST_NUMERIC_ENV` here resolves ONLY
-      // through the project's own `supabase/.env` (never set on
-      // `process.env`), so the gate used to see the literal string
-      // `"env(PULL_TEST_NUMERIC_ENV)"` where `max_rows` expects a number,
-      // fail to decode, and drop the WHOLE `[api]` family (no `enabled`
-      // sibling to narrow the drop to) — taking the sibling `schemas` write
-      // down with it even though nothing about ITS OWN value was ever
-      // unresolvable.
+      // PULL_TEST_NUMERIC_ENV resolves only through the project's own supabase/.env, never
+      // process.env, so this exercises the validation gate's own env(...) resolution path.
       const before =
         'project_id = "test"\n[api]\nmax_rows = "env(PULL_TEST_NUMERIC_ENV)"\nschemas = ["public"]\n';
       const { layer, out } = setup({
@@ -2530,17 +2369,11 @@ describe("config pull integration", () => {
   it.live(
     "a pre-write decode failure at a path unrelated to the plan is exempted: pull still writes its planned change and exits 0 (review T0)",
     () => {
-      // `runConfigPull` (exported precisely to be reusable independently
-      // of `configPull`'s own load step) is called directly here with a
-      // hand-augmented `source.loaded.rawDocument`/`.text`: the REAL loader
-      // itself unconditionally aborts the whole command on a root-level
-      // business-rule violation (verified directly against the real
-      // loader — a broken `[auth.sms.twilio]` at the config root is NEVER
-      // reachable past `openConfigPullSource`'s own initial load, by
-      // construction), so the only way to exercise the validation gate's OWN
-      // pre-existing exemption for a failure the rest of the command's load
-      // path would already have caught is to construct the source directly,
-      // the way `configPull` already does before delegating.
+      // runConfigPull is called directly with a hand-augmented source.loaded.rawDocument/.text:
+      // the real loader aborts the whole command on a root-level business-rule violation, so a
+      // broken [auth.sms.twilio] is never reachable past openConfigPullSource's initial load.
+      // Constructing the source directly is the only way to exercise the validation gate's own
+      // pre-existing exemption for a failure the load path would already have caught.
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
       const { layer, out } = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
@@ -2569,8 +2402,8 @@ describe("config pull integration", () => {
         });
         const after = readFileSync(configPath(), "utf8");
         expect(after).toContain("max_rows = 1000");
-        // The pre-existing, unrelated twilio state is left exactly as it
-        // was — pull never attributes it to this run's own plan.
+        // The pre-existing, unrelated twilio state is left exactly as it was; pull never
+        // attributes it to this run's own plan.
         expect(after).toContain("[auth.sms.twilio]");
         expect(after).toContain("enabled = true");
         expect(out.stdoutText).not.toContain("would_invalidate");
@@ -2607,14 +2440,11 @@ describe("config pull integration", () => {
                 ...(attributes["auth"] as Record<string, unknown>),
                 sms_provider: "twilio",
                 sms_twilio_account_sid: "ACreal0000000000000000000000000",
-                // `sms_twilio_message_service_sid` is deliberately absent —
-                // the remote never reports it, so it can never be written;
-                // writing `enabled`/`account_sid` alone into
-                // `[remotes.staging.*]` decodes fine RAW (remotes decode
-                // with business-rule checks disabled) but fails once this
-                // block is SELECTED and merged over root — exactly the
-                // projection a future `config pull`/`config push` targeting
-                // this project ref would use.
+                // sms_twilio_message_service_sid is deliberately absent: writing
+                // enabled/account_sid alone into [remotes.staging.*] decodes fine raw (remotes
+                // skip business-rule checks), but fails once this block is selected and merged
+                // over root — the same projection a future config pull/push targeting this ref
+                // would use.
               },
             }),
           }),
