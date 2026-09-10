@@ -157,6 +157,23 @@ describe("deterministic stack identity and state paths", () => {
     ),
   );
 
+  it.live("rejects a malformed HEAD marker in an otherwise empty git directory", () =>
+    withScope(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-git-marker-" });
+        const project = path.join(root, "project");
+        yield* fs.makeDirectory(path.join(project, ".git"), { recursive: true });
+        yield* fs.writeFileString(path.join(project, ".git", "HEAD"), "not-a-commit\n");
+
+        const error = yield* resolveStackIdentity({ projectRoot: project }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(InvalidStackIdentityError);
+      }),
+    ),
+  );
+
   it.live("preserves errors for an explicit gitdir target with missing HEAD", () =>
     withScope(
       Effect.gen(function* () {

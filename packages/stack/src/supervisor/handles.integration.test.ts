@@ -55,7 +55,10 @@ import {
   StackRuntimeMismatchError,
 } from "../public/Errors.ts";
 import type { ContainerEngine } from "../runtime/ContainerEngine.ts";
-import { ContainerEngineResolver } from "../runtime/ContainerEngineResolver.ts";
+import {
+  ContainerEngineResolver,
+  defaultContainerEngineResolver,
+} from "../runtime/ContainerEngineResolver.ts";
 
 const databaseRelease = catalogReleaseFor("database:database");
 if (databaseRelease === undefined) throw new Error("Missing default database release");
@@ -89,6 +92,10 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
       return yield* effect(project).pipe(
         Effect.onExit(() => cleanupOwners),
         Effect.provideService(StackRuntimeEnvironment, runtime),
+        Effect.provideService(ContainerEngineResolver, {
+          isInstalled: () => Effect.succeed(false),
+          resolve: (kind) => defaultContainerEngineResolver.resolve(kind),
+        }),
       );
     }),
   ).pipe(Effect.provide(NodeServices.layer));
@@ -661,7 +668,13 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           const { Effect } = await import("effect");
           const { NodeServices } = await import("@effect/platform-node");
           const { createStack } = await import(${encodedStackModule});
-          const stack = await Effect.runPromise(Effect.scoped(createStack({ projectRoot: process.argv[1] }).pipe(Effect.provide(NodeServices.layer))));
+          const stack = await Effect.runPromise(
+            Effect.scoped(
+              createStack({ projectRoot: process.argv[1], runtime: { kind: "native" } }).pipe(
+                Effect.provide(NodeServices.layer),
+              ),
+            ),
+          );
           process.stdout.write(stack.id);
         `;
         const spawnCaller = () =>

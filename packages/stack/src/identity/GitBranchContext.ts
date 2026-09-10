@@ -49,21 +49,10 @@ const hasGitRepositoryMarkers = (
 ): Effect.Effect<boolean, PlatformError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const head = yield* fs.exists(path.join(gitDirectory, "HEAD"));
-    const hasLocalObjectsAndRefs =
-      (yield* fs.exists(path.join(gitDirectory, "objects"))) &&
-      (yield* fs.exists(path.join(gitDirectory, "refs")));
-    if (hasLocalObjectsAndRefs) return true;
-
-    if (!(yield* fs.exists(path.join(gitDirectory, "commondir")))) return false;
-    if (!head) return false;
-    const commonDirectory = (yield* fs.readFileString(path.join(gitDirectory, "commondir"))).trim();
-    if (commonDirectory.length === 0) return false;
-    const canonicalCommonDirectory = yield* fs.realPath(
-      path.resolve(gitDirectory, commonDirectory),
-    );
+    if (head) return true;
     return (
-      (yield* fs.exists(path.join(canonicalCommonDirectory, "objects"))) &&
-      (yield* fs.exists(path.join(canonicalCommonDirectory, "refs")))
+      (yield* fs.exists(path.join(gitDirectory, "objects"))) &&
+      (yield* fs.exists(path.join(gitDirectory, "refs")))
     );
   });
 

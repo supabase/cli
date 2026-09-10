@@ -77,7 +77,10 @@ import {
   type ContainerCommandResult,
   type ContainerCommandRunner,
 } from "../runtime/ContainerEngine.ts";
-import { ContainerEngineResolver } from "../runtime/ContainerEngineResolver.ts";
+import {
+  ContainerEngineResolver,
+  defaultContainerEngineResolver,
+} from "../runtime/ContainerEngineResolver.ts";
 import { runGit } from "../../tests/helpers/git.ts";
 
 const defaultDatabaseVersion = catalogEntryFor("database:database").defaultVersion;
@@ -166,7 +169,13 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
         tempRoot: "/tmp",
         platform: "posix",
       };
-      return yield* effect(project).pipe(Effect.provideService(StackRuntimeEnvironment, runtime));
+      return yield* effect(project).pipe(
+        Effect.provideService(StackRuntimeEnvironment, runtime),
+        Effect.provideService(ContainerEngineResolver, {
+          isInstalled: () => Effect.succeed(false),
+          resolve: (kind) => defaultContainerEngineResolver.resolve(kind),
+        }),
+      );
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 

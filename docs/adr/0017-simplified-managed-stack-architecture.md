@@ -58,6 +58,9 @@ in the materialized definition only when the local runtime implements them;
 hosted-only database network restrictions, SSL enforcement, and vault settings
 are excluded.
 
+Disabling a capability releases its automatic port assignment; re-enabling it may
+select a new port.
+
 Stack handles are lightweight identity-scoped clients. Creating or opening one
 does not launch a Supervisor. Successful stop drains ingress, removes every
 ephemeral runtime resource, persists stopped state, delivers its response, then
