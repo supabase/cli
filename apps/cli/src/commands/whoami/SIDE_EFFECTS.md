@@ -11,12 +11,13 @@
 | `<SUPABASE_HOME or ~/.supabase>/access-token`           | plain text (token string) | last-resort fallback after environment and keyring lookup                                  |
 | `<SUPABASE_HOME or ~/.supabase>/telemetry.json`         | JSON                      | when present, before post-run telemetry state is refreshed                                 |
 | `<ancestor>/supabase/config.toml`                       | existence probe           | while resolving the default workdir; skipped when `--workdir` or `SUPABASE_WORKDIR` is set |
+| `/proc/sys/kernel/osrelease`                            | existence probe and text  | during credential initialization to detect WSL; read only when the path exists             |
 
 ## Files Written
 
-| Path                                            | Format | When                                                                                                                 |
-| ----------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------- |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | during a first persistent identity stitch when applicable, then after command completion on both success and failure |
+| Path                                            | Format | When                                                                                                                                                                            |
+| ----------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | during startup identity initialization when telemetry consent is granted, during a first persistent identity stitch when applicable, and after completion on success or failure |
 
 `whoami` is a user-level command. It does not resolve a project ref or write the linked-project
 cache.
@@ -29,14 +30,16 @@ cache.
 
 ## Environment Variables
 
-| Variable                | Purpose                                                           | Required?                                                                     |
-| ----------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)              | no (falls back to keyring then `<SUPABASE_HOME or ~/.supabase>/access-token`) |
-| `SUPABASE_HOME`         | overrides the CLI state directory                                 | no (defaults to `~/.supabase`)                                                |
-| `SUPABASE_NO_KEYRING`   | disables the OS keyring, forcing the access-token file fallback   | no                                                                            |
-| `SUPABASE_PROFILE`      | selects a built-in profile or a filesystem path to a YAML profile | no (falls back to the persisted profile, then `supabase`)                     |
-| `SUPABASE_PROJECT_ID`   | loaded by shared command settings; unused by `whoami`             | no                                                                            |
-| `SUPABASE_WORKDIR`      | sets the shared command workdir and skips ancestor config probing | no (falls back to searching upward from the current directory)                |
+| Variable                      | Purpose                                                           | Required?                                                                     |
+| ----------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`       | auth token (bypasses credential file/keyring lookup)              | no (falls back to keyring then `<SUPABASE_HOME or ~/.supabase>/access-token`) |
+| `SUPABASE_HOME`               | overrides the CLI state directory                                 | no (defaults to `~/.supabase`)                                                |
+| `SUPABASE_NO_KEYRING`         | disables the OS keyring, forcing the access-token file fallback   | no                                                                            |
+| `SUPABASE_PROFILE`            | selects a built-in profile or a filesystem path to a YAML profile | no (falls back to the persisted profile, then `supabase`)                     |
+| `SUPABASE_PROJECT_ID`         | loaded by shared command settings; unused by `whoami`             | no                                                                            |
+| `SUPABASE_WORKDIR`            | sets the shared command workdir and skips ancestor config probing | no (falls back to searching upward from the current directory)                |
+| `DO_NOT_TRACK`                | disables telemetry delivery when set to `1`                       | no                                                                            |
+| `SUPABASE_TELEMETRY_DISABLED` | disables telemetry delivery when set to `1`                       | no                                                                            |
 
 ## Exit Codes
 
@@ -66,17 +69,15 @@ Prints one JSON object with the profile fields:
 
 ```json
 {
-  "gotrue_id": "00000000-0000-0000-0000-000000000000",
-  "primary_email": "user@example.com",
-  "username": "example",
-  "message": ""
+  "id": "00000000-0000-0000-0000-000000000000",
+  "email": "user@example.com",
+  "username": "example"
 }
 ```
 
 ### `--output-format stream-json`
 
-Prints one `result` NDJSON event whose `data` contains `gotrue_id`, `primary_email`, `username`,
-and `message: ""`.
+Prints one `result` NDJSON event whose `data` contains `id`, `email`, and `username`.
 
 ### `-o` / `--output`
 

@@ -42,8 +42,23 @@ export const whoami = Effect.fn("whoami")(function* (_flags: WhoamiFlags) {
     );
     yield* fetching?.clear() ?? Effect.void;
 
-    if (output.format === "json" || output.format === "stream-json") {
-      yield* output.success("", { ...profile });
+    const machineProfile = {
+      id: profile.gotrue_id,
+      email: profile.primary_email,
+      username: profile.username,
+    };
+
+    if (output.format === "json") {
+      yield* output.raw(`${JSON.stringify(machineProfile)}\n`);
+      return;
+    }
+
+    if (output.format === "stream-json") {
+      yield* output.event({
+        type: "result",
+        data: machineProfile,
+        timestamp: new Date().toISOString(),
+      });
       return;
     }
 
