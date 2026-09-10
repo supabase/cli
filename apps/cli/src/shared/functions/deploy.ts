@@ -100,14 +100,12 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
     projectRef: Option.Option<string>,
   ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
   /**
-   * Optional shell-specific styling hooks. Both default to identity (plain
-   * text); the CLI injects Go's aqua/bold here so this shared module stays
-   * free of CLI-specific rendering.
+   * Optional shell-specific styling hooks. All default to identity (plain text); keeping them
+   * injected keeps this shared module free of CLI-specific rendering.
    * - `styleIdentifier`: the project ref in the stdout success line.
-   * - `styleEmphasis`: the slug in the stderr `Bundling Function:` line and
-   *   the functions dir in the no-functions error.
-   * - `styleWarning`: the `WARNING:` token on the "Docker is not running"
-   *   fallback line. Go: `utils.Yellow("WARNING:")` (`deploy.go:60`).
+   * - `styleEmphasis`: the slug in the stderr `Bundling Function:` line and the functions dir in
+   *   the no-functions error.
+   * - `styleWarning`: the `WARNING:` token on the "Docker is not running" fallback line.
    */
   readonly styleIdentifier?: (text: string) => string;
   readonly styleEmphasis?: (text: string) => string;
@@ -198,11 +196,9 @@ function decodeFunctionListResponse(value: unknown): ReadonlyArray<RemoteFunctio
   return decodeFunctionListResponseSchema(normalized);
 }
 
-// Format a raw response body for an unexpected-status error message. When the
-// body is JSON, re-stringify it so the message stays byte-identical to the
-// previous `JSON.stringify(parsedBody)` form; otherwise fall back to the raw
-// text (a non-JSON body was previously impossible because the response was
-// eagerly JSON-decoded before the status check).
+// Formats a raw response body for an unexpected-status error message: re-stringifies JSON so the
+// message stays byte-identical to a parsed-then-stringified body, falling back to raw text
+// otherwise.
 function formatUnexpectedStatusBody(text: string): string {
   try {
     return JSON.stringify(JSON.parse(text));
@@ -298,12 +294,8 @@ function explicitBooleanFlag(
  */
 export const dockerWorkdirLabel = "com.supabase.cli.workdir";
 /**
- * Go parity (`apps/cli-go/internal/functions/deploy/bundle.go:68-70`, deleted
- * in CLI-1970; last present at commit 7b469f5b3): the eszip
- * bundler container receives only `NPM_CONFIG_REGISTRY` from the host
- * environment. `NPM_AUTH_TOKEN` is deliberately NOT forwarded — the Go-side PR
- * proposing it (supabase/cli#4933) was closed unmerged, and CLI-1985 ruled
- * strict parity over the TS-only forwarding that #5645 had added.
+ * The eszip bundler container receives only `NPM_CONFIG_REGISTRY` from the host environment.
+ * `NPM_AUTH_TOKEN` is intentionally not forwarded, even though a caller might expect it to be.
  */
 const dockerNpmEnvNames = ["NPM_CONFIG_REGISTRY"] as const;
 
@@ -328,10 +320,9 @@ export function formatDockerBind(bind: DockerBind) {
  * Drops every bind another bind already supplies verbatim: same mode, host
  * path strictly beneath the other's, container path at the same relative
  * offset. The import walker and import-map target enumeration routinely emit
- * such pairs, and Docker rejects `docker cp` into a created container whose
- * config nests a file bind inside a read-only parent bind
- * (supabase/supabase#50088). A bind that overrides its parent's source, mode,
- * or container mapping is never collapsed.
+ * such pairs, and Docker rejects `docker cp` into a created container whose config nests a file
+ * bind inside a read-only parent bind. A bind that overrides its parent's source, mode, or
+ * container mapping is never collapsed.
  */
 export function pruneRedundantDockerBinds(
   binds: ReadonlyArray<DockerBind>,
@@ -385,13 +376,9 @@ function isContainedInAnyPath(roots: ReadonlyArray<string>, candidate: string) {
 }
 
 /**
- * Go parity (`apps/cli-go/pkg/function/deploy.go:251-284`, via
- * `afero.IOFS.Open` → `fs.ValidPath`): `writeForm`'s `addFile` opens every
- * uploaded path through an `fs.FS`, which rejects any path containing a `..`
- * element before the read (and thus the upload) happens. A workdir≠git-root
- * layout can otherwise produce a multipart `File` name like
- * `../packages/shared/src/index.ts` that escapes the anchor dir — reject it
- * the same way Go does, before any upload is attempted.
+ * Rejects any path containing a `..` segment before it's uploaded. A workdir that differs from
+ * the git root can otherwise produce a multipart `File` name like
+ * `../packages/shared/src/index.ts` that escapes the anchor directory.
  */
 function hasParentPathSegment(relativePath: string) {
   return toSlash(relativePath)
@@ -674,11 +661,8 @@ function substituteImportMapValue(
     if (prefix.length === 0) {
       continue;
     }
-    // Import-maps spec (implemented by Deno): a key matches exactly, or as a
-    // prefix only when it ends with "/". Go's walker prefix-matches every key
-    // (pkg/function/deno.go:150-155) — intentional divergence, see
-    // go-cli-divergences.md: the lax match fabricates paths the runtime
-    // can never resolve (the ENOTDIR family this PR fixes).
+    // Import-maps spec (implemented by Deno): a key matches exactly, or as a prefix only when it
+    // ends with "/" — see go-cli-divergences.md for why this differs from a naive prefix match.
     if (prefix.endsWith("/")) {
       // Spec normalization: a `/`-suffixed key whose address lacks a trailing
       // `/` is an invalid mapping — dropped, not concatenated.
@@ -772,10 +756,8 @@ async function walkImportPaths(
           await onWarning(`WARN: ${message}\n`);
           continue;
         }
-        // Go aborts on any other read error (pkg/function/deno.go:131-136); an
-        // ENOTDIR (import path routed through a file) gets Go's message instead
-        // of an unhandled raw Node error, via a classified error so telemetry
-        // books it as user-fixable config instead of a panic.
+        // An ENOTDIR (import path routed through a file) gets a classified, user-facing message
+        // instead of an unhandled raw Node error, so telemetry books it as user-fixable config.
         if (error.code === "ENOTDIR") {
           throw new FunctionImportNotDirectoryError({
             message: `failed to read file: open ${toApiRelativePath(displayRoot, current)}: not a directory`,
@@ -802,10 +784,9 @@ async function walkImportPaths(
       );
       modulePath = toSlash(modulePath);
 
-      // A module file needs a dot in the FINAL path segment (Go's path.Ext
-      // semantics): a dot earlier in the path (`dist/index.mjs/core`) is a
-      // directory-shaped path, not a module file. Not basename(): a
-      // trailing-slash directory import must yield an empty final segment here.
+      // A module file needs a dot in the final path segment: a dot earlier in the path
+      // (`dist/index.mjs/core`) is a directory-shaped path, not a module file. Not basename():
+      // a trailing-slash directory import must yield an empty final segment here.
       const finalSegment = modulePath.slice(modulePath.lastIndexOf("/") + 1);
       if (!finalSegment.includes(".")) {
         continue;
@@ -1030,9 +1011,8 @@ async function writeSourceDeployForm(
       return;
     }
     uploadedAssets.add(realPathname);
-    // Uploaded file names are anchored at the workdir like Go's `toRelPath`
-    // (`apps/cli-go/pkg/function/deploy.go:94-103`, relative to `os.Getwd()`),
-    // NOT at `sourceRoot` — see the CLI-1985 note in `deployViaApi`.
+    // Uploaded file names are anchored at the workdir, not at `sourceRoot` — see the note in
+    // `deployViaApi`.
     const relativePath = toApiRelativePath(workdir, pathname);
     if (hasParentPathSegment(relativePath)) {
       throw new Error(`failed to read file: open ${relativePath}: invalid argument`);
@@ -1161,10 +1141,8 @@ async function writeSourceDeployForm(
 }
 
 /**
- * Server-recorded metadata paths are anchored at the workdir, matching Go's
- * `toRelPath` (`apps/cli-go/pkg/function/deploy.go:42-57,94-103`): relative to
- * `os.Getwd()` (the Go CLI chdirs to the workdir), forward slashes via
- * `filepath.ToSlash` — see the CLI-1985 note in `deployViaApi`.
+ * Server-recorded metadata paths are anchored at the workdir, with forward slashes regardless of
+ * platform — see the note in `deployViaApi`.
  */
 function createSourceMetadata(
   workdir: string,
@@ -1439,9 +1417,6 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     projectEnvValues,
   } = options;
   const output = yield* Output;
-  // Go: `fmt.Fprintln(os.Stderr, "Bundling Function:", utils.Bold(slug))`
-  // (`internal/functions/deploy/bundle.go:30`) — the handler injects
-  // the bold styling via `styleEmphasis`; next stays plain.
   yield* output.raw(`Bundling Function: ${styleEmphasis(config.slug)}\n`, "stderr");
 
   const outputRoot = resolve(functionsDir, "..", ".temp");
@@ -1459,22 +1434,17 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
       });
     }
     const outputPath = join(outputDir, "output.eszip");
-    // `edgeRuntimeImage` applies the tag VERBATIM (Go's `replaceImageTag`)
-    // — a `.temp/edge-runtime-version` pin flows through unmodified, `v`
-    // prefix or not (see the helper's doc in `functions.shared.ts`).
+    // `edgeRuntimeImage` applies the tag verbatim — a `.temp/edge-runtime-version` pin flows
+    // through unmodified, `v` prefix or not (see the helper's doc in `functions.shared.ts`).
     const rawImage = edgeRuntimeImage(edgeRuntimeVersion);
     const binds = yield* Effect.promise(() =>
       buildDockerBinds(projectId, functionsDir, outputDir, config, {
         onWarning: (message) => Effect.runPromise(output.raw(message, "stderr")),
       }),
     );
-    // Go: `DockerStart` -> `DockerResolveImageIfNotCached` (`internal/utils/docker.go:326-386`)
-    // — resolves ECR->GHCR->Docker-Hub candidates and pulls with retry, per
-    // container, before ever touching the network/volume. Deliberately NOT
-    // hoisted out of the per-function loop the way `download.ts`'s
-    // `PulledEdgeRuntimeImage` is: per-slug matches Go's per-container
-    // `DockerStart` exactly, and the first resolve failure aborts the loop,
-    // so the only cost is one cached `docker image inspect` per function.
+    // Resolved per function rather than hoisted out of the loop (unlike `download.ts`'s
+    // `PulledEdgeRuntimeImage`): the first resolve failure aborts the loop, and the only added
+    // cost is one cached `docker image inspect` per function.
     const image = yield* resolveFunctionsDockerImage(rawImage, projectEnvValues);
     yield* ensureDockerNetwork(networkMode, projectId);
     yield* ensureDockerNamedVolume(edgeRuntimeCacheVolume(projectId).name, projectId);
@@ -1515,17 +1485,14 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
       networkMode,
       binds: binds.map(formatDockerBind),
       env,
-      // Go: `WorkingDir: utils.ToDockerPath(cwd)` (`bundle.go:79`), where
-      // `cwd` is the post-`ChangeWorkDir` workdir — `functionsDir` is
-      // `<workdir>/supabase/functions`, same derivation as `deployViaApi`'s
+      // `functionsDir` is `<workdir>/supabase/functions`, same derivation as `deployViaApi`'s
       // own `projectRoot`.
       workingDir: toDockerPath(resolve(functionsDir, "..", "..")),
       containerArgs,
     });
 
-    // Live-tees each chunk to `output.raw` as it arrives (Go's
-    // `DockerRunOnceWithConfig` copies the container's log stream live)
-    // rather than buffering the whole run until exit.
+    // Live-tees each chunk to `output.raw` as it arrives, rather than buffering the whole run
+    // until exit.
     const result = yield* runChildProcess("docker", command, {
       stdout: "pipe",
       stderr: "pipe",
@@ -2101,18 +2068,10 @@ const deployViaApi = Effect.fnUntraced(function* (
   jobs: number,
 ) {
   const output = yield* Output;
-  // CLI-1985: uploaded file names and the server-recorded metadata paths
-  // (`entrypoint_path`, `import_map_path`, `static_patterns`) are anchored at the
-  // workdir (`projectRoot`), matching the pinned Go CLI's `toRelPath`, which is
-  // relative to `os.Getwd()` after the CLI chdirs to the workdir
-  // (`apps/cli-go/pkg/function/deploy.go:94-103`, `internal/utils/misc.go:238`).
-  // Upstream Go never anchored deploy paths at the git root — that was a TS-only
-  // divergence introduced by #5755. The import-walk *boundary* (which files may
-  // be uploaded at all) intentionally stays at the nearest git root: the boundary
-  // itself is a TS-only safeguard with no Go equivalent (Go's `WalkImportPaths`
-  // uploads any reachable import unbounded; #5755 widened the TS boundary from
-  // the workdir to the git root so monorepo imports outside the workdir deploy).
-  // Such files upload with Go-`toRelPath`-style `../`-relative names.
+  // Uploaded file names and the server-recorded metadata paths are anchored at the workdir
+  // (`projectRoot`), not at `sourceRoot`. The import-walk boundary (which files may be uploaded
+  // at all) is intentionally wider, extending to the nearest git root, so files outside the
+  // workdir but inside a monorepo can still deploy — those upload with `../`-relative names.
   const sourceRoot = yield* Effect.tryPromise({
     try: () => resolveFunctionsSourceRoot(projectRoot),
     catch: (error) => (error instanceof Error ? error : new Error(String(error))),
@@ -2146,10 +2105,10 @@ const deployViaApi = Effect.fnUntraced(function* (
     return;
   }
 
-  // INC-699: each bundleOnly upload writes the bundle and bumps the remote version without
-  // persisting metadata, which only the final bulk update does. Failing fast on the first
-  // upload error strands that metadata remotely and makes every later deploy conflict, so
-  // run every upload to completion, always persist what succeeded, then report the errors.
+  // Each bundleOnly upload writes the bundle and bumps the remote version without persisting
+  // metadata, which only the final bulk update does. Failing fast on the first upload error
+  // strands that metadata remotely and makes every later deploy conflict, so run every upload to
+  // completion, always persist what succeeded, then report the errors.
   const results = yield* Effect.forEach(
     enabled,
     (config) =>
@@ -2294,11 +2253,9 @@ const pruneFunctions = Effect.fnUntraced(function* (
     return;
   }
 
-  // Go's `confirmPruneAll` + `fmt.Sprintln` (`deploy.go:189,206-212`): header, one
-  // ` • <bold slug>` line per function, and a trailing blank line before the
-  // `[y/N]` choices. Routed through `promptYesNo` (Go `PromptYesNo(msg,
-  // false)`, `console.go:64-82`) so `--yes`/`SUPABASE_YES` auto-confirms with the
-  // stderr echo and a non-TTY stdin honors a piped `y`/`n` answer (CLI-1974).
+  // Header, one ` • <bold slug>` line per function, and a trailing blank line before the [y/N]
+  // choices. Routed through `promptYesNo` so `--yes`/`SUPABASE_YES` auto-confirms with the
+  // stderr echo, and a non-TTY stdin still honors a piped `y`/`n` answer.
   const prompt = `${[
     "Do you want to delete the following Functions from your project?",
     ...toDelete.map((slug) => ` • ${bold(slug)}`),
@@ -2325,10 +2282,9 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     const styleIdentifier = dependencies.styleIdentifier ?? ((text: string) => text);
     const styleEmphasis = dependencies.styleEmphasis ?? ((text: string) => text);
     const commandPath = ["functions", "deploy"] as const;
-    // Presence-based (true for `--use-api=false`, not just bare `--use-api`) — mirrors
-    // cobra's `Changed()`-driven `MarkFlagsMutuallyExclusive`, so it's only used for the
-    // mutual-exclusivity check below. Behavior branches (bundler routing, --jobs guard)
-    // key off the resolved `flags.useApi` value instead, matching Go's own `if useApi`.
+    // Presence-based (true for `--use-api=false`, not just bare `--use-api`) — used only for
+    // the mutual-exclusivity check below. Behavior branches (bundler routing, --jobs guard) key
+    // off the resolved `flags.useApi` value instead.
     const explicitUseApi = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-api");
     const explicitUseDocker = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-docker");
     const explicitLegacyBundle = hasExplicitLongFlag(
@@ -2351,30 +2307,23 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       );
     }
 
-    // Go parity (`cmd/functions.go:79-80`): `if useApi { useDocker = false }` mutates the
-    // resolved boolean, not a presence flag — `--use-api=false` alone must NOT force the
-    // API path, it should fall through to whatever `--use-docker`/`--legacy-bundle`
-    // already resolved to.
+    // `--use-api=false` alone must not force the API path — it should fall through to whatever
+    // `--use-docker`/`--legacy-bundle` already resolved to.
     const useLocalBundler = !flags.useApi && (flags.useDocker || flags.legacyBundle);
     const configuredJobs = Option.getOrElse(flags.jobs, () => 1);
     const jobs = configuredJobs === 0 ? 1 : configuredJobs;
-    // Go parity (`cmd/functions.go:79-82`): the guard is `if useApi { ... } else if
-    // maxJobs > 1 { error }` — keyed on the resolved `--use-api` value alone, not on
-    // whether local bundling (Docker/legacy-bundle) is in play.
+    // Keyed on the resolved `--use-api` value alone, not on whether local bundling
+    // (Docker/legacy-bundle) is in play.
     if (!flags.useApi && jobs > 1) {
       return yield* Effect.fail(new Error("--jobs must be used together with --use-api"));
     }
 
     const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
-    // `@supabase/config` merges the matching `[remotes.*]` block over the base
-    // config (Go's `loadFromFile` with `Config.ProjectId` set), so the resolved
-    // config already reflects any remote function/edge_runtime overrides.
-    // In the CLI this also runs the same `Config.Validate`/dotenv/
-    // env-override pipeline `start`/`stop`/`status` already go through — see
-    // `functions-config.ts`. Go: `flags.LoadConfig` runs before validating any
-    // slug (`deploy.go:22-28`), so this must precede the loop below too — an
-    // invalid `config.toml` is reported ahead of a malformed slug when both
-    // are wrong (review round on CLI-1963).
+    // `@supabase/config` merges the matching `[remotes.*]` block over the base config, so this
+    // already reflects any remote function/edge_runtime overrides, through the same
+    // `Config.Validate`/dotenv/env-override pipeline `start`/`stop`/`status` use (see
+    // `functions-config.ts`). Must precede the slug-validation loop below, so an invalid
+    // `config.toml` is reported ahead of a malformed slug when both are wrong.
     const context = yield* loadFunctionsCliConfig({
       projectRoot: dependencies.projectRoot,
       projectRef,
@@ -2393,11 +2342,8 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       "no-verify-jwt",
       flags.noVerifyJwt,
     );
-    // Go gates the bundler's `--verbose` on `viper.GetBool("DEBUG")`
-    // (`bundle.go:59`), so `--debug=false` must resolve to `false` — a plain
-    // presence check would get that backwards (same rule as `download.ts`'s
-    // own `--debug` read; the `SUPABASE_DEBUG` env fallback is deferred
-    // there too).
+    // `--debug=false` must resolve to `false` — a plain presence check would get that backwards
+    // (same rule as `download.ts`'s own `--debug` read).
     const debugEnabled = explicitBooleanLongFlag(dependencies.rawArgs, "debug") ?? false;
     const deployConfig = context.loaded?.config;
     const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
@@ -2407,11 +2353,9 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     const configFunctions = yield* inferFunctionsManifest({
       cwd: dependencies.projectRoot,
       config: deployConfig,
-      // Matches `loadFunctionsCliConfig`'s own options above (`search: false,
-      // tomlOnly: true` for the CLI): no ancestor directory is
-      // searched past `dependencies.projectRoot` for EITHER load, so they can
-      // never resolve two different projects (same rationale as
-      // `start.handler.ts`'s equivalent call).
+      // Matches `loadFunctionsCliConfig`'s own options above: no ancestor directory is searched
+      // past `dependencies.projectRoot` for either load, so they can never resolve two
+      // different projects.
       search: dependencies.goConfigCompat === undefined,
     });
     const configDeclaredFunctions = deployConfig?.functions ?? {};
@@ -2425,11 +2369,8 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     if (slugs.length === 0) {
       return yield* Effect.fail(
         new NoFunctionsToDeployError({
-          // Go: `errors.Errorf("No Functions specified or found in %s",
-          // utils.Bold(utils.FunctionsDir))` (`internal/functions/deploy/deploy.go:35`) —
-          // the handler injects the bold styling via `styleEmphasis`. Styling is
-          // text-mode only: in `--output-format json`/`stream-json` this message lands in
-          // the structured error payload, which must stay free of ANSI escapes.
+          // Styling is text-mode only: in `--output-format json`/`stream-json` this message
+          // lands in the structured error payload, which must stay free of ANSI escapes.
           message: `No Functions specified or found in ${
             output.format === "text"
               ? styleEmphasis(SUPABASE_FUNCTIONS_DIR)
@@ -2483,12 +2424,10 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
             return yield* deployWithApi;
           }
 
-          // `lastExplicitLongFlagValue` preserves the "explicitly cleared" vs
-          // "never touched" distinction `resolveDockerNetworkMode` needs to
-          // decide whether `SUPABASE_NETWORK_ID` applies — see that
-          // function's own doc comment. `SUPABASE_NETWORK_ID` (env or
-          // project dotenv) is CLI-only — same Go-viper-parity gate
-          // as `context.projectEnvValues` itself (`undefined` for library callers).
+          // `lastExplicitLongFlagValue` preserves the "explicitly cleared" vs "never touched"
+          // distinction `resolveDockerNetworkMode` needs — see that function's own doc comment.
+          // `SUPABASE_NETWORK_ID` (env or project dotenv) is CLI-only, `undefined` for library
+          // callers.
           const networkMode = resolveDockerNetworkMode({
             explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
             envOverride:
@@ -2521,12 +2460,8 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     }
 
     if (output.format === "text") {
-      // Go: `fmt.Printf("Deployed Functions on project %s: %s\n",
-      // utils.Aqua(flags.ProjectRef), strings.Join(slugs, ", "))`
-      // (`internal/functions/deploy/deploy.go:70`) — the handler injects
-      // the aqua styling via `styleIdentifier` (stdout-bound, so its TTY gate
-      // must check stdout); next stays plain. Go joins the raw `slugs` list, not
-      // the deduped set, so `functions deploy foo foo` prints "foo, foo".
+      // Joins the raw `slugs` list, not the deduped set, so `functions deploy foo foo` prints
+      // "foo, foo".
       yield* output.raw(
         `Deployed Functions on project ${styleIdentifier(projectRef)}: ${slugs.join(", ")}\n`,
       );

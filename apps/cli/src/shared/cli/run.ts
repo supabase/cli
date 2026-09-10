@@ -68,10 +68,9 @@ import {
 } from "./subcommand-flag-suggestions.ts";
 
 /**
- * Services the two CLI shells provide before evaluating a root command. Keep
- * this list explicit: preserving the root command's requirement channel here
- * makes an accidentally unprovided service fail at the shell boundary instead
- * of becoming a runtime missing-service defect.
+ * Services available before evaluating the root command. Keep this list explicit: preserving the
+ * root command's requirement channel here makes an accidentally unprovided service fail at the
+ * shell boundary instead of becoming a runtime missing-service defect.
  */
 export type AllowedRunCliServices =
   | Analytics
@@ -97,60 +96,24 @@ export type AllowedRunCliServices =
 
 export type CliRootCommand = Command.Command<"supabase", {}, {}, unknown, AllowedRunCliServices>;
 
-// Global flags that consume the following argv token as their value — a value
-// flag missing here would make `extractCommandPath` mistake its value for a
-// command-path segment, and would leave the flag's following token unconsumed
-// for every scanner below — silently mis-resolving `--workdir` for the bare
-// space-separated spelling, or missing the root `--version` behind
-// `--completions bash`. Derived from `PERSISTENT_VALUE_FLAG_NAMES` (see
-// `GLOBAL_VALUE_FLAG_TOKENS`) so the registries cannot drift apart again
-// (issue #6482).
+// Global flags that consume their following argv token as a value; missing one here would make
+// `extractCommandPath` mistake its value for a command-path segment, and leave scanners below
+// unable to skip past it. Derived from `PERSISTENT_VALUE_FLAG_NAMES` so the two registries can't
+// drift apart.
 //
-// DELIBERATE MODEL SPLIT: `extractCommandPath` consumes a recognized
-// space-separated boolean literal (`--debug false`) because it selects the
-// command tree and signal-wrapper behavior. `rootFlagTokens` and
-// `firstPositionalIndex` retain pflag-style semantics for their version and
-// flag-walk checks: a bare boolean never consumes a following token there.
-// The residual divergence predates the issue #6482 fixes and is deliberately
-// left with the walk-consolidation follow-up rather than widened further.
+// `extractCommandPath` treats a recognized bare boolean literal (`--debug false`) as consuming a
+// token too, but `rootFlagTokens`/`firstPositionalIndex` keep pflag's stricter rule that a bare
+// boolean never consumes the next token — don't unify these; they answer different questions.
 const globalFlagsWithValues: ReadonlySet<string> = GLOBAL_VALUE_FLAG_TOKENS;
 
-// Commands that run their own foreground signal loop (serve/start daemons) and must
-// NOT be wrapped in the global signal-interrupt handler, which would otherwise race
-// their graceful shutdown. Matched by leading command-path segments.
+// Commands that run their own foreground signal loop (serve/start daemons) and must not be
+// wrapped by the global signal-interrupt handler, which would otherwise race their graceful
+// shutdown. Matched by leading command-path segments.
 //
-// Top-level `start` (["start"]) is deliberately NOT listed here: it used to proxy to the
-// Go binary, which managed SIGINT/SIGTERM itself, but the native TypeScript `start`
-// installs no signal handling of its own — excluding it left Ctrl-C mid-bring-up as a raw,
-// unhandled OS signal that hard-kills the process, skipping every Effect finalizer
-// including `rollbackStart`. Go's own `start` DID roll back on SIGINT
-// (`cmd/root.go:99,155` wraps every command's context with `signal.NotifyContext`;
-// formerly `internal/start/start.go:73-82`, which rolled back on any non-nil `run()`
-// error, including the `context.Canceled` a SIGINT produces — internal/start was
-// deleted as unreachable in CLI-1966, last present at commit a253ccba2), so native
-// `start` must participate in the global
-// wrapper to match. This list is matched purely against argv command-path segments.
-//
-// `["db", "start"]` (top-level `db start`) is ALSO deliberately not listed here, for the exact
-// same reason as `start` above: it used to proxy container bootstrap to the hidden Go
-// `db __db-bootstrap --mode start` seam, which held SIGINT/SIGTERM itself, but CLI-1954's
-// native port (`commands/db/start/start.handler.ts` -> `startDatabase`) installs
-// no signal handling of its own — it relies on the SAME `Effect.onError(() =>
-// rollbackStart(...))` wrapper `supabase start` uses, which only ever fires when this
-// process's own fiber is interrupted (by `Fiber.interrupt` below, or by an ordinary typed
-// failure) — a raw, unhandled OS signal skips it entirely, exactly like the `start` case above.
-//
-// `["db", "reset"]` was ALSO listed here once, for the same reason `db start` used to be:
-// its local path drove the hidden `db __db-bootstrap --mode recreate`/`--mode await-storage`
-// seam via a bespoke DIRECT `ChildProcess.make` spawn (not through `GoProxy`), which
-// held SIGINT/SIGTERM/SIGHUP itself while the Go child recreated the container — the global
-// handler's own `Fiber.interrupt` would otherwise race that child's Docker cleanup and lose
-// its real exit status. CLI-1955 removed that seam entirely: `db reset --local` is now fully
-// native TS (`command-internal/db-bootstrap/recreate-local-database.ts`), installing no signal
-// handling of its own. Its only remaining Go child is the niche `--experimental` remote
-// delegate, via the SAME `GoProxy.exec`/`execCapture` every other unlisted
-// command already uses safely alongside this global handler — so `db reset` was removed from
-// this list too, matching `db start`'s own precedent exactly.
+// `start` and `db start` are deliberately NOT listed here even though they sound similar: their
+// native implementations install no signal handling of their own, and instead rely on the global
+// handler's interruption to trigger their own rollback-on-error cleanup. Listing them would let a
+// raw Ctrl-C skip that cleanup entirely.
 const selfManagedSignalCommands: ReadonlyArray<ReadonlyArray<string>> = [["functions", "serve"]];
 
 /** Positional command-path tokens from argv, skipping global flags and their values. */
@@ -229,17 +192,9 @@ function isFlagOccurrence(token: string, name: string): boolean {
 }
 
 /**
- * `strconv.ParseBool`'s true spellings — a TRUTHINESS set for the
- * pflag-modeled `--version=<value>` resolution below. Answers a different
- * question than `BOOLEAN_FLAG_VALUES` (`agent-output.ts`), which asks whether
- * the shipped parser ACCEPTS the value at all — that parser serves the
- * Version action for any accepted value, `--version=no` included, so the two
- * sets must not be merged. The residual divergence runs both ways — an
- * accepted-but-not-ParseBool-true spelling (`--version=no`) resolves
- * `version=false` here while the renderer still serves the version, and a
- * ParseBool-true spelling the parser rejects (`--version=t`) never serves
- * anything — but it only steers the upgrade-notice scans and predates the
- * issue #6482 fixes.
+ * pflag's `ParseBool` true spellings, used to resolve `--version=<value>` here. This answers a
+ * different question than `BOOLEAN_FLAG_VALUES` (`agent-output.ts`), which asks whether the
+ * shipped parser accepts the value at all — the two sets must not be merged.
  */
 const PFLAG_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
@@ -300,14 +255,10 @@ function firstPositionalIndex(
 }
 
 /**
- * Whether argv sets the ROOT `--version` flag — in any spelling pflag marks as
- * changed, which is what Go's `shouldFetchRelease` keys on: bare, valued
- * (`--version=false` included), or followed by a
- * space-form operand (`--version true` — cobra serves the version built-in
- * before it ever validates the stray operand). A subcommand's own flag of the
- * same name (`db reset --version x`) does not count: a positional precedes
- * it. Operands after `--` and tokens consumed as another flag's value never
- * count.
+ * Whether argv sets the root `--version` flag, in any spelling pflag marks as changed: bare,
+ * valued (`--version=false` included), or followed by a space-form operand (`--version true`,
+ * since the version built-in is served before the stray operand is validated). A subcommand's
+ * own `--version` (`db reset --version x`) does not count, since a positional precedes it.
  */
 export function hasRootVersionFlag(
   args: ReadonlyArray<string>,
@@ -322,20 +273,11 @@ export function hasRootVersionFlag(
 }
 
 /**
- * Whether cobra serves this argv as a built-in — help at any depth, or root
- * version — without ever running `PersistentPreRunE`. Help counts on
- * presence: a false value on the root or a group still lands on cobra's
- * non-`Runnable()` help (execute() serves the built-ins and the Runnable
- * check before `preRun`), and the one input Go would instead run (a runnable
- * leaf under `--help=false`) is a spelling the vendored effect CLI serves
- * help for anyway. The version flag resolves pflag-style, last value wins: a
- * true value counts as the version built-in, `--version=false <leaf>` counts
- * as running the leaf — `ChangeWorkDir` included — and only a bare
- * invocation falls back to the non-runnable root's help. That is this
- * function's MODEL, not the shipped renderer's behavior: the parser serves
- * the Version action for any accepted value, `--version=no` included (see
- * `PFLAG_BOOL_TRUE`'s doc above for the deliberate split — only the
- * upgrade-notice checks ride on this resolution).
+ * Whether this argv resolves to a built-in action — help at any depth, or the root version —
+ * without ever running a command handler. Help counts on presence, regardless of value. The
+ * version flag resolves pflag-style, last value wins: a true value counts as the version
+ * built-in, `--version=false <leaf>` counts as running the leaf, and only a bare invocation with
+ * no positional falls back to the root's help. Used only by the upgrade-notice checks below.
  */
 export function hasRootHelpOrVersionFlag(
   args: ReadonlyArray<string>,
@@ -392,21 +334,11 @@ function formatterLayerFor(
 }
 
 /**
- * Process exit code for a failed CLI run, matching Go cobra's exit-code
- * mapping. Delegates to Effect's own `Runtime` exit-code protocol (the same
- * one `Runtime.defaultTeardown` uses) rather than hand-rolling `ShowHelp`
- * classification: `CliError.ShowHelp` declares
- * `[Runtime.errorExitCode] = this.errors.length ? 1 : 0`, so a bare group
- * command's default handler failing with `ShowHelp({ errors: [] })` (no
- * subcommand given, e.g. `supabase branches`) reads as exit `0` here — matching
- * Go cobra's non-`Runnable()` handling, which internally returns
- * `flag.ErrHelp` and `ExecuteC()` maps that to "print help, return nil error".
- * A `ShowHelp` with a non-empty `errors` array (a genuine parse/validation
- * failure) reads as exit `1`, and any other failure (including a `Cause.die`
- * defect with no typed `ShowHelp` marker at all) falls back to
- * `Runtime.getErrorExitCode`'s default of `1`. An explicit `--help` invocation
- * never reaches this function — it's handled earlier as a successful
- * `GlobalFlag.Action` and exits 0 via the success path.
+ * Process exit code for a failed CLI run. Delegates to Effect's own `Runtime` exit-code protocol
+ * rather than hand-rolling classification: a bare group command's default handler failing with
+ * `ShowHelp({ errors: [] })` (no subcommand given) reads as exit `0`; a `ShowHelp` with a
+ * non-empty `errors` array, or any other failure, falls back to exit `1`. An explicit `--help`
+ * invocation never reaches this function — it exits 0 via the success path.
  */
 export function exitCodeForFailure(cause: Cause.Cause<unknown>): number {
   if (Cause.hasInterruptsOnly(cause)) return 130;
@@ -414,20 +346,12 @@ export function exitCodeForFailure(cause: Cause.Cause<unknown>): number {
 }
 
 /**
- * Whether `handledProgram` should render its generic `output.fail` stderr line
- * for a failed run, given the run's cause and the exit code `exitCodeForFailure`
- * already computed for it. False for a clean exit (`0`), an interrupt (`130`),
- * and a `GoChildExitError` (CLI-1879) — a delegated Go child already wrote
- * its own detailed failure to the inherited stderr, so a second generic line
- * here would be a line Go itself never prints.
- *
- * Checked by concrete type, NOT Effect's shared `[Runtime.errorReported]`
- * marker: `CliError.ShowHelp` also sets that marker to `false`, for an
- * unrelated reason (the CLI framework already rendered help/usage text) —
- * gating on the marker would ALSO suppress `normalizeCause`'s Go-parity
- * rendering for a `MissingOption` wrapped in `ShowHelp` (e.g. `Error: required
- * flag(s) "type" not set`), a real parity regression. See the test suite for
- * the regression this guards.
+ * Whether `handledProgram` should render its generic `output.fail` stderr line for a failed run.
+ * False for a clean exit (`0`), an interrupt (`130`), and a `GoChildExitError` — a delegated Go
+ * child already wrote its own failure to the inherited stderr, so a second line here would be
+ * redundant. Checked by concrete type rather than Effect's shared `[Runtime.errorReported]`
+ * marker, since `CliError.ShowHelp` also sets that marker `false` for an unrelated reason and
+ * would otherwise suppress real error rendering too.
  */
 export function shouldReportFailure(cause: Cause.Cause<unknown>, exitCode: number): boolean {
   if (exitCode === 0 || exitCode === 130) return false;
@@ -435,9 +359,8 @@ export function shouldReportFailure(cause: Cause.Cause<unknown>, exitCode: numbe
 }
 
 /**
- * A single `Console.log`/`Console.error` call captured while
- * `withoutParseErrorHelpDump` runs, so it can be replayed once the run's
- * outcome is known instead of being written immediately.
+ * A single `Console.log`/`Console.error` call captured while `withoutParseErrorHelpDump` runs, so
+ * it can be replayed once the run's outcome is known instead of being written immediately.
  */
 interface BufferedConsoleWrite {
   readonly method: "log" | "error";
@@ -445,12 +368,10 @@ interface BufferedConsoleWrite {
 }
 
 /**
- * A `Console.Console` that captures `log`/`error` calls into `sink` instead
- * of writing them, and forwards every other method straight through to the
- * real console. The vendored `effect` CLI library's parser only ever calls
- * `log`/`error` (`showHelp()` and the `Help`/`Version`/`Completions`
- * `GlobalFlag.Action`s in `Command.ts`) — the rest are implemented so this
- * stays a faithful `Console.Console` rather than a partial stand-in.
+ * A `Console.Console` that captures `log`/`error` calls into `sink` instead of writing them, and
+ * forwards every other method straight through to the real console. The vendored CLI library only
+ * ever calls `log`/`error`, but every method is implemented so this stays a faithful
+ * `Console.Console` rather than a partial stand-in.
  */
 function bufferingConsole(sink: Array<BufferedConsoleWrite>): Console.Console {
   const real = globalThis.console;
@@ -482,104 +403,21 @@ function bufferingConsole(sink: Array<BufferedConsoleWrite>): Console.Console {
 }
 
 /**
- * How `withoutParseErrorHelpDump` should dispose of its buffered
- * `Console.log`/`Console.error` writes, given how the wrapped effect failed:
- *
- * - `"flush-unchanged"` — success, or a "clean" `ShowHelp` (`errors: []` —
- *   an explicit `--help` or a bare group command with no subcommand, both
- *   of which map to exit `0` per `exitCodeForFailure` above), or any other
- *   failure. Those buffered writes (if any, there normally are none outside
- *   the two `ShowHelp` cases) are the actual intended output.
- * - `"drop"` — a genuine parse/validation failure Go cobra's
- *   `PersistentPreRunE` already suppresses usage for: `ValidateRequiredFlags`
- *   (cobra `command.go:1007`), which sets `cmd.SilenceUsage = true`
- *   (`apps/cli-go/cmd/root.go:97`) BEFORE it runs. This library's
- *   `MissingOption` is the one tag that maps to that stage — see CLI-1901 —
- *   but ONLY when the flag was never given at all. A required flag that IS
- *   present on argv but missing its value (e.g. `sso add --type` with
- *   nothing after it) also raises `MissingOption` in this library (it has no
- *   distinct "value required" tag), yet Go's own pflag raises a DIFFERENT,
- *   earlier `ParseFlags`-time error for that input (`flag needs an
- *   argument: --type`) which does NOT get `SilenceUsage` treatment — verified
- *   against the real binary (`apps/cli-go/supabase-go sso add --type`: full
- *   usage block on stderr, vs `sso add --project-ref x` with `--type` never
- *   mentioned at all: bare `required flag(s) "type" not set`, no usage). See
- *   `isMissingFlagTokenPresent` below for how this case is distinguished from
- *   a genuinely-absent flag.
- * - `"flush-help-doc-to-stderr"` — every other genuine parse/validation
- *   failure (`UnrecognizedOption`, `InvalidValue`, `MissingArgument`,
- *   `UnknownSubcommand`; multiple simultaneous errors also lands here).
- *   These map to cobra's `ParseFlags`/`ValidateArgs` (`command.go:919,968`),
- *   which run BEFORE `PersistentPreRunE` — Go still shows a usage block for
- *   these, just on stderr, never stdout (verified against the real
- *   `apps/cli-go/supabase-go` binary, e.g. `branches --bogus-flag` and
- *   `sso add --type bogus`). The help doc this library renders isn't
- *   byte-identical to cobra's shorter usage template (that would need a
- *   second formatter, out of scope for CLI-1901), but showing SOME usage
- *   content on the RIGHT stream is closer to Go than showing none at all.
- *
- * In every "genuine failure" case, the buffered `Console.error` write (the
- * library's own duplicate render of the errors) is always dropped — this
- * repo's own `handledProgram` + `normalizeCause` already render the single
- * Go-parity line for it (see `withoutParseErrorHelpDump` below).
+ * How `withoutParseErrorHelpDump` disposes of its buffered `Console` writes for a failed run.
+ * `"drop"` applies only when a required flag was never given at all (see
+ * `isMissingFlagTokenPresent`) — a required flag that's present but missing its value is a
+ * different, earlier parse error and must render normally. Every other genuine parse/validation
+ * failure gets its help doc redirected to stderr instead of stdout; the library's own duplicate
+ * error line is always dropped, since `handledProgram`/`normalizeCause` render that separately.
  */
 export type ParseErrorConsoleDisposition = "flush-unchanged" | "drop" | "flush-help-doc-to-stderr";
 
 /**
- * Whether `option`'s canonical long-form flag token (`--option` or
- * `--option=...`), or one of its short/long `aliases` (e.g. `-t`), appears
- * anywhere in the raw argv this run was invoked with BEFORE the `--`
- * operand terminator (if any) — used to tell a genuinely-absent required
- * flag (Go: `SilenceUsage`-suppressed) apart from one that's present but
- * missing its value (Go: a `ParseFlags`-time error, usage still shown). See
- * the `"drop"` case on `ParseErrorConsoleDisposition` above for the full
- * rationale. `aliases` come from `flagAliasesFor` (see
- * `classifyParseErrorConsoleOutput` below), already formatted with their
- * leading dash(es).
- *
- * Tokens after a literal `--` are always positional operands, never a flag
- * occurrence for ANY option — this mirrors the vendored `effect` CLI
- * library's own lexer, which treats `--` the same way (`internal/lexer.ts`,
- * `argv.indexOf("--")`). Without this cutoff, a command like
- * `migration repair -- 20230101000000 --status` (a required `Flag.choice`,
- * `commands/migration/repair/repair.command.ts`) would have its
- * trailing `--status` positional argument misread as evidence the `--status`
- * flag was given, flipping a genuinely-absent-flag failure (Go: no usage
- * shown) into a "present but missing its value" one (Go: usage shown) — see
- * CLI-1901.
- *
- * That `--` cutoff is only genuine when the scan reaches `--` as a LIVE
- * token, not when it was itself consumed as the VALUE of an immediately
- * preceding value-taking flag. Go/pflag's `parseArgs` (`flag.go`) only
- * recognizes `--` as the terminator when it's at the FRONT of the remaining
- * args on a fresh iteration; `parseLongArg`'s value branch pops the very
- * next raw token with no shape check at all, so a literal `--` right after a
- * value-taking flag gets swallowed as that flag's value and never reaches
- * the terminator check — e.g. `sso add --project-ref -- --type` hands the
- * literal string `--` to `--project-ref`, and parsing resumes normally on
- * `--type` (which then fails with pflag's OWN `ValueRequiredError` — a
- * `ParseFlags`-time error, usage still shown — since nothing follows it).
- * The scan below therefore folds the terminator check into the very same
- * loop that already skips consumed-value tokens, rather than precomputing
- * `args.indexOf("--")` up front — a Codex review finding on CLI-1901.
- *
- * `isValueTakingToken` (from `isValueTakingFlagTokenFor`, OR'd with
- * `globalFlagsWithValues` at the `classifyParseErrorConsoleOutput` call site
- * below) lets the scan skip a token immediately consumed as the VALUE of a
- * preceding value-taking flag — local OR global — instead of mistaking that
- * consumed token (or a consumed literal `--`, per above) for `option`'s own
- * occurrence. Go/pflag's `parseLongArg` (`flag.go`) unconditionally consumes
- * the very next argv entry as a value-taking flag's value, even when that
- * entry itself looks like another flag — e.g. `sso add --project-ref --type`
- * hands the literal string `--type` to `--project-ref`, so `--type` is never
- * seen as its own occurrence in Go, and its `MissingOption` failure keeps
- * Go's `SilenceUsage` treatment (no usage shown). The vendored `effect`
- * parser does NOT replicate that eager consumption (it only treats a
- * following token as a value when the lexer tags it `Value`, never a
- * flag-shaped token — `internal/parser.ts`'s `consumeFlagValueWithTokens`),
- * so without this skip the raw scan would find the literal `--type` token
- * and wrongly flush the help doc for an input Go shows no usage for — a
- * Codex review finding on CLI-1901.
+ * Whether `option`'s flag token, or one of its `aliases`, appears anywhere in argv before a live
+ * `--` terminator — used to tell a genuinely-absent required flag (usage suppressed) apart from
+ * one that's present but missing its value (a separate, earlier parse error that still shows
+ * usage). `isValueTakingToken` skips tokens consumed as another flag's value (including a literal
+ * `--`), so a consumed token is never mistaken for `option`'s own occurrence.
  */
 function isMissingFlagTokenPresent(
   option: string,
@@ -591,18 +429,15 @@ function isMissingFlagTokenPresent(
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (arg === undefined) continue;
-    // A literal "--" only terminates flag parsing when reached as a LIVE
-    // token here — if the previous iteration already skipped it as a
-    // value-taking flag's consumed value (below), this line never runs for
-    // it, matching pflag's own ordering (see the doc comment above).
+    // A literal "--" only terminates parsing when reached live — if it was already skipped as a
+    // value-taking flag's consumed value below, this check never runs for it.
     if (arg === "--") break;
     if (tokens.some((token) => arg === token || arg.startsWith(`${token}=`))) return true;
     const equalIndex = arg.indexOf("=");
     const bareToken = equalIndex === -1 ? arg : arg.slice(0, equalIndex);
     if (equalIndex === -1 && isValueTakingToken(bareToken)) {
-      // Go/pflag consumes the following argv entry as `bareToken`'s value
-      // unconditionally — even a literal "--" — so skip it here too, before
-      // the next iteration's terminator check ever sees it.
+      // pflag consumes the following argv entry as `bareToken`'s value unconditionally — even a
+      // literal "--" — so skip it here too, before the terminator check ever sees it.
       index++;
     }
   }
@@ -617,15 +452,10 @@ export function classifyParseErrorConsoleOutput(
   if (!CliError.isCliError(error) || error._tag !== "ShowHelp" || error.errors.length === 0) {
     return "flush-unchanged";
   }
-  // `isValueTakingFlagTokenFor` only inspects the resolved LEAF command's own
-  // flags, so it has no visibility into value-taking GLOBAL flags (`--network-id`,
-  // `--profile`, etc. — see `globalFlagsWithValues` above). Without OR-ing those
-  // in, a global value flag consuming the very next token (e.g.
-  // `migration repair --network-id --status --local <version>` handing the
-  // literal `--status` to `--network-id`, per pflag's `parseLongArg`) would
-  // leave the required `status` flag looking "present" to the scan below, even
-  // though Go/pflag never sees it as its own occurrence and suppresses usage
-  // for it (`SilenceUsage`) — a Codex review finding on CLI-1901.
+  // `isValueTakingFlagTokenFor` only inspects the resolved leaf command's own flags, so
+  // value-taking global flags (`--network-id`, `--profile`, etc.) must be OR'd in — otherwise a
+  // global flag consuming the very next token could leave a genuinely-required flag looking
+  // "present" to the scan below.
   const isLeafValueTakingToken = isValueTakingFlagTokenFor(context.rootCommand, error.commandPath);
   const isValueTakingToken = (token: string) =>
     globalFlagsWithValues.has(token) || isLeafValueTakingToken(token);
@@ -641,50 +471,14 @@ export function classifyParseErrorConsoleOutput(
 }
 
 /**
- * Wraps `Command.runWith(rootCommand, ...)(args)` so the vendored `effect`
- * CLI library's OWN `Console.log`/`Console.error` writes are captured
- * instead of reaching the real console, then disposed of per
- * `classifyParseErrorConsoleOutput` once the run's outcome is known:
- * dropped entirely for a missing-required-flag failure, replayed to stderr
- * (never stdout) for every other genuine parse/validation failure, and
- * replayed unchanged for everything else. Either way, the library's own
- * duplicate error render never survives — this repo's own `handledProgram`
- * + `normalizeCause` already render the single Go-parity line for it. That
- * fixes both halves of CLI-1901 (the stdout help dump and the duplicate
- * error line) from this one call site, without patching the vendored
- * library itself.
+ * Wraps `Command.runWith(rootCommand, ...)(args)` so the vendored CLI library's own
+ * `Console.log`/`Console.error` writes are captured instead of reaching the real console, then
+ * disposed of per `classifyParseErrorConsoleOutput`: dropped for a missing-required-flag failure,
+ * replayed to stderr for other parse/validation failures, and replayed unchanged otherwise. Safe
+ * to wrap the whole call since no handler here writes through `Console` directly except
+ * `@supabase/config`'s `loadCliConfigFile`, which pins itself to the real console.
  *
- * TODO: remove this whole buffering/classification dance once upstream
- * Effect-TS/effect#6313 is fixed — https://github.com/Effect-TS/effect/issues/6313.
- * `runWith` has no supported way to opt out of, or redirect, its own
- * `showHelp` console writes; everything below exists only to work around
- * that gap from the outside.
- *
- * The "flush unchanged" outcome covers success, `--help`, `--version`,
- * `--completions`, and the bare-group-command help dump, all of which stay
- * untouched.
- *
- * Safe to wrap the entire `runWith` call — parsing AND the eventual command
- * handler, not just the parse phase that can actually raise `ShowHelp`: no
- * command handler in this codebase writes through `effect`'s `Console`
- * service directly (they go through the `Output` service instead). One
- * indirect exception is known — `@supabase/config`'s `loadCliConfigFile`
- * emits its deprecated-config-section warnings via `Console.error`, and is
- * reachable from handlers through `CliConfigStore`/`loadCliConfig` —
- * so it pins itself to the real console (`Effect.provideService(Console.Console,
- * globalThis.console)`) rather than relying on whatever `Console.Console` is
- * ambient here; see CLI-1901 and that package's `io.ts` for why (a
- * long-running command like `functions serve` would otherwise have the
- * warning buffered for its entire session instead of shown at startup).
- * Any other handler writing through `Console` directly would need the same
- * treatment — buffering here never delays or drops real command output
- * ONLY as long as that invariant holds. Note that Effect's OWN default
- * logger (`Effect.log*`) DOES resolve through this same `Console` reference
- * (`Logger.withConsoleLog`/`withConsoleError`) — this codebase has no
- * `Effect.log*` call sites today, but if one is ever added to a handler, its
- * output would be buffered too (deferred to end-of-run on the "flush
- * unchanged" path, or dropped on a genuine parse failure — which never runs
- * a handler in the first place, so that half is moot).
+ * TODO: remove once https://github.com/Effect-TS/effect/issues/6313 is fixed upstream.
  */
 export function withoutParseErrorHelpDump<A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -703,9 +497,8 @@ export function withoutParseErrorHelpDump<A, E, R>(
       return yield* exit;
     }
     for (const write of sink) {
-      // The library's own duplicate error render never survives a genuine
-      // parse failure — only its help-doc `log` write gets a second look,
-      // redirected to stderr instead of its original stdout-bound method.
+      // The library's own duplicate error render never survives a genuine parse failure — only
+      // its help-doc `log` write gets a second look, redirected to stderr.
       if (disposition === "flush-help-doc-to-stderr" && write.method === "error") continue;
       const method = disposition === "flush-help-doc-to-stderr" ? "error" : write.method;
       yield* Console.consoleWith((console) =>
@@ -745,11 +538,9 @@ export interface RunCliOptions {
   readonly beforeParse?: Effect.Effect<void, unknown, FileSystem.FileSystem | Path.Path>;
   readonly analyticsLayer: AnyAnalyticsLayer;
   /**
-   * Runs just before the process exits on any invocation that exits 0 — the
-   * seam for the CLI's upgrade notice. `cleanShowHelp` marks the
-   * exit-0 ShowHelp failure branch (a bare group command), which cobra serves
-   * without `PersistentPreRunE`. Must never fail, and cannot change the exit
-   * code.
+   * Runs just before the process exits on any invocation that exits 0 — the seam for the CLI's
+   * upgrade notice. `cleanShowHelp` marks the exit-0 `ShowHelp` failure branch (a bare group
+   * command). Must never fail, and cannot change the exit code.
    */
   readonly afterSuccess?: (
     args: ReadonlyArray<string>,
@@ -777,7 +568,8 @@ function cliProgramFor<
 ) {
   const runtimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
   const fallbackCommandLayer = Layer.mergeAll(
-    // Root command env inference currently leaks some subcommand-provided services.
+    // Root command env inference leaks some subcommand-provided services; these stand-ins die
+    // if a root-level invocation ever touches them.
     Layer.succeed(Credentials, {
       getAccessToken: Effect.die("unexpected root credentials access"),
       saveAccessToken: () => Effect.die("unexpected root credentials write"),
@@ -838,11 +630,8 @@ export async function runCli<
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  // Same `{ rootCommand, args }` shape `formatterLayerFor` builds below, so
-  // `normalizeCause`'s single-render fallback path (CLI-1901) can reuse
-  // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the
-  // text/json formatters would have shown before the vendored library's own
-  // duplicate render was suppressed.
+  // Same shape `formatterLayerFor` builds below, so `normalizeCause`'s fallback path can reuse
+  // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the formatters would.
   const suggestionContext = { rootCommand, args };
   const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(args);
   const outputFormat = await Effect.runPromise(
@@ -937,12 +726,8 @@ export async function runCli<
           : Effect.void;
       if (Exit.isFailure(exit)) {
         const exitCode = exitCodeForFailure(exit.cause);
-        // See `shouldReportFailure` for the reporting rules (and why they're
-        // NOT keyed on Effect's shared `[Runtime.errorReported]` marker).
-        // Literal `--help` never reaches this branch — it's handled as a
-        // successful `GlobalFlag.Action` and exits 0 via the success path
-        // below. See `exitCodeForFailure` for why a "clean" ShowHelp failure
-        // (e.g. a bare group command with no subcommand) also maps to exit 0.
+        // See `shouldReportFailure` and `exitCodeForFailure` for the exit-code/reporting rules; a
+        // literal `--help` never reaches this branch — it exits 0 via the success path below.
         if (shouldReportFailure(exit.cause, exitCode)) {
           yield* output.fail(normalizeCause(exit.cause, suggestionContext));
         }
