@@ -24,7 +24,7 @@
  *    right for it. The three documented exceptions, all of which
  *    intentionally scaffold into or report on a bare directory: `functions
  *    new` (templates use embedded defaults — port/publishable key),
- *    `experimental workers new` (`workers new api --workdir ./bare-dir`
+ *    `compute new` (`compute new api --workdir ./bare-dir`
  *    must create the entry there), and `seedBucketsRun`'s own load,
  *    which is only reached by the standalone `seed buckets` command —
  *    `start` and `db reset` pass `resolvedConfig` and never load config here

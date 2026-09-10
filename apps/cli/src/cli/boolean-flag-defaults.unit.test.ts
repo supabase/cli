@@ -6,7 +6,7 @@ import {
   userGlobalFlagParams,
 } from "../docs/docs-introspection.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
-import { rootCommand } from "./root.ts";
+import { rootCommandForFeatures } from "./root.ts";
 
 /**
  * `Flag.boolean(name)` builds a bare `Single` param, and a bare `Single` is
@@ -21,9 +21,9 @@ import { rootCommand } from "./root.ts";
  * precisely the invocation no handler test makes — so the guard walks the
  * command tree instead of waiting for a command to be exercised end to end.
  *
- * `experimental workers push --no-wait` is the flag that prompted it: it first
+ * `compute push --no-wait` is the flag that prompted it: it first
  * shipped with neither closer, which made a plain
- * `supabase experimental workers push` fail to parse at all.
+ * `supabase compute push` fail to parse at all.
  */
 
 /**
@@ -70,6 +70,12 @@ function booleanFlagsRequiringAValue(command: Command.Command.Any): ReadonlyArra
 
 describe("boolean flag wiring", () => {
   it("gives every boolean flag a default, so omitting it is not a parse error", () => {
-    expect(booleanFlagsRequiringAValue(rootCommand)).toEqual([]);
+    for (const stackBackend of ["legacy", "stack"] as const) {
+      for (const computeEnabled of [false, true]) {
+        expect(
+          booleanFlagsRequiringAValue(rootCommandForFeatures({ stackBackend, computeEnabled })),
+        ).toEqual([]);
+      }
+    }
   });
 });

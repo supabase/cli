@@ -156,11 +156,11 @@ function apiEnvelope(attributes: Record<string, unknown>): unknown {
 describe("fromConfigDocument", () => {
   test("projecting the default config keeps exactly the hosted sections", () => {
     const projected = fromConfigDocument(getDefaultCliConfig());
-    // `workers` survives as `{}`: the prune removes only containers the copy
+    // `compute` survives as `{}`: the prune removes only containers the copy
     // itself EMPTIED (secret stripping) — an originally-empty container is
     // declared data (a record entry's value can be an empty struct by schema
     // design, e.g. `storage.analytics.buckets` entries, where the key is the
-    // information). `realtime` is absent, not present-as-`{}` like `workers`:
+    // information). `realtime` is absent, not present-as-`{}` like `compute`:
     // all 3 of its config-side fields are `DOCUMENT_ONLY_LOCAL_PATHS` entries
     // (CLI-2316), all 3 are always-materialized (not `optionalKey`) so the
     // default config always declares them, and the emptied-by-exclusion
@@ -169,12 +169,12 @@ describe("fromConfigDocument", () => {
     expect(Object.keys(projected).sort()).toEqual([
       "api",
       "auth",
+      "compute",
       "db",
       "experimental",
       "storage",
-      "workers",
     ]);
-    expect(projected.workers).toEqual({});
+    expect(projected.compute).toEqual({});
     // Local-only sections never appear, however they're spelled on `CliConfig`.
     for (const droppedKey of [
       "project_id",
@@ -362,7 +362,7 @@ describe("fromConfigDocument", () => {
       "db",
       "realtime",
       "storage",
-      "workers",
+      "compute",
       "experimental",
     ]);
 
@@ -528,7 +528,7 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
       realtime: { enabled: false, ip_version: "IPv6", max_header_length: 1 },
     });
     const projected = fromConfigDocument(document);
-    // Every config-side `realtime` field is excluded, so — unlike `workers`,
+    // Every config-side `realtime` field is excluded, so — unlike `compute`,
     // which survives as `{}` — the section disappears entirely: it was
     // emptied BY this exclusion, the same prune rule as a secret-stripped
     // section.
@@ -549,6 +549,7 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
     });
     const projected = fromConfigDocument(document);
     expect(Object.hasOwn(projected.experimental ?? {}, "stack")).toBe(false);
+    expect(Object.hasOwn(projected.experimental ?? {}, "compute")).toBe(false);
     expect(Object.hasOwn(projected.experimental ?? {}, "orioledb_version")).toBe(false);
     expect(Object.hasOwn(projected.experimental ?? {}, "s3_host")).toBe(false);
     expect(Object.hasOwn(projected.experimental ?? {}, "s3_region")).toBe(false);
@@ -657,6 +658,7 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
       },
       realtime: { enabled: false, ip_version: "IPv6", max_header_length: 1 },
       experimental: {
+        compute: true,
         stack: true,
         orioledb_version: "1.0",
         s3_host: "host",

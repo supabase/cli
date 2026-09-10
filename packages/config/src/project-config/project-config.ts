@@ -45,7 +45,7 @@ export type ReadonlyJsonValue =
 /**
  * The hosted-project subset of {@link CliConfig}: the sections a Management
  * API project-config response can speak for (`api`, `auth`, `db`,
- * `realtime`, `storage`, `workers`, `experimental`) — never the local-only
+ * `realtime`, `storage`, `compute`, `experimental`) — never the local-only
  * sections (`studio`, service ports, `edge_runtime`, `analytics`,
  * `[remotes.*]`, …) that only make sense for a checkout on disk
  * (`docs/cli-config-loading.md`'s vocabulary).
@@ -87,7 +87,7 @@ export type ReadonlyJsonValue =
  * genuinely carry any field in any of the seven. `fromApiProjectConfig`'s
  * operand speaks for far fewer — `realtime` maps zero rows today (every field
  * is local dev-server tuning with no hosted counterpart, `./registry.ts`'s
- * comment on `realtime`), and `workers`/`experimental` have no v2
+ * comment on `realtime`), and `compute`/`experimental` have no v2
  * project-config API counterpart at all, so an API-sourced `ProjectConfig`
  * never carries those two keys regardless of what the remote project has
  * configured. A comparison consumer (CLI-2156) must restrict its comparison
@@ -327,7 +327,7 @@ function copyHostedValueForDocument(value: unknown, path: ReadonlyArray<string>)
  *   same as any other section: pruning only fires on a container this
  *   function's OWN exclusion emptied, never one that started empty), matching
  *   `fromApiProjectConfig` already never carrying a populated one either.
- * - `experimental.stack` — selects the local CLI stack backend.
+ * - `experimental.stack` and `experimental.compute` — select local CLI feature families.
  * - `experimental.orioledb_version`, `experimental.s3_host`,
  *   `experimental.s3_region` — local OrioleDB-with-S3 storage engine config
  *   (`experimental.s3_access_key`/`s3_secret_key` need no entry: both are
@@ -389,6 +389,7 @@ export const DOCUMENT_ONLY_LOCAL_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
   ["realtime", "ip_version"],
   ["realtime", "max_header_length"],
   ["experimental", "stack"],
+  ["experimental", "compute"],
   ["experimental", "orioledb_version"],
   ["experimental", "s3_host"],
   ["experimental", "s3_region"],
@@ -2109,7 +2110,7 @@ function readApiResponseProperty(config: Record<string, unknown>): unknown {
  * are added, removed, or renamed, this set moves with them automatically.
  * Excludes secret rows (an API-sourced value for one is never populated, so
  * it can never meaningfully participate in a comparison) and every field
- * with no row at all (`realtime` in full, `workers`/`experimental`, and
+ * with no row at all (`realtime` in full, `compute`/`experimental`, and
  * every "Deliberately unmapped" field the sibling registries document).
  *
  * This ONLY remedies the whole-SECTION-granularity gap (e.g. `realtime` in

@@ -333,7 +333,7 @@ const expectedPureGraphFiles = [
   "realtime.ts",
   "storage.ts",
   "studio.ts",
-  "workers.ts",
+  "compute.ts",
 ]
   .map((relativePath) => join(srcDir, relativePath))
   .sort();

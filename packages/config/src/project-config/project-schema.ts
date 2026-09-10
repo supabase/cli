@@ -60,10 +60,10 @@
  *      true } } } }` with no `host` yet is a legal, if incomplete,
  *      `ProjectConfig` fragment, but `requiredWhenEnabled("host", ...)` would
  *      reject it. Every LEAF-level check survives untouched, since it lives
- *      on a non-`Objects` node — today that's only `workers.*.instances`'s
+ *      on a non-`Objects` node — today that's only `compute.*.instances`'s
  *      `Schema.Number.check(isInt(), isGreaterThanOrEqualTo(0))` and the
- *      `[workers]` record's own key pattern (`Schema.isPattern(...)` on
- *      `workerName`, `../workers.ts`). There is no port-range (or other
+ *      `[compute]` record's own key pattern (`Schema.isPattern(...)` on
+ *      `computeName`, `../compute.ts`). There is no port-range (or other
  *      numeric-bound) leaf check anywhere in this schema today.
  *    - Recurses into `Union` members (e.g. `storage.file_size_limit`'s
  *      `Schema.Union([String, Number])`, and every `Schema.Literals`-backed
@@ -216,7 +216,7 @@ const hostedSectionsStruct = Schema.Struct({
   db: CliConfigSchema.fields.db,
   realtime: CliConfigSchema.fields.realtime,
   storage: CliConfigSchema.fields.storage,
-  workers: CliConfigSchema.fields.workers,
+  compute: CliConfigSchema.fields.compute,
   experimental: CliConfigSchema.fields.experimental,
 });
 

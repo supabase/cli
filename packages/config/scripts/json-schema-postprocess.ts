@@ -42,7 +42,7 @@ interface RecoveredAnnotations {
  * drops when it splits a plain `Schema.Number` into the `anyOf` union
  * {@link collapseNonFiniteNumberUnions} collapses back down (verified
  * empirically against `api.max_rows`, which carries both). A `.check()`ed
- * number (e.g. `workers.*.instances`'s `isInt()`) renders as a plain
+ * number (e.g. `compute.*.instances`'s `isInt()`) renders as a plain
  * `"type": "integer"` node instead of this union, so it never reaches this
  * map's consumer in the first place — collected here regardless, since this
  * walk narrows number leaves only through `SchemaAST.isNumber`.

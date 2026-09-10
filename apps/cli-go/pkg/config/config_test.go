@@ -286,23 +286,23 @@ enabled = false
 		assert.False(t, config.Experimental.PgDelta.Enabled)
 	})
 
-	// [workers] is owned by the TS CLI, but the published JSON schema advertises it,
+	// [compute] is owned by the TS CLI, but the published JSON schema advertises it,
 	// so a user can hand-write it today. Every Go-delegated path goes through
 	// config.Load, and UnmarshalExact rejects keys baseConfig does not model — so the
 	// section has to at least parse here, in both base and remote position.
-	t.Run("accepts the TS-owned workers section", func(t *testing.T) {
+	t.Run("accepts the TS-owned compute section", func(t *testing.T) {
 		config := NewConfig()
 		fsys := fs.MapFS{
 			"supabase/config.toml": &fs.MapFile{Data: []byte(`
 project_id = "test"
 
-[workers.api]
+[compute.api]
 runtime = "node"
 
 [remotes.prod]
 project_id = "bvikqvbczudanvggcord"
 
-[remotes.prod.workers.api]
+[remotes.prod.compute.api]
 instances = 3
 `)},
 		}
@@ -351,6 +351,14 @@ instances = 3
 			assert.Equal(t, tt.want, config.Experimental.Stack)
 		})
 	}
+
+	t.Run("accepts experimental compute", func(t *testing.T) {
+		t.Setenv("SUPABASE_EXPERIMENTAL_COMPUTE", "")
+		config := NewConfig()
+		fsys := fs.MapFS{"supabase/config.toml": &fs.MapFile{Data: []byte("[experimental]\ncompute = true\n")}}
+		require.NoError(t, config.Load("", fsys))
+		assert.True(t, config.Experimental.Compute)
+	})
 
 	t.Run("does not emit experimental stack", func(t *testing.T) {
 		config := NewConfig()

@@ -61,7 +61,7 @@ describe("shadowCacheKey", () => {
     expect(shadowBaselineTarFileName(first)).toBe(`shadow-baseline-${first}.tar`);
   });
 
-  it("changes when ANY baked-in input changes", () => {
+  const shadowCacheMutations = () => {
     const base = baseKeyInputs();
     const mutations: ReadonlyArray<{
       readonly label: string;
@@ -149,12 +149,19 @@ describe("shadowCacheKey", () => {
         },
       },
     ];
-    const baseKey = shadowCacheKey(base);
-    const seen = new Map<string, string>([[baseKey, "base"]]);
+    return { base, mutations };
+  };
+
+  it.each(shadowCacheMutations().mutations)("changes when $label changes", (mutation) => {
+    expect(shadowCacheKey(mutation.inputs)).not.toBe(shadowCacheKey(baseKeyInputs()));
+  });
+
+  it("keeps all baked-in mutations collision-free", () => {
+    const { base, mutations } = shadowCacheMutations();
+    const seen = new Map<string, string>([[shadowCacheKey(base), "base"]]);
     for (const mutation of mutations) {
       const key = shadowCacheKey(mutation.inputs);
-      const collision = seen.get(key);
-      expect(collision, `${mutation.label} must change the cache key`).toBeUndefined();
+      expect(seen.get(key), `${mutation.label} must change the cache key`).toBeUndefined();
       seen.set(key, mutation.label);
     }
   });

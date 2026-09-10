@@ -8,14 +8,11 @@ import { configCommand } from "../commands/config/config.command.ts";
 import { dbCommand } from "../commands/db/db.command.ts";
 import { domainsCommand } from "../commands/domains/domains.command.ts";
 import { encryptionCommand } from "../commands/encryption/encryption.command.ts";
-import { experimentalCommand } from "../commands/experimental/experimental.command.ts";
-import {
-  experimentalStackRuntimeLayer,
-  stackCommand,
-} from "../commands/experimental/stack/stack.command.ts";
-import { experimentalStackStartCommand } from "../commands/experimental/stack/start/start.command.ts";
-import { experimentalStackStopCommand } from "../commands/experimental/stack/stop/stop.command.ts";
-import type { StackBackend } from "../commands/experimental/stack/stack-backend.ts";
+import { stackRuntimeLayer, stackCommand } from "../commands/stack/stack.command.ts";
+import { stackStartCommand } from "../commands/stack/start/start.command.ts";
+import { stackStopCommand } from "../commands/stack/stop/stop.command.ts";
+import type { StackBackend } from "../commands/stack/stack-backend.ts";
+import { computeCommand } from "../commands/compute/compute.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
 import { genCommand } from "../commands/gen/gen.command.ts";
 import { initCommand } from "../commands/init/init.command.ts";
@@ -69,16 +66,21 @@ import {
   YesFlag,
 } from "../command-internal/global-flags.ts";
 
-const stackStartAliasCommand = experimentalStackStartCommand.pipe(
+const stackStartAliasCommand = stackStartCommand.pipe(
   Command.provide(commandRuntimeLayer(["start"])),
-  Command.provide(experimentalStackRuntimeLayer),
+  Command.provide(stackRuntimeLayer),
 );
-export const stackStopAliasCommand = experimentalStackStopCommand.pipe(
+export const stackStopAliasCommand = stackStopCommand.pipe(
   Command.provide(commandRuntimeLayer(["stop"])),
-  Command.provide(experimentalStackRuntimeLayer),
+  Command.provide(stackRuntimeLayer),
 );
 
-export const rootCommandForBackend = (backend: StackBackend = "legacy"): CliRootCommand =>
+export const rootCommandForFeatures = (
+  options: {
+    readonly stackBackend?: StackBackend;
+    readonly computeEnabled?: boolean;
+  } = {},
+): CliRootCommand =>
   Command.make("supabase").pipe(
     Command.withDescription("Supabase CLI (stable channel)."),
     Command.withSubcommands([
@@ -90,7 +92,7 @@ export const rootCommandForBackend = (backend: StackBackend = "legacy"): CliRoot
       dbCommand,
       domainsCommand,
       encryptionCommand,
-      experimentalCommand,
+      ...(options.computeEnabled ? [computeCommand] : []),
       functionsCommand,
       genCommand,
       initCommand,
@@ -113,9 +115,9 @@ export const rootCommandForBackend = (backend: StackBackend = "legacy"): CliRoot
       sslEnforcementCommand,
       ssoCommand,
       stackCommand,
-      backend === "stack" ? stackStartAliasCommand : startCommand,
+      options.stackBackend === "stack" ? stackStartAliasCommand : startCommand,
       statusCommand,
-      backend === "stack" ? stackStopAliasCommand : stopCommand,
+      options.stackBackend === "stack" ? stackStopAliasCommand : stopCommand,
       storageCommand,
       telemetryCommand,
       testCommand,
@@ -190,4 +192,4 @@ export const rootCommandForBackend = (backend: StackBackend = "legacy"): CliRoot
     Command.withGlobalFlags([OutputFormatFlag, ...GLOBAL_FLAGS]),
   );
 
-export const rootCommand: CliRootCommand = rootCommandForBackend();
+export const rootCommand: CliRootCommand = rootCommandForFeatures();

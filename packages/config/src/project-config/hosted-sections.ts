@@ -13,7 +13,7 @@ export const HOSTED_SECTION_KEYS = [
   "db",
   "realtime",
   "storage",
-  "workers",
+  "compute",
   "experimental",
 ] as const;
 

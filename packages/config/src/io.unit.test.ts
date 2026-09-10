@@ -1320,7 +1320,7 @@ project_id = "dupref"
     }
   });
 
-  test("loads a [remotes.*.workers] section alongside the project's own", async () => {
+  test("loads a [remotes.*.compute] section alongside the project's own", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -1329,20 +1329,20 @@ project_id = "dupref"
         join(cwd, "supabase", "config.toml"),
         `project_id = "baseref"
 
-[workers.api]
+[compute.api]
 runtime = "node"
 
 [remotes.staging]
 project_id = "abcdefghijklmnopqrst"
 
-[remotes.staging.workers.api]
+[remotes.staging.compute.api]
 runtime = "deno"
 `,
       );
 
       const loaded = await runConfigEffect(loadCliConfig(cwd));
       expect(loaded).not.toBeNull();
-      expect(loaded!.config.workers).toEqual({ api: { runtime: "node" } });
+      expect(loaded!.config.compute).toEqual({ api: { runtime: "node" } });
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
