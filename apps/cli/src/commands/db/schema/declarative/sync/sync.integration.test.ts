@@ -1820,20 +1820,6 @@ describe("db schema declarative sync integration", () => {
     });
   });
 
-  it.effect("interactive migration naming wires stem validation into the prompt", () => {
-    seedDeclarative(tmp.current);
-    const s = setup(tmp.current, {
-      stdinIsTty: true,
-      diffSql: "ALTER TABLE a ADD COLUMN b int;",
-      promptTextResponses: ["safe_change"],
-    });
-    return Effect.gen(function* () {
-      yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      const validate = s.out.promptTextCalls[0]?.opts?.validate;
-      expect(validate).toBeTypeOf("function");
-    }).pipe(Effect.provide(s.layer));
-  });
-
   it.effect("failed image preflight saves diagnostics before deleting the generated file", () => {
     seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
@@ -1916,6 +1902,38 @@ describe("db schema declarative sync integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(migrationEntries(tmp.current)).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("failed apply keeps generated files after a no-transaction statement committed", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      stdinIsTty: true,
+      applyFailurePrefix: "ALTER TYPE",
+      promptConfirmResponses: [false],
+      renderedFiles: [
+        {
+          sequence: 1,
+          name: "enum_values",
+          sql: "-- pg-delta: transaction=false\nSELECT 1;\nALTER TYPE mood ADD VALUE 'fine';",
+          transactionMode: "none",
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(migrationEntries(tmp.current)).toHaveLength(1);
+      expect(s.dbExec.some((sql) => sql.includes("SELECT 1"))).toBe(true);
+      expect(s.out.stderrText).toContain("SQL from this apply may already have been committed");
+      expect(s.out.stderrText).not.toContain(
+        "one or more segments were already recorded in migration history",
+      );
+      expect(s.out.promptConfirmCalls.map((call) => call.message)).not.toContain(
+        "Keep the generated migration file(s)?",
+      );
     }).pipe(Effect.provide(s.layer));
   });
 

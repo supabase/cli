@@ -787,6 +787,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     // Step 8: apply the migration to the local database (native).
     let applyAttempted = false;
     const appliedSegments = yield* Ref.make(0);
+    const sqlMayHaveCommitted = yield* Ref.make(false);
     const applyExit = yield* ensureLocalPostgresImageCurrent.pipe(
       Effect.andThen(
         Effect.sync(() => {
@@ -798,6 +799,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
           { port: toml.port, password: toml.password, dnsResolver },
           migrationPaths,
           Ref.update(appliedSegments, (count) => count + 1),
+          Ref.set(sqlMayHaveCommitted, true),
         ),
       ),
       Effect.exit,
@@ -810,7 +812,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
 
     // A Ctrl-C or defect during the apply is not a migration-apply failure —
     // propagate it unchanged instead of synthesizing a fake
-    // `DeclarativeApplyError` (review CLI-1958).
+    // `DeclarativeApplyError`.
     const applyFailure = Cause.findFail(applyExit.cause);
     if (Result.isFailure(applyFailure)) {
       return yield* Effect.failCause(applyFailure.failure);
@@ -850,7 +852,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         if (Exit.isFailure(resetExit)) {
           // A Ctrl-C or defect during the recovery reset must cancel the command,
           // not get rewritten into a synthetic "unknown error" apply failure —
-          // propagate it unchanged (review CLI-1958).
+          // propagate it unchanged.
           const resetFailure = Cause.findFail(resetExit.cause);
           if (Result.isFailure(resetFailure)) {
             return yield* Effect.failCause(resetFailure.failure);
@@ -901,10 +903,16 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     }
 
     const appliedSegmentCount = yield* Ref.get(appliedSegments);
-    let keepGeneratedFiles = appliedSegmentCount > 0;
-    if (keepGeneratedFiles) {
+    const sqlCommitted = yield* Ref.get(sqlMayHaveCommitted);
+    let keepGeneratedFiles = appliedSegmentCount > 0 || sqlCommitted;
+    if (appliedSegmentCount > 0) {
       yield* output.raw(
         "Generated migration files were kept because one or more segments were already recorded in migration history.\n",
+        "stderr",
+      );
+    } else if (sqlCommitted) {
+      yield* output.raw(
+        "Generated migration files were kept because SQL from this apply may already have been committed.\n",
         "stderr",
       );
     } else if (tty.stdinIsTty && !yes) {
@@ -1023,6 +1031,7 @@ const applyMigrationToLocal = (
   local: { port: number; password: string; dnsResolver: "native" | "https" },
   migrationPaths: ReadonlyArray<string>,
   onMigrationRecorded: Effect.Effect<void>,
+  onStatementsCommitted: Effect.Effect<void>,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -1035,6 +1044,7 @@ const applyMigrationToLocal = (
         path,
         migrationPath,
         (message) => new DeclarativeApplyError({ message }),
+        onStatementsCommitted,
       );
       yield* onMigrationRecorded;
     }

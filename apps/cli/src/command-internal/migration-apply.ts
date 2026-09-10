@@ -66,6 +66,7 @@ const ALTER_SYSTEM_PATTERN = /^ALTER\s+SYSTEM(?:\s|$)/u;
 const CLUSTER_PATTERN = /^CLUSTER(?:\s|$)/u;
 const TRANSACTION_CONTROL_PATTERN =
   /^(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ABORT|PREPARE\s+TRANSACTION)(?:\s|$)/u;
+const SESSION_CONFIG_PATTERN = /^(?:SET(?:\s+LOCAL)?|RESET)(?:\s|$)/u;
 
 /**
  * Strips a leading BOM, whitespace, and SQL line (`--`) and block comments from the
@@ -126,6 +127,9 @@ export const hasTransactionControl = (sql: string): boolean => {
   }
   return TRANSACTION_CONTROL_PATTERN.test(upper);
 };
+
+const isSessionConfigStatement = (sql: string): boolean =>
+  SESSION_CONFIG_PATTERN.test(trimLeadingSqlComments(sql).toUpperCase());
 
 const ROLE_REVERT_PATTERN =
   /^(?:RESET\s+ROLE|RESET\s+SESSION\s+AUTHORIZATION|SET\s+(?:SESSION\s+)?ROLE(?:\s+TO\s+|\s*=\s*|\s+)(?:NONE|DEFAULT)|SET\s+SESSION\s+AUTHORIZATION\s+DEFAULT|DISCARD\s+ALL)(?:\s|;|$)/u;
@@ -533,6 +537,8 @@ interface MigrationHistoryRecord {
 interface ExecMigrationStatementsOptions {
   readonly history?: MigrationHistoryRecord;
   readonly sequentialFailureCleanup?: string;
+  /** After user SQL succeeded. Not connect, role restore, history insert, or SET/RESET. */
+  readonly onStatementsCommitted?: Effect.Effect<void>;
 }
 
 const execMigrationStatements = (
@@ -543,6 +549,7 @@ const execMigrationStatements = (
 ): Effect.Effect<void, Error | DbConnectError> =>
   Effect.gen(function* () {
     const restoreRole = session.restoreRoleSql;
+    const notifyCommitted = options.onStatementsCommitted ?? Effect.void;
 
     const executeSequentially = (cleanup?: string) =>
       Effect.gen(function* () {
@@ -550,6 +557,9 @@ const execMigrationStatements = (
           yield* session
             .exec(statement)
             .pipe(Effect.mapError((cause) => formatExecBatchError(cause, index, statement)));
+          if (!isSessionConfigStatement(statement)) {
+            yield* notifyCommitted;
+          }
           if (restoreRole !== undefined && revertsToLoginRole(statement)) {
             yield* session
               .exec(restoreRole)
@@ -656,6 +666,9 @@ const execMigrationStatements = (
             );
           }),
         );
+        if (batchStatements.length > 0) {
+          yield* notifyCommitted;
+        }
         pending = [];
         executed += batchStatements.length;
       });
@@ -669,6 +682,7 @@ const execMigrationStatements = (
           .exec(statement)
           .pipe(Effect.mapError((cause) => formatExecBatchError(cause, index, statement)));
         executed += 1;
+        yield* notifyCommitted;
       } else {
         pending.push(statement);
       }
@@ -743,6 +757,7 @@ const execMigrationBatch = <E>(
   forceNoVersion: boolean,
   displayPath: string = migrationPath,
   projectEnv: Readonly<Record<string, string>> = {},
+  onStatementsCommitted?: Effect.Effect<void>,
 ): Effect.Effect<void, E | DbConnectError> =>
   Effect.gen(function* () {
     // Receives an already-read/parsed file (the read
@@ -810,6 +825,7 @@ const execMigrationBatch = <E>(
     yield* execMigrationStatements(session, statements, transactionMode, {
       history,
       sequentialFailureCleanup: "RESET ALL",
+      onStatementsCommitted,
     }).pipe(
       Effect.mapError((error) =>
         // A batch connection failure is not an execution failure: it keeps its own
@@ -854,6 +870,7 @@ export const applyMigrationFile = <E>(
   path: Path.Path,
   migrationPath: string,
   mapError: (message: string, dbError?: DbExecError) => E,
+  onStatementsCommitted?: Effect.Effect<void>,
 ): Effect.Effect<void, E | DbConnectError> =>
   Effect.gen(function* () {
     yield* resetConnectionState(session, mapError);
@@ -865,6 +882,9 @@ export const applyMigrationFile = <E>(
       migrationPath,
       (message, _phase, dbError) => mapError(message, dbError),
       false,
+      migrationPath,
+      {},
+      onStatementsCommitted,
     );
   });
 

@@ -92,8 +92,8 @@ always go to stderr, in every `--output-format`. On success:
 - **Architecture:** the engine extracts and renders the target in-process.
 - **Stale local-container guard.** `--local`/smart-mode's Local target inspects
   the running local `db` container's actual image and compares it against the
-  currently-configured/resolved one before reading from it. A same-tag family
-  mismatch (slim vs docker.io, e.g. after toggling `SUPABASE_USE_SLIM_IMAGES`
-  without restarting) fails with a suggestion to `supabase stop` then
-  `supabase start` with the same flag. A real version/tag mismatch still
-  suggests `supabase stop --all --no-backup` then `supabase start`.
+  currently-configured/resolved one before reading from it. Same-major tag and
+  slim/docker.io family changes use data-preserving `supabase stop` then
+  `supabase start`. A proven Postgres-major upgrade **or** a standard↔OrioleDB
+  storage-engine change uses `supabase stop --all --no-backup` then
+  `supabase start` and explicitly warns that local data will be deleted.
