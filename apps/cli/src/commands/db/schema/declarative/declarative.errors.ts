@@ -138,8 +138,3 @@ export function readErrorSuggestion(error: unknown): string | undefined {
   const { suggestion } = error as { suggestion: unknown };
   return typeof suggestion === "string" ? suggestion : undefined;
 }
-
-/**
- * Materializing the declarative export on disk failed: `"failed to clean declarative schema
- * directory: " + err` or `"unsafe declarative export path: " + path`.
- */

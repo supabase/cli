@@ -72,11 +72,7 @@ interface DbConfigResolverShape {
   ) => Effect.Effect<Option.Option<PgConnInput>, DbConfigError>;
 }
 
-/**
- * Resolves a Postgres connection from the `--db-url` / `--local` / `--linked`
- * flags. Shared cross-command infra:
- * `db reset` / `db dump` will reuse it as they are ported.
- */
+/** Resolves a Postgres connection from the `--db-url` / `--local` / `--linked` flags. */
 export class DbConfigResolver extends Context.Service<DbConfigResolver, DbConfigResolverShape>()(
   "supabase/cli/DbConfigResolver",
 ) {}

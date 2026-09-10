@@ -41,11 +41,6 @@ export interface WorkerLogEntry {
 }
 
 /**
- * The row shape the projection in `workerLogsQuery` produces. `stream` stays a plain string
- * and `log_attributes` an open record because the log contract is additive-only: a new stream
- * or attribute must render, not fail the whole read.
- */
-/**
  * The widest instant a JavaScript `Date` can hold, either side of the epoch. `ts_ms` feeds
  * `new Date(...).toISOString()` unconditionally when a payload is built; outside this range
  * that throws `RangeError`, turning a bad row into a defect — so the bound lives on the
@@ -53,6 +48,11 @@ export interface WorkerLogEntry {
  */
 const MAX_DATE_MS = 8_640_000_000_000_000;
 
+/**
+ * The row shape the projection in `workerLogsQuery` produces. `stream` stays a plain string
+ * and `log_attributes` an open record because the log contract is additive-only: a new stream
+ * or attribute must render, not fail the whole read.
+ */
 const WorkerLogRow = Schema.Struct({
   id: Schema.String,
   ts_ms: Schema.Number.pipe(

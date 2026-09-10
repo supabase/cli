@@ -152,9 +152,7 @@ export class StorageFileError extends Data.TaggedError("StorageFileError")<{
   }
 }
 
-/**
- * Both `--linked` and `--local` set — mutually exclusive.
- */
+/** Conflicting target flags: `--linked` with `--local`, or `--project-ref` with `--local`. */
 export class StorageMutuallyExclusiveFlagsError extends Data.TaggedError(
   "StorageMutuallyExclusiveFlagsError",
 )<{

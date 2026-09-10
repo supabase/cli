@@ -20,7 +20,7 @@ const config = {
     Flag.withDescription("Checks the local database for issues."),
     Flag.withDefault(false),
   ),
-  // TS-only override of the linked project ref — see push.command.ts.
+  // Overrides the linked project ref; the same flag exists on `config push`.
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,

@@ -71,7 +71,7 @@ const config = {
     Flag.withDescription("Diffs local migration files against the local database."),
     Flag.optional,
   ),
-  // TS-only override of the linked project ref — see push.command.ts.
+  // Overrides the linked project ref; the same flag exists on `config push`.
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,

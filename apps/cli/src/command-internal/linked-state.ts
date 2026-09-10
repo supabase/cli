@@ -32,19 +32,13 @@ export type LinkedState =
     };
 
 /**
- * Soft "currently linked ref" lookup: env `SUPABASE_PROJECT_ID`, else the
- * `<workdir>/supabase/.temp/project-ref` file; never prompts, never fails.
- * Deliberately independent of `ProjectRefResolver`, so this stays usable from
- * a runtime (e.g. `status`'s) that never wires that resolver up.
+ * Soft lookup of the currently linked ref: env `SUPABASE_PROJECT_ID`, else the
+ * `<workdir>/supabase/.temp/project-ref` file. Never prompts or fails, and does not depend on
+ * `ProjectRefResolver`, so runtimes like `status` can use it without wiring that resolver up.
  *
- * Both candidates are validated against `PROJECT_REF_PATTERN`: this value is
- * emitted verbatim by `status -o json`/`--output-format json`, and
- * `readProjectRefFile` follows symlinks, so an unvalidated candidate could
- * exfiltrate a symlinked secret file's contents. A non-matching candidate is
- * treated as absent rather than reaching any output channel.
- *
- * Reports which candidate won, since an env override and the workdir's own
- * cache file carry different trust rules.
+ * Candidates must match `PROJECT_REF_PATTERN`: the value is echoed verbatim by `status -o json`
+ * and the file read follows symlinks, so an unvalidated value could leak a secret file's contents.
+ * Reports which source won, since the env override and the cache file carry different trust.
  */
 const resolveSoftLinkedRef = Effect.fnUntraced(function* () {
   const cliSettings = yield* CommandSettings;

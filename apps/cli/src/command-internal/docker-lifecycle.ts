@@ -213,8 +213,7 @@ export const inspectContainerState = (spawner: Spawner, containerId: string) =>
           });
         }),
       );
-      // Concurrency is required, not cosmetic — see the matching comment in
-      // `listContainersByLabel` above.
+      // Concurrency is required, not cosmetic; see `spawnDockerPsLines` above.
       const [exitCode, stdout, stderr] = yield* Effect.all(
         [
           child.exitCode.pipe(Effect.map(Number)),
@@ -300,8 +299,7 @@ export const listVolumesByLabel = (spawner: Spawner, projectIdFilter: string) =>
             }),
         ),
       );
-      // Concurrency is required, not cosmetic — see the matching comment in
-      // `listContainersByLabel` above.
+      // Concurrency is required, not cosmetic; see `spawnDockerPsLines` above.
       const [exitCode, stdout, stderr] = yield* Effect.all(
         [
           child.exitCode.pipe(Effect.map(Number)),

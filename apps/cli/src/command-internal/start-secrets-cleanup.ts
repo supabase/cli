@@ -6,20 +6,14 @@ import { Effect } from "effect";
 import type { ContainerIdName } from "./docker-lifecycle.ts";
 
 /**
- * Best-effort removal of per-container staged-secret directories: plaintext secret/env
- * material some `start` services stage on host disk. Used by `start`'s rollback and `stop`.
- * Only Edge Runtime still stages anything here; an unstaged directory is a harmless no-op.
+ * Best-effort removal of the per-container staged-secret directories some `start` services put
+ * on host disk (today only Edge Runtime). Used by `start`'s rollback and by `stop`; never fails.
  *
- * Each container's directory is resolved under its own workdir label, not the caller's
- * `fallbackWorkdir` (used only when a container's label is empty) — otherwise a
- * `--project-id`/`--all` teardown could orphan a different project's secrets.
- *
- * `containers` must be exactly what Docker reported for the just-completed teardown, never
- * reconstructed or a pre-teardown snapshot — a container that failed to be removed must keep
- * its secrets, and this also avoids ever deleting the whole `start-secrets/` parent.
- *
- * Never fails. `container.name` is external `docker ps` metadata, so the resolved candidate
- * must be a direct child of the staging root before deletion — this also covers an empty name.
+ * Each directory is resolved under the container's own workdir label (`fallbackWorkdir` only
+ * when the label is empty) so a `--project-id`/`--all` teardown can't orphan another project's
+ * secrets, and it must be a direct child of the staging root because `container.name` is
+ * untrusted `docker ps` metadata. `containers` must be exactly what Docker reported for the
+ * completed teardown: a container that survived removal keeps its secrets.
  */
 export function cleanupStartSecrets(
   containers: ReadonlyArray<ContainerIdName>,
