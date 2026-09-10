@@ -176,6 +176,7 @@ Expected failures in Effect code must be represented in the typed error channel.
 - Use `Effect.try`, `Effect.tryPromise`, or callback adapters only at foreign boundaries, and map failures into a declared domain error.
 - Reserve defects (`Effect.die` or an uncaught throw) for genuinely impossible internal invariants and programmer bugs.
 - Standalone process entrypoints and public non-Effect adapters may throw or reject after translating the typed Effect failure at the outer boundary.
+- The string literal passed to `Data.TaggedError("...")` is that error's telemetry identity in PostHog: it flows into `error_fingerprint` (as `tag:<TagName>`) on the `cli_command_executed` event. Renaming the error _class_ is fine at any time; changing the string literal is not — it silently splits that error's history into two fingerprints, with no error and no warning. If a rename tool offers to update the string literal along with the class name, decline it. `apps/cli/src/shared/telemetry/error-tag-stability.unit.test.ts` enforces this by comparing every `Data.TaggedError("...")` tag under `apps/cli/src` against a committed snapshot.
 
 ### Causes and recovery
 

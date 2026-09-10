@@ -1,7 +1,19 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Schema } from "effect";
-import { CAPABILITY_NAMES } from "./Capability.ts";
 import { StackStatusSchema } from "./Status.ts";
+
+const STATUS_CAPABILITIES = [
+  "database",
+  "rest",
+  "auth",
+  "realtime",
+  "storage",
+  "functions",
+  "studio",
+  "mail",
+  "analytics",
+  "pooler",
+] as const;
 
 const STATUS_FIXTURE = {
   id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -19,7 +31,7 @@ const STATUS_FIXTURE = {
   versions: {
     database: "17",
   },
-  capabilities: CAPABILITY_NAMES.map((name) => ({
+  capabilities: STATUS_CAPABILITIES.map((name) => ({
     name,
     activation: "lazy",
     state: name === "rest" ? "dormant" : "disabled",
@@ -37,8 +49,7 @@ describe("public stack model", () => {
   it.effect("decodes a complete status snapshot", () =>
     Schema.decodeUnknownEffect(StackStatusSchema)(STATUS_FIXTURE).pipe(
       Effect.map((status) => {
-        expect(status.capabilities).toHaveLength(10);
-        expect(new Set(status.capabilities.map(({ name }) => name)).size).toBe(10);
+        expect(status.capabilities.map(({ name }) => name)).toEqual([...STATUS_CAPABILITIES]);
         expect(status.capabilities.find(({ name }) => name === "rest")?.state).toBe("dormant");
         expect(status.artifacts).toEqual([
           { workloadId: "rest:rest", capability: "rest", state: "downloading" },

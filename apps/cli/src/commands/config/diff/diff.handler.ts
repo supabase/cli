@@ -13,6 +13,7 @@ import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-va
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { unsupportedOutputFlagMessage } from "../../../command-internal/go-output-flag.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
 import {
@@ -110,8 +111,7 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
     // the same as every other failure here.
     if (Option.isSome(goOutputFlag)) {
       return yield* new ConfigDiffOutputFlagUnsupportedError({
-        message:
-          "the -o/--output flag is not supported by config diff; use --output-format json|stream-json instead.",
+        message: unsupportedOutputFlagMessage("config diff"),
       });
     }
 

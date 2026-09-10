@@ -2328,283 +2328,299 @@ describe("production runtime", () => {
     ),
   );
 
-  it.live("wires owner material into container workloads", () =>
+  const makeOwnerMaterialFixture = () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-production-inputs-" });
+      const template = path.join(root, "templates", "confirmation.html");
+      yield* fs.makeDirectory(path.dirname(template), { recursive: true });
+      yield* fs.writeFileString(template, "confirmation");
+      const gcpCredentials = path.join(root, "gcp.json");
+      yield* fs.writeFileString(gcpCredentials, "{}");
+      const compiled = yield* compileStack({
+        projectRoot: root,
+        runtime: { kind: "container", engine: "docker" },
+        config: {
+          capabilities: {
+            auth: {
+              settings: {
+                email: {
+                  template: { confirmation: { content_path: "templates/confirmation.html" } },
+                },
+              },
+            },
+            pooler: { enabled: true },
+            rest: { enabled: false },
+            realtime: { enabled: false },
+            storage: { enabled: false },
+            functions: {
+              enabled: true,
+              settings: {
+                edge_runtime: { secrets: { FACTORY_SECRET: Redacted.make("factory-secret") } },
+              },
+            },
+            studio: { enabled: false },
+            mail: { enabled: false },
+            analytics: {
+              enabled: true,
+              settings: { backend: "bigquery", gcp_jwt_path: "gcp.json" },
+            },
+          },
+          listeners: {
+            database: { enabled: false },
+            studio: { enabled: false },
+            mailUi: { enabled: false },
+            smtp: { enabled: false },
+            pop3: { enabled: false },
+            functionsInspector: { enabled: false },
+          },
+        },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const authServer = createServer((_request, response) => {
+        response.statusCode = 200;
+        response.setHeader("Connection", "close");
+        response.end("ok");
+      });
+      yield* listenForNativeReadiness(authServer);
+      const authAddress = authServer.address();
+      if (typeof authAddress !== "object" || authAddress === null)
+        return yield* Effect.die("Auth readiness server did not expose an address");
+      const functionsServer = createServer((_request, response) => {
+        response.statusCode = 200;
+        response.setHeader("Connection", "close");
+        response.end("ok");
+      });
+      yield* listenForNativeReadiness(functionsServer);
+      const functionsAddress = functionsServer.address();
+      if (typeof functionsAddress !== "object" || functionsAddress === null)
+        return yield* Effect.die("Functions readiness server did not expose an address");
+      const analyticsServer = createServer((_request, response) => {
+        response.statusCode = 200;
+        response.setHeader("Connection", "close");
+        response.end("ok");
+      });
+      yield* listenForNativeReadiness(analyticsServer);
+      const analyticsAddress = analyticsServer.address();
+      if (typeof analyticsAddress !== "object" || analyticsAddress === null)
+        return yield* Effect.die("Analytics readiness server did not expose an address");
+      const poolerServer = createServer((_request, response) => {
+        response.statusCode = 204;
+        response.end();
+      });
+      yield* listenForNativeReadiness(poolerServer);
+      const poolerAddress = poolerServer.address();
+      if (typeof poolerAddress !== "object" || poolerAddress === null)
+        return yield* Effect.die("Pooler readiness server did not expose an address");
+      const current = {
+        value: {
+          ...stateFor(
+            {
+              "secret:database.internal.password": { policy: "managed", value: "db-secret" },
+              "secret:auth.settings.jwt_secret": { policy: "managed", value: "jwt-secret" },
+              "secret:auth.settings.publishable_key": {
+                policy: "managed",
+                value: "sb_publishable_test",
+              },
+              "secret:auth.settings.secret_key": {
+                policy: "managed",
+                value: "sb_secret_test",
+              },
+              "secret:functions.settings.edge_runtime.secrets.FACTORY_SECRET": {
+                policy: "managed",
+                value: "factory-secret",
+              },
+            },
+            { kind: "container", engine: "docker" },
+          ),
+          identity: {
+            ...stateFor({}).identity,
+            projectRoot: root,
+          },
+          desiredLifecycle: "running" as const,
+          definition: compiled.definition,
+          ports: [{ field: "api" as const, port: 40_000, intent: "exact" as const }],
+          privatePorts: [
+            {
+              workloadId: "auth:auth",
+              binding: "primary",
+              port: authAddress.port,
+            },
+            {
+              workloadId: "pooler:pooler",
+              binding: "primary",
+              port: poolerAddress.port + 1,
+            },
+            {
+              workloadId: "pooler:pooler",
+              binding: "admin",
+              port: poolerAddress.port,
+            },
+            {
+              workloadId: "functions:edge-runtime",
+              binding: "primary",
+              port: functionsAddress.port,
+            },
+            {
+              workloadId: "functions:edge-runtime",
+              binding: "inspector",
+              port: functionsAddress.port + 1,
+            },
+            {
+              workloadId: "analytics:analytics",
+              binding: "primary",
+              port: analyticsAddress.port,
+            },
+          ],
+        },
+      } satisfies { value: PersistedStackState };
+      const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+      const createdSpecs: ContainerContainerSpec[] = [];
+      const copiedFiles: Array<Readonly<{ source: string; destination: string }>> = [];
+      const engine = ownerInputContainerEngine(createdSpecs, copiedFiles);
+      const runtime = yield* makeProductionRuntime({
+        stateRoot: root,
+        stackId,
+        ownerSessionId: "owner",
+        stateStore: stateStoreFor(current),
+        context,
+        ingress,
+        containerEngine: engine,
+        artifactPreparer: {
+          prepare: (_runtime, workload) =>
+            Effect.succeed({
+              workloadId: workload.id,
+              capability: workload.capability,
+              version: "test",
+              outcome: "cached" as const,
+              image: workload.selected.kind === "container" ? workload.selected.image : undefined,
+            }),
+        },
+        logStore: memoryLogStore([]),
+        bootstrapDatabase: () => Effect.void,
+      });
+      return { fs, runtime, createdSpecs, copiedFiles, compiled };
+    }).pipe(Effect.provide(NodeServices.layer));
+
+  it.live("writes Auth owner material and confirmation template settings", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-production-inputs-" });
-        const template = path.join(root, "templates", "confirmation.html");
-        yield* fs.makeDirectory(path.dirname(template), { recursive: true });
-        yield* fs.writeFileString(template, "confirmation");
-        const gcpCredentials = path.join(root, "gcp.json");
-        yield* fs.writeFileString(gcpCredentials, "{}");
-        const compiled = yield* compileStack({
-          projectRoot: root,
-          runtime: { kind: "container", engine: "docker" },
-          config: {
-            capabilities: {
-              auth: {
-                settings: {
-                  email: {
-                    template: { confirmation: { content_path: "templates/confirmation.html" } },
-                  },
-                },
-              },
-              pooler: { enabled: true },
-              rest: { enabled: false },
-              realtime: { enabled: false },
-              storage: { enabled: false },
-              functions: {
-                enabled: true,
-                settings: {
-                  edge_runtime: { secrets: { FACTORY_SECRET: Redacted.make("factory-secret") } },
-                },
-              },
-              studio: { enabled: false },
-              mail: { enabled: false },
-              analytics: {
-                enabled: true,
-                settings: { backend: "bigquery", gcp_jwt_path: "gcp.json" },
-              },
-            },
-            listeners: {
-              database: { enabled: false },
-              studio: { enabled: false },
-              mailUi: { enabled: false },
-              smtp: { enabled: false },
-              pop3: { enabled: false },
-              functionsInspector: { enabled: false },
-            },
-          },
-        }).pipe(Effect.provide(NodeServices.layer));
-        const authServer = createServer((_request, response) => {
-          response.statusCode = 200;
-          response.setHeader("Connection", "close");
-          response.end("ok");
-        });
-        yield* listenForNativeReadiness(authServer);
-        const authAddress = authServer.address();
-        if (typeof authAddress !== "object" || authAddress === null)
-          return yield* Effect.die("Auth readiness server did not expose an address");
-        const functionsServer = createServer((_request, response) => {
-          response.statusCode = 200;
-          response.setHeader("Connection", "close");
-          response.end("ok");
-        });
-        yield* listenForNativeReadiness(functionsServer);
-        const functionsAddress = functionsServer.address();
-        if (typeof functionsAddress !== "object" || functionsAddress === null)
-          return yield* Effect.die("Functions readiness server did not expose an address");
-        const analyticsServer = createServer((_request, response) => {
-          response.statusCode = 200;
-          response.setHeader("Connection", "close");
-          response.end("ok");
-        });
-        yield* listenForNativeReadiness(analyticsServer);
-        const analyticsAddress = analyticsServer.address();
-        if (typeof analyticsAddress !== "object" || analyticsAddress === null)
-          return yield* Effect.die("Analytics readiness server did not expose an address");
-        const poolerServer = createServer((_request, response) => {
-          response.statusCode = 204;
-          response.end();
-        });
-        yield* listenForNativeReadiness(poolerServer);
-        const poolerAddress = poolerServer.address();
-        if (typeof poolerAddress !== "object" || poolerAddress === null)
-          return yield* Effect.die("Pooler readiness server did not expose an address");
-        const current = {
-          value: {
-            ...stateFor(
-              {
-                "secret:database.internal.password": { policy: "managed", value: "db-secret" },
-                "secret:auth.settings.jwt_secret": { policy: "managed", value: "jwt-secret" },
-                "secret:auth.settings.publishable_key": {
-                  policy: "managed",
-                  value: "sb_publishable_test",
-                },
-                "secret:auth.settings.secret_key": {
-                  policy: "managed",
-                  value: "sb_secret_test",
-                },
-                "secret:functions.settings.edge_runtime.secrets.FACTORY_SECRET": {
-                  policy: "managed",
-                  value: "factory-secret",
-                },
-              },
-              { kind: "container", engine: "docker" },
-            ),
-            identity: {
-              ...stateFor({}).identity,
-              projectRoot: root,
-            },
-            desiredLifecycle: "running" as const,
-            definition: compiled.definition,
-            ports: [{ field: "api" as const, port: 40_000, intent: "exact" as const }],
-            privatePorts: [
-              {
-                workloadId: "auth:auth",
-                binding: "primary",
-                port: authAddress.port,
-              },
-              {
-                workloadId: "pooler:pooler",
-                binding: "primary",
-                port: poolerAddress.port + 1,
-              },
-              {
-                workloadId: "pooler:pooler",
-                binding: "admin",
-                port: poolerAddress.port,
-              },
-              {
-                workloadId: "functions:edge-runtime",
-                binding: "primary",
-                port: functionsAddress.port,
-              },
-              {
-                workloadId: "functions:edge-runtime",
-                binding: "inspector",
-                port: functionsAddress.port + 1,
-              },
-              {
-                workloadId: "analytics:analytics",
-                binding: "primary",
-                port: analyticsAddress.port,
-              },
-            ],
-          },
-        } satisfies { value: PersistedStackState };
-        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const createdSpecs: ContainerContainerSpec[] = [];
-        const copiedFiles: Array<Readonly<{ source: string; destination: string }>> = [];
-        const engine = ownerInputContainerEngine(createdSpecs, copiedFiles);
-        const runtime = yield* makeProductionRuntime({
-          stateRoot: root,
-          stackId,
-          ownerSessionId: "owner",
-          stateStore: stateStoreFor(current),
-          context,
-          ingress,
-          containerEngine: engine,
-          artifactPreparer: {
-            prepare: (_runtime, workload) =>
-              Effect.succeed({
-                workloadId: workload.id,
-                capability: workload.capability,
-                version: "test",
-                outcome: "cached" as const,
-                image: workload.selected.kind === "container" ? workload.selected.image : undefined,
-              }),
-          },
-          logStore: memoryLogStore([]),
-          bootstrapDatabase: () => Effect.void,
-        });
+        const { fs, runtime, createdSpecs, compiled } = yield* makeOwnerMaterialFixture();
         const auth = compiled.executionPlan.workloads.find(
           (workload) => workload.id === "auth:auth",
         );
-        const pooler = compiled.executionPlan.workloads.find(
-          (workload) => workload.id === "pooler:pooler",
-        );
-        if (auth === undefined || pooler === undefined)
-          return yield* Effect.die("Expected Auth and Pooler workloads");
-        yield* runtime.driver.start(
-          {
-            stackId,
-            workloadId: auth.id,
-          },
-          auth,
-        );
+        if (auth === undefined) return yield* Effect.die("Expected Auth workload");
+
+        yield* runtime.driver.start({ stackId, workloadId: auth.id }, auth);
         const authSpec = createdSpecs.find((spec) => spec.labels.workloadId === auth.id);
-        if (authSpec === undefined || authSpec.envFile === undefined)
+        if (authSpec?.envFile === undefined)
           return yield* Effect.die("Auth container was not captured");
-        const authEnv = yield* fs.readFileString(authSpec.envFile);
-        expect(authEnv).toContain("GOTRUE_JWT_SECRET=jwt-secret");
-        expect(authEnv).toContain(
+        const authEnvironment = yield* fs.readFileString(authSpec.envFile);
+
+        expect(authEnvironment).toContain("GOTRUE_JWT_SECRET=jwt-secret");
+        expect(authEnvironment).toContain(
           "GOTRUE_MAILER_TEMPLATES_CONFIRMATION=http://host.docker.internal:40000/email/confirmation.html",
         );
+      }),
+    ),
+  );
+
+  it.live("writes Functions owner material and bootstrap source", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { fs, runtime, createdSpecs, copiedFiles, compiled } =
+          yield* makeOwnerMaterialFixture();
         const functions = compiled.executionPlan.workloads.find(
           (workload) => workload.id === "functions:edge-runtime",
         );
-        const analytics = compiled.executionPlan.workloads.find(
-          (workload) => workload.id === "analytics:analytics",
-        );
-        if (functions === undefined || analytics === undefined)
-          return yield* Effect.die("Expected Functions and Analytics workloads");
-        yield* runtime.driver.start(
-          {
-            stackId,
-            workloadId: functions.id,
-          },
-          functions,
-        );
+        if (functions === undefined) return yield* Effect.die("Expected Functions workload");
+
+        yield* runtime.driver.start({ stackId, workloadId: functions.id }, functions);
         const functionsSpec = createdSpecs.find((spec) => spec.labels.workloadId === functions.id);
         if (functionsSpec?.envFile === undefined)
           return yield* Effect.die("Functions container was not captured");
         const firstBootstrap = copiedFiles.at(-1);
         if (firstBootstrap === undefined)
           return yield* Effect.die("Functions bootstrap was not captured");
-        const firstBootstrapPath = firstBootstrap.source;
-        expect(yield* fs.exists(firstBootstrapPath)).toBe(true);
-        expect(yield* fs.readFileString(functionsSpec.envFile)).toContain(
-          "FACTORY_SECRET=factory-secret",
+        const functionsEnvironment = yield* fs.readFileString(functionsSpec.envFile);
+
+        expect(functionsEnvironment).toContain("FACTORY_SECRET=factory-secret");
+        expect(yield* fs.exists(firstBootstrap.source)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("mounts the Analytics credentials file for the owner", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { runtime, createdSpecs, compiled } = yield* makeOwnerMaterialFixture();
+        const analytics = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "analytics:analytics",
         );
-        yield* runtime.driver.start(
-          {
-            stackId,
-            workloadId: analytics.id,
-          },
-          analytics,
-        );
+        if (analytics === undefined) return yield* Effect.die("Expected Analytics workload");
+
+        yield* runtime.driver.start({ stackId, workloadId: analytics.id }, analytics);
         const analyticsSpec = createdSpecs.find((spec) => spec.labels.workloadId === analytics.id);
+
         expect(analyticsSpec?.mounts).toContainEqual({
           source: expect.stringContaining("gcp.json"),
           target: "/opt/app/rel/logflare/bin/gcloud.json",
           readOnly: true,
         });
-        yield* runtime.driver.start(
-          {
-            stackId,
-            workloadId: pooler.id,
-          },
-          pooler,
+      }),
+    ),
+  );
+
+  it.live("starts Pooler with its owner startup entrypoints", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { runtime, createdSpecs, compiled } = yield* makeOwnerMaterialFixture();
+        const pooler = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "pooler:pooler",
         );
+        if (pooler === undefined) return yield* Effect.die("Expected Pooler workload");
+
+        yield* runtime.driver.start({ stackId, workloadId: pooler.id }, pooler);
         const poolerSpec = createdSpecs.find(
           (spec) => spec.labels.workloadId === pooler.id && spec.labels.startup !== true,
         );
         const poolerStartupSpecs = createdSpecs.filter(
           (spec) => spec.labels.workloadId === pooler.id && spec.labels.startup === true,
         );
+
         expect(poolerSpec?.mounts).toEqual([]);
         expect(poolerStartupSpecs.map((spec) => spec.entrypoint)).toEqual([
           "/app/bin/prepare",
           "/app/bin/provision-tenant",
         ]);
-        yield* runtime.driver.stop({
-          stackId,
-          workloadId: pooler.id,
-        });
-        yield* runtime.driver.start(
-          {
-            stackId,
-            workloadId: pooler.id,
-          },
-          pooler,
+      }),
+    ),
+  );
+
+  it.live("removes and recreates the Functions bootstrap across container cleanup", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { fs, runtime, copiedFiles, compiled } = yield* makeOwnerMaterialFixture();
+        const functions = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "functions:edge-runtime",
         );
+        if (functions === undefined) return yield* Effect.die("Expected Functions workload");
+
+        yield* runtime.driver.start({ stackId, workloadId: functions.id }, functions);
+        const firstBootstrap = copiedFiles.at(-1);
+        if (firstBootstrap === undefined)
+          return yield* Effect.die("Functions bootstrap was not captured");
+        expect(yield* fs.exists(firstBootstrap.source)).toBe(true);
+
         yield* runtime.driver.cleanup({ stackId, destroy: false });
-        expect(yield* fs.exists(firstBootstrapPath)).toBe(false);
-        yield* runtime.driver.start(
-          {
-            stackId,
-            workloadId: functions.id,
-          },
-          functions,
-        );
+        expect(yield* fs.exists(firstBootstrap.source)).toBe(false);
+
+        yield* runtime.driver.start({ stackId, workloadId: functions.id }, functions);
         const restartedBootstrap = copiedFiles.at(-1);
         if (restartedBootstrap === undefined || restartedBootstrap === firstBootstrap)
           return yield* Effect.die("Restarted Functions bootstrap was not captured");
         expect(yield* fs.exists(restartedBootstrap.source)).toBe(true);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }),
     ),
   );
 

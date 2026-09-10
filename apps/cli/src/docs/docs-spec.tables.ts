@@ -77,6 +77,7 @@ export const DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
   "supabase-test": ["local-dev"],
   "supabase-unlink": ["local-dev"],
   "supabase-vanity-subdomains": ["management-api"],
+  "supabase-whoami": ["management-api"],
 };
 
 /** Leaves that require `--experimental`. */

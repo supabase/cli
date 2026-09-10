@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { Console, Effect, FileSystem, Path, Predicate, Redacted, Schema } from "effect";
+import { Console, Effect, FileSystem, Path, Predicate, Redacted } from "effect";
 import * as SmolToml from "smol-toml";
-import { CliConfigSchema, RemotesSchema, type CliConfig } from "./base.ts";
+import { CliConfigSchema, type CliConfig } from "./base.ts";
 import {
   encodeCliConfigToJsonDocument,
   encodeCliConfigToTomlDocument,
@@ -23,20 +23,7 @@ import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
 import { findCliProjectPaths } from "./paths.ts";
 import { setOwnProperty } from "./sparse.ts";
 import { loadCliProjectEnvironment } from "./project.ts";
-
-const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
-/**
- * Decodes the `remotes` map with `disableChecks: true` — full type/shape
- * decoding, defaults, and transformations (e.g. secret redaction) still run,
- * but the `.check()`-based business-rule refinements embedded in `auth`/`db`/
- * etc. (e.g. "external provider requires a secret when enabled") are skipped.
- * See {@link RemotesSchema}'s doc comment for why: Go only ever applies those
- * business rules to the merged effective config, never to a `[remotes.*]`
- * block that wasn't selected.
- */
-const decodeRemotesWithoutChecks = Schema.decodeUnknownSync(RemotesSchema, {
-  disableChecks: true,
-});
+import { validateCliConfig } from "./validate.ts";
 
 function configJsonPathWith(path: Path.Path, cwd: string): string {
   return path.join(cwd, "supabase", "config.json");
@@ -473,48 +460,23 @@ function parseCliConfig(
   path: string,
   appliedRemote: string | undefined,
 ): Effect.Effect<CliConfig, CliConfigParseError> {
-  return Effect.try({
-    try: () => {
-      // Decode `remotes` separately, with business-rule checks disabled — see
-      // `decodeRemotesWithoutChecks`/`RemotesSchema`'s doc comments. Non-selected
-      // `[remotes.*]` blocks reach here still attached to `document` (only a
-      // SELECTED remote gets merged in and stripped from `remotes` by
-      // `applyRemoteOverride`), so decoding them through the normal,
-      // checks-enabled `decodeCliConfig` below would apply Go's
-      // merged-config-only business rules to every remote regardless of
-      // selection. Structural decoding (types, defaults, transformations)
-      // still runs either way, matching Go's unconditional `UnmarshalExact`
-      // struct decode of every remote.
-      const rawRemotes = isObject(document) ? document.remotes : undefined;
-      const config = decodeCliConfig(isObject(document) ? { ...document, remotes: {} } : document);
-      return { ...config, remotes: decodeRemotesWithoutChecks(rawRemotes ?? {}) };
-    },
-    // `document` always parsed successfully by this point (raw parse failures
-    // are caught earlier, in `loadCliConfigFile`), so any error here is a
-    // schema-decode failure — attach it so callers can attempt a narrower,
-    // Go-tolerant re-decode of an unaffected subtree. See the field doc on
-    // `CliConfigParseError.document`. Only the `edge_runtime` subtree is
-    // retained (not the whole document): it's the only slice any caller
-    // re-decodes today (`secrets set`'s `recoverEdgeRuntimeConfig`), and several
-    // callers of `loadCliConfig` (e.g. `gen types`, `next start`,
-    // `functions dev/serve/deploy`) don't catch `CliConfigParseError` at
-    // all, so this error can propagate with whatever we attach here — no
-    // reason to carry unrelated sections (db credentials, other
-    // `[remotes.*]` blocks, etc.) along for the ride. `appliedRemote` is passed
-    // through unconditionally too — see the field doc on
-    // `CliConfigParseError.appliedRemote` for why a tolerant caller still
-    // owes the override notice on this path.
-    catch: (cause) =>
-      new CliConfigParseError({
-        path,
-        format,
-        cause,
-        document: isObject(document)
-          ? { edge_runtime: redactEdgeRuntimeSecrets(document.edge_runtime) }
-          : undefined,
-        appliedRemote,
-      }),
-  });
+  // `validateCliConfig` preserves the loader's checked base/structural remote
+  // decode split. Keep the loader-specific path, format, and narrow redacted
+  // document attached to its existing parse error contract.
+  return validateCliConfig(document).pipe(
+    Effect.mapError(
+      (cause) =>
+        new CliConfigParseError({
+          path,
+          format,
+          cause,
+          document: isObject(document)
+            ? { edge_runtime: redactEdgeRuntimeSecrets(document.edge_runtime) }
+            : undefined,
+          appliedRemote,
+        }),
+    ),
+  );
 }
 
 export interface DecodeCliConfigDocumentForValidationEffectOptions {
