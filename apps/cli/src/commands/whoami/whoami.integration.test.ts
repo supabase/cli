@@ -26,8 +26,8 @@ type Profile = typeof V1GetProfileOutput.Type;
 
 const SAMPLE_PROFILE: Profile = {
   gotrue_id: "5a5c1690-8f6f-4b95-b76c-97b80a8868fc",
-  primary_email: "person@example.com",
-  username: "person",
+  primary_email: "identity@example.net",
+  username: "cli-owner",
 };
 
 const tempRoot = useTempWorkdir("supabase-whoami-int-");
@@ -72,8 +72,9 @@ describe("whoami integration", () => {
 
       expect(out.stdoutText).toContain("USER ID");
       expect(out.stdoutText).toContain(SAMPLE_PROFILE.gotrue_id);
-      expect(out.stdoutText).toContain(SAMPLE_PROFILE.username);
-      expect(out.stdoutText).toContain(SAMPLE_PROFILE.primary_email);
+      expect(out.stdoutText.split("\n")).toContain(
+        "   5a5c1690-8f6f-4b95-b76c-97b80a8868fc | cli-owner | identity@example.net ",
+      );
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]).toMatchObject({
         method: "GET",

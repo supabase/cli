@@ -710,6 +710,16 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer));
     });
 
+    it.effect("result writes message-free JSON to stdout", () => {
+      const mock = mockStdio();
+      const layer = jsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.result({ id: 42 });
+        expect(mock.stdout).toEqual(['{"id":42}\n']);
+      }).pipe(Effect.provide(layer));
+    });
+
     it.effect("fail writes JSON error to stdout", () => {
       const mock = mockStdio();
       const layer = jsonOutputLayer.pipe(Layer.provide(mock.layer));
@@ -994,6 +1004,22 @@ describe("Output", () => {
         expect(parsed.type).toBe("result");
         expect(parsed.data).toEqual({ key: "value", message: "done" });
         expect(parsed.timestamp).toBeDefined();
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("result emits a message-free result event", () => {
+      const mock = mockStdio();
+      const layer = streamJsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.result({ id: 42 });
+        const parsed = JSON.parse(mock.stdout[0]!);
+        expect(parsed).toEqual({
+          type: "result",
+          data: { id: 42 },
+          timestamp: expect.any(String),
+        });
+        expect(parsed.data).not.toHaveProperty("message");
       }).pipe(Effect.provide(layer));
     });
 

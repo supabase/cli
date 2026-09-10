@@ -79,6 +79,7 @@ function issueMockOutput(opts: { readonly format?: OutputFormat } = {}) {
           message: () => Effect.void,
           stop: () => Effect.void,
         }),
+      result: () => Effect.void,
       success: (message: string, data?: Record<string, unknown>) =>
         Effect.sync(() => {
           messages.push({ type: "success", message, data });

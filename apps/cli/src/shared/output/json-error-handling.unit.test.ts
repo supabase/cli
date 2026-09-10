@@ -58,6 +58,7 @@ function mockOutput(format: "text" | "json" | "stream-json" = "text") {
           cancel: (_nextMessage?: string) => Effect.void,
           clear: () => Effect.void,
         }),
+      result: (_data: unknown) => Effect.void,
       success: (_message: string, _data?: Record<string, unknown>) => Effect.void,
       fail: (err: FailCall) =>
         Effect.sync(() => {
