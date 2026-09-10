@@ -99,7 +99,7 @@ function resolveProfile(
  * `--workdir=` differently (treats it as explicit-but-falls-through-to-walk-up,
  * never to env) — the two are intentionally NOT unified.
  */
-function resolveWorkdir(
+export function resolveWorkdir(
   flagValue: Option.Option<string>,
   envValue: string | undefined,
   cwd: string,

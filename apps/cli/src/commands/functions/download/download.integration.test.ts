@@ -27,6 +27,7 @@ import { downloadFunctions } from "../../../shared/functions/download.ts";
 import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ConflictingFunctionDownloadFlagsError } from "../../../shared/functions/download.errors.ts";
+import { FunctionsApiStatusError } from "../../../shared/functions/functions-api.errors.ts";
 import { functionsDownloadHandler } from "./download.command.ts";
 import type { FunctionsDownloadFlags } from "./download.command.ts";
 import { functionsDownload } from "./download.handler.ts";
@@ -1645,6 +1646,69 @@ describe("functions download", () => {
       );
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "attaches the first function's on-disk directory to the failure when a later function's download fails",
+    () => {
+      // Reproduces a reviewer-reported repro on the shared download loop
+      // (`downloadFunctions`, `download.ts`): the first function downloads
+      // successfully, the second function's body request returns HTTP 500 —
+      // the resulting failure must carry the first function's already-written
+      // directory (via `writtenSoFar`) instead of reporting no progress at
+      // all, since a caller three steps up (`pull.aggregate.ts`'s
+      // `hasWrittenSoFar`) needs it to avoid claiming `written: []` on a
+      // partially-successful run.
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        handler: (request) =>
+          request.url.endsWith("/functions")
+            ? Effect.succeed(
+                jsonResponse(request, 200, [{ slug: "hello-world" }, { slug: "goodbye-world" }]),
+              )
+            : request.url.endsWith("/hello-world/body")
+              ? Effect.succeed(multipartResponse(request))
+              : request.url.endsWith("/goodbye-world/body")
+                ? Effect.succeed(jsonResponse(request, 500, { message: "unavailable" }))
+                : Effect.succeed(jsonResponse(request, 200, {})),
+      });
+      const proxy = mockProxy();
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        }),
+        proxy.layer,
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "download", "--project-ref", PROJECT_ID]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        // `useDocker: false` (the base flags' default) forces the native
+        // server-side path this repro targets, not the Docker-unbundle one.
+        const error = yield* functionsDownload({
+          ...baseFlags,
+          functionName: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(FunctionsApiStatusError);
+        expect((error as FunctionsApiStatusError).status).toBe(500);
+        expect((error as unknown as { writtenSoFar?: ReadonlyArray<string> }).writtenSoFar).toEqual(
+          [resolve(tempRoot.current, "supabase", "functions", "hello-world")],
+        );
+        // The first function's files really are on disk despite the failure.
+        expect(
+          yield* Effect.tryPromise(() =>
+            readFile(
+              join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
+              "utf8",
+            ),
+          ),
+        ).toBe("console.log('legacy native')");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("forwards only --legacy-bundle to the Go proxy, not the --use-docker default too", () => {
     const out = mockOutput({ format: "text" });

@@ -538,6 +538,7 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
   test("excludes local-only experimental fields while experimental.webhooks (genuinely pushed) survives", () => {
     const document = decodeCliConfig({
       experimental: {
+        stack: true,
         orioledb_version: "1.0",
         s3_host: "bucket.s3.example.com",
         s3_region: "us-east-1",
@@ -547,6 +548,7 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
       },
     });
     const projected = fromConfigDocument(document);
+    expect(Object.hasOwn(projected.experimental ?? {}, "stack")).toBe(false);
     expect(Object.hasOwn(projected.experimental ?? {}, "orioledb_version")).toBe(false);
     expect(Object.hasOwn(projected.experimental ?? {}, "s3_host")).toBe(false);
     expect(Object.hasOwn(projected.experimental ?? {}, "s3_region")).toBe(false);
@@ -655,6 +657,7 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
       },
       realtime: { enabled: false, ip_version: "IPv6", max_header_length: 1 },
       experimental: {
+        stack: true,
         orioledb_version: "1.0",
         s3_host: "host",
         s3_region: "region",

@@ -1,4 +1,5 @@
 import { Effect, Layer } from "effect";
+import { BunServices } from "@effect/platform-bun";
 import { CliOutput, Command, type HelpDoc } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
@@ -12,8 +13,6 @@ import { projectsCommand } from "../../commands/projects/projects.command.ts";
 import { projectsCreateCommand } from "../../commands/projects/create/create.command.ts";
 import { startCommand } from "../../commands/start/start.command.ts";
 import { stopCommand } from "../../commands/stop/stop.command.ts";
-import { VALID_TOKEN } from "../../../tests/helpers/command-mocks.ts";
-import { mockOutput, withEnv } from "../../../tests/helpers/mocks.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { GoProxy } from "../../command-internal/go-proxy.service.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
@@ -52,17 +51,25 @@ const testRoot = Command.make("supabase").pipe(
   Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
+function parserCommand<Name extends string, Input, ContextInput, E, R>(
+  command: Command.Command<Name, Input, ContextInput, E, R>,
+  parsed: Array<unknown>,
+) {
+  return command.pipe(
+    Command.withHandler((flags) =>
+      Effect.sync(() => {
+        parsed.push(flags);
+      }),
+    ),
+  );
+}
+
 const silentCliOutputFormatter: CliOutput.Formatter = {
   formatCliError: () => "",
   formatError: () => "",
   formatErrors: () => "",
   formatHelpDoc: () => "",
   formatVersion: () => "",
-};
-
-const authenticatedEnv = {
-  SUPABASE_ACCESS_TOKEN: VALID_TOKEN,
-  ...(process.env["SystemRoot"] === undefined ? {} : { SystemRoot: process.env["SystemRoot"] }),
 };
 
 describe("native hidden flags", () => {
@@ -116,49 +123,46 @@ describe("native hidden flags", () => {
     ]);
   });
 
-  it("still parses and forwards every hidden flag by exact name", async () => {
-    const proxy = mockGoProxy();
+  it("passes hidden flag values to handlers by exact name", async () => {
+    const parsed: Array<unknown> = [];
+    const parserFunctionsCommand = Command.make("functions").pipe(
+      Command.withSubcommands([
+        parserCommand(functionsDownloadCommand, parsed),
+        parserCommand(functionsDeployCommand, parsed),
+        parserCommand(functionsServeCommand, parsed),
+      ]),
+    );
+    const parserRoot = Command.make("supabase").pipe(
+      Command.withSubcommands([
+        parserCommand(startCommand, parsed),
+        parserCommand(stopCommand, parsed),
+        parserFunctionsCommand,
+      ]),
+    );
+    const parserLayer = Layer.mergeAll(
+      BunServices.layer,
+      CliOutput.layer(silentCliOutputFormatter),
+    );
+    const runParser = (args: ReadonlyArray<string>) =>
+      Command.runWith(parserRoot, { version: "0.0.0-test" })(args).pipe(
+        Effect.provide(parserLayer),
+      );
 
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          // `start` and `stop` are both natively ported (no longer `GoProxy` forwards),
-          // so they can fail for workdir/Docker-related reasons in this proxy-only test layer —
-          // the point here is only to prove the hidden `--preview`/`--backup` flags still parse
-          // by exact name, not that the commands succeed, matching the `functions deploy`/`serve`
-          // assertions below.
-          const startExit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })([
-            "start",
-            "--preview",
-          ]).pipe(Effect.exit);
-          expect(JSON.stringify(startExit)).not.toContain("UnrecognizedFlag");
-          const stopExit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })([
-            "stop",
-            "--backup=false",
-          ]).pipe(Effect.exit);
-          expect(JSON.stringify(stopExit)).not.toContain("UnrecognizedFlag");
-          // `functions download --use-docker` now runs the native Docker-unbundle
-          // path (CLI-1963) instead of forwarding to `GoProxy` — the
-          // deliberately-invalid slug makes it fail at `validateSlug`
-          // (`download.ts`, checked BEFORE `isDockerRunning`/any image pull),
-          // so the invocation stays fast and side-effect-free even on a CI
-          // runner with a live Docker daemon (a valid slug here triggered a
-          // real multi-second `docker pull` and timed this test out), while
-          // still proving the hidden flag parses by exact name.
-          // `--legacy-bundle` is the one remaining case that still forwards to the
-          // proxy, asserted below.
-          const downloadUseDockerExit = yield* Command.runWith(testRoot, {
-            version: "0.0.0-test",
-          })([
+          // Recorder handlers cover parser-to-handler values without running command runtimes.
+          yield* runParser(["start", "--preview"]);
+          yield* runParser(["stop", "--backup=false"]);
+          yield* runParser([
             "functions",
             "download",
-            "Not_A_Valid-Slug!",
+            "hello",
             "--project-ref",
             "abcdefghijklmnopqrst",
-            "--use-docker",
-          ]).pipe(Effect.exit);
-          expect(JSON.stringify(downloadUseDockerExit)).not.toContain("UnrecognizedFlag");
-          yield* Command.runWith(testRoot, { version: "0.0.0-test" })([
+            "--use-docker=false",
+          ]);
+          yield* runParser([
             "functions",
             "download",
             "hello",
@@ -166,45 +170,22 @@ describe("native hidden flags", () => {
             "abcdefghijklmnopqrst",
             "--legacy-bundle",
           ]);
-          const useDockerExit = yield* Command.runWith(testRoot, {
-            version: "0.0.0-test",
-          })(["functions", "deploy", "hello", "--use-docker"]).pipe(Effect.exit);
-          const legacyBundleExit = yield* Command.runWith(testRoot, {
-            version: "0.0.0-test",
-          })(["functions", "deploy", "hello", "--legacy-bundle"]).pipe(Effect.exit);
-          expect(JSON.stringify(useDockerExit)).not.toContain("UnrecognizedFlag");
-          expect(JSON.stringify(legacyBundleExit)).not.toContain("UnrecognizedFlag");
-          const serveExit = yield* Command.runWith(testRoot, {
-            version: "0.0.0-test",
-          })(["functions", "serve", "--all=false"]).pipe(Effect.exit);
-          expect(JSON.stringify(serveExit)).not.toContain("UnrecognizedFlag");
+          yield* runParser(["functions", "deploy", "hello", "--use-docker=false"]);
+          yield* runParser(["functions", "deploy", "hello", "--legacy-bundle"]);
+          yield* runParser(["functions", "serve", "--all=false"]);
         }),
-      ).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            withEnv(authenticatedEnv),
-            proxy.layer,
-            mockOutput({ format: "text" }).layer,
-            CliOutput.layer(textCliOutputFormatter()),
-          ),
-        ),
-      ) as Effect.Effect<void>,
+      ),
     );
-
-    expect(proxy.calls).toEqual([
-      [
-        "functions",
-        "download",
-        "hello",
-        "--project-ref",
-        "abcdefghijklmnopqrst",
-        "--legacy-bundle",
-      ],
+    expect(parsed).toEqual([
+      expect.objectContaining({ preview: true }),
+      expect.objectContaining({ backup: false }),
+      expect.objectContaining({ useDocker: false }),
+      expect.objectContaining({ legacyBundle: true }),
+      expect.objectContaining({ useDocker: false }),
+      expect.objectContaining({ legacyBundle: true }),
+      expect.objectContaining({ all: false }),
     ]);
-    // Guard, not a correctness assertion: this test drives 8 full command
-    // invocations through the real CLI tree, which can exceed the 5s default
-    // under CI file-level parallelism on a loaded runner.
-  }, 30_000);
+  });
 
   it("does not leak hidden flag names through unknown-flag suggestions", async () => {
     const proxy = mockGoProxy();

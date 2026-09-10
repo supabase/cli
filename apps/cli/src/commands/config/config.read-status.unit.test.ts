@@ -1,17 +1,9 @@
 import { describe, expect, test } from "vitest";
 
-import { configReadStatusMessage, unexpectedStatusMessage } from "./config.read-status.ts";
+import { configReadStatusMessage } from "./config.read-status.ts";
 
 const REF = "abcdefghijklmnopqrst";
 const API_HOST = "https://api.supabase.com";
-
-describe("unexpectedStatusMessage", () => {
-  test("shapes the generic unexpected-status message", () => {
-    expect(unexpectedStatusMessage(500, '{"message":"boom"}')).toBe(
-      'unexpected status 500: {"message":"boom"}',
-    );
-  });
-});
 
 describe("configReadStatusMessage", () => {
   test("401 points at re-authenticating", () => {

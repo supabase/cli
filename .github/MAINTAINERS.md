@@ -83,6 +83,46 @@ the preview. This is independent of `run-ci` and `run-live-e2e-ci`.
 The `run-preview-packages` label must exist as a repository label; create it
 from **Issues → Labels** if it is missing.
 
+## Live e2e coverage and stable releases
+
+[`Live E2E`](./workflows/live-e2e.yml) exercises managed staging after every push
+to `develop`, daily at 06:23 UTC, and on manual dispatch. New `develop` pushes
+cancel superseded push runs; nightly and manual runs execute independently.
+Nightly runs do not depend on a new beta version: they also detect staging
+changes between CLI releases.
+
+Stable publishing requires a passing live suite for the exact release commit.
+The release workflow reuses a verified successful staging run on `develop` for
+that commit when available; otherwise it runs the suite before publishing.
+Normal promotion fast-forwards that commit from `develop` to `main`. The gate
+deliberately queries `develop` runs of `live-e2e.yml`; renaming the workflow
+requires updating that selector. Actions API lookup errors and live-test
+failures block publication. This also applies to
+manual stable releases. Beta publication keeps its existing build and smoke-test
+gates.
+
+Live-test failures and recoveries are sent to the channel configured by
+`SLACK_RELEASE_WEBHOOK`, with commit and workflow links. Routine successful runs
+stay quiet. GitHub Actions logs contain the test failures; notification delivery
+does not determine whether the suite passed.
+
+PR live coverage remains opt-in through `run-live-e2e-ci`. That label dispatches
+the PR commit to the separate Supabox harness, which also has its own nightly
+schedule against pinned submodules. A Supabox result does not replace the
+managed-staging gate for stable publication.
+
+The gate and notifier identify the reusable suite by the `Live e2e` job name (or
+the exact ` / Live e2e` suffix). The gate also checks the `Run live e2e` step
+name. Keep these names aligned with their consumers. Push, scheduled, manual, and stable-gate runs
+use separate concurrency groups because they own independent temporary project
+sets; this is intentional and does not imply a global concurrency quota.
+Notification history inspects at most 25 recent runs of the same workflow and
+branch. It suppresses repeated outcomes and results superseded by a newer run
+or attempt. Recovery requires a known prior failure. History lookup errors
+produce warnings; a confirmed current failure can still be reported if its
+prior outcome is unknown. Release failures use the existing release notification
+to avoid a second failure alert from the live notifier.
+
 ## Deferred: automatic Linear → GitHub label sync
 
 We considered auto-applying `open-for-contribution` when a Linear issue moves out of

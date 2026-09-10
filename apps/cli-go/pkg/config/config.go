@@ -342,6 +342,7 @@ type (
 		S3Region        string         `toml:"s3_region" json:"s3_region"`
 		S3AccessKey     string         `toml:"s3_access_key" json:"s3_access_key"`
 		S3SecretKey     string         `toml:"s3_secret_key" json:"s3_secret_key"`
+		Stack           bool           `toml:"-" json:"stack"`
 		Webhooks        *webhooks      `toml:"webhooks" json:"webhooks"`
 		PgDelta         *PgDeltaConfig `toml:"pgdelta" json:"pgdelta"`
 		Inspect         inspect        `toml:"inspect" json:"inspect"`

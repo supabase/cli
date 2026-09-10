@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { Cause } from "effect";
 
 import { rootCommand } from "./root.ts";
+import { StackRoutingError } from "../commands/experimental/stack/stack-backend.ts";
 import {
   CompletionDirective,
   type ClassifyCompletionInput,
@@ -1474,6 +1476,7 @@ describe("formatCompletionResponse", () => {
 describe("tryComplete", () => {
   function makeDeps(overrides: Partial<CompleteDeps> = {}) {
     const stdoutWrites: Array<string> = [];
+    const stderrWrites: Array<string> = [];
     const exits: Array<number> = [];
     const deps: CompleteDeps = {
       root: rootCommand,
@@ -1481,6 +1484,9 @@ describe("tryComplete", () => {
       env: {},
       stdoutWrite: (message) => {
         stdoutWrites.push(message);
+      },
+      stderrWrite: (message) => {
+        stderrWrites.push(message);
       },
       exit: (code) => {
         exits.push(code);
@@ -1493,7 +1499,7 @@ describe("tryComplete", () => {
       captureTelemetry: async () => {},
       ...overrides,
     };
-    return { deps, stdoutWrites, exits };
+    return { deps, stdoutWrites, stderrWrites, exits };
   }
 
   // `tryComplete` returns `Promise<boolean>` — it awaits
@@ -1524,6 +1530,36 @@ describe("tryComplete", () => {
     const { deps, stdoutWrites, exits } = makeDeps({ argv: ["__complete"] });
     expect(await tryComplete(deps)).toBe(true);
     expect(stdoutWrites).toEqual([]);
+    expect(exits).toEqual([1]);
+  });
+
+  it("writes invalid environment routing failures to stderr without emitting completion stdout", async () => {
+    const { deps, stdoutWrites, stderrWrites, exits } = makeDeps({
+      root: undefined,
+      routingFailure: Cause.fail(
+        new StackRoutingError({
+          message: "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set",
+        }),
+      ),
+    });
+    expect(await tryComplete(deps)).toBe(true);
+    expect(stdoutWrites).toEqual([]);
+    expect(stderrWrites).toHaveLength(1);
+    expect(stderrWrites[0]).toContain("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set");
+    expect(stderrWrites[0]).toContain(
+      "Suggestion: Set SUPABASE_EXPERIMENTAL_STACK=0 to use legacy start/stop, or use `supabase stack`.",
+    );
+    expect(exits).toEqual([1]);
+  });
+
+  it("preserves a defect diagnostic when routing fails with a defect cause", async () => {
+    const { deps, stdoutWrites, stderrWrites, exits } = makeDeps({
+      root: undefined,
+      routingFailure: Cause.die(new Error("completion routing defect")),
+    });
+    expect(await tryComplete(deps)).toBe(true);
+    expect(stdoutWrites).toEqual([]);
+    expect(stderrWrites[0]).toContain("completion routing defect");
     expect(exits).toEqual([1]);
   });
 });
