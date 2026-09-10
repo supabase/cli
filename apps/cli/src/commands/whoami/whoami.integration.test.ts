@@ -138,12 +138,20 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("maps a transport failure without a text-mode spinner", () => {
-    const { layer } = setup({ format: "json", network: "fail" });
+  it.live("maps transport failures without task output in machine modes", () => {
+    const run = (format: "json" | "stream-json") => {
+      const { layer, out } = setup({ format, network: "fail" });
+      return Effect.gen(function* () {
+        const error = findError(yield* whoami({}).pipe(Effect.exit));
+        expect(error).toBeInstanceOf(WhoamiNetworkError);
+        expect(out.progressEvents).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    };
+
     return Effect.gen(function* () {
-      const error = findError(yield* whoami({}).pipe(Effect.exit));
-      expect(error).toBeInstanceOf(WhoamiNetworkError);
-    }).pipe(Effect.provide(layer));
+      yield* run("json");
+      yield* run("stream-json");
+    });
   });
 
   it.live("rejects every -o/--output value before calling the API", () => {
