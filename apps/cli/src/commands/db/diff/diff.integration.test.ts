@@ -76,68 +76,51 @@ interface SetupOpts {
   readonly hazards?: PgDeltaHazardReport;
   readonly oom?: boolean; // edge-runtime OOMs; the bash fallback returns `diffSql`
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
-  // When set, the PGDELTA_DEBUG shadow-catalog export fails with this message
-  // instead of succeeding.
+  // Message for a failing PGDELTA_DEBUG shadow-catalog export.
   readonly diffFailWith?: string;
-  // When set, the shadow's own PG15+ one-shot platform-baseline job(s) exit
-  // non-zero, exercising cleanup-on-partial-failure (the shadow is still removed).
+  // Makes the shadow's PG15+ baseline job(s) exit non-zero; the shadow should
+  // still be removed.
   readonly failShadowSetupJob?: boolean;
   readonly networkId?: string; // --network-id value forwarded to docker runs
   // When set, the Nth `writeFileString` fails, exercising cleanup-on-failure.
   readonly failWriteOnCall?: number;
-  // When set, the first `writeFileString` whose path matches fails. Prefer this
-  // over `failWriteOnCall` when shadow setup writes extra SQL before the
-  // command's `--file` migration.
+  // Fails the first `writeFileString` call whose path matches; prefer over
+  // `failWriteOnCall` when shadow setup writes extra files first.
   readonly failWriteMatching?: (path: string) => boolean;
-  // When set, the shadow container never reports healthy — for the interrupt-during-
-  // health-wait regression coverage (review: PRRT_kwDOErm0O86XMrID). See
-  // `mockShadowContainerCliSpawner`'s own doc comment for why this is required
-  // (not `Effect.never`) to observe a genuinely suspended retry loop. Only the
-  // `--use-pgadmin` branch still gates on the Docker healthcheck; the shadow-source
-  // branch gates on `neverConnectableShadow` below instead.
+  // Makes the shadow container never report healthy; only the `--use-pgadmin` branch
+  // gates on this (the shadow-source branch uses `neverConnectableShadow` instead).
   readonly neverHealthyShadow?: boolean;
-  // When set, every connect to the shadow's own port is refused, so the readiness gate
-  // (`waitForShadowReady`) keeps polling — the shadow-source branch's equivalent of
-  // `neverHealthyShadow`, since that wait no longer consults the Docker healthcheck.
+  // Refuses every connect to the shadow's port, so `waitForShadowReady` keeps
+  // polling — the shadow-source branch's equivalent of `neverHealthyShadow`.
   readonly neverConnectableShadow?: boolean;
-  // `CommandSettings.projectId` (the `SUPABASE_PROJECT_ID` env-only reader). Defaults
-  // to `Option.some("test")`; pass `Option.none()` to exercise the
-  // config.toml/workdir-basename fallback `resolveLocalProjectId` provides for
-  // the pg-delta edge-runtime cache bind.
+  // `CommandSettings.projectId`; defaults to `Option.some("test")`. Pass
+  // `Option.none()` to exercise the config.toml/workdir-basename fallback
+  // (`resolveLocalProjectId`).
   readonly projectId?: Option.Option<string>;
-  // Simulates a genuinely unlinked workdir: `loadProjectRef` fails with
-  // `ProjectRefNotLinkedError` absent an explicit `--project-ref` flag,
-  // instead of silently falling back to `opts.linkedRef ?? VALID_REF`.
+  // Simulates an unlinked workdir: `loadProjectRef` fails with
+  // `ProjectRefNotLinkedError` absent an explicit `--project-ref` flag.
   readonly linkedFails?: boolean;
-  // --- CLI-1968 (native --use-pgadmin) ---
-  // Per-differ-run `--json-diff` stdout, one entry per `runCapture` call to the differ
-  // image (index 0 = the no-`--schema` run, or the 1st `--schema` run; index 1 = the
-  // 2nd `--schema` run; …). Falls back to `""` (an empty/"No schema changes" diff) once
-  // exhausted, so a single-run test only needs a one-element array.
+  // Per-differ-run `--json-diff` stdout, indexed by run order; falls back to `""`
+  // once exhausted, so a single-run test only needs one element.
   readonly pgadminStdout?: ReadonlyArray<string>;
-  // Per-differ-run stderr (the raw text `processPgAdminDiffProgress` filters).
-  // Falls back to `""` once exhausted.
+  // Per-differ-run stderr; falls back to `""` once exhausted.
   readonly pgadminStderr?: ReadonlyArray<string>;
-  // Applied to every differ `runCapture` call (the failure tests below only ever drive
-  // a single, no-`--schema` run, so one number covers them).
+  // Exit code applied to every differ `runCapture` call.
   readonly pgadminExitCode?: number;
-  // Makes every differ `runCapture` call fail at the docker boundary instead of
-  // returning a result — `"spawn"` (daemon unreachable) or `"pull"` (registry failure).
+  // Fails every differ `runCapture` call at the docker boundary: `"spawn"` (daemon
+  // unreachable) or `"pull"` (registry failure).
   readonly pgadminDockerFail?: "spawn" | "pull";
-  // Makes the pre-flight `docker container inspect supabase_db_<projectId>` probe
-  // (`isLocalDbRunning`, run before `--use-pgadmin` provisions anything) report
-  // "container not found" — surfaces as "supabase start is not running.".
+  // Makes the pre-flight `isLocalDbRunning` probe report "container not found",
+  // surfacing as "supabase start is not running.".
   readonly dbNotRunning?: boolean;
-  // Makes that SAME probe fail with a daemon-unreachable stderr instead — the
-  // `daemonDown: true` classification branch. Mutually exclusive with `dbNotRunning`.
+  // Makes the same probe fail with a daemon-unreachable stderr instead (mutually
+  // exclusive with `dbNotRunning`).
   readonly dbInspectFailsWith?: string;
-  // `RuntimeInfo.platform` — drives the differ's `--add-host host.docker.internal:
-  // host-gateway` (Linux-only). Defaults to `"linux"` (every other test's implicit
-  // baseline); pass `"darwin"`/`"win32"` to exercise the no-add-host branch.
+  // `RuntimeInfo.platform`; defaults to `"linux"`. Pass `"darwin"`/`"win32"` to
+  // exercise the no-add-host branch (`--add-host` is Linux-only).
   readonly platform?: NodeJS.Platform;
-  // Swaps the stateless shadow spawner for the stateful Docker model, whose
-  // `stop`/`cp`/`start` really move bytes. Required by (and only by) the tests that
-  // enable the shadow BASELINE CACHE — see `mockDockerDaemonCliSpawner`.
+  // Swaps in the stateful Docker model (real `stop`/`cp`/`start`), required by the
+  // shadow baseline cache tests.
   readonly statefulDocker?: boolean;
 }
 
@@ -152,13 +135,10 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
 const SHADOW_PORT = 54320;
 
 /**
- * Records every `DbConnection.connect` target's database name, and every `exec`/`query`
- * SQL run against it.
- *
- * `neverConnectableShadow` makes every connect to the SHADOW port fail (leaving the local
- * target's own connects untouched) — the shadow's readiness gate is now a direct connect probe
- * (`waitForShadowReady`), so a shadow that never accepts a connection is what keeps a
- * provisioning fiber genuinely suspended inside that retry loop.
+ * Records every `DbConnection.connect` target's database name and every `exec`/`query` run
+ * against it. `neverConnectableShadow` fails every connect to the shadow port, leaving local
+ * connects untouched — this keeps a provisioning fiber suspended in `waitForShadowReady`'s
+ * retry loop.
  */
 function fakeShadowDbConnection(opts: { readonly neverConnectableShadow?: boolean } = {}) {
   const connectedDatabases: Array<string> = [];
@@ -192,17 +172,14 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
 
-  // A real docker-spawner fake backs container create/start/health-inspect/cleanup,
-  // and a real (fake) Postgres session backs the shadow's own
-  // platform-baseline/migration/declarative setup.
+  // A docker-spawner fake backs container lifecycle; a fake Postgres session backs
+  // shadow setup.
   const shadowSpawner = mockShadowContainerCliSpawner({
     neverHealthy: opts.neverHealthyShadow ?? false,
     dbNotRunning: opts.dbNotRunning ?? false,
     dbInspectFailsWith: opts.dbInspectFailsWith,
   });
-  // The shadow baseline cache's cold export and warm restore only mean anything against a
-  // daemon that actually holds container state and carries `docker cp` bytes, so the cache
-  // tests below opt into the stateful model instead.
+  // Cache tests need the stateful Docker model since `docker cp` needs real container state.
   const dockerDaemon = opts.statefulDocker === true ? mockDockerDaemonCliSpawner() : undefined;
   const shadowDbConnection = fakeShadowDbConnection({
     neverConnectableShadow: opts.neverConnectableShadow ?? false,
@@ -271,10 +248,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         return Effect.fail(new EdgeRuntimeScriptError({ message: opts.diffFailWith }));
       }
       const diffSql = opts.diffSql ?? "";
-      // The pg-delta diff script (uniquely identified by `renderPlanFiles`) prints a
-      // JSON envelope with one file per plan unit; wrap the test's raw SQL into a
-      // single-unit envelope so `diffPgDelta` parses it. The migra script
-      // returns raw SQL unchanged.
+      // The pg-delta script (identified by `renderPlanFiles`) prints a JSON envelope
+      // with one file per plan unit; the migra script returns raw SQL unchanged.
       const isPgDelta = runOpts.script.includes("renderPlanFiles");
       const planFiles =
         opts.diffFiles !== undefined
@@ -295,26 +270,19 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
   });
 
-  // `dockerCalls` tracks the migra OOM bash fallback's own `runCapture` calls — the
-  // native shadow's PG15+ one-shot setup jobs (`runStartMigrateJob`) go through
-  // `runStream` instead (constant-memory stdout discard), so they're tracked
-  // separately in `shadowSetupJobCalls` (their `env`, notably `DB_HOST`, is the one
-  // shadow-specific parameterization that matters to get right).
+  // Tracks the migra OOM bash fallback's own `runCapture` calls; the native shadow's
+  // PG15+ one-shot setup jobs go through `runStream` instead and are tracked
+  // separately in `shadowSetupJobCalls`.
   const dockerCalls: unknown[] = [];
-  // The pgAdmin differ's own `runCapture` calls, tracked separately from
-  // `dockerCalls` (the migra OOM bash fallback's image) so pgadmin tests never
-  // conflate the two — both go through the SAME `DockerRun.runCapture` seam,
-  // distinguished only by `image`.
+  // The pgAdmin differ's own `runCapture` calls, distinguished from `dockerCalls`
+  // by `image` (both share the same `DockerRun.runCapture` seam).
   const differCalls: Array<DockerRunOpts> = [];
-  // The `runCapture` SECOND (options) argument for every differ call, parallel to
-  // `differCalls` — pinned `undefined` below, since the differ's raw stderr is
-  // never teed to the parent terminal (see `pgadmin-diff.ts`'s own doc
-  // comment).
+  // The `runCapture` options argument for every differ call, parallel to
+  // `differCalls`; stays `undefined` since the differ's stderr is never teed to
+  // the parent terminal.
   const differCaptureOpts: Array<{ readonly teeStderr?: boolean } | undefined> = [];
-  // Snapshots `process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]` at the moment each
-  // differ `runCapture` call is made — the real `dockerRunLayer`'s own image
-  // resolver reads that key straight off `process.env` at call time (no
-  // `projectEnvValues` threaded through), so this stands in for it here.
+  // Snapshots `process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]` at each differ
+  // `runCapture` call, standing in for the real image resolver's own read of it.
   const differRegistryEnvAtCall: Array<string | undefined> = [];
   const shadowSetupJobCalls: Array<{ readonly env: Readonly<Record<string, string>> }> = [];
   const docker = Layer.succeed(DockerRun, {
@@ -361,10 +329,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const resolver = Layer.succeed(DbConfigResolver, {
     resolve: (resolveFlags) => {
       resolverCalls.push(resolveFlags);
-      // A threaded `--project-ref` flag wins over the fixed `opts.linkedRef` test
-      // fixture, same top precedence a real resolver would give it — lets a test
-      // prove the flag (not just `opts.linkedRef`) drives the resolved ref (read
-      // by both the native path and explicit mode's "linked" case).
+      // A threaded `--project-ref` flag wins over the fixed `opts.linkedRef` fixture,
+      // matching real resolver precedence.
       const flagRef = resolveFlags.linkedProjectRef ?? Option.none();
       const ref =
         Option.isSome(flagRef) && flagRef.value.length > 0 ? flagRef.value : opts.linkedRef;
@@ -383,14 +349,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
-  // The linked ref is now pre-loaded (for the config-override print, ahead of
-  // `resolver.resolve()`'s own network work — review: PRRT_kwDOErm0O86XHvYl) via
-  // `ProjectRefResolver`, mirroring the SAME ref `resolver`'s own mock embeds in
-  // its resolved `ref` above, so both stay consistent regardless of whether a test sets
-  // `opts.linkedRef` (mirrors `reset.integration.test.ts`'s identical mock).
-  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
-  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
-  // (not just `opts.linkedRef`) drives the linked ref.
+  // Mirrors the same ref `resolver`'s own mock embeds above, and gives an explicit
+  // `--project-ref` flag top precedence over `opts.linkedRef` (mirrors
+  // `reset.integration.test.ts`'s identical mock).
   const projectRefResolver = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
     resolveForLink: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
@@ -417,10 +378,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   const baseLayer = Layer.mergeAll(
-    // `BunServices.layer` is listed FIRST so every fake service layer below (most
-    // importantly `shadowSpawner.layer`'s fake `ChildProcessSpawner`) OVERRIDES its
-    // real implementation — `Layer.mergeAll` is last-wins on a shared service,
-    // matching `start.integration.test.ts`'s own established ordering.
+    // Listed first so the fake service layers below (`Layer.mergeAll` is last-wins)
+    // override its real implementations, matching `start.integration.test.ts`.
     BunServices.layer,
     out.layer,
     telemetry.layer,
@@ -516,8 +475,6 @@ const stderr = (out: ReturnType<typeof mockOutput>) =>
 const tmp = useTempWorkdir();
 useShadowCacheDisabled();
 
-// --- native --use-pgadmin fixtures ---
-
 /** `DiffEntry` shape, defaulting to a kept entry. */
 function pgadminEntry(overrides: Record<string, unknown> = {}) {
   return {
@@ -532,10 +489,8 @@ function pgadminEntry(overrides: Record<string, unknown> = {}) {
 /** `processPgAdminDiffOutput`'s exact output for a single default `pgadminEntry()`. */
 const PGADMIN_DIFF_SQL = `${PGADMIN_DIFF_HEADER}\n\nALTER TABLE test;\n`;
 
-// The default `resolver`/shadow-port fixtures in `setup()` below (conn
-// 127.0.0.1:54322, shadow port 54320) — `source` is the user's db (via
-// `toPostgresURL`) and `target` is the shadow (a raw, hardcoded connection
-// string).
+// Matches `setup()`'s default resolver/shadow-port fixtures (conn 127.0.0.1:54322,
+// shadow port 54320).
 const PGADMIN_SOURCE_URL =
   "postgresql://postgres:postgres@127.0.0.1:54322/postgres?connect_timeout=10";
 const PGADMIN_TARGET_URL = "postgresql://postgres:postgres@127.0.0.1:54320/postgres";
@@ -545,8 +500,6 @@ describe("db diff", () => {
     const s = setup(tmp.current, { diffSql: "create table players ();\n" });
     return Effect.gen(function* () {
       yield* dbDiff(flags());
-      // The native shadow was created once (one `docker create`) and removed once
-      // (one `docker rm -f -v`) — see `mockShadowContainerCliSpawner`.
       expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
       expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
       expect(stdout(s.out)).toBe("create table players ();\n\n");
@@ -554,15 +507,6 @@ describe("db diff", () => {
       expect(stderr(s.out)).toContain("Diffing schemas...");
       expect(stderr(s.out)).toContain("Finished supabase db diff on branch");
       expect(s.telemetry.flushed).toBe(true);
-      // The shadow's PG15+ one-shot platform-baseline job(s) connect to the shadow over
-      // Docker's embedded DNS using the shadow container's OWN 12-char short id as
-      // `DB_HOST` — NOT the real `db` container's name, and not some other slice length
-      // (a mutation from `.slice(0, 12)` to `.slice(0, 8)` must fail this). This is the
-      // one shadow-specific parameterization that matters
-      // (`buildShadowSetupDatabaseInput`'s `dbHost`). The default config enables
-      // realtime (and PG >= 15 by default), so this always exercises at least one
-      // one-shot job — Realtime's own env sets `DB_HOST` directly; Storage/Auth embed
-      // the same host inside a `DATABASE_URL`-style connection string instead.
       const expectedHost = FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
       expect(s.shadowSetupJobCalls.length).toBeGreaterThan(0);
       let sawHost = false;
@@ -608,8 +552,6 @@ describe("db diff", () => {
           connectOptions: { isLocal: true, dnsResolver: "native" },
         },
       });
-      // pg-delta runs in-process through PgDeltaEngine; the handler never
-      // invokes the edge runtime for it.
       expect(s.edgeCalls).toEqual([]);
       expect(stderr(s.out)).toContain("Diffing schemas: public");
       expect(stdout(s.out)).toBe("create table p ();\n\n");
@@ -659,10 +601,8 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  // The transition warning is only true for pg-delta. Migra still routes a local
-  // target with declarative files through the declared-schema `contrib_regression`
-  // override, so schema_paths DOES still shape its output and claiming otherwise
-  // would be a lie.
+  // Migra still routes declarative files through the `contrib_regression` override,
+  // so schema_paths still shapes its output — only pg-delta prints this warning.
   const writeSchemaPathsConfig = (pgDeltaEnabled: boolean) => {
     mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
     writeFileSync(
@@ -691,9 +631,6 @@ describe("db diff", () => {
   });
 
   it.effect("PG14: provisions a shadow via the SQL-exec init path (no PG15+ one-shot jobs)", () => {
-    // This covers the PG14 branch of the `setupDatabase` pipeline, which execs
-    // SQL directly via the session instead of the three one-shot `DockerRun`
-    // jobs (the PG15+ short-id DNS resolution path is covered separately).
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\nmajor_version = 14\n");
     const s = setup(tmp.current, { diffSql: "create table pg14 ();\n" });
@@ -702,8 +639,6 @@ describe("db diff", () => {
       expect(stdout(s.out)).toBe("create table pg14 ();\n\n");
       expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
       expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-      // PG14's `startInitSchemaPre15` execs SQL over the session directly —
-      // no one-shot `DockerRun` jobs run for this branch.
       expect(s.dockerCalls).toEqual([]);
       expect(s.shadowExecCalls.length).toBeGreaterThan(0);
     }).pipe(Effect.provide(s.layer));
@@ -712,8 +647,6 @@ describe("db diff", () => {
   it.effect(
     "removes the shadow even when its own platform-baseline setup fails midway (ok-sentinel cleanup)",
     () => {
-      // Once the shadow container is created, ANY later failure (here, a PG15+
-      // one-shot platform-baseline job exiting non-zero) still removes it.
       const s = setup(tmp.current, { diffSql: "create table x ();\n", failShadowSetupJob: true });
       return Effect.gen(function* () {
         const exit = yield* dbDiff(flags()).pipe(Effect.exit);
@@ -724,10 +657,7 @@ describe("db diff", () => {
     },
   );
   it.effect("a linked [remotes.<ref>] block enabling pg-delta selects the pg-delta engine", () => {
-    // The linked path merges the matching [remotes.<ref>] block before
-    // experimental.pgdelta.enabled is read. The default db diff target is local (no
-    // merge), so this only applies with --linked; base config disables pg-delta, the
-    // remote override enables it, so the diff must pick the pg-delta engine.
+    // Base config disables pg-delta; the remote override enables it.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
@@ -758,14 +688,9 @@ describe("db diff", () => {
   it.effect(
     "a linked [remotes.<ref>] db.major_version override reaches the shadow's OWN container spec, not just cfg",
     () => {
-      // Go remote-merges the WHOLE config uniformly on the linked path (`LoadConfig` seeds
-      // `flags.ProjectRef` before every field read) — the shadow's container spec (image,
-      // JWT secret, root key, db.settings, service enabled-for-setup flags) must reflect the
-      // matched `[remotes.<ref>]` override too, not just the `cfg`/`toml` read used for
-      // pg-delta/schema_paths. `major_version` is a clean, directly-observable probe: PG <= 14
-      // is the ONLY branch that emits a `--tmpfs` flag on the shadow's `docker create` argv
-      // (`buildShadowPostgresContainerSpec`) — a base config of 17 (>= 15, no tmpfs)
-      // overridden by a remote block's `major_version = 14` must flip that flag on.
+      // The remote's own container spec must reflect the `[remotes.<ref>]` override too, not
+      // just the config read for pg-delta/schema_paths; `major_version` is used as a probe
+      // since PG <= 14 is the only branch that emits `--tmpfs` on `docker create`.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
@@ -790,16 +715,12 @@ describe("db diff", () => {
         yield* dbDiff(flags({ linked: Option.some(true) }));
         const createArgs = s.shadowSpawned.find((c) => c.args[0] === "create")?.args ?? [];
         expect(createArgs).toContain("--tmpfs");
-        // The PG15+ one-shot platform-baseline jobs (`initSchema15`) never run for PG14 —
-        // it execs SQL directly over the session instead — corroborating the same override.
         expect(s.dockerCalls).toEqual([]);
       }).pipe(Effect.provide(s.layer));
     },
   );
 
   it.effect("the base config (default local target) does not merge a remote block", () => {
-    // The default db diff target is local; Go never calls LoadProjectRef for local,
-    // so a [remotes.<ref>] override must be ignored and the base engine (migra) wins.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
@@ -818,7 +739,6 @@ describe("db diff", () => {
     const s = setup(tmp.current, { diffSql: "create table players ();\n" });
     return Effect.gen(function* () {
       yield* dbDiff(flags());
-      // The local default never merges a remote block, so the base (migra) engine wins.
       expect(s.edgeCalls[0]?.script).not.toContain("renderPlanFiles");
     }).pipe(Effect.provide(s.layer));
   });
@@ -836,8 +756,7 @@ describe("db diff", () => {
   });
 
   it.effect("diffs the project given via --project-ref without a linked workdir", () => {
-    // The fake resolver fails as "unlinked" (`ProjectRefNotLinkedError`)
-    // absent the flag — only the flag can resolve a ref here.
+    // `linkedFails: true` simulates an unlinked workdir; only the flag can resolve a ref.
     const FLAG_REF = "flagflagflagflagflag";
     const s = setup(tmp.current, {
       isLocal: false,
@@ -853,8 +772,7 @@ describe("db diff", () => {
 
   it.effect("--project-ref overrides an already-linked workdir's project ref", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    // The workdir already resolves to VALID_REF (e.g. via
-    // .temp/project-ref) — the flag must win over it.
+    // A distinct `linkedRef` proves the flag, not the workdir's own linked ref, wins.
     const s = setup(tmp.current, {
       isLocal: false,
       linkedRef: "abcdefghijklmnopqrst",
@@ -879,7 +797,6 @@ describe("db diff", () => {
       expect(JSON.stringify(exit)).toContain(
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
       );
-      // The guard fires before any connection resolution or cache write.
       expect(s.resolverCalls).toEqual([]);
       expect(s.cache.cached).toBe(false);
     }).pipe(Effect.provide(s.layer));
@@ -888,10 +805,8 @@ describe("db diff", () => {
   it.effect(
     "explicit --from linked --to migrations --project-ref proceeds and uses the flag ref",
     () => {
-      // The `[remotes.staging]` block's `project_id` matches the FLAG ref, not the
-      // resolver's own `opts.linkedRef` fallback (left unset) — the shadow only
-      // gets the remote's `db.major_version = 14` override (`--tmpfs` on PG<=14)
-      // if the flag (not a fallback) actually resolved the "linked" ref.
+      // `[remotes.staging]`'s `project_id` matches the flag ref, not `opts.linkedRef`
+      // (left unset), so the override only applies if the flag resolved it.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
@@ -929,11 +844,8 @@ describe("db diff", () => {
   it.effect(
     "explicit --from local --to migrations --linked --project-ref proceeds and applies the flag ref's remote override",
     () => {
-      // Same `[remotes.staging]` fixture as the `--from linked` case above, but here
-      // it's a changed `--linked` (not a "linked" ref on either side) that resolves the
-      // flag ref via the preflight — `preflightConnType` keys off
-      // `Option.isSome(flags.linked)`, so the guard must not fire and the preflight's
-      // resolved ref must still drive the `[remotes.<ref>]` merge below.
+      // Same `[remotes.staging]` fixture as the `--from linked` case above, but here a
+      // changed `--linked` (not a literal "linked" ref) resolves the flag ref instead.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
@@ -972,8 +884,6 @@ describe("db diff", () => {
   it.effect(
     "explicit --from local --to migrations --project-ref errors (neither side is linked)",
     () => {
-      // Neither side of the explicit cascade is the literal ref "linked", so the
-      // flag would go unused — the guard fires instead of silently discarding it.
       const FLAG_REF = "flagflagflagflagflag";
       const s = setup(tmp.current);
       return Effect.gen(function* () {
@@ -998,10 +908,8 @@ describe("db diff", () => {
   it.effect(
     "caches the linked ref even when the merged config fails to load afterward (review: PRRT_kwDOErm0O86XLe6s)",
     () => {
-      // The project ref is cached the moment it's known, and stays cached even when a
-      // LATER step (here, `readDbToml`'s own config-load) fails afterward.
-      // `db.migrations.enabled = "notabool"` fails `readDbToml`'s own bool
-      // parse AFTER the ref is already known, exercising exactly that gap.
+      // `db.migrations.enabled = "notabool"` fails config-load after the ref is
+      // already cached.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
@@ -1024,16 +932,15 @@ describe("db diff", () => {
   it.effect(
     "migra provisions a local-target declarative shadow and diffs against the override database",
     () => {
-      // A declarative schema file under supabase/schemas makes `loadDeclaredSchemas`
-      // non-empty, so the native `--target-local` branch redirects the diff target to
-      // a second (contrib_regression) database on the SAME shadow container.
+      // A declarative schema file makes `loadDeclaredSchemas` non-empty, redirecting
+      // the diff target to a second (contrib_regression) database on the same shadow
+      // container.
       mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
       writeFileSync(join(tmp.current, "supabase", "schemas", "public.sql"), "select 1;\n");
       const s = setup(tmp.current, { diffSql: "create table o ();\n" });
       return Effect.gen(function* () {
         yield* dbDiff(flags());
         expect(stdout(s.out)).toBe("create table o ();\n\n");
-        // The declarative-schema file was migrated into the contrib_regression override.
         expect(s.shadowConnectedDatabases).toContain("contrib_regression");
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
       }).pipe(Effect.provide(s.layer));
@@ -1046,20 +953,17 @@ describe("db diff", () => {
       const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
       return Effect.gen(function* () {
         yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
-        // --use-pgadmin no longer delegates to the bundled Go binary.
         expect(s.proxyCalls).toEqual([]);
         expect(s.proxyCaptureCalls).toEqual([]);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
         expect(s.differCalls).toHaveLength(1);
-        // Status lines go to STDOUT, not stderr.
+        // Status lines go to stdout, not stderr.
         expect(stdout(s.out)).toBe(
           `Creating shadow database...\nDiffing local database with current migrations...\n${PGADMIN_DIFF_SQL}\n`,
         );
-        // Stderr still carries the SHARED shadow-setup diagnostics (revoke-api-privileges,
-        // roles.sql seeding — identical on every diff engine), but none of pgAdmin's own
-        // status lines, which are on stdout instead, and none of the migra/pg-delta-only
-        // "Diffing schemas..."/"Finished ... on branch" lines (`diff.Run`-only, bypassed).
+        // Stderr carries the shared shadow-setup diagnostics but not pgAdmin's own status
+        // lines (those are on stdout) or the migra/pg-delta-only status lines.
         const err = stderr(s.out);
         expect(err).not.toContain("Creating shadow database...");
         expect(err).not.toContain("Diffing local database with current migrations...");
@@ -1070,10 +974,8 @@ describe("db diff", () => {
   );
 
   it.effect("rejects --project-ref combined with --use-pg-schema before delegating", () => {
-    // The bundled Go binary's own `db diff` never registered `--project-ref`, so
-    // the flag can't be forwarded — fail up front instead of silently dropping it.
-    // (`--use-pgadmin` is native as of CLI-1968 and honors the flag — see the
-    // positive test below.)
+    // The delegated Go binary doesn't support --project-ref, so this must fail before
+    // forwarding rather than silently dropping the flag.
     const FLAG_REF = "flagflagflagflagflag";
     const s = setup(tmp.current);
     return Effect.gen(function* () {
@@ -1088,8 +990,6 @@ describe("db diff", () => {
   });
 
   it.effect("--use-pgadmin --linked honors --project-ref like the other native engines", () => {
-    // CLI-1968 made pgadmin share the same target resolve as migra/pg-delta, so
-    // the flag ref must win over the workdir's own linked ref here too.
     const FLAG_REF = "flagflagflagflagflag";
     const s = setup(tmp.current, {
       isLocal: false,
@@ -1114,10 +1014,8 @@ describe("db diff", () => {
   it.effect(
     "--use-pgadmin --linked succeeds when only the [remotes.<ref>] override fixes an invalid base config",
     () => {
-      // pgadmin now shares the SAME target resolve as migra/pg-delta, so it validates
-      // the remote-merged config, prints the override line, and succeeds — unlike the
-      // old Go-delegate era, where the whole command (config load included) ran
-      // inside the delegated child.
+      // pgadmin shares the same target resolve as migra/pg-delta, so it validates the
+      // remote-merged config and succeeds.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
@@ -1150,9 +1048,8 @@ describe("db diff", () => {
   it.effect(
     "--use-pgadmin --linked's preflight probe targets the resolved LINKED project id, not the base config's",
     () => {
-      // The preflight probe's project id derives from the resolved config AFTER the
-      // linked remote merge, NOT the base config's own `project_id` — the matched
-      // `[remotes.<ref>]` block's own `project_id` must suppress it.
+      // The preflight probe's project id comes from the config after the linked
+      // remote merge, not the base config's own `project_id`.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
@@ -1171,9 +1068,8 @@ describe("db diff", () => {
       });
       return Effect.gen(function* () {
         yield* dbDiff(flags({ usePgAdmin: Option.some(true), linked: Option.some(true) }));
-        // `mockShadowContainerCliSpawner` distinguishes this SEPARATE
-        // `isLocalDbRunning` preflight probe from the shadow's own (64-hex-id)
-        // health-check inspect by the `supabase_db_` container-name prefix.
+        // `mockShadowContainerCliSpawner` distinguishes this preflight probe from the
+        // shadow's own health-check inspect by the `supabase_db_` container-name prefix.
         const inspectTargets = s.shadowSpawned
           .filter((c) => c.args[0] === "container" && c.args[1] === "inspect")
           .map((c) => c.args[2]);
@@ -1199,9 +1095,6 @@ describe("db diff", () => {
   );
 
   it.effect("a native local diff still validates the base config", () => {
-    // Control for the delegate case: the local/db-url native path reads the base
-    // config (no remote merge), so an invalid base value (db.major_version=16) must
-    // still fail.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\nmajor_version = 16\n");
     const s = setup(tmp.current, { diffSql: "create table x ();\n" });
@@ -1214,14 +1107,9 @@ describe("db diff", () => {
   it.effect(
     "validates the shadow's own local config (api.tls cert file) BEFORE resolving the connection",
     () => {
-      // `db.major_version` above is caught by `cfg` (`readDbToml`'s "D" pipeline),
-      // which already runs ahead of `resolver.resolve()`. `api.tls` is "L only" — `cfg`
-      // only tracks its dotted keys for remote-override gating, it never reads the cert/key
-      // files (see `buildLocalDbContainerInputs`'s doc comment) — so this is the ONE
-      // config error only `buildLocalDbContainerInputs`'s own validation catches, and
-      // it must run strictly before `resolver.resolve()` ever runs — so `resolverCalls`
-      // must stay empty here, proving the shadow's config validation ran first, not just
-      // that the command failed.
+      // `api.tls`'s cert/key files are only validated by `buildLocalDbContainerInputs`,
+      // which must run strictly before `resolver.resolve()` — `resolverCalls` staying
+      // empty here proves validation ran first, not just that the command failed.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
@@ -1248,10 +1136,8 @@ describe("db diff", () => {
   );
 
   it.effect("re-quotes a comma-containing schema when delegating --use-pg-schema", () => {
-    // flags.schema holds the single parsed value `tenant,one`; forwarding it raw
-    // would let the Go child's pflag StringSlice CSV-split it into two schemas, so
-    // it must be re-encoded as a quoted CSV field. `--use-pg-schema` is the only
-    // remaining delegate path.
+    // The parsed schema value `tenant,one` must be re-encoded as a quoted CSV field
+    // so the delegated Go child's pflag StringSlice doesn't split it into two schemas.
     const s = setup(tmp.current);
     return Effect.gen(function* () {
       yield* dbDiff(flags({ usePgSchema: Option.some(true), schema: ["tenant,one"] }));
@@ -1264,9 +1150,8 @@ describe("db diff", () => {
   it.effect(
     "forwards a comma-containing --schema value to the differ raw, with no CSV re-quoting (native path)",
     () => {
-      // Unlike the --use-pg-schema delegate above, the native differ argv is never
-      // re-parsed by a pflag StringSlice, so the single parsed value reaches the
-      // container unchanged.
+      // Unlike the delegate above, the native differ argv isn't re-parsed by a pflag
+      // StringSlice, so the value reaches the container unchanged.
       const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
       return Effect.gen(function* () {
         yield* dbDiff(flags({ usePgAdmin: Option.some(true), schema: ["tenant,one"] }));
@@ -1283,15 +1168,9 @@ describe("db diff", () => {
       const s = setup(tmp.current);
       return Effect.gen(function* () {
         yield* dbDiff(flags({ usePgSchema: Option.some(true) }));
-        // The TS wrapper prints its own deprecation notice pointing at pg-delta /
-        // the default migra engine, additive to (not a replacement for) the
-        // delegated Go child's own "experimental" warning (unchanged, printed by
-        // the real Go binary rather than this mocked proxy). Assert on a stable
-        // substring so future wording tweaks don't require touching every test site.
+        // Asserts on a stable substring so wording tweaks don't require touching every test site.
         expect(stderr(s.out)).toContain('"--use-pg-schema" is deprecated');
-        // The TS wrapper must not print a second copy of the delegated child's own warning.
         expect(stderr(s.out)).not.toContain("--use-pg-schema flag is experimental");
-        // Delegation to Go is unchanged besides the new warning.
         expect(s.proxyCalls[0]?.args).toEqual(["db", "diff", "--use-pg-schema"]);
         // The child's own telemetry is disabled so the single `cli_command_executed`
         // event comes from this TS command's instrumentation, not the delegated child.
@@ -1328,11 +1207,7 @@ describe("db diff", () => {
       });
       return Effect.gen(function* () {
         yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
-        // stdout stays payload-only in machine mode — no status lines leak into it.
         expect(stdout(s.out)).toBe("");
-        // The status lines are diagnostics, not payload, so machine mode redirects
-        // them to stderr instead of dropping them (repo invariant: stdout is
-        // payload-only, diagnostics go to stderr — CLI-1546).
         const err = stderr(s.out);
         expect(err).toContain("Creating shadow database...");
         expect(err).toContain("Diffing local database with current migrations...");
@@ -1389,9 +1264,7 @@ describe("db diff", () => {
       expect(s.proxyCaptureCalls).toHaveLength(1);
       const success = s.out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ diff: "create table e ();\n", engine: "pg-schema" });
-      // The deprecation notice is a diagnostic, so it must still reach stderr in
-      // machine output mode rather than being dropped or leaking into the stdout
-      // payload.
+      // Diagnostics like the deprecation notice still reach stderr in machine mode.
       expect(stderr(s.out)).toContain('"--use-pg-schema" is deprecated');
       // The child's own telemetry is disabled here too, same as the text-mode delegate.
       expect(s.proxyCaptureCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
@@ -1515,8 +1388,6 @@ describe("db diff", () => {
   });
 
   it.effect("creates nested parent directories for a nested single-unit --file name", () => {
-    // `db diff -f snapshots/remote` must create the `<ts>_snapshots/` parent dir
-    // before writing.
     const s = setup(tmp.current, { diffSql: "create table g ();\n" });
     return Effect.gen(function* () {
       yield* dbDiff(flags({ file: Option.some("snapshots/remote") }));
@@ -1532,7 +1403,6 @@ describe("db diff", () => {
     const s = setup(tmp.current, { isLocal: false, diffSql: "create table e ();\n" });
     return Effect.gen(function* () {
       yield* dbDiff(flags({ from: Option.some("local"), to: Option.some("linked") }));
-      // Explicit mode is pg-delta and never provisions a shadow.
       expect(s.explicitDiffCalls[0]).toMatchObject({
         source: {
           kind: "database",
@@ -1600,10 +1470,8 @@ describe("db diff", () => {
   it.effect(
     "forwards an explicit --linked=false target flag to the delegated pg-schema child",
     () => {
-      // Target flags are selectors keyed on flag.Changed in the delegated Go child;
-      // dropping Some(false) would make the child default to local instead of the
-      // linked target the native path selected. `--use-pg-schema` is the only
-      // remaining delegate path.
+      // Target flags are selectors keyed on the delegated child's flag.Changed; dropping
+      // `Some(false)` would default it to local instead of the linked target selected.
       const s = setup(tmp.current);
       return Effect.gen(function* () {
         yield* dbDiff(flags({ usePgSchema: Option.some(true), linked: Option.some(false) }));
@@ -1615,9 +1483,8 @@ describe("db diff", () => {
   it.effect(
     "an empty --file value prints to stdout instead of writing a nameless migration",
     () => {
-      // The file write is gated on the value being non-empty; an empty --file
-      // (e.g. an unset shell var) falls through to stdout rather than writing
-      // `<timestamp>_.sql`.
+      // The file write is gated on non-empty; an empty --file falls through to stdout
+      // instead of writing `<timestamp>_.sql`.
       const s = setup(tmp.current, { diffSql: "create table y ();\n" });
       return Effect.gen(function* () {
         yield* dbDiff(flags({ file: Option.some("") }));
@@ -1631,14 +1498,13 @@ describe("db diff", () => {
   it.effect(
     "explicit --output with an empty value prints to stdout instead of writing a file",
     () => {
-      // The file write is gated on the value being non-empty; an empty value falls
-      // through to stdout rather than writing SQL into the project directory.
+      // The file write is gated on non-empty; an empty --output falls through to stdout
+      // instead of writing into the project directory.
       const s = setup(tmp.current, { diffSql: "create table z ();\n" });
       return Effect.gen(function* () {
         yield* dbDiff(
           flags({ from: Option.some("local"), to: Option.some("local"), output: Option.some("") }),
         );
-        // Reaching stdout proves it didn't try to write SQL to the resolved workdir.
         expect(stdout(s.out)).toBe("create table z ();\n");
       }).pipe(Effect.provide(s.layer));
     },
@@ -1654,8 +1520,7 @@ describe("db diff", () => {
   });
 
   it.effect("explicit --from linked --to migrations passes the linked ref to the strategy", () => {
-    // Go resolves linked first (LoadConfig merges [remotes.<ref>]), so the later
-    // migrations catalog is built from the remote-merged config (explicit.go).
+    // Linked resolves first, so the later migrations catalog uses the remote-merged config.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
@@ -1682,17 +1547,15 @@ describe("db diff", () => {
         kind: "migrations",
         projectRef: "abcdefghijklmnopqrst",
       });
-      // Opposite direction of the sibling "migrations --to linked" test below: linked
-      // resolves FIRST here, so the remote-merged config (major_version = 14) is what
-      // must reach the migrations shadow/catalog.
+      // Linked resolves first here (opposite of the sibling test below), so the
+      // remote-merged config reaches the catalog.
       expect(s.explicitDiffCalls[0]?.toml?.majorVersion).toBe(14);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("explicit --from migrations --to linked passes base config to the strategy", () => {
-    // Migrations is resolved BEFORE linked here, so Go's LoadConfig(ref) hasn't run
-    // yet — the catalog (and its shadow's own container spec) must use base config
-    // (no ref forwarded), matching order.
+    // Migrations resolves before linked here, so the catalog must use base config
+    // (no ref forwarded yet).
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
@@ -1706,8 +1569,8 @@ describe("db diff", () => {
         "[remotes.staging.db]",
         "major_version = 14",
         "",
-        // Set ONLY under the remote block: proves the strategy-received toml is the
-        // base config, not the linked-merged one (which would flip this to true).
+        // Set only under the remote block, so it would flip to true if the
+        // linked-merged config leaked in.
         "[remotes.staging.experimental.webhooks]",
         "enabled = true",
         "",
@@ -1727,10 +1590,8 @@ describe("db diff", () => {
   });
 
   it.effect("explicit --from local --to migrations --linked seeds the merged config", () => {
-    // A changed --linked resolves the project ref and remote-merges the config
-    // before the explicit refs resolve — so the migrations catalog's shadow (and
-    // local refs/format options) use the linked override even though neither
-    // explicit ref is itself `linked`.
+    // A changed --linked remote-merges the config before the explicit refs resolve,
+    // even though neither explicit ref is itself `linked`.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
@@ -1767,9 +1628,8 @@ describe("db diff", () => {
   });
 
   it.effect("explicit --from local --to migrations --linked validates the merged config", () => {
-    // The explicit base config read is deferred until after the linked preflight, so
-    // a base config that's only valid after the [remotes.<ref>] merge (base
-    // major_version=16, override=15) does not fail before the ref is resolved.
+    // The base config read is deferred until after the linked preflight, so a base
+    // config only valid after the remote merge doesn't fail early.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
@@ -1803,12 +1663,11 @@ describe("db diff", () => {
   });
 
   it.effect("empty --from/--to (shell vars) fall through to the normal diff", () => {
-    // Go gates explicit mode on len(diffFrom)>0 || len(diffTo)>0; `--from "" --to ""`
-    // is unset and runs the normal local diff, not an unknown-target error.
+    // `--from "" --to ""` is unset and runs the normal local diff, not an
+    // unknown-target error.
     const s = setup(tmp.current, { diffSql: "create table e ();\n" });
     return Effect.gen(function* () {
       yield* dbDiff(flags({ from: Option.some(""), to: Option.some("") }));
-      // Reaching the native path proves it didn't enter explicit mode and error.
       expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
       expect(stdout(s.out)).toBe("create table e ();\n\n");
     }).pipe(Effect.provide(s.layer));
@@ -1825,10 +1684,8 @@ describe("db diff", () => {
   });
 
   it.effect("explicit mode still runs the target-flag preflight on a changed --db-url", () => {
-    // Go runs ParseDatabaseConfig in PreRun before RunExplicit (cmd/root.go:118),
-    // so a changed target flag is still validated/loaded even when the explicit
-    // refs drive the diff. The preflight resolves the --db-url target (connType
-    // db-url); a real bad URL would surface the resolver's parse error.
+    // A changed target flag is still validated even when the explicit refs drive the
+    // diff; the preflight resolves --db-url (connType db-url).
     const s = setup(tmp.current, { diffSql: "create table p ();\n" });
     return Effect.gen(function* () {
       yield* dbDiff(
@@ -1901,7 +1758,6 @@ describe("db diff", () => {
     const s = setup(tmp.current, { format: "json", diffSql: "create table j ();\n" });
     return Effect.gen(function* () {
       yield* dbDiff(flags());
-      // No raw SQL on stdout in machine mode; the envelope carries it instead.
       expect(stdout(s.out)).toBe("");
       const success = s.out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({
@@ -1944,8 +1800,7 @@ describe("db diff", () => {
   });
 
   it.effect("the migra OOM fallback honors --network-id over host networking", () => {
-    // The migra OOM bash fallback routes through Docker start, which overrides the
-    // requested host network with --network-id when set.
+    // Routes through Docker start, which overrides host networking with --network-id.
     const s = setup(tmp.current, {
       oom: true,
       diffSql: "create table fb ();\n",
@@ -1965,38 +1820,25 @@ describe("db diff", () => {
   it.live(
     "removes the shadow container on a SIGINT-style interruption during the readiness wait, without waiting for the readiness timeout",
     () => {
-      // Regression test for the acquireUseRelease restructuring (review:
-      // PRRT_kwDOErm0O86XMrID): an earlier shape passed the ENTIRE
-      // `prepareShadowSource` (create -> health-wait -> migrate ->
-      // declarative-apply) as `acquireUseRelease`'s `acquire`, which Effect's
-      // `uninterruptibleMask` (no `restore` around `acquire`) made completely
-      // uninterruptible — a SIGINT landing during the readiness wait (which can run
-      // for up to 30 real seconds, `HEALTH_CHECK_TIMEOUT_SECONDS`) was silently
-      // swallowed until the wait gave up on its own. `acquire` is now ONLY
-      // `createShadowDatabase` (container creation); the readiness wait runs
-      // inside the interruptible `use` phase instead, so a `Fiber.interrupt` here must
-      // land promptly.
+      // `acquire` covers only `createShadowDatabase`; the readiness wait runs in the
+      // interruptible `use` phase instead, so a `Fiber.interrupt` here must land
+      // promptly rather than waiting for the readiness timeout.
       const s = setup(tmp.current, { neverConnectableShadow: true });
       return Effect.gen(function* () {
         const fiber = yield* dbDiff(flags()).pipe(
           Effect.provide(s.layer),
           Effect.forkChild({ startImmediately: true }),
         );
-        // Wait until the shadow's readiness gate has actually refused a connect at
-        // least once — proving the fiber is genuinely suspended inside
-        // `waitForShadowReady`'s retry loop, not merely past the `create` call.
+        // Waits until the shadow's readiness gate has refused a connect at least once,
+        // proving the fiber is suspended in `waitForShadowReady`'s retry loop.
         while (s.shadowConnectedDatabases.length === 0) {
           yield* Effect.sleep("5 millis");
         }
-        // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
-        // including `removeShadowDatabase`) has fully completed — if `acquire`
-        // still covered the readiness wait, this call would hang for up to 30 real
-        // seconds (or until this test's own timeout), instead of resolving as soon
-        // as the in-flight probe returns.
+        // `Fiber.interrupt` only resolves once finalizers complete; this would hang for
+        // up to 30s if `acquire` still covered the readiness wait.
         yield* Fiber.interrupt(fiber);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-        // The diff step (past the health wait) was never reached.
         expect(s.edgeCalls).toHaveLength(0);
       });
     },
@@ -2092,11 +1934,9 @@ describe("db diff", () => {
       "invokes the differ with the exact argv, image, network, labels, and empty env/binds (no --schema)",
       () => {
         const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
-        // `CommandSettings.projectId` only feeds pg-delta's own project id (a
-        // SEPARATE mechanism); the shadow/differ's docker network+labels come from
-        // `loadLocalProjectContext`'s REAL resolution (no config.toml
-        // `project_id`/`SUPABASE_PROJECT_ID` here), which falls back to the workdir
-        // basename — same as the pg-delta Deno-cache-volume tests above.
+        // `CommandSettings.projectId` only feeds pg-delta's project id; the differ's
+        // network/labels come from `loadLocalProjectContext`'s own resolution, falling
+        // back to the workdir basename.
         const projectId = basename(tmp.current);
         return Effect.gen(function* () {
           yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
@@ -2116,8 +1956,7 @@ describe("db diff", () => {
             "com.docker.compose.project": projectId,
           });
           expect(call.extraHosts).toEqual(["host.docker.internal:host-gateway"]);
-          // Go never tees the differ's raw stderr to the parent terminal — the
-          // `runCapture` options argument must stay unset.
+          // The differ's stderr is never teed to the parent terminal.
           expect(s.differCaptureOpts[0]).toBeUndefined();
         }).pipe(Effect.provide(s.layer));
       },
@@ -2171,11 +2010,9 @@ describe("db diff", () => {
     it.effect(
       "a supabase/.env-only SUPABASE_INTERNAL_IMAGE_REGISTRY reaches the differ's image resolver during the run, and reverts after",
       () => {
-        // `dockerRunLayer`'s own image resolver has no `projectEnvValues` in
-        // scope, so it falls back to reading `process.env` directly at `runCapture`
-        // call time; this mock docker layer records that same read
-        // (`differRegistryEnvAtCall`) since it replaces the real resolver wholesale
-        // and can't observe an already-rewritten image.
+        // The image resolver reads `process.env` directly at call time (no
+        // `projectEnvValues` in scope); this mock records that same read since it
+        // replaces the resolver wholesale.
         const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
         delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
         mkdirSync(join(tmp.current, "supabase"), { recursive: true });
@@ -2187,8 +2024,6 @@ describe("db diff", () => {
         return Effect.gen(function* () {
           yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
           expect(s.differRegistryEnvAtCall).toEqual(["registry.example.com"]);
-          // Reverted once the handler's scope closes — no leak into a later command
-          // (or a later test) sharing this process.
           expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
         }).pipe(
           Effect.ensuring(
@@ -2268,12 +2103,8 @@ describe("db diff", () => {
     it.effect(
       ">=2 --schema runs each emitting a diff array succeed, aggregating every run's DDL under ONE header (CLI-1968 round 2: parsed per run, not concatenated then parsed once)",
       () => {
-        // Completes the intended shared-buffer algorithm's own purpose (see
-        // `pgadmin-diff.ts`'s own header comment): each run's stdout is
-        // parsed on its own, so >=2 `--schema` runs that each emit a full JSON
-        // array no longer concatenate into one buffer and fail a single
-        // `JSON.parse` — every run's own DESKTOP-mode NOTE prefix (`pgadmin4#24`)
-        // is trimmed from that run's own buffer too, not just the very first run's.
+        // Each run's stdout is parsed on its own (see `pgadmin-diff.ts`), including its
+        // own DESKTOP-mode NOTE prefix trim, not just the first run's.
         const s = setup(tmp.current, {
           pgadminStdout: [
             `${PGADMIN_DESKTOP_NOTE_PREFIX}${JSON.stringify([pgadminEntry({ diff_ddl: "create table pub ();" })])}`,
@@ -2283,17 +2114,14 @@ describe("db diff", () => {
         return Effect.gen(function* () {
           yield* dbDiff(flags({ usePgAdmin: Option.some(true), schema: ["public", "app"] }));
           const text = stdout(s.out);
-          // A single header, not one per run.
           expect(text.split(PGADMIN_DIFF_HEADER)).toHaveLength(2);
           expect(text).toContain(
             `${PGADMIN_DIFF_HEADER}\n\ncreate table pub ();\n\ncreate table app ();\n`,
           );
-          // Per-run "Diffing schema:" ordering is preserved.
           const idxPublic = text.indexOf("Diffing schema: public");
           const idxApp = text.indexOf("Diffing schema: app");
           expect(idxPublic).toBeGreaterThanOrEqual(0);
           expect(idxApp).toBeGreaterThan(idxPublic);
-          // Neither run's raw NOTE prefix leaked into the rendered diff.
           expect(text).not.toContain("NOTE: Configuring authentication for DESKTOP mode.");
         }).pipe(Effect.provide(s.layer));
       },
@@ -2316,9 +2144,6 @@ describe("db diff", () => {
     it.effect(
       "emits a failed run's captured progress statuses before the container-error surfaces",
       () => {
-        // This port batches stderr via `runCapture` instead of streaming it, so a
-        // run that later exits non-zero must still have its captured status lines
-        // processed/emitted BEFORE the exit-code check, not after returning early.
         const s = setup(tmp.current, {
           pgadminExitCode: 1,
           pgadminStderr: ["Comparing Tables 45%\nDiffing 100%\n"],
@@ -2368,8 +2193,7 @@ describe("db diff", () => {
             reason: "differ",
             message: "error running container: exit 1",
           });
-          // The differ's own stderr never reaches the error message (Go quirk — it
-          // only ever fed the progress-line filter).
+          // The differ's own stderr never reaches the error message.
           expect((error as { message: string }).message).not.toContain("some differ crash text");
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
         }).pipe(Effect.provide(s.layer));
@@ -2416,9 +2240,6 @@ describe("db diff", () => {
           );
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toEqual([]);
           expect(s.differCalls).toEqual([]);
-          // The target was still resolved BEFORE the running-check failed — Go
-          // resolves the target in the root PersistentPreRunE, strictly before
-          // RunPgAdmin's AssertSupabaseDbIsRunning.
           expect(s.resolverCalls.length).toBeGreaterThan(0);
         }).pipe(Effect.provide(s.layer));
       },
@@ -2525,9 +2346,9 @@ describe("db diff", () => {
             Effect.provide(s.layer),
             Effect.forkChild({ startImmediately: true }),
           );
-          // Wait for the SHADOW's own health probe specifically (its 64-hex id) —
-          // the pgadmin path's separate `supabase_db_test` "is running" probe fires
-          // first and would otherwise satisfy a looser check immediately.
+          // Waits for the shadow's own health probe (its 64-hex id); the pgadmin path's
+          // separate `supabase_db_test` probe fires first and would satisfy a looser
+          // check immediately.
           while (
             !s.shadowSpawned.some(
               (c) =>
@@ -2580,11 +2401,9 @@ describe("db diff", () => {
       ).pipe(Effect.as(s));
     };
 
-    // Regression: both migrate paths used to pass a hardcoded `{ webhooks: "enabled" }`, so the
-    // migra run's forced-`pg_net` baseline and the pg-delta run's config-following baseline keyed
-    // to the SAME tar and silently restored each other's cluster. The handler now forks the
-    // policy on `migrationMode`; `shadow-cache.integration.test.ts` covers the cache's half of
-    // the contract, this covers `db diff`'s call site.
+    // A migra baseline and a pg-delta baseline must not key to the same cache tar and
+    // silently restore each other's cluster; `shadow-cache.integration.test.ts` covers
+    // the cache's own half, this covers the call site.
     it.live("a migra-engine baseline is never restored into a pg-delta run", () => {
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
@@ -2600,7 +2419,7 @@ describe("db diff", () => {
         expect(migraTars).toHaveLength(1);
 
         // pg-delta follows the config (webhooks are off here), so it must cold-provision
-        // and publish its OWN baseline rather than restore the forced-on one above.
+        // and publish its own baseline rather than restore the forced-on one above.
         const pgDeltaRun = yield* runCached("pg-delta");
         expect(pgDeltaRun.dockerDaemon?.stepCalls("cp-in")).toHaveLength(0);
         expect(pgDeltaRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);

@@ -1,32 +1,15 @@
 /**
- * Native pgAdmin schema-diff engine. `db diff` is the only caller, so this stays
- * colocated with the command rather than under `commands/db/shared/`; move it
- * there (and split the error into its own `pgadmin-diff.errors.ts`,
- * mirroring `migra.ts`/`migra.errors.ts`) if a second command ever
- * needs it.
+ * Native pgAdmin schema-diff engine used by `db diff`.
  *
- * Covers the two pure halves — parsing (`parsePgAdminDiffEntries`) and
- * rendering (`renderPgAdminDiff`), recomposed as
- * `processPgAdminDiffOutput` for a single whole buffer — and the
- * container-invocation loop, `diffSchemaPgAdmin`. Shadow provisioning, the
- * `Creating shadow database...`/`Diffing local database with current
- * migrations...` status lines, and the file write all stay in `diff.handler.ts`.
+ * Covers the pure halves — parsing (`parsePgAdminDiffEntries`) and rendering
+ * (`renderPgAdminDiff`), recomposed as `processPgAdminDiffOutput` for a single
+ * whole buffer — and the container-invocation loop, `diffSchemaPgAdmin`. Shadow
+ * provisioning, status lines, and the file write stay in `diff.handler.ts`.
  *
- * **Deliberate divergence from the historical Go implementation:** the differ
- * container's stdout was, in the original Go CLI, never actually collected — a
- * struct-copy bug meant `--use-pgadmin` always reported "No schema changes found"
- * (exit 0) regardless of the differ's real output, on any schema count. This port
- * implements the algorithm the surrounding code clearly intended: it parses EACH
- * run's own real stdout separately and aggregates the kept DDLs across runs,
- * rather than gluing every run's raw bytes into one buffer and parsing that once
- * (which would turn a multi-`--schema` diff whose every run individually parses
- * fine into a spurious `JSON.parse` "trailing data" failure — the worst of both
- * worlds). So where the historical implementation silently reported an empty diff
- * no matter what the differ produced, this port produces the actual, aggregated
- * diff across every run (or a real per-run JSON-parse error — see
- * `parsePgAdminDiffEntries`'s own doc comment). Ruling: keep this port's
- * (correct) implementation; see `SIDE_EFFECTS.md`'s "Deliberate divergence" entry
- * for the user-facing framing.
+ * Each differ run's stdout is parsed and aggregated separately rather than
+ * concatenated across runs and parsed once, which would turn a multi-`--schema`
+ * diff, where every run parses fine on its own, into a spurious JSON
+ * "trailing data" failure. See `SIDE_EFFECTS.md` for the user-facing behavior.
  */
 
 import { Effect, Option, Result } from "effect";
@@ -42,11 +25,9 @@ import { DbDiffPgAdminError } from "./diff.errors.ts";
 const DIFFER_IMAGE = dockerfileServiceImage("differ");
 
 /**
- * Trimmed front-anchored only (not a global strip) — a real pgAdmin4 output quirk
- * (`supabase/pgadmin4#24`). `parsePgAdminDiffEntries` runs once per differ
- * run, so each run's OWN copy of this note is trimmed off the front of that run's
- * own buffer; `processPgAdminDiffOutput`, applied to a single whole buffer,
- * still only strips the very front of whatever string it's given.
+ * Only the front of the buffer is trimmed, not every occurrence — a real pgAdmin4
+ * output quirk (`supabase/pgadmin4#24`). Each differ run's own copy is trimmed
+ * off that run's own buffer.
  */
 export const PGADMIN_DESKTOP_NOTE_PREFIX = "NOTE: Configuring authentication for DESKTOP mode.\n";
 
@@ -68,38 +49,22 @@ const PGADMIN_DIFF_TYPES = new Set([
 ]);
 
 /**
- * Compiled with the `s` (dotAll) flag: JS's `.` excludes every line-terminator code
- * point (`\r`, `\n`, U+2028, U+2029) unless `s` is set, and `scanLines` only
- * splits on `\n`, so a line can still carry embedded `\r`s from a `\r`-driven
- * progress bar (multiple updates overwriting the same terminal line) — without `s`,
- * this pattern would stop matching at the first embedded `\r`. No alternation, so
- * the match is greedy on the digit/percent suffix, e.g. `"Diffing 100%"` → group 1
- * `"Diffing 1"`, group 2 `"00"`.
+ * Uses the `s` (dotAll) flag so `.` still matches an embedded `\r` left by a
+ * `\r`-driven progress bar; `scanLines` only splits on `\n`, so a line can carry
+ * one of these mid-string.
  */
 const PGADMIN_PROGRESS_RE = /(.*)([0-9]{2,3})%/s;
 
-/**
- * Splits `stderr` into lines: `\r\n`/`\n`-terminated lines with the trailing `\r`
- * (if any) stripped, and a final, non-newline-terminated fragment still emitted as
- * its own line. An empty input yields zero lines. Deliberately has no line-length
- * limit, so an abnormally long differ progress line is still scanned in full.
- */
+/** Splits into lines, stripping a trailing `\r` from each and any final empty line left by a trailing `\n`. */
 function scanLines(text: string): ReadonlyArray<string> {
   if (text.length === 0) return [];
   const lines = text.split("\n");
-  // A trailing `\n` produces one trailing empty element from `split` that isn't a
-  // real line of its own — the `\n` itself already terminated the prior line.
+  // `split("\n")` leaves a trailing empty element after a trailing newline.
   const withoutTrailingNewline = text.endsWith("\n") ? lines.slice(0, -1) : lines;
   return withoutTrailingNewline.map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
 }
 
-/**
- * Extracts the status lines from the differ's stderr progress stream (progress
- * percentages themselves are dropped). `"Starting schema diff..."` and any
- * non-matching line produce nothing. This port's stdout emission
- * (`diff.handler.ts`'s `emitStatus`) targets non-TTY status-line output; a TTY
- * session's frame-by-frame progress rendering has no TS equivalent.
- */
+/** Extracts status text from the differ's stderr progress stream, dropping percentages and non-matching lines. */
 export function processPgAdminDiffProgress(stderr: string): ReadonlyArray<string> {
   const statuses: Array<string> = [];
   for (const line of scanLines(stderr)) {
@@ -110,10 +75,7 @@ export function processPgAdminDiffProgress(stderr: string): ReadonlyArray<string
   return statuses;
 }
 
-/**
- * Field kept snake_case (the literal wire key), not camelCased, so the guard
- * below reads the parsed JSON 1:1.
- */
+/** Field name is snake_case to match the differ's wire JSON key. */
 interface PgAdminDiffDependency {
   readonly type?: string | null;
 }
@@ -128,11 +90,7 @@ interface PgAdminDiffEntry {
   readonly source_schema_name?: string | null;
 }
 
-/**
- * A present field's type is checked exactly like every other `DiffEntry` scalar
- * below — see {@link isPgAdminDiffEntryElement}'s own doc comment for the
- * shared "null tolerated per field" rule.
- */
+/** See {@link isPgAdminDiffEntryElement} for the null-tolerance rule this follows. */
 function isPgAdminDiffDependencyElement(value: unknown): value is PgAdminDiffDependency | null {
   if (value === null) return true;
   if (typeof value !== "object" || Array.isArray(value)) return false;
@@ -141,18 +99,9 @@ function isPgAdminDiffDependencyElement(value: unknown): value is PgAdminDiffDep
 }
 
 /**
- * Structural guard for the differ's `DiffEntry` JSON shape, applied to an
- * untrusted `JSON.parse` of the differ's stdout:
- * - a bare `null` array element is accepted — the caller normalizes it away
- *   before this guard ever sees it;
- * - a non-null, non-object element (`{}`/`"x"`/`1`/`true`/an array) is rejected;
- * - `null` for an individual DECLARED scalar field (`type`/`status`/`diff_ddl`/
- *   `group_name`/`source_schema_name`) is tolerated with no error, leaving the
- *   zero value — so `{"status":null}` is accepted, not rejected;
- * - a MISTYPED declared field (`{"type":123}`, `{"dependencies":{}}`,
- *   `{"dependencies":[1]}`, a `dependencies[].type` that isn't a string) is
- *   rejected, so every array field's own elements are validated too, not just
- *   its own top-level shape.
+ * Structural guard for the differ's `DiffEntry` JSON shape: a bare `null` element is
+ * accepted, `null` for a declared scalar field is tolerated as its zero value, and any
+ * wrong-typed field (including `dependencies[].type`) is rejected.
  */
 function isPgAdminDiffEntryElement(value: unknown): value is PgAdminDiffEntry | null {
   if (value === null) return true;
@@ -184,17 +133,11 @@ function isPgAdminDiffEntryElement(value: unknown): value is PgAdminDiffEntry | 
 }
 
 /**
- * Parse/filter half of the differ output pipeline — pure, no Effect. Trims the
- * DESKTOP-mode NOTE prefix off the FRONT of `stdout` (a real pgAdmin4 quirk,
- * `supabase/pgadmin4#24`), then parses and filters it into the ordered list of
- * kept, trimmed DDL strings (allow-listed entry types + internal-schema/
- * extension-dependency filtering). Rendering the header and joining is
- * `renderPgAdminDiff`'s job, kept separate so `diffSchemaPgAdmin`'s
- * run loop can parse EACH run's own buffer (trimming that run's own DESKTOP-mode
- * note, if any) and aggregate every run's DDLs before rendering once — avoiding
- * gluing raw bytes together first, which would turn a multi-`--schema` diff where
- * every run individually parses fine into one spurious `JSON.parse` "trailing
- * data" failure.
+ * Parses the differ's `--json-diff` stdout into the ordered, filtered list of DDL
+ * strings, trimming the DESKTOP-mode NOTE prefix off the front first. Kept separate
+ * from `renderPgAdminDiff` so `diffSchemaPgAdmin` can parse and aggregate each
+ * differ run's buffer individually instead of concatenating them, which would turn a
+ * multi-`--schema` diff into a spurious JSON "trailing data" failure.
  */
 export function parsePgAdminDiffEntries(
   stdout: string,
@@ -212,9 +155,7 @@ export function parsePgAdminDiffEntries(
       message: `failed to parse schema diff output: ${cause instanceof Error ? cause.message : String(cause)}`,
     });
   }
-  // `json.Unmarshal` into a non-pointer `[]DiffEntry` accepts a top-level JSON `null` as a
-  // no-op (nil slice) — normalize it to `[]` before the array guard below, matching
-  // `isPgDeltaApplyResult`'s identical `null` handling.
+  // A top-level JSON `null` is treated as an empty array, matching `isPgDeltaApplyResult`.
   const entries: unknown = parsed === null ? [] : parsed;
   if (!Array.isArray(entries) || !entries.every(isPgAdminDiffEntryElement)) {
     return Result.fail({
@@ -253,14 +194,8 @@ export function renderPgAdminDiff(ddls: ReadonlyArray<string>): string {
 }
 
 /**
- * Parse-then-render composition of the two halves above, applied to a SINGLE,
- * whole buffer — kept for callers (and this file's own unit tests) that want the
- * whole pipeline as one function over one buffer. `diffSchemaPgAdmin`'s run
- * loop calls `parsePgAdminDiffEntries`/`renderPgAdminDiff` directly
- * instead, once per run, so this function's own single-buffer semantics
- * (including the multi-JSON-array "trailing data" failure on a buffer that
- * concatenates >=1 complete arrays) are unchanged but no longer reachable from a
- * multi-`--schema` diff.
+ * Parses and renders a single whole buffer in one call. `diffSchemaPgAdmin`
+ * calls the two halves directly, once per differ run, instead.
  */
 export function processPgAdminDiffOutput(
   stdout: string,
@@ -268,15 +203,6 @@ export function processPgAdminDiffOutput(
   return Result.map(parsePgAdminDiffEntries(stdout), renderPgAdminDiff);
 }
 
-/**
- * Maps `DockerRunError`'s own three-way docker-boundary discriminant onto this
- * command's `reason` union — mirrors `dbSetupDockerReason` (`db-setup.ts`): a spawn
- * failure or a detected daemon-down message means the daemon itself is unreachable, a failed
- * image inspect is a config/registry-availability issue distinct from a pull failure, and
- * everything else at this boundary is a registry-pull failure. `diffMigraBash`
- * (`migra.ts`) keeps its own pre-existing two-way collapse (`inspect` folded into
- * `pull`) — out of scope for this port.
- */
 function pgAdminDockerReason(
   reason: "spawn" | "inspect" | "pull",
   daemonDown: boolean,
@@ -287,19 +213,16 @@ function pgAdminDockerReason(
 }
 
 export interface DiffSchemaPgAdminParams {
-  /** The USER'S db. */
+  /** The user's database connection string. */
   readonly source: string;
-  /** The SHADOW — a raw connection string, not built via `toPostgresURL`. */
+  /** The shadow database's raw connection string (not built via `toPostgresURL`). */
   readonly target: string;
   readonly schema: ReadonlyArray<string>;
-  /** Merged onto both docker labels, matching every other container this codebase creates. */
+  /** Merged onto both docker container labels. */
   readonly projectId: string;
   /**
-   * Already `--network-id`/`SUPABASE_NETWORK_ID`/`supabase_network_<projectId>`-resolved by
-   * the caller (`resolveNetworkId`, via `buildLocalDbContainerInputs`'s
-   * `localInputs.networkId`) — never empty, so this function does no second resolution and,
-   * unlike `migra.ts`'s `diffMigraBash`, never falls back to a host network: the
-   * differ always joins a user-defined bridge network.
+   * Already resolved to a network ID by the caller; never empty. The differ always
+   * joins this network and never falls back to the host network.
    */
   readonly networkId: string;
   /** Linux-only `host.docker.internal:host-gateway`; empty elsewhere. */
@@ -309,28 +232,11 @@ export interface DiffSchemaPgAdminParams {
 }
 
 /**
- * One differ container run when no `--schema` is given, else one run per
- * `--schema` (in flag order), each preceded by its own `Diffing schema: <s>`
- * status. `runCapture`, not `runStream`, because the differ's progress lines
- * arrive on STDERR, and `DockerRun.runStream` only exposes an `onStdout`
- * streaming hook — there is no `onStderr` equivalent to observe stderr
- * incrementally through this service today. This means status lines aren't
- * live-streamed: this function buffers each run's stderr in full via
- * `runCapture` and only filters/flushes it (`processPgAdminDiffProgress` +
- * `emitStatus`, below) once that run's container has already exited — so a
- * multi-`--schema` diff still gets one status batch per run, but within a single
- * run every one of its status lines appears together, after the fact, instead
- * of as the differ actually emits them. A real fix would add an `onStderr`
- * streaming hook to `runStream`, mirroring `onStdout`, and switch this function
- * to it. `teeStderr` stays off regardless. The image is passed raw (not
- * pre-resolved via `getRegistryImageUrl`, unlike `diffMigraBash`):
- * `dockerRunLayer`'s own resolver builds the ECR→GHCR→docker.io candidate
- * ladder from it — reading `SUPABASE_INTERNAL_IMAGE_REGISTRY` straight off
- * `process.env` at call time (no `projectEnvValues` passed through). It is the
- * caller's (`diff.handler.ts`) own `applyProjectEnv` scope, applied right
- * after the config load, that makes a registry override set only in the
- * project's `supabase/.env` (not the ambient shell) visible to that resolver by
- * the time this function's `runCapture` call reaches it.
+ * Runs one differ container per `--schema` flag (or one run if none given). Uses
+ * `runCapture`, not `runStream`, because progress arrives on stderr, which cannot be
+ * streamed incrementally today — so each run's status lines print only after that
+ * run's container exits, not live. The image is passed unresolved so the registry
+ * resolver picks up any project-level registry override from the caller's env scope.
  */
 export const diffSchemaPgAdmin = (
   params: DiffSchemaPgAdminParams,
@@ -373,17 +279,12 @@ export const diffSchemaPgAdmin = (
               }),
           ),
         );
-      // Emitted BEFORE the exit-code check below: a failed run's own status lines
-      // should still print ahead of the container error surfacing. Returning early
-      // on a nonzero exit before reaching this would silently drop that run's
-      // already-captured statuses.
+      // Emitted before the exit-code check so a failed run's status lines still print.
       for (const line of processPgAdminDiffProgress(result.stderr)) {
         yield* params.emitStatus(line);
       }
       if (result.exitCode !== 0) {
-        // The differ's own stderr is never surfaced beyond the progress-line
-        // filter above; any non-matching line is silently dropped, even under
-        // `--debug`.
+        // Non-progress stderr lines are dropped silently, even under `--debug`.
         return yield* Effect.fail(
           new DbDiffPgAdminError({
             message: `error running container: exit ${result.exitCode}`,
@@ -392,10 +293,7 @@ export const diffSchemaPgAdmin = (
         );
       }
       const stdout = new TextDecoder().decode(result.stdout);
-      // Parsed per run rather than concatenated across runs and parsed once,
-      // which would turn a multi-`--schema` diff whose every run individually
-      // parses fine into a spurious "trailing data" `JSON.parse` failure — see
-      // this module's own header comment.
+      // Parsed per run, not concatenated across runs.
       const parsed = parsePgAdminDiffEntries(stdout);
       if (Result.isFailure(parsed)) {
         return yield* Effect.fail(
