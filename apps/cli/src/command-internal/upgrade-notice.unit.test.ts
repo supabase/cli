@@ -51,7 +51,7 @@ describe("isNewerCliVersion", () => {
     ["v2.114.0-beta.1", "2.114.0", false],
     ["", "2.113.0", false],
     ["not-a-version", "2.113.0", false],
-    // x/mod/semver requires the leading v: a bare tag is invalid to Go.
+    // A bare tag (no leading "v") is invalid.
     ["2.114.0", "2.113.0", false],
     ["v2.114.0", "0.0.0-dev", true],
     ["v2.114.0", "", true],
@@ -211,7 +211,7 @@ describe("runUpgradeNotice", () => {
     expect(on.stderr).toContain("Failed to fetch latest release");
     on.cleanup();
 
-    // A set flag (`--debug=false`) beats SUPABASE_DEBUG, like viper.
+    // A set flag (`--debug=false`) beats SUPABASE_DEBUG.
     const off = setup({
       fetchFails: true,
       project: false,
@@ -224,8 +224,6 @@ describe("runUpgradeNotice", () => {
   });
 
   it("a built-in ignores SUPABASE_DEBUG but still honors the --debug flag, like cobra's init order", async () => {
-    // AutomaticEnv binds inside cobra.OnInitialize, which --help/--version
-    // never reach; BindPFlags runs at package init, so the flag still reads.
     const viaEnv = setup({
       fetchFails: true,
       project: false,
@@ -329,8 +327,8 @@ describe("runUpgradeNotice", () => {
   );
 
   it("a --debug consumed by the leaf command's own value flag is not the debug flag, like pflag", async () => {
-    // `login --name --debug`: pflag hands `--debug` to `--name`. The real CLI
-    // passes the resolved leaf's value-flag predicate into the hook.
+    // `login --name --debug`: `--debug` is consumed as `--name`'s value; the
+    // real CLI passes the resolved leaf's value-flag predicate into the hook.
     const ctx = setup({ fetchFails: true, project: false, args: ["login", "--name", "--debug"] });
     await runUpgradeNotice({
       ...ctx.deps,
@@ -341,9 +339,8 @@ describe("runUpgradeNotice", () => {
   });
 
   it("a false root version flag before a leaf runs the normal path, workdir included", async () => {
-    // `--version=false <leaf>`: cobra parses false, runs the leaf with
-    // `ChangeWorkDir` — but pflag still marks the flag changed, forcing the
-    // fetch. Only the built-in classification must not trigger.
+    // `--version=false <leaf>` still marks the flag as set, forcing the fetch;
+    // only the built-in classification must not trigger.
     const ctx = setup({ project: false });
     const flagged = join(workdir, "flagged");
     mkdirSync(join(flagged, "supabase"), { recursive: true });
@@ -367,15 +364,14 @@ describe("runUpgradeNotice", () => {
       await runUpgradeNotice(ctx.deps);
       chmodSync(ctx.cachePath, 0o644);
       expect(ctx.stderr).toContain("failed to write file");
-      // The stale cache survives, exactly like Go's failed open.
       expect(readFileSync(ctx.cachePath, "utf8")).toBe("v2.115.0");
       ctx.cleanup();
     },
   );
 
   it("project dotenv SUPABASE_DEBUG surfaces diagnostics, like godotenv before the Execute tail", async () => {
-    // A symlinked .temp disables the backoff write, so the fetch error is what
-    // remains to log — and the debug gate resolves through the project chain.
+    // The symlinked .temp disables the backoff write, so the fetch error is
+    // what remains to log.
     const ctx = setup({ fetchFails: true });
     writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_DEBUG=1\n");
     mkdirSync(join(workdir, "elsewhere"), { recursive: true });
@@ -384,7 +380,7 @@ describe("runUpgradeNotice", () => {
     expect(ctx.stderr).toContain("Failed to fetch latest release");
     ctx.cleanup();
 
-    // A shell env that defines the key blocks the chain, like os.Environ.
+    // A shell env that defines the key blocks the chain.
     const blocked = setup({ fetchFails: true, env: { SUPABASE_DEBUG: "" } });
     writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_DEBUG=1\n");
     mkdirSync(join(workdir, "elsewhere"), { recursive: true });
@@ -397,7 +393,7 @@ describe("runUpgradeNotice", () => {
   it("a failed fetch inside a project stays silent under --debug, matching Go's backoff", async () => {
     const ctx = setup({ fetchFails: true, args: ["db", "start", "--debug"] });
     await runUpgradeNotice(ctx.deps);
-    // The empty-cache backoff write succeeds, so Go emits no debug line.
+    // The empty-cache backoff write succeeds, so no debug line is emitted.
     expect(ctx.stderr).toBe("");
     expect(readFileSync(ctx.cachePath, "utf8")).toBe("");
     ctx.cleanup();
@@ -474,8 +470,8 @@ describe("runUpgradeNotice", () => {
   });
 
   it("a shell env that defines the key beats the project dotenv, like godotenv's no-override", async () => {
-    // Defined-but-unparseable in the shell env: Go's os.Environ presence stops
-    // godotenv from overriding, and ParseBool("") keeps the notifier on.
+    // Defined-but-unparseable in the shell env still blocks the project
+    // dotenv from overriding, and an empty value keeps the notifier on.
     const ctx = setup({ env: { SUPABASE_NO_UPDATE_NOTIFIER: "" } });
     writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_NO_UPDATE_NOTIFIER=1\n");
     await runUpgradeNotice(ctx.deps);
@@ -492,16 +488,14 @@ describe("runUpgradeNotice", () => {
   });
 
   it("resolves --help and --version against the bare cwd, ignoring --workdir, like Go", async () => {
-    // Go serves the built-ins without `ChangeWorkDir`, so the flagged project
-    // must not gain a cache entry; the caller's cwd (no supabase/) writes none.
     const ctx = setup({ project: false });
     const flagged = join(workdir, "flagged");
     mkdirSync(join(flagged, "supabase"), { recursive: true });
     for (const args of [
       ["--workdir", flagged, "--help"],
       ["--workdir", flagged, "--version"],
-      // Valued spellings request the same built-ins, and a false value still
-      // does: the non-runnable root/group serves help before `preRun`.
+      // Valued spellings request the same built-ins; even a false value does,
+      // since the non-runnable root/group serves help before running anything.
       ["--workdir", flagged, "--help=true"],
       ["branches", "--workdir", flagged, "-h=1"],
       ["--workdir", flagged, "--version=true"],
@@ -547,8 +541,6 @@ describe("runUpgradeNotice", () => {
       args: ["branches", "--workdir", flagged],
       cleanShowHelp: true,
     });
-    // Go serves the bare group's help without ChangeWorkDir: nothing lands in
-    // the flagged project, and the caller's cwd (no supabase/) writes nothing.
     expect(() => readFileSync(join(flagged, "supabase", ".temp", "cli-latest"), "utf8")).toThrow();
     expect(ctx.stderr).toContain("v2.114.0");
     ctx.cleanup();
@@ -560,7 +552,6 @@ describe("runUpgradeNotice", () => {
     mkdirSync(join(elsewhere, "supabase"), { recursive: true });
     const opCtx = { ...ctx.deps, args: ["db", "start", "--", "--workdir", elsewhere] };
     await runUpgradeNotice(opCtx);
-    // The operand is not a flag: the cache lands in the real project, not `elsewhere`.
     expect(readFileSync(ctx.cachePath, "utf8")).toBe("v2.114.0");
     expect(() =>
       readFileSync(join(elsewhere, "supabase", ".temp", "cli-latest"), "utf8"),
@@ -589,11 +580,9 @@ describe("runUpgradeNotice", () => {
     writeFileSync(victim, "v9.9.9");
     mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
 
-    // The `lstat` guard runs BEFORE the fetch, so it only proves the path was
-    // safe up to FETCH_TIMEOUT_MS ago. Planting the symlink from inside
-    // `fetchLatestTag` lands it in exactly that check-then-write window — a
-    // concurrent process doing this made the old plain `writeFile` follow the
-    // link and truncate `victim`. The `O_NOFOLLOW` open fails with ELOOP.
+    // Planting the symlink inside `fetchLatestTag` simulates a concurrent
+    // swap landing in the check-then-write window; `O_NOFOLLOW` makes the
+    // open fail with ELOOP instead of following it.
     await runUpgradeNotice({
       ...ctx.deps,
       fetchLatestTag: () => {
@@ -636,13 +625,10 @@ describe("runUpgradeNotice", () => {
 });
 
 /**
- * The `delegatedToGo` guard is why a proxied command doesn't print the notice
- * twice: the Go child ran its own `checkUpgrade` and already printed one.
- *
- * Asserted here rather than by spawning a real Phase 0 command, so the coverage
- * doesn't depend on which commands are still Go wrappers — that set shrinks
- * every time one is ported (`docs/go-cli-porting-status.md`), and an e2e test
- * pinned to one breaks the moment it does.
+ * `delegatedToGo` is asserted directly rather than via a real proxied
+ * command, so this doesn't depend on which commands still delegate to Go —
+ * that set only shrinks (`docs/go-cli-porting-status.md`), and a test pinned
+ * to one command would break the moment it's ported.
  */
 describe("upgradeNoticeHook", () => {
   async function stderrFromHook(delegatedToGo: boolean): Promise<string> {

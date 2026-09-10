@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { collectDotenvPrivateKeys, decryptSecret, isEncryptedSecret } from "./vault-decrypt.ts";
 
-// A known-good test vector. The same
-// keypair/ciphertext must decrypt identically here, proving `eciesjs`
-// cross-decrypts `github.com/ecies/go/v2`'s output.
+// This keypair/ciphertext must decrypt identically here, proving `eciesjs`
+// cross-decrypts another ECIES implementation's output.
 const PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
 const ENCRYPTED_VALUE =
   "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
@@ -14,7 +13,7 @@ describe("isEncryptedSecret", () => {
   it("matches only the leading encrypted: prefix", () => {
     expect(isEncryptedSecret(ENCRYPTED_VALUE)).toBe(true);
     expect(isEncryptedSecret("encrypted:anything")).toBe(true);
-    // Must START with the prefix — a value that merely contains it is not encrypted.
+    // A value that merely contains the prefix is not encrypted.
     expect(isEncryptedSecret("not-encrypted:value")).toBe(false);
     expect(isEncryptedSecret("plain")).toBe(false);
   });
@@ -78,7 +77,7 @@ describe("collectDotenvPrivateKeys", () => {
 
   it("requires the underscore for the prefixed form and drops empty entries", () => {
     const keys = collectDotenvPrivateKeys({
-      // No underscore after the prefix → not a private-key var (Go requires `_`).
+      // No underscore after the prefix → not a private-key var.
       DOTENV_PRIVATE_KEYX: "nope",
       DOTENV_PRIVATE_KEY: ",,",
     });
