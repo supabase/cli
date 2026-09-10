@@ -30,6 +30,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BranchDetailResponse_Output'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden action
+        '429':
+          description: Rate limit exceeded
         '500':
           description: Failed to retrieve database branch
       security:
@@ -81,6 +87,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BranchResponse_Output'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden action
+        '429':
+          description: Rate limit exceeded
         '500':
           description: Failed to update database branch
       security:
@@ -138,6 +150,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BranchDeleteResponse_Output'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden action
+        '429':
+          description: Rate limit exceeded
         '500':
           description: Failed to delete database branch
       security:
@@ -190,6 +208,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BranchUpdateResponse_Output'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden action
+        '429':
+          description: Rate limit exceeded
         '500':
           description: Failed to push database branch
       security:
@@ -242,6 +266,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BranchUpdateResponse_Output'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden action
+        '429':
+          description: Rate limit exceeded
         '500':
           description: Failed to merge database branch
       security:
@@ -294,6 +324,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BranchUpdateResponse_Output'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden action
+        '429':
+          description: Rate limit exceeded
         '500':
           description: Failed to reset database branch
       security:
@@ -340,6 +376,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BranchRestoreResponse_Output'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden action
+        '429':
+          description: Rate limit exceeded
         '500':
           description: Failed to restore database branch
       security:
@@ -405,6 +447,12 @@ paths:
               schema:
                 type: string
           description: ''
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden action
+        '429':
+          description: Rate limit exceeded
         '500':
           description: Failed to diff database branch
       security:
@@ -723,6 +771,12 @@ paths:
       responses:
         '204':
           description: ''
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden action
+        '429':
+          description: Rate limit exceeded
       summary: '[Beta] Authorize user through oauth'
       tags:
         - OAuth
@@ -751,6 +805,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OAuthTokenResponse_Output'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden action
+        '429':
+          description: Rate limit exceeded
       summary: '[Beta] Exchange auth code for user''s access and refresh token'
       tags:
         - OAuth
@@ -770,6 +830,12 @@ paths:
       responses:
         '204':
           description: ''
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden action
+        '429':
+          description: Rate limit exceeded
       summary: '[Beta] Revoke oauth app authorization and it''s corresponding tokens'
       tags:
         - OAuth
@@ -1305,6 +1371,8 @@ paths:
         - control-plane
       x-fga-permissions:
         - - api_gateway_keys_read
+        - - api_gateway_keys_read
+          - api_gateway_keys_secret_read
       x-oauth-scope: secrets:read
     post:
       operationId: v1-create-project-api-key
@@ -1591,6 +1659,8 @@ paths:
         - control-plane
       x-fga-permissions:
         - - api_gateway_keys_read
+        - - api_gateway_keys_read
+          - api_gateway_keys_secret_read
       x-oauth-scope: secrets:read
     delete:
       operationId: v1-delete-project-api-key
@@ -1685,6 +1755,12 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/BranchResponse_Output'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden action
+        '429':
+          description: Rate limit exceeded
         '500':
           description: Failed to retrieve database branches
       security:
@@ -1728,6 +1804,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BranchResponse_Output'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden action
+        '429':
+          description: Rate limit exceeded
         '500':
           description: Failed to create database branch
       security:
@@ -1810,6 +1892,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BranchResponse_Output'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden action
+        '429':
+          description: Rate limit exceeded
         '500':
           description: Failed to fetch database branch
       security:
@@ -2606,6 +2694,8 @@ paths:
         - infra
       x-fga-permissions:
         - - data_api_config_read
+        - - data_api_config_read
+          - data_api_config_secret_read
       x-oauth-scope: rest:read
     patch:
       operationId: v1-update-postgrest-service-config
@@ -8037,6 +8127,12 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/V1OrganizationMemberResponse_Output'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden action
+        '429':
+          description: Rate limit exceeded
       security:
         - bearer: []
       summary: List members of an organization
@@ -14794,9 +14890,12 @@ components:
               type: boolean
             iceberg_catalog:
               type: boolean
+            object_versioning:
+              type: boolean
           required:
             - list_v2
             - iceberg_catalog
+            - object_versioning
         external:
           type: object
           properties:
