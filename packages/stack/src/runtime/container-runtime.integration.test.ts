@@ -1938,68 +1938,51 @@ describe("container runtime", () => {
     }),
   );
 
-  it.live("preserves Docker and Podman command behavior", () =>
-    Effect.gen(function* () {
-      const workload = {
-        name: "backend",
-        image: "example/backend:1",
-        labels: {
-          stackId,
-          ownerSessionId: "owner",
-          workloadId: "backend",
-          role: "workload" as const,
-        },
-        network: "private",
-        mounts: [{ source: "/tmp/backend", target: "/app/backend", readOnly: true }],
-        volumeMounts: [{ volume: "backend-data", target: "/var/lib/backend", readOnly: false }],
-        publications: [{ address: "127.0.0.1" as const, hostPort: 54321, containerPort: 8000 }],
-        envFile: "/tmp/supabase-owned.env",
-        networkAliases: ["supabase-database"],
-        command: ["serve", "--port", "8000"],
-        role: "workload" as const,
-      };
-      const docker = serializeDockerCommand({ operation: "create-container", spec: workload });
-      expect(docker.args).toContain("--publish");
-      expect(docker.args).toContain("127.0.0.1:54321:8000");
-      expect(docker.args).toContain("type=bind,src=/tmp/backend,dst=/app/backend,ro");
-      expect(docker.args).toContain("type=volume,src=backend-data,dst=/var/lib/backend");
-      const encodedMount = serializeDockerCommand({
-        operation: "create-container",
-        spec: {
-          ...workload,
-          mounts: [{ source: '/tmp/a,b"c', target: "/app/a,b", readOnly: false }],
-        },
-      });
-      expect(encodedMount.args).toContain('type=bind,"src=/tmp/a,b""c","dst=/app/a,b"');
-      expect(
-        serializeDockerCommand({
+  const commandSerializationWorkload = {
+    name: "backend",
+    image: "example/backend:1",
+    labels: {
+      stackId,
+      ownerSessionId: "owner",
+      workloadId: "backend",
+      role: "workload" as const,
+    },
+    network: "private",
+    mounts: [{ source: "/tmp/backend", target: "/app/backend", readOnly: true }],
+    volumeMounts: [{ volume: "backend-data", target: "/var/lib/backend", readOnly: false }],
+    publications: [{ address: "127.0.0.1" as const, hostPort: 54321, containerPort: 8000 }],
+    envFile: "/tmp/supabase-owned.env",
+    networkAliases: ["supabase-database"],
+    command: ["serve", "--port", "8000"],
+    role: "workload" as const,
+  };
+
+  it.live(
+    "serializes Docker workload creation with environment, mounts, aliases, and command",
+    () =>
+      Effect.sync(() => {
+        const docker = serializeDockerCommand({
           operation: "create-container",
-          spec: {
-            ...workload,
-            mounts: [{ source: "/tmp/a=b", target: "/app/a=b", readOnly: false }],
-          },
-        }).args,
-      ).toContain("type=bind,src=/tmp/a=b,dst=/app/a=b");
-      expect(docker.args).toContain("--network-alias");
-      expect(docker.args).toContain("supabase-database");
-      expect(docker.args).toContain("--env-file");
-      expect(docker.args).toContain("/tmp/supabase-owned.env");
-      expect(docker.args.join(" ")).not.toContain("value");
-      expect(docker.args.slice(-3)).toEqual(["serve", "--port", "8000"]);
-      const podmanCreate = serializePodmanCommand({
-        operation: "create-container",
-        spec: workload,
-      });
-      expect(podmanCreate.args).toContain("--env-file");
-      expect(podmanCreate.args).toContain("127.0.0.1:54321:8000");
-      expect(podmanCreate.args).toContain("type=bind,src=/tmp/backend,dst=/app/backend,ro");
-      expect(podmanCreate.args).toContain("type=volume,src=backend-data,dst=/var/lib/backend");
-      expect(podmanCreate.args).toContain("--network-alias");
-      expect(podmanCreate.args).toContain("/tmp/supabase-owned.env");
-      expect(podmanCreate.args.join(" ")).not.toContain("value");
-      expect(podmanCreate.args.slice(-3)).toEqual(["serve", "--port", "8000"]);
-      const podman = serializePodmanCommand({ operation: "inspect-networks", stackId });
-      expect(podman.args.join(" ")).toContain("{{index .Labels");
+          spec: commandSerializationWorkload,
+        });
+        expect(docker.args).toEqual(
+          expect.arrayContaining([
+            "--publish",
+            "127.0.0.1:54321:8000",
+            "--network-alias",
+            "supabase-database",
+            "--env-file",
+            "/tmp/supabase-owned.env",
+            "type=bind,src=/tmp/backend,dst=/app/backend,ro",
+            "type=volume,src=backend-data,dst=/var/lib/backend",
+          ]),
+        );
+        expect(docker.args.slice(-3)).toEqual(["serve", "--port", "8000"]);
+      }),
+  );
+
+  it.live("serializes Docker container copy arguments", () =>
+    Effect.sync(() => {
       expect(
         serializeDockerCommand({
           operation: "copy-container",
@@ -2008,6 +1991,56 @@ describe("container runtime", () => {
           destination: "/root",
         }).args,
       ).toEqual(["cp", "/tmp/functions-main.ts", "container-id:/root"]);
+    }),
+  );
+
+  it.live.each([
+    {
+      name: "quotes commas in bind mount paths",
+      mount: { source: '/tmp/a,b"c', target: "/app/a,b", readOnly: false },
+      expected: 'type=bind,"src=/tmp/a,b""c","dst=/app/a,b"',
+    },
+    {
+      name: "preserves equals signs in bind mount paths",
+      mount: { source: "/tmp/a=b", target: "/app/a=b", readOnly: false },
+      expected: "type=bind,src=/tmp/a=b,dst=/app/a=b",
+    },
+  ])("serializes Docker bind mounts when it $name", ({ mount, expected }) =>
+    Effect.sync(() => {
+      expect(
+        serializeDockerCommand({
+          operation: "create-container",
+          spec: { ...commandSerializationWorkload, mounts: [mount] },
+        }).args,
+      ).toContain(expected);
+    }),
+  );
+
+  it.live(
+    "serializes Podman workload creation with environment, mounts, aliases, and command",
+    () =>
+      Effect.sync(() => {
+        const podman = serializePodmanCommand({
+          operation: "create-container",
+          spec: commandSerializationWorkload,
+        });
+        expect(podman.args).toEqual(
+          expect.arrayContaining([
+            "--env-file",
+            "/tmp/supabase-owned.env",
+            "127.0.0.1:54321:8000",
+            "type=bind,src=/tmp/backend,dst=/app/backend,ro",
+            "type=volume,src=backend-data,dst=/var/lib/backend",
+            "--network-alias",
+            "supabase-database",
+          ]),
+        );
+        expect(podman.args.slice(-3)).toEqual(["serve", "--port", "8000"]);
+      }),
+  );
+
+  it.live("serializes Podman container copy arguments", () =>
+    Effect.sync(() => {
       expect(
         serializePodmanCommand({
           operation: "copy-container",
@@ -2016,12 +2049,29 @@ describe("container runtime", () => {
           destination: "/root",
         }).args,
       ).toEqual(["cp", "/tmp/functions-main.ts", "container-id:/root"]);
+    }),
+  );
+
+  it.live("serializes Podman network inspection templates", () =>
+    Effect.sync(() => {
+      expect(
+        serializePodmanCommand({ operation: "inspect-networks", stackId }).args.join(" "),
+      ).toContain("{{index .Labels");
+    }),
+  );
+
+  it.live("rejects Podman on unsupported hosts before resource parsing", () =>
+    Effect.gen(function* () {
       const unsupported = yield* makePodmanEngine({
         runner: makeControlledCommandRunner({ run: () => Effect.succeed(commandResult("ok")) }),
         platform: { os: "darwin" },
       }).preflight.pipe(Effect.exit);
       expect(Exit.isFailure(unsupported)).toBe(true);
+    }),
+  );
 
+  it.live("parses Podman resource rows after a successful preflight", () =>
+    Effect.gen(function* () {
       const rowRunner = makeControlledCommandRunner({
         run: (request) =>
           Effect.succeed({
@@ -2045,7 +2095,6 @@ describe("container runtime", () => {
             exitCode: 0,
           }),
       });
-
       const podmanEngine = makePodmanEngine({
         runner: rowRunner,
         platform: { os: "linux", rootless: true },

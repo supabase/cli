@@ -1,25 +1,12 @@
 /**
- * Pure flag-presence helpers for the `--db-url / --linked / --local` target
- * selection shared by `db lint`, `db advisors`, and `test db`.
+ * Pure flag-presence helpers for the `--db-url / --linked / --local` target selection shared by
+ * `db lint`, `db advisors`, and `test db`.
  *
- * Go's cobra uses `pflag.Changed` to decide which selector was explicitly set by
- * the user. Effect CLI's
- * parsed flag values don't carry a `Changed` bit, so we re-derive it from the
- * raw `process.argv` slice.
- *
- * cobra's `MarkFlagsMutuallyExclusive` error has TWO bracketed lists: the
- * group list keeps REGISTRATION order (`strings.Join(flagNames, " ")`)
- * and is NOT sorted, while the "were all set" list IS
- * sorted (`sort.Strings(set)`). The FIXED insertion
- * order ["db-url","linked","local"] — alphabetical — for the `setFlags` array
- * matches only that second, sorted list; each command must hardcode its own
- * group list in its own registration order (e.g. seed `[local linked]`
- * vs storage `[linked local]`).
- *
- * pflag accepts `--flag value` (space form) for non-boolean flags: the token
- * after a value-consuming flag is its value, not a separate flag. The scan
- * skips those value tokens to avoid false positives (e.g. `--schema --linked`
- * must not detect `--linked` as a changed selector).
+ * Effect CLI's parsed flags carry no "was this explicitly set" bit, so this re-derives it from
+ * raw `process.argv`. The mutually-exclusive-group error's "were all set" list is alphabetically
+ * sorted regardless of each command's own flag registration order, which `setFlags` always
+ * returns. A value-consuming flag given in space form (`--flag value`) has its value token
+ * skipped during the scan, so e.g. `--schema --linked` does not misdetect `--linked` as changed.
  */
 
 export type DbConnType = "db-url" | "linked" | "local";
@@ -28,62 +15,32 @@ export interface DbTargetSelection {
   /** Alphabetically-sorted list of explicitly-set selector flags ("db-url", "linked", "local"). */
   readonly setFlags: ReadonlyArray<string>;
   /**
-   * Changed-first selection, matching `ParseDatabaseConfig` precedence:
-   * db-url > local > linked (if changed) > undefined (→ local default).
-   *
-   * `undefined` means no selector was explicitly set; callers default to "local".
+   * Changed-first selection: db-url > local > linked (if changed) > undefined (→ local
+   * default). `undefined` means no selector was explicitly set; callers default to "local".
    */
   readonly connType: DbConnType | undefined;
 }
 
 /**
- * Long-form flags (without `--` prefix) that consume the next token as their
- * value when given in space-separated form (`--flag value`). Flags in this set
- * cause the immediately following token to be skipped during the target-selector
- * scan.
- *
- * Sources: every command that calls `resolveDbTargetFlags`
- * (`db lint`, `db advisors`, `test db`, and the `migration` commands `list`/
- * `repair`/`fetch`/`up`/`down`) or `changedLinkedLocalFlags`
- * (`seed buckets`, `storage cp/ls/mv/rm`), plus the shared global flags
- * (`src/command-internal/global-flags.ts`, `src/shared/cli/global-flags.ts`).
- * `Flag.string` / `Flag.choice` / `Flag.integer` → value-consuming;
- * `Flag.boolean` → not.
- *
- * Also consulted by `extractChangedFlagNames`
- * (`telemetry/command-telemetry.ts`), which scans EVERY
- * command's raw argv, not just the db-target/global subset above — so
- * this set additionally lists every other value-consuming (non-boolean) flag
- * declared anywhere under `commands/`. Without an entry here, a bare
- * `--some-local-flag <token>` is mis-scanned: the value token is treated as a
- * separate flag rather than skipped, and if that token happens to look like a
- * global flag's long name (e.g. `secrets set --env-file --debug`, where
- * `--debug` is `--env-file`'s value under pflag semantics), CLI-1896's
- * global-flag fallback fabricates a `flags.debug` value Go never records for
- * that invocation. `db-target-flags.unit.test.ts` statically scans
- * every `*.command.ts` file's directly-declared `Flag.string`/`Flag.integer`/
- * `Flag.choice`/`Flag.choiceWithValue` calls and asserts they're all
- * represented here, so a new command that adds a value-consuming flag and
- * forgets to register it fails CI. That scan cannot see flag names built
- * through a helper indirection (`issue.command.ts`'s
- * `issueOptionalTextFlag`, and the shared `stringSliceFlag`
- * builder used by the sso/postgres-config/start/status/network-bans/
- * network-restrictions slice flags — CLI-2005) — those flags are listed
- * below by hand.
+ * Long-form flags that consume the next token as their value in space-separated form
+ * (`--flag value`), so the target-selector scan skips it. Also consulted by
+ * `extractChangedFlagNames` across every command's argv, so this lists every value-consuming
+ * flag declared anywhere under `commands/`; a missing entry can misdetect a flag's value token
+ * as a global flag's long name. `db-target-flags.unit.test.ts` enforces coverage for
+ * directly-declared flags; flags built through a name-parameterized helper are listed by hand.
  */
 export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   // db-family command flags
   "db-url",
-  "password", // db push/pull/dump/remote (StringVarP, short -p)
+  "password", // db push/pull/dump/remote (short -p)
   "sql-paths",
   "schema",
   "level",
   "fail-on",
   "type",
-  // migration/db credential flag — `StringVarP(&dbPassword, "password", "p", …)`
-  // consumes the next token as the value.
+  // migration/db credential flag; consumes the next token as its value.
   "password",
-  // inspect report flag (StringVar, no short alias)
+  // inspect report flag
   "output-dir",
   // storage cp command flags (Flag.string / Flag.integer)
   "cache-control",
@@ -97,14 +54,11 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "network-id",
   "dns-resolver",
   "agent",
-  // The CLI library's built-in `--log-level` is deliberately not listed: an
-  // argv giving it a flag-shaped value fails the real parse before any
-  // scanner here runs, so nothing can mis-consume around it (issue #6482
-  // registered it only where positional counting depends on it). The
-  // `--completions` action prints and exits before any handler runs, so
-  // these scans never see it either.
-  // Every other value-consuming flag declared directly across commands/
-  // (CLI-1896 review follow-up — see the doc comment above).
+  // `--log-level` is not listed: an argv giving it a flag-shaped value fails the real parse
+  // before any scanner here runs, so nothing can mis-consume around it. `--completions` prints
+  // and exits before any handler runs, so these scans never see it either.
+  // Every other value-consuming flag declared directly across commands/ (see the doc comment
+  // above).
   "add-domains",
   "algorithm",
   "attribute-mapping-file",
@@ -162,11 +116,10 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "token",
   "valid-for",
   "version",
-  // Declared through a name-parameterized helper, invisible to the static
-  // scan (see the doc comment above): `issue.command.ts`'s
-  // `issueOptionalTextFlag`. (The `stringSliceFlag`-built names —
-  // domains, add-domains, remove-domains, config, exclude, override-name,
-  // db-unban-ip, db-allow-cidr — are already listed in the sections above.)
+  // Declared through a name-parameterized helper, invisible to the static scan (see the doc
+  // comment above): `issue.command.ts`'s `issueOptionalTextFlag`. (The `stringSliceFlag`-built
+  // names — domains, add-domains, remove-domains, config, exclude, override-name, db-unban-ip,
+  // db-allow-cidr — are already listed in the sections above.)
   "additional-context",
   "area",
   "command",
@@ -202,17 +155,13 @@ export const VALUE_CONSUMING_SHORT_FLAGS = new Set([
 ]);
 
 /**
- * Detects which of `--linked` / `--local` were explicitly set on the command
- * line, reproducing cobra's `pflag.Changed` for the `MarkFlagsMutuallyExclusive`
- * groups on `seedCmd` and `storageCmd`. Shared by `seed buckets` and
- * `storage ls/cp/mv/rm`.
+ * Detects which of `--linked` / `--local` were explicitly set on the command line, for `seed
+ * buckets` and `storage ls/cp/mv/rm`'s mutually-exclusive-flag error message.
  *
- * Effect CLI's parsed flags carry no `Changed` bit, so this re-derives it from
- * raw argv, skipping value tokens of space-separated value-consuming flags
- * (`--workdir <path>`, `-o <fmt>`, …) to avoid false positives. The negation
- * form (`--no-linked`/`--no-local`) counts as changed. Returned in cobra's
- * alphabetically-sorted order `["linked", "local"]` so the rendered conflict
- * string matches exactly.
+ * Effect CLI's parsed flags carry no "was this set" bit, so this re-derives it from raw argv,
+ * skipping value tokens of space-separated value-consuming flags to avoid false positives. The
+ * negation form (`--no-linked`/`--no-local`) counts as changed. Returned alphabetically sorted
+ * (`["linked", "local"]`) so the rendered conflict string matches exactly.
  */
 export function changedLinkedLocalFlags(args: ReadonlyArray<string>): ReadonlyArray<string> {
   let linked = false;
@@ -256,16 +205,14 @@ export function changedLinkedLocalFlags(args: ReadonlyArray<string>): ReadonlyAr
 }
 
 /**
- * Resolves the DB target selection from raw CLI args.
+ * Resolves the DB target selection from raw CLI args with a single left-to-right pass, skipping
+ * value tokens that follow space-separated value-consuming flags to avoid false-positive
+ * detection.
  *
- * Performs a single left-to-right pass, skipping value tokens that follow
- * space-separated value-consuming flags to avoid false-positive detection.
+ * `setFlags` is built in the fixed alphabetical order `["db-url", "linked", "local"]` so the
+ * rendered conflict string (`[db-url linked]`, `[linked local]`, …) matches exactly.
  *
- * `setFlags` is built in the fixed order ["db-url","linked","local"] so the
- * rendered conflict string (`[db-url linked]`, `[linked local]`, …) matches
- * cobra's alphabetically-sorted output exactly.
- *
- * `connType` follows `ParseDatabaseConfig`'s Changed-first precedence:
+ * `connType` follows Changed-first precedence:
  * 1. `--db-url` if changed → "db-url"
  * 2. `--local` if changed → "local"
  * 3. `--linked` if changed → "linked"
@@ -278,9 +225,8 @@ export function resolveDbTargetFlags(args: ReadonlyArray<string>): DbTargetSelec
 
   let skipNext = false;
   for (const token of args) {
-    // pflag: a value-consuming flag consumes the next token as its value even
-    // when that token is "--". Only a "--" that is NOT a pending value acts as
-    // the end-of-options sentinel.
+    // A value-consuming flag consumes the next token as its value even when that token is "--".
+    // Only a "--" that is not a pending value acts as the end-of-options sentinel.
     if (skipNext) {
       skipNext = false;
       continue;

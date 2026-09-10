@@ -8,14 +8,11 @@ import { configCommand } from "../commands/config/config.command.ts";
 import { dbCommand } from "../commands/db/db.command.ts";
 import { domainsCommand } from "../commands/domains/domains.command.ts";
 import { encryptionCommand } from "../commands/encryption/encryption.command.ts";
-import { experimentalCommand } from "../commands/experimental/experimental.command.ts";
-import {
-  experimentalStackRuntimeLayer,
-  stackCommand,
-} from "../commands/experimental/stack/stack.command.ts";
-import { experimentalStackStartCommand } from "../commands/experimental/stack/start/start.command.ts";
-import { experimentalStackStopCommand } from "../commands/experimental/stack/stop/stop.command.ts";
+import { stackRuntimeLayer, stackCommand } from "../commands/experimental/stack/stack.command.ts";
+import { stackStartCommand } from "../commands/experimental/stack/start/start.command.ts";
+import { stackStopCommand } from "../commands/experimental/stack/stop/stop.command.ts";
 import type { StackBackend } from "../commands/experimental/stack/stack-backend.ts";
+import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
 import { genCommand } from "../commands/gen/gen.command.ts";
@@ -46,6 +43,7 @@ import { testCommand } from "../commands/test/test.command.ts";
 import { telemetryCommand } from "../commands/telemetry/telemetry.command.ts";
 import { unlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { vanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
+import { whoamiCommand } from "../commands/whoami/whoami.command.ts";
 import { OutputFormatFlag } from "../shared/cli/global-flags.ts";
 import { outputLayerFor } from "../shared/output/output.layer.ts";
 import { quietProgressTextOutputLayer } from "../output/quiet-progress-text-output.layer.ts";
@@ -70,16 +68,21 @@ import {
   YesFlag,
 } from "../command-internal/global-flags.ts";
 
-const stackStartAliasCommand = experimentalStackStartCommand.pipe(
+const stackStartAliasCommand = stackStartCommand.pipe(
   Command.provide(commandRuntimeLayer(["start"])),
-  Command.provide(experimentalStackRuntimeLayer),
+  Command.provide(stackRuntimeLayer),
 );
-export const stackStopAliasCommand = experimentalStackStopCommand.pipe(
+export const stackStopAliasCommand = stackStopCommand.pipe(
   Command.provide(commandRuntimeLayer(["stop"])),
-  Command.provide(experimentalStackRuntimeLayer),
+  Command.provide(stackRuntimeLayer),
 );
 
-export const rootCommandForBackend = (backend: StackBackend = "legacy"): CliRootCommand =>
+export const rootCommandForFeatures = (
+  options: {
+    readonly stackBackend?: StackBackend;
+    readonly computeEnabled?: boolean;
+  } = {},
+): CliRootCommand =>
   Command.make("supabase").pipe(
     Command.withDescription("Supabase CLI (stable channel)."),
     Command.withSubcommands([
@@ -87,11 +90,11 @@ export const rootCommandForBackend = (backend: StackBackend = "legacy"): CliRoot
       bootstrapCommand,
       branchesCommand,
       completionCommand,
+      ...(options.computeEnabled ? [computeCommand] : []),
       configCommand,
       dbCommand,
       domainsCommand,
       encryptionCommand,
-      experimentalCommand,
       feedbackCommand,
       functionsCommand,
       genCommand,
@@ -115,14 +118,15 @@ export const rootCommandForBackend = (backend: StackBackend = "legacy"): CliRoot
       sslEnforcementCommand,
       ssoCommand,
       stackCommand,
-      backend === "stack" ? stackStartAliasCommand : startCommand,
+      options.stackBackend === "stack" ? stackStartAliasCommand : startCommand,
       statusCommand,
-      backend === "stack" ? stackStopAliasCommand : stopCommand,
+      options.stackBackend === "stack" ? stackStopAliasCommand : stopCommand,
       storageCommand,
       telemetryCommand,
       testCommand,
       unlinkCommand,
       vanitySubdomainsCommand,
+      whoamiCommand,
     ]),
     Command.provide(
       Layer.unwrap(
@@ -141,9 +145,8 @@ export const rootCommandForBackend = (backend: StackBackend = "legacy"): CliRoot
           const cliArgs = yield* CliArgs;
 
           const aiTool = yield* AiTool.pipe(Effect.provide(aiToolLayer));
-          // An explicit Go --output is a complete format choice (even `-o pretty`
-          // must keep its human table), so the agent JSON default only applies
-          // when that flag is absent.
+          // An explicit --output is a complete format choice (even `-o pretty` keeps its
+          // human table), so the agent JSON default only applies when it's absent.
           const outputFormat = resolveAgentOutputFormat({
             explicitOutputFormat,
             goOutputFormat: goOutput,
@@ -152,8 +155,6 @@ export const rootCommandForBackend = (backend: StackBackend = "legacy"): CliRoot
             isBuiltInTextRequest: isBuiltInTextRequest(cliArgs.args),
           });
 
-          // Build args to prepend to every proxy exec call.
-          // --output: use explicit --output if set, otherwise map from --output-format.
           const globalArgs: string[] = [];
           if (Option.isSome(goOutput)) {
             globalArgs.push("--output", goOutput.value);
@@ -170,12 +171,9 @@ export const rootCommandForBackend = (backend: StackBackend = "legacy"): CliRoot
           if (createTicket) globalArgs.push("--create-ticket");
           if (agent !== "auto") globalArgs.push("--agent", agent);
 
-          // Go's `-o {json,yaml,toml,env,csv}` selects a machine encoder the
-          // handler writes via `output.raw`. Keep the text layer (so errors still
-          // render as red text on stderr, matching Go), but suppress its progress
-          // spinner — otherwise clack writes ANSI to stdout and corrupts the
-          // payload (CLI-1546). `-o pretty` / `-o table` (`db query`'s human
-          // default) / no `-o` keep the normal text/json layers.
+          // Machine formats keep the text layer's error rendering but suppress the progress
+          // spinner, which would otherwise corrupt the stdout payload. `-o pretty`/`-o table`
+          // (db query's human default) and no `-o` keep the normal text/json layers.
           const goFmt = Option.getOrUndefined(goOutput);
           const isGoMachineFormat = goFmt !== undefined && goFmt !== "pretty" && goFmt !== "table";
           const outputLayer = isGoMachineFormat
@@ -192,4 +190,4 @@ export const rootCommandForBackend = (backend: StackBackend = "legacy"): CliRoot
     Command.withGlobalFlags([OutputFormatFlag, ...GLOBAL_FLAGS]),
   );
 
-export const rootCommand: CliRootCommand = rootCommandForBackend();
+export const rootCommand: CliRootCommand = rootCommandForFeatures();

@@ -3,10 +3,6 @@ import type { HelpDoc } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 import { formatHelpDocAsMarkdown } from "./markdown-formatter.ts";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 type RawFlagDoc = Omit<HelpDoc.FlagDoc, "description"> & { readonly description?: string };
 type RawArgDoc = Omit<HelpDoc.ArgDoc, "description"> & { readonly description?: string };
 type RawHelpDoc = Omit<Partial<HelpDoc.HelpDoc>, "flags" | "args"> & {
@@ -39,10 +35,6 @@ function makeDoc(overrides: RawHelpDoc = {}): HelpDoc.HelpDoc {
     annotations: Context.empty(),
   };
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("formatHelpDocAsMarkdown", () => {
   describe("usage section", () => {
@@ -126,7 +118,6 @@ describe("formatHelpDocAsMarkdown", () => {
       const result = formatHelpDocAsMarkdown(doc);
       const lines = result.split("\n");
       const flagLines = lines.filter((l) => l.startsWith("|"));
-      // All table rows should have the same length (padded)
       const lengths = flagLines.map((l) => l.length);
       expect(new Set(lengths).size).toBe(1);
     });
@@ -251,7 +242,6 @@ describe("formatHelpDocAsMarkdown", () => {
       const result = formatHelpDocAsMarkdown(doc);
       expect(result).toContain("## Examples");
       expect(result).toContain("```sh\nmyapp deploy --env production\n```");
-      // No description prefix before the block
       const examplesSection = result.split("## Examples\n\n")[1]!;
       expect(examplesSection.trimStart().startsWith("```sh")).toBe(true);
     });
@@ -507,7 +497,6 @@ describe("formatHelpDocAsMarkdown", () => {
       });
       const result = formatHelpDocAsMarkdown(doc);
       expect(result).toContain("## Subcommands");
-      // The ungrouped table should not have a ### heading before it
       const subcommandsSection = result.split("## Subcommands\n\n")[1]!;
       expect(subcommandsSection.trimStart().startsWith("|")).toBe(true);
       expect(result).toContain("### Database");

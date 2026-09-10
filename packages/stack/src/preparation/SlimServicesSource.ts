@@ -68,9 +68,7 @@ export const systemTarBoundary: TarBoundary = {
         );
     }),
 };
-// The slim-services transport is a foreign HTTP boundary; production wiring
-// may provide an Effect HttpClient-backed fetcher through RuntimeFactory.
-// oxlint-disable-next-line effecttsgo/global-fetch
+// oxlint-disable-next-line effecttsgo/global-fetch -- foreign HTTP boundary; production wiring may swap in an Effect HttpClient-backed fetcher.
 const fetcher: Fetcher = (input, init) => globalThis.fetch(input, init);
 
 const fetchBytes = (

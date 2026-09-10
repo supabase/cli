@@ -8,17 +8,10 @@ import { dbQuery } from "./query.handler.ts";
 import { dbQueryRuntimeLayer } from "./query.layers.ts";
 
 /**
- * NOTE on `--output` / `-o`: `db query` needs its own command-local
- * `--output`/`-o` (`json|table|csv`) that shadows the global one, but the
- * Effect CLI extracts global flags from the whole token stream **before**
- * the leaf parse and builds one tree-wide registry, so a duplicate
- * command-scoped `output` global is impossible (`Parser.createFlagRegistry`
- * throws on duplicate names). Instead the global `OutputFlag` choice is
- * the UNION of every command's `--output` values
- * (`env|pretty|json|toml|yaml|table|csv`); this handler reads the global and
- * honors `json`, `table`, and `csv` — `db query`'s own enum — defaulting by
- * agent mode (JSON for agents, table for humans) when `-o` is unset. See
- * SIDE_EFFECTS.md.
+ * `db query` needs its own `--output`/`-o` (`json|table|csv`), but Effect CLI keeps one global
+ * flag registry that can't hold two `output` flags, so the global choice is the union of every
+ * command's values instead. This handler reads the global flag, honors `json`/`table`/`csv`, and
+ * defaults by agent mode (JSON for agents, table for humans) when unset. See SIDE_EFFECTS.md.
  */
 const config = {
   sql: Argument.string("sql").pipe(
@@ -31,23 +24,17 @@ const config = {
     ),
     Flag.optional,
   ),
-  // `db query` defaults `--linked` to false and never reads its value; the
-  // linked-vs-local decision is driven entirely by explicit presence. Model
-  // presence (not value) with `Option` — the same way `--db-url` does — so
-  // `--linked=false` still selects the linked path.
+  // Selects the linked path by presence, not value, so `--linked=false` still selects it.
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Queries the linked project's database via Management API."),
     Flag.optional,
   ),
-  // `--local` is in the same mutually-exclusive target group as `--db-url`/
-  // `--linked`, keyed off explicit presence, not the value (`--local` even
-  // defaults to true), so model presence with `Option` so `--local=false`
-  // still counts as an explicit target in the conflict check.
+  // In the same mutually-exclusive target group as `--db-url`/`--linked`, keyed off explicit
+  // presence, so `--local=false` still counts as an explicit target in the conflict check.
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Queries the local database."),
     Flag.optional,
   ),
-  // TS-only override of the linked project ref — see push.command.ts.
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
@@ -74,13 +61,9 @@ export const dbQueryCommand = Command.make("query", config).pipe(
           "project-ref": flags.projectRef,
           file: flags.file,
         },
-        // --project-ref has no established telemetry-safety baseline, so it
-        // stays redacted.
-        // db query's own enum is `json|table|csv`, not the resource-command set.
+        // --project-ref isn't in the telemetry safe-flags list, so it stays redacted.
         outputFormats: QUERY_OUTPUT_FORMATS,
-        // `--file` registers shorthand `-f`, and telemetry reports changed
-        // flags by canonical name, so `-f query.sql` must log as `file`. `f`
-        // is query's only telemetry-relevant shorthand. Mirrors dump.command.ts.
+        // Telemetry reports changed flags by canonical name, so `-f query.sql` must log as `file`.
         aliases: { f: "file" },
       }),
       withJsonErrorHandling,

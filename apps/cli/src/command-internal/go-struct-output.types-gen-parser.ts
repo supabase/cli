@@ -1,21 +1,10 @@
 /**
- * A best-effort parser for the Go struct declarations in
- * `apps/cli-go/pkg/api/types.gen.go`, plus a comparison against the
- * {@link GoType} specs the `*.go-payload.ts` files hand-declare to
- * mirror them (CLI-1975).
+ * A best-effort parser for the Go struct declarations in `apps/cli-go/pkg/api/types.gen.go`,
+ * compared against the {@link GoType} specs the `*.go-payload.ts` files hand-declare to mirror
+ * them, so drift between the two fails a test instead of surfacing as a byte-format bug.
  *
- * Nothing mechanically checked that a spec still matches its Go struct — if
- * `types.gen.go` regenerates (field added/removed/reordered/renamed), a spec
- * could silently desync. This module parses the real struct source and walks
- * it in lockstep with the runtime `GoType` tree, so drift shows up as a
- * failing test instead of a byte-format bug found in the wild (review
- * kanadgupta, PR #6002).
- *
- * This is intentionally scoped to what the 4 current `*.go-payload.ts` specs
- * need: `oapi-codegen`-generated struct bodies with `json:"..."` tags, plain
- * fields, pointers, slices, `map[string]...`, recursively nested anonymous
- * structs, and single-level type aliases (`type X string`). It is not a
- * general Go parser.
+ * Scoped to what the current specs need — `oapi-codegen` struct bodies, pointers, slices, maps,
+ * nested anonymous structs, and single-level type aliases — not a general Go parser.
  */
 
 import type { GoType } from "./go-struct-output.encoders.ts";
@@ -200,8 +189,6 @@ function classifyBaseType(
   return classifyBaseType(basetype.trim(), source, new Set([...seen, text]));
 }
 
-// Comparison: GoType (runtime spec) <-> GoParsedType (parsed Go source)
-
 export interface GoStructDriftMismatch {
   readonly path: string;
   readonly message: string;
@@ -223,7 +210,7 @@ export function compareGoTypeToParsedGoType(
   return mismatches;
 }
 
-/** `ptr`/`nullable` both mean "Go pointer" for this comparison (CLI-1975 design doc). */
+/** `ptr`/`nullable` both mean "Go pointer" for this comparison. */
 function unwrapPointer(type: GoType): {
   readonly pointer: boolean;
   readonly inner: GoType;

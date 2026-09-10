@@ -49,15 +49,48 @@ describe("database bootstrap catalog", () => {
     }),
   );
 
-  it.live("fails closed when secret material is absent or JWT expiry is invalid", () =>
+  it.live("rejects database bootstrap when the managed database password is absent", () =>
     Effect.gen(function* () {
       const state = yield* compileDefinition;
-      const missing = yield* databaseBootstrapPlan({ ...state, secrets: {} }).pipe(Effect.exit);
+      const missing = yield* databaseBootstrapPlan({
+        ...state,
+        secrets: Object.fromEntries(
+          Object.entries(state.secrets).filter(
+            ([slot]) => slot !== "secret:database.internal.password",
+          ),
+        ),
+      }).pipe(Effect.exit);
       const missingError = errorOf(missing);
+      expect(missingError).toMatchObject({
+        message: "Managed database password is unavailable for bootstrap",
+      });
       expect(missingError).toBeInstanceOf(StackPreparationError);
-      expect(String(missingError)).not.toContain("database-secret");
+    }),
+  );
 
-      if (state.definition === undefined) return;
+  it.live("rejects database bootstrap when the managed JWT secret is absent", () =>
+    Effect.gen(function* () {
+      const state = yield* compileDefinition;
+      const missing = yield* databaseBootstrapPlan({
+        ...state,
+        secrets: Object.fromEntries(
+          Object.entries(state.secrets).filter(
+            ([slot]) => slot !== "secret:auth.settings.jwt_secret",
+          ),
+        ),
+      }).pipe(Effect.exit);
+      const missingError = errorOf(missing);
+      expect(missingError).toMatchObject({
+        message: "Managed JWT secret is unavailable for database bootstrap",
+      });
+      expect(missingError).toBeInstanceOf(StackPreparationError);
+    }),
+  );
+
+  it.live("rejects database bootstrap when the Auth JWT expiry is invalid", () =>
+    Effect.gen(function* () {
+      const state = yield* compileDefinition;
+      if (state.definition === undefined) throw new Error("compiled state has no definition");
       const invalidDefinition = {
         ...state.definition,
         capabilities: {
@@ -73,8 +106,10 @@ describe("database bootstrap catalog", () => {
         definition: invalidDefinition,
       }).pipe(Effect.exit);
       const invalidError = errorOf(invalid);
+      expect(invalidError).toMatchObject({
+        message: "Auth JWT expiry must be a finite positive integer",
+      });
       expect(invalidError).toBeInstanceOf(StackPreparationError);
-      expect(String(invalidError)).not.toContain("jwt-secret");
     }),
   );
 });

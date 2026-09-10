@@ -12,16 +12,15 @@ import { dockerfileServiceImage } from "../services/dockerfile-images.ts";
 import { bundleServeMainTemplate } from "./serve-main-bundler.ts";
 
 /**
- * Regression guard for supabase/supabase#45570: the edge-runtime worker bootstrap
- * template must boot with **no network access**. Before bundling, the template
- * imported `deno.land/std` and `jsr:` modules that Deno resolved over the network on
- * every start, so `functions serve` failed offline.
+ * Regression guard for supabase/supabase#45570: the edge-runtime worker
+ * bootstrap template must boot with no network access. Before bundling, the
+ * template imported `deno.land/std` and `jsr:` modules resolved over the
+ * network on every start, so `functions serve` failed offline.
  *
- * This boots the real bundled template as an edge-runtime main service with
- * `--network none` and asserts it reaches the template's own "Serving functions"
- * log line without any remote fetch. The service is mounted at `/app` (read-only) so
- * `/root` stays writable for Deno's module cache — isolating the network as the only
- * variable (a control run of the unbundled template fails here with a DNS error).
+ * Boots the real bundled template with `--network none` and asserts it
+ * reaches the "Serving functions" log line without any remote fetch. Mounted
+ * at `/app` (read-only) so `/root` stays writable for Deno's module cache —
+ * isolating the network as the only variable.
  */
 
 function hasDocker(): boolean {
@@ -35,9 +34,8 @@ function hasDocker(): boolean {
 
 const dockerAvailable = hasDocker();
 const SERVE_OFFLINE_STARTUP_TIMEOUT_MS = 60_000;
-// Cold-cache image resolution (up to one shared 90s resolveDeadline budget)
-// runs inside the test body, ahead of the 60s startup wait — the test budget
-// must cover both stacked, or a healthy near-cap pull trips vitest first.
+// Cold-cache image resolution (up to a shared 90s budget) runs ahead of the
+// 60s startup wait; the test timeout must cover both stacked.
 const SERVE_OFFLINE_TEST_TIMEOUT_MS = 180_000;
 const AUTH_FUNCTIONS_CONFIG = JSON.stringify({
   test: {
@@ -187,10 +185,8 @@ async function fetchColdFunction(
 }
 
 async function writeKongConfig(dir: string, edgeRuntimeContainer: string) {
-  // Was: read straight from apps/cli-go/internal/start/templates/kong.yml. That
-  // package was deleted outright (CLI-1966; unreachable from the TS CLI, directly
-  // or indirectly), so this now uses the TS transcription of the same template
-  // that `start`'s Kong service already ports byte-for-byte.
+  // Uses the TS transcription of the Kong template that `start`'s Kong
+  // service already ports byte-for-byte.
   const config = START_KONG_YML_TEMPLATE.replaceAll("{{ .EdgeRuntimeId }}", edgeRuntimeContainer)
     .replaceAll("{{ .BearerToken }}", "$((headers.authorization or headers.apikey))")
     .replaceAll("{{ .QueryToken }}", "$((query_params.apikey))")
@@ -251,9 +247,7 @@ describe("functions serve runtime template (offline)", () => {
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
 
-        // The template's own onListen message — proves the bundled worker booted.
         expect(logs).toMatch(/Serving functions on/);
-        // No remote module resolution occurred (the #45570 failure mode).
         expect(logs).not.toMatch(/deno\.land|jsr\.io/);
         expect(logs).not.toMatch(/dns error|name resolution|worker boot error/i);
       } finally {

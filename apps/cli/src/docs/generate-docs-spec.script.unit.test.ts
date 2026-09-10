@@ -5,13 +5,11 @@ import { parse } from "yaml";
 const cliRoot = path.resolve(import.meta.dirname, "../..");
 
 /**
- * Subprocess-level coverage of the `scripts/generate-docs-spec.ts` entrypoint
- * — the contract `docs/README.md` documents: the spec YAML is the ONLY thing
- * on stdout (`> cli_v1_commands.yaml` must yield a clean parseable file), the
- * version defaults to `latest`, and a `v`-prefixed argument is stripped. The
- * builder itself is covered in-process by `docs-spec.unit.test.ts`;
- * these two spawns pin the argv handling, path resolution, and stdout purity
- * that direct helper calls cannot.
+ * Subprocess-level coverage of the `scripts/generate-docs-spec.ts` entrypoint (see
+ * `docs/README.md` for the full contract): the spec YAML is the only thing on stdout, the
+ * version defaults to `latest`, and a `v`-prefixed argument is stripped. `docs-spec.unit.test.ts`
+ * covers the builder itself in-process; these spawns pin the argv handling and stdout purity
+ * that direct calls can't.
  */
 describe("generate-docs-spec.ts entrypoint", () => {
   function runScript(args: ReadonlyArray<string>): { stdout: string; stderr: string } {

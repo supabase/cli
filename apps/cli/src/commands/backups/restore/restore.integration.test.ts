@@ -204,9 +204,7 @@ describe("backups restore integration", () => {
       format: "text",
       promptSelectResponses: [VALID_REF],
     });
-    // The resolver lists projects, then POSTs the restore. Branch on the path
-    // to give the list endpoint its project array and let the restore endpoint
-    // succeed with a 201.
+    // Branches on path: the resolver's list call gets a project array, the restore call gets 201.
     const api = mockCommandPlatformApi({
       handler: (request) => {
         if (request.url.includes("/v1/projects") && !request.url.includes("/database/backups")) {
@@ -263,8 +261,6 @@ describe("backups restore integration", () => {
   });
 
   it.live("accepts --timestamp short alias -t in the same way (no separate parse path)", () => {
-    // The flag layer is responsible for parsing -t into `timestamp`; once parsed,
-    // the handler does not differentiate, so we just verify the handler honors the value.
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* backupsRestore({

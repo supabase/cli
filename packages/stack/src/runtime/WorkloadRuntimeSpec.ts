@@ -667,9 +667,8 @@ const apiGatewayUrl = (state: PersistedStackState, inputs?: WorkloadRuntimeInput
 const authSmsProvider = (state: PersistedStackState): string => {
   const sms = settingsFor(state, "auth");
   if (!isRecord(sms) || !isRecord(sms.sms)) return "";
-  // Keep the same fixed priority as the legacy GoTrue builder. If multiple
-  // providers are enabled, the first one wins and only its credentials are
-  // consumed by GoTrue.
+  // Providers are checked in this fixed order; if multiple are enabled, the first one wins
+  // and only its credentials are passed to GoTrue.
   const providers = ["twilio", "twilio_verify", "messagebird", "textlocal", "vonage"];
   for (const provider of providers) {
     const value = sms.sms[provider];

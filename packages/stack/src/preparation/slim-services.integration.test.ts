@@ -11,6 +11,7 @@ import {
   type ZstdDecompressor,
 } from "./SlimServicesSource.ts";
 import type { NativeWorkloadArtifact } from "../model/WorkloadCatalog.ts";
+import { StackPreparationError } from "../public/Errors.ts";
 
 const artifact: NativeWorkloadArtifact = {
   provider: "supabase/slim-services",
@@ -154,7 +155,7 @@ describe("slim-services artifact source", () => {
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-unsafe-" });
         const failed = yield* source.materialize(request, destination, expected).pipe(Effect.exit);
-        expect(errorOf(failed)).toBeDefined();
+        expect(errorOf(failed)).toBeInstanceOf(StackPreparationError);
         expect(yield* fs.exists(`${destination}/outside`)).toBe(false);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
@@ -211,7 +212,7 @@ describe("slim-services artifact source", () => {
         const failed = yield* makeSlimServicesSource(() => artifact, malformedFetcher)
           .materialize(request, destination, malformedDigest)
           .pipe(Effect.exit);
-        expect(errorOf(failed)).toBeDefined();
+        expect(errorOf(failed)).toBeInstanceOf(StackPreparationError);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
@@ -246,7 +247,7 @@ describe("slim-services artifact source", () => {
         const failed = yield* makeSlimServicesSource(() => artifact, fetcher)
           .materialize(request, destination, expected)
           .pipe(Effect.exit);
-        expect(errorOf(failed)).toBeDefined();
+        expect(errorOf(failed)).toBeInstanceOf(StackPreparationError);
         expect(yield* fs.exists(`${destination}/outside`)).toBe(false);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),

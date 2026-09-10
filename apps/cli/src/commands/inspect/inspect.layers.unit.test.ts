@@ -1,15 +1,3 @@
-/**
- * Layer-exposure test for `inspectBaseLayer`.
- *
- * Verifies that `IdentityStitch` is exposed at the top level of the
- * runtime layer so that `withCommandTelemetry` can read
- * `stitchedDistinctId()` via `Effect.serviceOption(IdentityStitch)` and
- * attribute the `cli_command_executed` event to the gotrue id.
- *
- * See `db/lint/lint.layers.unit.test.ts` for the canonical pattern and a
- * detailed explanation of the bug this guards against.
- */
-
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Option } from "effect";
@@ -47,11 +35,7 @@ import { inspectBaseLayer } from "./inspect.layers.ts";
 
 const tempRoot = useTempWorkdir("supabase-inspect-layers-");
 
-/**
- * Stub layer satisfying every external service required by
- * `inspectBaseLayer` from the root runtime. Services under test are
- * left as `Effect.die` no-ops — layer construction must not invoke them.
- */
+// Services under test are stubbed as `Effect.die` — layer construction must not invoke them.
 function ambientStubs() {
   const analytics = mockAnalytics();
   const out = mockOutput();
@@ -78,8 +62,7 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the REAL commandSettingsLayer against
-    // the real filesystem — see isolatedHomeLayer's docs.
+    // Builds the real commandSettingsLayer against the real filesystem; see isolatedHomeLayer's docs.
     isolatedHomeLayer(tempRoot.current),
     mockTty(),
     mockProcessControl().layer,

@@ -39,9 +39,7 @@ export class SnippetsEnvNotSupportedError extends Data.TaggedError("SnippetsEnvN
 }
 
 // `snippets list -o toml` fails whenever a snippet carries a `description`,
-// because BurntSushi refuses the `nullable.Nullable[string]`
-// (`map[bool]string`) field
-// ("failed to output toml: toml: cannot encode a map with non-string key type").
+// since the nullable field can't be represented in TOML.
 export class SnippetsTomlEncodeError extends Data.TaggedError("SnippetsTomlEncodeError")<{
   readonly message: string;
 }> {
@@ -50,8 +48,7 @@ export class SnippetsTomlEncodeError extends Data.TaggedError("SnippetsTomlEncod
   }
 }
 
-// Wraps `uuid.Parse` failure in `download.Run`; message preserves Go's
-// `invalid snippet ID: <cause>` prefix so callers see the same string.
+// Wraps the UUID parse failure with an `invalid snippet ID: <cause>` prefix.
 export class SnippetsInvalidIdError extends Data.TaggedError("SnippetsInvalidIdError")<{
   readonly message: string;
 }> {

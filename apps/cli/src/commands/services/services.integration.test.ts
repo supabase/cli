@@ -375,12 +375,9 @@ major_version = 15
         }
 
         if (url.pathname === "/v1/projects/abcdefghijklmnopqrst/api-keys") {
-          // Deliberately no service-role key: this test only needs to prove the
-          // handler wires the fetch+merge branch through, not re-test
-          // `fetchLinkedServiceVersions`'s own tenant-probe logic (already
-          // covered in services.shared.unit.test.ts). Omitting the
-          // service-role key keeps this test free of a second, tenant-gateway
-          // mock without weakening the assertion below.
+          // No service-role key: this test only proves the handler wires the
+          // fetch+merge branch through, not `fetchLinkedServiceVersions`'s own
+          // tenant-probe logic (covered in services.shared.unit.test.ts).
           return Response.json([
             {
               name: "anon",
@@ -486,8 +483,8 @@ major_version = 15
   });
 
   it.live("emits structured JSON for --output pretty combined with --output-format json", () => {
-    // Regression guard (CLI-1546): a Go `--output pretty` must defer to the TS
-    // `--output-format json` flag instead of forcing the human-readable table.
+    // --output pretty defers to --output-format json instead of forcing the
+    // human-readable table.
     const { layer, out } = setup({ format: "json", goOutput: Option.some("pretty") });
 
     return Effect.gen(function* () {
@@ -531,7 +528,7 @@ major_version = 15
 
       expect(out.stdoutText).toContain("[[services]]");
       // The hand-written imageVersion struct emits PascalCase field names in
-      // declaration order (Name, Local, Remote) with 2-space indent (CLI-1975).
+      // declaration order (Name, Local, Remote) with 2-space indent.
       expect(out.stdoutText).toContain('  Name = "supabase/postgres"');
     });
   });
@@ -557,8 +554,8 @@ major_version = 15
   });
 
   it.live("warns to stderr when the project-ref file exists but cannot be read", () => {
-    // A directory at the ref path makes `exists()` true but `readFileString()` fail
-    // (EISDIR), exercising the READ-error branch distinct from "file absent".
+    // A directory at the ref path makes `exists()` true but `readFileString()`
+    // fail (EISDIR), exercising the read-error branch distinct from "file absent".
     const workdir = mkdtempSync(join(tmpdir(), "supabase-services-"));
     mkdirSync(join(workdir, "supabase", ".temp", "project-ref"), { recursive: true });
     const { layer, out } = setup({ workdir });

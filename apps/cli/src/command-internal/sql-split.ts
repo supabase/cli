@@ -1,14 +1,10 @@
 /**
- * PostgreSQL statement splitter, ported 1:1 from `pkg/parser`
- * (`token.go` + `state.go`). A finite-state machine tracks string literals
- * (`'…'`, `"…"`), line/block comments, dollar-quoted bodies (`$tag$…$tag$`),
- * backslash escapes, and `BEGIN ATOMIC … END` / parenthesised bodies, so a `;`
- * inside any of those is not mistaken for a statement separator. This matters
- * for declarative diffs, which contain `CREATE FUNCTION` bodies full of `;`.
+ * PostgreSQL statement splitter. A finite-state machine tracks string literals, comments,
+ * dollar-quoted bodies (`$tag$…$tag$`), backslash escapes, and `BEGIN ATOMIC … END`/
+ * parenthesised bodies, so a `;` inside any of those isn't mistaken for a statement
+ * separator — this matters for declarative diffs, whose `CREATE FUNCTION` bodies are full of `;`.
  *
- * Operates on Unicode code points (JS strings) rather than raw bytes; the ASCII
- * delimiters are described as slash-star, star-slash, semicolon, quotes, and
- * dollar signs; suffix comparison is identical to Go's byte-window logic.
+ * Operates on Unicode code points (JS strings), not raw bytes.
  */
 
 interface State {
@@ -19,10 +15,8 @@ interface State {
 const BEGIN_ATOMIC = "ATOMIC";
 const END_ATOMIC = "END";
 
-// `\p{Nd}` (decimal digits only), not `\p{N}` (all Unicode numbers): Go's
-// `unicode.IsDigit` — what `isIdentifierRune`/`TagState.next` port — is an alias for
-// category `Nd` alone, so it rejects `No`/`Nl` runes like superscript-2 (`²`) that
-// `\p{N}` would wrongly accept as a valid identifier/dollar-tag character.
+// `\p{Nd}` (decimal digits only), not `\p{N}` (all Unicode numbers): `\p{N}` would wrongly
+// accept `No`/`Nl` runes like superscript-2 (`²`) as a valid identifier/dollar-tag character.
 const isIdentifierRune = (rune: string): boolean => /[\p{L}\p{Nd}_$]/u.test(rune);
 
 function isBeginAtomic(data: string): boolean {
@@ -149,12 +143,9 @@ class AtomicState implements State {
 }
 
 /**
- * One raw token from {@link splitRaw}. `terminated` is `false` only for a
- * trailing statement emitted at EOF with no closing delimiter (the
- * `acc.length > 0` fallback below) — every other token was emitted because the
- * FSM itself found a boundary (a bare `;` in `ReadyState`, or `AtomicState`
- * closing). Only ever `false` on the LAST element `splitRaw` returns, since
- * that fallback fires at most once, after the main loop.
+ * One raw token from {@link splitRaw}. `terminated` is `false` only for a trailing
+ * statement emitted at EOF with no closing delimiter — the FSM found a boundary for every
+ * other token. Only ever `false` on the last element `splitRaw` returns.
  */
 interface RawToken {
   readonly text: string;
@@ -183,8 +174,8 @@ function splitRaw(sql: string): RawToken[] {
 }
 
 /**
- * Splits `sql` into raw statements (comments/whitespace preserved), then applies
- * the optional transforms to each. Mirrors `parser.Split`.
+ * Splits `sql` into raw statements (comments/whitespace preserved), then applies the
+ * optional transforms to each.
  */
 export function splitSql(
   sql: string,
@@ -199,57 +190,36 @@ export function splitSql(
   return statements;
 }
 
-/** `parser.SplitAndTrim`'s per-token transform: trim trailing `;` then surrounding whitespace. */
+/** Per-token transform: trim trailing `;` then surrounding whitespace. */
 const trimStatement = (token: string): string => token.replace(/;+$/u, "").trim();
 
-/** Mirrors `parser.SplitAndTrim`: trim trailing `;` then surrounding whitespace. */
+/** Trims trailing `;` then surrounding whitespace from each statement. */
 export function splitAndTrim(sql: string): string[] {
   return splitSql(sql, trimStatement);
 }
 
-/** One statement, paired with both its RAW and trimmed forms. */
+/** One statement, paired with both its raw and trimmed forms. */
 export interface SplitSqlToken {
   /** The exact text `splitSql(sql)` (no transforms) would emit for this statement. */
   readonly raw: string;
   /** `trimStatement(raw)` — what `splitAndTrim` emits, including when empty. */
   readonly trimmed: string;
   /**
-   * `false` only for a trailing statement with no closing delimiter, emitted at
-   * real EOF (`splitRaw`'s `acc.length > 0` fallback) — see {@link RawToken}.
-   * `checkScannerBufferSize` (`migration-apply.ts`) needs this to decide
-   * `>` vs `>=` against the effective buffer limit: `bufio.Scanner` can
-   * only apply its too-long check (`len(s.buf) >= s.maxTokenSize`) once it has
-   * given up looking for a delimiter and still needs more data — for a
-   * delimiter-terminated token the delimiter is found (and the token emitted)
-   * in the SAME `Scan()` call that fills the buffer to capacity, before that
-   * check is ever reached, so a token exactly AT the limit still succeeds. An
-   * unterminated trailing token has no delimiter to find: once the buffer
-   * fills to the effective limit without one, the too-long check fires
-   * immediately — there's never a chance to attempt the extra `Read()` that would
-   * reveal real EOF and let the split function emit the trailing token
-   * instead. Verified empirically against `pkg/parser.Split`: a
-   * single terminated statement of exactly `maxbuf` bytes always succeeds,
-   * while an unterminated one of exactly `maxbuf` bytes always fails with
-   * `bufio.ErrTooLong` (one byte under still succeeds; one byte over always
-   * fails either way).
+   * `false` only for a trailing statement with no closing delimiter, emitted at real EOF —
+   * see {@link RawToken}. `checkScannerBufferSize` needs this to decide `>` vs `>=` against
+   * the effective buffer limit: a delimiter-terminated token exactly at the limit still
+   * succeeds (the delimiter is found before the too-long check is reached), while an
+   * unterminated one exactly at the limit always fails.
    */
   readonly terminated: boolean;
 }
 
 /**
- * Same FSM traversal as {@link splitAndTrim}, but pairs each statement's RAW
- * (pre-trim) text with its trimmed form instead of discarding the raw text once
- * emitted. `bufio.Scanner`-based `parser.Split`
- * enforces `SUPABASE_SCANNER_BUFFER_SIZE` against the untransformed
- * `scanner.Text()` — the RAW form — and its `bufio.ErrTooLong` message reports
- * that same raw text for the LAST successfully scanned statement, so a caller
- * replicating that check (`migration-apply.ts`'s `execMigrationBatch`)
- * needs both forms, not just the trimmed one `splitAndTrim` returns.
+ * Same FSM traversal as {@link splitAndTrim}, but pairs each statement's raw (pre-trim) text
+ * with its trimmed form, since `SUPABASE_SCANNER_BUFFER_SIZE` enforcement needs the raw form.
  *
- * Unlike `splitSql`/`splitAndTrim`, this does NOT drop a statement
- * whose trimmed form is empty — callers that replicate `len(stats)` counter
- * (which only increments for a non-empty trimmed statement) need to see every raw
- * token, including the ones `splitAndTrim` itself would filter out.
+ * Unlike `splitSql`/`splitAndTrim`, this does not drop a statement whose trimmed form is
+ * empty, so callers counting only non-empty trimmed statements still see every raw token.
  */
 export function splitSqlTokens(sql: string): ReadonlyArray<SplitSqlToken> {
   return splitRaw(sql).map(({ text: raw, terminated }) => ({
@@ -259,13 +229,12 @@ export function splitSqlTokens(sql: string): ReadonlyArray<SplitSqlToken> {
   }));
 }
 
-// `(?i)drop\s+` — `dropStatementPattern`.
+// Case-insensitive: matches "drop" followed by whitespace.
 const DROP_STATEMENT_PATTERN = /drop\s+/i;
 
 /**
- * Extracts DROP statements from a schema diff for the safety warning shown by
- * `db diff` / `db pull` / declarative `sync`. Mirrors `findDropStatements`:
- * split the SQL into statements, then keep those matching `(?i)drop\s+`.
+ * Extracts DROP statements from a schema diff for the safety warning shown by `db diff`,
+ * `db pull`, and declarative `sync`.
  */
 export function findDropStatements(sql: string): ReadonlyArray<string> {
   return splitAndTrim(sql).filter((statement) => DROP_STATEMENT_PATTERN.test(statement));

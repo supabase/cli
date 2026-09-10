@@ -183,13 +183,7 @@ import { buildPgMetaContainerSpec } from "./services/pg-meta.service.ts";
 import { buildStudioContainerSpec } from "./services/studio.service.ts";
 import { buildSupavisorContainerSpec } from "./services/supavisor.service.ts";
 
-/**
- * The analytics API key's only possible value — never configurable.
- * Duplicated locally rather than hoisted: `logflare.service.ts`/
- * `studio.service.ts` each already hardcode this same literal independently,
- * matching that existing precedent instead of introducing a new shared
- * constant for it.
- */
+/** The analytics API key's only possible value; never configurable. */
 const ANALYTICS_API_KEY = "api-key";
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -199,12 +193,9 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 /**
- * Wraps a synchronous `envOverride*`/`envOverride*` config-override read that throws on a
- * malformed value into a typed `StartInvalidConfigError` failure —
- * config validation hard-fails on a bad decode before any Docker work runs —
- * instead of leaking an untyped Effect defect that bypasses
- * `withJsonErrorHandling`'s `Effect.catch` (which, unlike this pipeline's `Effect.onError`
- * rollback, only intercepts typed failures, never defects).
+ * Wraps a synchronous `envOverride*` config read that throws on a malformed value into a typed
+ * `StartInvalidConfigError`, so a bad override fails the command through the normal error path
+ * instead of surfacing as an untyped Effect defect.
  */
 function wrapConfigOverride<T>(
   dottedFieldPath: string,
@@ -220,23 +211,14 @@ function wrapConfigOverride<T>(
 }
 
 /**
- * Every value {@link buildGotrueContainerSpec} needs from `config`/
- * `values`, minus `dbHost`/`dbPassword` (which that builder derives itself
- * from `projectId`/`dbUrl`). See this module's header for the `@supabase/
- * config` schema gaps (`captcha`/`passkey`/`webauthn`/`email.smtp` presence,
- * `external` provider filtering) `gotrue.service.ts`'s own doc comment
- * documents — reused here.
+ * Every value {@link buildGotrueContainerSpec} needs from `config`/`values`, minus
+ * `dbHost`/`dbPassword` (derived by that builder itself).
  *
- * A configured `auth.signing_keys_path` is honored for anon/service_role JWT
- * SIGNING (`values.jwtSecret`/`resolveLocalConfigValues`'s own
- * `loadFirstSigningKey`), for the stack-wide JWKS document
- * (`resolveLocalJwks`), AND here as GoTrue's own `GOTRUE_JWT_KEYS` —
- * all three resolve the SAME file via
- * {@link resolveConfiguredSigningKeys}, so GoTrue always signs with
- * (one of) the key(s) the published JWKS advertises. `undefined` (the
- * default ES256 key, matching `gotrue.service.ts`'s hardcoded
- * `GOTRUE_DEFAULT_SIGNING_KEY`) only when no `signing_keys_path` is
- * configured or auth is disabled.
+ * A configured `auth.signing_keys_path` is honored for anon/service_role JWT signing, for the
+ * stack-wide JWKS document, and here as `GOTRUE_JWT_KEYS` — all three resolve the same file via
+ * {@link resolveConfiguredSigningKeys}, so GoTrue always signs with a key the published JWKS
+ * advertises. `undefined` (the default ES256 key) only when no `signing_keys_path` is configured
+ * or auth is disabled.
  */
 
 function resolveGotrueEnvInput(params: {
@@ -258,13 +240,10 @@ function resolveGotrueEnvInput(params: {
     "local_smtp.enabled",
     projectEnvValues,
   );
-  // `[auth.email.smtp]`'s presence-based `enabled` default — reading the
-  // schema-decoded `config.auth.email.smtp` here would always see `enabled:
-  // false` when the key is merely absent from the TOML table (`@supabase/
-  // config`'s decode-time default), silently falling back to Mailpit even
-  // when a real SMTP server is configured. `resolveAuthEmailSmtp`
-  // resolves this correctly off the raw document, same as the passkey/
-  // webauthn/external-provider reads below.
+  // Reading the schema-decoded `config.auth.email.smtp` here would always see `enabled: false`
+  // when the key is merely absent from the TOML table, silently falling back to Mailpit even when
+  // a real SMTP server is configured. `resolveAuthEmailSmtp` resolves this correctly off the raw
+  // document.
   const resolvedSmtp = resolveAuthEmailSmtp(asRecord(document?.["auth"]), projectEnvValues);
   const smtp =
     resolvedSmtp?.enabled === true
@@ -277,10 +256,8 @@ function resolveGotrueEnvInput(params: {
           senderName: resolvedSmtp.senderName,
         }
       : undefined;
-  // Same generic-Viper-override gap as `inbucketEnabled` above, for
-  // `local_smtp.admin_email`/`sender_name` — value-typed fields, so no
-  // raw-document presence gate needed, matching `local_smtp.port`'s
-  // existing treatment.
+  // Same override gap as `inbucketEnabled` above; these are value-typed fields, so no
+  // raw-document presence gate is needed.
   const mailpitAdminEmail = envOverride(
     "SUPABASE_LOCAL_SMTP_ADMIN_EMAIL",
     config.local_smtp.admin_email,
@@ -347,15 +324,10 @@ function resolveGotrueEnvInput(params: {
 }
 
 /**
- * Read-and-discard existence/readability check for one already-resolved
- * `content_path` — same pattern as `local-config-values.ts`'s
- * `readAuthEmailTemplateContent` and `push.auth-email-content.ts`'s
- * `readTemplateContent`, reusing their established error message shape.
- * Closes the gap where a resolved-but-never-read path (e.g. a `content_path`
- * naming a missing file, only reachable when `auth.enabled = false`) would
- * otherwise reach Docker unverified — the root-privileged daemon silently
- * creates a directory at a bind-mounted host path that doesn't exist, so an
- * unprivileged read here must succeed first.
+ * Existence/readability check for one already-resolved `content_path`. Without it, a
+ * resolved-but-never-read path (e.g. a missing file, only reachable when `auth.enabled = false`)
+ * would reach Docker unverified — the root-privileged daemon silently creates a directory at a
+ * bind-mounted host path that doesn't exist, instead of failing.
  */
 function readKongEmailTemplateContent(
   section: "template" | "notification",
@@ -370,22 +342,14 @@ function readKongEmailTemplateContent(
 }
 
 /**
- * Kong's email template mounts: every configured template, then every
- * ENABLED notification, suffixed `_notification`. Resolves, containment-
- * checks, and read-verifies each `content_path` HERE — once, before any
- * Docker work — via `resolveEmailTemplateContentPath` (the same check
- * config validation and `config push` apply) followed by
- * `readKongEmailTemplateContent`. The resulting `resolvedPath` is what the
- * caller threads straight into `buildKongEmailTemplateBind`; nothing
- * re-derives it later, right before the `docker create` call for Kong
- * (potentially minutes later, after image pulls/Postgres bring-up/
- * migrations) — closing the TOCTOU window between an earlier
- * validation-only pass and Kong's own independent re-resolution.
+ * Kong's email template mounts: every configured template, then every enabled notification,
+ * suffixed `_notification`. Resolves, containment-checks, and read-verifies each `content_path`
+ * once, here, before any Docker work; the caller threads the resulting `resolvedPath` straight
+ * into the Kong container spec instead of re-deriving it later, closing the TOCTOU window before
+ * Kong's own `docker create` call.
  *
- * Skips (never throws for) an entry whose resolver returns `undefined` — per
- * its own contract that only happens for an empty/absent `content_path`,
- * which should be unreachable here since Kong's set is built from configured
- * entries, but this omits the mount defensively rather than crashing.
+ * Skips (never throws for) an entry whose resolver returns `undefined`, defensively, even though
+ * that should be unreachable since Kong's set is built from configured entries.
  */
 function resolveKongEmailTemplateMounts(
   email: ResolvedAuthEmail,
@@ -421,11 +385,9 @@ function resolveKongEmailTemplateMounts(
 }
 
 /**
- * What `--ignore-health-check` prints when it downgrades a health-check timeout
- * to a warning. That decision belongs to this caller, not `../../shared/db-bootstrap/health-check.ts`
- * (which only implements the polling contract), and it writes straight to
- * stderr — bypassing the `Output.fail` renderer that would otherwise append the
- * error's `suggestion` for it.
+ * What `--ignore-health-check` prints when it downgrades a health-check timeout to a warning.
+ * Writes straight to stderr, bypassing the `Output.fail` renderer, so it appends the error's
+ * `suggestion` itself.
  */
 function healthWarningText(error: HealthCheckTimeoutError): string {
   return error.suggestion === undefined ? error.message : `${error.message}\n${error.suggestion}`;
@@ -451,12 +413,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       Effect.mapError((error) => new StartWorkdirError({ message: error.message })),
     );
 
-    // 1. `--exclude` validation runs as the VERY FIRST step — before config
-    // loads or checking whether the stack is already running, so this
-    // warning fires unconditionally on every invocation with an invalid
-    // `--exclude` value, including the already-running short-circuit below.
-    // `excludedKeys` (the VALID subset) is what actually gates container
-    // bring-up later.
+    // 1. `--exclude` validation runs before config loads or the already-running check, so this
+    // warning fires on every invocation with an invalid `--exclude` value. `excludedKeys` (the
+    // valid subset) is what actually gates container bring-up later.
     const partition = partitionStartExcludeFlags(flags.exclude);
     if (partition.warning !== undefined && output.format === "text") {
       yield* output.raw(partition.warning, "stderr");
@@ -484,11 +443,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         }),
     });
     const { config, projectId, projectEnvValues } = context;
-    // `SUPABASE_EXPERIMENTAL`/`--experimental`, read deep inside
-    // `startDatabase`'s fresh-volume setup pipeline — resolved here
-    // (project `.env` aware, like `db reset`'s identical gate) so it can be
-    // threaded straight through to `startDatabase`'s own
-    // `setup.experimental` below.
+    // Resolved here (project `.env` aware) so it can be threaded through to `startDatabase`'s
+    // own `setup.experimental` below.
     const experimental = yield* resolveExperimentalWithProjectEnv(projectEnvValues);
     // Single source resolved once, fed to both Kong's template mounts and GoTrue's env builder —
     // see {@link resolveAuthEmail}'s doc comment.
@@ -504,17 +460,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           message: cause instanceof Error ? cause.message : String(cause),
         }),
     });
-    // Kong mounts every configured template (regardless of `auth.enabled` —
-    // Kong is the stack's mandatory gateway) and every ENABLED notification's
-    // `content_path`, unconditionally. Resolving, containment-checking, AND
-    // read-verifying every path happens exactly ONCE, here, before any Docker
-    // work — not only inside `resolveLocalConfigValues`'s own
-    // `auth.enabled`-gated `readAuthEmailTemplateContent` call. The resulting
-    // `resolvedPath`s are threaded straight into the Kong container-spec
-    // input below instead of being discarded and re-derived later inside
-    // `buildKongEmailTemplateBind`, which closes the TOCTOU window
-    // between this pass and Kong's `docker create` call (potentially minutes
-    // later, after image pulls/Postgres bring-up/migrations).
+    // Kong mounts every configured template and every enabled notification's `content_path`,
+    // regardless of `auth.enabled` — see {@link resolveKongEmailTemplateMounts} for why this
+    // resolves and verifies each path once, here, rather than re-deriving it before Kong's
+    // `docker create` call.
     const kongEmailTemplateMounts = yield* Effect.try({
       try: () => resolveKongEmailTemplateMounts(resolvedEmail, cliSettings.workdir),
       catch: (cause) =>
@@ -522,15 +471,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           message: cause instanceof Error ? cause.message : String(cause),
         }),
     });
-    // Every `time.Duration`-shaped config field — including these 5 — must
-    // fail fast, before `start` touches Docker at all: these fields are only
-    // parsed inside GoTrue's own env builder (`gotrue.service.ts`), which
-    // never runs at all when auth is disabled or `gotrue` is excluded — so a
-    // malformed value would otherwise be silently accepted instead of
-    // failing the command. Validate eagerly here, discarding the parsed
-    // nanosecond counts, since `resolveGotrueEnvInput` (below) re-resolves
-    // and re-parses these same fields for the actual GoTrue container
-    // build.
+    // Duration fields (Go duration syntax) are otherwise only parsed inside GoTrue's own env
+    // builder, which never runs when auth is disabled or `gotrue` is excluded — so a malformed
+    // value must be validated eagerly here or it would be silently accepted.
     const gotrueSessionsForValidation = resolveGotrueSessions(
       config.auth.sessions,
       projectEnvValues,
@@ -538,11 +481,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     yield* wrapConfigOverride("auth.email.max_frequency", () =>
       parseGoDuration(resolvedEmail.max_frequency),
     );
-    // Wrapped like `resolvedEmail` above: `resolveLocalConfigValues`'s own SMS validation
-    // only runs `if (authEnabled)` (`local-config-values.ts`), so this direct call is the
-    // ONLY place a malformed `auth.sms.*` override is ever caught when auth is disabled — an
-    // unwrapped throw here would surface as an Effect defect instead of the normal
-    // `StartInvalidConfigError` config-load failure.
+    // `resolveLocalConfigValues`'s own SMS validation only runs when auth is enabled, so this is
+    // the only place a malformed `auth.sms.*` override is caught when auth is disabled.
     const smsForValidation = yield* Effect.try({
       try: () =>
         resolveAuthSms(
@@ -558,11 +498,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     yield* wrapConfigOverride("auth.sms.max_frequency", () =>
       parseGoDuration(smsForValidation.max_frequency),
     );
-    // SMS validation downgrades `EnableSignup` to `false` and prints a
-    // warning when no provider is enabled — `resolveAuthSms` already
-    // applies the downgrade itself, so this only needs to detect whether
-    // that branch fired (the user configured `enable_signup = true` with
-    // every provider disabled) to print the matching warning.
+    // `resolveAuthSms` already downgrades `enable_signup` when no provider is enabled; this only
+    // detects whether that branch fired, to print the matching warning.
     if (
       !smsForValidation.twilio.enabled &&
       !smsForValidation.twilio_verify.enabled &&
@@ -591,16 +528,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     yield* wrapConfigOverride("auth.mfa.phone.max_frequency", () =>
       parseGoDuration(resolveAuthMfa(config.auth.mfa, projectEnvValues).phone.max_frequency),
     );
-    // Same gap for the remaining GoTrue overrides: `auth.rate_limit.*` (plain `uint`s) and
-    // `auth.web3.*.enabled`/`auth.oauth_server.{enabled,allow_dynamic_registration}` (plain
-    // `bool`s) must all validate unconditionally, regardless of
-    // `auth.enabled`/`--exclude gotrue`.
-    // `resolveGotrueRateLimit`/`resolveGotrueWeb3`/`resolveGotrueOAuthServer` already
-    // throw internally on a bad override, so — unlike the duration fields above — calling each
-    // whole (pure) function once here is simpler than re-deriving every field individually;
-    // `resolveGotrueEnvInput` below re-resolves them a second time for the real container build,
-    // which is safe since they're pure. `auth.oauth_server.authorization_url_path` is a plain
-    // string and can't throw, so it needs no eager check.
+    // These GoTrue overrides must validate unconditionally too, regardless of
+    // `auth.enabled`/`--exclude gotrue`. The resolvers already throw internally on a bad
+    // override, so calling each once here is simpler than re-deriving every field individually.
     yield* wrapConfigOverride("auth.rate_limit", () =>
       resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
     );
@@ -610,14 +540,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     yield* wrapConfigOverride("auth.oauth_server", () =>
       resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
     );
-    // Same gap for `auth.passkey.enabled`/`auth.webauthn.*` and per-provider `auth.external.
-    // <name>.{enabled,skip_nonce_check,email_optional}` — these raw
-    // (unmodeled by `@supabase/config`) booleans must validate
-    // unconditionally too, regardless of `auth.enabled`/`--exclude gotrue`.
-    // Both resolvers already throw internally on a bad raw bool (`rawUnmodeledBool`)
-    // and are otherwise only reached from `resolveGotrueEnvInput`'s `case "gotrue":` branch below —
-    // itself gated on auth being enabled and gotrue not excluded — so calling each here, once,
-    // eagerly and discarding the result, closes the same "validates but doesn't reach it" gap.
+    // Same gap for the raw (unmodeled by `@supabase/config`) `auth.passkey`/`auth.webauthn`/
+    // `auth.external.<name>` booleans, which are otherwise only reached once auth is enabled and
+    // gotrue isn't excluded.
     yield* wrapConfigOverride("auth.passkey", () =>
       resolveGotruePasskeyWebauthn(context.loaded?.document, projectEnvValues),
     );
@@ -628,26 +553,14 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         projectEnvValues,
       ),
     );
-    // Same gap for `auth.third_party.<provider>.{enabled,...}` — this must
-    // validate unconditionally regardless of `auth.enabled`, even though
-    // validation itself is otherwise only meaningful when auth is enabled.
-    // `resolveThirdPartyProviders` is otherwise never called by this
-    // handler at all (GoTrue's own container build never wires third-party
-    // JWT settings) — so a malformed override (e.g.
-    // `SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED=bogus`) would otherwise
-    // never fail this command at all (review: PRRT_kwDOErm0O86WXFqj).
+    // Same gap for `auth.third_party.<provider>.*` — `resolveThirdPartyProviders` is otherwise
+    // never called by this handler at all, so a malformed override would never fail the command.
     yield* wrapConfigOverride("auth.third_party", () =>
       resolveThirdPartyProviders(config.auth.third_party, projectEnvValues),
     );
-    // `[functions.<slug>.env]` has no supported meaning for `start` — this
-    // must reject any unknown key unconditionally, well before any Docker
-    // work, matching the established config-validation contract.
-    // `@supabase/config`'s own schema DOES model `[functions.<slug>.env]`
-    // (`packages/config/src/functions.ts`) — a legitimate schema feature the
-    // shared package keeps for other consumers — so this is a CLI-side
-    // rejection, not a schema change. Confirmed against the
-    // established parity contract: a config with `[functions.foo.env]`
-    // fails with `'functions[foo]' has invalid keys: env`.
+    // `[functions.<slug>.env]` has no supported meaning for `start`, so any key here must be
+    // rejected before any Docker work. `@supabase/config`'s schema still models this table for
+    // other consumers, so the rejection is CLI-side, not a schema change.
     for (const [slug, func] of Object.entries(config.functions)) {
       if (Object.keys(func.env).length > 0) {
         yield* Effect.fail(
@@ -657,38 +570,22 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         );
       }
     }
-    // `checkDbToml` resolves `[db.vault]`/`[db.seed]`/`db.migrations.enabled`/the effective
-    // `api.auto_expose_new_tables` tri-state — this must run unconditionally,
-    // before any Docker work. The port only ran this inside
-    // `startSetupLocalDatabase`, which is itself gated on the DB container's
-    // healthcheck passing AND a fresh volume (the `NoBackupVolume` gate) — so a malformed
-    // `SUPABASE_DB_SEED_ENABLED`/an undecryptable `[db.vault]` secret went completely unvalidated
-    // whenever `start` reused an existing volume. The resolved Webhooks flag is also retained so
-    // existing volumes can converge `pg_net`; `startSetupLocalDatabase`'s own internal call
-    // (an already-accepted duplicate config-load pass, matching `db start`'s own independent
-    // resolution — see `../../shared/db-bootstrap/db-setup.ts`'s header) still resolves fresh-setup
-    // values for its own use when it runs.
+    // Must run unconditionally, before any Docker work: without this, a malformed
+    // `SUPABASE_DB_SEED_ENABLED` or an undecryptable `[db.vault]` secret would go unvalidated
+    // whenever `start` reuses an existing volume instead of provisioning a fresh one.
+    // `startSetupLocalDatabase` still resolves its own fresh-setup values independently when it runs.
     const dbTomlValues = yield* checkDbToml(fs, path, cliSettings.workdir);
 
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = cliProjectFilterValue(projectId);
 
-    // Shared status-values helper — reused by BOTH the already-running branch
-    // (full status pipeline, health-checked + "stopped" diffed) and the
-    // success path at the end (a direct pretty-print/`toValues` call, no
-    // re-health-check — see each call site's own comment for why they
-    // differ).
+    // Shared by the already-running branch (full status pipeline, re-health-checked) and the
+    // success path (a direct pretty-print, no re-health-check).
     //
-    // `precomputedLocal` is only ever passed by the success-path call: the
-    // already-running branch delegates to the shared status pipeline, which
-    // loads config (and therefore re-derives keys) a SECOND time in that
-    // same process, so recomputing here matches that. The success path, by
-    // contrast, never reloads config again after bring-up — it prints
-    // straight from the already-populated config — so it must reuse the
-    // SAME `values` that were already used to build every container spec,
-    // instead of re-deriving (and, for asymmetric JWTs, re-signing with a
-    // new `exp`) a second time. See {@link resolveStatusLocalState}'s
-    // `precomputedLocal` param doc for why a second derivation is unsafe.
+    // `precomputedLocal` is passed only by the success path, which must reuse the same `values`
+    // already used to build every container spec instead of re-deriving them a second time — for
+    // asymmetric JWTs, a second derivation would re-sign with a new `exp`. See
+    // {@link resolveStatusLocalState}'s `precomputedLocal` param for why that's unsafe.
     const buildStatusValues = Effect.fnUntraced(function* (
       excluded: ReadonlyArray<string>,
       precomputedLocal?: LocalConfigValues,
@@ -715,9 +612,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
     const inBitbucketPipeline = isBitbucketPipeline();
 
-    // 3. Missing proceeds to startup; other inspect failures propagate.
-    // Verified stopped stacks are recovered unless Bitbucket's lack of named volumes
-    // makes removing the Postgres container destructive.
+    // 3. A missing container proceeds to startup; other inspect failures propagate. Stopped
+    // stacks are recovered unless Bitbucket's lack of named volumes makes removal destructive.
     const inspectDbState = inspectContainerState(spawner, dbContainerId).pipe(
       Effect.catch((error) =>
         isContainerNotFoundMessage(error.message) ? Effect.succeed(undefined) : Effect.fail(error),
@@ -732,19 +628,14 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const shouldRecoverStoppedStack = isRecoverableStoppedState(dbState) && !inBitbucketPipeline;
 
     const reportAlreadyRunningStatus = Effect.fnUntraced(function* () {
-      // Gated here on text mode for internal consistency
-      // with every other supplementary stderr line this handler prints (see
-      // the exclude warning above and the success-path messages below) — this
-      // port's `--output-format json|stream-json` callers get a clean
-      // structured payload with no extra text noise.
+      // Gated on text mode for consistency with every other supplementary stderr line this
+      // handler prints — json/stream-json callers get a clean structured payload with no noise.
       if (output.format === "text") {
         yield* output.raw(startAlreadyRunningMessage(), "stderr");
       }
 
-      // The full status pipeline for this branch: health-check +
-      // "stopped services" diffing, distinct from the success path's direct
-      // pretty-print call below (see that branch's own comment for why the
-      // two differ).
+      // The full status pipeline for this branch: health-check plus "stopped services" diffing,
+      // distinct from the success path's direct pretty-print call below.
       if (!flags.ignoreHealthCheck) {
         const state = yield* inspectContainerState(spawner, dbContainerId).pipe(
           Effect.mapError((cause) => new StatusDbInspectError({ message: cause.message })),
@@ -780,9 +671,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       const excluded = [...stopped, ...flags.exclude];
 
       if (output.format === "text") {
-        // The pretty-branch banner -- distinct from (and printed in
-        // ADDITION to) `startAlreadyRunningMessage()` above; both
-        // lines really do stack in this branch.
+        // Distinct from, and stacks with, `startAlreadyRunningMessage()` above.
         yield* output.raw(`${aqua("supabase")} local development setup is running.\n\n`, "stderr");
         const { values: statusValues, names } = yield* buildStatusValues(excluded);
         yield* output.raw(renderStatusPretty(statusValues, names));
@@ -796,17 +685,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       return yield* reportAlreadyRunningStatus();
     }
 
-    // 4. A best-effort update-suggestion check: a Management API call gated
-    // on the project being linked AND the user being logged in, purely to
-    // print an "update available" hint, every error silently swallowed.
-    // Deliberately NOT implemented — this command has zero Management API
-    // dependency by design.
+    // 4. No update-suggestion check: `start` has no Management API dependency by design.
 
-    // 5. Gate evaluation — see `start.gates.ts` for the full boolean table.
-    // `envOverrideBool` throws synchronously on an unparsable value —
-    // wrapped so that throw becomes the typed `StartInvalidConfigError`
-    // every other malformed-config path in this handler uses, not an
-    // untyped Effect defect.
+    // 5. Gate evaluation — see `start.gates.ts`. Wrapped because `envOverrideBool` throws
+    // synchronously on an unparsable value, and this handler surfaces that as a typed error.
     const gates = yield* Effect.try({
       try: () =>
         resolveStartGates({
@@ -821,8 +703,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         }),
     });
 
-    // 6. JWKS resolution — runs UNCONDITIONALLY, before any image pull,
-    // regardless of whether auth/realtime/postgrest/storage end up enabled.
+    // 6. JWKS resolution runs unconditionally, before any image pull, regardless of which
+    // services end up enabled.
     const jwks = yield* Effect.tryPromise({
       try: () => resolveLocalJwks(config, cliSettings.workdir, values.jwtSecret, projectEnvValues),
       catch: (cause) =>
@@ -831,22 +713,12 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         }),
     });
 
-    // Same treatment as `majorVersion` below, for the sibling
-    // `edge_runtime.deno_version` -> image switch, applied before validation
-    // at the end of config loading. Start-only (Edge Runtime has no
-    // `db start` equivalent), so it stays outside the shared bootstrap-config
-    // derivation below.
+    // The `edge_runtime.deno_version` -> image switch is start-only (no `db start` equivalent),
+    // so it's resolved here rather than inside the shared bootstrap-config derivation below.
     const denoVersion = envOverrideDenoVersion(config.edge_runtime.deno_version, projectEnvValues);
 
-    // Every field the fresh-DB bootstrap needs, already resolved — major
-    // version, orioledb/S3 overrides, the fresh-DB setup jobs' own
-    // `enabled`/`ip_version`/`max_header_length`/`file_size_limit`
-    // overrides, the Postgres image + linked-service version pins,
-    // `db.health_timeout`, and the Storage migration pin. Shared with
-    // `db start`'s own native container bootstrap (`startDatabase`,
-    // `command-internal/db-bootstrap/start-database.ts`) — see
-    // `bootstrap-config.ts`'s own header for exactly why this is a single
-    // TS home instead of two independently-drifting copies.
+    // Every field the fresh-DB bootstrap needs, shared with `db start`'s own native bootstrap —
+    // see `bootstrap-config.ts`'s header for why this is one shared derivation.
     const {
       majorVersion,
       orioledbVersion,
@@ -872,19 +744,15 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       (message) => new StartInvalidConfigError({ message }),
     );
 
-    // 7. Resolve every image that will actually be pulled BEFORE any
-    // container is created.
+    // 7. Resolve every image that will actually be pulled before any container is created.
     const imagePlan = resolveStartImagePlan(gates, serviceVersionOverrides);
-    // Edge Runtime doesn't go through `resolveStartImagePlan` (see
-    // `start.gates.ts`'s header) — its default image is resolved
-    // independently, pre-pulled whenever it's enabled and not excluded.
+    // Edge Runtime doesn't go through `resolveStartImagePlan` (see `start.gates.ts`'s header),
+    // so its default image is resolved independently, pre-pulled when enabled and not excluded.
     const edgeRuntimeDefaultImage = gates.edgeRuntime
       ? yield* resolveEdgeRuntimeImage(fs, path, cliSettings.workdir, denoVersion)
       : undefined;
-    // Pre-pull only ever touches non-excluded services, and the
-    // one-shot setup-job images are resolved lazily, only when the
-    // fresh-DB setup job actually runs (see the conditional resolve further
-    // down, gated the same way that job itself is gated).
+    // Pre-pull only touches non-excluded services; the one-shot setup-job images are resolved
+    // lazily, only when the fresh-DB setup job actually runs.
     const resolvedImages = yield* ensureImagesCached(
       spawner,
       [
@@ -896,20 +764,13 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     );
     const resolveImage = (image: string) => resolvedImages.get(image) ?? image;
 
-    // Hoisted out of the Edge Runtime bring-up below: Studio's own bind
-    // mounts are resolved UNCONDITIONALLY of `config.edge_runtime.enabled`,
-    // so these manifest values must be available to `buildSpecForService`'s
-    // "studio" case regardless of whether Edge Runtime itself is enabled.
+    // Studio's bind mounts are resolved unconditionally of `config.edge_runtime.enabled`, since
+    // `buildSpecForService`'s "studio" case needs them regardless of whether Edge Runtime itself
+    // is enabled.
     //
-    // `config.functions.<slug>.env.<VAR>` is schema-marked deferred
-    // (`env(...)`, `packages/config/src/lib/env.ts`) and only gets its
-    // literal interpolated by `resolveCliConfigSubtree` — without this step, a
-    // configured `[functions.<slug>.env]` entry reaches Edge Runtime as the
-    // literal string `"env(API_KEY)"` instead of the real secret.
-    // `functions serve`'s own call site already resolves this subtree first
-    // (`shared/functions/serve.ts:615-622`) before the same
-    // `toPlainFunctionRecord` call — same reasoning as `resolvedEdgeRuntime`
-    // below, just for the sibling `functions` subtree.
+    // `config.functions.<slug>.env.<VAR>` is schema-marked deferred and only gets its literal
+    // interpolated by `resolveCliConfigSubtree` — without this, a configured `env` entry reaches
+    // Edge Runtime as the literal string `"env(API_KEY)"` instead of the real secret.
     const resolvedFunctions = yield* resolveCliConfigSubtree(
       config.functions,
       { values: projectEnvValues ?? {} },
@@ -920,11 +781,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const configFunctions = yield* inferFunctionsManifest({
       cwd: cliSettings.workdir,
       config: { ...config, functions: configDeclaredFunctions },
-      // `search: false`: `cliSettings.workdir` is already the fully-resolved chdir target (same
-      // reasoning as `local-project-context.ts`'s `loadCliProjectEnvironment` call) — letting
-      // `findCliProjectPaths` climb ancestors again here would let an unrelated ancestor project's
-      // `supabase/functions` win when `--workdir`/`SUPABASE_WORKDIR` points at a subdirectory with
-      // no `supabase/config.toml` of its own.
+      // `search: false`: `cliSettings.workdir` is already the fully-resolved chdir target.
+      // Climbing ancestors again here could let an unrelated ancestor project's
+      // `supabase/functions` win when `--workdir` points at a subdirectory with no config of its own.
       search: false,
     });
     const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);
@@ -942,27 +801,17 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         )
       : new Set<string>();
 
-    // Every container's network mode (and the network it creates) resolves
-    // to `--network-id` when set, ahead of the generated
-    // `supabase_network_<project>` fallback — and `--network-id` falls back
-    // to the `SUPABASE_NETWORK_ID` shell/project-dotenv env var ONLY when
-    // the flag was never passed, the same override mechanism as
-    // `SUPABASE_YES`/`SUPABASE_EXPERIMENTAL` (review: PRRT_kwDOErm0O86VlqIL).
-    // See {@link resolveDockerNetworkMode}'s doc comment for the full 3-way
-    // flag/env precedence (shared with `db start` and the `functions`
-    // Docker paths).
+    // `--network-id` wins over the generated `supabase_network_<project>` fallback, falling back
+    // to `SUPABASE_NETWORK_ID` only when the flag was never passed. See
+    // {@link resolveDockerNetworkMode} for the full flag/env precedence.
     const networkIdFlag = yield* NetworkIdFlag;
     const networkId = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(networkIdFlag),
       envOverride: viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
       projectId,
     });
-    // Every container unconditionally gets the Linux-only
-    // `host.docker.internal:host-gateway` extra host (empty on
-    // darwin/windows, where Docker Desktop already resolves that hostname)
-    // — same expression already used for the one-shot migrate jobs
-    // (`db-setup.ts`) and Edge Runtime bring-up
-    // (`edge-runtime-script.layer.ts`).
+    // Linux-only `host.docker.internal:host-gateway` extra host; empty on darwin/windows, where
+    // Docker Desktop already resolves that hostname.
     const extraHosts =
       runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
     const startOpts: ContainerOpts = {
@@ -987,22 +836,15 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     const vectorContainerName = serviceContainerName("vector", projectId);
     const mailpitContainerName = serviceContainerName("inbucket", projectId);
 
-    // The TLS cert/key disk read is gated on the post-override
-    // `api.enabled` itself, not just `api.tls.enabled`: when API is
-    // disabled, `CertContent`/`KeyContent` stay at their embedded defaults.
-    // Not the SAME `apiEnabled` `resolveStartGates` (`start.gates.ts:87-92`)
-    // computes for its own `gates.postgrest` — that one is additionally
-    // ANDed with `--exclude postgrest`, which has no equivalent in config
-    // validation — so this is resolved separately here.
+    // The TLS cert/key disk read is gated on `api.enabled` itself, not just `api.tls.enabled`.
+    // Resolved separately from `gates.postgrest`'s own `apiEnabled`, which is additionally
+    // combined with `--exclude postgrest` — a distinction config validation has no equivalent for.
     const apiEnabled = yield* wrapConfigOverride("api.enabled", () =>
       envOverrideBool("SUPABASE_API_ENABLED", config.api.enabled, "api.enabled", projectEnvValues),
     );
-    // Hoisted out of the "kong" case below (it used to be computed only
-    // there): the post-bring-up health-probe CA-trust lookup near the end of
-    // this function needs the SAME env-overridden value, not the raw
-    // `config.api.tls.enabled` — there must be one source of truth here,
-    // since the health probe's trust pool and its target URL both read
-    // that same already-overridden value.
+    // The post-bring-up health-probe CA-trust lookup needs this same env-overridden value, not
+    // the raw `config.api.tls.enabled` — both the trust pool and its target URL must read one
+    // source of truth.
     const apiTlsEnabled = yield* wrapConfigOverride("api.tls.enabled", () =>
       envOverrideBool(
         "SUPABASE_API_TLS_ENABLED",
@@ -1011,12 +853,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         projectEnvValues,
       ),
     );
-    // Same override gap as `apiTlsEnabled` above, for the two custom
-    // cert/key path fields — `SUPABASE_API_TLS_CERT_PATH`/
-    // `SUPABASE_API_TLS_KEY_PATH` must apply before reading `CertPath`/
-    // `KeyPath` from disk into `CertContent`/`KeyContent`. Mirrors the
-    // identical resolution `local-config-values.ts` already does for
-    // `status`/`stop`.
+    // Same override gap as `apiTlsEnabled` above: the env overrides must apply before reading
+    // the cert/key paths from disk.
     const apiTlsCertPath = envOverride(
       "SUPABASE_API_TLS_CERT_PATH",
       config.api.tls.cert_path,
@@ -1061,9 +899,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         );
     }
 
-    // Same gap for `storage.vector.enabled` — both the long-running Storage
-    // container AND `seedBucketsRun`'s `effectiveLocalStorageConfig`
-    // splice further down must see the same already-overridden value.
+    // Same gap for `storage.vector.enabled` — both the Storage container and `seedBucketsRun`'s
+    // config splice further down must see the same already-overridden value.
     const storageVectorEnabled = yield* wrapConfigOverride("storage.vector.enabled", () =>
       envOverrideBool(
         "SUPABASE_STORAGE_VECTOR_ENABLED",
@@ -1072,13 +909,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         projectEnvValues,
       ),
     );
-    // Same gap for `storage.s3_protocol.enabled` — a plain bool that must
-    // validate unconditionally before any Docker work, the exact same
-    // mechanism as `storage.vector.enabled` above. The Storage spec builder
-    // below only parsed this lazily, so it was silently accepted when
-    // Storage is excluded/disabled — same class of gap already fixed for
-    // `storage.file_size_limit`, the GoTrue duration fields, and
-    // `db.health_timeout`.
+    // Same gap for `storage.s3_protocol.enabled`: the Storage spec builder only parsed this
+    // lazily, so a malformed override was silently accepted whenever Storage is excluded/disabled.
     const storageS3ProtocolEnabled = yield* wrapConfigOverride("storage.s3_protocol.enabled", () =>
       envOverrideBool(
         "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
@@ -1087,14 +919,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         projectEnvValues,
       ),
     );
-    // Same gap for `storage.analytics.enabled` — the `Enabled` bool sibling
-    // of the `max_namespaces`/`max_tables`/`max_catalogs` uint fields
-    // validated below, all of which must validate unconditionally, before
-    // any Docker work. `start` itself never reads this field locally (only
-    // `seed buckets --linked` does, unreachable from `start`'s own inline
-    // seeding since every call here passes `projectRef: ""`) — validate
-    // purely for fail-fast parity and discard the result, same as the uint
-    // siblings below.
+    // Same gap for `storage.analytics.enabled`. `start` never reads this field itself (only
+    // `seed buckets --linked` does), so it's validated here purely for fail-fast parity and the
+    // result discarded.
     yield* wrapConfigOverride("storage.analytics.enabled", () =>
       envOverrideBool(
         "SUPABASE_STORAGE_ANALYTICS_ENABLED",
@@ -1103,13 +930,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         projectEnvValues,
       ),
     );
-    // `storage.analytics.{max_namespaces,max_tables,max_catalogs}` and
-    // `storage.vector.{max_buckets,max_indexes}` are plain `uint`s that must
-    // validate unconditionally, before any Docker work, the same as every
-    // other field above. Unlike their `enabled` siblings above, `start`'s
-    // own logic never reads these fields (only `config push`/`pull` do), so
-    // there is no downstream re-resolution to reuse — validate purely for
-    // fail-fast parity and discard the result.
+    // These plain `uint` fields must validate unconditionally too. `start` never reads them
+    // itself (only `config push`/`pull` do), so they're validated purely for fail-fast parity.
     yield* wrapConfigOverride("storage.analytics.max_namespaces", () =>
       envOverrideUint(
         "SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES",
@@ -1151,11 +973,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       ),
     );
 
-    // Same gap for `api.schemas`/`api.extra_search_path`/`api.max_rows` —
-    // both PostgREST's own container AND Studio's copy of the same
-    // PGRST_DB_* env must see the same already-overridden values. The two
-    // array fields use the same comma-split-override pattern as
-    // `auth.additional_redirect_urls`/`auth.webauthn.rp_origins` above.
+    // Same gap for `api.schemas`/`api.extra_search_path`/`api.max_rows` — both PostgREST's own
+    // container and Studio's copy of the same `PGRST_DB_*` env must see the overridden values.
     const apiSchemasOverride = envOverride("SUPABASE_API_SCHEMAS", undefined, projectEnvValues);
     const apiSchemas =
       apiSchemasOverride !== undefined ? apiSchemasOverride.split(",") : config.api.schemas;
@@ -1172,11 +991,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       envOverrideApiMaxRows(config.api.max_rows, projectEnvValues),
     );
 
-    // Same gap for Mailpit's three ports — `SUPABASE_LOCAL_SMTP_PORT`/
-    // `_SMTP_PORT`/`_POP3_PORT` must apply before building Mailpit's port
-    // bindings. `smtp_port`/`pop3_port` have no TOML default, matching
-    // `mailpit.service.ts`'s own `!== 0` publish guard, so `?? 0` here
-    // preserves that "unconfigured" signal.
+    // Same gap for Mailpit's three ports. `smtp_port`/`pop3_port` have no TOML default, so `?? 0`
+    // here preserves the "unconfigured" signal `mailpit.service.ts`'s `!== 0` publish guard checks.
     const mailpitPort = yield* wrapConfigOverride("local_smtp.port", () =>
       envOverridePort(
         "SUPABASE_LOCAL_SMTP_PORT",
@@ -1212,12 +1028,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         projectEnvValues,
       ),
     );
-    // Same gap for Logflare's deprecated Vector port —
-    // `analytics.vector_port` (a `uint16`, "Deprecated together with
-    // syslog") must validate unconditionally too; nothing downstream in
-    // `start` reads the resolved value, but a malformed override must still
-    // fail before any Docker work. Result discarded — no native code path
-    // consumes it.
+    // Same gap for Logflare's deprecated `analytics.vector_port`: nothing downstream reads the
+    // resolved value, but a malformed override must still fail before any Docker work.
     yield* wrapConfigOverride("analytics.vector_port", () =>
       envOverridePort(
         "SUPABASE_ANALYTICS_VECTOR_PORT",
@@ -1227,16 +1039,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       ),
     );
 
-    // Same gap for Supavisor's pooler fields — `SUPABASE_DB_POOLER_*` must
-    // apply before building the pooler's port/mode fields; `pool_mode`
-    // specifically decides the published host port (5432 session vs 6543
-    // transaction). All four throw synchronously on a malformed override —
-    // wrapped via `wrapConfigOverride` so a bad value fails as a typed
-    // `StartInvalidConfigError` instead of an untyped Effect defect
-    // bypassing `withJsonErrorHandling`'s `Effect.catch`
-    // (see `wrapConfigOverride`'s doc comment) — same bug class already fixed
-    // for `dbHealthTimeoutSeconds`/`db.settings`/the Edge Runtime
-    // `policy`/`inspector_port` overrides elsewhere in this function.
+    // Same gap for Supavisor's pooler fields — `pool_mode` specifically decides the published
+    // host port (5432 session vs 6543 transaction). Wrapped via `wrapConfigOverride` so a bad
+    // value fails as a typed error instead of an untyped Effect defect.
     const poolerPort = yield* wrapConfigOverride("db.pooler.port", () =>
       envOverridePort(
         "SUPABASE_DB_POOLER_PORT",
@@ -1255,14 +1060,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       envOverrideMaxClientConn(config.db.pooler.max_client_conn, projectEnvValues),
     );
 
-    // Same bug class as `dbHealthTimeoutSeconds` (now resolved by the shared
-    // `resolveDbBootstrapConfig` call above): `edge_runtime.policy`
-    // (an enum) and `edge_runtime.inspector_port` (a plain uint) decode during
-    // the same unconditional config-load pass, before
-    // any Docker work — regardless of `--exclude edge-runtime`. The Edge Runtime
-    // branch below re-resolves both against `resolvedEdgeRuntime`'s env-interpolated subtree
-    // for the real container build; this eager call only needs the raw `config.edge_runtime`
-    // value to prove it parses.
+    // `edge_runtime.policy`/`edge_runtime.inspector_port` must validate unconditionally too,
+    // regardless of `--exclude edge-runtime`. The Edge Runtime branch below re-resolves both
+    // against the env-interpolated subtree for the real container build; this eager call only
+    // needs the raw config value to prove it parses.
     const edgeRuntimePolicy = yield* wrapConfigOverride("edge_runtime.policy", () =>
       envOverrideEdgeRuntimePolicy(config.edge_runtime.policy, projectEnvValues),
     );
@@ -1276,11 +1077,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     );
 
     /**
-     * Every case returns `{ spec, excludeFromHealthWatch? }`: `spec` is the
-     * {@link StartContainerSpec} to bring up; `excludeFromHealthWatch`
-     * (only ever set by "vector") is returned explicitly instead of a
-     * captured mutable variable — Vector's `npipe`-scheme exception is the
-     * only case that ever sets it.
+     * Every case returns `{ spec, excludeFromHealthWatch? }`. `excludeFromHealthWatch` is
+     * returned explicitly rather than a captured mutable variable — only the "vector" case
+     * (its `npipe`-scheme exception) ever sets it.
      */
     const buildSpecForService = Effect.fnUntraced(function* (service: string, image: string) {
       switch (service) {
@@ -1532,47 +1331,30 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       }
     });
 
-    // `isFreshVolume`: set once, inside the pre-create volume-existence
-    // check, then read much later on a rollback. A plain outer `let` is
-    // this port's equivalent of a mutable global shared across that whole
-    // window — unlike `excludeFromHealthWatch` (returned explicitly from
-    // `buildSpecForService` because a clean return-value alternative
-    // existed there), `isFreshVolume` must survive PAST `bringUp`'s own
-    // failure path (`Effect.onError` below, which runs on ANY failure —
-    // including a defect or interrupt — and has no access to a value
-    // `bringUp` only returns on success) — there is no non-mutable way to
-    // thread a value computed mid-effect into a sibling failure handler.
+    // Set once, inside the pre-create volume-existence check, then read on a rollback. A plain
+    // outer `let` is necessary here: `isFreshVolume` must still be readable from `bringUp`'s own
+    // failure path (`Effect.onError` below, which runs on any failure including a defect or
+    // interrupt), and there's no non-mutable way to thread a value computed mid-effect into a
+    // sibling failure handler.
     let isFreshVolume = false;
 
-    // 8. Bring-up: network -> Postgres (+ its own health wait, GATED on
-    // `--ignore-health-check` exactly like every other service's wait below
-    // — this must propagate a Postgres health-wait failure immediately,
-    // before "Starting containers..." even prints — there is no
-    // Postgres-specific carve-out) -> the fresh-volume-gated
-    // `SetupLocalDatabase` equivalent (BEFORE any other service starts) ->
-    // the 12 remaining enabled+non-excluded services plus Edge Runtime, in
-    // the real start order (`start.gates.ts`'s `imagePlan` + `edgeRuntime`).
-    // Any OTHER failure in this whole phase (including a NON-ignored
-    // Postgres timeout) rolls back and fails the command outright. An
-    // IGNORED Postgres timeout instead short-circuits to `{ kind:
-    // "postgresUnhealthyIgnored" }` below — skipping every later step in
-    // this phase, and the bulk health check/bucket seeding/
-    // `cli_stack_started` capture after it — while still letting the
-    // command reach the final "Started..." tail, printing the warning and
-    // falling through to that SAME unconditional tail rather than returning
-    // early from the whole command.
+    // 8. Bring-up order: network -> Postgres (+ health wait, gated on `--ignore-health-check`
+    // like every other service below) -> the fresh-volume-gated `SetupLocalDatabase` equivalent,
+    // before any other service starts -> the remaining enabled, non-excluded services plus Edge
+    // Runtime, in the real start order.
+    //
+    // Any failure other than an ignored Postgres timeout rolls back and fails the command. An
+    // ignored Postgres timeout instead short-circuits to `{ kind: "postgresUnhealthyIgnored" }`
+    // below, skipping the rest of this phase and the bulk health check/bucket seeding, but still
+    // falling through to the same unconditional "Started..." tail rather than returning early.
     const bringUp = Effect.gen(function* () {
-      // `--debug` — threaded into `setup.debug` below so a failed fresh-volume
-      // Realtime/Storage/Auth migrate job (see `db-setup.ts`'s `runStartMigrateJob`
-      // doc comment) tees its own stderr.
+      // Threaded into `setup.debug` below so a failed fresh-volume migrate job tees its own
+      // stderr (see `db-setup.ts`'s `runStartMigrateJob`).
       const bringUpDebug = yield* DebugFlag;
 
-      // Runs the DB bootstrap sequence (network -> volume probe -> container
-      // create+start -> health wait -> fresh-volume setup -> `_current_branch`) — shared
-      // with `db start`'s own native container bootstrap, see `startDatabase`'s own
-      // header (`command-internal/db-bootstrap/start-database.ts`) for the full call order and
-      // for why this function has zero knowledge of `--ignore-health-check`: that decision
-      // belongs entirely to THIS caller, immediately below.
+      // Runs the DB bootstrap sequence, shared with `db start`'s own native bootstrap — see
+      // `startDatabase`'s header for the full call order. `startDatabase` has no knowledge of
+      // `--ignore-health-check`; that decision belongs to this caller, immediately below.
       const dbBootstrapResult = yield* startDatabase(spawner, {
         fs,
         path,
@@ -1584,20 +1366,17 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         dbPort: values.dbPort,
         containerOpts: startOpts,
         postgresSpec: {
-          // `port` overridden by SUPABASE_DB_PORT — the published port binds
-          // straight from the already-overridden `config.db.port`.
-          // `settings` overridden by any `SUPABASE_DB_SETTINGS_*` field —
-          // serialized from the same already-overridden `config.db.settings`.
+          // `port`/`settings` bind straight from the already env-overridden
+          // `config.db.port`/`config.db.settings`.
           db: {
             ...config.db,
             port: values.dbPort,
             major_version: majorVersion,
             settings: resolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
           },
-          // `orioledb_version` overridden by SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION,
-          // matching the value already used to select `postgresImage` above —
-          // `postgresExtraEnv` reads this same field, and its four sibling
-          // S3 fields, for its S3/`POSTGRES_INITDB_ARGS` branch.
+          // Matches the already env-overridden value used to select `postgresImage` above;
+          // `postgresExtraEnv` reads this and its sibling S3 fields for its
+          // `POSTGRES_INITDB_ARGS` branch.
           experimental: {
             ...config.experimental,
             orioledb_version: orioledbVersion,
@@ -1607,10 +1386,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             s3_secret_key: s3SecretKey,
           },
           jwtSecret: values.jwtSecret,
-          // Overridden by SUPABASE_AUTH_JWT_EXPIRY — Postgres's JWT_EXP
-          // (seeding app.settings.jwt_exp) and GoTrue's GOTRUE_JWT_EXP both
-          // read the same already-overridden value; using the raw config
-          // value here would let Postgres and GoTrue disagree.
+          // Postgres's `JWT_EXP` and GoTrue's `GOTRUE_JWT_EXP` both read this same
+          // already-overridden value; the raw config value would let them disagree.
           jwtExpiry: values.authJwtExpiry,
           projectId,
           networkId,
@@ -1619,21 +1396,18 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           // `fromBackup` stays unset: `supabase start` always calls the DB
           // bootstrap with an empty `fromBackup` — only `db start` ever sets it.
         },
-        // Already resolved as part of THIS run's own batched pre-pull (`resolvedImages`,
-        // above) — `supabase start` has no per-container lazy resolve of its own, unlike
-        // `db start` (see `startDatabase`'s header for why this is caller-supplied).
+        // Already resolved as part of this run's batched pre-pull above — `start` has no
+        // per-container lazy resolve of its own, unlike `db start`.
         resolvePostgresImage: Effect.succeed(resolveImage(postgresImage)),
         dbHealthTimeoutSeconds,
         webhooksEnabled: dbTomlValues.webhooksEnabled,
         setup: {
           majorVersion,
           experimental,
-          // The fresh-volume setup's per-job gates read the EFFECTIVE,
-          // env-overridden `{Realtime,Storage,Auth}.enabled` values, NOT
-          // additionally filtered by `--exclude` the way `gates.*` is — the
-          // one-shot migration jobs run regardless of `--exclude`, since
-          // they're part of the DB bootstrap, which finishes before this
-          // handler's own excluded-services filtering even begins.
+          // Reads the effective, env-overridden `{Realtime,Storage,Auth}.enabled` values, not
+          // additionally filtered by `--exclude` the way `gates.*` is — these one-shot migration
+          // jobs run regardless of `--exclude`, since the DB bootstrap finishes before this
+          // handler's own excluded-services filtering begins.
           config: {
             ...config,
             realtime: {
@@ -1654,9 +1428,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           },
           dbUrl: values.dbUrl,
           jwtSecret: values.jwtSecret,
-          // Already resolved, unconditionally, near the top of THIS handler's own prelude
-          // (feeding the long-running Realtime/GoTrue/PostgREST containers too) — reused
-          // here rather than re-resolved, see `startDatabase`'s header for why.
+          // Already resolved unconditionally near the top of this handler (feeding the
+          // long-running Realtime/GoTrue/PostgREST containers too), so it's reused, not re-resolved.
           jwks: Effect.succeed(jwks),
           apiUrl: values.apiUrl,
           authExternalUrl: resolveAuthExternalUrl(context.loaded?.document, projectEnvValues),
@@ -1679,15 +1452,8 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       if (Result.isFailure(dbBootstrapResult)) {
         const error = dbBootstrapResult.failure;
         if (flags.ignoreHealthCheck && isUnhealthyStartError(error)) {
-          // `ignoreHealthCheck && isUnhealthyStartError(error)` applies
-          // uniformly to whatever the DB bootstrap returns AS A WHOLE —
-          // including Postgres's own health-wait error, which propagates
-          // immediately, before any of the steps below (fresh-volume setup,
-          // `initCurrentBranch`, every other service, the bulk health check)
-          // ever run. Downgrade to a warning and short-circuit the rest of
-          // this phase, falling through to the SAME unconditional tail
-          // every other path reaches, not an early return from the whole
-          // command.
+          // Downgrades to a warning and short-circuits the rest of this phase, falling through
+          // to the same unconditional tail every other path reaches.
           yield* output.raw(`${healthWarningText(error)}\n`, "stderr");
           return { kind: "postgresUnhealthyIgnored" as const };
         }
@@ -1698,11 +1464,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         yield* output.raw(START_STARTING_CONTAINERS_MESSAGE, "stderr");
       }
 
-      // An insertion-ordered container NAME -> resolved image map. Watches
-      // container names, not the ids `docker create` returns, so an
-      // unhealthy container reports as `supabase_auth_demo` rather than 64
-      // hex characters. Keying the images by that same name keeps the watch
-      // list and its images from drifting apart.
+      // An insertion-ordered container name -> resolved image map. Keyed by name (not the id
+      // `docker create` returns) so an unhealthy container reports as `supabase_auth_demo`
+      // rather than 64 hex characters, and the watch list stays in sync with its images.
       const started = new Map<string, string>();
       let postgrestGateway: HealthCheckPostgrestGateway | undefined;
       let edgeRuntimeGateway: HealthCheckPostgrestGateway | undefined;
@@ -1711,38 +1475,27 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       for (const entry of START_SERVICES) {
         if (entry.service === "postgres") continue;
 
-        // Edge Runtime doesn't go through `imagePlan`/`buildSpecForService` —
-        // see `start.gates.ts`'s header — so it's special-cased here, in its
-        // real relative position (between ImgProxy and pg-meta).
+        // Edge Runtime doesn't go through `imagePlan`/`buildSpecForService` (see
+        // `start.gates.ts`'s header), so it's special-cased here, between ImgProxy and pg-meta.
         if (entry.service === "edgeRuntime") {
           if (!gates.edgeRuntime || edgeRuntimeDefaultImage === undefined) continue;
-          // `config.edge_runtime.secrets` is still schema-decoded plain
-          // strings here — `toPlainEdgeRuntimeConfig` only emits entries
-          // whose values are `Redacted` (`shared/functions/serve.ts`), and a
-          // value only becomes `Redacted` after `resolveCliConfigSubtree`'s
-          // env-interpolation + secret-path-redaction pass. Without this step
-          // every configured `[edge_runtime.secrets]` entry is silently
-          // dropped — `functions serve`'s own call site already resolves the
-          // subtree first (`shared/functions/serve.ts:603-610`) before
-          // calling the same helper.
+          // `config.edge_runtime.secrets` is still schema-decoded plain strings here —
+          // `toPlainEdgeRuntimeConfig` only emits entries whose values are `Redacted`, which a
+          // value only becomes after `resolveCliConfigSubtree`'s env-interpolation and
+          // secret-path-redaction pass. Without this step every configured secret is silently
+          // dropped.
           const resolvedEdgeRuntime = yield* resolveCliConfigSubtree(
             config.edge_runtime,
             { values: projectEnvValues ?? {} },
             "edge_runtime",
             { goViperCompat: true },
           );
-          // Every `config.Secret`-typed field (including
-          // `edge_runtime.secrets`) must be decrypted unconditionally, so
-          // the real Edge Runtime container always receives plaintext.
-          // `toPlainEdgeRuntimeConfig` only does `env()` interpolation and
-          // `Redacted`-unwrapping — it never decrypts a dotenvx `encrypted:`
-          // value — so without this step the literal ciphertext would reach
-          // the container's env file. `checkDbToml` (called
-          // unconditionally, before any Docker work) already validates
-          // every `edge_runtime.secrets.*` entry is decryptable via
-          // `assertDecryptableSecrets`, but only for that validation's
-          // own side effect — the decrypted plaintext is discarded there,
-          // not threaded back into this value.
+          // Every `config.Secret`-typed field must be decrypted unconditionally so the Edge
+          // Runtime container receives plaintext. `toPlainEdgeRuntimeConfig` only interpolates
+          // `env()` and unwraps `Redacted` — it never decrypts a dotenvx `encrypted:` value, so
+          // without this step the literal ciphertext would reach the container's env file.
+          // `checkDbToml` already validates every secret is decryptable, but discards the
+          // decrypted plaintext there.
           const rawEdgeRuntimeSecrets = toPlainEdgeRuntimeConfig(resolvedEdgeRuntime).secrets;
           const dotenvPrivateKeys = collectDotenvPrivateKeys({
             ...projectEnvValues,
@@ -1792,16 +1545,11 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             platform: runtimeInfo.platform,
           };
           const runtime: StartedRuntime = yield* startStackEdgeRuntimeContainer(edgeRuntimeInput);
-          // Deliberately NOT calling `runtime.cleanup` here — see
-          // `edge-runtime.service.ts`'s header for why. Unlike every other
-          // service built here (`createContainer`'s `restartPolicy:
-          // "unless-stopped"`), Edge Runtime's own bring-up sets no Docker
-          // restart policy at all — but its bind-mounted host temp files
-          // (env-file/multiline-env-script staging) must still exist for
-          // as long as the container can be reattached to; `start
-          // EdgeRuntimeContainer` already runs `cleanup` on a failed or
-          // interrupted bring-up internally, so only the success path must
-          // leave it alone.
+          // Not calling `runtime.cleanup` here: unlike every other service (`createContainer`'s
+          // `restartPolicy: "unless-stopped"`), Edge Runtime sets no Docker restart policy, so
+          // its bind-mounted host temp files must still exist for as long as the container can
+          // be reattached to. `startStackEdgeRuntimeContainer` already runs cleanup internally on
+          // a failed or interrupted bring-up, so only the success path must leave it alone.
           started.set(runtime.containerId, edgeRuntimeInput.image);
           edgeRuntimeGateway = {
             containerId: runtime.containerId,
@@ -1814,21 +1562,12 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         const image = imagePlanByService.get(entry.service);
         if (image === undefined) continue;
 
-        // Several service builders do synchronous, throwing work over
-        // config.toml string fields `@supabase/config`'s schema does not
-        // itself validate as durations/sizes (GoTrue's
-        // `auth.email/sms.max_frequency`/sessions/mfa duration parsing and
-        // Storage's file-size-limit parsing are now caught earlier, eagerly,
-        // before any Docker work — see the `resolvedEmail`/
-        // `storageFileSizeLimit` validation above — but this `catchDefect`
-        // stays as defense-in-depth for any other field of this shape). A
-        // malformed value would otherwise surface as an uncaught Effect
-        // defect — `Effect.onError` below still rolls back on a defect
-        // either way, but the user would see an opaque defect instead of a
-        // typed config error. `catchDefect` converts any such throw into
-        // the same typed config error every other malformed-config path in
-        // this handler already produces, matching the fail-fast-at-decode
-        // behavior every other field validates with.
+        // Defense-in-depth: some service builders do synchronous, throwing work over config
+        // fields `@supabase/config`'s schema doesn't itself validate (most such fields are now
+        // caught earlier, eagerly, above). A malformed value would otherwise surface as an
+        // uncaught Effect defect — `Effect.onError` below still rolls back either way, but
+        // `catchDefect` converts it into the same typed config error every other malformed-config
+        // path produces, instead of an opaque defect.
         const resolvedServiceImage = resolveImage(image);
         const { spec, excludeFromHealthWatch } = yield* buildSpecForService(
           entry.service,
@@ -1866,19 +1605,13 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         storageContainerId,
       };
     }).pipe(
-      // The rollback's `NoBackupVolume` value — `true` only when this run's
-      // Postgres volume was freshly created (see `isFreshVolume` above): a
-      // rollback prunes volumes on a brand-new, empty first-ever `start`,
-      // but never touches a pre-existing user's data on a failed restart.
+      // The rollback's `NoBackupVolume` value is `true` only when this run's Postgres volume was
+      // freshly created — a rollback prunes volumes on a first-ever `start`, but never touches a
+      // pre-existing user's data on a failed restart.
       //
-      // `Effect.onError`, not `Effect.tapError`: this must roll back on ANY
-      // failure from bring-up, including a `context.Canceled`-equivalent
-      // interrupt from a SIGINT during bring-up. `tapError` is built on
-      // `Cause.findError`, which only matches `Fail` reasons — a pure fiber
-      // interrupt never reaches it. `onError` fires on any failure outcome
-      // (including interruption) and its cleanup effect runs
-      // uninterruptibly, matching the unconditional rollback check every
-      // other failure path in this handler needs.
+      // `Effect.onError`, not `Effect.tapError`: this must roll back on any failure from bring-up,
+      // including a SIGINT interrupt. `tapError` is built on `Cause.findError`, which only
+      // matches `Fail` reasons — a pure fiber interrupt never reaches it.
       Effect.onError(() =>
         rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
       ),
@@ -1920,75 +1653,32 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
     const bringUpResult = yield* bringUp;
 
-    // Only reached when Postgres itself became healthy (or the volume
-    // already existed) — the `postgresUnhealthyIgnored` short-circuit above
-    // skips this entire block, falling through to the tail below either way
-    // but never re-entering these later steps once the DB bootstrap has
-    // already returned.
+    // Only reached when Postgres itself became healthy — the `postgresUnhealthyIgnored`
+    // short-circuit above skips this entire block and falls through to the tail below instead.
     if (bringUpResult.kind === "started") {
       const { started, postgrestGateway, edgeRuntimeGateway, storageContainerId } = bringUpResult;
 
-      // Wraps steps 9-11 below (bulk health wait, the ignore-health-check
-      // storage-only recheck-and-seed, the success-path bucket seeding, and
-      // the `cli_stack_started` capture) in the same `Effect.onError` rollback
-      // `bringUp`'s own pipe uses above. This whole tail must be checked for
-      // a single failure outcome exactly once — a SIGINT/SIGTERM landing
-      // anywhere in this tail, not just during bring-up, must roll back
-      // too. Per-step manual `rollbackStart` calls would miss a pure
-      // fiber interrupt between steps (see the `bringUp` pipe's doc comment
-      // for why `onError`, not `tapError`, is required), so every fail path
-      // below just fails and lets this single outer `onError` roll back.
+      // Wraps steps 9-11 below in the same `Effect.onError` rollback `bringUp`'s own pipe uses
+      // above, so a SIGINT/SIGTERM landing anywhere in this tail also rolls back. Per-step manual
+      // `rollbackStart` calls would miss a pure fiber interrupt between steps (see the `bringUp`
+      // pipe's comment for why `onError`, not `tapError`, is required).
       yield* Effect.gen(function* () {
         // 9. Bulk health check over every non-Postgres started container, at
         // the generic 30s service timeout.
         if (output.format === "text") {
           yield* output.raw(START_WAITING_FOR_HEALTH_CHECKS_MESSAGE, "stderr");
         }
-        // The PostgREST/Edge Runtime readiness probes go through Kong over HTTP(S) —
-        // when `api.tls.enabled`, Kong's local cert is self-signed, so the root
-        // runtime's `HttpClient.HttpClient` (built from `FetchHttpClient.layer` over
-        // plain `fetch`) would fail TLS verification on every probe and the health
-        // check would exhaust its full timeout even though the services are
-        // actually healthy. Resolve the same local Kong CA `seedBucketsRun`'s
-        // own gateway calls already trust (`projectRef: ""` never touches the
-        // network — see `resolveStorageCredentials`'s local branch) and
-        // override just the underlying `FetchHttpClient.Fetch` primitive — NOT the
-        // whole `HttpClient.HttpClient` layer — so this only takes effect for a
-        // `FetchHttpClient`-backed client (production) and is a no-op against a
-        // hand-rolled `HttpClient.make(...)` mock (this file's own integration
-        // tests), which never reads `FetchHttpClient.Fetch` at all.
+        // PostgREST/Edge Runtime readiness probes go through Kong over HTTP(S); when
+        // `api.tls.enabled`, Kong's cert is self-signed, so the default `HttpClient` would fail
+        // TLS verification and the health check would time out even though the services are
+        // healthy. Overrides only the underlying `FetchHttpClient.Fetch` primitive, so it's a
+        // no-op against a mock `HttpClient` (this file's own tests).
         //
-        // Folds the hoisted, env-overridden `apiEnabled`/`apiPort`/`apiTlsEnabled`/
-        // `apiTlsCertPath`/`apiTlsKeyPath`/`values.apiUrl` into `config` (not the
-        // raw values) so a `SUPABASE_API_ENABLED`/`SUPABASE_API_PORT`/
-        // `SUPABASE_API_TLS_{ENABLED,CERT_PATH,KEY_PATH}`/`SUPABASE_API_EXTERNAL_URL`
-        // override that actually brought Kong up on a different port/TLS/cert/
-        // external URL also reaches every local Storage-gateway caller below.
-        // `resolveStorageCredentials` now folds the same `SUPABASE_API_*`
-        // overrides itself (`resolveLocalApiConfig`,
-        // `storage-credentials.ts` — #6452) and re-resolves this
-        // pre-folded config to identical values, so the api fold here is what
-        // guarantees the exact resolved-URL/TLS/cert locals Kong's own spec used
-        // (`apiEnabled`/`apiTlsCertPath`/`apiTlsKeyPath`) are the ones handed
-        // on. Also folds in the
-        // already-resolved `values.jwtSecret`/`values.serviceRoleKey` (decrypted,
-        // env/dotenv-overridden, signing-keys-aware — the same values the real
-        // GoTrue/Storage containers were started with) instead of the raw
-        // `config.auth.*`. `resolveStorageCredentials`'s local branch now
-        // applies the same env/dotenv override + decrypt composition itself,
-        // but its own derivation is symmetric-only (`generateGoJwt`), so this
-        // fold remains load-bearing for the `signing_keys_path` case where
-        // `values.serviceRoleKey` is asymmetric-signed.
-        // Also folds in `storageFileSizeLimit`/
-        // `storageVectorEnabled` so `seedBucketsRun` (which reads
-        // `config.storage.file_size_limit`/`config.storage.vector.enabled` to fill
-        // bucket defaults and gate vector-upsert seeding, `seed-buckets.ts`)
-        // sees the same values the real Storage container was started with, not the
-        // raw un-overridden config.
-        // Reused for both this health-check CA lookup and the two
-        // `seedBucketsRun` calls below (`resolvedConfig`), so bucket
-        // seeding never independently reloads config.toml and silently drops
-        // these same overrides.
+        // `effectiveLocalStorageConfig` folds the hoisted, env-overridden api/auth/storage values
+        // into `config` rather than the raw config, so every consumer below sees the exact
+        // resolved port/TLS/cert/secrets the real containers were started with. Reused for both
+        // this CA lookup and the two `seedBucketsRun` calls below, so bucket seeding never
+        // independently reloads config and drops these overrides.
         const effectiveLocalStorageConfig = {
           ...config,
           api: {
@@ -2042,23 +1732,15 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         if (Result.isFailure(healthResult)) {
           const error = healthResult.failure;
           if (flags.ignoreHealthCheck && isUnhealthyStartError(error)) {
-            // `ignoreHealthCheck`/`isUnhealthyStartError` only gates THIS
-            // wait, not Postgres's own earlier one. There's additionally a
-            // narrower, storage-only recheck-and-seed here: when it's a fresh
-            // volume and Storage was among the
-            // started containers, wait for Storage alone to become healthy, and
-            // if it does, seed buckets. A seed FAILURE there REPLACES this
-            // original health error and hard-fails (with rollback) —
-            // since a plain seed error never satisfies
-            // `isUnhealthyStartError` and so never gets this branch's own
-            // downgrade-to-warning treatment. A seed SUCCESS (or a storage
-            // recheck that never turns healthy) changes nothing: fall through to
-            // the same downgrade-to-warning as every other ignored-unhealthy
-            // failure.
+            // Gates only this wait, not Postgres's own earlier one. Additionally, when it's a
+            // fresh volume and Storage was among the started containers, wait for Storage alone
+            // and seed buckets if it becomes healthy. A seed failure there replaces this health
+            // error and hard-fails (a plain seed error never satisfies `isUnhealthyStartError`,
+            // so it skips this branch's own downgrade-to-warning). A seed success, or a storage
+            // recheck that never turns healthy, falls through to the same downgrade-to-warning.
             if (isFreshVolume && storageContainerId !== undefined) {
-              // `images` is intentionally the whole run's registry, not scoped to
-              // this one-container watch list — the hint can only ever key off
-              // containers that actually appear in this call's own failures.
+              // `images` is the whole run's registry, not scoped to this one-container watch
+              // list — the hint can only key off containers that appear in this call's own failures.
               const storageHealthResult = yield* withLocalKongCa(
                 waitForHealthyServices(spawner, [storageContainerId], {
                   images: started,
@@ -2092,24 +1774,14 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           }
         }
 
-        // 10. Storage-bucket seeding, gated on `isFreshVolume &&
-        // storageContainerId !== undefined` — only when the Postgres data
-        // volume was freshly created this run AND Storage actually started.
-        // Reached only on a genuine health-check SUCCESS
-        // (`Result.isSuccess`): unreachable on the `--ignore-health-check`
-        // downgrade-to-warning fallthrough — that fallthrough still fails
-        // with the original unhealthy error before ever reaching it
-        // (mutually exclusive with the narrower storage-only recheck-and-seed
-        // path implemented above, inside the `Result.isFailure(healthResult)`
-        // branch: that branch only runs when this one's
-        // `Result.isSuccess(healthResult)` guard is false).
+        // 10. Storage-bucket seeding, gated on a freshly created volume and Storage having
+        // started. Reached only on a genuine health-check success — mutually exclusive with the
+        // narrower storage-only recheck-and-seed path above, which only runs when this guard is
+        // false.
         //
-        // A seeding failure propagates as a normal command failure and
-        // still rolls back via the same outer `Effect.onError` as
-        // everything else in this tail: a plain seed error (unlike the
-        // health-check timeout above) never satisfies
-        // `isUnhealthyStartError`, so it always takes that branch
-        // regardless of `--ignore-health-check`.
+        // A seeding failure rolls back via the same outer `Effect.onError`: a plain seed error
+        // never satisfies `isUnhealthyStartError`, so it always fails regardless of
+        // `--ignore-health-check`.
         if (Result.isSuccess(healthResult) && isFreshVolume && storageContainerId !== undefined) {
           yield* seedBucketsRun({
             projectRef: "",
@@ -2124,12 +1796,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           });
         }
 
-        // 11. Success ONLY: fire `cli_stack_started` exactly once, no
-        // properties/groups — this capture sits AFTER the entire
-        // bulk-health-check block (including the ignore-health-check
-        // downgrade path above), so a genuine bulk-health-check failure
-        // never reaches it even when `--ignore-health-check` downgrades it
-        // to a warning.
+        // 11. Fires `cli_stack_started` exactly once, only on success. Sits after the entire
+        // bulk-health-check block, so a genuine failure never reaches it even when
+        // `--ignore-health-check` downgrades it to a warning.
         if (Result.isSuccess(healthResult)) {
           yield* analytics.capture(EventStackStarted, {});
         }
@@ -2140,28 +1809,19 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       );
     }
 
-    // The final status render trusts "config-enabled + not --exclude'd" as
-    // a proxy for "actually running" — true whenever this line is reached
-    // normally (it would have already failed and rolled back before
-    // getting here if any enabled, non-excluded container failed to
-    // start). The one exception: an IGNORED Postgres health-check timeout
-    // (`bringUpResult.kind === "postgresUnhealthyIgnored"` above) reaches
-    // this same tail even though every OTHER enabled, non-excluded
-    // container was never even created — the status render shows them
-    // anyway, purely from config, with no Docker query to contradict it.
-    // Edge Runtime now genuinely starts under that same "config-enabled"
-    // gate (no more force-exclusion from status rendering), so the raw
-    // `--exclude` values are enough on their own.
+    // The final status render trusts "config-enabled and not --exclude'd" as a proxy for
+    // "actually running", since a real failure would have already rolled back before reaching
+    // here. The exception: an ignored Postgres health-check timeout reaches this same tail even
+    // though every other container was never created — the status render shows them anyway,
+    // purely from config, with no Docker query to contradict it.
     const statusExcluded = flags.exclude;
 
     if (output.format === "text") {
       yield* output.raw(startCompletedMessage(), "stderr");
-      // Called DIRECTLY, unlike the already-running branch's `status.Run`: no
-      // re-health-check, no "stopped services" diffing, just the raw
-      // `--exclude` values against the config/values already resolved (and
-      // just health-checked) above. `values` is passed through as
-      // `precomputedLocal` so this reuses the exact keys already baked into
-      // the containers `bringUp` just created, instead of re-deriving them.
+      // Unlike the already-running branch, no re-health-check or "stopped services" diffing —
+      // just the raw `--exclude` values against the config already resolved above. `values` is
+      // passed as `precomputedLocal` so this reuses the exact keys already baked into the
+      // containers `bringUp` just created.
       const { values: statusValues, names } = yield* buildStatusValues(statusExcluded, values);
       yield* output.raw(renderStatusPretty(statusValues, names));
       yield* output.raw(startSecurityNotice(), "stderr");

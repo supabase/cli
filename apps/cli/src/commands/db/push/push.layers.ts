@@ -20,12 +20,12 @@ import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts
  * connection, the db-config resolver, project-ref resolution, and the
  * linked-project cache.
  *
- * Like `db lint`, it deliberately uses the **lazy** `commandPlatformApiFactoryLayer`
- * (not the eager management-API runtime) so the auth-free `--local` path never
- * resolves an access token at layer-build time. `commandSettingsLayer` is provided
- * to each consumer that needs it (CLAUDE.md invariant 5); the single
- * `identityStitchLayer` reference is shared so the factory, the cache, and
- * the db-config resolver share one `stitchAttempted` guard.
+ * Like `db lint`, it uses the lazy `commandPlatformApiFactoryLayer` (not the eager
+ * management-API runtime) so the auth-free `--local` path never resolves an access
+ * token at layer-build time. `commandSettingsLayer` is provided to each consumer that
+ * needs it (CLAUDE.md invariant 5); the single `identityStitchLayer` reference is
+ * shared so the factory, the cache, and the db-config resolver share one
+ * `stitchAttempted` guard.
  */
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));

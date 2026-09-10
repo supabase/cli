@@ -12,13 +12,9 @@ import { Api, type LoginSessionResponse } from "./api.service.ts";
 const BODY_DECODE_REASONS = new Set<string>(["DecodeError", "EmptyBodyError"]);
 
 /**
- * Maps any fetcher failure to an {@link ApiError}, preserving the classification
- * signal:
- * - a received status → `statusCode` (transport error → status-less, classified
- *   as network);
- * - a body/schema decode failure — whether an `HttpClientError` decode reason or
- *   a non-`HttpClientError` thrown while decoding — → `decode: true`, classified
- *   as an API response problem instead of network.
+ * Maps any fetcher failure to an {@link ApiError}, preserving the classification signal: a
+ * received status → `statusCode` (no status → classified as network); a body/schema decode
+ * failure → `decode: true`, classified as an API response problem instead of network.
  */
 function mapToApiError(error: unknown): Effect.Effect<never, ApiError> {
   if (HttpClientError.isHttpClientError(error)) {

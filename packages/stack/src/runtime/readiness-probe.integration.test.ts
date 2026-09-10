@@ -168,7 +168,9 @@ describe("private endpoint readiness probe", () => {
   it.live("reports a failed endpoint after bounded retries", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        let attempts = 0;
         const server = createHttpServer((_request, response) => {
+          attempts += 1;
           response.statusCode = 503;
           response.end("not ready");
         });
@@ -178,6 +180,7 @@ describe("private endpoint readiness probe", () => {
           { retries: 1, retryDelay: 0 },
         ).pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
+        expect(attempts).toBe(2);
       }),
     ),
   );

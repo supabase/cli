@@ -16,6 +16,7 @@ import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-va
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveYes, OutputFlag } from "../../../command-internal/global-flags.ts";
+import { unsupportedOutputFlagMessage } from "../../../command-internal/go-output-flag.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
@@ -44,34 +45,11 @@ import {
 import type { ConfigPullFlags } from "./pull.command.ts";
 
 /**
- * `config pull` — writes a remote project or branch's configuration into
- * `supabase/config.toml`/`.json` (root, or an existing/new `[remotes.*]`
- * block), after a confirmation prompt. Mirrors `config diff`'s target
- * resolution, fetch, and classify steps (`../diff/diff.handler.ts`)
- * step-for-step through the point where the two commands diverge (CLI-2064).
- *
- * The plan/apply run-core (opening the base config source, planning,
- * applying, and the render/payload builders) is hoisted to
- * `command-internal/config-pull-run.ts` (CLI-1272) so the `supabase pull`
- * orchestrator (`commands/pull/`) can reuse it without importing this
- * command family's own files. `configPull` (steps 1-4) rejects
- * `-o/--output`, then opens the base config source via
- * `openConfigPullSource` — a load with NO `[remotes.*]` overlay,
- * paired with that SAME load's own captured on-disk text (`LoadedCliConfig.rawText`)
- * — BEFORE any network call or target resolution, then resolves the target
- * and delegates to `runConfigPull` (steps 5-15) — the reusable,
- * target-agnostic body kept here since it is not itself reused by another
- * command family; `supabase pull` composes the SAME plan/apply/render pieces
- * into its own multi-step confirmation instead of calling `runConfigPull`
- * directly. The plan's own `ConfigPullInput` sketch omits
- * the loaded config/file text; this implementation carries them through
- * explicitly (as a single `ConfigPullSource`) instead of
- * reloading/re-reading inside `runConfigPull`, since `configPull`
- * already holds both by the time it delegates. Pairing them behind one
- * exported constructor — rather than two independently-assembled fields on
- * `ConfigPullInput` — is what makes "loaded without overlay, text taken
- * from that SAME load" true BY CONSTRUCTION rather than by caller convention
- * (see `ConfigPullSource`'s own doc comment, `command-internal/config-pull-run.ts`).
+ * `config pull` writes a remote project or branch's configuration into `supabase/config.toml`/
+ * `.json` (the config root, or an existing/new `[remotes.*]` block) after a confirmation prompt.
+ * Its target resolution, fetch, and classify steps mirror `config diff`'s, up to the point where
+ * the two commands diverge. The plan/apply run-core is hoisted to
+ * `command-internal/config-pull-run.ts` so the `supabase pull` orchestrator can reuse it.
  */
 
 export { openConfigPullSource };
@@ -84,8 +62,7 @@ const mapBranchResolveError = mapHttpError({
   statusMessage: unexpectedStatusMessage,
 });
 
-/** Error construction for `resolveConfigTarget` (`command-internal/project-target.ts`), keeping
- *  `config pull`'s own tagged error classes; the message wording is shared there. */
+// Maps resolveConfigTarget's generic errors onto config pull's own tagged error classes.
 const configTargetErrors = configTargetErrorsFor({
   notLinked: ConfigPullBranchNotLinkedError,
   parentRefInvalid: ConfigPullParentRefInvalidError,
@@ -93,26 +70,21 @@ const configTargetErrors = configTargetErrorsFor({
   branchNotReady: ConfigPullBranchNotReadyError,
 });
 
-/**
- * Steps 5-15 of `config pull`, reusable independently of the CLI flag
- * surface (plan §1.6's library seam) — everything AFTER the target is known.
- */
+/** Everything `config pull` does once the target is known, reusable independently of the CLI
+ *  flag surface. */
 export interface ConfigPullInput {
   readonly target: ConfigTarget;
   /** `--remote-label`, already filtered so an empty value reads as absent. */
   readonly remoteLabel: string | undefined;
   readonly dryRun: boolean;
   readonly force: boolean;
-  /** `--yes` OR `SUPABASE_YES` (the GLOBAL flag — `resolveYes`, no
-   * project-`.env` fallback: unlike `config push`, this command never loads
-   * one). */
+  /** `--yes` or `SUPABASE_YES` via `resolveYes`; unlike `config push`, this command never loads
+   *  a project `.env` fallback. */
   readonly yes: boolean;
   /**
-   * The base config load + its on-disk text (`configPull` steps 2-3),
-   * produced by {@link openConfigPullSource} BEFORE target resolution
-   * (a malformed config must not burn a branch-resolution round trip) — so
-   * `configPull` already holds it by the time it delegates here,
-   * passed through rather than reopened.
+   * The base config load and its on-disk text, produced by {@link openConfigPullSource} before
+   * target resolution so a malformed config doesn't burn a branch-resolution round trip; passed
+   * through rather than reopened.
    */
   readonly source: ConfigPullSource;
 }
@@ -128,10 +100,9 @@ export const runConfigPull = Effect.fnUntraced(function* (input: ConfigPullInput
   const { changeSet, scope, plan: finalPlan, context, configFilePath } = runPlan;
   const ref = context.projectRef;
 
-  // The TEXT one-line disposition drops the caveats (`opts.withCaveats:
-  // false`, item F.2 of CLI-2064's fix pass) — the change-by-change body
-  // above already rendered the same `Note:` lines once; the machine-mode
-  // `message` keeps them, since it is the only place an agent reads them.
+  // The text one-line disposition drops the caveats (opts.withCaveats: false) since the
+  // change-by-change body above already rendered the same Note: lines; the machine-mode message
+  // keeps them.
   const emitOutcome = (planForOutput: ConfigPullPlan, outcome: ConfigPullOutcome) =>
     output.format !== "text"
       ? output.success(
@@ -142,9 +113,8 @@ export const runConfigPull = Effect.fnUntraced(function* (input: ConfigPullInput
           `${configPullSummaryMessage(changeSet, scope, planForOutput, outcome, { withCaveats: false })}\n`,
         );
 
-  // 9. `--dry-run`: preview only. Never runs the git check, never prompts,
-  // never touches the file. Comes before the `hasWork` short-circuit below —
-  // a planner defect must be visible even on a run that would do nothing.
+  // --dry-run previews only: no git check, no prompt, no write. Checked before the hasWork
+  // short-circuit below so a planner defect stays visible even on a run that would do nothing.
   if (input.dryRun) {
     if (output.format === "text") {
       yield* output.raw(renderConfigPullText(changeSet, scope, finalPlan, ref, context.configPath));
@@ -153,12 +123,9 @@ export const runConfigPull = Effect.fnUntraced(function* (input: ConfigPullInput
     return;
   }
 
-  // 9.5. Nothing planned AT ALL — no value write, no `[remotes.*]` block to
-  // create — success, no git check, no prompt. Doing this check BEFORE the
-  // git guard (rather than after, as it used to run) is what fixes bug A: a
-  // converged run never spawns `git status` at all, so an
-  // uncommitted-but-otherwise-clean config file never aborts a pull that was
-  // never going to touch it.
+  // Nothing planned at all (no value write, no block to create) succeeds with no git check and
+  // no prompt: a converged run never spawns `git status`, so an uncommitted-but-otherwise-clean
+  // file never aborts a pull that wouldn't touch it.
   if (!runPlan.hasWork) {
     if (output.format === "text") {
       yield* output.raw(renderConfigPullText(changeSet, scope, finalPlan, ref, context.configPath));
@@ -167,11 +134,9 @@ export const runConfigPull = Effect.fnUntraced(function* (input: ConfigPullInput
     return;
   }
 
-  // 10. Git dirty guard (plan §1.4), reached only when there's work to do.
-  // `--force` skips it entirely — no check, no warning, no prompt-default
-  // flip. `--yes` aborts rather than bypasses (CLI-2064 item C): no human is
-  // on hand to read the warning and answer the prompt honestly once `--yes`
-  // answers it automatically, on any TTY.
+  // Git dirty guard, reached only when there's work to do. --force skips it entirely; --yes
+  // aborts rather than bypasses it, since no human is available to confirm once --yes answers
+  // automatically.
   let dirty = false;
   if (!input.force) {
     const dirtyOption = yield* pathHasUncommittedChanges(configFilePath);
@@ -185,9 +150,8 @@ export const runConfigPull = Effect.fnUntraced(function* (input: ConfigPullInput
       }
     }
   }
-  // Reuses the SAME `plan.warnings` hook the planner's own path-scoped
-  // warnings render through (`renderConfigPullText`'s "Warnings:"
-  // section) — a repository-level warning, no `path`.
+  // Reuses the same plan.warnings hook the planner's path-scoped warnings render through
+  // (renderConfigPullText's "Warnings:" section) — a repository-level warning, with no path.
   const planForRender: ConfigPullPlan = dirty
     ? {
         ...finalPlan,
@@ -201,14 +165,10 @@ export const runConfigPull = Effect.fnUntraced(function* (input: ConfigPullInput
     );
   }
 
-  // 11. Confirm. A run with at least one value write keeps the established
-  // "Apply N change(s)..." message even when it ALSO creates a block (the
-  // rendered body above already called that out) — naming the destination
-  // block too, when writing into one, so the prompt itself is unambiguous
-  // about WHERE (omitted for the config root); a block-ONLY run (no value
-  // writes — bug B's zero-drift branch target) gets its own message naming
-  // the block directly, since there is no per-change body to convey it
-  // otherwise.
+  // A run with at least one value write keeps the "Apply N change(s)..." message, naming the
+  // destination block when writing into one so the prompt is unambiguous about where. A
+  // block-only run (no value writes, a zero-drift branch target) gets its own message naming
+  // the block directly, since there's no per-change body to convey it.
   let confirmMessage: string;
   if (planForRender.writes.length > 0) {
     const destinationSuffix =
@@ -219,35 +179,30 @@ export const runConfigPull = Effect.fnUntraced(function* (input: ConfigPullInput
   } else if (planForRender.createdTable !== undefined) {
     confirmMessage = `Create [remotes.${configPullCreatedBlockLabel(planForRender.createdTable)}] in ${context.configPath}?`;
   } else {
-    // Unreachable: `writes.length === 0` only reaches this branch when
-    // `hasWork` was true, which (post the step-9.5 short-circuit above) means
-    // `createdTable` must be set.
+    // Unreachable: writes.length === 0 only reaches this branch when hasWork was true, which
+    // (after the short-circuit above) means createdTable must be set.
     return yield* Effect.die(
       new Error("config pull: nothing to confirm — hasWork invariant violated"),
     );
   }
   const confirmed = yield* promptYesNo(output, input.yes, confirmMessage, dirty ? false : true);
   if (!confirmed) {
-    // Mirrors `config push`'s own treatment of a declined confirmation (each
-    // service is marked "skipped" and the command still succeeds) — a
-    // decline is a normal, expected outcome, not a failure: exit code stays
-    // 0 in every format.
+    // A decline is a normal, expected outcome, not a failure: exit code stays 0 in every format,
+    // mirroring config push's own treatment.
     yield* emitOutcome(planForRender, { dryRun: false, declined: true });
     return;
   }
 
-  // 12-13. Re-read against the step-3 baseline, apply, and write.
+  // Re-read against the baseline, apply, and write.
   yield* applyConfigPullRun({ runPlan, source: input.source });
 
-  // 14. Final summary/payload.
   yield* emitOutcome(planForRender, { dryRun: false, declined: false });
 });
 
 /**
- * `configPull` — the command-facing entry point (steps 1-4): rejects
- * `-o/--output`, opens the base config source (`openConfigPullSource`)
- * BEFORE any network call or target resolution, resolves the target, then
- * delegates to {@link runConfigPull} for the rest.
+ * The command-facing entry point: rejects `-o/--output`, opens the base config source before
+ * any network call or target resolution, resolves the target, then delegates to
+ * {@link runConfigPull}.
  */
 export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullFlags) {
   const goOutputFlag = yield* OutputFlag;
@@ -264,39 +219,31 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
     Option.filter(flags.remoteLabel, (value) => value.length > 0),
   );
 
-  // Written once the target is known, so the linked-project cache finalizer
-  // below only fires for invocations that got that far (mirrors `config
-  // diff`).
+  // Set once the target resolves, so the linked-project cache write below only fires for
+  // invocations that got that far.
   let resolvedRef: string | undefined;
 
   yield* Effect.gen(function* () {
-    // 1. Reject the Go-compat `-o/--output` flag outright, before anything
-    // else — `config pull` is a net-new TS command with no Go parity
-    // contract (CLI-2156, mirrors `config diff`).
+    // Reject -o/--output outright, before anything else: this command only supports
+    // --output-format.
     if (Option.isSome(goOutputFlag)) {
       return yield* new ConfigPullOutputFlagUnsupportedError({
-        message:
-          "the -o/--output flag is not supported by config pull; use --output-format json|stream-json instead.",
+        message: unsupportedOutputFlagMessage("config pull"),
       });
     }
 
-    // 1.5. The resolved `--workdir`/`SUPABASE_WORKDIR` must exist and be a
-    // directory before the base config source is opened — distinguishes
-    // "the directory doesn't exist" from "it exists but holds no
-    // `supabase/` project" (the step 2-3 load below).
+    // Validated before the base config source is opened so a missing workdir surfaces its own
+    // error rather than the generic "no supabase/ project" one.
     yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
       Effect.mapError((error) => new ConfigPullWorkdirError({ message: error.message })),
     );
 
-    // 2-3. Open the base config source (load with NO `[remotes.*]` overlay,
-    // paired with its on-disk text) BEFORE any network call or target
-    // resolution — a missing file must point at `supabase init` rather than
-    // the resolver's not-linked error, and a malformed document must not
-    // burn a branch-resolution round trip.
+    // Opens the base config source (no [remotes.*] overlay, paired with its on-disk text)
+    // before any network call or target resolution, so a missing file points at supabase init
+    // and a malformed document doesn't burn a branch-resolution round trip.
     const source = yield* openConfigPullSource();
 
-    // 4. Resolve the pull target — hoisted into `resolveConfigTarget`
-    // (`command-internal/project-target.ts`, shared with `config diff`/`config push`, CLI-2064).
+    // Resolves the pull target via resolveConfigTarget, shared with config diff/config push.
     const { ref, branch } = yield* resolveConfigTarget(
       requested,
       configTargetErrors,
@@ -313,10 +260,8 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
       source,
     });
   }).pipe(
-    // CLI Invariant #1: telemetry flushes on EVERY invocation —
-    // including load/parse failures and branch-resolution failures — while
-    // the linked-project cache write needs a resolved ref, so it fires
-    // exactly when one exists (mirrors `config diff`).
+    // Telemetry flushes on every invocation; the linked-project cache write only fires once a
+    // ref has resolved.
     Effect.ensuring(
       Effect.suspend(() =>
         resolvedRef === undefined ? Effect.void : linkedProjectCache.cache(resolvedRef),

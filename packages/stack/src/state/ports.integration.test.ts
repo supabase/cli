@@ -247,6 +247,7 @@ describe("port acquisition", () => {
           )
           .pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
+        expect(listeners).toHaveLength(1);
         expect(listeners.every((listener) => listener.binding.server.listening === false)).toBe(
           true,
         );

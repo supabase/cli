@@ -31,9 +31,7 @@ export const backupsRestore = Effect.fn("backups.restore")(function* (flags: Bac
   const ref = yield* resolver.resolve(flags.projectRef);
   const recoveryTimeTargetUnix = Option.getOrElse(flags.timestamp, () => 0);
 
-  // Cache + telemetry flush whether the main call succeeds or fails.
   yield* Effect.gen(function* () {
-    // Spinner only in human-facing text mode — see list.handler.ts.
     const restoring =
       output.format === "text" ? yield* output.task("Initiating PITR restore...") : undefined;
     yield* api.v1
@@ -46,9 +44,8 @@ export const backupsRestore = Effect.fn("backups.restore")(function* (flags: Bac
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
-    // Go ignores --output entirely (restore.go:22) and always writes the text line to stderr.
-    // We mirror that for every Go --output value except `json`, where we provide a TS-only
-    // structured payload (Go has no JSON for restore — adding one is non-breaking).
+    // --output is ignored for restore except `json`, a TS-only structured payload; every other
+    // value (including unset) writes the text line to stderr.
     if (goFmt === "json") {
       yield* output.raw(
         JSON.stringify({ message: "Started PITR restore", project_ref: ref }, null, 2) + "\n",
@@ -61,7 +58,6 @@ export const backupsRestore = Effect.fn("backups.restore")(function* (flags: Bac
       return;
     }
 
-    // pretty/yaml/toml/env (Go-compat) + TS text mode → byte-identical text line on stderr.
     yield* output.raw(`Started PITR restore: ${ref}\n`, "stderr");
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

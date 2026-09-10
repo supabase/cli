@@ -9,19 +9,17 @@ import { createSeedTable } from "./migration-history.ts";
 import { sqlFilesGlob } from "./sql-files-glob.ts";
 import { splitAndTrim } from "./sql-split.ts";
 
-/**
- * Seed-history DML, verbatim from Go's `pkg/migration/history.go`. The schema/table
- * DDL (with a transaction-scoped lock timeout) lives in `createSeedTable`.
- */
+// Seed-history DML; the schema/table DDL (with a transaction-scoped lock timeout) lives in
+// `createSeedTable`.
 const UPSERT_SEED_FILE =
   "INSERT INTO supabase_migrations.seed_files(path, hash) VALUES($1, $2) ON CONFLICT (path) DO UPDATE SET hash = EXCLUDED.hash";
 const SELECT_SEED_TABLE = "SELECT path, hash FROM supabase_migrations.seed_files";
 
 /** A local seed file resolved from `[db.seed].sql_paths`, with its content hash. */
 export interface SeedFile {
-  /** Workdir-relative, forward-slashed path (Go's `filepath.ToSlash`). */
+  /** Workdir-relative, forward-slashed path. */
   readonly path: string;
-  /** Lowercase hex SHA-256 of the file content (Go's `NewSeedFile`). */
+  /** Lowercase hex SHA-256 of the file content. */
   readonly hash: string;
   /** True when the remote `seed_files` row has a different hash (re-hash only). */
   readonly dirty: boolean;
@@ -47,17 +45,11 @@ const isUndefinedTable = (error: DbExecError): boolean =>
       !/column .* does not exist/iu.test(error.message);
 
 /**
- * Resolves the pending seed files for `db push --include-seed`. Mirrors Go's
- * `GetPendingSeeds` (`pkg/migration/seed.go:34-63`): glob the configured paths via
- * the shared {@link sqlFilesGlob} traversal (also used by `[db.migrations].
- * schema_paths`, `migration-apply.ts`, and by `seed.ts`'s own
- * `resolveSeedFiles` for the `migration down`/`start` seed step), warn — don't fail —
- * on empty patterns, read the remote `seed_files` hashes, and emit each local file
- * that is new (`dirty=false`) or hash-changed (`dirty=true`); files whose hash
- * already matches are skipped. Per-pattern warnings are joined with Go's `errors.Join`
- * newline semantics and surfaced unconditionally (`seed.go:36-38`) — unlike the
- * schema-files apply path (see `applySchemaFiles`), which only surfaces a
- * warning when it is the ONLY outcome.
+ * Resolves the pending seed files for `db push --include-seed`: globs the configured
+ * patterns via {@link sqlFilesGlob}, warns (without failing) on empty patterns, reads the
+ * remote `seed_files` hashes, and emits each local file that is new (`dirty=false`) or
+ * hash-changed (`dirty=true`), skipping files whose hash already matches. Unlike
+ * `applySchemaFiles`, per-pattern warnings are always surfaced, not only when that's the sole outcome.
  */
 export const getPendingSeeds = Effect.fnUntraced(function* (
   session: DbSession,
@@ -76,15 +68,14 @@ export const getPendingSeeds = Effect.fnUntraced(function* (
 
   const applied = yield* readRemoteSeeds(session);
   for (const file of files) {
-    // Go's `NewSeedFile` hashes the raw file stream (`io.Copy`, `pkg/migration/file.go:184`),
-    // so hash the bytes — not a UTF-8-decoded string, which replaces invalid sequences and
-    // would drift from the Go-recorded `seed_files` hash for a non-UTF-8 seed (SQL_ASCII dump
-    // / binary COPY payload), spuriously re-running it across a Go ↔ native switch.
+    // Hashes the raw bytes, not a UTF-8-decoded string: decoding would replace invalid
+    // sequences in a non-UTF-8 seed (SQL_ASCII dump / binary COPY payload) and silently
+    // change its hash.
     const content = yield* fs.readFile(path.isAbsolute(file) ? file : path.join(workdir, file));
     const hash = createHash("sha256").update(content).digest("hex");
     const appliedHash = applied.get(file);
     if (appliedHash !== undefined) {
-      if (appliedHash === hash) continue; // Already applied, unchanged.
+      if (appliedHash === hash) continue;
       pending.push({ path: file, hash, dirty: true });
       continue;
     }
@@ -94,11 +85,9 @@ export const getPendingSeeds = Effect.fnUntraced(function* (
 });
 
 /**
- * Applies pending seed files. Mirrors Go's `SeedData` + `ExecBatchWithCache`
- * (`pkg/migration/seed.go:65-83`, `file.go:198-217`): create the `seed_files`
- * table, then per file emit the dirty/clean status line and, in one transaction,
- * run the file's statements (skipped when dirty — only the hash is refreshed)
- * followed by the `seed_files` hash upsert.
+ * Applies pending seed files: creates the `seed_files` table, then per file emits the
+ * dirty/clean status line and, in one transaction, runs the file's statements (skipped when
+ * dirty — only the hash is refreshed) followed by the `seed_files` hash upsert.
  */
 export const seedData = <E>(
   session: DbSession,
@@ -111,11 +100,8 @@ export const seedData = <E>(
   Effect.gen(function* () {
     const output = yield* Output;
     if (seeds.length === 0) return;
-    // Go's `CreateSeedTable` (history.go:54-64) runs `SET lock_timeout = '4s'` +
-    // schema/table DDL in one implicit transaction, so a conflicting schema/table lock
-    // fails promptly but the timeout reverts on COMMIT and never leaks into the seed
-    // SQL run below. `createSeedTable` reproduces that with BEGIN + SET LOCAL +
-    // DDL + COMMIT (creating the schema first so a seed-only run doesn't fail).
+    // `createSeedTable` runs BEGIN + SET LOCAL lock_timeout + schema/table DDL + COMMIT, so
+    // a conflicting lock fails promptly but the timeout never leaks into the seed SQL below.
     yield* createSeedTable(session);
     for (const seed of seeds) {
       yield* output.raw(
@@ -124,14 +110,10 @@ export const seedData = <E>(
           : `Seeding data from ${seed.path}...\n`,
         "stderr",
       );
-      // Go's `ExecBatchWithCache` parses the file (read + `SplitAndTrim`)
-      // UNCONDITIONALLY before the dirty check (`file.go:198-211`), so a dirty seed
-      // that is unreadable or contains malformed SQL still fails and leaves the
-      // previous hash — only the queueing of statements is gated on `Dirty`. Parsing
-      // includes the same `SUPABASE_SCANNER_BUFFER_SIZE` enforcement every other
-      // `parseFile` caller gets (`checkScannerBufferSize`'s own doc comment) — Go's
-      // `SeedFile.ExecBatchWithCache` runs through the identical `parseFile`, so an
-      // oversized seed statement must fail here too, not execute silently.
+      // The file is read and parsed unconditionally, before the dirty check, so an
+      // unreadable or malformed dirty seed still fails (leaving the previous hash) — only
+      // the queueing of statements is gated on `dirty`. This also applies the same
+      // `SUPABASE_SCANNER_BUFFER_SIZE` enforcement as any other `parseFile` caller.
       const content = yield* fs.readFileString(
         path.isAbsolute(seed.path) ? seed.path : path.join(workdir, seed.path),
       );
@@ -142,8 +124,8 @@ export const seedData = <E>(
       const body = Effect.gen(function* () {
         for (const statement of statements) {
           yield* session.exec(statement);
-          // A top-level role revert drops a stepped-down session to the login
-          // role; restore `postgres` right away (supabase/cli#6236).
+          // A top-level role revert drops a stepped-down session to the login role; restore
+          // `postgres` immediately so later statements run with the expected privileges.
           if (session.restoreRoleSql !== undefined && revertsToLoginRole(statement)) {
             yield* session.exec(session.restoreRoleSql);
           }

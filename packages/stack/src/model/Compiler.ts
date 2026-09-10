@@ -447,10 +447,9 @@ const releaseFor = <T>(
   const selected = extract(raw, "version");
   const selector =
     typeof selected === "string" ? selected : (previousVersion ?? module.defaultVersion);
-  // The CLI config exposes PostgreSQL as a major selector (for example `15`
-  // or `17`), while the stack catalog persists a concrete release. Resolve a
-  // major against the catalog here so the CLI never needs to know artifact
-  // patch IDs. Exact selectors keep their existing behavior for every module.
+  // The CLI config exposes PostgreSQL as a major selector (`15`, `17`), while the catalog
+  // persists a concrete release; resolve a major against the catalog here so the CLI never
+  // needs to know artifact patch IDs.
   const majorSelector = module.name === "database" && /^\d+$/.test(selector);
   const resolvedSelector = majorSelector
     ? (() => {

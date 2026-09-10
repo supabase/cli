@@ -81,20 +81,10 @@ import {
 } from "../commands/config/pull/pull.errors.ts";
 
 /**
- * `config pull`'s plan/apply run-core (CLI-1272): the pieces hoisted out of
- * `commands/config/pull/pull.handler.ts`/`pull.format.ts` so the `supabase
- * pull` orchestrator (`commands/pull/`) can drive the SAME plan, apply, and
- * emission-adjacent formatting logic as the standalone `config pull` command
- * without one command family importing another's command-local files
- * (`code-structure.unit.test.ts`'s "prevents commands from importing other
- * command internals" rule). `commands/config/pull/pull.handler.ts` still owns
- * the CLI-facing `configPull` entry point and the reusable `runConfigPull`
- * body (steps 1-4 and 9-15); this module owns everything a second caller also
- * needs verbatim: opening the base config source (steps 2-3), planning (steps
- * 5-8), applying (steps 12-13), and the render/payload builders both callers'
- * confirmation/summary/machine output share. `pull.format.ts` re-exports the
- * payload/render pieces that moved here so its own (unmodified) test suite
- * keeps resolving them from the same path.
+ * `config pull`'s plan/apply core, hoisted out of `commands/config/pull/` so
+ * `commands/pull/` can reuse the same plan/apply/formatting logic without importing
+ * another command's internals. `pull.handler.ts` still owns the CLI entry point;
+ * `pull.format.ts` re-exports the payload/render pieces that moved here.
  */
 
 export interface ConfigPullPlanRequest {
@@ -115,15 +105,15 @@ export interface ConfigPullRunPlan {
 }
 
 /**
- * The run's actual outcome, known only after the confirmation prompt (or
- * `--dry-run`) resolves — layered on top of {@link ConfigPullPlan},
- * which only knows what WOULD be written. `dryRun` and `declined` are
- * mutually exclusive: a `--dry-run` run never reaches the prompt.
+ * The run's actual outcome, known only after the confirmation prompt (or `--dry-run`)
+ * resolves — layered on top of {@link ConfigPullPlan}, which only knows what would be
+ * written. `dryRun` and `declined` are mutually exclusive: a `--dry-run` run never reaches
+ * the prompt.
  */
 export interface ConfigPullOutcome {
   readonly dryRun: boolean;
-  /** The confirmation prompt (§1.4) was declined — every planned write
-   * becomes `skipped_reason: "declined"` instead of being applied. */
+  /** The confirmation prompt was declined — every planned write becomes
+   * `skipped_reason: "declined"` instead of being applied. */
   readonly declined: boolean;
 }
 
@@ -138,38 +128,33 @@ export interface ConfigPullContext {
    * (`supabase/config.toml`). */
   readonly configPath: string;
   readonly format: ConfigFormat;
-  /** Matched `[remotes.<name>]` block the DIFF operand was merged from —
-   * independent of `destination` (a brand-new `[remotes.*]` block being
-   * CREATED has no applied overlay to diff against yet). Mirrors `config
-   * diff`'s own `target.local_scope`. */
+  /** Matched `[remotes.<name>]` block the diff operand was merged from — independent of
+   * `destination` (a brand-new `[remotes.*]` block being created has no applied overlay to
+   * diff against yet). Mirrors `config diff`'s own `target.local_scope`. */
   readonly appliedRemote: string | undefined;
   readonly destination: ConfigPullDestination;
 }
 
 /**
- * Version of the machine payload's own shape — bump when the payload
- * contract changes incompatibly. A NEW payload, independent of `config
- * diff`'s `CONFIG_DIFF_PAYLOAD_VERSION` (never bumped by this file).
+ * Version of the payload shape below; bump when the contract changes incompatibly.
+ * Independent of `config diff`'s `CONFIG_DIFF_PAYLOAD_VERSION`.
  */
 export const CONFIG_PULL_PAYLOAD_VERSION = 1;
 
 /**
- * A change's actual disposition once the confirmation prompt (and
- * `--dry-run`) are known — broader than {@link ConfigPullSkipReason}
- * (the pure PLANNING-time reason a change was never even attempted): a
- * change `planConfigPull` planned to write still ends up unwritten when
+ * A change's actual disposition once the confirmation prompt (and `--dry-run`) are known —
+ * broader than {@link ConfigPullSkipReason} (the pure planning-time reason a change was never
+ * even attempted): a change `planConfigPull` planned to write still ends up unwritten when
  * the run is a dry run or the user declined.
  */
 type ConfigPullChangeSkipReason = ConfigPullSkipReason | "declined" | "dry_run";
 
 /**
- * The collision message (`ConfigPullRemoteLabelCollisionError`) —
- * worded differently depending on WHICH of `pull.scope.ts`'s two
- * `label_collision` situations applies, and whether the label came from an
- * explicit `--remote-label` or was derived from a branch name (only
- * `--remote-label` can ever reach the "a DIFFERENT block already tracks this
- * ref" situation — see `resolveConfigPullDestination`'s own doc
- * comment for why a branch-derived label never does).
+ * The collision message (`ConfigPullRemoteLabelCollisionError`), worded differently
+ * depending on which of `pull.scope.ts`'s two `label_collision` situations applies and
+ * whether the label came from an explicit `--remote-label` or a branch name (only
+ * `--remote-label` can reach the "a different block already tracks this ref" situation — see
+ * `resolveConfigPullDestination`'s own doc comment for why a branch-derived label never does).
  */
 function configPullLabelCollisionMessage(
   scopeResult: ConfigPullScopeLabelCollision,
@@ -233,50 +218,15 @@ function configPullRefusalRemediation(reason: ConfigEditRefusalReason): string {
 }
 
 /**
- * Plan §1.9's convergence check — run once the fixpoint expansion
- * (`expandConfigPullChangeSet`, `pull.plan.ts`) has settled, and BEFORE
- * `--dry-run` returns (a planner defect must be caught even in a preview
- * run) — against the fixpoint's OWN residual (the last round's re-diff, i.e.
- * the state once every currently-planned write has been applied).
- *
- * A residual change at a path this run just planned to write means the write
- * didn't actually converge — a defect in THIS command's own planner, never a
- * user-facing condition, surfaced as a typed `ConfigPullPlanDefectError`
- * (`impossibleState`) rather than a crash: nothing has been written yet at
- * this point (this check runs BEFORE the dry-run/prompt/write/validation
- * steps), so the error can truthfully say so. A residual `unmanaged` path
- * would mean the very value this run just wrote made itself invisible to the
- * projection again. Most surviving `@supabase/config` prunes
- * (`DISABLED_SENTINEL_PRUNES`, most of `applyRawPresenceMask`) are
- * conditional on exactly the state a write establishes — a container's OWN
- * decoded `enabled`, or the raw file's OWN declared-ness — so writing a
- * value usually satisfies the very condition that would otherwise hide it
- * again. CLI-2314 retired the one `DISABLED_SENTINEL_PRUNES`-family prune
- * that didn't have this property (`auth.oauth_server`'s old unconditional
- * removal, ignoring what had just been written) — see ADR 0021's CLI-2314
- * addendum; `pull.integration.test.ts`'s "no longer trips the ADR 0021
- * unpushable warning" case pins the resulting behavior for that family. This
- * branch DOES still have a known live trigger, though, via a DIFFERENT
- * cross-path prune: `applyDisabledSentinels`'s own "cross-section rule"
- * (`project-config.ts`, search "Cross-section rule: the email rate limit")
- * deletes `auth.rate_limit.email_sent` whenever `auth.email.smtp.enabled` is
- * explicitly `false` — checked on BOTH arms, not gated by raw presence. On
- * the API arm this only spares `email_sent` when the response is genuinely
- * SPARSE (never reports `smtp_host` at all, so `enabled` decodes as absent
- * rather than an explicit `false`) — an ordinary response with
- * `smtp_host: ""` (the common "SMTP not configured" shape) still prunes it
- * there too, leaving nothing to diff. So the live trigger is narrow: a
- * sparse remote response reporting a real `rate_limit_email_sent` while
- * omitting `smtp_host` entirely, pulled into a LOCAL document that also
- * never declares `[auth.email.smtp]` (so `applyRawPresenceMask` masks the
- * just-written value again on the residual check) — see
- * `pull.integration.test.ts`'s matching case for the exact construction.
- * Retained as a structural safety net for any OTHER asymmetric/cross-path
- * prune too, not dead code: surfaced as a `"unpushable"` warning, reusing
- * the SAME
- * `plan.warnings` / `renderConfigPullText` "Warnings:" hook the
- * planner's own `dual_scope`/`duplicates_root`/`array_drift` warnings
- * already render through, rather than adding a new payload field.
+ * Convergence check run after the fixpoint expansion settles, before `--dry-run` returns,
+ * against the fixpoint's own residual (the last round's re-diff). A residual change at a
+ * path this run just planned to write means the write didn't converge — a planner defect,
+ * surfaced as `ConfigPullPlanDefectError` rather than a crash, since nothing has been written
+ * yet. A residual `unmanaged` path instead means the value this run just wrote made itself
+ * invisible to the projection again; that's a known, if rare, side effect of a cross-path
+ * config prune (see `applyDisabledSentinels`'s cross-section rule in `project-config.ts`), so
+ * it's surfaced as an `"unpushable"` warning through the same `plan.warnings` hook rather than
+ * treated as a defect.
  */
 function configPullDefectAndUnpushableCheck(
   plan: ConfigPullPlan,
@@ -311,12 +261,10 @@ function configPullDefectAndUnpushableCheck(
 }
 
 /**
- * Builds the FULL raw, on-disk-shaped document `config pull`'s
- * schema-validation gate decodes: `rawDocument` (`remotes` intact,
- * pre-`env()`-interpolation — the same shape `applyConfigEdits` edits) with
- * `writes`' `documentPath`s applied, plus the new block's `project_id` when
- * this plan creates one — mirroring step 13's real `edits` array exactly, so
- * what gets validated here is what would actually be written.
+ * Builds the raw, on-disk-shaped document the schema-validation gate decodes:
+ * `rawDocument` with the planned `writes`' `documentPath`s applied, plus the new block's
+ * `project_id` when this plan creates one — so validation runs against what would actually
+ * be written.
  */
 function configPullValidationDocument(
   rawDocument: Readonly<Record<string, unknown>>,
@@ -334,13 +282,9 @@ function configPullValidationDocument(
 }
 
 /**
- * Restricts a document to the subtree a `ConfigChange.path` (hosted-config,
- * destination-agnostic) is relative to: itself for a root destination, or
- * `document.remotes[label]` for a `[remotes.*]` destination — the inverse of
- * `documentPathFor` (`pull.plan.ts`), needed because the schema-validation
- * gate's failing paths (and the pre-write raw document it looks up an env()
- * spelling in) must be read in the SAME namespace `ConfigChange.path`/the
- * plan's family-root helpers already use.
+ * Restricts a document to the subtree a `ConfigChange.path` is relative to: itself for a
+ * root destination, or `document.remotes[label]` for a `[remotes.*]` destination. The
+ * inverse of `documentPathFor` (`pull.plan.ts`).
  */
 function configPullChangeRelativeValue(
   document: unknown,
@@ -354,27 +298,12 @@ function configPullChangeRelativeValue(
 }
 
 /**
- * A failed {@link decodeCliConfigDocumentForValidationEffect} attempt's own
- * `SchemaIssue` paths, converted to `ConfigChange.path`-relative ("change
- * path") segments — the SAME destination-agnostic namespace `write.change.path`
- * already lives in, regardless of where a write physically lands in the
- * document.
- *
- * `isLabelPrefixed` picks between the TWO shapes a decode's own issue paths
- * can take — entirely independent of `destination.kind`, since it is the
- * PROJECTION (raw vs. `remoteName`-merged; see
- * {@link validateConfigPullPlan}) that determines this, not the
- * destination: the RAW/unmerged projection of a REMOTE destination decodes
- * the whole `remotes` map through `RemotesSchema` (`disableChecks: true`),
- * whose own issue paths start with the map's OWN key — the label itself, not
- * the literal word `remotes` — so dropping that one leading segment recovers
- * the change-path form; every OTHER case (a root destination's raw
- * projection, or ANY destination's `remoteName`-merged projection, which
- * decodes the merged document at the schema ROOT) already reports
- * change-path-relative paths, nothing to strip. Not a `SchemaError` at all
- * (should not happen — this only ever runs against a `CliConfigParseError`
- * this same module's own decode calls produced) yields no paths, which
- * callers treat as "could not attribute this failure".
+ * Converts a failed {@link decodeCliConfigDocumentForValidationEffect} attempt's
+ * `SchemaIssue` paths into `ConfigChange.path`-relative segments. `isLabelPrefixed` strips
+ * one leading segment for the raw/unmerged projection of a remote destination, whose issue
+ * paths start with the `remotes` map's own key (the label) rather than already being
+ * change-path-relative like every other case. Returns no paths for a non-`SchemaError`
+ * cause, which callers treat as "could not attribute this failure".
  */
 function configPullSchemaIssueChangePaths(
   cause: CliConfigParseError,
@@ -402,18 +331,12 @@ function configPullSchemaIssueChangePaths(
 }
 
 /**
- * Groups already-resolved change-paths (`configPullSchemaIssueChangePaths`,
- * already filtered by the caller to exclude every PRE-EXISTING failure) by
- * `configPullFamilyRootForPath`'s nearest-enclosing-table rule,
- * enriching each with its local `env(VAR)` spelling when it has one.
- * `relativeValidation`/`relativeRaw` are always the DESTINATION-relative view
- * (`configPullChangeRelativeValue`) — the subtree a change-path is
- * actually relative to on disk — regardless of which projection (raw or
- * `remoteName`-merged) reported the failure: a merged projection's own issue
- * paths already arrive change-path-relative (see the sibling function
- * above), but the SHAPE this function reads off `document` (an enclosing
- * "family" table, a field's local raw spelling) lives at the same
- * destination-relative location either way.
+ * Groups already-resolved change-paths (already filtered by the caller to exclude every
+ * pre-existing failure) by `configPullFamilyRootForPath`'s nearest-enclosing-table rule,
+ * enriching each with its local `env(VAR)` spelling when it has one. `relativeValidation`/
+ * `relativeRaw` are always the destination-relative view
+ * ({@link configPullChangeRelativeValue}), regardless of which projection reported the
+ * failure.
  */
 function configPullFamiliesForChangePaths(
   changePaths: ReadonlyArray<ReadonlyArray<string>>,
@@ -449,15 +372,10 @@ function configPullFamiliesForChangePaths(
 }
 
 /**
- * Runs {@link decodeCliConfigDocumentForValidationEffect}, capturing only ITS
- * OWN `CliConfigParseError` failure into a `Result` the caller inspects (the
- * schema-validation gate's "did this decode" check) — `CliProjectEnvParseError`/
- * `PlatformError` (a genuinely malformed `.env`/`.env.local`, or a filesystem
- * failure reading one) are not decode-ATTRIBUTION failures at all, so they are
- * left in the returned Effect's error channel to propagate uncaught, exactly
- * like the SAME two failures already do from the real `loadCliConfig` call
- * this command's own initial load makes (`makeConfigLoader` only ever catches
- * `CliConfigParseError`/`DuplicateRemoteProjectIdError` there too).
+ * Runs {@link decodeCliConfigDocumentForValidationEffect}, capturing only its own
+ * `CliConfigParseError` failure into a `Result`. A genuinely malformed `.env`/`.env.local`,
+ * or a filesystem failure reading one, is not a decode-attribution failure, so those
+ * propagate uncaught, matching how the real `loadCliConfig` call already handles them.
  */
 function decodeConfigPullValidation(
   document: Record<string, unknown>,
@@ -471,16 +389,12 @@ function decodeConfigPullValidation(
 
 /**
  * The change-path keys ({@link configPathKey}) that already fail
- * {@link decodeCliConfigDocumentForValidationEffect} in `rawDocument` AS IT
- * SITS ON DISK RIGHT NOW — before this pull's own writes are projected onto
- * it. {@link validateConfigPullPlan} excludes every one of these from
- * the families it forms: the file was already in that state, so pull
- * attributing the failure to its own plan, dropping a write over it, or
- * failing the whole command over it would all be wrong — pulling only ever
- * needs to leave the file NO WORSE than it already was. Runs the SAME two
- * projections the round-by-round gate below runs (raw, plus
- * `remoteName`-merged for a remote destination), so a pre-existing failure
- * that only surfaces once a `[remotes.*]` block is SELECTED is exempted too.
+ * {@link decodeCliConfigDocumentForValidationEffect} in `rawDocument` as it sits on disk
+ * right now, before this pull's own writes are projected. {@link validateConfigPullPlan}
+ * excludes these from the families it forms — pulling should never attribute, drop, or fail
+ * over a pre-existing problem; it only needs to leave the file no worse than it was. Runs
+ * both projections (raw, plus `remoteName`-merged for a remote destination) so a failure
+ * that only surfaces once a `[remotes.*]` block is selected is exempted too.
  */
 const configPullPreExistingFailingChangePathKeys = Effect.fnUntraced(function* (input: {
   readonly rawDocument: Readonly<Record<string, unknown>>;
@@ -518,38 +432,19 @@ const configPullPreExistingFailingChangePathKeys = Effect.fnUntraced(function* (
   return keys;
 });
 
-/** Cap on how many times {@link validateConfigPullPlan} drops a family
- * and re-validates — die-free: hitting the cap fails the whole command with a
- * typed `ConfigPullValidationFailedError` rather than writing (per that
- * error's own doc comment, reaching the cap "shouldn't happen", since
- * dropping a family always restores a state that loaded before this pull
- * ran). */
+/** Cap on how many times {@link validateConfigPullPlan} drops a family and re-validates;
+ * hitting it fails the command with `ConfigPullValidationFailedError` rather than writing. */
 const CONFIG_PULL_VALIDATION_ROUND_CAP = 4;
 
 /**
- * `config pull`'s schema-validation gate (CLI-2064's live-bug fix, layer
- * 2): pull must NEVER write a file the CLI itself cannot load. Before the
- * TOCTOU re-read/write, decodes the projected FINAL document (every planned
- * write, plus a new block's `project_id`, applied to the raw on-disk
- * document) through the real `CliConfigSchema` decode, resolving `env(VAR)`
- * EXACTLY as the next `loadCliConfig` call will (`decodeCliConfigDocumentForValidationEffect`
- * — process env layered with the project's own `.env`/`.env.local`, not bare
- * `process.env`). A `[remotes.*]` destination additionally validates the
- * `remoteName`-merged projection — the same overlay a future `loadCliConfig`
- * targeting THIS project ref applies before its own checks-enabled decode —
- * since a written block can pass the raw/unmerged check (remotes decode with
- * business-rule checks disabled) yet still fail once actually selected.
- *
- * A decode failure whose change-path already failed in `rawDocument` BEFORE
- * this pull touched it ({@link configPullPreExistingFailingChangePathKeys})
- * is PRE-EXISTING: never attributed to this plan, never dropped, never a
- * reason to fail the command — the file was already in that state, and pull
- * leaves it no worse. Only a NEW failing change-path drives the drop below:
- * every write under its nearest enclosing family/provider table
- * (`dropConfigPullUnvalidatableFamilies`), re-validated, repeating up
- * to {@link CONFIG_PULL_VALIDATION_ROUND_CAP} times; if validation
- * still fails on a NEW path once nothing more can be dropped, fails the whole
- * command (`ConfigPullValidationFailedError`) rather than write.
+ * `config pull`'s schema-validation gate: decodes the projected final document the way the
+ * next `loadCliConfig` call will (including a `[remotes.*]` destination's `remoteName`-merged
+ * projection, since a block can pass the raw check yet still fail once selected), and never
+ * writes a file the CLI itself couldn't load. A failure already present in
+ * {@link configPullPreExistingFailingChangePathKeys} is ignored; a new one drops its
+ * enclosing family ({@link dropConfigPullUnvalidatableFamilies}) and retries, up to
+ * {@link CONFIG_PULL_VALIDATION_ROUND_CAP} times, else fails the command
+ * (`ConfigPullValidationFailedError`) instead of writing.
  */
 const validateConfigPullPlan = Effect.fnUntraced(function* (input: {
   readonly plan: ConfigPullPlan;
@@ -638,17 +533,9 @@ const validateConfigPullPlan = Effect.fnUntraced(function* (input: {
   });
 });
 
-/** Builds the file-load helpers for one `cliSettings.workdir` — a small
- * factory rather than a shared closure so both `openConfigPullSource`
- * (steps 2-3) and `planConfigPullRun` (step 6's conditional reload) get
- * their own, independently testable copy without threading `cliSettings`
- * through `ConfigPullInput`. Narrowed to `workdir` +
- * `explicitWorkdir` (rather than the full `CommandSettings` shape) since
- * that's all `loadLocalConfig` (`config.load.ts`, shared with
- * `config diff`/`config push`) needs — it owns the parse/duplicate-remote/
- * missing-file message shapes and the ancestor-search decision
- * (`shouldSearchAncestors`); only this family's own tagged error class
- * is local. */
+/** Builds the file-load helpers for one `cliSettings.workdir`, narrowed to `workdir` and
+ * `explicitWorkdir` since that's all `loadLocalConfig` needs; only this family's own tagged
+ * error class is local. */
 function makeConfigLoader(cliSettings: {
   readonly workdir: string;
   readonly explicitWorkdir: boolean;
@@ -667,11 +554,9 @@ function makeConfigLoader(cliSettings: {
 }
 
 /**
- * The paired base config load + its exact on-disk text, produced ONLY by
- * {@link openConfigPullSource} — never assembled by hand elsewhere, so
- * "loaded with NO `[remotes.*]` overlay" and "text read from the SAME path
- * immediately after that load" are true by construction, not by caller
- * convention.
+ * The paired base config load and its exact on-disk text, produced only by
+ * {@link openConfigPullSource} so both properties — no `[remotes.*]` overlay, and text read
+ * from the same path right after the load — hold by construction, not caller convention.
  */
 export interface ConfigPullSource {
   readonly loaded: LoadedCliConfig;
@@ -679,18 +564,12 @@ export interface ConfigPullSource {
 }
 
 /**
- * Opens `config pull`'s base config source (`configPull` steps 2-3):
- * loads the local config with NO `[remotes.*]` overlay applied — the overlay
- * is keyed by the RESOLVED target ref, applied later inside
- * `runConfigPull` step 6 only when block reuse selects it — then takes
- * `loaded.rawText` (`@supabase/config`'s own capture of the exact bytes it
- * parsed) as this pull's baseline text, rather than reading the file a
- * second time: a separate read here would reopen a window for a concurrent
- * edit to land BETWEEN the parsed load and that read, silently becoming the
- * accepted baseline while the plan below is computed against the (now
- * stale) parsed values. The SAME bytes `applyConfigEdits` edits later
- * (step 13), and the baseline `runConfigPull` re-reads before writing
- * to detect a concurrent edit (step 12).
+ * Opens `config pull`'s base config source: loads the local config with no `[remotes.*]`
+ * overlay (applied later, only when block reuse selects an existing block), then uses
+ * `loaded.rawText` as this pull's baseline text instead of reading the file again — a second
+ * read would reopen a window for a concurrent edit to land between the parsed load and that
+ * read, silently becoming the accepted baseline while the plan below is computed against the
+ * now-stale parsed values.
  */
 export const openConfigPullSource = Effect.fnUntraced(function* () {
   const cliSettings = yield* CommandSettings;
@@ -699,10 +578,8 @@ export const openConfigPullSource = Effect.fnUntraced(function* () {
   const loaded = yield* loadConfig(undefined);
 
   if (loaded.rawText === undefined) {
-    // The loader contract guarantees `rawText` for any file it actually
-    // parsed off disk — reaching this would mean that contract broke. Fail
-    // the same way a genuine concurrent edit does, rather than falling back
-    // to a second read that would reopen the exact race this baseline
+    // The loader guarantees `rawText` for any file it parsed off disk; treat this like a
+    // concurrent edit rather than re-reading, which would reopen the race this baseline
     // exists to close.
     return yield* new ConfigPullFileChangedError({
       message: `${toRelativeConfigPath(loaded.path)} could not be read: the config loader returned no on-disk text. Rerun the command.`,
@@ -713,14 +590,12 @@ export const openConfigPullSource = Effect.fnUntraced(function* () {
 });
 
 /**
- * Steps 5-8 of `config pull` (plan §1.6's plan/apply split): destination
- * resolution, the conditional `[remotes.*]`-overlay reload, the remote fetch,
- * the fixpoint-expanded diff/plan, and the planner-defect/schema-validation
- * gate. Prints the "Pulling config from …" destination line and the
- * "Comparison scope: …" line to stderr exactly once, here — never repeated by
- * a caller. Never runs the git dirty guard, never prompts, never writes, and
- * never calls `output.success`/`emitOutcome`; the caller decides what to do
- * with the returned {@link ConfigPullRunPlan}.
+ * Resolves the pull destination, reloads with the `[remotes.*]` overlay when block reuse
+ * selects an existing block, fetches the remote config, and runs the fixpoint-expanded
+ * diff/plan plus the planner-defect/schema-validation gate. Prints the destination and
+ * comparison-scope lines to stderr exactly once. Never runs the git dirty guard, prompts,
+ * writes, or calls `output.success`; the caller decides what to do with the returned
+ * {@link ConfigPullRunPlan}.
  */
 export const planConfigPullRun = Effect.fnUntraced(function* (request: ConfigPullPlanRequest) {
   const output = yield* Output;
@@ -729,9 +604,6 @@ export const planConfigPullRun = Effect.fnUntraced(function* (request: ConfigPul
   const { ref, branch } = request.target;
   const { loadConfig, toRelativeConfigPath } = makeConfigLoader(cliSettings);
 
-  // 5. Resolve WHERE this pull writes (root vs. an existing/new
-  // `[remotes.*]` block) — pure, no network call — then print the
-  // destination line to stderr BEFORE any network call.
   const branchLabelCandidate =
     branch !== undefined && !BRANCH_UUID_PATTERN.test(branch) ? branch : undefined;
   const scopeResult = resolveConfigPullDestination({
@@ -755,8 +627,7 @@ export const planConfigPullRun = Effect.fnUntraced(function* (request: ConfigPul
   const destination = scopeResult.destination;
   yield* output.raw(configPullDestinationLine({ projectRef: ref, branch }, destination), "stderr");
 
-  // 6. Reload WITH the `[remotes.*]` overlay only when block reuse selected
-  // an EXISTING block — a brand-new block has nothing to overlay yet.
+  // A brand-new block has nothing to overlay yet.
   let loaded = request.source.loaded;
   if (destination.kind === "remote" && !destination.created) {
     loaded = yield* loadConfig(ref);
@@ -772,10 +643,8 @@ export const planConfigPullRun = Effect.fnUntraced(function* (request: ConfigPul
     destination,
   };
 
-  // 7. Fetch the effective remote config — verbatim from `config diff`
-  // (ADR 0019 rule 2: `executeRaw` + lenient decode boundary; the caller
-  // owns the status check, `fromApiProjectConfig`'s lenient decode owns the
-  // body).
+  // See ADR 0019 rule 2: `executeRaw` + lenient decode; the caller owns the status check,
+  // `fromApiProjectConfig`'s lenient decode owns the body.
   const fetching =
     output.format === "text" ? yield* output.task("Fetching remote config...") : undefined;
   const response = yield* api.executeRaw(operationDefinitions.v2GetProjectConfig, { ref }).pipe(
@@ -808,9 +677,8 @@ export const planConfigPullRun = Effect.fnUntraced(function* (request: ConfigPul
   );
   yield* fetching?.clear() ?? Effect.void;
 
-  // Project the response through CLI-2230's convergence normalizer (ADR
-  // 0021) and classify — same typed/defect boundary as `config diff`
-  // (`configProjectConfigTry`, shared across the `config` family).
+  // Normalizes and classifies the response through the config family's shared
+  // typed/defect boundary (ADR 0021).
   const remote = yield* configProjectConfigTry(() => fromApiProjectConfig(responseJson));
   const initialChangeSet = yield* configProjectConfigTry(() =>
     diffProjectConfig({ local: loaded, remote }),
@@ -822,15 +690,9 @@ export const planConfigPullRun = Effect.fnUntraced(function* (request: ConfigPul
   );
   yield* output.raw(configScopeLine(scope), "stderr");
 
-  // 8. Fixpoint-expand the diff (plan §1.9, extended by CLI-2064's live-bug
-  // fix): projecting a round's writes can un-gate a sibling ADR 0021's
-  // disabled-provider gates would otherwise have excluded as unmanaged (e.g.
-  // flipping a disabled SMS provider's `enabled` on un-gates its credential
-  // siblings) — `expandConfigPullChangeSet` repeats until nothing new
-  // appears. Plan the fully-expanded writes, check for a planner defect /
-  // surface unpushable notes against the fixpoint's own residual (unchanged
-  // from before), then run the schema-validation gate (layer 2): pull must
-  // never write a file the CLI itself cannot load.
+  // Projecting a round's writes can un-gate sibling fields ADR 0021 otherwise excludes as
+  // unmanaged (e.g. flipping a disabled SMS provider's `enabled` on un-gates its credential
+  // fields), so `expandConfigPullChangeSet` repeats until nothing new appears.
   const fixpoint = yield* configProjectConfigTry(() =>
     expandConfigPullChangeSet({
       initialChangeSet,
@@ -857,10 +719,8 @@ export const planConfigPullRun = Effect.fnUntraced(function* (request: ConfigPul
     format: loaded.format,
   });
 
-  // `hasBlockToCreate` is why this is `hasWork`, not merely
-  // `writes.length === 0`: a zero-drift branch target still has WORK to do
-  // (creating the block), so it must reach the git guard/confirmation like
-  // any other write (CLI-2064 bug B).
+  // A zero-drift branch target can still have work to do — creating the block — so it must
+  // reach the git guard/confirmation like any other write.
   const hasBlockToCreate = finalPlan.createdTable !== undefined;
   const hasWork = finalPlan.writes.length > 0 || hasBlockToCreate;
 
@@ -875,11 +735,9 @@ export const planConfigPullRun = Effect.fnUntraced(function* (request: ConfigPul
 });
 
 /**
- * Steps 12-13 of `config pull`: the TOCTOU re-read against
- * {@link ConfigPullSource.text} (someone may have edited the file
- * while the confirmation prompt was on screen), `applyConfigEdits`, and the
- * atomic write. No emission — the caller renders the final summary/payload
- * once this succeeds.
+ * The TOCTOU re-read against {@link ConfigPullSource.text} (someone may have edited the file
+ * while the confirmation prompt was on screen), `applyConfigEdits`, and the atomic write. No
+ * emission — the caller renders the final summary/payload once this succeeds.
  */
 export const applyConfigPullRun = Effect.fnUntraced(function* (input: {
   readonly runPlan: ConfigPullRunPlan;
@@ -888,8 +746,6 @@ export const applyConfigPullRun = Effect.fnUntraced(function* (input: {
   const fs = yield* FileSystem.FileSystem;
   const { plan, context, configFilePath } = input.runPlan;
 
-  // 12. Re-read and compare against the step-3 baseline — someone may have
-  // edited the file while the prompt was on screen.
   const currentText = yield* fs.readFileString(configFilePath).pipe(
     Effect.catchTag(
       "PlatformError",
@@ -905,16 +761,11 @@ export const applyConfigPullRun = Effect.fnUntraced(function* (input: {
     });
   }
 
-  // 13. Apply and write. When this pull CREATES a new `[remotes.<label>]`
-  // block (`plan.createdTable`), the block's own `project_id` is NOT itself a
-  // `ConfigChange` (it is infrastructure for the block's identity, never a
-  // comparable project-config path), so it never reaches `plan.writes`/the
-  // payload — but it still has to be written, or the block has no
-  // `project_id` for `remoteNameForProjectRef` to match on a future run
-  // (this pull's own scope-resolution rule, `pull.scope.ts`).
-  // `applyConfigEdits` only recognizes its "always EOF, project_id first"
-  // `[remotes.*]` placement rule when an edit targets the label root
-  // directly, so this must be its own edit, not folded into an existing one.
+  // When this pull creates a new `[remotes.<label>]` block, its `project_id` isn't itself a
+  // `ConfigChange` (infrastructure, not a comparable path), so it never reaches `plan.writes`,
+  // but it must still be written for `remoteNameForProjectRef` to match on a future run.
+  // `applyConfigEdits`'s EOF/project-id-first placement rule only applies when an edit targets
+  // the label root directly, so this must be its own edit.
   const edits: ReadonlyArray<ConfigEdit> = [
     ...plan.writes.map((write) => ({ path: write.documentPath, value: write.value })),
     ...(plan.createdTable === undefined
@@ -1035,11 +886,9 @@ function humanizeSkipReason(reason: ConfigPullSkipReason): string {
 }
 
 /**
- * The per-change marker (`write`/`skip: ...`) — suppresses the skip reason
- * when it would merely restate the change's own class (`local_only`
- * changes are ALWAYS skipped for reason `local_only`, so `[local-only, skip:
- * local_only]` says nothing a reader doesn't already know from the class
- * alone); every other skip reason is humanized for text-mode prose.
+ * The per-change marker (`write`/`skip: ...`); suppresses the skip reason when it would
+ * merely restate the change's own class (a `local_only` change is always skipped for that
+ * same reason), and humanizes every other skip reason for text-mode prose.
  */
 function changeMarker(
   change: ConfigChange,
@@ -1057,16 +906,12 @@ function changeMarker(
 }
 
 /**
- * Human-readable change-by-change body for text mode (stdout), shown BEFORE
- * the confirmation prompt (and reused, unchanged, for `--dry-run`'s output) —
- * so it reports what the plan WOULD do, independent of the run's eventual
- * outcome. The final one-line disposition (wrote / would write / declined)
- * is {@link configPullSummaryMessage}'s job, not this renderer's.
+ * Human-readable change-by-change body for text mode, shown before the confirmation prompt
+ * (and reused for `--dry-run`) — it reports what the plan would do, independent of the run's
+ * eventual outcome. The final one-line disposition is {@link configPullSummaryMessage}'s job.
  *
- * A `plan.createdTable` always gets its own line naming the new block —
- * regardless of whether any value write is ALSO planned — so a block-only
- * run (a zero-drift branch/`--remote-label` target, CLI-2064 bug B) states
- * its one action in the body too, not only in its own confirmation prompt.
+ * A `plan.createdTable` always gets its own line naming the new block, even when no value
+ * write is planned, so a block-only run states its action here too.
  */
 export function renderConfigPullText(
   changeSet: ConfigChangeSet,
@@ -1139,11 +984,9 @@ function destinationPayload(destination: ConfigPullDestination): Record<string, 
 }
 
 /**
- * The structured result for `--output-format json|stream-json` — the only
- * machine-output mechanism this command honors (`-o/--output` is rejected
- * outright, mirroring `config diff`, CLI-2156). Unset sides are explicit
- * `null`s (via `configChangePayloadEntry`), distinguishable from empty
- * values.
+ * The structured result for `--output-format json|stream-json` — the only machine-output
+ * mechanism this command honors (`-o`/`--output` is rejected outright). Unset sides are
+ * explicit `null`s (via `configChangePayloadEntry`), distinguishable from empty values.
  */
 export function configPullPayload(
   changeSet: ConfigChangeSet,
@@ -1157,10 +1000,8 @@ export function configPullPayload(
   const documentPathByKey = new Map(
     plan.writes.map((write) => [configPathKey(write.change.path), write.documentPath] as const),
   );
-  // A block-only run (`plan.createdTable` set, no value writes) still WROTE —
-  // the new block itself — even though `written` (a count of VALUE writes)
-  // stays 0; `dryRun`/`declined` mean the block was only ever a plan, never
-  // actually created.
+  // A block-only run still wrote the new block even though `written` (a count of value
+  // writes) stays 0; `dryRun`/`declined` mean the block was never actually created.
   const wrote =
     written > 0 || (plan.createdTable !== undefined && !outcome.dryRun && !outcome.declined);
 
@@ -1187,10 +1028,8 @@ export function configPullPayload(
         ...configChangePayloadEntry(change),
         written: changeWritten,
         ...(entry?.reason === undefined ? {} : { skipped_reason: entry.reason }),
-        // Only an ACTUALLY written entry carries `document_path` — a
-        // dry-run/declined outcome still has a planned `documentPath`, but
-        // nothing landed there, so surfacing it would overstate what
-        // happened.
+        // Only an actually-written entry carries `document_path`; a dry-run/declined outcome
+        // still has a planned path, but nothing landed there.
         ...(changeWritten && documentPath !== undefined ? { document_path: documentPath } : {}),
       };
     }),

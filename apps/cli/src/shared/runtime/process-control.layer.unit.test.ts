@@ -76,7 +76,6 @@ describe("ProcessControl", () => {
           }),
         );
 
-        // Listeners removed on scope close.
         expect(process.listenerCount("SIGINT")).toBe(before.SIGINT);
         expect(process.listenerCount("SIGTERM")).toBe(before.SIGTERM);
         expect(process.listenerCount("SIGHUP")).toBe(before.SIGHUP);
@@ -106,7 +105,6 @@ describe("ProcessControl", () => {
 
       yield* Fiber.interrupt(fiber);
 
-      // acquireRelease's finalizer must run on interruption.
       expect(process.listenerCount("SIGINT")).toBe(before.SIGINT);
       expect(process.listenerCount("SIGTERM")).toBe(before.SIGTERM);
     }).pipe(Effect.provide(processControlLayer)),
@@ -119,16 +117,12 @@ describe("ProcessControl", () => {
 
       yield* processControl.holdSignals(["SIGINT"]).pipe(Scope.provide(scope));
 
-      // Emit the signal — no listener from holdSignals should do anything
-      // observable (no resume, no exception). If Node had no userland
-      // listener the default SIGINT action would kill the process, so the
-      // fact that we get past this line is itself proof the noop is live.
+      // Reaching the next line without the process dying is itself the
+      // assertion: with no listener, SIGINT's default action would exit.
       yield* Effect.sync(() => {
         process.emit("SIGINT");
       });
 
-      // Sanity: we can still close the scope cleanly and the listener is
-      // removed. No "resume" happened.
       yield* Scope.close(scope, Exit.void);
     }).pipe(Effect.provide(processControlLayer)),
   );

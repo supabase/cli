@@ -12,6 +12,7 @@ import {
   Path,
   Ref,
 } from "effect";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- native loopback HTTP server is the integration protocol boundary under test.
 import {
   request as requestHttp,
   createServer,
@@ -54,9 +55,7 @@ const response = (
     });
     requestRef.value = client;
     client.once("error", (error) => resume(Effect.fail(error)));
-    client.end(() => {
-      Deferred.doneUnsafe(sent, Effect.void);
-    });
+    client.end(() => Deferred.doneUnsafe(sent, Effect.void));
     return Effect.sync(() => client.destroy());
   });
 
@@ -79,137 +78,134 @@ const backend = Effect.acquireRelease(
     }),
 );
 
+const makeStartupFixture = () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-startup-ingress-" });
+    const identity = {
+      projectRoot: root,
+      branchContext: "ordinary-workspace",
+      stackName: "startup-ingress",
+    } as const;
+    const stackId = yield* deriveStackId(identity);
+    const store = yield* makeStackStateStore({ stateRoot: root });
+    yield* store.initialize(stackId, {
+      format: "supabase-stack-state-v1",
+      identity: { ...identity, stackId },
+      runtime: { kind: "native" },
+      desiredLifecycle: "unconfigured",
+      ports: [],
+      privatePorts: [],
+      secrets: {},
+    });
+    const context = Context.make(FileSystem.FileSystem, fs).pipe(
+      Context.add(Path.Path, path),
+      Context.add(Crypto.Crypto, crypto),
+    );
+    const listenerBound = yield* Deferred.make<HostListener, StackError>();
+    const startEntered = yield* Deferred.make<void>();
+    const releaseStart = yield* Deferred.make<void>();
+    const activationCalls = yield* Ref.make(0);
+    const service = yield* backend;
+    const address = service.address();
+    if (typeof address !== "object" || address === null)
+      return yield* Effect.die("backend did not expose an address");
+
+    const bindHost = (host: string, port: number, field: import("../public/Status.ts").PortField) =>
+      bindHostListener(host, port, field).pipe(
+        Effect.tap((listener) =>
+          field === "api" ? Deferred.succeed(listenerBound, listener) : Effect.void,
+        ),
+      );
+    const ingress = yield* makeSupervisorIngress({
+      stackId,
+      stateRoot: root,
+      store,
+      context,
+      bindHost,
+      apiMaterial: () =>
+        Effect.succeed({
+          publishableKey: "publishable",
+          secretKey: "secret",
+          anonJwt: "anon",
+          serviceRoleJwt: "service",
+        }),
+    });
+    const driver: RuntimeDriver = {
+      observe: () => Effect.succeed([]),
+      start: (key, _workload: PlannedWorkload) =>
+        Effect.gen(function* () {
+          if (key.workloadId === "database:database") {
+            yield* Deferred.succeed(startEntered, undefined);
+            yield* Deferred.await(releaseStart);
+          }
+          return { ...key, state: "ready" as const };
+        }),
+      stop: () => Effect.void,
+      remove: () => Effect.void,
+      cleanup: () => Effect.void,
+    };
+    const entry: StackLogEntry = {
+      cursor: { opaque: "v1_1" },
+      timestamp: "2026-01-01T00:00:00.000Z",
+      source: "supervisor",
+      stream: "internal",
+      message: "startup",
+    };
+    const runtime: SupervisorRuntime = {
+      driver,
+      preflight: () => Effect.void,
+      prepare: () => Effect.void,
+      prefetch: () => Effect.void,
+      artifacts: Effect.succeed([]),
+      activate: () =>
+        Ref.update(activationCalls, (count) => count + 1).pipe(
+          Effect.andThen(Effect.succeed({ host: "127.0.0.1", port: address.port })),
+        ),
+      ingress,
+      logStore: {
+        path: "memory://startup-ingress",
+        append: () => Effect.succeed(entry),
+        read: () => Effect.succeed([entry]),
+      },
+    };
+    const supervisor = yield* makeSupervisor({
+      stackId,
+      ownerSessionId: "startup-ingress-test",
+      stateStore: store,
+      context,
+      runtime,
+    });
+    const start = supervisor
+      .start({
+        config: {
+          listeners: {
+            api: { enabled: true },
+            database: { enabled: false },
+            pooler: { enabled: false },
+            studio: { enabled: false },
+            mailUi: { enabled: false },
+            smtp: { enabled: false },
+            pop3: { enabled: false },
+            functionsInspector: { enabled: false },
+          },
+        },
+      })
+      .pipe(Effect.tapCause((cause) => Deferred.failCause(listenerBound, cause)));
+    return { listenerBound, startEntered, releaseStart, activationCalls, supervisor, start };
+  });
+
 describe("startup ingress", () => {
   it.live("holds requests during startup and forwards them after the service is ready", () =>
     withPlatform(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-startup-ingress-" });
-        const identity = {
-          projectRoot: root,
-          branchContext: "ordinary-workspace",
-          stackName: "startup-ingress",
-        } as const;
-        const stackId = yield* deriveStackId(identity);
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        yield* store.initialize(stackId, {
-          format: "supabase-stack-state-v1",
-          identity: { ...identity, stackId },
-          runtime: { kind: "native" },
-          desiredLifecycle: "unconfigured",
-          ports: [],
-          privatePorts: [],
-          secrets: {},
-        });
-        const context = Context.make(FileSystem.FileSystem, fs).pipe(
-          Context.add(Path.Path, path),
-          Context.add(Crypto.Crypto, crypto),
-        );
-        const listenerBound = yield* Deferred.make<HostListener, StackError>();
-        const startEntered = yield* Deferred.make<void>();
-        const releaseStart = yield* Deferred.make<void>();
-        const activationCalls = yield* Ref.make(0);
-        const service = yield* backend;
-        const address = service.address();
-        if (typeof address !== "object" || address === null)
-          return yield* Effect.die("backend did not expose an address");
-
-        const bindHost = (
-          host: string,
-          port: number,
-          field: import("../public/Status.ts").PortField,
-        ) =>
-          bindHostListener(host, port, field).pipe(
-            Effect.tap((listener) =>
-              field === "api" ? Deferred.succeed(listenerBound, listener) : Effect.void,
-            ),
-          );
-        const ingress = yield* makeSupervisorIngress({
-          stackId,
-          stateRoot: root,
-          store,
-          context,
-          bindHost,
-          apiMaterial: () =>
-            Effect.succeed({
-              publishableKey: "publishable",
-              secretKey: "secret",
-              anonJwt: "anon",
-              serviceRoleJwt: "service",
-            }),
-        });
-        const driver: RuntimeDriver = {
-          observe: () => Effect.succeed([]),
-          start: (key, _workload: PlannedWorkload) =>
-            Effect.gen(function* () {
-              if (key.workloadId === "database:database") {
-                yield* Deferred.succeed(startEntered, undefined);
-                yield* Deferred.await(releaseStart);
-              }
-              return { ...key, state: "ready" as const };
-            }),
-          stop: () => Effect.void,
-          remove: () => Effect.void,
-          cleanup: () => Effect.void,
-        };
-        const entry: StackLogEntry = {
-          cursor: { opaque: "v1_1" },
-          timestamp: "2026-01-01T00:00:00.000Z",
-          source: "supervisor",
-          stream: "internal",
-          message: "startup",
-        };
-        const runtime: SupervisorRuntime = {
-          driver,
-          preflight: () => Effect.void,
-          prepare: () => Effect.void,
-          prefetch: () => Effect.void,
-          artifacts: Effect.succeed([]),
-          activate: () =>
-            Ref.update(activationCalls, (count) => count + 1).pipe(
-              Effect.andThen(
-                Effect.succeed({
-                  host: "127.0.0.1",
-                  port: address.port,
-                }),
-              ),
-            ),
-          ingress,
-          logStore: {
-            path: "memory://startup-ingress",
-            append: () => Effect.succeed(entry),
-            read: () => Effect.succeed([entry]),
-          },
-        };
-        const supervisor = yield* makeSupervisor({
-          stackId,
-          ownerSessionId: "startup-ingress-test",
-          stateStore: store,
-          context,
-          runtime,
-        });
-        const starting = yield* Effect.forkChild(
-          supervisor
-            .start({
-              config: {
-                listeners: {
-                  api: { enabled: true },
-                  database: { enabled: false },
-                  pooler: { enabled: false },
-                  studio: { enabled: false },
-                  mailUi: { enabled: false },
-                  smtp: { enabled: false },
-                  pop3: { enabled: false },
-                  functionsInspector: { enabled: false },
-                },
-              },
-            })
-            .pipe(Effect.tapCause((cause) => Deferred.failCause(listenerBound, cause))),
-        );
-        const listener = yield* Deferred.await(listenerBound);
+        const fixture = yield* makeStartupFixture();
+        const starting = yield* Effect.forkChild(fixture.start);
+        const listener = yield* Deferred.await(fixture.listenerBound);
         if (listener.binding.kind !== "http") return yield* Effect.die("API listener is not HTTP");
+
         const requestsAccepted = yield* Deferred.make<void>();
         let acceptedCount = 0;
         const onRequest = () => {
@@ -219,29 +215,28 @@ describe("startup ingress", () => {
         listener.binding.server.on("request", onRequest);
         const firstSent = yield* Deferred.make<void>();
         const secondSent = yield* Deferred.make<void>();
-        const firstFinished = yield* Deferred.make<void>();
+        const secondFinished = yield* Deferred.make<void>();
         const firstRequest: { value?: ClientRequest } = {};
         const first = yield* Effect.forkChild(
-          response(listener.port, firstSent, firstFinished, firstRequest),
+          response(listener.port, firstSent, yield* Deferred.make<void>(), firstRequest),
         );
         yield* Deferred.await(firstSent);
-        const secondFinished = yield* Deferred.make<void>();
         const second = yield* Effect.forkChild(
           response(listener.port, secondSent, secondFinished, {}),
         );
         yield* Deferred.await(secondSent);
         yield* Deferred.await(requestsAccepted);
-        yield* Deferred.await(startEntered);
+        yield* Deferred.await(fixture.startEntered);
         expect(Option.isNone(yield* Deferred.poll(secondFinished))).toBe(true);
         firstRequest.value?.destroy();
-        yield* Deferred.succeed(releaseStart, undefined);
-        const result = yield* Fiber.join(second);
-        expect(result).toEqual({ status: 200, body: "backend-ready" });
+        yield* Deferred.succeed(fixture.releaseStart, undefined);
+
+        expect(yield* Fiber.join(second)).toEqual({ status: 200, body: "backend-ready" });
         expect((yield* Fiber.join(starting)).lifecycle).toBe("running");
-        expect(yield* Ref.get(activationCalls)).toBe(1);
+        expect(yield* Ref.get(fixture.activationCalls)).toBe(1);
         expect(Exit.isFailure(yield* Fiber.join(first).pipe(Effect.exit))).toBe(true);
         listener.binding.server.off("request", onRequest);
-        yield* supervisor.destroy;
+        yield* fixture.supervisor.destroy;
       }),
     ),
   );

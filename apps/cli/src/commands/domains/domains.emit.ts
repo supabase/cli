@@ -16,10 +16,8 @@ import {
 import { formatHostnameStatus, type HostnameResponse } from "./domains.format.ts";
 
 /**
- * Type shape for `api.UpdateCustomHostnameResponse`
- * (`apps/cli-go/pkg/api/types.gen.go`) — every hostname subcommand encodes
- * this struct for `-o yaml` / `-o toml`, so keys derive from these field
- * names and non-pointer fields are zero-filled (CLI-1975).
+ * Struct spec for the custom-hostname response, driving `-o yaml`/`-o toml`
+ * key casing for every hostname subcommand; non-pointer fields are zero-filled.
  */
 const GO_HOSTNAME_RESPONSE = goStruct([
   ["custom_hostname", goString],
@@ -99,21 +97,16 @@ function terminateHumanStatus(status: string): string {
 }
 
 /**
- * Emit a custom-hostname response across all output modes:
+ * Emits a custom-hostname response across all output modes:
  *
- *   - In `pretty`/text mode the human status text goes to **stderr**, and
- *     nothing goes to stdout. Unlike the reference implementation's
- *     no-newline `Fprintf` branches, the final human status here is
- *     newline-terminated so an interactive shell prompt cannot redraw over
- *     the last line.
+ *   - In `pretty`/text mode the human status goes to **stderr**,
+ *     newline-terminated so a shell prompt cannot redraw over the last line;
+ *     nothing goes to stdout.
  *   - In a structured `-o` mode (`json`/`yaml`/`toml`/`env`) the encoded
- *     response goes to **stdout** and the human status is **suppressed**,
- *     keeping stdout/stderr stable for machine consumers.
- *   - `--include-raw-output` (deprecated) forces `-o` to `json` when it is
- *     unset or `pretty`.
- *   - For the TS-native `--output-format json|stream-json` modes (no `-o`
- *     flag), emit a single structured `success` event and suppress the
- *     stderr status.
+ *     response goes to **stdout** and the human status is suppressed.
+ *   - `--include-raw-output` (deprecated) forces `-o` to `json` when unset or `pretty`.
+ *   - For `--output-format json|stream-json` (no `-o` flag), emits a single
+ *     structured `success` event and suppresses the stderr status.
  */
 export const emitHostnameResult = Effect.fnUntraced(function* (
   response: HostnameResponse,
@@ -143,12 +136,10 @@ export const emitHostnameResult = Effect.fnUntraced(function* (
     return;
   }
 
-  // goFmt is undefined or "pretty" — defer to the TS --output-format mode.
   if (output.format === "json" || output.format === "stream-json") {
     yield* output.success("", normalizeHostnameResponse(response));
     return;
   }
 
-  // text mode (Go pretty parity): status to stderr, nothing to stdout.
   yield* output.raw(terminateHumanStatus(formatHostnameStatus(response)), "stderr");
 });

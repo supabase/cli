@@ -1,10 +1,4 @@
-/**
- * Transcribed verbatim from `apps/cli-go/internal/db/start/templates/schema.sql`
- * (Go `//go:embed templates/schema.sql`, `apps/cli-go/internal/db/start/start.go:33-35`).
- * Not a Go `text/template` — embedded byte-for-byte into the Postgres
- * container's entrypoint heredoc (`NewContainerConfig`, `start.go:63-116`) for
- * PG >= 15. Do not hand-edit — re-transcribe from the Go source if it changes.
- */
+/** Embedded byte-for-byte into the Postgres container's entrypoint heredoc for PG >= 15. */
 export const START_DB_SCHEMA_SQL = `\\set pgpass \`echo "$PGPASSWORD"\`
 \\set jwt_secret \`echo "$JWT_SECRET"\`
 \\set jwt_exp \`echo "$JWT_EXP"\`

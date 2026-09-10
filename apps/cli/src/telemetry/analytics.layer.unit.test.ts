@@ -106,8 +106,8 @@ describe("resolveGroups", () => {
 
   it("keys the organization group by organization_id (not slug) to match Go", () => {
     const groups = resolveGroups({}, Option.some(linkedCacheValue()));
-    // Must be the org ID so the event group matches what groupIdentify published
-    // (apps/cli-go/internal/telemetry/project.go:99-103). The slug is never a key.
+    // Must be the org ID so the event group matches what groupIdentify published; the slug is
+    // never a key.
     expect(groups).toEqual({
       [GroupOrganization]: "org-id-123",
       [GroupProject]: "proj-ref",

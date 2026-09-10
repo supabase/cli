@@ -156,9 +156,9 @@ function setupSeedBuckets(
           )
         : Effect.succeed(projectRefRef),
     resolveOptional: () => Effect.succeed(Option.some(projectRefRef)),
-    // Gives an explicit `--project-ref` flag top precedence, same as Go's
-    // `flags.LoadProjectRef` — short-circuits BEFORE `linkedFails`, so a test
-    // can prove the flag resolves a ref even for an "unlinked" workdir.
+    // An explicit `--project-ref` flag takes precedence and short-circuits
+    // before `linkedFails`, so a test can prove the flag resolves a ref even
+    // for an "unlinked" workdir.
     loadProjectRef: (flagValue: Option.Option<string>) =>
       Option.isSome(flagValue) && flagValue.value.length > 0
         ? Effect.succeed(flagValue.value)
@@ -222,12 +222,9 @@ const VAULT_ENCRYPTED =
 describe("seed buckets", () => {
   const tmp = useTempWorkdir("supabase-seed-buckets-");
 
-  // Ambient `SUPABASE_API_*`/`SUPABASE_AUTH_*` values and the two canonical
-  // dotenvx private-key names (`DOTENV_PRIVATE_KEY`, `DOTENV_PRIVATE_KEY_LOCAL`)
-  // would shadow the dotenv fixtures below — the project-env walk skips keys
-  // already present in the shell env — so pin them to unset for every test in
-  // this file (the ambient-override test sets its own value back through
-  // `withEnvVar`).
+  // Ambient SUPABASE_API_*/SUPABASE_AUTH_* values and the dotenvx private-key
+  // env vars would shadow the dotenv fixtures below, so pin them unset for
+  // every test here (the ambient-override test restores its own via `withEnvVar`).
   const OVERRIDE_ENV_KEYS = [
     "SUPABASE_API_ENABLED",
     "SUPABASE_API_EXTERNAL_URL",
@@ -271,8 +268,6 @@ describe("seed buckets", () => {
   it.live(
     "hard-fails a malformed SUPABASE_API_PORT even when nothing is configured to seed",
     () => {
-      // The override decode belongs to config load, which runs before the no-op
-      // short-circuit — same principle as the bucket-name/size validations.
       const { layer, requests } = setupSeedBuckets(tmp.current, {
         toml: 'project_id = "test"\n',
         files: { "supabase/.env": "SUPABASE_API_PORT=not-a-port\n" },
@@ -289,8 +284,6 @@ describe("seed buckets", () => {
   it.live(
     "hard-fails a broken TLS cert/key pairing even when nothing is configured to seed",
     () => {
-      // The canonical `[api]` block (port, then TLS presence) is enforced on the
-      // no-op path too — same principle as the malformed-port case above.
       const { layer, requests } = setupSeedBuckets(tmp.current, {
         toml: 'project_id = "test"\n[api.tls]\nenabled = true\ncert_path = "kong.crt"\n',
       });
@@ -308,8 +301,6 @@ describe("seed buckets", () => {
   it.live(
     "hard-fails an undecryptable encrypted: service_role_key even when nothing is configured to seed",
     () => {
-      // The auth override/decrypt step is part of the same config-load
-      // validation as the `[api]` block above, so it runs on the no-op path too.
       const { layer, requests } = setupSeedBuckets(tmp.current, {
         toml: 'project_id = "test"\n[auth]\nservice_role_key = "encrypted:not-a-real-ciphertext"\n',
       });
@@ -331,24 +322,20 @@ describe("seed buckets", () => {
       const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests).toHaveLength(0);
-      // Scripted json callers get a result object even for the no-op short-circuit.
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["buckets_created"]).toEqual([]);
       expect(success?.data?.["objects_uploaded"]).toEqual([]);
     });
   });
 
-  // --local/--linked mutual exclusivity is enforced at the command level, before
-  // instrumentation (so it doesn't emit telemetry, matching the flag-validation
-  // rejection semantics). It's covered by `assertSeedTargetsExclusive` in
-  // buckets.flags.unit.test.ts rather than here, since the handler no longer
-  // performs the check.
+  // --local/--linked mutual exclusivity is enforced at the command level, so it
+  // doesn't reach this handler; see `assertSeedTargetsExclusive` in
+  // buckets.flags.unit.test.ts for that coverage.
 
   it.live("tolerates null string fields in 200 responses (Go encoding/json zero value)", () => {
-    // Go decodes these bodies into plain `string` fields (not *string); a JSON
-    // `null` leaves them at "" and does NOT abort (fetcher/http.go:144-151). A
+    // A JSON `null` for a string field decodes to "" and must not abort — a
     // list entry with `name: null` and a create response with `message: null`
-    // must therefore be tolerated, not treated as a parse failure.
+    // are both tolerated, not treated as a parse failure.
     const { layer, out, requests } = setupSeedBuckets(tmp.current, {
       toml: "[storage.buckets.docs]\npublic = false\n",
       routes: [
@@ -367,11 +354,9 @@ describe("seed buckets", () => {
   });
 
   it.live("tolerates a null element in a bucket list (Go zero-value struct)", () => {
-    // encoding/json decodes a null array element into the zero-value struct
-    // (BucketResponse{Name:"", Id:""}) and the upsert loop continues
-    // (pkg/storage/buckets.go:21-27). A null element must not abort the run; the
-    // configured bucket is still created. A genuine type mismatch (string/number
-    // element) still aborts — that's covered by the malformed-response test.
+    // A null array element decodes to an empty-name entry and must not abort
+    // the run; the configured bucket is still created. A genuine type mismatch
+    // (string/number element) still aborts — see the malformed-response test.
     const { layer, out, requests } = setupSeedBuckets(tmp.current, {
       toml: "[storage.buckets.docs]\npublic = false\n",
       routes: [
@@ -439,11 +424,9 @@ describe("seed buckets", () => {
         pipedAnswers: ["n"],
       });
       return Effect.gen(function* () {
-        // db reset seeds buckets with interactive=false (`buckets.Run(ctx, "",
-        // false, fsys)` forces console.IsTTY=false). This does NOT silently take
-        // the default: the prompt still prints its label, scans one line, and
-        // honors a parsed answer — so the piped "n" must skip the overwrite
-        // (default is yes).
+        // interactive: false doesn't silently take the default — the prompt
+        // still prints its label, scans one line, and honors the parsed
+        // answer, so the piped "n" skips the overwrite (default is yes).
         const exit = yield* seedBucketsRun({
           projectRef: "",
           emitSummary: false,
@@ -496,7 +479,6 @@ describe("seed buckets", () => {
       toml: "[storage.vector]\nenabled = true\n[storage.vector.buckets.documents-openai]\n",
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
-        // Go decodes `{"vectorBuckets": null}` into a nil slice → empty, not an error.
         { method: "POST", match: VECTOR_LIST, body: { vectorBuckets: null } },
         { method: "POST", match: VECTOR_CREATE, body: {} },
       ],
@@ -536,9 +518,9 @@ describe("seed buckets", () => {
   it.live(
     "prunes a stale vector bucket when the caller passes yes (db reset project-env path)",
     () => {
-      // `db reset` resolves `yes` with the nested project `.env` and passes it into the runner
-      // with `interactive: false`; the pre-resolved `yes` must drive pruning even though no
-      // prompt is answered and the runner's own shell-only resolveYes would default to false.
+      // db reset resolves `yes` from the nested project `.env` and passes it with
+      // `interactive: false`; the pre-resolved `yes` must drive pruning even
+      // though no prompt is answered and resolveYes would otherwise default to false.
       const { layer, out, requests } = setupSeedBuckets(tmp.current, {
         toml: "[storage.vector]\nenabled = true\n[storage.vector.buckets.keep-vec]\n",
         routes: [
@@ -625,7 +607,7 @@ describe("seed buckets", () => {
 
   it.live("uploads objects from a bucket's objects_path", () => {
     const { layer, out, requests } = setupSeedBuckets(tmp.current, {
-      // Relative objects_path resolves under supabase/ (Go config.go:757-759).
+      // Relative objects_path resolves under supabase/.
       toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
       files: {
         "supabase/assets/a.txt": "hello",
@@ -648,10 +630,9 @@ describe("seed buckets", () => {
   });
 
   it.live("sets the object Content-Type from the file bytes, not the extension", () => {
-    // Go sniffs the first 512 bytes with http.DetectContentType and only refines
-    // a generic text/plain by extension (objects.go:77-108). A PNG named `.txt`
-    // must upload as image/png (bytes win), and a JSON text file refines to
-    // application/json via its extension.
+    // Content-type is sniffed from the first 512 bytes; only a generic
+    // text/plain sniff is refined by extension. A PNG named `.txt` uploads as
+    // image/png (bytes win), and a JSON text file refines to application/json.
     mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
     // Real PNG magic bytes — written raw (a UTF-8 string would mangle 0x89).
     writeFileSync(
@@ -672,9 +653,7 @@ describe("seed buckets", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
       const byKey = (suffix: string) => uploads.find((r) => r.url.endsWith(suffix));
-      // PNG content named .txt → image/png (the bytes win over the extension).
       expect(byKey("images/logo.txt")?.headers["content-type"]).toBe("image/png");
-      // JSON text → text/plain sniff refined to application/json by extension.
       expect(byKey("images/data.json")?.headers["content-type"]).toBe("application/json");
     });
   });
@@ -721,16 +700,12 @@ describe("seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // json mode does not prompt; overwrite default (yes) → bucket updated.
       expect(out.promptConfirmCalls).toHaveLength(0);
       expect(requests.some((r) => r.method === "PUT" && r.url.includes("/bucket/test"))).toBe(true);
     });
   });
 
   it.live("treats a missing config file as embedded defaults: local no-op, no text output", () => {
-    // Go never aborts on a missing config.toml — it uses embedded defaults and
-    // no-ops the LOCAL path on empty buckets (internal/seed/buckets/buckets.go:16-20).
-    // Text mode emits nothing for the no-op, same as before.
     const { layer, out, requests } = setupSeedBuckets(tmp.current, {});
     return Effect.gen(function* () {
       const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
@@ -741,8 +716,6 @@ describe("seed buckets", () => {
   });
 
   it.live("emits an empty JSON result for a missing config file (local no-op, json mode)", () => {
-    // The missing-config local no-op flows through the same empty-summary path as
-    // an empty-but-present config, so scripted json callers still get a result.
     const { layer, out, requests } = setupSeedBuckets(tmp.current, { format: "json" });
     return Effect.gen(function* () {
       const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
@@ -755,10 +728,9 @@ describe("seed buckets", () => {
   });
 
   it.live("does not skip a --linked run when the config file is absent", () => {
-    // A linked run never short-circuits (gating is len(projectRef) == 0), so even
-    // with no config file Go still builds the remote client, fetches the
-    // service-role key, and lists buckets — failures surface instead of a silent
-    // success. With no configured buckets the remote LIST must still happen.
+    // A linked run never short-circuits on empty config: even with no config
+    // file, the remote client is built, the service-role key fetched, and
+    // buckets listed — failures surface instead of a silent success.
     const flags: BucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer, requests } = setupSeedBuckets(tmp.current, {
       projectRef: VALID_REF,
@@ -776,7 +748,6 @@ describe("seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* seedBuckets(flags).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // The remote list call fired against the linked project — not a silent no-op.
       expect(
         requests.some(
           (r) =>
@@ -808,9 +779,7 @@ describe("seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // baseUrl is the configured external_url, not the 127.0.0.1 default.
       expect(requests.every((r) => r.url.startsWith("http://gateway.test:9999"))).toBe(true);
-      // A non-`sb_` key is treated as a JWT: both apikey and bearer are sent.
       expect(requests.every((r) => r.headers["apikey"] === "explicit-key")).toBe(true);
       expect(requests.every((r) => r.headers["authorization"] === "Bearer explicit-key")).toBe(
         true,
@@ -834,7 +803,6 @@ describe("seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // `withAuthToken` sends only `apikey` for opaque `sb_...` keys.
       expect(requests.every((r) => r.headers["apikey"] === "sb_secret_localkey")).toBe(true);
       expect(requests.every((r) => r.headers["authorization"] === undefined)).toBe(true);
     });
@@ -853,8 +821,6 @@ describe("seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // An empty key is regenerated from the default secret (a signed JWT), not
-      // sent verbatim — `generateAPIKeys` fills it on len == 0.
       expect(
         requests.every((r) => (r.headers["authorization"] ?? "").startsWith("Bearer ey")),
       ).toBe(true);
@@ -872,15 +838,14 @@ describe("seed buckets", () => {
       expect(JSON.stringify(exit)).toContain(
         "Invalid config for auth.jwt_secret. Must be at least 16 characters",
       );
-      // Validation fails before any Storage call.
       expect(requests).toHaveLength(0);
     });
   });
 
   it.live("fails on an invalid bucket file_size_limit before any Storage call", () => {
     const { layer, requests } = setupSeedBuckets(tmp.current, {
-      // First bucket is valid; the second has an unparseable size. Go parses all
-      // sizes at config-load before NewStorageAPI, so nothing is mutated.
+      // First bucket is valid; the second has an unparseable size — all sizes
+      // are parsed at config-load, before any Storage call, so nothing is mutated.
       toml: [
         "[storage.buckets.ok]",
         "public = true",
@@ -896,15 +861,14 @@ describe("seed buckets", () => {
       const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("invalid size");
-      // No list/create happened — validation precedes every Storage side effect.
       expect(requests).toHaveLength(0);
     });
   });
 
   it.live("rejects a malformed file_size_limit numeral (Go strconv.ParseFloat)", () => {
     const { layer, requests } = setupSeedBuckets(tmp.current, {
-      // JS parseFloat would parse "1.2.3" as 1.2; `strconv.ParseFloat` rejects
-      // the whole config before NewStorageAPI.
+      // parseFloat would parse "1.2.3" as 1.2; the whole config must be
+      // rejected instead.
       toml: '[storage.buckets.media]\npublic = true\nfile_size_limit = "1.2.3MiB"\n',
       routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
     });
@@ -918,8 +882,8 @@ describe("seed buckets", () => {
 
   it.live("fails on an invalid storage-level file_size_limit (only vector buckets)", () => {
     const { layer, requests } = setupSeedBuckets(tmp.current, {
-      // No storage buckets inherit it, only a vector bucket is configured — Go
-      // still unmarshals storage.FileSizeLimit at config-load and aborts.
+      // No storage buckets inherit it, only a vector bucket is configured — the
+      // storage-level file_size_limit is still validated at config-load and aborts.
       toml: [
         '[storage]\nfile_size_limit = "bogus"',
         "[storage.vector]\nenabled = true",
@@ -937,9 +901,9 @@ describe("seed buckets", () => {
 
   it.live("fails on an invalid storage-level file_size_limit even with nothing to seed", () => {
     const { layer, requests } = setupSeedBuckets(tmp.current, {
-      // No buckets and no vector buckets — but Go decodes storage.FileSizeLimit
-      // at config-load before buckets.Run's no-op path, so it still aborts. The
-      // config-load validations must run before the no-op short-circuit.
+      // No buckets and no vector buckets — the storage-level file_size_limit is
+      // still validated at config-load, before the no-op short-circuit, so it
+      // still aborts.
       toml: '[storage]\nfile_size_limit = "bogus"\n',
     });
     return Effect.gen(function* () {
@@ -952,8 +916,8 @@ describe("seed buckets", () => {
 
   it.live("inherits the storage-level file_size_limit when a bucket omits it", () => {
     const { layer, requests } = setupSeedBuckets(tmp.current, {
-      // Custom storage-level limit; the bucket omits file_size_limit, so Go's
-      // resolve() copies the storage-level value (5MiB) into the bucket.
+      // Custom storage-level limit; the bucket omits file_size_limit, so the
+      // storage-level value (5MiB) is inherited.
       toml: '[storage]\nfile_size_limit = "5MiB"\n[storage.buckets.media]\npublic = true\n',
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
@@ -1027,8 +991,8 @@ describe("seed buckets", () => {
 
   it.live("omits the port-conflict hint on a connection-refused local failure", () => {
     const { layer } = setupSeedBuckets(tmp.current, {
-      // Stack simply stopped → ECONNREFUSED. `localGatewayHint` does NOT fire
-      // for connection-refused (only malformed/timeout), so neither do we.
+      // Stack simply stopped → ECONNREFUSED. The local-gateway hint only fires
+      // for malformed/timeout failures, not connection-refused.
       toml: "[api]\nport = 7654\n[storage.buckets.test]\npublic = true\n",
       routes: [{ method: "GET", match: "/storage/v1/bucket", transport: true }],
     });
@@ -1041,8 +1005,8 @@ describe("seed buckets", () => {
 
   it.live("reports the external_url port (not api.port) in the local hint", () => {
     const { layer } = setupSeedBuckets(tmp.current, {
-      // external_url overrides the host:port the gateway actually targets; Go's
-      // localGatewayHint parses that URL, so the hint reports 9999, not 7654.
+      // external_url overrides the host:port the gateway targets, so the hint
+      // reports 9999, not 7654.
       toml: '[api]\nport = 7654\nexternal_url = "http://127.0.0.1:9999"\n[storage.buckets.test]\npublic = true\n',
       routes: [
         {
@@ -1161,9 +1125,8 @@ describe("seed buckets", () => {
   });
 
   it.live("calls the gateway on the SUPABASE_API_PORT override, not the config.toml port", () => {
-    // #6452: the resolved api.port must reach the storage gateway like every
-    // other consumer of that setting. Setup runs before the env mutation so a
-    // throwing mkdir/write can never leak the override into later tests.
+    // Setup runs before the env mutation so a throwing mkdir/write can never
+    // leak the override into later tests.
     const { layer, requests } = setupSeedBuckets(tmp.current, {
       toml: "[api]\nport = 54321\n[storage.buckets.images]\npublic = true\n",
       routes: [
@@ -1406,7 +1369,7 @@ describe("seed buckets", () => {
 
   it.live("sends a SUPABASE_AUTH_SERVICE_ROLE_KEY set only in supabase/.env as the api key", () => {
     // The auth vars go through the same env/dotenv override composition as the
-    // `SUPABASE_API_*` family (#6467 follow-up).
+    // SUPABASE_API_* family.
     const { layer, requests } = setupSeedBuckets(tmp.current, {
       toml: "[storage.buckets.images]\npublic = true\n",
       files: { "supabase/.env": "SUPABASE_AUTH_SERVICE_ROLE_KEY=sb_secret_dotenv_only_key\n" },
@@ -1437,17 +1400,12 @@ describe("seed buckets", () => {
       const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.length).toBeGreaterThan(0);
-      // The exact token `status` prints for the same secret: signed with the
-      // dotenv secret through the same deterministic signer.
       const apiKey = generateGoJwt(secret, "service_role");
       expect(requests.every((r) => r.headers["apikey"] === apiKey)).toBe(true);
     });
   });
 
   it.live("decrypts an encrypted: service_role_key with the private key from supabase/.env", () => {
-    // The config.toml ciphertext is decrypted with the `DOTENV_PRIVATE_KEY*`
-    // carried by the project dotenv, so the gateway sees the plaintext, not
-    // the ciphertext.
     const { layer, requests } = setupSeedBuckets(tmp.current, {
       toml: `[auth]\nservice_role_key = "${VAULT_ENCRYPTED}"\n[storage.buckets.images]\npublic = true\n`,
       files: { "supabase/.env": `DOTENV_PRIVATE_KEY=${VAULT_PRIVATE_KEY}\n` },
@@ -1465,8 +1423,8 @@ describe("seed buckets", () => {
   });
 
   it.live("hard-fails an undecryptable encrypted: service_role_key before any gateway call", () => {
-    // `encrypted:` values are decrypted like the status/stop resolver does;
-    // an undecryptable one aborts instead of being sent as literal key material.
+    // An undecryptable `encrypted:` value aborts instead of being sent as
+    // literal key material.
     const { layer, requests } = setupSeedBuckets(tmp.current, {
       toml: '[auth]\nservice_role_key = "encrypted:not-a-real-ciphertext"\n[storage.buckets.images]\npublic = true\n',
       routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
@@ -1496,8 +1454,8 @@ describe("seed buckets", () => {
     const { layer, requests } = setupSeedBuckets(tmp.current, {
       toml: "[storage.buckets.images]\npublic = true\n",
       routes: [
-        // A missing `name` decodes to the zero value (""), tolerated like Go's
-        // json.Decode. (Non-object elements / wrong-typed fields are NOT — see below.)
+        // A missing `name` decodes to "" and is tolerated (non-object elements
+        // and wrong-typed fields are not — see below).
         { method: "GET", match: "/storage/v1/bucket", body: [{ id: "x" }] },
         { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
       ],
@@ -1513,8 +1471,8 @@ describe("seed buckets", () => {
     const { layer, requests } = setupSeedBuckets(tmp.current, {
       toml: "[storage.buckets.images]\npublic = true\n",
       routes: [
-        // A non-object element / wrong-typed field — `ParseJSON` aborts here
-        // (cannot unmarshal string into BucketResponse), before any create.
+        // A non-object element or wrong-typed field aborts parsing before any
+        // create.
         {
           method: "GET",
           match: "/storage/v1/bucket",
@@ -1551,7 +1509,6 @@ describe("seed buckets", () => {
       toml: "[storage.buckets.images]\npublic = true\n",
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
-        // The gateway uses WithExpectedStatus(200); a 201 is an error.
         { method: "POST", match: "/storage/v1/bucket", status: 201, body: { name: "images" } },
       ],
     });
@@ -1565,10 +1522,8 @@ describe("seed buckets", () => {
   it.live(
     "trusts the Kong CA for an explicit https external_url even when tls.enabled is false",
     () => {
-      // Go installs status.NewKongClient unconditionally for the local client, so
-      // an https external_url with tls.enabled false/omitted still trusts the
-      // embedded CA. The handler must take the CA-injection path (no validation,
-      // no error) here, not skip it on `tls.enabled`.
+      // An https external_url always takes the CA-injection path (no
+      // validation, no error), regardless of `tls.enabled`.
       const { layer, requests } = setupSeedBuckets(tmp.current, {
         toml: '[api]\nexternal_url = "https://127.0.0.1:54321"\n[storage.buckets.images]\npublic = true\n',
         routes: [
@@ -1624,7 +1579,7 @@ describe("seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // `net.JoinHostPort` brackets IPv6: http://[::1]:54321, not http://::1:54321.
+      // IPv6 hosts are bracketed: http://[::1]:54321, not http://::1:54321.
       expect(requests.every((r) => r.url.startsWith("http://[::1]:54321"))).toBe(true);
     }).pipe(
       Effect.ensuring(
@@ -1654,8 +1609,7 @@ describe("seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // `GetHostname` dials the TCP daemon host, not loopback, when only
-      // DOCKER_HOST is set (misc.go:305-310).
+      // Dials the TCP daemon host, not loopback, when only DOCKER_HOST is set.
       expect(requests.every((r) => r.url.startsWith("http://docker.internal:54321"))).toBe(true);
     }).pipe(
       Effect.ensuring(
@@ -1720,10 +1674,9 @@ describe("seed buckets", () => {
   });
 
   it.live("skips OS metadata files during the object walk (CLI-1950)", () => {
-    // .DS_Store (macOS Finder), Thumbs.db and desktop.ini (Windows Explorer)
-    // must never be uploaded as seeded objects — they are never even attempted,
-    // covering the "silently becomes a public object" failure mode, not just
-    // an upload-time abort.
+    // These files must never even be attempted for upload — covering the
+    // "silently becomes a public object" failure mode, not just an
+    // upload-time abort.
     mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
     writeFileSync(join(tmp.current, "supabase", "assets", ".DS_Store"), "junk");
@@ -1752,11 +1705,10 @@ describe("seed buckets", () => {
   it.live(
     "skips a .DS_Store file in a MIME-restricted bucket instead of uploading it (CLI-1950)",
     () => {
-      // Reproduces the original bug report shape: a bucket with allowed_mime_types
-      // restricted to images. The test harness's mock HTTP route doesn't enforce
-      // allowed_mime_types server-side (that's real Storage-service behavior), so
-      // this doesn't simulate the 415 abort itself — it asserts the junk file is
-      // skipped and never uploaded, while the real image file still uploads.
+      // The mock HTTP route doesn't enforce allowed_mime_types server-side
+      // (real Storage-service behavior), so this doesn't simulate a 415 — it
+      // only asserts the junk file is skipped client-side while the real image
+      // still uploads.
       mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
       writeFileSync(join(tmp.current, "supabase", "assets", "logo.png"), "fake-png-bytes");
       writeFileSync(join(tmp.current, "supabase", "assets", ".DS_Store"), "junk");
@@ -1811,13 +1763,10 @@ describe("seed buckets", () => {
   it.live.skipIf(isRoot)(
     "skips a symlink to an unreadable regular file and keeps seeding siblings (Go opens, not stats)",
     () => {
-      // `isUploadableEntry` OPENS the symlink target (batch.go:73), which needs
-      // read permission; a stat-only check would queue this unreadable file and then
-      // abort the whole run when uploadObject opens it to stream. Mode 000 makes
-      // stat succeed (type File) but open fail — the entry must be skipped, not fatal.
-      // The real unreadable file lives OUTSIDE the walked tree: a plain regular file
-      // inside assets/ would be queued without an open-probe and would legitimately
-      // abort, so only the symlink may reach the unreadable target.
+      // The symlink target is opened, not just stat'd, so mode 000 (stat
+      // succeeds, open fails) is skipped rather than aborting the run. The
+      // unreadable file must live outside the walked tree — a plain file there
+      // would be queued and legitimately abort.
       mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
       mkdirSync(join(tmp.current, "supabase", "private"), { recursive: true });
       writeFileSync(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
@@ -1843,7 +1792,6 @@ describe("seed buckets", () => {
           "Skipping non-regular file: supabase/assets/link-to-secret",
         );
         expect(out.stderrText).toContain("Uploading: supabase/assets/a.txt => images/a.txt");
-        // Only the readable sibling is uploaded; the unreadable symlink target is not.
         const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
         expect(uploads).toHaveLength(1);
       });
@@ -1880,9 +1828,8 @@ describe("seed buckets", () => {
   );
 
   it.live("follows a symlinked objects_path root and uploads its files (Go fs.WalkDir)", () => {
-    // `io/fs.WalkDir` follows a symlinked ROOT ("if root itself is a
-    // symbolic link, its target will be walked"); only NESTED symlinks are
-    // skipped. fs.stat on the root follows the link, so the target dir is walked.
+    // A symlinked root is followed and its target walked; only nested
+    // symlinks are skipped.
     mkdirSync(join(tmp.current, "supabase", "real-assets"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "real-assets", "a.txt"), "hello");
     symlinkSync("./real-assets", join(tmp.current, "supabase", "linked-assets"));
@@ -1928,11 +1875,9 @@ describe("seed buckets", () => {
   it.live(
     "auto-confirms the overwrite from SUPABASE_YES in the project .env (Go loadNestedEnv, CLI-1878)",
     () => {
-      // SUPABASE_YES lives only in supabase/.env, not the shell or the --yes flag. `seed
-      // buckets` defaults to `--local` (Go: `cmd/seed.go:31`), and root's
-      // `ParseDatabaseConfig` loads the project `.env` files before `buckets.Run`'s
-      // overwrite prompt (`root.go:118`), so the standalone command's own fallback
-      // resolution (not the `db reset`-passed `opts.yes`) must read it too.
+      // SUPABASE_YES lives only in supabase/.env, not the shell or --yes flag.
+      // The standalone command must resolve it itself, not rely on the
+      // `db reset`-passed `opts.yes`.
       const { layer, out, requests } = setupSeedBuckets(tmp.current, {
         toml: "[storage.buckets.assets]\npublic = true\n",
         files: { "supabase/.env": "SUPABASE_YES=true\n" },
@@ -1976,8 +1921,6 @@ describe("seed buckets", () => {
       expect(requests.some((r) => r.url.endsWith(VECTOR_DELETE))).toBe(true);
     });
   });
-
-  // --linked remote path tests
 
   it.live("--linked seeds the remote storage project", () => {
     const flags: BucketsFlags = { linked: true, local: false, projectRef: Option.none() };
@@ -2065,7 +2008,6 @@ describe("seed buckets", () => {
   });
 
   it.live("--linked=false still takes the linked path (Go flag.Changed, not value)", () => {
-    // Go selects the target from flag.Changed: `--linked=false` is still linked.
     const { layer, requests } = setupSeedBuckets(tmp.current, {
       toml: "[storage.buckets.test]\npublic = true\n",
       projectRef: VALID_REF,
@@ -2082,7 +2024,6 @@ describe("seed buckets", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // Remote URL → the linked path ran despite the parsed value being false.
       expect(requests.every((r) => r.url.startsWith(`https://${VALID_REF}.supabase.co`))).toBe(
         true,
       );
@@ -2105,8 +2046,8 @@ describe("seed buckets", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // Local path (not the remote https host) — `--local` changed selects local.
-      // Asserting "not remote" keeps this independent of the loopback host env.
+      // Asserts "some request happened, not the remote host" — keeps this
+      // independent of the loopback host env.
       expect(requests.length).toBeGreaterThan(0);
       expect(requests.every((r) => r.url.startsWith("http://"))).toBe(true);
       expect(requests.some((r) => r.url.includes("supabase.co"))).toBe(false);
@@ -2128,17 +2069,15 @@ describe("seed buckets", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      // `tenant.GetApiKeys` → errMissingKey, before NewStorageAPI.
       expect(JSON.stringify(exit)).toContain("Anon key not found.");
       expect(requests.some((r) => r.url.includes("/storage/v1/"))).toBe(false);
     });
   });
 
   it.live("--linked surfaces tenant.GetApiKeys auth error on a non-200 api-keys response", () => {
-    // Go resolves the service-role key via tenant.GetApiKeys (storage/client/api.go:22),
-    // which maps a non-200 to `Authorization failed for the access token and project
-    // ref pair: <body>` (tenant/client.go:15,77-78) — NOT the projects api-keys
-    // helper's `unexpected get api keys status ...`.
+    // A non-200 api-keys response maps to `StorageAuthTokenError` with
+    // "Authorization failed for the access token and project ref pair", not
+    // the generic "unexpected get api keys status" message.
     const { layer, requests } = setupSeedBuckets(tmp.current, {
       toml: "[storage.buckets.test]\npublic = true\n",
       projectRef: VALID_REF,
@@ -2157,15 +2096,13 @@ describe("seed buckets", () => {
       expect(json).toContain("StorageAuthTokenError");
       expect(json).toContain("Authorization failed for the access token and project ref pair");
       expect(json).not.toContain("unexpected get api keys status");
-      // Fails before any remote Storage call.
       expect(requests.some((r) => r.url.includes("/storage/v1/"))).toBe(false);
     });
   });
 
   it.live("caches the linked project on --linked but not on local", () => {
-    // Mirrors `ensureProjectGroupsCached` (cmd/root.go), gated on a non-empty
-    // resolved ref: --linked writes the linked-project cache + group identify;
-    // the local path must not.
+    // Gated on a non-empty resolved ref: --linked writes the linked-project
+    // cache and group identify; the local path does not.
     const linked = setupSeedBuckets(tmp.current, {
       toml: "[storage.buckets.test]\npublic = true\n",
       projectRef: VALID_REF,
@@ -2330,12 +2267,10 @@ describe("seed buckets", () => {
   });
 
   it.live("succeeds on the TLS local path and uses an https base URL", () => {
-    // The integration harness mocks HttpClient.HttpClient directly (bypassing fetch),
-    // so real TLS cert verification cannot be exercised here. This test confirms
-    // the TLS code path (embedded CA resolution + FetchHttpClient.Fetch override)
-    // does not throw, and that the gateway is called with https:// URLs — matching
-    // the existing "builds an https base URL" test but going through the full
-    // CA-resolution branch in the handler.
+    // The mock replaces HttpClient.HttpClient directly (bypassing fetch), so
+    // real TLS cert verification isn't exercised here — this only confirms the
+    // embedded-CA resolution path doesn't throw and the gateway is called with
+    // https:// URLs.
     const previousHost = process.env["SUPABASE_SERVICES_HOSTNAME"];
     process.env["SUPABASE_SERVICES_HOSTNAME"] = "localhost";
     const { layer, requests } = setupSeedBuckets(tmp.current, {
@@ -2363,8 +2298,8 @@ describe("seed buckets", () => {
   });
 
   it.live("reads cert_path and key_path from disk when both api.tls paths are set", () => {
-    // Writes a dummy CA PEM and key to disk. Both must be present and readable
-    // for the handler to succeed (Go validateLocalKongTls parity).
+    // Writes a dummy CA PEM and key to disk; both must be present and readable
+    // for the handler to succeed.
     const certContent = "-----BEGIN CERTIFICATE-----\nZHVtbXk=\n-----END CERTIFICATE-----\n";
     const keyContent = "-----BEGIN PRIVATE KEY-----\nZHVtbXk=\n-----END PRIVATE KEY-----\n";
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
@@ -2389,11 +2324,9 @@ describe("seed buckets", () => {
   it.live(
     "re-roots an absolute cert_path/key_path under supabase/ (Go path.Join, no IsAbs guard)",
     () => {
-      // Go resolves api.tls.cert_path/key_path with path.Join(SupabaseDirPath, p)
-      // and NO filepath.IsAbs guard (config.go:795-801), so an absolute-looking
-      // "/tmp/kong.crt" is read from supabase/tmp/kong.crt — NOT from the real
-      // /tmp. We only write the cert/key under supabase/tmp/; if the handler tried
-      // the literal /tmp path it would fail to read and error out.
+      // An absolute-looking "/tmp/kong.crt" is resolved relative to supabase/,
+      // not the real /tmp — we only write the cert/key under supabase/tmp/, so
+      // a handler that read the literal /tmp path would fail here.
       const certContent = "-----BEGIN CERTIFICATE-----\nZHVtbXk=\n-----END CERTIFICATE-----\n";
       const keyContent = "-----BEGIN PRIVATE KEY-----\nZHVtbXk=\n-----END PRIVATE KEY-----\n";
       mkdirSync(join(tmp.current, "supabase", "tmp"), { recursive: true });
@@ -2416,14 +2349,11 @@ describe("seed buckets", () => {
     },
   );
 
-  // Fix 1 — --linked merges [remotes.*] config overrides
-
   it.live("--linked merges [remotes.*] storage config override before seeding", () => {
-    // The base config has [storage.buckets.base] with public=true; the remote block
-    // overrides it to public=false and adds [storage.buckets.remote]. Both buckets
-    // appear after the merge (`mergeRemoteConfig` merges subtrees recursively;
-    // it does not wholesale replace [storage.buckets]).
-    const remoteRef = VALID_REF; // "abcdefghijklmnopqrst"
+    // The remote block overrides `base.public` to false and adds a `remote`
+    // bucket; `mergeRemoteConfig` merges subtrees recursively rather than
+    // replacing [storage.buckets] wholesale, so both buckets are seeded.
+    const remoteRef = VALID_REF;
     const flags: BucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer, out, requests } = setupSeedBuckets(tmp.current, {
       toml: [
@@ -2447,13 +2377,9 @@ describe("seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* seedBuckets(flags).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // Go prints the override notice from inside config load (config.go:513).
       expect(out.stderrText).toContain("Loading config override: [remotes.production]");
-      // Both base and remote are present after the merge; the remote override
-      // changed base.public from true → false (but both are still seeded).
       expect(out.stderrText).toContain("Creating Storage bucket: base");
       expect(out.stderrText).toContain("Creating Storage bucket: remote");
-      // Two POST /bucket calls — both buckets seeded.
       expect(
         requests.filter((r) => r.method === "POST" && r.url.includes("/storage/v1/bucket")),
       ).toHaveLength(2);
@@ -2461,7 +2387,6 @@ describe("seed buckets", () => {
   });
 
   it.live("local run uses base config (no [remotes.*] merge)", () => {
-    // Without --linked, the base [storage.buckets.base] is used verbatim.
     const remoteRef = VALID_REF;
     const { layer, out, requests } = setupSeedBuckets(tmp.current, {
       toml: [
@@ -2489,8 +2414,6 @@ describe("seed buckets", () => {
     });
   });
 
-  // Fix 2 — validate bucket names up front
-
   it.live("fails with exact error message on an invalid bucket name", () => {
     const { layer, requests } = setupSeedBuckets(tmp.current, {
       // "good-name" is valid; "bad/name" contains "/" which is not in the allowed set.
@@ -2513,13 +2436,11 @@ describe("seed buckets", () => {
       expect(JSON.stringify(exit)).toContain(
         "Invalid Bucket name: bad/name. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed. (^(\\\\w|!|-|\\\\.|\\\\*|'|\\\\(|\\\\)| |&|\\\\$|@|=|;|:|\\\\+|,|\\\\?)*$)",
       );
-      // Validation fails before any Storage call.
       expect(requests).toHaveLength(0);
     });
   });
 
   it.live("accepts valid bucket names that use allowed special characters", () => {
-    // Bucket names with spaces, dots, underscores, etc. are valid per the regex.
     const { layer, requests } = setupSeedBuckets(tmp.current, {
       toml: [
         '[storage.buckets."my.bucket"]',
@@ -2540,8 +2461,6 @@ describe("seed buckets", () => {
       expect(requests.filter((r) => r.method === "POST")).toHaveLength(3);
     });
   });
-
-  // Fix 3 — SUPABASE_AUTH_JWT_SECRET / SUPABASE_AUTH_SERVICE_ROLE_KEY for local
 
   it.live("local run: SUPABASE_AUTH_JWT_SECRET overrides auth.jwt_secret", () => {
     const prevJwt = process.env["SUPABASE_AUTH_JWT_SECRET"];
@@ -2564,7 +2483,6 @@ describe("seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // A derived JWT is sent (not opaque sb_ key), so Authorization is present.
       expect(
         requests.every((r) => (r.headers["authorization"] ?? "").startsWith("Bearer ey")),
       ).toBe(true);
@@ -2626,8 +2544,6 @@ describe("seed buckets", () => {
       ),
     );
   });
-
-  // Fix 5 — validate api.tls cert/key pairing before seeding
 
   it.live("fails when cert_path is set but key_path is missing", () => {
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
@@ -2699,10 +2615,9 @@ describe("seed buckets", () => {
   });
 
   it.live("skips TLS validation when api.enabled is false (Go gates on c.Api.Enabled)", () => {
-    // Cert/key are resolved and validated only inside `if c.Api.Enabled` blocks
-    // (config.go:795, 841), so a config with [api] enabled=false, [api.tls]
-    // enabled=true and only cert_path set is valid and must NOT fail here on
-    // the missing key_path — it seeds normally instead.
+    // Cert/key pairing is validated only when api.enabled is true, so a config
+    // with api.enabled=false and only cert_path set must not fail on the
+    // missing key_path — it seeds normally.
     const { layer, requests } = setupSeedBuckets(tmp.current, {
       toml: '[api]\nenabled = false\n[api.tls]\nenabled = true\ncert_path = "custom-ca.crt"\n[storage.buckets.docs]\npublic = false\n',
       routes: [
@@ -2722,10 +2637,9 @@ describe("seed buckets", () => {
   it.live(
     "fails before the api-keys fetch when --workdir names a config-less subdirectory of a real ancestor project",
     () => {
-      // CLI-2285 regression: the ancestor project genuinely has a valid
-      // config.toml declaring a bucket, and the subdirectory genuinely has
-      // none of its own — an EXPLICIT --workdir must never silently climb
-      // to the ancestor's config and seed buckets there.
+      // The ancestor project has a valid config.toml declaring a bucket; the
+      // subdirectory has none of its own — an explicit --workdir must never
+      // silently climb to the ancestor's config.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
@@ -2740,7 +2654,6 @@ describe("seed buckets", () => {
         const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(JSON.stringify(exit)).toContain("SeedMissingProjectConfigError");
-        // Fires before any credential/api-keys resolution.
         expect(requests).toHaveLength(0);
         expect(telemetry.flushed).toBe(true);
       });
@@ -2765,12 +2678,10 @@ describe("seed buckets", () => {
   it.live(
     "seedBucketsRun succeeds with a caller-supplied resolvedConfig even when cliSettings.explicitWorkdir is true",
     () => {
-      // `start`/`db reset` never reach `buckets.handler.ts`'s own
-      // `requireExplicitWorkdirProject` guard — they call this shared
-      // core directly with an already-resolved `resolvedConfig`, bypassing
-      // the reload entirely. This regression guard proves that reuse path
-      // stays untouched by the CLI-2285 fix even when the settings passed
-      // happen to carry `explicitWorkdir: true`.
+      // `start`/`db reset` call `seedBucketsRun` directly with an
+      // already-resolved `resolvedConfig`, bypassing `buckets.handler.ts`'s
+      // `requireExplicitWorkdirProject` guard entirely — this proves that
+      // reuse path stays untouched even when `explicitWorkdir` is true.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),

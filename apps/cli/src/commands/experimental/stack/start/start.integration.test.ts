@@ -14,7 +14,11 @@ import {
   StackRuntimeError,
   StackStateInvalidError,
 } from "@supabase/stack/effect";
-import type { EffectStack, StackStartError, StackStatus } from "@supabase/stack/effect";
+import type {
+  EffectStack,
+  StackStartError as ApiStackStartError,
+  StackStatus,
+} from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
@@ -22,15 +26,15 @@ import {
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { mockContextualAnalytics, mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
 import {
-  experimentalStackApiLayer,
-  ExperimentalStackTargetError,
-  ExperimentalStackTargetResolver,
-  experimentalStackTargetResolverLayer,
-  ExperimentalStackApi,
+  stackApiLayer,
+  StackTargetError,
+  StackTargetResolver,
+  stackTargetResolverLayer,
+  StackApi,
 } from "../stack.shared.ts";
-import { experimentalStackStart } from "./start.handler.ts";
-import { ExperimentalStackStartError } from "./start.errors.ts";
-import { experimentalStackStartCommand } from "./start.command.ts";
+import { stackStart } from "./start.handler.ts";
+import { StackCommandStartError } from "./start.errors.ts";
+import { stackStartCommand } from "./start.command.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
@@ -46,8 +50,8 @@ const project = (): string => {
   return root;
 };
 
-const resolverLayer = experimentalStackTargetResolverLayer.pipe(
-  Layer.provideMerge(experimentalStackApiLayer),
+const resolverLayer = stackTargetResolverLayer.pipe(
+  Layer.provideMerge(stackApiLayer),
   Layer.provide(BunServices.layer),
 );
 
@@ -82,7 +86,7 @@ const status = (id: string, runtime: "native" | "container" = "native") =>
 
 function fakeStack(
   id: string,
-  start: (config: unknown) => Effect.Effect<StackStatus, StackStartError>,
+  start: (config: unknown) => Effect.Effect<StackStatus, ApiStackStartError>,
 ) {
   return {
     id: StackIdSchema.make(id),
@@ -97,7 +101,7 @@ function fakeStack(
   } satisfies EffectStack;
 }
 
-const flags = (overrides: Partial<Parameters<typeof experimentalStackStart>[0]> = {}) => ({
+const flags = (overrides: Partial<Parameters<typeof stackStart>[0]> = {}) => ({
   stack: Option.none<string>(),
   stackId: Option.none<string>(),
   runtime: "auto" as const,
@@ -116,13 +120,13 @@ function handlerLayer(opts: {
   const out = mockOutput();
   const telemetry = mockTelemetryStateTracked();
   const { id, ...targetWithoutId } = opts.target;
-  const targetLayer = Layer.succeed(ExperimentalStackTargetResolver, {
+  const targetLayer = Layer.succeed(StackTargetResolver, {
     resolve: () =>
       Effect.succeed(
         id === undefined ? targetWithoutId : { ...targetWithoutId, id: StackIdSchema.make(id) },
       ),
   });
-  const apiLayer = Layer.succeed(ExperimentalStackApi, {
+  const apiLayer = Layer.succeed(StackApi, {
     findStack: () => Effect.succeed(Option.none()),
     createStack: (options) => {
       opts.onCreate?.(options);
@@ -148,11 +152,11 @@ function handlerLayer(opts: {
   };
 }
 
-describe("experimental stack start targeting", () => {
+describe("stack start targeting", () => {
   it.effect("resolves the current project target", () => {
     const root = project();
     return Effect.gen(function* () {
-      const resolver = yield* ExperimentalStackTargetResolver;
+      const resolver = yield* StackTargetResolver;
       const target = yield* resolver.resolve({
         projectRoot: root,
         runtime: "auto",
@@ -170,7 +174,7 @@ describe("experimental stack start targeting", () => {
   it.effect("keeps a named native stack target distinct", () => {
     const root = project();
     return Effect.gen(function* () {
-      const resolver = yield* ExperimentalStackTargetResolver;
+      const resolver = yield* StackTargetResolver;
       const target = yield* resolver.resolve({
         projectRoot: root,
         name: "feature-a",
@@ -186,18 +190,18 @@ describe("experimental stack start targeting", () => {
 
   it.effect("rejects a malformed stack id before loading project configuration", () =>
     Effect.gen(function* () {
-      const resolver = yield* ExperimentalStackTargetResolver;
+      const resolver = yield* StackTargetResolver;
       const failure = yield* resolver
         .resolve({ projectRoot: "/does/not/exist", id: "invalid", runtime: "auto" })
         .pipe(Effect.flip);
-      expect(failure).toBeInstanceOf(ExperimentalStackTargetError);
+      expect(failure).toBeInstanceOf(StackTargetError);
       expect(failure.message).toContain("lowercase SHA-256");
       expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
     }).pipe(Effect.provide(resolverLayer)),
   );
 
   it.effect("classifies an existing stack runtime mismatch as provided flags", () => {
-    const api = Layer.succeed(ExperimentalStackApi, {
+    const api = Layer.succeed(StackApi, {
       findStack: () => Effect.succeed(Option.none()),
       createStack: () => Effect.die("unused"),
       openStack: () => Effect.die("unused"),
@@ -215,17 +219,14 @@ describe("experimental stack start targeting", () => {
         }),
     });
     return Effect.gen(function* () {
-      const resolver = yield* ExperimentalStackTargetResolver;
+      const resolver = yield* StackTargetResolver;
       const failure = yield* resolver
         .resolve({ projectRoot: "/tmp/project", id: "b".repeat(64), runtime: "docker" })
         .pipe(Effect.flip);
       expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
     }).pipe(
       Effect.provide(
-        experimentalStackTargetResolverLayer.pipe(
-          Layer.provideMerge(api),
-          Layer.provide(BunServices.layer),
-        ),
+        stackTargetResolverLayer.pipe(Layer.provideMerge(api), Layer.provide(BunServices.layer)),
       ),
     );
   });
@@ -247,7 +248,7 @@ describe("experimental stack start targeting", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* experimentalStackStart(
+      yield* stackStart(
         flags({
           stack: Option.some("feature-a"),
           runtime: "native",
@@ -294,7 +295,7 @@ describe("experimental stack start targeting", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* experimentalStackStart(flags({ stackId: Option.some("b".repeat(64)) }));
+      yield* stackStart(flags({ stackId: Option.some("b".repeat(64)) }));
       expect(opened).toBe(true);
       expect(startConfig).toMatchObject({ config: { listeners: { api: { port: 55421 } } } });
     }).pipe(
@@ -327,9 +328,9 @@ describe("experimental stack start targeting", () => {
     } satisfies EffectStack;
     const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
-      const failure = yield* experimentalStackStart(flags()).pipe(Effect.flip);
-      expect(failure).toBeInstanceOf(ExperimentalStackStartError);
-      if (failure instanceof ExperimentalStackStartError) {
+      const failure = yield* stackStart(flags()).pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(StackCommandStartError);
+      if (failure instanceof StackCommandStartError) {
         expect(failure.reason).toBe("runtime");
         expect(failure.suggestion).toContain("container engine");
         expect(failure[ErrorActionabilityId]).toEqual(actionability.dockerNotRunning);
@@ -361,7 +362,7 @@ describe("experimental stack start targeting", () => {
     } satisfies EffectStack;
     const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
-      yield* experimentalStackStart(flags());
+      yield* stackStart(flags());
       expect(stopped).toBe(false);
       expect(destroyed).toBe(false);
     }).pipe(
@@ -382,9 +383,9 @@ describe("experimental stack start targeting", () => {
     );
     const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
-      const failure = yield* experimentalStackStart(flags()).pipe(Effect.flip);
-      expect(failure).toBeInstanceOf(ExperimentalStackStartError);
-      if (failure instanceof ExperimentalStackStartError) {
+      const failure = yield* stackStart(flags()).pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(StackCommandStartError);
+      if (failure instanceof StackCommandStartError) {
         expect(failure.reason).toBe("registry");
         expect(failure.suggestion).toContain("registry connectivity");
         expect(failure[ErrorActionabilityId]).toEqual(actionability.externalNetwork);
@@ -402,9 +403,9 @@ describe("experimental stack start targeting", () => {
     );
     const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
-      const failure = yield* experimentalStackStart(flags()).pipe(Effect.flip);
-      expect(failure).toBeInstanceOf(ExperimentalStackStartError);
-      if (failure instanceof ExperimentalStackStartError) {
+      const failure = yield* stackStart(flags()).pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(StackCommandStartError);
+      if (failure instanceof StackCommandStartError) {
         expect(failure.reason).toBe("unknown");
         expect(failure.suggestion).toContain("runtime diagnostics");
         expect(failure[ErrorActionabilityId]).toEqual(actionability.unknown);
@@ -422,9 +423,9 @@ describe("experimental stack start targeting", () => {
     );
     const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
-      const failure = yield* experimentalStackStart(flags()).pipe(Effect.flip);
-      expect(failure).toBeInstanceOf(ExperimentalStackStartError);
-      if (failure instanceof ExperimentalStackStartError) {
+      const failure = yield* stackStart(flags()).pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(StackCommandStartError);
+      if (failure instanceof StackCommandStartError) {
         expect(failure.reason).toBe("invalid-config");
         expect(failure.suggestion).toContain("restore a valid state record");
         expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
@@ -440,9 +441,9 @@ describe("experimental stack start targeting", () => {
     const stack = fakeStack("9".repeat(64), () => Effect.succeed(status("9".repeat(64))));
     const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
-      const failure = yield* experimentalStackStart(flags()).pipe(Effect.flip);
-      expect(failure).toBeInstanceOf(ExperimentalStackStartError);
-      if (failure instanceof ExperimentalStackStartError) {
+      const failure = yield* stackStart(flags()).pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(StackCommandStartError);
+      if (failure instanceof StackCommandStartError) {
         expect(failure.reason).toBe("invalid-config");
         expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
       }
@@ -475,9 +476,7 @@ describe("experimental stack start targeting", () => {
           }),
       } satisfies EffectStack;
       const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      const fiber = yield* Effect.forkChild(
-        Effect.provide(experimentalStackStart(flags()), setup.layer),
-      );
+      const fiber = yield* Effect.forkChild(Effect.provide(stackStart(flags()), setup.layer));
       yield* Deferred.await(started);
       yield* Fiber.interrupt(fiber);
       expect(stopped).toBe(false);
@@ -498,13 +497,13 @@ describe("experimental stack start targeting", () => {
       setup.out.layer,
       setup.telemetry.layer,
       mockCommandSettings({ workdir: root }),
-      Layer.succeed(ExperimentalStackTargetResolver, {
+      Layer.succeed(StackTargetResolver, {
         resolve: () => {
           resolved = true;
           return Effect.die("resolver should not run");
         },
       }),
-      Layer.succeed(ExperimentalStackApi, {
+      Layer.succeed(StackApi, {
         findStack: () => Effect.succeed(Option.none()),
         createStack: () => {
           created = true;
@@ -516,7 +515,7 @@ describe("experimental stack start targeting", () => {
       BunServices.layer,
     );
     return Effect.gen(function* () {
-      const failure = yield* experimentalStackStart(
+      const failure = yield* stackStart(
         flags({ stack: Option.some("feature"), stackId: Option.some("e".repeat(64)) }),
       ).pipe(Effect.flip);
       expect(failure.message).toContain("cannot be used together");
@@ -530,7 +529,7 @@ describe("experimental stack start targeting", () => {
   });
 });
 
-describe("experimental stack start parser", () => {
+describe("stack start parser", () => {
   it.live("records the wired command identity with a fresh run id per invocation", () => {
     const root = project();
     const analytics = mockContextualAnalytics();
@@ -538,7 +537,7 @@ describe("experimental stack start parser", () => {
     const output = mockOutput();
     const stack = fakeStack("e".repeat(64), () => Effect.succeed(status("e".repeat(64))));
     const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-    const command = experimentalStackStartCommand.pipe(
+    const command = stackStartCommand.pipe(
       Command.provide(commandRuntimeLayer(["stack", "start"])),
       Command.provide(
         Layer.mergeAll(setup.layer, output.layer, analytics.layer, processControl.layer),
@@ -562,7 +561,7 @@ describe("experimental stack start parser", () => {
 
   it.live("parses --stack and --runtime through the command", () => {
     let parsed: { stack: Option.Option<string>; runtime: string } | undefined;
-    const command = experimentalStackStartCommand.pipe(
+    const command = stackStartCommand.pipe(
       Command.withHandler((flags) =>
         Effect.sync(() => {
           parsed = { stack: flags.stack, runtime: flags.runtime };
@@ -591,7 +590,7 @@ describe("experimental stack start parser", () => {
       target: { projectRoot: root },
       stack: fakeStack("a".repeat(64), () => Effect.succeed(status("a".repeat(64)))),
     });
-    const target = Layer.succeed(ExperimentalStackTargetResolver, {
+    const target = Layer.succeed(StackTargetResolver, {
       resolve: () =>
         Effect.sync(() => {
           resolved = true;
@@ -599,9 +598,9 @@ describe("experimental stack start parser", () => {
         }),
     });
     return Effect.gen(function* () {
-      const failure = yield* experimentalStackStart(flags()).pipe(Effect.flip);
-      expect(failure).toBeInstanceOf(ExperimentalStackStartError);
-      if (failure instanceof ExperimentalStackStartError) {
+      const failure = yield* stackStart(flags()).pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(StackCommandStartError);
+      if (failure instanceof StackCommandStartError) {
         expect(failure.reason).toBe("flags");
         expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
       }

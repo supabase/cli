@@ -9,8 +9,7 @@ import { CAPABILITY_NAMES } from "./Capability.ts";
 import { StackIdSchema } from "./StackId.ts";
 import type { StackStatus } from "./Status.ts";
 
-// Promise facade fixtures intentionally model async operations.
-// oxlint-disable effecttsgo/async-function
+// oxlint-disable effecttsgo/async-function -- fixtures model the Promise facade's async operations.
 
 const stackId = StackIdSchema.make(
   "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
@@ -60,66 +59,86 @@ const stream = <A>(values: ReadonlyArray<A>): AsyncIterable<A> => ({
   },
 });
 
-const fakeStack = (
-  events: Array<string>,
-  failStart = false,
-  reachesReadiness = true,
-  includeApi = true,
-  functionsState: "ready" | "dormant" | "stopped" = "dormant",
-  failedCapability?: string,
-): PromiseStack => ({
-  id: stackId,
-  status: async () =>
-    status(reachesReadiness ? "running" : "stopped", includeApi, functionsState, failedCapability),
-  credentials: async () => ({
-    database: { url: "postgres://test", password: "test" },
-    api: {
-      publishableKey: "publishable",
-      secretKey: "secret",
-      anonJwt: "anon",
-      serviceRoleJwt: "service",
+type FakeStackOptions = {
+  readonly failStart?: boolean;
+  readonly reachesReadiness?: boolean;
+  readonly includeApi?: boolean;
+  readonly functionsState?: "ready" | "dormant" | "stopped";
+  readonly failedCapability?: string;
+};
+
+const fakeStack = (events: Array<string>, options: FakeStackOptions = {}): PromiseStack => {
+  const {
+    failStart = false,
+    reachesReadiness = true,
+    includeApi = true,
+    functionsState = "dormant",
+    failedCapability,
+  } = options;
+  return {
+    id: stackId,
+    status: async () =>
+      status(
+        reachesReadiness ? "running" : "stopped",
+        includeApi,
+        functionsState,
+        failedCapability,
+      ),
+    credentials: async () => ({
+      database: { url: "postgres://test", password: "test" },
+      api: {
+        publishableKey: "publishable",
+        secretKey: "secret",
+        anonJwt: "anon",
+        serviceRoleJwt: "service",
+      },
+      storage: {
+        endpoint: "http://storage",
+        region: "local",
+        accessKeyId: "access",
+        secretAccessKey: "storage",
+      },
+    }),
+    prepare: async () => ({ capabilities: [] }),
+    start: async () => {
+      events.push("start");
+      if (failStart) throw new Error("startup failed");
+      return status(
+        reachesReadiness ? "running" : "stopped",
+        includeApi,
+        functionsState,
+        failedCapability,
+      );
     },
-    storage: {
-      endpoint: "http://storage",
-      region: "local",
-      accessKeyId: "access",
-      secretAccessKey: "storage",
+    stop: async () => undefined,
+    destroy: async () => {
+      events.push("destroy");
+      if (failStart) throw new Error("destroy failed");
     },
-  }),
-  prepare: async () => ({ capabilities: [] }),
-  start: async () => {
-    events.push("start");
-    if (failStart) throw new Error("startup failed");
-    return status(
-      reachesReadiness ? "running" : "stopped",
-      includeApi,
-      functionsState,
-      failedCapability,
-    );
-  },
-  stop: async () => undefined,
-  destroy: async () => {
-    events.push("destroy");
-    if (failStart) throw new Error("destroy failed");
-  },
-  logs: async () => ({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
-  followLogs: () => stream([]),
-});
+    logs: async () => ({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
+    followLogs: () => stream([]),
+  };
+};
+
+const setupFixture = (root: string, stackOptions: FakeStackOptions = {}) => {
+  const events: Array<string> = [];
+  const removed: Array<string> = [];
+  const operations: TestStackOperations = {
+    createRoot: async () => root,
+    createStack: async (options) => {
+      events.push(`create:${options.projectRoot}`);
+      return fakeStack(events, stackOptions);
+    },
+    removeRoot: async (removedRoot) => {
+      removed.push(removedRoot);
+    },
+  };
+  return { events, removed, operations };
+};
 
 describe("test stack resource", () => {
   it("starts automatically and destroys only its owned identity", async () => {
-    const events: Array<string> = [];
-    const removed: Array<string> = [];
-    const operations: TestStackOperations = {
-      createRoot: async () => "/tmp/stack-test-owned",
-      createStack: async (options) => {
-        events.push(`create:${options.projectRoot}`);
-        return fakeStack(events);
-      },
-      removeRoot: async (root) => {
-        removed.push(root);
-      },
-    };
+    const { events, removed, operations } = setupFixture("/tmp/stack-test-owned");
     const stack = await createTestStackWith({}, operations);
     await stack[Symbol.asyncDispose]();
     expect(events).toEqual(["create:/tmp/stack-test-owned", "start", "destroy"]);
@@ -127,26 +146,13 @@ describe("test stack resource", () => {
   });
 
   it("preserves startup failure while retaining the root when destroy fails", async () => {
-    const events: Array<string> = [];
-    const removed: Array<string> = [];
-    const operations: TestStackOperations = {
-      createRoot: async () => "/tmp/stack-test-failed",
-      createStack: async () => fakeStack(events, true),
-      removeRoot: async (root) => {
-        removed.push(root);
-      },
-    };
-    let failure: unknown;
-    try {
-      await createTestStackWith({}, operations);
-    } catch (error) {
-      failure = error;
-    }
-    expect(failure).toBeInstanceOf(Error);
-    if (!(failure instanceof Error)) throw new Error("expected startup failure");
-    expect(failure.message).toContain("startup failed");
-    expect(failure.message).toContain("retained test stack root /tmp/stack-test-failed");
-    expect(events).toEqual(["start", "destroy"]);
+    const { events, removed, operations } = setupFixture("/tmp/stack-test-failed", {
+      failStart: true,
+    });
+    await expect(createTestStackWith({}, operations)).rejects.toThrow(
+      /startup failed[\s\S]*retained test stack root \/tmp\/stack-test-failed/,
+    );
+    expect(events).toEqual(["create:/tmp/stack-test-failed", "start", "destroy"]);
     expect(removed).toEqual([]);
   });
 
@@ -240,7 +246,7 @@ describe("test stack resource", () => {
     const events: Array<string> = [];
     const operations: TestStackOperations = {
       createRoot: async () => "/tmp/stack-test-disabled-surfaces",
-      createStack: async () => fakeStack(events, false, true, false, "stopped"),
+      createStack: async () => fakeStack(events, { includeApi: false, functionsState: "stopped" }),
       removeRoot: async () => undefined,
     };
     const stack = await createTestStackWith(
@@ -287,7 +293,6 @@ describe("test stack resource", () => {
 
   it("uses the managed runtime state root without mutating process environment", async () => {
     const events: Array<string> = [];
-    // This read is the assertion that createTestStackWith leaves global environment untouched.
     // oxlint-disable-next-line effecttsgo/process-env -- test-only environment immutability assertion.
     const originalHome = process.env.SUPABASE_HOME;
     let environment: Parameters<NonNullable<TestStackOperations["createStack"]>>[1] | undefined;
@@ -369,7 +374,7 @@ describe("test stack resource", () => {
     const removed: Array<string> = [];
     const operations: TestStackOperations = {
       createRoot: async () => "/tmp/stack-test-capability-failed",
-      createStack: async () => fakeStack(events, false, true, true, "dormant", "auth"),
+      createStack: async () => fakeStack(events, { failedCapability: "auth" }),
       removeRoot: async (root) => {
         removed.push(root);
       },

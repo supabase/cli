@@ -1,11 +1,9 @@
 /**
- * The composed shadow-provisioning shape `db diff`/`db pull` actually call:
- * {@link prepareShadowSource} builds on `shared/db-bootstrap/shadow-database.ts`'s
- * lower-level primitives (create → health-wait → platform baseline → migrations replay) and
- * adds the migra `--target-local` declarative-schema branch, which applies declarative files
- * to a second database on the same shadow container instead of diffing the user's local DB
- * directly. Schema selection deliberately plays no part in shadow provisioning — the `--schema`
- * flag only scopes the diff itself, never what the shadow contains.
+ * The composed shadow-provisioning shape `db diff`/`db pull` call: {@link prepareShadowSource}
+ * builds on `shared/db-bootstrap/shadow-database.ts`'s primitives and adds the migra
+ * `--target-local` declarative-schema branch, which applies declarative files to a second
+ * database on the same shadow container instead of diffing the user's local DB directly.
+ * The `--schema` flag only scopes the diff itself, never what the shadow contains.
  */
 
 import { Effect, Result, type FileSystem, type Path } from "effect";
@@ -49,16 +47,12 @@ type Spawner = ChildProcessSpawner["Service"];
 
 export type { ShadowSourceResult };
 
-// `shadowRunInputFromLocalContainerInputs` used to be re-exported here (promoted to
-// `shared/db-bootstrap/shadow-database.ts` when `migration squash` became this builder's
-// third consumer, CLI-1969). Callers import it from there directly — no re-export shim needed.
-
 export interface PrepareShadowSourceInput<E> extends ShadowSetupInput<E> {
-  /** Go's `utils.IsLocalDatabase(config)` — the only target-derived input the shadow prep needs. */
+  /** The only target-derived input the shadow prep needs. */
   readonly targetLocal: boolean;
   /** Selects the shadow baseline and whether a local target may use the migra declarative override. */
   readonly migrationMode?: "legacy" | "pgdelta-next";
-  /** `db.migrations.schema_paths`, RAW (unresolved) — Go's `Config.Db.Migrations.SchemaPaths` pre-`config.go:976-979`-resolution form. */
+  /** `db.migrations.schema_paths`, unresolved (raw config value). */
   readonly schemaPaths: ReadonlyArray<string>;
   readonly pgDelta: PgDeltaTomlConfig;
 }
@@ -72,35 +66,11 @@ export type PrepareShadowSourceError =
   | ImagePrepullError;
 
 /**
- * Port of Go's `PrepareShadowSource` (`apps/cli-go/internal/db/diff/shadow.go:37-91`):
- * readiness-wait against an already-`createShadowDatabase`-created shadow (a direct
- * connect probe, `waitForShadowReady` — NOT the Docker-health gate the long-running `db`
- * container uses, which the shadow's own 10s-interval healthcheck cannot satisfy until well
- * after Postgres is connectable; see that function's own doc comment) ->
- * `MigrateShadowDatabase` (platform baseline + local migrations + the `contrib_regression`
- * template database) -> build the diff-source config -> for legacy local targets, the
- * declarative-schema override branch. Pg-delta next always compares that migrations shadow
- * directly to the live target.
- *
- * Deliberately does NOT call `createShadowDatabase` (`shadow-database.ts`) itself, and
- * no longer wraps its own body in `Effect.onError` cleanup — the caller does both, structuring
- * this function as the `use` phase of an `Effect.acquireUseRelease` whose `acquire` is
- * `createShadowDatabase` and whose `release` is `removeShadowDatabase` (see
- * `diff.handler.ts`/`pull.handler.ts`'s call sites). An earlier shape passed THIS WHOLE
- * function (create -> health-wait -> migrate -> declarative-apply) as `acquire` instead —
- * matching Go's `ok`-sentinel + `defer` pattern for the "remove on any failure after
- * creation" case, but Effect's `acquireUseRelease` runs `acquire` inside an
- * `uninterruptibleMask` with no `restore` (`uninterruptibleMask(restore =>
- * flatMap(acquire, a => onExitPrimitive(restore(use(a)), ...)))`), so passing all of this
- * function as `acquire` made the ENTIRE health-wait/migration-replay/declarative-apply
- * sequence uninterruptible too — a SIGINT during any of it (each of which can run for
- * seconds to minutes) was silently swallowed until the whole sequence finished on its own,
- * unlike Go, which threads one cancellable `ctx` through every one of these calls. Moving
- * creation out to the (brief, Docker-API-bound) `acquire` and keeping this sequence as the
- * `use` phase restores that parity: a SIGINT here now interrupts immediately, same as Go's
- * ctx cancellation, while `removeShadowDatabase` still runs as the `release` finalizer
- * regardless of how `use` exits — success, a typed failure, or an interrupt (review:
- * PRRT_kwDOErm0O86XMrID).
+ * The `use` phase of an `Effect.acquireUseRelease` whose `acquire` creates the shadow and
+ * `release` removes it (see the `diff`/`pull` handlers). Health-wait, migration replay, and
+ * the declarative-schema override for legacy local targets all run here, not in `acquire` —
+ * `acquireUseRelease` runs `acquire` under an uninterruptible mask, so nesting them there
+ * would swallow a SIGINT until the whole sequence finished.
  */
 export const prepareShadowSource = <E>(
   spawner: Spawner,
@@ -127,11 +97,10 @@ export const prepareShadowSource = <E>(
       image: input.image,
     });
 
-    // `handle` doubles as the baseline state: on a warm shadow-cache hit the cluster it carries
-    // already holds the platform baseline (so only the template database + user migrations run),
-    // and on a cache-enabled cold provision it carries the snapshot step that runs between the
-    // two — see `shadow-cache.ts`/`ShadowBaselineState`. An uncached acquire hands over the
-    // always-cold state, which reproduces today's sequence exactly.
+    // `handle` doubles as the baseline state: on a warm shadow-cache hit it already holds the
+    // platform baseline (so only the template database + user migrations run); on a
+    // cache-enabled cold provision it carries the snapshot step that runs between the two — see
+    // `shadow-cache.ts`/`ShadowBaselineState`. An uncached acquire is always-cold.
     const migrateShadow =
       input.migrationMode === "pgdelta-next" ? migrateNextShadowDatabase : migrateShadowDatabase;
     yield* migrateShadow(
@@ -174,23 +143,16 @@ export const prepareShadowSource = <E>(
     } satisfies ShadowSourceResult;
   });
 
-/** Go's `pkg/config.hasGlobMeta` (`config.go:211-213`) — `*?[` only, NOT `io/fs.hasMeta`'s broader set (which also counts `\`). */
+/** Glob metacharacters recognized here: `*?[` only — not `\`. */
 function hasConfigGlobMeta(pattern: string): boolean {
   return /[*?[]/u.test(pattern);
 }
 
 /**
- * Port of Go's `Glob.SQLFiles(fsys, WithSkipEmptyGlobs(), WithErrorOnAllSkippedGlobs())`
- * (`apps/cli-go/pkg/config/config.go:119-192`), the exact option combination
- * `loadDeclaredSchemas`'s `schema_paths` branch uses. Deliberately separate from
- * `migrate-and-seed.ts`'s `resolveSchemaPathFiles` (Go's SAME `Glob.SQLFiles`
- * with ZERO options, `applySchemaFiles`) — the two option sets are genuinely different: a
- * per-pattern "no files matched" is unconditionally an error here UNLESS the pattern
- * contains a glob metacharacter (`skipEmptyGlobs`), in which case it's only converted back
- * into an error when EVERY pattern ended up skipped and the combined result is still empty
- * (`errorOnAllSkippedGlobs`) — and, unlike `applySchemaFiles`'s caller (which swallows any
- * collected errors once `len(declared) > 0`), `loadDeclaredSchemas`'s caller propagates
- * ANY error unconditionally, regardless of whether other patterns matched.
+ * A pattern with no matches is an error, unless it contains a glob metacharacter, in which
+ * case it's merely skipped — and the skip becomes an error too if every pattern in this call
+ * was skipped and the combined result is still empty. Any resulting error always propagates,
+ * unlike `resolveSchemaPathFiles`'s caller, which swallows errors once some files matched.
  */
 function globDeclaredSchemaPaths(
   fs: FileSystem.FileSystem,
@@ -205,62 +167,26 @@ function globDeclaredSchemaPaths(
     const skipped: Array<string> = [];
 
     for (const rawPattern of patterns) {
-      // Go's `config.go:976-979`: a non-empty, non-absolute `schema_paths` entry is resolved
-      // under `supabase/` (via `path.Join`, which also cleans the result) at config-load
-      // time — `resolveSeedSqlPath` already implements the identical resolution Go
-      // applies to `[db.seed] sql_paths`, the same shape. Go's `Glob.files` then normalizes
-      // to forward slashes immediately before globbing (`fs.Glob(fsys,
-      // filepath.ToSlash(pattern))`, `config.go:145`) — an absolute Windows entry such as
-      // `C:\repo\schema.sql` must become `C:/repo/schema.sql` before `pathMatch`/
-      // `globPattern` (which only recognize `/` as a segment separator) ever see it.
-      // Mirrors `seed-ops.ts`'s identical `toSlash` step for `[db.seed] sql_paths`.
-      //
-      // Gated on `path.sep !== "/"`, mirroring BOTH `cleanSchemaPath` below AND
-      // `globPattern`'s own internal `path.sep === "/" ? pattern : ...` normalization
-      // (`glob.ts:68`) — `filepath.ToSlash` is a byte-for-byte no-op on POSIX (only
-      // Windows's `filepath.Separator` is `\`), so converting unconditionally here previously
-      // fed `globPattern` an already-slashed pattern on POSIX too, silently discarding
-      // any `\` a caller wrote as a `path.Match` escape. Verified empirically with a scratch
-      // `path.Match` probe on darwin: `path.Match("foo\\*.sql", "foo*.sql")` (Go's real,
-      // unconverted-on-POSIX behavior) is `true` — a literal `\*` escapes the metacharacter,
-      // matching a file literally named `foo*.sql` — while this file's OLD unconditional
-      // `.replaceAll("\\", "/")` turned the same pattern into `foo/*.sql`, which instead
-      // searches a `foo/` subdirectory and never matches the literal `foo*.sql` file Go finds.
-      // The same probe also caught a second-order bug: unconditionally rewriting `\[` (a valid
-      // escaped literal `[`) into `/[` turns it into an unterminated character class, so a
-      // pattern that is well-formed for Go's `path.Match` was spuriously rejected as malformed
-      // here. Leaving `\` untouched on POSIX lets `pathMatch`'s own escape handling (used
-      // by both this and `globPattern`) reproduce Go's semantics directly — no gap in
-      // that shared module needs fixing first.
+      // Non-absolute entries resolve under `supabase/` first. Slashes are normalized only
+      // when `path.sep !== "/"` (Windows): on POSIX, `\` is a literal `pathMatch`/`globPattern`
+      // escape character, so converting it unconditionally would silently break a pattern like
+      // `foo\*.sql` (matches the literal file `foo*.sql`) by turning it into `foo/*.sql` (a
+      // subdirectory glob).
       const rawResolved = resolveSeedSqlPath(path, rawPattern);
-      // Go's `Glob.files` (`config.go:145`) only ever ToSlashes the pattern for the internal
-      // `fs.Glob` CALL itself — `hasGlobMeta`, the `skipped` slice, and both "no files matched
-      // pattern" error sites all keep using the loop's own `pattern` variable, which is NEVER
-      // ToSlash'd (`config.go:143-154`). So on Windows, an absolute entry like
-      // `C:\schemas\*.sql` must glob-match as `C:/schemas/*.sql` but still ERROR/report as
-      // `C:\schemas\*.sql` — `matchPattern` (slashed) feeds `pathMatch`/`globPattern`
-      // below; `rawResolved` (untouched) feeds every diagnostic (`skipped`/`problems`) so stderr
-      // stays byte-compatible with Go's un-ToSlash'd `pattern`.
+      // `matchPattern` (slash-normalized) feeds the glob/match calls below; diagnostics always
+      // use `rawResolved` (untouched), so an absolute Windows entry like `C:\schemas\*.sql`
+      // still reports with its original backslashes even though it matched via forward slashes.
       const matchPattern = path.sep === "/" ? rawResolved : rawResolved.replaceAll("\\", "/");
       if (pathMatch(matchPattern, "").badPattern) {
         problems.push(`failed to glob files: ${BAD_PATTERN_MESSAGE}`);
         continue;
       }
-      // Go's `io/fs.Glob` never matches an empty pattern: its literal (no-metacharacter)
-      // branch calls `Stat(fsys, "")`, which fails on a real OS filesystem (there is no file
-      // whose path is the empty string), so `Glob` returns zero matches — verified empirically
-      // against the real `config.Glob.SQLFiles` (`apps/cli-go/pkg/config/config.go:119-133`)
-      // fed pattern `""` against an `afero.NewOsFs()`: it reports `no files matched pattern: `,
-      // the same as any other non-matching literal pattern. `globPattern`'s own
-      // literal-pattern branch, however, resolves an empty pattern to the WORKDIR itself
-      // (`resolveUnderWorkdir(path, workdir, "")` is the workdir, which always exists),
-      // so without this guard an empty `schema_paths` entry would recurse into and collect
-      // every `.sql` file in the entire project instead of matching nothing. Short-circuit
-      // before calling it, rather than fixing `globPattern` itself, since that shared
-      // helper (`glob.ts`) also backs `[db.seed] sql_paths` (`seed.ts`) and
-      // `migrate-and-seed.ts`, both out of scope for this PR.
-      // Go's `sort.Strings(matches)` (`config.go:154`) — byte order, not JS's default UTF-16
-      // code-unit order; see `compareUtf8Bytes`'s own doc comment.
+      // An empty pattern must short-circuit to zero matches: `globPattern`'s literal-pattern
+      // branch resolves `""` to the workdir itself, so without this guard an empty
+      // `schema_paths` entry would collect every `.sql` file in the project instead of
+      // matching nothing.
+      // Byte order, not JS's default UTF-16 code-unit order; see `compareUtf8Bytes`'s own doc
+      // comment.
       const matches =
         matchPattern.length === 0
           ? []
@@ -270,11 +196,9 @@ function globDeclaredSchemaPaths(
           skipped.push(rawResolved);
           continue;
         }
-        // Go always resolves `SchemaPaths` (`config.go:976-979`) before this error can fire
-        // (resolution happens at config-load time, ahead of any glob), so the error must show
-        // the RESOLVED, `supabase/`-prefixed pattern, matching the all-skipped-globs branch
-        // below — not the raw, caller-supplied one. Still `rawResolved`, not `matchPattern`:
-        // see this loop's own doc comment above on why Go's error text is never ToSlash'd.
+        // The error shows the resolved, `supabase/`-prefixed pattern (not the raw
+        // caller-supplied one), and keeps `rawResolved`'s original separators rather than
+        // `matchPattern`'s slashes.
         problems.push(`no files matched pattern: ${rawResolved}`);
         continue;
       }
@@ -292,28 +216,19 @@ function globDeclaredSchemaPaths(
           }
           continue;
         }
-        // Go's `walkMatchedDir` (`pkg/config/config.go:194-211`) propagates ANY `fs.WalkDir`
-        // error (e.g. a permission-denied or I/O-erroring subdirectory) as `failed to walk
-        // matched directory: <err>` — it does NOT treat an unreadable directory as an empty
-        // match set, since silently doing so can omit declared schemas and compare a
-        // local-target diff against the wrong target. `walkSqlFiles` (`glob.ts`)
-        // also matches Go's byte-sorted, no-follow-symlink walk semantics — see its own doc
-        // comment.
+        // A walk error propagates rather than being treated as an empty match set — silently
+        // ignoring an unreadable subdirectory could omit a declared schema and compare a
+        // local-target diff against the wrong target.
         const sqlRelativeResult = yield* walkSqlFiles(fs, absMatch, "").pipe(Effect.result);
         if (Result.isFailure(sqlRelativeResult)) {
           problems.push(`failed to walk matched directory: ${sqlRelativeResult.failure.message}`);
           continue;
         }
         for (const relative of sqlRelativeResult.success) {
-          // `io/fs.WalkDir`'s own path.Join(dir, entry.Name()) (`io/fs/walk.go`'s `walkDir`)
-          // cleans redundant separators before `walkMatchedDir`'s callback ever records the
-          // child path — so a `match` that retains a trailing separator (e.g. a directory
-          // `schema_paths` entry configured as `"supabase/schemas/"`) never reaches Go's dedup
-          // `set` as a double-slashed key. A raw template join skips that implicit clean and
-          // can let the same file be recorded twice — once here, once via a literal
-          // `schema_paths` entry for the file itself — bypassing `seen` and double-applying the
-          // SQL. `cleanSchemaPath` (below) performs the equivalent slash-segment
-          // collapsing and is reused here rather than duplicated (review: PRRT_kwDOErm0O86XAlIr).
+          // `cleanSchemaPath` collapses a trailing separator in `match` (e.g. a directory entry
+          // configured as `"supabase/schemas/"`), so a file reached both via this walk and via
+          // its own literal `schema_paths` entry dedupes to the same key instead of
+          // double-applying.
           const relativeToWorkdir = cleanSchemaPath(`${match}/${relative}`);
           if (!seen.has(relativeToWorkdir)) {
             seen.add(relativeToWorkdir);
@@ -334,37 +249,11 @@ function globDeclaredSchemaPaths(
 }
 
 /**
- * Port of Go's `afero.Walk` + regular-`.sql`-file filter + `sort.Strings` (the shared tail of
- * both `loadDeclaredSchemas`'s pg-delta-declarative-dir and `SchemasDir` branches,
- * `apps/cli-go/internal/db/diff/diff.go:65-76,86-96`). `walkSqlFiles` (`glob.ts`)
- * also matches Go's byte-sorted, no-follow-symlink walk semantics — see its own doc comment.
- *
- * The walk ROOT itself is checked for being a symlink here, unlike `globDeclaredSchemaPaths`'s
- * directory branch (Go's `fs.WalkDir`, whose own doc comment says "if root itself is a symbolic
- * link, its target will be walked" — so a symlinked `schema_paths` match is deliberately followed,
- * matching `walkSqlFiles`'s existing never-checks-its-own-root behavior). `afero.Walk` is the
- * opposite: its `Walk(fs, root, walkFn)` entry point `Lstat`s the root BEFORE ever calling
- * `walkFn`, so a symlinked root is treated as a non-directory and produces zero files silently,
- * never descending into the target — verified against `afero`'s own source (`path.go`'s
- * `Walk`/`lstatIfPossible`). The PRECEDING `fs.stat`-based existence check in
- * `loadDeclaredSchemas` (which follows symlinks, matching Go's `afero.DirExists` — also
- * `fs.Stat`-based) can't substitute for this: existence and walkability are different checks in
- * Go, and only the latter uses `Lstat`.
- *
- * Paths are joined with the injected `Path` service (not a literal `/` template) so a symlink-free
- * result matches Go's own `filepath.Join`-built path on every platform — on Windows this yields
- * native backslashes (Go's `afero.Walk` never calls `filepath.ToSlash` on this branch, unlike
- * `walkMatchedDir`'s `schema_paths` branch, which does), and `path.join` normalizes ANY `/`
- * `walkSqlFiles`'s own relative-path construction produced internally, not just the outer
- * `dirRel`/`relative` join (verified: `path.win32.join("supabase/database",
- * "sub/dir/file.sql")` returns `"supabase\\database\\sub\\dir\\file.sql"`, not a mixed-separator
- * string) — on POSIX this is a no-op (`path.posix.join` is byte-identical to the old template).
- *
- * `errorPrefix` lets the two callers preserve Go's own DIFFERENT wrapping messages for the same
- * walk failure: the pg-delta declarative-dir branch reports `"failed to walk declarative dir:
- * %w"` while the `supabase/schemas` fallback reports `"failed to walk dir: %w"`
- * (`apps/cli-go/internal/db/diff/diff.go:65-76,86-96` — same walk, genuinely different prefix
- * per source), so stderr still identifies which configured source failed.
+ * Shared walk tail for both `loadDeclaredSchemas` sources: regular `.sql` files only,
+ * byte-sorted (see `walkSqlFiles`'s own doc comment). Unlike `globDeclaredSchemaPaths`'s
+ * directory branch, the walk root itself is checked for being a symlink and treated as
+ * empty if so — this walk never follows a symlinked root. Paths are joined with the
+ * injected `Path` service so results use native separators on every platform.
  */
 function walkSqlFilesSorted(
   fs: FileSystem.FileSystem,
@@ -390,10 +279,9 @@ function walkSqlFilesSorted(
 }
 
 /**
- * Port of Go's `loadDeclaredSchemas` (`apps/cli-go/internal/db/diff/diff.go:52-101`): a
- * three-source priority ladder — `db.migrations.schema_paths` (when non-empty) ->
- * pg-delta's declarative dir (when `[experimental.pgdelta] enabled` AND the dir exists) ->
- * `supabase/schemas` (when it exists) -> `[]`. Each source is `sort.Strings`-ordered.
+ * A three-source priority ladder: `db.migrations.schema_paths` (when non-empty), then
+ * pg-delta's declarative dir (when `[experimental.pgdelta] enabled` and the dir exists), then
+ * `supabase/schemas` (when it exists), then `[]`. Each source is byte-sorted.
  */
 export function loadDeclaredSchemas(
   fs: FileSystem.FileSystem,
@@ -409,9 +297,8 @@ export function loadDeclaredSchemas(
     if (pgDelta.enabled) {
       const declDirRel = resolveDeclarativeDir(path, pgDelta);
       const declDirAbs = resolveUnderWorkdir(path, workdir, declDirRel);
-      // Go's `afero.DirExists` (`diff.go:63`) — a path that exists but is a regular file is
-      // "not a directory" (`err == nil && exists` is false), not an error, so it falls through
-      // to the `supabase/schemas` source below rather than being walked as a directory.
+      // A path that exists but is a regular file is treated as "not a directory," not an
+      // error, so it falls through to the `supabase/schemas` source below.
       const isDeclDir = yield* fs.stat(declDirAbs).pipe(
         Effect.map((info) => info.type === "Directory"),
         Effect.orElseSucceed(() => false),
@@ -428,9 +315,8 @@ export function loadDeclaredSchemas(
     }
     const schemasDirRel = "supabase/schemas";
     const schemasDirAbs = resolveUnderWorkdir(path, workdir, schemasDirRel);
-    // Same `afero.DirExists` semantics as above (`diff.go:80`): a missing path or a path that
-    // exists but isn't a directory both resolve to "no declared schemas" (`[]`), not an error —
-    // only a genuine stat failure (permission denied, I/O error) propagates.
+    // A missing path or a non-directory path both resolve to "no declared schemas" (`[]`),
+    // not an error — only a genuine stat failure propagates.
     const isSchemasDir = yield* fs.stat(schemasDirAbs).pipe(
       Effect.matchEffect({
         onFailure: (cause) =>
@@ -450,14 +336,11 @@ export function loadDeclaredSchemas(
 }
 
 /**
- * Windows-only sibling of {@link cleanSchemaPath}'s segment cleaner: the length of the
- * leading "volume" a Windows path can carry, mirroring Go's `volumeNameLen`
- * (`internal/filepathlite/path_windows.go`) for the two shapes realistic in a `schema_paths`
- * config value — a drive letter (`C:...`, length 2) and a UNC share (`//host/share`, length
- * through the second separator, Go's `uncLen`). Deliberately does NOT port Go's `\\.\`/`\\?\`/
- * `\??\` device-path branches (`\\.\C:\...`, Root Local Device paths) — not realistic values
- * for this field, and porting them would add meaningful complexity for no reachable parity
- * benefit. `path` is already backslash-normalized to `/` by the caller.
+ * Windows-only sibling of {@link cleanSchemaPath}'s segment cleaner: the length of the leading
+ * "volume" a Windows path can carry — a drive letter (`C:...`, length 2) or a UNC share
+ * (`//host/share`, length through the second separator). Device-path forms (`\\.\`, `\\?\`)
+ * aren't realistic `schema_paths` values, so they're not handled. `path` is already
+ * backslash-normalized to `/` by the caller.
  */
 function windowsVolumeLen(path: string): number {
   if (path.length >= 2 && path[1] === ":") return 2;
@@ -473,24 +356,11 @@ function windowsVolumeLen(path: string): number {
 }
 
 /**
- * Go's `cleanSchemaPath` (`apps/cli-go/internal/db/diff/diff.go:117-119`):
- * `filepath.ToSlash(filepath.Clean(path))`. `filepath.Clean`/`ToSlash` only treat `\` as a path
- * separator on the Windows build of the Go CLI (`filepath.Separator == '\\'` there) — on every
- * POSIX build (darwin/linux, what this TS binary stands in for on those hosts) a backslash is
- * just a literal filename character that survives untouched. Verified empirically:
- * `filepath.ToSlash(filepath.Clean(\`supabase/foo\bar\`))` compiled for `GOOS=darwin` returns
- * `supabase/foo\bar`, not `supabase/foo/bar`. Gate the separator-normalization on the host
- * platform so this matches whichever Go build this TS binary is standing in for.
- *
- * On Windows, `filepath.Clean` never cleans INTO a leading volume (`internal/filepathlite/
- * path_windows.go`'s `volumeNameLen`/`Clean`) — a UNC host+share (or a drive letter) survives
- * verbatim, including its doubled leading separator for UNC, through `ToSlash`. Split it off
- * with {@link windowsVolumeLen} before the segment-cleanup loop below, which would
- * otherwise treat a UNC path's two leading empty segments the same as any other redundant
- * separator and collapse `//host/share` down to `/host/share` — verified empirically against
- * a standalone extraction of Go's own windows `Clean`/`ToSlash` source, run natively (review:
- * PRRT_kwDOErm0O86W2tRk): `filepath.ToSlash(filepath.Clean(\`\\server\share\schemas\`))`
- * compiled for `GOOS=windows` returns `//server/share/schemas`, not `/server/share/schemas`.
+ * Backslash is a path separator only on Windows; on POSIX it's a literal filename character,
+ * so separator normalization is gated on the host platform. A UNC/drive-letter volume prefix
+ * is split off with {@link windowsVolumeLen} before the segment-cleanup loop, since that loop
+ * would otherwise collapse a UNC path's two leading empty segments (`//host/share`) like any
+ * other redundant separator.
  */
 export function cleanSchemaPath(
   rawPath: string,
@@ -500,9 +370,9 @@ export function cleanSchemaPath(
   const volumeLen = platform === "win32" ? windowsVolumeLen(normalized) : 0;
   const volume = normalized.slice(0, volumeLen);
   const remainder = normalized.slice(volumeLen);
-  // A bare volume with nothing after it (`\\server\share`, or `C:`) — Go's Clean leaves it
-  // untouched rather than falling into the segment-cleanup loop below (which would otherwise
-  // turn "no path left" into a bare "." and lose the volume).
+  // A bare volume with nothing after it (`\\server\share`, or `C:`) is returned untouched —
+  // the segment-cleanup loop below would otherwise turn "no path left" into a bare "." and
+  // lose the volume.
   if (volumeLen > 0 && remainder === "") return volume;
   const isAbsolute = remainder.startsWith("/");
   const out: Array<string> = [];
@@ -521,11 +391,9 @@ export function cleanSchemaPath(
 }
 
 /**
- * Port of Go's `migrateBaseDatabase` (`apps/cli-go/internal/db/diff/diff.go:261-274`): prints
- * the declarative-schema file list, connects to `config` (the shadow's `contrib_regression`
- * override), then seeds `migrations` as globals (Go's `migration.SeedGlobals` — no history
- * row, no history table, WITHOUT the migra-engine schema files' own transactional/seed
- * distinctions {@link seedGlobals} already reproduces for every other caller of it).
+ * Prints the declarative-schema file list, connects to the shadow's `contrib_regression`
+ * override, then seeds the files as globals — no history row or table, unlike the
+ * transactional/seed distinctions {@link seedGlobals} otherwise applies for the migra engine.
  */
 function migrateBaseDatabase(
   fs: FileSystem.FileSystem,

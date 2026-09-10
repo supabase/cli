@@ -13,11 +13,8 @@ import {
 } from "../config.format.ts";
 
 /**
- * Pure formatters, payload builders, and input adapters for `config diff` —
- * no Effect, no services, unit-testable in isolation. The API-scope
- * classification, target-naming phrase, value/path rendering, and
- * masked/unmanaged/not-returned caveat wording shared with `config pull` live
- * in `../config.format.ts` (hoisted, CLI-2064).
+ * Pure formatters, payload builders, and input adapters for `config diff`. Formatting shared
+ * with `config pull` lives in `../config.format.ts`.
  */
 
 export interface ConfigDiffContext {
@@ -32,10 +29,9 @@ export interface ConfigDiffContext {
 }
 
 /**
- * Version of the machine payload's own shape — bump when the payload
- * contract changes incompatibly. Distinct from the config document's
- * `$schema` URL (`config_schema` in the payload), which is user-controlled
- * and per-repo.
+ * Version of the machine payload's own shape; bump when the contract changes incompatibly.
+ * Distinct from the config document's `$schema` URL (`config_schema` in the payload), which
+ * is user-controlled and per-repo.
  */
 export const CONFIG_DIFF_PAYLOAD_VERSION = 1;
 
@@ -51,12 +47,9 @@ export function configDiffComparisonLine(context: ConfigDiffContext): string {
 }
 
 /**
- * One-line summary including the not-returned/masked/unmanaged caveats — the
- * text-mode count line's caveats also travel with the machine-mode
- * `message`, so an agent echoing `.message` never reports "in sync" on a
- * partial response (e.g. a scoped token returning `auth: {}`) or a project
- * whose masked SMTP password (or unpushable declared value) may have
- * drifted.
+ * One-line summary including the not-returned/masked/unmanaged caveats, so an agent echoing
+ * the machine-mode `.message` never reports "in sync" on a partial response or a value that
+ * may have silently drifted (e.g. a masked SMTP password).
  */
 export function configDiffSummaryMessage(
   changeSet: ConfigChangeSet,
@@ -81,10 +74,8 @@ export function configDiffSummaryMessage(
 }
 
 /**
- * Human-readable diff body for text mode (stdout). The per-change blocks are
- * rendered by `configRenderChangeLines` (`../config.format.ts`, shared
- * with `config push`'s per-resource change blocks); this function only adds
- * the trailing counts/notes lines.
+ * Human-readable diff body for text mode. Per-change blocks come from `configRenderChangeLines`
+ * (shared with `config push`); this only adds the trailing counts/notes lines.
  */
 export function renderConfigDiffText(changeSet: ConfigChangeSet, scope: ConfigApiScope): string {
   const changeLines = configRenderChangeLines(changeSet.changes);
@@ -111,12 +102,9 @@ export function renderConfigDiffText(changeSet: ConfigChangeSet, scope: ConfigAp
 }
 
 /**
- * The structured result for `--output-format json|stream-json` (the only
- * machine-output mechanism this command honors — `-o/--output` is rejected
- * outright, CLI-2156). Unset sides are explicit `null`s, distinguishable from
- * empty values. Paths are segment arrays — a record key (an `sms.test_otp`
- * phone number, a `[remotes.*]` name) may itself contain a `.`, so consumers
- * must never split a joined string.
+ * The structured result for `--output-format json|stream-json` (the only machine-output this
+ * command honors). Unset sides are explicit `null`s. Paths stay segment arrays, never a joined
+ * string, since a record key (e.g. an `sms.test_otp` phone number) may itself contain a `.`.
  */
 export function configDiffPayload(
   changeSet: ConfigChangeSet,
@@ -124,15 +112,11 @@ export function configDiffPayload(
   context: ConfigDiffContext,
 ): Record<string, unknown> {
   return {
-    // The payload contract's own version — what a forward-compat consumer
-    // gates on. The user's `$schema` document reference is `config_schema`:
-    // user-controlled and per-repo, never a contract signal.
     schema_version: CONFIG_DIFF_PAYLOAD_VERSION,
     config_schema: context.configSchema,
     target: {
       project_ref: context.projectRef,
-      // Omitted (not null) when no branch was targeted — the documented
-      // contract says optional.
+      // Omitted, not null, when no branch was targeted.
       ...(context.branch === undefined ? {} : { branch: context.branch }),
       local_scope:
         context.appliedRemote === undefined ? "base" : `remotes.${context.appliedRemote}`,

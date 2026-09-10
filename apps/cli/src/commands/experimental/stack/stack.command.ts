@@ -4,21 +4,21 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
-import { experimentalStackStartCommand } from "./start/start.command.ts";
-import { experimentalStackStopCommand } from "./stop/stop.command.ts";
-import { experimentalStackApiLayer, experimentalStackTargetResolverLayer } from "./stack.shared.ts";
+import { stackStartCommand as stackStartCommandBase } from "./start/start.command.ts";
+import { stackStopCommand as stackStopCommandBase } from "./stop/stop.command.ts";
+import { stackApiLayer, stackTargetResolverLayer } from "./stack.shared.ts";
 
-export const experimentalStackRuntimeLayer = Layer.mergeAll(
-  experimentalStackTargetResolverLayer,
-  experimentalStackApiLayer,
+export const stackRuntimeLayer = Layer.mergeAll(
+  stackTargetResolverLayer,
+  stackApiLayer,
   commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer)),
   telemetryStateLayer,
 );
 
-const stackStartCommand = experimentalStackStartCommand.pipe(
+const stackStartCommand = stackStartCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "start"])),
 );
-const stackStopCommand = experimentalStackStopCommand.pipe(
+const stackStopCommand = stackStopCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "stop"])),
 );
 
@@ -28,5 +28,5 @@ export const stackCommand = Command.make("stack").pipe(
   ),
   Command.withShortDescription("Manage experimental local stacks"),
   Command.withSubcommands([stackStartCommand, stackStopCommand]),
-  Command.provide(experimentalStackRuntimeLayer),
+  Command.provide(stackRuntimeLayer),
 );

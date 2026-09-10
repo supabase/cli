@@ -25,11 +25,6 @@ describe("configReadStatusMessage", () => {
   });
 
   test("404 strips control characters from a hostile api host before embedding it inline", () => {
-    // `apiHost` traces back to a `SUPABASE_PROFILE` YAML file's `api_url:`
-    // value — validated as a well-formed `http(s)://` URL, but not stripped
-    // of embedded control characters (`profile-load.ts` keeps the raw
-    // matched string). A crafted profile must not be able to inject terminal
-    // control sequences via this message, same as `ref` already can't.
     const hostileHost = "https://api.supabase.com\x1b[31mFAKE\x1b[0m";
     const message = configReadStatusMessage(404, '{"message":"not found"}', REF, hostileHost);
     expect(message).not.toContain("\x1b");

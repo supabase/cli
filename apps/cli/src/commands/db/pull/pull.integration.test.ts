@@ -69,8 +69,7 @@ const EXPORT_JSON = JSON.stringify({
   files: [{ path: "schemas/public/t.sql", order: 0, statements: 1, sql: "create table t ();" }],
 });
 
-// Builds the pg-delta diff envelope printed by `templates/pgdelta.ts`: one file
-// per execution-aware plan unit (`{version:1,files:[{order,name,transactionMode,sql}]}`).
+// Builds the pg-delta diff envelope: one file per plan unit.
 const pgDeltaDiffEnvelope = (
   units: ReadonlyArray<{ name: string; sql: string; transactionMode?: string }>,
 ): string =>
@@ -96,46 +95,37 @@ interface SetupOpts {
   readonly experimental?: boolean;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
   readonly resolvedRef?: string;
-  // Fail the first edge-runtime run with this message (the second succeeds with
+  // Fails the first edge-runtime run with this message (the second succeeds with
   // `edgeStdout`), to exercise the pooler-fallback retry.
   readonly edgeFailFirstWith?: string;
-  // resolvePoolerFallback returns Some(pooler conn) when true, None otherwise.
+  // `resolvePoolerFallback` returns `Some(pooler conn)` when true, `None` otherwise.
   readonly poolerAvailable?: boolean;
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
-  // Initial-migra pull: the bytes the native pg_dump container streams to its sink,
-  // its exit code / stderr, and (when set) an IPv6 stderr that fails the FIRST dump
-  // attempt so the pooler retry runs (the second attempt then streams `dumpStdout`).
+  // Initial-migra pull: the bytes the native pg_dump container streams to its sink, its
+  // exit code/stderr, and (when set) an IPv6 stderr that fails the first dump attempt so
+  // the pooler retry runs (the second attempt then streams `dumpStdout`).
   readonly dumpStdout?: string;
   readonly dumpExitCode?: number;
   readonly dumpStderr?: string;
   readonly dumpFailFirstWith?: string;
-  // Bytes the FIRST dump attempt streams to its sink before it fails with
-  // `dumpFailFirstWith`, reproducing a direct attempt that emits preamble then
-  // exits non-zero on an IPv6 drop.
+  // Bytes the first dump attempt streams before failing with `dumpFailFirstWith`.
   readonly dumpFailFirstPartialBytes?: string;
-  // Raw argv seen by the handler (CliArgs). Only consulted when both
-  // `--declarative` and `--use-pg-delta` are present, to replay pflag's
-  // last-occurrence-wins ordering; defaults to empty.
+  // Raw argv seen by the handler (CliArgs). Only consulted when both `--declarative`
+  // and `--use-pg-delta` are present, to replay pflag's last-occurrence-wins ordering.
   readonly args?: ReadonlyArray<string>;
-  // When set, the Nth `writeFileString` fails, exercising cleanup-on-failure.
-  // `CommandSettings.projectId` (the `SUPABASE_PROJECT_ID` env-only reader). Defaults
-  // to `Option.some("test")`; pass `Option.none()` to exercise the
-  // config.toml/workdir-basename fallback `resolveLocalProjectId` provides for
-  // the pg-delta edge-runtime cache bind.
+  // `CommandSettings.projectId`; defaults to `Option.some("test")`. Pass
+  // `Option.none()` to exercise the config.toml/workdir-basename fallback
+  // (`resolveLocalProjectId`).
   readonly projectId?: Option.Option<string>;
-  // Simulates a genuinely unlinked workdir: `loadProjectRef` fails with
-  // `ProjectRefNotLinkedError` absent an explicit `--project-ref` flag,
-  // instead of silently falling back to `opts.resolvedRef ?? VALID_REF`.
+  // Simulates an unlinked workdir: `loadProjectRef` fails with
+  // `ProjectRefNotLinkedError` absent an explicit `--project-ref` flag.
   readonly linkedFails?: boolean;
-  // Swaps the stateless shadow spawner for the stateful Docker model, whose
-  // `stop`/`cp`/`start` really move bytes. Required by (and only by) the tests that
-  // enable the shadow BASELINE CACHE — see `mockDockerDaemonCliSpawner`.
+  // Swaps in the stateful Docker model (real `stop`/`cp`/`start`), required by the
+  // shadow baseline cache tests.
   readonly statefulDocker?: boolean;
-  // Fails the TARGET session's own history upsert (the real
-  // `supabase_migrations.schema_migrations` write `updateMigrationHistory` issues
-  // AFTER the migration file is already on disk) with this message — the shadow's
-  // own internal migration replay is unaffected. Exercises `DbPullWriteError`'s
-  // `writtenSoFar` (CLI-1272 review).
+  // Fails the target session's own history upsert (the write `updateMigrationHistory`
+  // issues after the migration file is already on disk); the shadow's own internal
+  // migration replay is unaffected. Exercises `DbPullWriteError`'s `writtenSoFar`.
   readonly historyUpdateFailWith?: string;
 }
 
@@ -149,9 +139,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   // A real docker-spawner fake backs container create/start/health-inspect/cleanup.
   const shadowSpawner = mockShadowContainerCliSpawner();
-  // The shadow baseline cache's cold export and warm restore only mean anything against a
-  // daemon that actually holds container state and carries `docker cp` bytes, so the cache
-  // tests below opt into the stateful model instead.
+  // Cache tests need the stateful Docker model since `docker cp` needs real container state.
   const dockerDaemon = opts.statefulDocker === true ? mockDockerDaemonCliSpawner() : undefined;
 
   const engineCalls: Array<{
@@ -278,10 +266,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
   });
 
-  // The initial-migra pull seeds the migration file with a native pg_dump via
-  // `runStream`; deliver the configured bytes to `onStdout`, then report the exit
-  // code + stderr. `dumpFailFirstWith` fails the first attempt so the pooler retry
-  // runs.
+  // The initial-migra pull seeds the migration via a native pg_dump `runStream`;
+  // delivers configured bytes to `onStdout` then reports exit code + stderr.
+  // `dumpFailFirstWith` fails the first attempt so the pooler retry runs.
   const dumpCalls: Array<{
     env: Readonly<Record<string, string>>;
     image: string;
@@ -293,12 +280,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     runCapture: () => Effect.die("runCapture unused"),
     runStream: (runOpts, streamOpts) =>
       Effect.gen(function* () {
-        // The native shadow's PG15+ one-shot platform-baseline jobs
-        // (`runStartMigrateJob`) go through this same `runStream`, always
-        // `skipImageResolve: true` (the real `pg_dump` `runStream` call never sets
-        // it) — succeed unconditionally so shadow setup itself never fails; this
-        // suite has no assertions over the one-shot jobs' own output, and they must
-        // not be counted alongside the real `dumpCalls` this suite DOES assert on.
+        // The shadow's own PG15+ one-shot jobs share this `runStream` but always set
+        // `skipImageResolve: true`; succeed them unconditionally so they're never
+        // counted alongside the real `dumpCalls` this suite asserts on.
         if (runOpts.skipImageResolve === true) {
           return { exitCode: 0, stderr: "" };
         }
@@ -322,14 +306,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const connectedDatabases: Array<string> = [];
   /** Same connects as {@link connectedDatabases}, keeping the port that tells target from shadow apart. */
   const connectTargets: Array<{ readonly database: string; readonly port: number }> = [];
-  // The resolver mock's own target connection always dials port 5432; the native
-  // shadow (platform baseline, `CREATE_TEMPLATE`, migrations, and — on the
-  // declarative branch — the `contrib_regression` override) always dials the
-  // schema-default shadow port (54320) instead — a reliable way to tell "the
-  // REAL remote/local target's own history upsert" (which `historyUpserts` is
-  // meant to count) apart from the shadow's OWN internal migration replay (which
-  // ALSO issues a parameterized `INSERT_MIGRATION_VERSION` query, into its own
-  // separate in-shadow history table).
+  // The resolver mock's target connection always dials port 5432; the shadow always
+  // dials the schema-default shadow port (54320) instead — a reliable way to tell the
+  // target's own history upsert (what `historyUpserts` counts) apart from the shadow's
+  // internal migration replay, which issues the same parameterized query into its own
+  // separate history table.
   const TARGET_PORT = 5432;
   const makeSession = (isShadow: boolean): DbSession => {
     const exec = (sql: string) => Effect.sync(() => void execLog.push(sql));
@@ -422,15 +403,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
-  // The linked ref is now pre-loaded (for the config-override print, ahead of
-  // `resolver.resolve()`'s own network work — review: PRRT_kwDOErm0O86XHvYl) via
-  // `ProjectRefResolver`, mirroring the SAME ref `resolver`'s own mock embeds in
-  // its `db.<ref>.<host>` connection host above, so both stay consistent regardless of
-  // whether a test sets `opts.resolvedRef` (mirrors `reset.integration.test.ts`'s
-  // identical mock).
-  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
-  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
-  // (not just `opts.resolvedRef`) drives the linked ref.
+  // Mirrors the same ref `resolver`'s own mock embeds above, and gives an explicit
+  // `--project-ref` flag top precedence over `opts.resolvedRef` (mirrors
+  // `reset.integration.test.ts`'s identical mock).
   const projectRefResolver = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(opts.resolvedRef ?? VALID_REF),
     resolveForLink: () => Effect.succeed(opts.resolvedRef ?? VALID_REF),
@@ -445,10 +420,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   const baseLayer = Layer.mergeAll(
-    // `BunServices.layer` is listed FIRST so every fake service layer below (most
-    // importantly `shadowSpawner.layer`'s fake `ChildProcessSpawner`) OVERRIDES its
-    // real implementation — `Layer.mergeAll` is last-wins on a shared service,
-    // matching `start.integration.test.ts`'s own established ordering.
+    // Listed first so the fake service layers below (`Layer.mergeAll` is last-wins)
+    // override its real implementations, matching `start.integration.test.ts`.
     BunServices.layer,
     out.layer,
     telemetry.layer,
@@ -558,13 +531,11 @@ describe("db pull", () => {
       yield* dbPull(flags({ diffEngine: Option.some("pg-delta"), strictCoverage: true }));
       const dir = join(tmp.current, "supabase", "migrations");
       expect(existsSync(join(dir, `${"20240101000000"}_local.sql`))).toBe(true);
-      // A single-unit plan keeps the unchanged `<ts>_remote_schema.sql` filename.
       const written = readdirSync(dir).filter((f) => f.endsWith("_remote_schema.sql"));
       expect(written).toHaveLength(1);
       expect(readFileSync(join(dir, written[0] ?? ""), "utf8")).toContain(
         "create table remote ();",
       );
-      // Prints the workdir-relative path, never the absolute one.
       expect(streamText(s.out, "stderr")).toContain(
         `Schema written to ${join("supabase", "migrations", written[0] ?? "")}\n`,
       );
@@ -575,17 +546,15 @@ describe("db pull", () => {
       expect(s.engineCalls[0]?.strictCoverage).toBe(true);
       expect(s.edgeRunCount).toBe(0);
       expect(streamText(s.out, "stdout")).toContain("Finished supabase db pull.");
-      // The linked ref is pre-loaded (cheap, local-only) before `resolve()` runs, so
-      // the post-run linked-project cache still gets the ref, matching the pattern
-      // `db reset`/`db push` use.
+      // The linked ref is pre-loaded before `resolve()` runs, so the cache still gets
+      // it, matching the `db reset`/`db push` pattern.
       expect(s.cache.cached).toBe(true);
       expect(s.cache.cachedRef).toBe("abcdefghijklmnopqrst");
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("pulls from the project given via --project-ref without a linked workdir", () => {
-    // The fake resolver fails as "unlinked" (`ProjectRefNotLinkedError`)
-    // absent the flag — only the flag can resolve a ref here.
+    // `linkedFails: true` simulates an unlinked workdir; only the flag can resolve a ref.
     const FLAG_REF = "flagflagflagflagflag";
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
@@ -611,8 +580,7 @@ describe("db pull", () => {
       remoteVersions: ["20240101000000"],
       edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
       yes: true,
-      // The workdir already resolves to VALID_REF (e.g. via
-      // .temp/project-ref) — the flag must win over it.
+      // A distinct fixed ref proves the flag, not the workdir's own ref, wins.
       resolvedRef: "abcdefghijklmnopqrst",
     });
     return Effect.gen(function* () {
@@ -636,7 +604,6 @@ describe("db pull", () => {
       expect(JSON.stringify(exit)).toContain(
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
       );
-      // The guard fires before any connection resolution or cache write.
       expect(s.resolveCalls).toEqual([]);
       expect(s.cache.cached).toBe(false);
     }).pipe(Effect.provide(s.layer));
@@ -656,10 +623,7 @@ describe("db pull", () => {
   it.effect(
     "a pg-delta plan with transaction boundaries writes one ordered migration file per unit",
     () => {
-      // pg-delta plans that cross a transaction boundary (e.g. ALTER TYPE ... ADD
-      // VALUE then a statement using the new value) come back as several units; each
-      // is written to its own migration file with a strictly increasing timestamp and
-      // recorded in the remote history.
+      // e.g. ALTER TYPE ... ADD VALUE followed by a statement using the new value.
       seedMigration(tmp.current, "20240101000000");
       const s = setup(tmp.current, {
         remoteVersions: ["20240101000000"],
@@ -681,7 +645,6 @@ describe("db pull", () => {
           .filter((f) => f !== "20240101000000_local.sql")
           .sort();
         expect(written).toHaveLength(3);
-        // Multi-unit plans append the unit name and carry strictly increasing versions.
         expect(written[0]).toMatch(/^\d{14}_remote_schema_schema_changes\.sql$/u);
         expect(written[1]).toMatch(/^\d{14}_remote_schema_after_enum_values\.sql$/u);
         expect(written[2]).toMatch(/^\d{14}_remote_schema_non_transactional\.sql$/u);
@@ -691,15 +654,12 @@ describe("db pull", () => {
         const nonTransactional = readFileSync(join(dir, written[2] ?? ""), "utf8");
         expect(nonTransactional.startsWith("-- pg-delta: transaction=false\n")).toBe(true);
         expect(nonTransactional).toContain("create index concurrently i on t (c);");
-        // One "Schema written to" line per unit, each printing the workdir-relative
-        // path, and one history upsert per unit.
         const err = streamText(s.out, "stderr");
         expect(err.match(/Schema written to/gu)).toHaveLength(3);
         for (const file of written) {
           expect(err).toContain(`Schema written to ${join("supabase", "migrations", file)}\n`);
         }
         expect(s.historyUpserts.length).toBe(3);
-        // Prints all versions space-separated.
         expect(streamText(s.out, "stderr")).toContain(
           `Repaired migration history: [${versions.join(" ")}] => applied`,
         );
@@ -710,8 +670,7 @@ describe("db pull", () => {
   it.effect(
     "a multi-unit pg-delta pull reports every written migration path in the json payload",
     () => {
-      // The structured payload must list ALL written migration files in write order,
-      // not just the first (`schemaWritten`). A pg-delta plan writes one file per unit.
+      // Lists every written path, not just the first (`schemaWritten`).
       seedMigration(tmp.current, "20240101000000");
       const s = setup(tmp.current, {
         format: "json",
@@ -733,11 +692,9 @@ describe("db pull", () => {
           | { schemaWritten?: string; schemaFiles?: Array<string> }
           | undefined;
         expect(data?.schemaFiles).toHaveLength(3);
-        // Paths appear in write order, each carrying its unit name.
         expect(data?.schemaFiles?.[0]).toMatch(/_remote_schema_schema_changes\.sql$/u);
         expect(data?.schemaFiles?.[1]).toMatch(/_remote_schema_after_enum_values\.sql$/u);
         expect(data?.schemaFiles?.[2]).toMatch(/_remote_schema_non_transactional\.sql$/u);
-        // `schemaWritten` stays the first written path (unchanged string contract).
         expect(data?.schemaWritten).toBe(data?.schemaFiles?.[0]);
       }).pipe(Effect.provide(s.layer));
     },
@@ -757,10 +714,9 @@ describe("db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  // The transition warning belongs to the bundled next engine only: migra (and the
-  // legacy pg-delta opt-out) still substitute the declared-schema
-  // `contrib_regression` target for a local database, so schema_paths does still
-  // shape their output and the warning would be factually wrong.
+  // Migra (and the legacy pg-delta opt-out) still substitute the declared-schema
+  // `contrib_regression` target locally, so schema_paths still shapes their output —
+  // only the next engine's pull prints this warning.
   it.effect("pulls with the next engine and warns that schema_paths no longer applies", () => {
     seedMigration(tmp.current, "20240101000000");
     writeFileSync(
@@ -814,8 +770,7 @@ describe("db pull", () => {
       expect(s.shadowSpawned.filter((call) => call.args[0] === "create")).toHaveLength(1);
       const err = streamText(s.out, "stderr");
       expect(err).not.toContain("schema_paths no longer changes the migrations baseline");
-      // Go's `ConnectByConfig` prints the Connecting line to stderr before dialing
-      // (`internal/utils/connect.go:348`), ahead of any other pull output.
+      // Connecting must print before shadow creation.
       expect(err).toContain("Connecting to remote database...\n");
       expect(err.indexOf("Connecting to remote database...")).toBeLessThan(
         err.indexOf("Creating shadow database..."),
@@ -830,13 +785,9 @@ describe("db pull", () => {
   it.effect(
     "validates the shadow's own local config (api.tls cert file) BEFORE resolving the connection",
     () => {
-      // `toml` (`readDbToml`'s "D" pipeline) only tracks `api.tls`'s dotted keys for
-      // remote-override gating, it never reads the cert/key files — that read lives in
-      // `buildLocalDbContainerInputs`'s own "L" pipeline (see that call's doc comment,
-      // and `diff.handler.ts`'s identical fix), and it must run strictly before
-      // `resolver.resolve()` or the connectivity check ever run — so `resolveCalls` must
-      // stay empty here, proving the shadow's config validation ran first, not just that
-      // the command failed.
+      // `api.tls`'s cert/key files are only validated by `buildLocalDbContainerInputs`,
+      // which must run strictly before `resolver.resolve()` — `resolveCalls` staying
+      // empty here proves validation ran first, not just that the command failed.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
@@ -868,8 +819,6 @@ describe("db pull", () => {
       expect(s.engineCalls[0]?.strictCoverage).toBe(true);
       expect(s.edgeRunCount).toBe(0);
       const err = streamText(s.out, "stderr");
-      // Order: the connectivity check prints Connecting, then the declarative
-      // export prints Preparing.
       expect(err).toContain("Connecting to remote database...\n");
       expect(err.indexOf("Connecting to remote database...")).toBeLessThan(
         err.indexOf("Preparing declarative schema export"),
@@ -889,9 +838,7 @@ describe("db pull", () => {
         scope: "database",
         files: ["public/t.sql"],
       });
-      // Declarative export reads only the live target: the sole connect is the
-      // top-level target connect (`resolved.conn`, port 5432, database "postgres"),
-      // and no shadow database is ever provisioned.
+      // Declarative export reads only the live target; no shadow is provisioned.
       expect(s.connectTargets).toEqual([{ database: "postgres", port: 5432 }]);
       expect(s.shadowSpawned.filter((call) => call.args[0] === "create")).toHaveLength(0);
       expect(s.shadowSpawned.filter((call) => call.args[0] === "rm")).toHaveLength(0);
@@ -910,9 +857,8 @@ describe("db pull", () => {
   it.effect(
     "pull --declarative writes [db.migrations] schema_paths when pg-delta is disabled",
     () => {
-      // Points schema_paths at the declarative dir when pg-delta is disabled in
-      // config (db pull does not force-enable it), so later db reset/db diff read
-      // the pulled files.
+      // Points schema_paths at the declarative dir so later db reset/db diff read the
+      // pulled files (pg-delta stays disabled).
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\n");
       const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
@@ -926,8 +872,8 @@ describe("db pull", () => {
   );
 
   it.effect("pull --declarative leaves schema_paths untouched when pg-delta is enabled", () => {
-    // For an enabled config the declarative dir is already the source of truth, so
-    // the schema_paths rewrite is skipped (the gate reads the config value).
+    // An enabled config already treats the declarative dir as source of truth, so the
+    // rewrite is skipped.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     const original = "[experimental.pgdelta]\nenabled = true\n";
     writeFileSync(join(tmp.current, "supabase", "config.toml"), original);
@@ -971,14 +917,10 @@ describe("db pull", () => {
   );
 
   it.effect("passes the config/workdir-resolved project id to the pg-delta engine", () => {
-    // No `SUPABASE_PROJECT_ID` env and no `supabase/config.toml` `project_id` — Go's
-    // `Config.ProjectId` falls back to the workdir basename (`pkg/config/config.go:563-570`)
-    // and `UpdateDockerIds` names the edge-runtime volume from that already-sanitized value
-    // (`internal/utils/config.go:57-76`). Before the fix, `ctx.projectId` came from
-    // `CommandSettings.projectId` alone (env-only) and resolved to `""`, mounting
-    // `supabase_edge_runtime_:/root/.cache/deno:rw` regardless of the real project — reachable
-    // here via the declarative-export path (`declarativeExportPgDelta`), which reads
-    // `ctx.projectId` before any local shadow diff even starts.
+    // Absent env/config project_id, the workdir basename must reach the pg-delta
+    // engine's project id, including on the declarative-export path (read before any
+    // local shadow diff starts) — not an empty string from `CommandSettings.projectId`
+    // alone.
     const s = setup(tmp.current, { edgeStdout: EXPORT_JSON, projectId: Option.none() });
     const expectedProjectId = basename(tmp.current);
     return Effect.gen(function* () {
@@ -990,12 +932,9 @@ describe("db pull", () => {
   it.effect(
     "a linked [remotes.<ref>]'s project_id outranks a conflicting SUPABASE_PROJECT_ID",
     () => {
-      // `readDbToml` already gates `toml.projectId` behind `remoteOverrideKeys` so it
-      // reflects the matched remote's OWN `project_id` (review: PRRT_kwDOErm0O86XHGDL) — but
-      // `resolveLocalProjectId` tries `cliSettings.projectId` (raw, ungated env) FIRST, so
-      // an ambient `SUPABASE_PROJECT_ID` that differs from the matched remote must be
-      // suppressed here too, or it silently wins back over the already-gated `toml.projectId`
-      // (mirrors `diff.integration.test.ts`'s identically-named test).
+      // `readDbToml` gates `toml.projectId` behind `remoteOverrideKeys` for the matched
+      // remote, but `resolveLocalProjectId` tries the raw ambient env first — an ambient
+      // `SUPABASE_PROJECT_ID` for an unrelated project must not win back over it.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
@@ -1004,8 +943,6 @@ describe("db pull", () => {
       const s = setup(tmp.current, {
         edgeStdout: EXPORT_JSON,
         resolvedRef: "abcdefghijklmnopqrst",
-        // Simulates an ambient `SUPABASE_PROJECT_ID` scoped to an unrelated (e.g. local)
-        // project — must NOT win over the matched remote's own `project_id`.
         projectId: Option.some("unrelated-env-project"),
       });
       return Effect.gen(function* () {
@@ -1018,9 +955,8 @@ describe("db pull", () => {
   it.effect(
     "--declarative --use-pg-delta=false stays in migration mode (Go last-occurrence-wins)",
     () => {
-      // Both flags bind to one variable, so the last occurrence wins: this
-      // invocation ends false => migration mode + history repair, NOT declarative
-      // export. OR-ing the two parsed flags would wrongly take the declarative path.
+      // Both flags bind to one variable, so the last occurrence wins — ORing the two
+      // parsed flags would wrongly take the declarative path instead.
       seedMigration(tmp.current, "20240101000000");
       const s = setup(tmp.current, {
         remoteVersions: ["20240101000000"],
@@ -1060,8 +996,6 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       yield* dbPull(flags({ declarative: Option.some(true), usePgDelta: Option.some(true) }));
       expect(s.engineCalls[0]?.operation).toBe("export");
-      // Reaching the declarative write (rather than a migration file / history
-      // upsert) proves the declarative export path ran.
       expect(existsSync(join(tmp.current, "supabase", "schemas", "public", "t.sql"))).toBe(true);
       expect(s.historyUpserts.length).toBe(0);
     }).pipe(Effect.provide(s.layer));
@@ -1079,8 +1013,6 @@ describe("db pull", () => {
   it.effect(
     "an initial pull (no local migrations, migra) dumps the schema natively then appends the diff",
     () => {
-      // The initial-pull dump (pg_dump, now native) plus the migra diff appended.
-      // No Go delegation.
       const s = setup(tmp.current, {
         remoteVersions: [],
         dumpStdout: "create table dumped ();\n",
@@ -1132,8 +1064,8 @@ describe("db pull", () => {
       expect(s.proxyCalls).toHaveLength(0);
       expect(s.proxyCaptureCalls).toHaveLength(0);
       const success = s.out.messages.find((m) => m.type === "success");
-      // Machine mode never prompts, so history is updated on the default (true);
-      // `schemaWritten` is the real native migration path (not null as when delegated).
+      // Machine mode never prompts, so history updates by default (true); `schemaWritten`
+      // is the real native path (not null as when delegated).
       expect(success?.data).toMatchObject({
         declarative: false,
         remoteHistoryUpdated: true,
@@ -1143,15 +1075,13 @@ describe("db pull", () => {
         | { schemaWritten?: string; schemaFiles?: Array<string> }
         | undefined;
       expect(data?.schemaWritten).toMatch(/_remote_schema\.sql$/u);
-      // The single-unit case lists exactly one written migration path, and it is the
-      // same path as the singular `schemaWritten` field.
+      // Single-unit case: exactly one path, matching `schemaWritten`.
       expect(data?.schemaFiles).toHaveLength(1);
       expect(data?.schemaFiles?.[0]).toBe(data?.schemaWritten);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("an initial pull swallows an empty migra diff once the dump wrote content", () => {
-    // After the pg_dump seed, an empty second pass is success, not "in sync".
     const s = setup(tmp.current, {
       remoteVersions: [],
       dumpStdout: "create table dumped ();\n",
@@ -1195,12 +1125,9 @@ describe("db pull", () => {
   );
 
   it.effect("an initial pull with an empty schema reports 'No schema changes found'", () => {
-    // An empty dump + empty diff leaves the file empty → in sync. The owned empty
-    // seed file must not be left behind (CLI-1272 review): a leftover zero-byte
-    // `<timestamp>_remote_schema.sql` is a phantom local migration with no remote
-    // counterpart that a later pull's history reconciliation trips over, and
-    // `--with-migration-history` can't clear it since fetching empty remote history
-    // never deletes local files.
+    // A leftover zero-byte `<timestamp>_remote_schema.sql` seed file is a phantom local
+    // migration with no remote counterpart; `--with-migration-history` can't clear it
+    // since fetching empty remote history never deletes local files.
     const s = setup(tmp.current, { remoteVersions: [], dumpStdout: "", edgeStdout: "" });
     return Effect.gen(function* () {
       const error = yield* dbPull(flags()).pipe(Effect.flip);
@@ -1220,11 +1147,9 @@ describe("db pull", () => {
         expect(first.message).toBe("No schema changes found");
         expect(existsSync(dir) ? readdirSync(dir) : []).toEqual([]);
 
-        // Without the cleanup, the first run's leftover empty seed file would
-        // desynchronize this second run's reconciliation: an empty remote history
-        // plus a local-only version is a `DbPullMigrationConflictError`, not a
-        // repeat "No schema changes found" — the exact regression the reviewer
-        // reproduced across two consecutive `db pull` invocations.
+        // Without the cleanup, the leftover seed file would desync this second run's
+        // reconciliation: an empty remote history plus a local-only version is a
+        // `DbPullMigrationConflictError`, not a repeat "No schema changes found".
         const second = yield* dbPull(flags()).pipe(Effect.flip);
         expect(second).toMatchObject({
           _tag: "DbPullInSyncError",
@@ -1238,11 +1163,9 @@ describe("db pull", () => {
   it.effect(
     "an initial-pull direct write that IPv6-fails then an empty pooler retry reports 'No schema changes found'",
     () => {
-      // Regression: the direct attempt streams preamble bytes then drops over IPv6;
-      // the pooler retry succeeds empty. The file is truncated before the retry and
-      // in-sync is decided from the file on disk, so an empty pooler retry + empty
-      // diff is in sync — not a schema write + migration-history upsert. The sticky
-      // `seedWroteBytes` flag must therefore reset per attempt.
+      // The file is truncated before the pooler retry, and in-sync is decided from the
+      // file on disk, so an empty retry + empty diff is in sync, not a schema write. The
+      // sticky `seedWroteBytes` flag must reset per attempt.
       const s = setup(tmp.current, {
         remoteVersions: [],
         dumpFailFirstWith: "could not translate host name: network is unreachable",
@@ -1293,8 +1216,7 @@ describe("db pull", () => {
       const err = streamText(s.out, "stderr");
       expect(err).toContain("does not support IPv6");
       expect(err).toContain("Retrying via the IPv4 connection pooler");
-      // The "Dumping schema…" line is printed once (before the fallback), not
-      // re-printed on the pooler retry.
+      // Printed once, before the fallback, not re-printed on the pooler retry.
       expect(err.match(/Dumping schema from remote database/gu)).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));
   });
@@ -1318,9 +1240,8 @@ describe("db pull", () => {
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, { remoteVersions: ["20240101000000"], edgeStdout: "" });
     return Effect.gen(function* () {
-      // Go's message and non-zero exit are the contract; the generic
-      // "rerun with --debug" footer is replaced by an explanation instead
-      // (docs/go-cli-divergences.md).
+      // The message and non-zero exit are the contract; the generic --debug footer is
+      // replaced with this explanation instead (docs/go-cli-divergences.md).
       const error = yield* dbPull(flags()).pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: "DbPullInSyncError",
@@ -1406,11 +1327,9 @@ describe("db pull", () => {
   it.effect(
     "a remote-history update failure after a successful write reports the written migration path (CLI-1272)",
     () => {
-      // The migration write itself succeeds and is already on disk; ONLY the
-      // subsequent "Update remote migration history table?" write fails. The
-      // resulting `DbPullWriteError` must still carry that already-written path
-      // via `writtenSoFar` (the shape `pull.aggregate.ts`'s `hasWrittenSoFar`
-      // duck-types), not report the write as if nothing happened.
+      // The migration write succeeds; only the subsequent history-table write fails.
+      // The resulting `DbPullWriteError` must still carry the already-written path via
+      // `writtenSoFar`, not report the write as if nothing happened.
       const s = setup(tmp.current, {
         remoteVersions: [],
         dumpStdout: "",
@@ -1425,24 +1344,20 @@ describe("db pull", () => {
         const file = readdirSync(dir).find((f) => f.endsWith("_remote_schema.sql"));
         expect(file).toBeDefined();
         const writtenPath = join(dir, file ?? "");
-        // The file really is on disk — the failure happened strictly after the
-        // write, not instead of it.
+        // Confirms the failure happened after the write, not instead of it.
         expect(existsSync(writtenPath)).toBe(true);
         expect((error as { writtenSoFar?: ReadonlyArray<string> }).writtenSoFar).toEqual([
           writtenPath,
         ]);
-        // No history row was recorded — the failure is real, not swallowed.
         expect(s.historyUpserts.length).toBe(0);
       }).pipe(Effect.provide(s.layer));
     },
   );
 
   it.effect("updates history on an empty non-interactive stdin (Go default)", () => {
-    // Scans stdin and only falls back to the default (`true`) when the scan is
-    // empty/exhausted. With no piped input a non-interactive `db pull` therefore
-    // proceeds to update the remote history. (The production clack prompt would
-    // hang on a non-TTY — that no-hang behavior is proven end-to-end in
-    // `pull.live.test.ts`; here the empty piped scan defaults.)
+    // Only falls back to the default (`true`) when the piped scan is empty/exhausted;
+    // a non-interactive pull without piped input therefore updates history. (The clack
+    // prompt would hang on a non-TTY; see `pull.live.test.ts` for that end-to-end proof.)
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
@@ -1456,9 +1371,8 @@ describe("db pull", () => {
   });
 
   it.effect("declines the history update on a piped 'n' (non-tty)", () => {
-    // Regression: piped stdin is scanned before defaulting, so a piped `n` cancels
-    // the history update even on a non-terminal — `schema_migrations` must not be
-    // touched against the user's explicit decline.
+    // Piped stdin is scanned before defaulting, so a piped `n` cancels even on a
+    // non-terminal.
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
@@ -1469,7 +1383,6 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       yield* dbPull(flags());
       expect(s.historyUpserts.length).toBe(0);
-      // Prints the label then echoes the consumed answer.
       expect(streamText(s.out, "stderr")).toContain(
         "Update remote migration history table? [Y/n] n",
       );
@@ -1487,8 +1400,7 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       yield* dbPull(flags());
       expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
-      // Diagnostics still go to stderr in machine mode (the Connecting line is
-      // written regardless of output format); stdout stays payload-only.
+      // Diagnostics still go to stderr in machine mode; stdout stays payload-only.
       expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...\n");
       const success = s.out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ declarative: false, remoteHistoryUpdated: true });
@@ -1510,9 +1422,8 @@ describe("db pull", () => {
   });
 
   it.effect("honors SUPABASE_YES for the initial-pull history update", () => {
-    // `SUPABASE_YES` auto-confirms even on a TTY with no piped answer. The native
-    // path resolves `yes` via `resolveYesWithProjectEnv`, not the raw `--yes`
-    // flag, so the shell env var is honored here too.
+    // `SUPABASE_YES` auto-confirms even on a TTY with no piped answer, via the native
+    // path's `resolveYesWithProjectEnv`.
     const prev = process.env["SUPABASE_YES"];
     process.env["SUPABASE_YES"] = "1";
     seedMigration(tmp.current, "20240101000000");
@@ -1540,10 +1451,8 @@ describe("db pull", () => {
   });
 
   it.effect("honors SUPABASE_YES from supabase/.env for the initial-pull history update", () => {
-    // The project `.env` is loaded before the history prompt, so `SUPABASE_YES` set
-    // only in `supabase/.env` auto-confirms — with no shell env or `--yes`. The
-    // native path resolves via `resolveYesWithProjectEnv`, reading the loaded
-    // project env map.
+    // The project .env is loaded before the history prompt, so `SUPABASE_YES` there
+    // auto-confirms with no shell env or --yes (`resolveYesWithProjectEnv`).
     const prev = process.env["SUPABASE_YES"];
     delete process.env["SUPABASE_YES"]; // only the project .env value must apply
     seedMigration(tmp.current, "20240101000000");
@@ -1573,10 +1482,9 @@ describe("db pull", () => {
   it.effect(
     "resolves the pg_dump image via SUPABASE_INTERNAL_IMAGE_REGISTRY from supabase/.env",
     () => {
-      // The project `.env` is applied before resolving the registry image, so a
-      // registry mirror set only in `supabase/.env` is used for the native pg_dump
-      // seed. The handler applies it with `applyProjectEnv` (scoped to the run,
-      // reverted on close); the loader itself stays pure.
+      // Applied before resolving the registry image, so a mirror set only in
+      // supabase/.env is used for the native pg_dump seed (scoped to the run via
+      // `applyProjectEnv`, reverted on close).
       const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
       delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
@@ -1610,9 +1518,8 @@ describe("db pull", () => {
   it.effect(
     "resolves the pg_dump network via SUPABASE_NETWORK_ID from supabase/.env when neither the flag nor the ambient env is set",
     () => {
-      // Host networking is the default, but a resolved `--network-id`/`SUPABASE_NETWORK_ID`
-      // value overrides it whenever non-empty — a value sourced only from `supabase/.env`
-      // still wins over host.
+      // A `SUPABASE_NETWORK_ID` sourced only from `supabase/.env` still overrides host
+      // networking.
       const prev = process.env["SUPABASE_NETWORK_ID"];
       delete process.env["SUPABASE_NETWORK_ID"];
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
@@ -1640,10 +1547,8 @@ describe("db pull", () => {
   );
 
   it.effect("an explicit --yes=false overrides SUPABASE_YES and honors the piped answer", () => {
-    // An explicit `--yes=false` wins over the SUPABASE_YES env. `printf 'n\n' |
-    // SUPABASE_YES=1 supabase --yes=false db pull` must let the piped `n` decline
-    // the history update rather than auto-confirming — schema_migrations stays
-    // untouched.
+    // An explicit `--yes=false` wins over the SUPABASE_YES env — a piped `n` still
+    // declines the history update rather than auto-confirming.
     const prev = process.env["SUPABASE_YES"];
     process.env["SUPABASE_YES"] = "1";
     seedMigration(tmp.current, "20240101000000");
@@ -1671,11 +1576,9 @@ describe("db pull", () => {
   it.effect(
     "a bare --password consumes the following token, so SUPABASE_YES still auto-confirms",
     () => {
-      // Same value-token-consuming hazard as the --experimental scanner fix above:
-      // `--password --yes=false` parses as `--password`'s VALUE being the literal
-      // string "--yes=false" — `--yes` was never actually set — so SUPABASE_YES=1
-      // must still auto-confirm the history update rather than a scanner wrongly
-      // reading an explicit `--yes=false` here.
+      // `--password --yes=false` parses as `--password`'s value being the literal string
+      // "--yes=false" — `--yes` itself was never set — so SUPABASE_YES=1 must still
+      // auto-confirm rather than the scanner misreading an explicit `--yes=false`.
       const prev = process.env["SUPABASE_YES"];
       process.env["SUPABASE_YES"] = "1";
       seedMigration(tmp.current, "20240101000000");
@@ -1743,10 +1646,9 @@ describe("db pull", () => {
         const prev = process.env["SUPABASE_EXPERIMENTAL"];
         process.env["SUPABASE_EXPERIMENTAL"] = "true";
         try {
-          // `forceMigrationMode: true` — the CLI-1272 fix — keeps an in-process
-          // caller (`pull`) in migration mode even though the ambient
-          // `SUPABASE_EXPERIMENTAL` gate would otherwise select the deprecated
-          // declarative export.
+          // `forceMigrationMode: true` keeps an in-process caller in migration mode
+          // even though the ambient `SUPABASE_EXPERIMENTAL` gate would otherwise select
+          // the deprecated declarative export.
           yield* runDbPull(flags({ diffEngine: Option.some("pg-delta") }), {
             forceMigrationMode: true,
           }).pipe(Effect.provide(forced.layer));
@@ -1755,9 +1657,8 @@ describe("db pull", () => {
             "Preparing declarative schema export",
           );
 
-          // Unset — the resolution `dbPull`/`dbRemoteCommit` still use — keeps
-          // the exact original behavior: the ambient gate still switches to the
-          // in-process declarative export.
+          // Unset preserves the original behavior: the ambient gate still switches to
+          // the in-process declarative export.
           yield* runDbPull(flags()).pipe(Effect.provide(unforced.layer));
           expect(unforced.engineCalls[0]?.operation).toBe("export");
           expect(streamText(unforced.out, "stderr")).toContain(
@@ -1836,8 +1737,8 @@ describe("db pull", () => {
   it.effect(
     "--declarative wins over --experimental and is unaffected by the deprecated experimental mode",
     () => {
-      // Declarative mode is checked before EXPERIMENTAL: declarative export must
-      // still run normally even when --experimental is also set.
+      // Declarative mode is checked before the experimental gate, so it runs normally
+      // even when --experimental is also set.
       const s = setup(tmp.current, { experimental: true, edgeStdout: EXPORT_JSON });
       return Effect.gen(function* () {
         yield* dbPull(flags({ declarative: Option.some(true) }));
@@ -1853,10 +1754,8 @@ describe("db pull", () => {
   it.effect(
     "an explicit --experimental=false wins over SUPABASE_EXPERIMENTAL=true and pulls normally",
     () => {
-      // A SET flag value wins over env regardless of whether it's true or false, so
-      // `--experimental=false` must NOT be overridden by a truthy
-      // `SUPABASE_EXPERIMENTAL` — the pull proceeds as a normal migration instead of
-      // the deprecated experimental export.
+      // A set flag value wins over env regardless of true/false, so `--experimental=false`
+      // isn't overridden by a truthy `SUPABASE_EXPERIMENTAL`.
       const prev = process.env["SUPABASE_EXPERIMENTAL"];
       process.env["SUPABASE_EXPERIMENTAL"] = "true";
       seedMigration(tmp.current, "20240101000000");
@@ -1884,12 +1783,10 @@ describe("db pull", () => {
   it.effect(
     "a migration name literally '--experimental=false' after -- does not suppress SUPABASE_EXPERIMENTAL",
     () => {
-      // Both pflag/cobra and this CLI's own lexer (effect/unstable/cli/internal/lexer.ts,
-      // `argv.indexOf("--")`) stop parsing
-      // flags at the first bare `--` — `db pull -- --experimental=false` passes
-      // "--experimental=false" as the positional migration-name argument, NOT as an
-      // explicit flag occurrence. Unlike the unterminated `--experimental=false`
-      // case above, this must still take the experimental export.
+      // Both pflag/cobra and this CLI's own lexer stop parsing flags at the first bare
+      // `--`, so `db pull -- --experimental=false` passes it as the positional
+      // migration-name argument, not a flag occurrence — unlike the unterminated case
+      // above, this must still take the experimental export.
       const prev = process.env["SUPABASE_EXPERIMENTAL"];
       process.env["SUPABASE_EXPERIMENTAL"] = "true";
       const s = setup(tmp.current, {
@@ -1915,10 +1812,9 @@ describe("db pull", () => {
   it.effect(
     "a repeated --experimental=false --experimental=true still exports (last Set() wins)",
     () => {
-      // pflag/viper bind ONE variable per flag: repeated occurrences collapse to
-      // whichever Set() call happened LAST. A resolver that only checks "does any
-      // pre-terminator token say false" gets this ordering backwards and would
-      // incorrectly skip the experimental export.
+      // pflag/viper bind one variable per flag: repeated occurrences collapse to
+      // whichever Set() call happened last, so a resolver must not get this ordering
+      // backwards.
       const s = setup(tmp.current, {
         args: ["db", "pull", "--experimental=false", "--experimental=true"],
         edgeStdout: EXPORT_JSON,
@@ -1934,13 +1830,9 @@ describe("db pull", () => {
   it.effect(
     "a bare --password consumes the following token, so SUPABASE_EXPERIMENTAL still gates the experimental export",
     () => {
-      // pflag accepts `--flag value` (space form) for `--password` (a string flag,
-      // `pull.command.ts`'s `password: Flag.string(...)`), so `--password
-      // --experimental=false` parses as `--password`'s VALUE being the literal string
-      // "--experimental=false" — `--experimental` was never actually Changed. A scanner
-      // that examines every pre-terminator token without skipping consumed values would
-      // wrongly read an explicit `--experimental=false` here and let the pull proceed
-      // normally instead of falling back to SUPABASE_EXPERIMENTAL=true.
+      // `--password --experimental=false` parses as `--password`'s value being the
+      // literal string "--experimental=false" — `--experimental` itself was never
+      // Changed, so the pull must still fall back to `SUPABASE_EXPERIMENTAL=true`.
       const prev = process.env["SUPABASE_EXPERIMENTAL"];
       process.env["SUPABASE_EXPERIMENTAL"] = "true";
       const s = setup(tmp.current, {
@@ -1997,11 +1889,9 @@ describe("db pull", () => {
   });
 
   it.effect("db pull --local with migra uses the declarative target override", () => {
-    // Go derives the shadow targetLocal from utils.IsLocalDatabase and substitutes
-    // the declarative contrib_regression target override (diff.go:190,196-197); a
-    // real declarative schema file makes the native `loadDeclaredSchemas` branch
-    // non-empty, so `prepareShadowSource` redirects the diff target to the
-    // shadow's own `contrib_regression` override database.
+    // A real declarative schema file makes the native `loadDeclaredSchemas` branch
+    // non-empty, so `prepareShadowSource` redirects the diff target to the shadow's
+    // own `contrib_regression` override database.
     seedMigration(tmp.current, "20240101000000");
     mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "schemas", "public.sql"), "select 1;\n");
@@ -2032,8 +1922,7 @@ describe("db pull", () => {
     "a migration name with a path separator fails instead of an empty-version repair",
     () => {
       // The repair globs `<timestamp>_*.sql`, which fails when the name has a path
-      // separator (the file is nested), so the native path must not silently upsert
-      // an empty-version migration-history row.
+      // separator, so the native path must not silently upsert an empty-version row.
       seedMigration(tmp.current, "20240101000000");
       const s = setup(tmp.current, {
         remoteVersions: ["20240101000000"],
@@ -2051,11 +1940,9 @@ describe("db pull", () => {
   it.effect(
     "a migration name whose nested basename is itself a valid migration filename still fails",
     () => {
-      // `dir/20250101000000_backfill` writes a nested file whose basename
-      // (`20250101000000_backfill.sql`) matches the migration regex, but the repair
-      // glob `<generated>_*.sql` never crosses the `/`, so it misses and fails.
-      // Anchoring on the generated timestamp must reject this rather than upserting
-      // the user's nested timestamp as applied.
+      // The basename (`20250101000000_backfill.sql`) matches the migration regex, but the
+      // repair glob `<generated>_*.sql` never crosses the `/`, so it misses — anchoring
+      // on the generated timestamp must reject this rather than upserting the nested one.
       seedMigration(tmp.current, "20240101000000");
       const s = setup(tmp.current, {
         remoteVersions: ["20240101000000"],
@@ -2073,9 +1960,9 @@ describe("db pull", () => {
   );
 
   it.effect("machine output in a TTY without --yes skips the prompt and emits the payload", () => {
-    // Regression: json/stream-json layers fail every prompt as non-interactive, so
-    // the history-update prompt must be skipped (default = yes) instead of failing
-    // the command before the structured success payload is emitted.
+    // json/stream-json layers fail every prompt as non-interactive, so the
+    // history-update prompt must be skipped (default = yes) instead of failing before
+    // the payload emits.
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
       format: "json",
@@ -2122,8 +2009,6 @@ describe("db pull", () => {
     return Effect.gen(function* () {
       yield* dbPull(flags({ linked: Option.some(true) }));
       expect(s.engineCalls[0]?.operation).toBe("diff");
-      // pg-delta selection is ref-aware (read from the remote-merged `toml.pgDelta`)
-      // and is proven by `edgeStdout`'s envelope shape parsing successfully below.
       expect(streamText(s.out, "stderr")).toMatch(
         /Schema written to supabase[/\\]migrations[/\\]\d{14}_remote_schema\.sql\n/u,
       );
@@ -2133,11 +2018,8 @@ describe("db pull", () => {
   it.effect(
     "caches the linked ref even when the merged config fails to load afterward (review: PRRT_kwDOErm0O86XLe6s)",
     () => {
-      // The project ref is cached the moment it's known, and stays cached even when
-      // a LATER step (here, `readDbToml`'s own config-load) fails afterward.
-      // `db.migrations.enabled = "notabool"` fails `readDbToml`'s own bool
-      // parse AFTER the ref is already known, exercising exactly that gap
-      // (`diff.integration.test.ts`'s identical fix/test).
+      // `db.migrations.enabled = "notabool"` fails config-load after the ref is
+      // already cached.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
@@ -2160,15 +2042,9 @@ describe("db pull", () => {
   it.effect(
     "a linked [remotes.<ref>] db.major_version override reaches the shadow's OWN container spec, not just toml",
     () => {
-      // The WHOLE config is remote-merged uniformly on the linked path — the shadow's
-      // container spec (image, JWT secret, root key, db.settings, service
-      // enabled-for-setup flags) must reflect the matched `[remotes.<ref>]` override
-      // too, not just the `toml` read used for pg-delta/schema_paths (mirrors
-      // `diff.integration.test.ts`'s identically-named test).
-      // `major_version` is a clean, directly-observable probe: PG <= 14 is the ONLY branch
-      // that emits a `--tmpfs` flag on the shadow's `docker create` argv
-      // (`buildShadowPostgresContainerSpec`) — a base config of 17 (>= 15, no tmpfs)
-      // overridden by a remote block's `major_version = 14` must flip that flag on.
+      // The remote's own container spec must reflect the `[remotes.<ref>]` override too,
+      // not just the config read for pg-delta/schema_paths; `major_version` is used as a
+      // probe since PG <= 14 is the only branch that emits `--tmpfs` on `docker create`.
       seedMigration(tmp.current, "20240101000000");
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
@@ -2200,17 +2076,9 @@ describe("db pull", () => {
   );
 
   it.effect("retries the migration-style diff through the IPv4 pooler on an IPv6 error", () => {
-    // The linked diff retries against the IPv4 pooler when the direct host is
-    // unreachable over IPv6 from the container. The first edge run fails with an
-    // IPv6 connectivity error; the retry succeeds and the migration is written.
-    //
-    // This retries the WHOLE shadow-provisioning + diff operation on this path,
-    // not just the diff engine (shadow provisioning prints "Creating shadow
-    // database..."/"Diffing schemas..." before ever touching the target
-    // connection) — so the pooler retry re-provisions and tears down a FRESH
-    // shadow and re-prints both banners, rather than reusing the first attempt's
-    // shadow. Assert that shape directly, not just that the migration eventually
-    // gets written.
+    // Retries the whole shadow-provisioning + diff operation, not just the diff engine —
+    // the pooler retry re-provisions and tears down a fresh shadow and re-prints both
+    // banners, rather than reusing the first attempt's shadow.
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
@@ -2238,9 +2106,7 @@ describe("db pull", () => {
   });
 
   it.effect("retries the declarative export through the IPv4 pooler on an IPv6 error", () => {
-    // The declarative export retries through the pooler in the same IPv6
-    // scenario. The export reads only the live target, so no shadow database is
-    // ever provisioned on this path.
+    // The export reads only the live target, so no shadow is ever provisioned on this path.
     const s = setup(tmp.current, {
       edgeFailFirstWith: "error exporting declarative schema:\nnetwork is unreachable",
       edgeStdout: EXPORT_JSON,
@@ -2258,8 +2124,6 @@ describe("db pull", () => {
   });
 
   it.effect("an IPv6 diff error with no pooler available surfaces the original error", () => {
-    // A pooler resolution failure surfaces the ORIGINAL diff error rather than a
-    // retry error.
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
@@ -2278,8 +2142,6 @@ describe("db pull", () => {
   });
 
   it.effect("a non-IPv6 diff error is not retried through the pooler", () => {
-    // Only IPv6 connectivity errors are eligible; any other failure surfaces as-is
-    // without consulting the pooler.
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
@@ -2318,8 +2180,8 @@ describe("db pull", () => {
      * Runs `db pull` with the shadow baseline cache on and artifacts under the temp root,
      * against the stateful Docker model the export/restore round trip needs.
      *
-     * Each run gets its OWN workdir so the migration file the previous pull wrote cannot shift
-     * the second run's behaviour — the cache key is global and deliberately workdir-independent,
+     * Each run gets its own workdir so the migration file the previous pull wrote cannot
+     * shift the second run's behavior — the cache key is global and workdir-independent,
      * so two worktrees with identical settings still collide on the same tar.
      */
     const runCached = (engine: "migra" | "pg-delta") => {
@@ -2351,11 +2213,9 @@ describe("db pull", () => {
       ).pipe(Effect.as(s));
     };
 
-    // Regression: both migrate paths used to pass a hardcoded `{ webhooks: "enabled" }`, so the
-    // migra run's forced-`pg_net` baseline and the pg-delta run's config-following baseline keyed
-    // to the SAME tar and silently restored each other's cluster. The handler now forks the
-    // policy on `migrationMode`; `shadow-cache.integration.test.ts` covers the cache's half of
-    // the contract, this covers `db pull`'s call site.
+    // A migra baseline and a pg-delta baseline must not key to the same cache tar and
+    // silently restore each other's cluster; `shadow-cache.integration.test.ts` covers
+    // the cache's own half, this covers the call site.
     it.live("a migra-engine baseline is never restored into a pg-delta run", () => {
       return Effect.gen(function* () {
         // Migra's migrate path forces `pg_net` on regardless of config, and publishes
@@ -2366,7 +2226,7 @@ describe("db pull", () => {
         expect(migraTars).toHaveLength(1);
 
         // pg-delta follows the config (webhooks are off here), so it must cold-provision
-        // and publish its OWN baseline rather than restore the forced-on one above.
+        // and publish its own baseline rather than restore the forced-on one above.
         const pgDeltaRun = yield* runCached("pg-delta");
         expect(pgDeltaRun.dockerDaemon?.stepCalls("cp-in")).toHaveLength(0);
         expect(pgDeltaRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);

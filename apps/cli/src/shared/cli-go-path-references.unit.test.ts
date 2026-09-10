@@ -4,17 +4,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
- * Guards against exactly the failure mode found and fixed in CLI-1966: a test
- * or build script reading an `apps/cli-go/...` path directly off disk via
- * `new URL("...cli-go/...", import.meta.url)` (see e.g. the fixed
- * `shared/functions/serve-main-offline.e2e.test.ts`, which read the now-deleted
- * `internal/start/templates/kong.yml`). Those reads only fail loudly when the
- * specific test/script actually runs -- for an `.e2e.test.ts` file that's a
- * slow, non-default-loop tier (see `apps/cli/CLAUDE.md`'s "Testing" section),
- * so a Go-source deletion elsewhere in this milestone could silently strand
- * one of these until CI's e2e/live tier finally executes it. This test
- * enumerates every such literal across the repo and fails fast, in the
- * default unit tier, the moment the referenced path stops existing.
+ * Every `new URL("...cli-go/...", import.meta.url)` literal reads an `apps/cli-go/...` path
+ * off disk. Those reads only fail when the specific test or script actually runs — a slow,
+ * non-default-loop tier for `.e2e.test.ts` files — so a Go-source deletion could silently
+ * strand a reference until CI's e2e/live tier executes it. This test enumerates every literal
+ * and fails fast in the default unit tier instead.
  */
 
 const repoRoot = fileURLToPath(new URL("../../../..", import.meta.url));
@@ -45,16 +39,15 @@ function findCliGoReferences(): Array<Reference> {
   const references: Array<Reference> = [];
   for (const dir of scanDirs) {
     for (const sourceFile of walk(dir)) {
-      // Excludes this file itself -- its own doc comment and regex source
-      // above are themselves full of literal text that would otherwise
+      // Excludes this file itself: its own doc comment and regex source would otherwise
       // match the pattern being scanned for.
       if (sourceFile === thisFile) continue;
       const source = readFileSync(sourceFile, "utf8");
       for (const match of source.matchAll(CLI_GO_URL_LITERAL)) {
         const literal = match[1]!;
-        // Mirrors `new URL(literal, import.meta.url)`'s own resolution: relative
-        // to the referencing file's own directory, treating a trailing "/" as a
-        // directory (matching WHATWG URL semantics, unlike path.resolve alone).
+        // Mirrors `new URL(literal, import.meta.url)`'s own resolution: relative to the
+        // referencing file's directory, with a trailing "/" kept as a directory (`path.resolve`
+        // alone drops it).
         const resolved = literal.endsWith("/")
           ? `${path.resolve(path.dirname(sourceFile), literal)}/`
           : path.resolve(path.dirname(sourceFile), literal);

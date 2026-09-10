@@ -7,9 +7,8 @@ import { DbConnectError } from "./db-connection.errors.ts";
 import { resolveHostsOverHttps } from "./db-dns.ts";
 
 /**
- * The result of transforming an original HTTPS request URL so the TCP
- * connection dials the resolved IP directly while TLS still targets the
- * original hostname — mirroring `withFallbackDNS` dial-context hook.
+ * The result of rewriting an HTTPS request URL so the TCP connection dials
+ * the resolved IP directly while TLS still targets the original hostname.
  */
 export interface DohRequestShape {
   /** The rewritten URL with the IP literal as authority. */
@@ -21,15 +20,12 @@ export interface DohRequestShape {
 }
 
 /**
- * Pure URL-rewrite helper. Swaps the authority of `originalUrl` to the
- * resolved IP address while keeping the scheme, path, query, and fragment
- * intact. IPv6 addresses are bracketed (`[::1]`) per RFC 2732.
+ * Swaps the authority of `originalUrl` to `resolvedIp` while keeping the
+ * scheme, path, query, and fragment intact. IPv6 addresses are bracketed
+ * (`[::1]`) per RFC 2732.
  *
- * When `originalUrl`'s host is already an IP literal no rewrite is needed;
- * callers should check `net.isIP(host) !== 0` and short-circuit before
- * calling this function. If `resolvedIp` is not a valid IP this function
- * throws — callers are expected to only pass values from `parseResolvedIps`,
- * which already enforces `net.isIP !== 0`.
+ * Callers should short-circuit before calling this when the host is already
+ * an IP literal. Throws if `resolvedIp` is not a valid IP.
  *
  * @param originalUrl - Fully qualified HTTPS URL, e.g. `https://api.supabase.com/v1/projects`.
  * @param resolvedIp - IPv4 or IPv6 address from a DoH resolution.
@@ -37,18 +33,15 @@ export interface DohRequestShape {
  */
 export function buildDohRequest(originalUrl: string, resolvedIp: string): DohRequestShape {
   const parsed = new URL(originalUrl);
-  // URL.hostname may include brackets for IPv6 in Bun (e.g. "[::1]"). Callers
-  // pass a non-IP hostname, so we just record the raw value and strip any
-  // brackets for serverName (TLS SNI must be the bare hostname, never bracketed).
+  // TLS SNI must be the bare hostname; strip the brackets Bun adds for IPv6.
   const rawHostname = parsed.hostname;
   const originalHost =
     rawHostname.startsWith("[") && rawHostname.endsWith("]")
       ? rawHostname.slice(1, -1)
       : rawHostname;
-  const portSuffix = parsed.port !== "" ? `:${parsed.port}` : ""; // preserve explicit port
+  const portSuffix = parsed.port !== "" ? `:${parsed.port}` : "";
 
-  // Bracket IPv6 in the URL authority (RFC 2732). Bun requires brackets when
-  // assigning an IPv6 address to URL.hostname.
+  // Bun requires brackets when assigning an IPv6 address to URL.hostname.
   const ipAuthority = net.isIPv6(resolvedIp) ? `[${resolvedIp}]` : resolvedIp;
   parsed.hostname = ipAuthority;
 
@@ -60,16 +53,13 @@ export function buildDohRequest(originalUrl: string, resolvedIp: string): DohReq
 }
 
 /**
- * The bare callable fetch signature. This is the call part of
- * `typeof globalThis.fetch` minus the Bun-specific `preconnect` namespace
- * member, so tests can pass a plain function as `innerFetch` without having to
- * stub `preconnect`.
+ * The call part of `typeof globalThis.fetch`, without the Bun-specific
+ * `preconnect` namespace member, so tests can pass a plain function as
+ * `innerFetch` without stubbing `preconnect`.
  */
 type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
-/**
- * Options for `dohFetch`. All fields are injectable for testing.
- */
+/** Options for `dohFetch`. All fields are injectable for testing. */
 export interface DohFetchOptions {
   /** The `--dns-resolver` flag value ("native" | "https"). */
   readonly dnsResolver: "native" | "https";
@@ -91,10 +81,6 @@ export interface DohFetchOptions {
  * request hostname before dialing, then passes `tls.serverName` so Bun
  * validates the TLS certificate against the original hostname — not the IP.
  *
- * Mirrors `withFallbackDNS` transport hook:
- * use the first resolved IP
- * (`ip[0]`), keep the Host header, keep TLS targeting the original name.
- *
  * Returns a standard `fetch` function suitable for use as
  * `FetchHttpClient.Fetch`'s context value.
  *
@@ -108,56 +94,43 @@ export function dohFetch(opts: DohFetchOptions): typeof globalThis.fetch {
     input: string | URL | Request,
     init?: RequestInit,
   ): Promise<Response> => {
-    // Normalise to string URL — same as what FetchHttpClient passes.
     const originalUrl =
       typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const parsed = new URL(originalUrl);
-    // URL.hostname returns bracketed IPv6 (e.g. "[::1]") in Bun. Strip brackets
-    // before the isIP check so net.isIP correctly identifies IPv6 literals.
+    // Strip Bun's IPv6 brackets (e.g. "[::1]") so net.isIP identifies the literal correctly.
     const rawHostname = parsed.hostname;
     const host =
       rawHostname.startsWith("[") && rawHostname.endsWith("]")
         ? rawHostname.slice(1, -1)
         : rawHostname;
 
-    // Short-circuit 1: not DoH mode or already an IP literal.
     if (dnsResolver !== "https" || net.isIP(host) !== 0) {
       return innerFetch(input, init);
     }
 
-    // DoH-resolve and take the first IP (Go's ip[0]). The request's abort
-    // signal is threaded into the resolution so Ctrl-C or a caller timeout
-    // during the DNS lookup cancels the resolver fiber too, instead of leaving
-    // it running until the DoH server answers.
+    // The request's abort signal must reach the lookup too, or an abort during
+    // resolution leaves the resolver fiber running until the DoH server answers.
     const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
     const ips = await Effect.runPromise(resolver(host), { signal: signal ?? undefined });
     const firstIp = ips[0];
     if (firstIp === undefined) {
-      // resolver guarantees non-empty; this is a safety net.
+      // resolver guarantees a non-empty result; this is a safety net.
       return innerFetch(input, init);
     }
 
     const { url, serverName, hostHeader } = buildDohRequest(originalUrl, firstIp);
 
-    // `BunFetchRequestInit` is Bun's global fetch-init type; it extends the
-    // standard `RequestInit` with `tls`. Bun's fetch honors `tls.serverName`:
-    // the TLS handshake sends this as the SNI extension and validates the peer
-    // certificate against it — not against the IP in the URL. Evidence:
-    // `fetch('https://104.16.133.229/', { tls: { serverName: 'cloudflare.com' } })`
-    // returned HTTP 403 (cert validated OK against 'cloudflare.com'). CWE-350
-    // guard: cert validation never falls back to the raw IP even though the URL
-    // authority is an IP literal.
-    // `init.headers` may be a plain record (Effect's FetchHttpClient), a
-    // WHATWG `Headers` instance (supabase-js), or an entries array — spreading
-    // a `Headers` instance yields zero entries, so rebuild through the
-    // `Headers` constructor, which accepts every `HeadersInit` shape. When the
-    // request is a `Request` with no separate `init.headers`, the headers live
-    // on the request object itself (standard fetch semantics: `init.headers`
-    // replaces them entirely when present).
+    // `init.headers` may be a plain record, a WHATWG `Headers` instance
+    // (supabase-js), or an entries array; spreading a `Headers` instance yields
+    // zero entries, so rebuild through the constructor. A `Request` input with
+    // no `init.headers` carries its headers on the request itself.
     const headers = new Headers(
       init?.headers ?? (input instanceof Request ? input.headers : undefined),
     );
     headers.set("Host", hostHeader);
+    // Bun's fetch sends `tls.serverName` as the SNI extension and validates
+    // the peer certificate against it, not against the IP used as the URL
+    // authority.
     const rewrittenInit: BunFetchRequestInit = {
       ...init,
       headers,
@@ -167,11 +140,8 @@ export function dohFetch(opts: DohFetchOptions): typeof globalThis.fetch {
     return innerFetch(url, rewrittenInit);
   };
 
-  // `FetchHttpClient.Fetch` holds a `typeof globalThis.fetch`, which in Bun
-  // carries a `preconnect` namespace member alongside the call signature.
-  // Attach the real `preconnect` so the override is a structurally complete
-  // `fetch` — no cast needed. `preconnect` is a Bun-only perf hint and is never
-  // invoked by Effect's FetchHttpClient.
+  // `typeof globalThis.fetch` includes Bun's `preconnect` member; attach the
+  // real one so this override satisfies that type without a cast.
   return Object.assign(fetchImpl, { preconnect: globalThis.fetch.preconnect });
 }
 

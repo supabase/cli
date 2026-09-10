@@ -56,8 +56,6 @@ export const supervisorEntrypointFor = (moduleUrl: string): string => {
 
 /** Default host values are resolved only at the process composition boundary. */
 export const defaultRuntimeEnvironment = (): StackRuntimeEnvironmentValue => {
-  // This synchronous helper is the composition boundary where host environment
-  // variables are read. The runtime itself receives a fully materialized value.
   // oxlint-disable-next-line effecttsgo/process-env -- composition-boundary environment read
   const home = process.env.SUPABASE_HOME ?? `${process.env.HOME ?? homedir()}/.supabase`;
   return {

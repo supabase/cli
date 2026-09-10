@@ -53,8 +53,7 @@ const runUp = Effect.fnUntraced(function* (
   }
 
   // `--project-ref` never implies `--linked` and must not be silently
-  // discarded on a non-linked target — see push.handler.ts's identical guard
-  // (db push) for the full TS-only rationale.
+  // discarded on a non-linked target; see push.handler.ts's identical guard.
   if (Option.isSome(flags.projectRef) && (target.connType ?? "local") !== "linked") {
     return yield* Effect.fail(
       new MigrationTargetFlagsError({
@@ -67,7 +66,6 @@ const runUp = Effect.fnUntraced(function* (
   const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
 
   const upBody = Effect.gen(function* () {
-    // up defaults to `--local`.
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       connType: target.connType ?? "local",
@@ -79,8 +77,6 @@ const runUp = Effect.fnUntraced(function* (
 
     yield* Effect.scoped(
       Effect.gen(function* () {
-        // The connect diagnostic prints to stderr before dialing,
-        // local/remote per the resolved connection.
         yield* output.raw(
           `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
           "stderr",
@@ -115,11 +111,9 @@ const runUp = Effect.fnUntraced(function* (
               }),
             );
           }
-          // `--include-all`: the out-of-order set + everything after the
-          // applied prefix. Slices the same version-ordered list
-          // `result.paths` was taken from — indexing a name-ordered list with a
-          // version-ordered offset would skip a pending migration and re-apply
-          // an already-applied one.
+          // Slices the same version-ordered list `result.paths` was taken from; indexing
+          // a name-ordered list with this offset would skip a pending migration and
+          // re-apply an already-applied one.
           pending = [
             ...result.paths,
             ...sortMigrationPathsByVersion(local).slice(remote.length + result.paths.length),

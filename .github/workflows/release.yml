@@ -25,18 +25,16 @@ on:
         description: npm package version to publish (must be unique on npm; pick the next unused version)
         required: true
         type: string
-      # Defaults to `true` so a stray "Run workflow" click can't accidentally
-      # publish — operators recovering from a stale-bytes run must consciously
-      # untick this when dispatching.
+      # Defaults to `true` so a stray "Run workflow" click can't accidentally publish; operators
+      # must consciously untick this when dispatching.
       dry_run:
         description: Dry run (skip actual publishing)
         required: false
         type: boolean
         default: true
 
-# The release pipeline mutates external package registries, git tags, GitHub
-# Releases, Homebrew, and Scoop. Keep one release per ref active at a time so
-# duplicate push events cannot race the same computed version.
+# The release pipeline mutates external registries, git tags, GitHub Releases, Homebrew, and
+# Scoop, so keep one release per ref active at a time to avoid duplicate push events racing.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -90,11 +88,9 @@ jobs:
       dry_run: ${{ steps.compute.outputs.dry_run }}
       channel: ${{ steps.compute.outputs.channel }}
     steps:
-      # semantic-release runs `git push --dry-run HEAD:<branch>` as part of
-      # verifyAuth even in `dry_run: true` mode, so the token must have push
-      # access to the protected `develop`/`main` branches. The default
-      # GITHUB_TOKEN doesn't, so we mint an App-installation token from the
-      # same App used for fast-forward + brew/scoop pushes.
+      # semantic-release runs `git push --dry-run HEAD:<branch>` as part of verifyAuth even in
+      # `dry_run: true` mode, so the token needs push access to the protected develop/main
+      # branches — the default GITHUB_TOKEN doesn't have it.
       - id: app-token
         if: github.event_name == 'push'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -102,11 +98,9 @@ jobs:
           client-id: ${{ vars.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
           permission-contents: write
-      # `persist-credentials: false` is required: otherwise checkout caches the
-      # default GITHUB_TOKEN as an `http.extraheader` in git config, and that
-      # Authorization header overrides the App token semantic-release puts in
-      # the push URL — making the dry-push identify as `github-actions[bot]`
-      # and get rejected by branch protection.
+      # `persist-credentials: false` is required: otherwise checkout caches the default
+      # GITHUB_TOKEN in git config, and its Authorization header overrides the App token
+      # semantic-release puts in the push URL, making the dry-push get rejected by branch protection.
       - uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1
         with:
           fetch-depth: 0
@@ -185,12 +179,11 @@ jobs:
     name: Release
     needs: plan
     if: needs.plan.outputs.should_release == 'true'
-    # pull-requests: write is required by the nested propose-release-notes
-    # workflow (release-shared.yml -> propose-release-notes.yml). For nested
-    # reusable workflows, a called job's permissions can't exceed those granted
-    # to the calling job, so this must be declared here even though the propose
-    # job uses an App token for its actual PR creation.
+    # pull-requests: write is required by the nested propose-release-notes workflow
+    # (release-shared.yml -> propose-release-notes.yml): a called job's permissions can't exceed
+    # those granted to the calling job, so this must be declared here too.
     permissions:
+      actions: read
       contents: write
       id-token: write
       pull-requests: write
@@ -213,13 +206,11 @@ jobs:
       DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
       LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY: ${{ secrets.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY }}
       LINEAR_CLI_BETA_RELEASE_ACCESS_KEY: ${{ secrets.LINEAR_CLI_BETA_RELEASE_ACCESS_KEY }}
+      SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
 
-  # Republishes the supabase.com CLI reference, restoring the job the Go
-  # `tools/bumpdoc` ran before the monorepo merge (71b543255) deleted it — the
-  # published spec has been frozen at 2.98.2 since. Stable only: the reference
-  # documents the CLI users actually install, so pre-releases are skipped.
-  # Nothing depends on this job, so a docs-site failure cannot affect the
-  # already-completed release.
+  # Republishes the supabase.com CLI reference. Stable only: the reference documents the CLI
+  # users actually install, so pre-releases are skipped. Nothing depends on this job, so a
+  # docs-site failure cannot affect the already-completed release.
   docs:
     name: Publish reference docs
     needs: [plan, release]
@@ -253,9 +244,8 @@ jobs:
         run: gh auth setup-git
       - name: Publish the CLI reference
         working-directory: apps/cli
-        # `shell: bash` for `-o pipefail`: the default `run:` shell would take
-        # the exit status of the publisher alone, so a generator that died
-        # part-way would look like a successful run of a truncated spec.
+        # `shell: bash` for `-o pipefail`: the default `run:` shell takes only the publisher's
+        # exit status, so a generator that died part-way would look like a successful run.
         shell: bash
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -269,12 +259,10 @@ jobs:
           bun scripts/generate-docs-spec.ts "$VERSION" \
             | bun scripts/publish-docs-spec.ts --version "$VERSION" "${args[@]}"
 
-  # Posts to the release Slack channel once the pipeline succeeds. Listing
-  # `release` in `needs` without a status function in `if:` keeps the implicit
-  # success() gate, so this only runs when both plan and release succeeded.
-  # The `if:` then filters to real (non-dry-run) stable cuts; beta and dry
-  # runs stay silent. Nothing depends on this job, so a Slack/webhook
-  # failure can't affect the already-completed release.
+  # Listing `release` in `needs` without a status function in `if:` keeps the implicit success()
+  # gate, so this only runs when both plan and release succeeded; the `if:` then filters to real
+  # (non-dry-run) stable cuts. Nothing depends on this job, so a Slack failure can't affect the
+  # already-completed release.
   notify-slack:
     name: Notify Slack
     needs: [plan, release]
@@ -290,15 +278,11 @@ jobs:
     secrets:
       SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
 
-  # Reports a broken release on every channel. `failure()` evaluates against the
-  # `needs` chain, so this fires whenever `plan` or `release` (and anything in
-  # the reusable release-shared workflow) fails. Skipped jobs — e.g. the
-  # fast-forward path or a release that never started — don't count as failures,
-  # so this stays quiet there. Dry runs are excluded — the guard reads the
-  # dispatch input directly, so even a plan job that dies before recording its
-  # dry_run output stays quiet; an operator running one is already watching it
-  # live. When `plan` fails its outputs are empty, so the message falls back to
-  # the workflow run link as the actionable detail.
+  # Reports a broken release on every channel. `failure()` evaluates against the full `needs`
+  # chain, so this fires whenever `plan` or `release` (including the reusable release-shared
+  # workflow) fails. Skipped jobs — e.g. the fast-forward path, or a release that never started —
+  # don't count as failures. Dry runs are excluded via the dispatch input directly, so even a
+  # plan job that dies before recording its `dry_run` output stays quiet.
   notify-slack-failure:
     name: Notify Slack (failure)
     needs: [plan, release]

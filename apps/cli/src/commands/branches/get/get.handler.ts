@@ -83,19 +83,13 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
   const cliSettings = yield* CommandSettings;
   void (yield* Tty); // ensures Tty is in handler R so promptBranchId resolves
 
-  // `branches` is PARENT-scoped: after `supabase link <branch>`,
-  // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
-  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
+  // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
+  // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
   const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
 
   yield* Effect.gen(function* () {
-    // Branch-id resolution. Empty input goes through the prompt helper.
     const branchInput = yield* promptBranchId(flags.name, ref);
 
-    // ------------------------------------------------------------------
-    // 1. Lookup: if input is not a UUID and not a ref pattern, fetch the
-    //    project ref via V1GetABranch (`GET /v1/projects/{ref}/branches/{name}`).
-    // ------------------------------------------------------------------
     let branchIdOrRef = branchInput;
     if (!BRANCH_UUID_PATTERN.test(branchInput) && !BRANCH_PROJECT_REF_PATTERN.test(branchInput)) {
       const lookup = yield* api.v1
@@ -104,10 +98,6 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
       branchIdOrRef = lookup.project_ref;
     }
 
-    // ------------------------------------------------------------------
-    // 2. Detail: V1GetABranchConfig (`GET /v1/branches/{id_or_ref}`).
-    //    Mask db_user / db_pass / jwt_secret with `******` when nil.
-    // ------------------------------------------------------------------
     const fetching =
       output.format === "text" ? yield* output.task("Fetching branch...") : undefined;
     const rawDetail: BranchDetail = yield* api.v1
@@ -133,9 +123,6 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
       return;
     }
 
-    // ------------------------------------------------------------------
-    // 3+4. API keys + pooler config (only for non-pretty modes).
-    // ------------------------------------------------------------------
     const keys: ApiKeys = yield* api.v1
       .getProjectApiKeys({ ref: detail.ref })
       .pipe(Effect.catch(mapApiKeysError));
@@ -152,8 +139,6 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
     const host = projectHost(cliSettings.profile);
     const projected = toStandardEnvs(detail, primary, keys, host);
     if (projected.poolerWarning !== undefined && output.format === "text") {
-      // Established output: `fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)`.
-      // The "WARNING:" prefix is yellow, then a space, then the parse error message.
       yield* output.raw(
         `${styleText("yellow", "WARNING:")} ${projected.poolerWarning}\n`,
         "stderr",
@@ -179,12 +164,11 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
     }
 
     if (wantsTsStructured) {
-      // No goFmt set but TS structured output requested.
       yield* output.success("", envMap);
       return;
     }
 
-    // Defensive — should be unreachable given the wantsEnvMap branch above.
+    // Unreachable in practice: wantsEnvMap is already true by this point.
     void wantsEnvMap;
     yield* output.raw(encodeGoJson(envMap));
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));

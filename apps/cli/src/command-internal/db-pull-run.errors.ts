@@ -28,11 +28,10 @@ export class DbPullMigrationConflictError extends Data.TaggedError("DbPullMigrat
 export class DbPullInSyncError extends Data.TaggedError("DbPullInSyncError")<{
   readonly message: string;
   /**
-   * Explains the non-zero exit instead of letting `Output.fail` append the
-   * generic "Try rerunning the command with --debug" footer — an in-sync
-   * database is a finding, not a failure to troubleshoot. The message and exit
-   * code stay Go-identical; only the footer diverges (see
-   * `docs/go-cli-divergences.md`).
+   * Explains the non-zero exit instead of letting `Output.fail` append the generic "Try
+   * rerunning the command with --debug" footer: an in-sync database is a finding, not a failure
+   * to troubleshoot. See `docs/go-cli-divergences.md` for the established message/exit-code
+   * contract this preserves.
    */
   readonly suggestion: string;
 }> {

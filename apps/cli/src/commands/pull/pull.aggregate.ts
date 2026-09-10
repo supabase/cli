@@ -10,19 +10,13 @@ import type {
 } from "./pull.types.ts";
 
 /**
- * Pure result-shaping helpers for `supabase pull` — no Effect, no services.
- * Each `pull<Step>StepResult` maps one sub-step's own already-frozen
- * outcome type into the shared `PullStepResult` shape `pull.handler.ts`
- * aggregates across all four steps (`pull.types.ts`). Status derivation rules
- * are documented per function below.
+ * Pure result-shaping helpers for `supabase pull`. Each `pull<Step>StepResult` maps one
+ * sub-step's outcome into the shared `PullStepResult` shape that `pull.handler.ts` aggregates
+ * across all four steps.
  */
 
-/**
- * Strips a leading `workdir` prefix from an absolute path — the same
- * prefix-strip `workdir-project.ts`'s `relativeConfigPath`
- * implements, duplicated here (rather than imported) so this module stays
- * free of that file's own Effect-importing neighbors.
- */
+// Duplicated from `workdir-project.ts`'s `relativeConfigPath` so this module stays
+// Effect-import-free.
 function pullRelativeToWorkdir(workdir: string, path: string): string {
   return path.startsWith(workdir) ? path.slice(workdir.length).replace(/^[/\\]/, "") : path;
 }
@@ -39,13 +33,9 @@ export interface PullConfigStepOutcome {
 }
 
 /**
- * `config` step: `unchanged` when the plan had no work at all; `planned` when
- * there was work but it was never applied (`--dry-run`, OR the aggregated
- * confirmation was declined — the two read identically from this step's own
- * perspective, since neither one ever reaches the write); `changed` once the
- * plan actually ran (confirmed, not a dry run). `detail` is always the config
- * step's own JSON payload verbatim, since `config pull` computes a real diff
- * report even for a dry-run or declined outcome.
+ * `config` step: `unchanged` with no work at all, `planned` when work exists but was skipped
+ * (dry run or a declined confirmation), and `changed` once the plan applied. `detail` is always
+ * the payload passed in, since `config pull` computes a diff report even when nothing applied.
  */
 export function pullConfigStepResult(
   outcome: PullConfigStepOutcome,
@@ -64,19 +54,17 @@ export function pullConfigStepResult(
 export type PullMigrationHistoryStepOutcome =
   | {
       /**
-       * Never attempted this run — `supabase/migrations` already had files and
-       * `--with-migration-history` was not passed (`"not_needed"`), or the
-       * aggregated confirmation was declined while this step would otherwise
-       * have run (`"declined"`).
+       * Never attempted: `"not_needed"` when migrations already existed and
+       * `--with-migration-history` wasn't passed, or `"declined"` when the aggregated
+       * confirmation was declined before this step could run.
        */
       readonly kind: "skipped";
       readonly reason: "not_needed" | "declined";
     }
   | {
       /**
-       * Would have run (bootstrap or `--with-migration-history`), but
-       * `--dry-run` suppressed it — migration fetch has no real preview
-       * machinery.
+       * Would have run (bootstrap or `--with-migration-history`), but `--dry-run` suppressed
+       * it — migration fetch has no real preview machinery.
        */
       readonly kind: "planned";
     }
@@ -86,12 +74,8 @@ export type PullMigrationHistoryStepOutcome =
       readonly workdir: string;
     };
 
-/**
- * `migration_history` step: `skipped` when never attempted (either it wasn't
- * needed, or the aggregated confirmation was declined before it could run);
- * `planned` for a dry run that would have fetched; otherwise `changed`/
- * `unchanged` based on whether the fetch actually wrote any files.
- */
+/** Maps `PullMigrationHistoryStepOutcome` to a `PullStepResult`; `changed`/`unchanged` depends on
+ *  whether the fetch wrote files. */
 export function pullMigrationHistoryStepResult(
   outcome: PullMigrationHistoryStepOutcome,
 ): PullStepResult {
@@ -122,11 +106,9 @@ export type PullDbStepOutcome =
   | { readonly kind: "applied"; readonly outcome: DbPullOutcome; readonly workdir: string };
 
 /**
- * `db` step: `planned` for a dry run (`db pull` has no real preview
- * machinery, same rationale as migration history above); `unchanged` for `db
- * pull`'s own "already in sync" finding (`DbPullInSyncError`, caught by
- * the handler and reported here — a finding, not a failure, at the `pull`
- * level per ADR 0024); `changed` once a schema was actually written.
+ * `db` step: `planned` for a dry run; `unchanged` for `db pull`'s "already in sync" finding
+ * (a finding, not a failure, at the `pull` level — see ADR 0024); `changed` once a schema was
+ * written.
  */
 export function pullDbStepResult(outcome: PullDbStepOutcome): PullStepResult {
   if (outcome.kind === "planned") {
@@ -161,11 +143,9 @@ export type PullFunctionsStepOutcome =
   | { readonly kind: "downloaded"; readonly result: DownloadFunctionsResult };
 
 /**
- * `functions` step: `planned` for a dry run (no preview machinery);
- * `unchanged` when the project has no functions at all; `changed` once at
- * least one slug downloaded. `written` lists each downloaded slug's function
- * directory — `DownloadFunctionsResult` doesn't enumerate individual files,
- * so the directory is the most useful representative path per slug.
+ * `functions` step: `planned` for a dry run, `unchanged` with no functions, `changed` once at
+ * least one slug downloaded. `written` lists each slug's directory since
+ * `DownloadFunctionsResult` doesn't enumerate individual files.
  */
 export function pullFunctionsStepResult(outcome: PullFunctionsStepOutcome): PullStepResult {
   if (outcome.kind === "planned") {
@@ -206,11 +186,9 @@ function hasStringTag(value: unknown): value is { readonly _tag: string } {
 }
 
 /**
- * Duck-types a caught failure value carrying `writtenSoFar` — a write-loop error (e.g.
- * `MigrationFetchWriteError`) that had already written some files before a LATER item in
- * the same loop failed (a tampered/malformed remote row, a mid-loop write failure, ...).
- * Absent for every other failure, including a write-loop error whose very first item
- * failed (nothing written yet).
+ * True when a write-loop failure (e.g. `MigrationFetchWriteError`) already wrote some files
+ * before a later item failed. Absent for every other failure, including one whose first item
+ * failed with nothing written yet.
  */
 function hasWrittenSoFar(
   value: unknown,
@@ -224,11 +202,8 @@ function hasWrittenSoFar(
 }
 
 /**
- * Duck-types a caught failure value (a plain `Error`, a tagged domain error,
- * or anything else `pull.handler.ts` extracts from a step's `Exit`) into a
- * message string — kept structural, rather than importing Effect's `Cause`
- * type, so this file stays free of Effect imports. The handler owns deciding
- * exactly what value reaches here.
+ * Extracts a message string from an arbitrary caught failure value, kept structural rather than
+ * importing Effect's `Cause` type so this file stays Effect-import-free.
  */
 function pullFailureMessage(cause: unknown): string {
   if (hasStringMessage(cause) && cause.message.length > 0) {
@@ -244,42 +219,33 @@ function pullFailureSuggestion(cause: unknown): string | undefined {
   return hasStringSuggestion(cause) && cause.suggestion.length > 0 ? cause.suggestion : undefined;
 }
 
-/** The squashed cause's own `_tag`, when it has one — a machine consumer's only way to classify
- *  a non-first (never re-failed) step failure without parsing `message`. */
+/** The cause's own `_tag`, when present — lets a machine consumer classify a step failure
+ *  without parsing `message`. */
 function pullFailureCode(cause: unknown): string | undefined {
   return hasStringTag(cause) && cause._tag.length > 0 ? cause._tag : undefined;
 }
 
 /**
- * POSIX single-quote escaping for a value inserted into a suggested shell command —
- * mirrors `commands/db/shared/pgdelta-next-diagnostics.ts`'s `shellQuote`. Kept as its
- * own tiny copy rather than a shared import: this file is deliberately Effect-import-free
- * (see `pull.handler.ts`'s own note on why `--remote-label` needs quoting — `config
- * pull`'s own `--remote-label` accepts labels requiring TOML quoting, including
- * whitespace, so an unquoted value here could render an invalid or dangerous
- * copy-pasteable command).
+ * POSIX single-quote escaping for a value inserted into a suggested shell command.
+ * `--remote-label` can contain whitespace, so leaving it unquoted could render an invalid or
+ * dangerous copy-pasteable command.
  */
 function pullShellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 /**
- * Strips control characters (CR/LF/tab) from a value before it is inlined into a
- * suggested shell command — the same CWE-117 concern `pull.format.ts`'s
- * `pullSanitizeRowText` guards against for rendered summary text. Kept as its own copy
- * here (rather than importing that sibling helper) since `pull.format.ts` already
- * imports FROM this module (`pullCounts`) and this file is deliberately
- * Effect-import-free.
+ * Strips control characters (CR/LF/tab) from a value before it's inlined into a suggested shell
+ * command, guarding the same CWE-117 concern as `pull.format.ts`'s `pullSanitizeRowText`. Kept
+ * as its own copy since `pull.format.ts` imports from this module, so importing back would cycle.
  */
 function pullSanitizeCommandToken(value: string): string {
   return value.replace(/[\r\n\t]+/g, " ");
 }
 
 /**
- * The ` --remote-label <value>` suffix for a suggested command — sanitized and
- * shell-quoted, empty when no label was passed. Shared by `pullRetryHint`'s config-step
- * command and `pullWithMigrationHistoryCommand` below, so every suggested command that
- * carries a user-supplied `--remote-label` renders it identically.
+ * The ` --remote-label <value>` suffix for a suggested command — sanitized, shell-quoted, and
+ * empty when no label was passed. Shared so every suggested command renders it identically.
  */
 function pullRemoteLabelFlag(remoteLabel: string | undefined): string {
   return remoteLabel === undefined
@@ -288,16 +254,9 @@ function pullRemoteLabelFlag(remoteLabel: string | undefined): string {
 }
 
 /**
- * The exact standalone command to retry ONE failed step on its own —
- * `pull.handler.ts` appends this line to a failed step's own
- * `failure.suggestion` (Phase 3), on top of whatever the step's own
- * error/suggestion already says, so a user watching `pull` fail doesn't have
- * to guess which of its four sub-commands to rerun, or redo every step that
- * already succeeded by rerunning the whole orchestrator. Takes the
- * already-RESOLVED `ref` — never a branch name someone typed for
- * `--project-ref`, since not every sub-command necessarily resolves branch
- * names the same way `pull` does, while a resolved ref is always a valid
- * `--project-ref` value everywhere.
+ * The standalone command to retry one failed step on its own, appended to that step's own
+ * `failure.suggestion`. Always uses the already-resolved `ref`, never a branch name, since not
+ * every sub-command resolves branch names the same way `pull` does.
  */
 export function pullRetryHint(
   step: PullStepId,
@@ -308,15 +267,9 @@ export function pullRetryHint(
   const commandByStep: Record<PullStepId, string> = {
     config: `supabase config pull --project-ref ${ref}${remoteLabelFlag}`,
     migration_history: `supabase migration fetch --project-ref ${ref}`,
-    // `pull.steps.ts`'s own `pullDbStep` passes `forceMigrationMode: true` to
-    // `runDbPull`, overriding any ambient `--experimental`/`SUPABASE_EXPERIMENTAL`
-    // gate so the orchestrated invocation never takes the deprecated declarative
-    // export path. An explicit `--experimental=false` reproduces that same override
-    // on the standalone retry — `resolveExperimentalWithProjectEnv`
-    // (`command-internal/global-flags.ts`) gives an explicit flag value precedence
-    // over both the flag's own parsed value and the `SUPABASE_EXPERIMENTAL`/project
-    // `.env` fallback — so this suggested command performs the SAME operation the
-    // failed step did, not a different one.
+    // `pullDbStep` runs with `forceMigrationMode: true`, overriding any ambient `--experimental`
+    // gate; `--experimental=false` reproduces that override so this suggested command performs
+    // the same operation the failed step did.
     db: `supabase db pull --project-ref ${ref} --experimental=false`,
     functions: `supabase functions download --project-ref ${ref}`,
   };
@@ -324,14 +277,9 @@ export function pullRetryHint(
 }
 
 /**
- * The exact `supabase pull --with-migration-history ...` command the db step's own
- * migration-conflict remedy (`pull.handler.ts`'s `pullDbStepFailureResult`) suggests
- * rerunning — named with the SAME resolved `ref`/`remoteLabel` `pull` itself targeted,
- * so blindly rerunning the bare `--with-migration-history` command (with no target) can
- * never silently retarget a different project than the one this run actually resolved
- * (a branch, an explicit different ref, ...). Shares `pullRemoteLabelFlag` with
- * `pullRetryHint` above so the two suggested commands render `--remote-label`
- * identically.
+ * The `supabase pull --with-migration-history ...` command suggested by the db step's
+ * migration-conflict remedy, using the same resolved `ref`/`remoteLabel` this run targeted so a
+ * bare rerun can't silently retarget a different project.
  */
 export function pullWithMigrationHistoryCommand(
   ref: string,
@@ -341,17 +289,9 @@ export function pullWithMigrationHistoryCommand(
 }
 
 /**
- * Builds a `status: "failed"` result for `step` from an arbitrary caught value.
- * `written` is populated from the cause's own `writtenSoFar` when it carries one (a
- * write-loop error whose earlier items had already written before a later one failed) —
- * relativized against `workdir` exactly like every other step's own `written` array,
- * when the caller has one. Three of the four steps' failure causes can carry one today:
- * `migration_history` (`MigrationFetchWriteError`), `db` (`DbPullWriteError`, populated
- * when the migration file write succeeds but the subsequent remote-history update
- * fails), and `functions` (the per-slug download loop's `attachDownloadWrittenSoFar`,
- * `shared/functions/download.ts`, once at least one earlier slug has already
- * downloaded) — `pull.handler.ts` passes `workdir` at every one of those three call
- * sites. Falls back to `[]` when the cause carries no such information.
+ * Builds a `status: "failed"` result for `step` from an arbitrary caught value. `written` comes
+ * from the cause's own `writtenSoFar` when present (relativized against `workdir`), covering a
+ * write-loop error whose earlier items already wrote before a later one failed.
  */
 export function pullFailedStepResult(
   step: PullStepId,

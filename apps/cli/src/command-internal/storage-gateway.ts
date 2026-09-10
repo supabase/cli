@@ -9,16 +9,13 @@ import { StorageGatewayNetworkError, StorageGatewayStatusError } from "./storage
 import { goPathSplit } from "./storage-url.ts";
 
 /**
- * Native TypeScript client for the Supabase Storage **service gateway** (Kong),
- * mirroring `pkg/storage/{buckets,objects,vector,api}.go` and the
- * `fetcher.NewServiceGateway` auth headers — see {@link kongAuthHeaders}
- * for the exact `apikey`/`Authorization` header shape.
+ * Client for the Supabase Storage service gateway (Kong). See
+ * {@link kongAuthHeaders} for the auth header shape.
  *
- * Shared by `seed buckets` (bucket/object/vector upsert against the local stack)
- * and `storage ls/cp/mv/rm` (object list/download/move/delete + bucket delete).
+ * Shared by `seed buckets` (bucket/object/vector upsert) and `storage
+ * ls/cp/mv/rm` (object list/download/move/delete + bucket delete).
  */
 
-/** `pkg/storage/api.go`. */
 export const PAGE_LIMIT = 100;
 export const DELETE_OBJECTS_LIMIT = 1000;
 
@@ -27,25 +24,20 @@ interface BucketSummary {
   readonly id: string;
 }
 
-/** A `/storage/v1/object/list/{bucket}` entry: a directory when `Id == nil`. */
+/** A `/storage/v1/object/list/{bucket}` entry: a directory when `id` is absent. */
 interface StorageObject {
   readonly name: string;
   readonly isDir: boolean;
 }
 
 export interface UpsertBucketProps {
-  /**
-   * Tri-state to match `Public *bool` with `json:"public,omitempty"`:
-   * `undefined` when `public` is absent from the bucket's TOML (field omitted),
-   * otherwise the explicit value.
-   */
+  /** `undefined` when `public` is absent from the bucket's TOML config; otherwise the explicit value. */
   readonly public: boolean | undefined;
-  /** Byte count; omitted from the request body when 0 (Go `omitempty`). */
+  /** Byte count; omitted from the request body when 0. */
   readonly fileSizeLimit: number;
   readonly allowedMimeTypes: ReadonlyArray<string>;
 }
 
-/** Upload headers, mirroring `FileOptions`. */
 interface UploadObjectOptions {
   readonly contentType: string;
   readonly cacheControl: string;
@@ -120,12 +112,9 @@ export interface StorageGateway {
 }
 
 /**
- * Strict JSON decode mirroring `fetcher.ParseJSON[T]`
- * (`pkg/fetcher/http.go` — `json.NewDecoder(r).Decode(&data)`): a body whose
- * shape doesn't match the typed target aborts. Only missing fields, `null`
- * (decoded as the zero value), empty arrays, and extra keys are tolerated; a
- * non-matching top-level type, a non-null non-object element, or a
- * present-but-wrong-typed string field fail.
+ * Decode errors from below share this permissive-but-strict policy: missing
+ * fields, `null`, empty arrays, and extra keys are tolerated; a non-matching
+ * top-level type or a wrong-typed field fails the decode.
  */
 function failParse(detail: string): StorageGatewayNetworkError {
   return new StorageGatewayNetworkError({
@@ -135,9 +124,9 @@ function failParse(detail: string): StorageGatewayNetworkError {
 }
 
 /**
- * Port for `localGatewayHint`: the
- * port-conflict hint fires only for a loopback host with a port, reporting THAT
- * URL's port (not `api.port`, which can differ when `api.external_url` is set).
+ * Returns the port for `localGatewayHint`'s port-conflict message: only for a
+ * loopback host, and using the resolved URL's port rather than `api.port`
+ * (which can differ when `api.external_url` is set).
  */
 function localGatewayHintPort(baseUrl: string): string | undefined {
   try {
@@ -152,7 +141,6 @@ function localGatewayHintPort(baseUrl: string): string | undefined {
   return undefined;
 }
 
-/** Byte-identical to `localGatewayHint` message. */
 function localGatewayHint(port: string): string {
   return (
     "The local Supabase API gateway did not return a valid HTTP response. " +
@@ -162,10 +150,9 @@ function localGatewayHint(port: string): string {
 }
 
 /**
- * Whether a transport failure is a plain connection-refused. Go's
- * `localGatewayHint` fires only for malformed-response / timeout — NOT
- * `ECONNREFUSED` — so the port-conflict hint is suppressed for refused
- * connections.
+ * Whether a transport failure is a plain connection-refused. The
+ * port-conflict hint is suppressed for these, since a refused connection
+ * means nothing is listening, not a malformed response.
  */
 function isConnectionRefused(error: HttpClientError.TransportError): boolean {
   const detail =
@@ -179,7 +166,7 @@ const parseJsonBody = (body: string): Effect.Effect<unknown, StorageGatewayNetwo
     catch: (cause) => failParse(String(cause)),
   });
 
-/** A JSON object → itself; `null` → `{}` (Go zero-value struct); other → `null`. */
+/** A JSON object → itself; `null` → `{}`; anything else → `null`. */
 function asObject(entry: unknown): Record<string, unknown> | null {
   if (entry === null) return {};
   return typeof entry === "object" && !Array.isArray(entry)
@@ -187,7 +174,7 @@ function asObject(entry: unknown): Record<string, unknown> | null {
     : null;
 }
 
-/** Go-struct string field: absent/`null` → ""; wrong type → `null` (decode failure). */
+/** A string field: absent or `null` decodes as `""`; a wrong type fails the decode (returns `null`). */
 function decodeStringField(obj: Record<string, unknown>, key: string): string | null {
   const value = obj[key];
   if (value === undefined || value === null) return "";
@@ -217,10 +204,8 @@ const decodeBucketSummaries = (
   });
 
 /**
- * Decode `[]ObjectResponse`: `Id` is a `*string`,
- * so an absent or `null` id marks a directory (`o.Id == nil`);
- * a present id (any non-null) marks a file. A
- * non-string non-null id fails the decode, matching `*string` unmarshal.
+ * Decodes a storage object list entry: an absent or `null` `id` marks a
+ * directory; any other non-string value fails the decode.
  */
 const decodeStorageObjects = (
   body: string,
@@ -277,10 +262,9 @@ const decodeVectorBucketNames = (
   });
 
 /**
- * Validate a `{<field>}` success body and return the field's value. Go's
- * mutations decode the 200 body via `fetcher.ParseJSON` into `{name}`/`{message}`
- * and fail on a non-JSON/empty body. `null` is tolerated (Go's zero value); a
- * non-object top-level or a wrong-typed field fails.
+ * Validates a `{<field>}` success body and returns the field's value. `null`
+ * decodes as an empty result; a non-object top-level or a wrong-typed field
+ * fails.
  */
 const decodeFieldResponse = (
   body: string,
@@ -340,9 +324,9 @@ const decodeAnalyticsBucketNames = (
   });
 
 /**
- * Build the create/update bucket body with `omitempty` semantics:
- * `public` (a `*bool`) is omitted when absent
- * from the TOML, `file_size_limit` when 0, `allowed_mime_types` when empty.
+ * Builds the create/update bucket request body: `public` is omitted when
+ * absent from the TOML config, `file_size_limit` when 0, and
+ * `allowed_mime_types` when empty.
  */
 export function bucketBody(props: UpsertBucketProps): Record<string, unknown> {
   const body: Record<string, unknown> = {};
@@ -391,9 +375,7 @@ export const makeStorageGateway = Effect.fnUntraced(function* (opts: {
       HttpClientRequest.setHeaders(kongAuthHeaders(opts.apiKey)),
     );
 
-  // Sends a request and returns the response body text, reproducing Go's
-  // fetcher error shapes (`pkg/fetcher/http.go`). Go's service gateway installs
-  // `WithExpectedStatus(http.StatusOK)`, so only exactly 200 is a success.
+  // Sends a request and returns the response body text; only exactly 200 counts as success.
   const send = Effect.fnUntraced(function* (req: HttpClientRequest.HttpClientRequest) {
     const { status, body } = yield* Effect.gen(function* () {
       const response = yield* httpClient.execute(req);
@@ -493,10 +475,9 @@ export const makeStorageGateway = Effect.fnUntraced(function* (opts: {
       if (options.overwrite) {
         req = req.pipe(HttpClientRequest.setHeader("x-upsert", "true"));
       }
-      // `bodyFile` stats the file for Content-Length and streams it via
-      // FileSystem rather than buffering — the analogue of Go's open-and-stream
-      // upload. The captured FileSystem is supplied here so the gateway's public
-      // Effect type stays free of a service requirement.
+      // `bodyFile` streams the file without buffering. FileSystem is provided
+      // here (not via the Effect type) so the gateway's public Effect stays
+      // free of a service requirement.
       const withBody =
         options.contentType.length > 0
           ? HttpClientRequest.bodyFile(req, absPath, { contentType: options.contentType })
