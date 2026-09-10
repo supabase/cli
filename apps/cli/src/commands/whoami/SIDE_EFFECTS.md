@@ -63,6 +63,9 @@ cache.
 
 Prints a single-row table with `USER ID`, `USERNAME`, and `EMAIL` columns.
 
+If the Management API rejects the access token with HTTP 401, the command reports that the token
+is invalid or expired and directs the user to run `supabase login`.
+
 ### `--output-format json`
 
 Prints one JSON object with the profile fields:
@@ -75,9 +78,14 @@ Prints one JSON object with the profile fields:
 }
 ```
 
+This is intentionally a bare profile object rather than the shared success envelope: it contains
+exactly `id`, `email`, and `username`, with no injected `message` field and no Management API field
+names (`gotrue_id` or `primary_email`).
+
 ### `--output-format stream-json`
 
-Prints one `result` NDJSON event whose `data` contains `id`, `email`, and `username`.
+Prints one `result` NDJSON event whose `data` contains the same bare profile object: exactly `id`,
+`email`, and `username`, with no injected `message` field or Management API field names.
 
 ### `-o` / `--output`
 

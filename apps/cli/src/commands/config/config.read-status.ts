@@ -1,4 +1,8 @@
-import { sanitizeInlineName, unexpectedStatusMessage } from "../../command-internal/http-errors.ts";
+import {
+  authenticationFailedStatusMessage,
+  sanitizeInlineName,
+  unexpectedStatusMessage,
+} from "../../command-internal/http-errors.ts";
 
 /**
  * Purpose-written messages for the status codes a wrong or inaccessible ref
@@ -26,7 +30,7 @@ export function configReadStatusMessage(
   apiHost: string,
 ): string {
   if (status === 401) {
-    return "Authentication failed: your access token is invalid or has expired. Run `supabase login` to re-authenticate.";
+    return authenticationFailedStatusMessage();
   }
   if (status === 403) {
     return `Access denied for project ${sanitizeInlineName(ref)}: your account does not have permission to view its configuration.`;

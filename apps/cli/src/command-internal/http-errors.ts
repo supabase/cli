@@ -101,6 +101,11 @@ export function unexpectedStatusMessage(status: number, body: string): string {
   return `unexpected status ${status}: ${body}`;
 }
 
+/** Shared remediation for Management API requests rejected with HTTP 401. */
+export function authenticationFailedStatusMessage(): string {
+  return "Authentication failed: your access token is invalid or has expired. Run `supabase login` to re-authenticate.";
+}
+
 export type NetworkErrorFactory<E> = new (args: {
   readonly message: string;
   readonly decode?: boolean;

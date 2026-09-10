@@ -1,8 +1,12 @@
+import type { V1GetProfileOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
-import { mapHttpError } from "../../command-internal/http-errors.ts";
+import {
+  authenticationFailedStatusMessage,
+  mapHttpError,
+} from "../../command-internal/http-errors.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import {
@@ -17,7 +21,39 @@ const mapProfileError = mapHttpError({
   networkError: WhoamiNetworkError,
   statusError: WhoamiUnexpectedStatusError,
   networkMessage: (cause) => `failed to fetch user profile: ${cause}`,
-  statusMessage: (status, body) => `unexpected get profile status ${status}: ${body}`,
+  statusMessage: (status, body) =>
+    status === 401
+      ? authenticationFailedStatusMessage()
+      : `unexpected get profile status ${status}: ${body}`,
+});
+
+type Profile = typeof V1GetProfileOutput.Type;
+
+/**
+ * Emits whoami's intentionally bare public profile contract.
+ *
+ * The shared `output.success` helper adds a `message` field in both machine modes,
+ * while this command's public payload is exactly `{ id, email, username }`. Keep the
+ * API-to-CLI field projection and the exceptional emission path together so API field
+ * names and the shared success envelope cannot leak into that contract.
+ */
+const emitMachineProfile = Effect.fnUntraced(function* (profile: Profile) {
+  const output = yield* Output;
+  const machineProfile = {
+    id: profile.gotrue_id,
+    email: profile.primary_email,
+    username: profile.username,
+  };
+
+  if (output.format === "json") {
+    yield* output.raw(`${JSON.stringify(machineProfile)}\n`);
+  } else {
+    yield* output.event({
+      type: "result",
+      data: machineProfile,
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 export const whoami = Effect.fn("whoami")(function* (_flags: WhoamiFlags) {
@@ -42,23 +78,8 @@ export const whoami = Effect.fn("whoami")(function* (_flags: WhoamiFlags) {
     );
     yield* fetching?.clear() ?? Effect.void;
 
-    const machineProfile = {
-      id: profile.gotrue_id,
-      email: profile.primary_email,
-      username: profile.username,
-    };
-
-    if (output.format === "json") {
-      yield* output.raw(`${JSON.stringify(machineProfile)}\n`);
-      return;
-    }
-
-    if (output.format === "stream-json") {
-      yield* output.event({
-        type: "result",
-        data: machineProfile,
-        timestamp: new Date().toISOString(),
-      });
+    if (output.format !== "text") {
+      yield* emitMachineProfile(profile);
       return;
     }
 
