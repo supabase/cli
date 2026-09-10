@@ -99,9 +99,9 @@ function copyHostedValueForDocument(value: unknown, path: ReadonlyArray<string>)
  * every config-side `realtime.*` field, and local-only `experimental.*` engine/backend selection.
  *
  * `db.major_version` and `db.pooler`'s other three fields (`pool_mode`, `default_pool_size`,
- * `max_client_conn`) are real hosted facts and deliberately excluded from this list, so `config
+ * `max_client_conn`) are real hosted facts and excluded from this list, so `config
  * diff`/`config pull` keep them comparable and can sync them from the platform. `auth.enabled`/
- * `storage.enabled` and `db.network_restrictions.enabled` are also deliberately excluded: each is a
+ * `storage.enabled` and `db.network_restrictions.enabled` are also excluded: each is a
  * genuine management opt-out a document can still declare, not a value to hide.
  *
  * Exact-match only; every path below names a static struct field.

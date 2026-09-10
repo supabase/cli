@@ -586,7 +586,7 @@ describe("sqlFilesGlob", () => {
   it.effect.skipIf(isRoot)(
     "picks the lexically-first failing subdirectory as the fatal error, matching Go's fs.WalkDir sorted-visit order (review CLI-1958)",
     () => {
-      // The fake `readDirectory` deliberately returns "schemas"'s children in reverse
+      // The fake `readDirectory` returns "schemas"'s children in reverse
       // order, to prove the walk sorts them back (`utf8Compare`) before iterating.
       const dir = mkdtempSync(join(tmpdir(), "sql-glob-walk-order-"));
       const schemasDir = join(dir, "schemas");

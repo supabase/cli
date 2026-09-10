@@ -279,7 +279,7 @@ The test name carries the intent. Comment only non-obvious fixture setup, in one
 
 ### Directive comments
 
-`// oxlint-disable-next-line`, `// @ts-expect-error`, `/// <reference …>`, shebangs, and similar are instructions to tools, not prose. Keep them, and give every lint disable a short reason after `--`.
+`// oxlint-disable-next-line`, `// @ts-expect-error`, `/// <reference …>`, shebangs, and similar are instructions to tools, not prose. Keep them, and give every lint disable a short reason after `--`. The same goes for tool-facing JSDoc tags: `@public` tells knip an export is intentionally unused, `@internal` and `@deprecated` carry meaning for consumers. Keep them even when trimming the rest of a doc comment.
 
 ### Size check
 

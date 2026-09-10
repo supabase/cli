@@ -2192,7 +2192,7 @@ describe("config pull integration", () => {
                 ...(attributes["auth"] as Record<string, unknown>),
                 sms_provider: "twilio",
                 sms_twilio_account_sid: "ACreal0000000000000000000000000",
-                // sms_twilio_message_service_sid is deliberately absent: the remote never
+                // sms_twilio_message_service_sid is absent: the remote never
                 // reports it, so message_service_sid stays "" after the fixpoint absorbs
                 // account_sid, and the projected file would fail to decode once enabled is
                 // written.
@@ -2440,7 +2440,7 @@ describe("config pull integration", () => {
                 ...(attributes["auth"] as Record<string, unknown>),
                 sms_provider: "twilio",
                 sms_twilio_account_sid: "ACreal0000000000000000000000000",
-                // sms_twilio_message_service_sid is deliberately absent: writing
+                // sms_twilio_message_service_sid is absent: writing
                 // enabled/account_sid alone into [remotes.staging.*] decodes fine raw (remotes
                 // skip business-rule checks), but fails once this block is selected and merged
                 // over root — the same projection a future config pull/push targeting this ref

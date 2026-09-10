@@ -41,9 +41,7 @@ function interpolateLeafValue(
 
   const resolved = env[envName];
   // Preserve the literal `env(VAR)` verbatim when VAR is unset OR present but
-  // empty (e.g. a dotenv `KEY=` line). Matches Go's `LoadEnvHook`
-  // (`apps/cli-go/pkg/config/decode_hooks.go:19-24`: `len(env) > 0`), which
-  // only substitutes a non-empty value — same gate as `substituteEnvLeaf` in
+  // empty (e.g. a dotenv `KEY=` line), the same gate as `substituteEnvLeaf` in
   // `./env.ts`. Without this, a present-but-empty `env(...)` secret (e.g.
   // `edge_runtime.secrets.FOO = "env(EMPTY)"`) resolves to `""` here, gets
   // redacted by `redactValue` as a real value instead of skipped as an

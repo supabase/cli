@@ -110,7 +110,7 @@ const globalFlagsWithValues: ReadonlySet<string> = GLOBAL_VALUE_FLAG_TOKENS;
 // wrapped by the global signal-interrupt handler, which would otherwise race their graceful
 // shutdown. Matched by leading command-path segments.
 //
-// `start` and `db start` are deliberately NOT listed here even though they sound similar: their
+// `start` and `db start` are not listed here even though they sound similar: their
 // native implementations install no signal handling of their own, and instead rely on the global
 // handler's interruption to trigger their own rollback-on-error cleanup. Listing them would let a
 // raw Ctrl-C skip that cleanup entirely.

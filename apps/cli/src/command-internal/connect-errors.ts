@@ -222,7 +222,7 @@ const SERVER_REFUSED_SSL = "The server does not support SSL connections";
 // `onConnectEnd`; Bun emits the same text for both FIN and RST). Phase-specific
 // by construction — only ever raised pre-secure-connection — so it maps to
 // pgconn's startTLS stage (`tls error (…)`). Its code is
-// ECONNRESET, deliberately absent from DIAL_ERROR_CODES: a raw
+// ECONNRESET, absent from DIAL_ERROR_CODES: a raw
 // post-handshake `read ECONNRESET` is not phase-specific and stays verbatim.
 const TLS_DISCONNECT_MESSAGE =
   "Client network socket disconnected before secure TLS connection was established";

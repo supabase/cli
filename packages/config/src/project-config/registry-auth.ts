@@ -323,7 +323,6 @@ function parseUint16(s: string): number | undefined {
   return n > 65535 ? undefined : n;
 }
 
-/** Splits on `,` then each entry on the first `=`; entries without `=` are dropped. */
 /**
  * Document-side canonicalization for `sms.test_otp`: serializes then re-parses through
  * {@link envToMap} so a key or value holding a literal comma converges on the value that
@@ -343,6 +342,7 @@ function canonicalizeTestOtpMap(value: unknown): unknown {
   return Object.keys(canonical).length > 0 ? canonical : undefined;
 }
 
+/** Splits on `,` then each entry on the first `=`; entries without `=` are dropped. */
 function envToMap(input: string): Record<string, string> {
   const entries = input.length === 0 ? [] : input.split(",");
   const result: Record<string, string> = {};

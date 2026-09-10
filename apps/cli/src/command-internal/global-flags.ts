@@ -306,7 +306,7 @@ const debugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean => {
 /**
  * `--debug` resolved with an env fallback, and the project `.env` consulted too, for debug-gated
  * behavior downstream of a command that already loaded the nested project env. `loadProjectEnv`
- * is deliberately pure, so callers pass the loaded map through explicitly — same shape as
+ * is pure, so callers pass the loaded map through explicitly — same shape as
  * {@link resolveYesWithProjectEnv}. Shell env *presence* suppresses the file value; an explicit
  * `--debug` wins over both.
  */

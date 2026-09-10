@@ -47,7 +47,7 @@ const BOM_CODE_POINT = 0xfeff;
 //
 // JS's `\s` also matches `\v` (vertical tab), which PostgreSQL >= 14 treats as SQL whitespace —
 // so a statement separated only by `\v` (e.g. `VACUUM\v(FULL)`) classifies as
-// pipeline-incompatible here, a known, deliberately unfixed edge case.
+// pipeline-incompatible here, a known, unfixed edge case.
 const CREATE_INDEX_CONCURRENTLY_PATTERN = /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY(?:\s|$)/u;
 const DROP_INDEX_CONCURRENTLY_PATTERN = /^DROP\s+INDEX\s+CONCURRENTLY(?:\s|$)/u;
 const REINDEX_CONCURRENTLY_PATTERN = /^REINDEX(?:\s|\().*\sCONCURRENTLY(?:\s|$)/u;

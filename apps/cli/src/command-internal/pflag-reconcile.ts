@@ -21,6 +21,8 @@ import { validateWorkdirIsDirectory } from "./workdir-validation.ts";
  *
  * Flows through {@link validatePflagWorkdir}'s inferred Effect error channel; no call site
  * imports the class by name.
+ *
+ * @public
  */
 export class PflagWorkdirError extends Data.TaggedError("PflagWorkdirError")<{
   readonly message: string;

@@ -61,9 +61,8 @@ describe("postgres-config get", () => {
   });
 
   it.live("renders a large integral config value with Go's float64 %g in the pretty table", () => {
-    // Go decodes the API response with `json.Unmarshal` into `map[string]any`,
-    // so every JSON number is a `float64`; `get.go:32-35`'s `%+v` then prints
-    // it with shortest `%g` — 1000000 renders as `1e+06`, never `1000000`.
+    // The established table output renders every JSON number as a float64 with shortest `%g`
+    // formatting, so 1000000 renders as `1e+06`, never `1000000`.
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       response: { status: 200, body: { max_connections: 1000000 } },

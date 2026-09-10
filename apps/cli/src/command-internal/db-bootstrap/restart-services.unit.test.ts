@@ -281,14 +281,13 @@ describe("restartServicesAndReloadKong", () => {
       Effect.map((error) => {
         expect(error).toBeInstanceOf(KongReloadError);
         if (!(error instanceof KongReloadError)) return;
-        // Byte-matches Go: `DockerExecOnceWithStream` sets a fixed `error executing command`
-        // for a non-zero exec exit code (`utils/docker.go:646-648`) — not the exit code itself.
+        // A non-zero exec exit code surfaces as the fixed `error executing command` text, not the
+        // exit code itself.
         expect(error.message).toContain("failed to reload kong: error executing command");
         expect(error.message).toContain("nginx: [error] invalid config");
         expect(error.suggestion).toContain(`docker restart ${KONG_ID}`);
-        // Pins the `--nginx-conf` flag (reset.go:269, reset_test.go:512) — a bare
-        // `kong reload` regenerates nginx.conf from Kong's default template and
-        // drops the custom `email_templates` server, reintroducing #6059.
+        // A bare `kong reload` regenerates nginx.conf from Kong's default template and drops the
+        // custom `email_templates` server, so the `--nginx-conf` flag is required.
         expect(mock.spawned).toContainEqual([
           "exec",
           KONG_ID,

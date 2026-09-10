@@ -4,7 +4,7 @@ import { describe, expect } from "vitest";
 import { PROJECT_REF } from "./env.ts";
 import { testBehaviour } from "./test-context.ts";
 
-// Regression guard (CLI-1489): a non-string field written as `env(VAR)` (e.g.
+// Regression guard: a non-string field written as `env(VAR)` (e.g.
 // a port) must not crash config decoding before env resolution runs.
 //
 // A 401 is injected so the test doesn't need a real API fixture; it only
