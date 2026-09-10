@@ -366,6 +366,7 @@ export const textOutputLayer = Layer.effect(
             stop: (msg: string) => Effect.sync(() => bar.stop(msg)),
           };
         }),
+      result: () => Effect.void,
       success: (message: string) => Effect.sync(() => log.success(message)),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.sync(() => {
@@ -414,6 +415,7 @@ export const jsonOutputLayer = Layer.effect(
           suggestion: "Provide all required values via flags",
         }),
       );
+    const result = (data: unknown) => writeStdout(`${JSON.stringify(data)}\n`);
 
     return Output.of({
       format: "json" as const,
@@ -455,8 +457,8 @@ export const jsonOutputLayer = Layer.effect(
             stop: (msg: string) => writeStderr(`[progress] done: ${msg}\n`),
           };
         }),
-      success: (message: string, data?: Record<string, unknown>) =>
-        writeStdout(JSON.stringify({ ...data, message }) + "\n"),
+      result,
+      success: (message: string, data?: Record<string, unknown>) => result({ ...data, message }),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.gen(function* () {
           const extra = yield* readMachineErrorContext();
@@ -495,6 +497,14 @@ export const streamJsonOutputLayer = Layer.effect(
           suggestion: "Provide all required values via flags",
         }),
       );
+    const result = (data: unknown) => {
+      const event: StreamEvent = {
+        type: "result",
+        data,
+        timestamp: new Date().toISOString(),
+      };
+      return writeStdout(`${JSON.stringify(event)}\n`);
+    };
 
     return Output.of({
       format: "stream-json" as const,
@@ -544,14 +554,8 @@ export const streamJsonOutputLayer = Layer.effect(
             stop: (msg: string) => emit("done", msg),
           };
         }),
-      success: (message: string, data?: Record<string, unknown>) =>
-        writeStdout(
-          JSON.stringify({
-            type: "result",
-            data: { ...data, message },
-            timestamp: new Date().toISOString(),
-          }) + "\n",
-        ),
+      result,
+      success: (message: string, data?: Record<string, unknown>) => result({ ...data, message }),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.gen(function* () {
           const extra = yield* readMachineErrorContext();

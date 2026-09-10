@@ -16,6 +16,7 @@ import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-va
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveYes, OutputFlag } from "../../../command-internal/global-flags.ts";
+import { unsupportedOutputFlagMessage } from "../../../command-internal/go-output-flag.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
@@ -275,8 +276,7 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
     // contract (CLI-2156, mirrors `config diff`).
     if (Option.isSome(goOutputFlag)) {
       return yield* new ConfigPullOutputFlagUnsupportedError({
-        message:
-          "the -o/--output flag is not supported by config pull; use --output-format json|stream-json instead.",
+        message: unsupportedOutputFlagMessage("config pull"),
       });
     }
 

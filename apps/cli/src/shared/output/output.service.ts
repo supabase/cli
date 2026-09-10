@@ -80,6 +80,13 @@ interface OutputShape {
     readonly message: (msg: string) => Effect.Effect<void>;
     readonly stop: (msg: string) => Effect.Effect<void>;
   }>;
+  /**
+   * Emits a successful result without adding a human-readable message.
+   *
+   * JSON mode writes `data` directly, while stream-json mode wraps it in the
+   * standard timestamped result event. Text mode leaves rendering to the caller.
+   */
+  readonly result: (data: unknown) => Effect.Effect<void>;
   readonly success: (message: string, data?: Record<string, unknown>) => Effect.Effect<void>;
   readonly fail: (err: {
     readonly code: string;

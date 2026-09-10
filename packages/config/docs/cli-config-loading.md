@@ -204,6 +204,29 @@ cross-field feature contracts such as `enabled => required sibling fields`. Raw 
 fails when a feature block is structurally invalid, but not just because a field still contains a
 literal, unresolved `env(NAME)`.
 
+### In-memory effective config validation
+
+Callers that start with a loaded config and apply an in-memory override should validate the
+effective document before consuming it:
+
+```ts
+const loaded = yield * loadCliConfig(cwd);
+const effective = applyCallerOverrides(loaded.config);
+const config = yield * validateCliConfig(effective);
+consumeConfig(config);
+```
+
+`validateCliConfig` is exported from `@supabase/config/effect`. It reads only the value supplied
+by the caller: it does not reread config files, read project or ambient environment variables, or
+interpolate `env(NAME)` references. It returns an `Effect` with the native Effect Schema error
+channel, so schema failures remain typed for the caller to handle.
+
+Validation follows the loader's existing remote policy. The base document receives all schema
+business-rule checks. Each `[remotes.*]` block still receives structural decoding, defaults, and
+transformations, while its business-rule checks are disabled until a caller selects and merges
+that remote into the effective config. An unselected remote may therefore be an incomplete but
+structurally valid stub; structurally invalid remote values still fail validation.
+
 ## Lazy `env(NAME)` Resolution
 
 A caller can also resolve `env(NAME)` references explicitly, after config is loaded. The package

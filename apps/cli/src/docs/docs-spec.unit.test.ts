@@ -167,6 +167,15 @@ describe("buildDocsSpec", () => {
     expect(byId.get("supabase-issue")?.tags).toEqual(["other-commands"]);
   });
 
+  it("includes the top-level whoami command in the Management API reference", () => {
+    const whoami = builtSpec().byId.get("supabase-whoami");
+    expect(whoami).toBeDefined();
+    expect(whoami?.tags).toEqual(["management-api"]);
+    expect(whoami?.usage).toBe("supabase whoami [flags]");
+    expect(whoami?.subcommands).toEqual([]);
+    expect(whoami?.description).toBe("Show information about the currently logged-in user.");
+  });
+
   it("renders link with its overlay description and flag display names", () => {
     const { byId, content } = builtSpec();
     const link = byId.get("supabase-link");
