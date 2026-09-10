@@ -381,7 +381,7 @@ export class InvalidAnalyticsBackendEnvOverrideError extends Error {
  * declared type is a plain `string`, not the literal union, so a call-site ternary would
  * re-widen the result.
  */
-function envOverrideAnalyticsBackend(
+export function envOverrideAnalyticsBackend(
   configured: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   skipEnvOverride = false,
