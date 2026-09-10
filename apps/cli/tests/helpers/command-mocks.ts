@@ -65,21 +65,14 @@ import {
   processEnvLayer,
 } from "./mocks.ts";
 
-// ---------------------------------------------------------------------------
-// Constants — Go-parity test fixtures used across every native-port integration
-// test. Centralized so a change to the project-ref schema (e.g. updated length)
-// only needs to update one constant.
-// ---------------------------------------------------------------------------
-
+// Fixtures shared across every native-port integration test. Centralized so a change to the
+// project-ref schema (e.g. updated length) only needs to update one constant.
 export const VALID_REF = "abcdefghijklmnopqrst";
 export const VALID_TOKEN = "sbp_" + "a".repeat(40);
 export const DEFAULT_API_URL = "https://api.supabase.com";
 export const DEFAULT_USER_AGENT = "SupabaseCLI/0.0.0-dev";
 
-// ---------------------------------------------------------------------------
 // No-op layers — drop-in for tests that don't assert on telemetry / cache state.
-// ---------------------------------------------------------------------------
-
 export const mockLinkedProjectCacheLayer = Layer.succeed(LinkedProjectCache, {
   cache: () => Effect.void,
 });
@@ -186,12 +179,9 @@ export function mockCommandCredentialsTracked(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Login crypto / API mocks. The crypto mock returns a dummy ECDH handle (the
-// browser-flow integration tests never reach a real decrypt — the API mock
-// supplies the ciphertext and the crypto mock returns the decrypted token).
-// ---------------------------------------------------------------------------
-
+// The crypto mock returns a dummy ECDH handle: the browser-flow integration tests never reach a
+// real decrypt — the API mock supplies the ciphertext and the crypto mock returns the decrypted
+// token.
 export function mockLoginCrypto(
   opts: {
     readonly publicKeyHex?: string;
@@ -272,21 +262,16 @@ export function mockLoginApi(
   };
 }
 
-// ---------------------------------------------------------------------------
-// State-tracking factories — for PersistentPostRun-parity assertions
-// (telemetry must flush, linked-project cache fires after ref resolution).
-// Shape matches the inline helpers the 9 native-port tests used pre-extraction.
-// ---------------------------------------------------------------------------
-
+// State-tracking factories, for asserting telemetry flushes and the linked-project cache fires
+// after ref resolution.
 export function mockTelemetryStateTracked(): {
   readonly layer: Layer.Layer<TelemetryState>;
   readonly flushed: boolean;
   /**
-   * Number of `flush` calls — beyond the plain `flushed` boolean, this lets a
-   * test prove a command's own `Effect.ensuring` finalizer fired EXACTLY once
-   * even when its body calls an in-process helper (e.g. `resetLocalDatabase`,
-   * CLI-2062) that could, if it wrongly owned a second finalizer, double the
-   * count instead of leaving it at 1.
+   * Number of `flush` calls — beyond the plain `flushed` boolean, this lets a test prove a
+   * command's own `Effect.ensuring` finalizer fired once, even when its body calls an in-process
+   * helper (e.g. `resetLocalDatabase`) that could double the count if it wrongly owned a second
+   * finalizer.
    */
   readonly flushCount: number;
   readonly stitchedDistinctId: string | undefined;
@@ -389,12 +374,8 @@ export function mockLinkedProjectCacheTracked(): {
   };
 }
 
-// ---------------------------------------------------------------------------
-// CLI config factory — defaults match the common case (linked project, valid
-// access token, supabase.com API URL). Tests override individual fields when
-// they need to exercise alternative resolution paths.
-// ---------------------------------------------------------------------------
-
+// Defaults match the common case (linked project, valid access token, supabase.com API URL).
+// Tests override individual fields when they need to exercise alternative resolution paths.
 export function mockCommandSettings(opts: {
   readonly workdir: string;
   readonly explicitWorkdir?: boolean;
@@ -421,11 +402,7 @@ export function mockCommandSettings(opts: {
   });
 }
 
-// ---------------------------------------------------------------------------
-// HTTP transport primitives — exported as low-level building blocks for tests
-// that need a custom `handler` in `mockCommandPlatformApi`.
-// ---------------------------------------------------------------------------
-
+// Low-level building blocks for tests that need a custom `handler` in `mockCommandPlatformApi`.
 export function jsonResponse(
   request: HttpClientRequest.HttpClientRequest,
   status: number,
@@ -476,14 +453,9 @@ function makeHttpClientLayer(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Platform API factory — hybrid surface.
-//
-// Precedence (high → low): `network: "fail"` > `handler` > `byMethod` > `response`.
-// `body` is JSON-decoded when the Uint8Array body parses; otherwise the raw
-// decoded string is stored. Falsy bodies (no request body) record `undefined`.
-// ---------------------------------------------------------------------------
-
+// Platform API factory — hybrid surface. Precedence (high → low): `network: "fail"` >
+// `handler` > `byMethod` > `response`. `body` is JSON-decoded when the Uint8Array body parses;
+// otherwise the raw decoded string is stored. Falsy bodies (no request body) record `undefined`.
 export type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 export interface RecordedRequest {
@@ -603,26 +575,16 @@ export function mockCommandPlatformApi(
   return { layer, httpClientLayer, requests, factoryLayer };
 }
 
-// ---------------------------------------------------------------------------
-// Direct-service mock for CommandPlatformApi.
+// Direct-service mock for CommandPlatformApi. Bypasses the real API client's input/output schema
+// validation by providing `CommandPlatformApi` via `Layer.succeed` directly. Use this when the
+// API schema is too strict for the test scenario (e.g. the `branch_id_or_ref` oneOf union rejects
+// 20-letter project refs because the UUID branch has no actual UUID pattern check) and the
+// handler logic under test does not depend on the byte-exact wire format of requests/responses.
 //
-// Bypasses the real API client's input/output schema validation by providing
-// `CommandPlatformApi` via `Layer.succeed` directly. Use this when:
-//
-//   - the API schema is too strict for the test scenario (e.g. the
-//     `branch_id_or_ref` oneOf union rejects 20-letter project refs because
-//     the UUID branch has no actual UUID pattern check), AND
-//   - the handler logic under test does not depend on the byte-exact wire
-//     format of requests/responses.
-//
-// The recorded `requests` array tracks `{ method, input }` for every call —
-// both typed `v1.*` calls and raw-execute calls (keyed by the operation's
-// `id`, e.g. `"v2GetProjectConfig"`), so a single array captures a whole
-// mocked call sequence regardless of which surface issued it.
-// Methods not present in `v1Stubs`/`raw` die at call time so missing wiring
-// shows up loud and clear instead of silently returning undefined.
-// ---------------------------------------------------------------------------
-
+// The recorded `requests` array tracks `{ method, input }` for every call — both typed `v1.*`
+// calls and raw-execute calls (keyed by the operation's `id`, e.g. `"v2GetProjectConfig"`), so a
+// single array captures a whole mocked call sequence regardless of which surface issued it.
+// Methods not present in `v1Stubs`/`raw` die at call time so missing wiring is loud and clear.
 type V1Stubs = Partial<{
   readonly [K in keyof ApiClient["v1"]]: (
     input: Parameters<ApiClient["v1"][K]>[0],
@@ -672,12 +634,10 @@ export function mockCommandPlatformApiService(
     },
   });
 
-  // No typed v2 operation has stub support here: the CLI's only v2
-  // call (the effective-project-config read) deliberately bypasses the typed
-  // `v2.*` surface for `executeRaw` (ADR 0019 rule 2 — the generated client's
-  // strict schema would reject the exact forward-compatible shapes the read
-  // needs to tolerate), so any typed `v2.*` call from command code is a wiring
-  // bug.
+  // No typed v2 operation has stub support here: the CLI's only v2 call (the
+  // effective-project-config read) bypasses the typed `v2.*` surface for `executeRaw` (ADR 0019
+  // rule 2 — the generated client's strict schema would reject the forward-compatible shapes the
+  // read needs to tolerate), so any typed `v2.*` call from command code is a wiring bug.
   const v2Proxy = new Proxy({} as ApiClient["v2"], {
     get(_target, prop: string) {
       return () => Effect.die(`Unmocked CommandPlatformApi.v2.${prop}`);
@@ -735,12 +695,8 @@ export function sequentialExecBatch(
     ).pipe(Effect.asVoid);
 }
 
-// ---------------------------------------------------------------------------
-// Temp workdir lifecycle — calls vitest beforeEach/afterEach internally, so
-// the helper must be invoked at module scope (or inside the surrounding
-// `describe`). Accessing `.current` outside a test throws.
-// ---------------------------------------------------------------------------
-
+// Calls vitest beforeEach/afterEach internally, so the helper must be invoked at module scope
+// (or inside the surrounding `describe`). Accessing `.current` outside a test throws.
 export function useTempWorkdir(prefix = "supabase-test-"): {
   readonly current: string;
 } {
@@ -812,7 +768,7 @@ export function useShadowCacheDisabled(): void {
 }
 
 /**
- * Ambient isolation for tests that construct the REAL `commandSettingsLayer` /
+ * Ambient isolation for tests that construct the real `commandSettingsLayer` /
  * `commandCredentialsLayer` (directly or inside a command runtime layer) against
  * a real filesystem. Those layers read `<homeDir>/.supabase/profile` and
  * `<homeDir>/.supabase/access-token`, resolving `SUPABASE_HOME` /
@@ -831,16 +787,11 @@ export function isolatedHomeLayer(
   return Layer.mergeAll(mockRuntimeInfo({ homeDir }), processEnvLayer(env));
 }
 
-// ---------------------------------------------------------------------------
-// Failing filesystem — wraps the real Bun `FileSystem` and fails a chosen
-// `writeFileString` with a `PlatformError`, so cleanup-on-failure paths
-// (e.g. the pg-delta multi-file migration writer) can be exercised
-// deterministically. Every other call delegates to the real filesystem, so
-// config reads / earlier writes behave normally. Merge this AFTER
-// `BunServices.layer` (last-wins) so it overrides only `FileSystem`; `Path`
-// still comes from `BunServices`.
-// ---------------------------------------------------------------------------
-
+// Wraps the real Bun `FileSystem` and fails a chosen `writeFileString` with a `PlatformError`,
+// so cleanup-on-failure paths (e.g. the pg-delta multi-file migration writer) can be exercised
+// deterministically. Every other call delegates to the real filesystem, so config reads/earlier
+// writes behave normally. Merge this after `BunServices.layer` (last-wins) so it overrides only
+// `FileSystem`; `Path` still comes from `BunServices`.
 export function failWriteStringOnNthCallFsLayer(
   failOnCall: number,
 ): Layer.Layer<FileSystem.FileSystem> {
@@ -889,63 +840,53 @@ function failWriteStringFsLayer(
   ).pipe(Layer.provide(BunServices.layer));
 }
 
-// ---------------------------------------------------------------------------
-// Shadow-database container-CLI spawner — shared by `db diff`/`db pull`'s native
-// shadow-provisioning integration tests (CLI-1956). Hoisted here (it was a verbatim
-// ~55-line duplicate in both `diff.integration.test.ts` and `pull.integration.test.ts`)
-// per `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate" rule.
-// ---------------------------------------------------------------------------
+// Shadow-database container-CLI spawner, shared by `db diff`/`db pull`'s native
+// shadow-provisioning integration tests.
 
 /** The shadow container's fake id — used both as `docker create`'s stdout and the `dbHost` `.slice(0, 12)` derives from. */
 export const FAKE_SHADOW_CONTAINER_ID = "abc123456789shadow0".padEnd(64, "0").slice(0, 64);
 
-/** Go's `container.HealthConfig`-shaped inspect JSON for a healthy container. */
+/** Inspect JSON for a healthy container. */
 const SHADOW_HEALTHY_STATE = '{"Running":true,"Status":"running","Health":{"Status":"healthy"}}';
 
 /**
- * A real (Docker-valid) "still starting" state — NOT `Effect.never` — so
+ * A real (Docker-valid) "still starting" state, not `Effect.never`, so
  * {@link waitForHealthyServices}'s retry loop genuinely retries on its real 1-second
- * `Schedule.spaced` backoff instead of hanging on a single probe forever. Mirrors
- * `start.integration.test.ts`'s own "never healthy" containers (same rationale: a fiber
- * interrupted mid-retry must be observed actually suspended inside the retry loop, not merely
- * past the initial `create` call).
+ * `Schedule.spaced` backoff instead of hanging on a single probe forever — a fiber interrupted
+ * mid-retry must be observed actually suspended inside the retry loop, not merely past the
+ * initial `create` call.
  */
 const SHADOW_STARTING_STATE = '{"Running":true,"Status":"running","Health":{"Status":"starting"}}';
 
 /**
- * Fakes every `docker`/`podman` subprocess call the native shadow-provisioning path issues
- * (`buildLocalDbContainerInputs`'s image-cache check, `createShadowDatabase`'s
- * network-create + container create/start, `waitForHealthyServices`'s container
- * inspect, and `removeShadowDatabase`'s cleanup) — scoped-down port of
- * `start.integration.test.ts`'s own `mockContainerCliSpawner`, since both callers only ever
- * create one (shadow) container, never named.
+ * Fakes every `docker`/`podman` subprocess call the native shadow-provisioning path issues:
+ * `buildLocalDbContainerInputs`'s image-cache check, `createShadowDatabase`'s network-create +
+ * container create/start, `waitForHealthyServices`'s container inspect, and
+ * `removeShadowDatabase`'s cleanup. Both callers only ever create one (shadow) container, never
+ * named.
  *
- * `neverHealthy` (default `false`) makes every `container inspect` report `"starting"` instead
- * of `"healthy"` — for the interrupt-during-health-wait regression coverage (review:
- * PRRT_kwDOErm0O86XMrID): with the default healthy-immediately response, a forked fiber can run
- * the ENTIRE shadow-provisioning sequence to completion synchronously before a test's own
- * polling loop is even scheduled, making `Fiber.interrupt` a no-op on an already-finished fiber.
+ * `neverHealthy` (default `false`) makes every `container inspect` report `"starting"` instead of
+ * `"healthy"`, for interrupt-during-health-wait coverage: with the default healthy-immediately
+ * response, a forked fiber can run the entire shadow-provisioning sequence to completion
+ * synchronously before a test's own polling loop is even scheduled, making `Fiber.interrupt` a
+ * no-op on an already-finished fiber.
  *
  * `failCreate`/`failRemove` (both default `false`) make `docker create`/`docker rm` exit
- * non-zero instead — hoisted from `migration squash`'s own scoped-down copy of this mock
- * (CLI-1969 review), which needed these two extra failure knobs `db diff`/`db pull`'s own
- * scenarios never exercised. Defaulting both to `false` keeps every existing caller
- * (`pull.integration.test.ts`, `declarative.orchestrate.integration.test.ts`,
- * `diff.integration.test.ts`) byte-identical.
+ * non-zero instead.
  *
- * `dbNotRunning`/`dbInspectFailsWith` (CLI-1968) fake the SEPARATE `docker container inspect
- * supabase_db_<projectId>` probe `isLocalDbRunning` issues before `--use-pgadmin`
- * provisions anything — distinguished from the shadow's own `container inspect <64-hex-id>`
- * health probe by the target id's `supabase_db_` prefix, so both options leave the shadow's
- * own health check on its normal (healthy/never-healthy) path. `dbNotRunning` reports the
- * Go/Docker "container doesn't exist" shape (`isContainerNotFoundMessage`); mutually
- * exclusive with `dbInspectFailsWith`, which instead reports a daemon-unreachable failure
- * (`isDockerDaemonUnreachable`) with the given stderr text — enforced below (a test
- * that sets both throws immediately, rather than one option silently winning).
+ * `dbNotRunning`/`dbInspectFailsWith` fake the separate `docker container inspect
+ * supabase_db_<projectId>` probe `isLocalDbRunning` issues before `--use-pgadmin` provisions
+ * anything — distinguished from the shadow's own `container inspect <64-hex-id>` health probe by
+ * the target id's `supabase_db_` prefix, so both options leave the shadow's own health check on
+ * its normal (healthy/never-healthy) path. `dbNotRunning` reports Docker's "container doesn't
+ * exist" shape (`isContainerNotFoundMessage`); mutually exclusive with `dbInspectFailsWith`,
+ * which instead reports a daemon-unreachable failure (`isDockerDaemonUnreachable`) with the given
+ * stderr text — enforced below (a test that sets both throws immediately, rather than one option
+ * silently winning).
  *
- * `dbInspectImage` makes the same `supabase_db_`-prefixed inspect report a `Config.Image`
- * value instead — for `ensureLocalPostgresImageCurrent`'s stale-image guard, which reads
- * that field from the same call `isLocalDbRunning` only checks the exit code of.
+ * `dbInspectImage` makes the same `supabase_db_`-prefixed inspect report a `Config.Image` value
+ * instead, for `ensureLocalPostgresImageCurrent`'s stale-image guard, which reads that field from
+ * the same call `isLocalDbRunning` only checks the exit code of.
  */
 export function mockShadowContainerCliSpawner(
   opts: {
@@ -1071,13 +1012,10 @@ export function mockShadowContainerCliSpawner(
   return { layer, spawned };
 }
 
-// ---------------------------------------------------------------------------
-// A minimal, stateful Docker model — the shadow BASELINE CACHE's round trip
-// (`docker stop` -> `docker cp - <id>:PGDATA` (the baseline stamp) ->
-// `docker cp <id>:PGDATA -` -> `docker start`, and the warm
-// `docker cp - <id>:<pgdata parent>` restore) really moves bytes, which
-// `mockShadowContainerCliSpawner` above deliberately does not model.
-// ---------------------------------------------------------------------------
+// A minimal, stateful Docker model — the shadow baseline cache's round trip (`docker stop` ->
+// `docker cp - <id>:PGDATA` (the baseline stamp) -> `docker cp <id>:PGDATA -` -> `docker start`,
+// and the warm `docker cp - <id>:<pgdata parent>` restore) really moves bytes, which
+// `mockShadowContainerCliSpawner` above does not model.
 
 /**
  * A real (if tiny) POSIX tar, byte for byte — `validatePgDataArchive`
@@ -1124,7 +1062,7 @@ const fakeTarEntry = (name: string, content: string, typeFlag: "0" | "5"): strin
 const FAKE_TAR_END = "\0".repeat(1024);
 
 /**
- * What the fake `docker cp <id>:PGDATA -` emits for a container the export path has NOT stamped —
+ * What the fake `docker cp <id>:PGDATA -` emits for a container the export path has not stamped —
  * a real cluster (`data/` + `data/PG_VERSION`) and nothing more. Stands in both for a hand-placed
  * bare PGDATA archive and for a snapshot taken before the platform baseline ran: it restores,
  * starts, and answers, so only the missing marker tells it apart from a usable baseline.
@@ -1136,7 +1074,7 @@ export const FAKE_UNSTAMPED_PGDATA_TAR = `${fakeTarEntry("data/", "", "5")}${fak
  * container — stands in for a real ~90MB PGDATA tar, with the same top-level `data/` member,
  * `data/PG_VERSION` cluster file, and `data/SUPABASE_BASELINE` marker a real export carries.
  *
- * `markerContent` is whatever the export ACTUALLY stamped, carried through rather than fixed: the
+ * `markerContent` is whatever the export actually stamped, carried through rather than fixed: the
  * marker binds a snapshot to its cache key, so a fake that always emitted the same marker would
  * make every key-binding assertion pass vacuously — a production regression stamping the wrong key
  * (or a fixed one) has to show up as a warm-path mismatch here too.
@@ -1166,7 +1104,7 @@ const fakeStampedMarkerContent = (stamp: string): string | undefined => {
 };
 
 /**
- * A syntactically VALID tar carrying no members at all — what a replaced or truncated cache
+ * A syntactically valid tar carrying no members at all — what a replaced or truncated cache
  * artifact looks like to `docker cp -`, which extracts it happily and lets the entrypoint `initdb`
  * a fresh cluster over the top. The pre-restore marker check is what catches it.
  */
@@ -1285,7 +1223,7 @@ export function mockDockerDaemonCliSpawner(
         else {
           container.running = false;
           // Docker destroys an `--rm` container the moment it exits, `docker stop` included —
-          // verified against Docker 29. This is exactly why the cold export path drops `--rm`.
+          // which is why the cold export path drops `--rm`.
           if (container.autoRemove) containers.delete(id);
         }
       } else if (args[0] === "rm") {
@@ -1358,7 +1296,7 @@ export function mockDockerDaemonCliSpawner(
   );
 
   /**
-   * One readable label per Docker call, so a test can assert the SEQUENCE of meaningful steps
+   * One readable label per Docker call, so a test can assert the sequence of meaningful steps
    * rather than raw argv. `cp` is split four ways because the shadow issues four different copies:
    * the pgsodium root key every shadow gets (`cp-secret`, `container-lifecycle.ts`), the baseline
    * marker stamped into PGDATA just before an export (`cp-stamp`), the baseline export (`cp-out`),
@@ -1396,19 +1334,11 @@ export function mockDockerDaemonCliSpawner(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Runtime composition — bundles the entire Layer.mergeAll(...) graph that
-// every native-port integration test re-builds, including the easy-to-mis-wire
-// `projectRefLayer.pipe(Layer.provide(...))` subgraph
-// (CLAUDE.md invariant 5: "Layer.provide does not share to siblings inside
-// Layer.mergeAll" — centralising the subgraph here removes a recurring footgun).
-// ---------------------------------------------------------------------------
-
+// Bundles the entire Layer.mergeAll(...) graph that every native-port integration test
+// re-builds, including the easy-to-mis-wire `projectRefLayer.pipe(Layer.provide(...))` subgraph —
+// `Layer.provide` does not share to siblings inside `Layer.mergeAll`, so centralizing the
+// subgraph here removes a recurring footgun.
 type GoOutputValue = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
-
-// ---------------------------------------------------------------------------
-// Analytics mock lives in `./mocks.ts` (`mockAnalytics`); this module no longer
-// ships its own copy. Use `mockAnalytics()` from the shared mocks module directly.
 
 export interface BuildTestRuntimeOpts {
   readonly out: { readonly layer: Layer.Layer<Output> };

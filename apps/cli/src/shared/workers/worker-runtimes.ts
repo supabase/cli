@@ -1,30 +1,22 @@
 /**
- * The alpha envelope a worker is described by: which runtime it is built on, how
- * big an instance it runs as, and whether it is reachable from the internet.
- *
- * All three are deliberately small closed sets, and the CLI's own rather than
- * the API's: the Workers API takes `spec.size` as one opaque string
- * (`2gb-1vcpu`) rather than independent cpu/memory dials, and `spec.exposure` as
- * an unconstrained string. So the CLI offers exactly the sizes that string has
- * values for and derives the vCPU count from the memory the user picked — one
- * choice, not two that could be combined into a shape the platform does not run.
+ * Runtime, size, and exposure are the CLI's own small closed sets, not the API's: the Workers API
+ * takes `spec.size` as one opaque string (`2gb-1vcpu`) and `spec.exposure` as an unconstrained
+ * string, so the CLI offers exactly the sizes that exist and derives vCPU count from memory rather
+ * than letting the two be picked independently.
  */
 
-/** A worker's runtime: its own Dockerfile, or one of the catalog base images. */
 /**
- * Kept in step with the directories under `./stacks/` — a runtime offered here
- * with no starter files there would scaffold an empty worker, which
- * `worker-stacks.macro.ts` refuses at build time.
+ * A worker's runtime: its own Dockerfile, or one of the catalog base images, kept in sync with
+ * `./stacks/` — a runtime offered here with no starter files there scaffolds an empty worker,
+ * which `worker-stacks.macro.ts` refuses at build time.
  */
 export const WORKER_RUNTIMES = ["dockerfile", "node", "deno"] as const;
 
 export type WorkerRuntime = (typeof WORKER_RUNTIMES)[number];
 
 /**
- * The runtime a worker gets when nobody names one: what `new`'s prompt
- * pre-selects, and what the classifier falls back to for a directory it does
- * not recognize. Deno, because it is the runtime the rest of the Supabase CLI's
- * function tooling assumes.
+ * The runtime `new` pre-selects and the classifier falls back to for an unrecognized directory.
+ * Deno, since it's the runtime the rest of the CLI's function tooling assumes.
  */
 export const DEFAULT_WORKER_RUNTIME: WorkerRuntime = "deno";
 
@@ -33,14 +25,9 @@ function isWorkerRuntime(value: string): value is WorkerRuntime {
 }
 
 /**
- * The runtime a config file named, case-insensitively. The canonical lowercase
- * form is what gets recorded.
- *
- * This is for hand-written `[workers.<name>] runtime` values, where the casing
- * is the user's own and `Runtime = "Node"` plainly means `node`. It is not what
- * validates `--runtime`: that is a `Flag.choice` over the same catalog, so the
- * parser rejects anything outside it — including a case variant — before a
- * handler runs, and lists the accepted values when it does.
+ * Parses a config-file `[workers.<name>] runtime` value case-insensitively (hand-written casing
+ * like `Runtime = "Node"` should still mean `node`). Not used for `--runtime`, which validates
+ * through a `Flag.choice` over the same catalog instead.
  */
 export function parseWorkerRuntime(value: string): WorkerRuntime | undefined {
   const canonical = value.trim().toLowerCase();
@@ -55,9 +42,8 @@ export const WORKER_RUNTIME_DESCRIPTIONS: Record<WorkerRuntime, string> = {
 };
 
 /**
- * The only instance sizes the alpha envelope offers, denominated by memory.
- * There is no resize — a different size later means a new worker, not a flag on
- * `push`.
+ * The only instance sizes offered, denominated by memory. There is no resize — a different size
+ * means a new worker, not a `push` flag.
  */
 export const WORKER_SIZES = ["2gb", "4gb"] as const;
 
@@ -67,9 +53,8 @@ export type WorkerSize = (typeof WORKER_SIZES)[number];
 export const DEFAULT_WORKER_SIZE: WorkerSize = "2gb";
 
 /**
- * Instances a worker runs when neither `--instances` nor `[workers.<name>]
- * instances` says otherwise. One, because a deploy has to name a count — the
- * API's spec requires it — and a worker nobody has scaled is a single instance.
+ * Instance count used when neither `--instances` nor `[workers.<name>] instances` is set. One,
+ * since the API's deploy spec requires a count and an unscaled worker is a single instance.
  */
 export const DEFAULT_WORKER_INSTANCES = 1;
 
@@ -84,22 +69,18 @@ export function parseWorkerSize(value: string): WorkerSize | undefined {
 }
 
 /**
- * How a worker is reached: `public` gives it an internet-facing URL, `private`
- * keeps it reachable only from inside the project.
- *
- * `spec.exposure` is an unconstrained string in the Management API's schema, so
- * this closed set is the CLI's own — the same arrangement as {@link WORKER_SIZES},
- * and the reason output renders the *accepted* exposure verbatim rather than
- * forcing it back into this enum.
+ * How a worker is reached: `public` gets an internet-facing URL, `private` is reachable only
+ * from inside the project. Like {@link WORKER_SIZES}, this closed set is the CLI's own — the
+ * API's `spec.exposure` is an unconstrained string — so output renders the *accepted* exposure
+ * verbatim rather than forcing it back into this enum.
  */
 export const WORKER_EXPOSURES = ["public", "private"] as const;
 
 export type WorkerExposure = (typeof WORKER_EXPOSURES)[number];
 
 /**
- * The exposure a worker gets when neither `--exposure` nor `[workers.<name>]
- * exposure` says otherwise. Public, because every runtime offered today serves
- * HTTP and a worker nobody has locked down is one you can call.
+ * Exposure used when neither `--exposure` nor `[workers.<name>] exposure` is set. Public, since
+ * every runtime offered today serves HTTP and an unlocked-down worker is one you can call.
  */
 export const DEFAULT_WORKER_EXPOSURE: WorkerExposure = "public";
 
@@ -132,9 +113,8 @@ export function apiSizeFor(size: WorkerSize): string {
 }
 
 /**
- * How a size reads in output: `2gb · 1 vCPU`. Takes the API's own spelling so a
- * worker deployed at a size this CLI never offered still renders, verbatim,
- * rather than being forced into the local enum.
+ * Formats a size for output as `2gb · 1 vCPU`, from the API's own spelling — a worker deployed at
+ * a size this CLI never offered still renders verbatim instead of being forced into the local enum.
  */
 export function formatApiSize(apiSize: string): string {
   const match = /^(\d+gb)-(\d+)vcpu$/.exec(apiSize.trim().toLowerCase());
@@ -154,10 +134,8 @@ const workerNameRequirement =
   "Use lowercase letters, digits and hyphens, starting and ending with a letter or digit.";
 
 /**
- * `undefined` when `name` is a name this CLI can *record*, else why it is not.
- *
- * For commands that write `[workers.<name>]` — which is `new`, and `push` only
- * because it deploys what `new` wrote.
+ * `undefined` when `name` can be recorded as `[workers.<name>]`, else the reason it can't — used
+ * by `new` (which writes the section) and `push` (which deploys what `new` wrote).
  */
 export function validateWorkerNameMessage(name: string): string | undefined {
   return WORKER_NAME_PATTERN.test(name) ? undefined : workerNameRequirement;

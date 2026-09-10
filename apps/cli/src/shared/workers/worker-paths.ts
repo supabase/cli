@@ -3,21 +3,10 @@ import { Effect, FileSystem, Option } from "effect";
 import { InvalidWorkerSourceError } from "./workers.errors.ts";
 
 /**
- * The project layout every worker command resolves against:
- *
- *   supabase/
- *     config.toml          project config — workers record `[workers.<name>]` here
- *     workers/<name>/      one directory per worker; the name IS the directory
- *
- * This mirrors `supabase/functions/<slug>/` on purpose: `supabase experimental workers` is a
- * sibling of `supabase functions`, not a separate tool with its own
- * conventions. A worker's name and its directory are the same fact, so
- * `push`/`status`/`delete <name>` needs no separate lookup, and running from
- * inside the directory needs no name at all.
- *
- * `supabase/workers/` is where they live. One worker whose code belongs
- * somewhere else uses `[workers.<name>] source`, relative to the project root,
- * which is the only key that moves anything.
+ * A worker's canonical location is `supabase/workers/<name>/`, mirroring `supabase/functions/<slug>/`
+ * — the directory name doubles as the worker's name, so no separate name-to-directory lookup
+ * exists. `[workers.<name>] source` (relative to the project root) is the only way to point a
+ * worker's code elsewhere.
  */
 
 /** The directory workers live in, under `supabase/`. */
@@ -49,12 +38,9 @@ function isAtOrUnder(parent: string, candidate: string): boolean {
 }
 
 /**
- * `target` with every symlink in it resolved, as far as it exists.
- *
- * `realPath` fails outright on a path that is not there yet, and the whole point
- * of canonicalizing here is to vet a destination *before* creating it. So this
- * walks up to the deepest ancestor that does exist, resolves that, and re-joins
- * the part that doesn't.
+ * `target` with every symlink resolved, walking up to the deepest existing ancestor since
+ * `realPath` fails on a path that doesn't exist yet — the point here is to vet a destination
+ * before creating it.
  */
 const canonicalize = Effect.fnUntraced(function* (target: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -78,17 +64,11 @@ const canonicalize = Effect.fnUntraced(function* (target: string) {
 });
 
 /**
- * Confine a resolved worker path to the project, on the filesystem's terms
- * rather than the string's.
- *
- * A string comparison cannot see a symlink: `packages/external -> /other-repo`
- * makes `--source packages/external/api` write into `/other-repo`. So both the
- * target and the project root are canonicalized before comparing — the root too,
- * or a project under a symlink (macOS `/tmp` -> `/private/tmp`, most CI
- * checkouts) fails containment against itself.
- *
- * Returns the path as given, not the canonical form, so what gets displayed and
- * persisted stays the path the user named.
+ * Confines a resolved worker path to the project by comparing canonicalized paths, not raw
+ * strings — a symlink such as `packages/external -> /other-repo` could otherwise let `--source
+ * packages/external/api` write outside the project. The project root is canonicalized too, since
+ * it may itself sit behind a symlink (macOS `/tmp`, most CI checkouts). Returns the path as given,
+ * not canonicalized, so it displays and persists as the user typed it.
  */
 export const confineWorkerPath = Effect.fnUntraced(function* (options: {
   readonly projectRoot: string;
@@ -133,14 +113,10 @@ export const confineWorkerPath = Effect.fnUntraced(function* (options: {
 });
 
 /**
- * `--source`, resolved against the directory the user typed it in and validated
- * before anything is written.
- *
- * The resolved path is where the starter files land, so a value naming the
- * project root, `supabase/`, or anywhere outside the project is refused.
- * `source` is the key that may leave the workers directory, but not the project;
- * `functions/` and `migrations/` are refused because the CLI already owns them,
- * and a worker scaffolded on top would be read as a function or a migration.
+ * Resolves `--source` against the directory it was typed in and validates it before anything is
+ * written: a value naming the project root, `supabase/`, or anywhere outside the project is
+ * refused, since the resolved path is where the starter files land. `source` may point anywhere
+ * inside the project except `functions/` and `migrations/`, which the CLI already owns.
  */
 export const resolveWorkerSource = Effect.fnUntraced(function* (options: {
   readonly projectRoot: string;
@@ -150,12 +126,8 @@ export const resolveWorkerSource = Effect.fnUntraced(function* (options: {
   const suggestion =
     "Point --source at a directory inside the project, for example --source packages/api.";
 
-  // Whitespace is not trimmed. A directory name may legally begin or end with a
-  // space on Unix, and the shell only delivers one in a single argv entry if the
-  // user quoted it — so trimming would silently retarget the scaffold at a
-  // neighbouring directory. Only the trailing separator, which is syntax rather
-  // than part of the name, comes off. An argument that is nothing but
-  // whitespace is refused rather than trimmed into something else.
+  // A directory name may legally start or end with a space on Unix, so whitespace isn't trimmed
+  // (only the trailing path separator is) — trimming could silently retarget the scaffold.
   if (options.raw.trim() === "") {
     return yield* Effect.fail(
       new InvalidWorkerSourceError({
@@ -179,15 +151,10 @@ export function workerDir(projectRoot: string, name: string): string {
 }
 
 /**
- * A worker's source directory: `[workers.<name>] source` when one is recorded,
- * resolved against the project root, otherwise the default directory.
- *
- * Confined, not just resolved. `source` arrives from `config.toml`, which is
- * committed and shared — so it is as much an input as `--source` is, and a
- * checkout carrying `source = "../../.."` or an absolute path would otherwise
- * have `push` package and upload a directory that has nothing to do with the
- * project. The default directory goes through the same guard so a symlinked
- * `supabase/workers` cannot escape either.
+ * A worker's source directory: `[workers.<name>] source` when one is recorded (resolved against
+ * the project root), otherwise the default directory. Both are confined, not just resolved —
+ * `source` comes from a committed `config.toml`, so a checkout carrying `source = "../../.."` or
+ * an absolute path must still be rejected, and a symlinked `supabase/workers` can't escape either.
  */
 export const workerSourceDir = Effect.fnUntraced(function* (options: {
   readonly projectRoot: string;
@@ -211,10 +178,9 @@ export const workerSourceDir = Effect.fnUntraced(function* (options: {
 });
 
 /**
- * A path as it should be shown to the user: relative to the current directory,
- * which is how they referred to it in the first place. Falls back to the
- * absolute form when the relative one would climb out of the tree, where `../../`
- * chains stop being clearer than the truth.
+ * A path as it should be shown to the user: relative to the current directory. Falls back to the
+ * absolute form when the relative one would climb out of the tree, where `../../` chains stop
+ * being clearer than the truth.
  */
 export function displayPath(cwd: string, target: string): string {
   const rel = relative(resolve(cwd), resolve(target));

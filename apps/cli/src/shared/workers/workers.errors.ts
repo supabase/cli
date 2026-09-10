@@ -22,11 +22,9 @@ export class InvalidWorkerNameError extends Data.TaggedError("InvalidWorkerNameE
 }
 
 /**
- * A bare `new` had no name to scaffold under, and nowhere to ask for one.
- *
- * The name is the one input this command cannot default — it is the directory,
- * the `config.toml` key and the hostname all at once — so with `-o` in force or
- * no interactive terminal there is nothing to do but say so.
+ * A bare `new` had no name to scaffold under, and nowhere to ask for one. The name is the one
+ * input this command can't default — it's the directory, the `config.toml` key, and the hostname
+ * all at once — so with `-o` or no interactive terminal there's nothing to do but say so.
  */
 export class MissingWorkerNameError extends Data.TaggedError("MissingWorkerNameError")<{
   readonly detail: string;
@@ -40,15 +38,11 @@ export class MissingWorkerNameError extends Data.TaggedError("MissingWorkerNameE
 /**
  * A symlink in the worker source points outside the build context.
  *
- * The archive is everything the server gets — it runs no install step and has
- * no view of the surrounding repository — so a link whose target is not also
- * packaged arrives dangling. The catalog runtimes then boot without the
- * dependency and a Dockerfile build fails on the `COPY`, both of them minutes
- * later and with nothing naming the cause. Refused here instead.
- *
- * The common source is a package manager that hoists: a worker directory that
- * is a pnpm workspace member links its dependencies at the repository root
- * rather than under its own `node_modules`.
+ * The archive is everything the server gets, with no install step and no view of the surrounding
+ * repository, so a link whose target isn't also packaged arrives dangling — the catalog runtimes
+ * boot without the dependency, or a Dockerfile build fails on `COPY`, both minutes later with
+ * nothing naming the cause. Refused here instead. The common source is a package manager that
+ * hoists dependencies to the repository root, outside the worker's own `node_modules`.
  */
 export class WorkerSourceEscapingLinkError extends Data.TaggedError(
   "WorkerSourceEscapingLinkError",
@@ -72,10 +66,8 @@ export class NoWorkersToDeployError extends Data.TaggedError("NoWorkersToDeployE
 }
 
 /**
- * `config.toml` records a runtime this CLI does not offer.
- *
- * Raised by `push`, the command that reads a worker's runtime back out of
- * config; `new` writes one and never reads it.
+ * `config.toml` records a runtime this CLI does not offer. Raised by `push`, which reads a
+ * worker's runtime back out of config; `new` writes one but never reads it.
  */
 export class UnknownWorkerRuntimeError extends Data.TaggedError("UnknownWorkerRuntimeError")<{
   readonly detail: string;
@@ -124,10 +116,9 @@ export class WorkerSourceMissingError extends Data.TaggedError("WorkerSourceMiss
 }
 
 /**
- * `--source` names a directory it is not allowed to name. Worth its own error
- * because the destination is where the starter files land, so a value that
- * resolves to the project root, `supabase/`, or anywhere outside the project has
- * to be refused before anything is written.
+ * `--source` names a directory it isn't allowed to name — the starter files land at the resolved
+ * destination, so a value resolving to the project root, `supabase/`, or anywhere outside the
+ * project must be refused before anything is written.
  */
 export class InvalidWorkerSourceError extends Data.TaggedError("InvalidWorkerSourceError")<{
   readonly detail: string;
@@ -192,10 +183,9 @@ export class WorkerNotDeployedError extends Data.TaggedError("WorkerNotDeployedE
 }
 
 /**
- * Workers are in private alpha: the routes answer 404 for a project that is not
- * enrolled, which is indistinguishable from an unknown worker at the transport
- * level — so this is only raised for the collection endpoints, where there is
- * no worker name that could have been wrong.
+ * Workers are in private alpha: an unenrolled project's routes answer 404, indistinguishable at
+ * the transport level from an unknown worker — so this is only raised on collection endpoints,
+ * where there's no worker name that could have been wrong.
  */
 export class WorkersUnavailableError extends Data.TaggedError("WorkersUnavailableError")<{
   readonly detail: string;
@@ -207,11 +197,9 @@ export class WorkersUnavailableError extends Data.TaggedError("WorkersUnavailabl
 }
 
 /**
- * The project ref names no project this account can see.
- *
- * Separated from {@link WorkersUnavailableError} because both arrive as a 404
- * on the same routes, and telling someone to request alpha enrolment for a
- * project that does not exist sends them somewhere that cannot help.
+ * The project ref names no project this account can see. Separated from {@link
+ * WorkersUnavailableError} because both arrive as a 404 on the same routes, and suggesting alpha
+ * enrolment for a project that doesn't exist would send someone somewhere that can't help.
  */
 export class WorkerProjectNotFoundError extends Data.TaggedError("WorkerProjectNotFoundError")<{
   readonly detail: string;
@@ -223,12 +211,9 @@ export class WorkerProjectNotFoundError extends Data.TaggedError("WorkerProjectN
 }
 
 /**
- * Any other status the Workers routes answered with.
- *
- * Classified from the status it carries rather than bucketed as a service
- * failure: a 401 is the user's to fix by logging in and a 403 by getting access,
- * and reporting either as `api_status` both misleads the user and blurs the
- * actionability signal for every Workers endpoint at once.
+ * Any other status the Workers routes answered with. Classified from the status it carries rather
+ * than bucketed as a generic service failure — a 401 is the user's to fix by logging in, a 403 by
+ * getting access, and reporting either as `api_status` would blur the actionability signal.
  */
 export class WorkersApiUnexpectedStatusError extends Data.TaggedError(
   "WorkersApiUnexpectedStatusError",
@@ -274,16 +259,12 @@ export class WorkerDeleteConfirmationRequiredError extends Data.TaggedError(
 }
 
 /**
- * The logs query itself failed.
- *
- * The analytics endpoint can answer **HTTP 200** with a populated `error` field,
- * so this is not reachable from a status code alone. It also covers the server's
- * 30-second query timeout, which arrives as a non-2xx.
- *
- * Classified apart from {@link WorkersApiUnexpectedStatusError} on purpose: the
- * SQL is this CLI's, not the user's input, so a rejected query means a projection
- * or a filter here is wrong. Its own fingerprint keeps that visible in telemetry
- * instead of grouped with transport noise from every other Workers route.
+ * The logs query itself failed. The analytics endpoint can answer HTTP 200 with a populated
+ * `error` field, so this isn't reachable from a status code alone; it also covers the server's
+ * 30-second query timeout, which arrives as a non-2xx. Kept apart from {@link
+ * WorkersApiUnexpectedStatusError} because the SQL here is the CLI's own, not user input — its
+ * own fingerprint keeps a broken projection or filter visible instead of blending into transport
+ * noise.
  */
 export class WorkerLogsQueryFailedError extends Data.TaggedError("WorkerLogsQueryFailedError")<{
   readonly detail: string;
@@ -305,10 +286,9 @@ export class WorkerLogsUsageExceededError extends Data.TaggedError("WorkerLogsUs
 }
 
 /**
- * The analytics endpoints allow 10 requests per 60 seconds, which `--follow`
- * polls against — so 429 is an ordinary outcome here rather than an edge case,
- * and it gets its own error so the suggestion can name the poll interval as the
- * thing to slow down.
+ * The analytics endpoints allow 10 requests per 60 seconds, which `--follow` polls against — so
+ * 429 is an ordinary outcome here, not an edge case. Its own error lets the suggestion name the
+ * poll interval as the thing to slow down.
  */
 export class WorkerLogsRateLimitedError extends Data.TaggedError("WorkerLogsRateLimitedError")<{
   readonly detail: string;

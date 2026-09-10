@@ -10,13 +10,12 @@ export type SignatureCheckResult = {
 };
 
 /**
- * Verify a macOS binary carries a valid signature. Runs on the macOS smoke-test
- * runners via `codesign` / `spctl`.
+ * Verify a macOS binary carries a valid signature. Runs on the macOS smoke-test runners via
+ * `codesign`/`spctl`.
  *
- * Phase 1 expects a full ad-hoc signature with our identifier and no
- * `linker-signed` flag — the shape that fixes the macOS 26+ launch SIGKILL
- * (CLI-1621 / GitHub #5556). When a Developer ID signature is present (Phase 2),
- * it additionally checks the hardened-runtime flag and that Gatekeeper accepts a
+ * Phase 1 expects a full ad-hoc signature with our identifier and no `linker-signed` flag — the
+ * shape that avoids the macOS 26+ launch SIGKILL. When a Developer ID signature is present
+ * (Phase 2), it additionally checks the hardened-runtime flag and that Gatekeeper accepts a
  * quarantined copy, which validates the online notarization ticket.
  */
 export async function verifyMacSignature(binPath: string): Promise<SignatureCheckResult> {
