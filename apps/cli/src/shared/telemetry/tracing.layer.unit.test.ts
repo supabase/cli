@@ -23,10 +23,6 @@ import {
 } from "../../../tests/helpers/mocks.ts";
 import { tracingLayer } from "./tracing.layer.ts";
 
-// ---------------------------------------------------------------------------
-// Filesystem helpers
-// ---------------------------------------------------------------------------
-
 const fsLayer = BunServices.layer;
 
 function makeTempDir(): string {
@@ -37,10 +33,6 @@ function writeConfig(dir: string, config: TelemetryConfig): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, "telemetry.json"), JSON.stringify(config));
 }
-
-// ---------------------------------------------------------------------------
-// Layer builder helpers
-// ---------------------------------------------------------------------------
 
 function buildLayer(opts: { home: string; env?: Record<string, string>; stdoutIsTty?: boolean }) {
   const env: Record<string, string> = {
@@ -75,10 +67,6 @@ function buildTracingLayer(opts: {
   return tracingLayer.pipe(Layer.provide(buildLayer(opts)));
 }
 
-// ---------------------------------------------------------------------------
-// Span factory helper (mirrors ExportableSpan constructor options)
-// ---------------------------------------------------------------------------
-
 function makeSpanOptions(
   overrides: Partial<{
     name: string;
@@ -97,10 +85,6 @@ function makeSpanOptions(
     sampled: overrides.sampled ?? true,
   };
 }
-
-// ---------------------------------------------------------------------------
-// Layer construction & first-run
-// ---------------------------------------------------------------------------
 
 describe("tracingLayer – layer construction & first-run", () => {
   it.live("first-run TTY: creates telemetry.json with consent=granted", () => {
@@ -195,10 +179,6 @@ describe("tracingLayer – layer construction & first-run", () => {
     },
   );
 });
-
-// ---------------------------------------------------------------------------
-// Span behaviour
-// ---------------------------------------------------------------------------
 
 describe("tracingLayer – span behaviour", () => {
   it.live("span creation attaches global attributes", () => {
@@ -375,10 +355,6 @@ describe("tracingLayer – span behaviour", () => {
     );
   });
 });
-
-// ---------------------------------------------------------------------------
-// ExportableSpan unit tests
-// ---------------------------------------------------------------------------
 
 describe("ExportableSpan unit tests", () => {
   it.live("child span inherits traceId from parent span", () => {

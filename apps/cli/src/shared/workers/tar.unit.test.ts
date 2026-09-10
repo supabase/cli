@@ -97,8 +97,7 @@ describe("createTar", () => {
   });
 
   test("refuses a value too large for an octal header field rather than truncating it", () => {
-    // One past the 11-digit octal ceiling. Encoding it would spill a digit into
-    // the next field and read back as a plausible but wrong number.
+    // One past the 11-digit octal ceiling — would spill into the next field if encoded.
     expect(() =>
       createTar([{ path: "a.txt", contents: new Uint8Array(1), mtime: 8 ** 11 }]),
     ).toThrow(TarFieldOutOfRangeError);
@@ -108,10 +107,9 @@ describe("createTar", () => {
     ).not.toThrow();
   });
 
-  // Each of these renders to exactly the field width once padded, so the width
-  // check alone waves it through and the header goes out unparseable: GNU tar
-  // rejects the whole archive, which surfaces server-side after the upload
-  // rather than here.
+  // Each of these renders to exactly the field width once padded, so the width check alone
+  // would wave it through and produce a header GNU tar rejects after the upload rather than
+  // here.
   test.each([
     ["a pre-epoch mtime", -1],
     ["an mtime from an invalid date", Number.NaN],

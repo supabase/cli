@@ -59,8 +59,8 @@ describe("readWorkersSection", () => {
     });
   });
 
-  // `push` has to send a count with every deploy, so a value the API would
-  // reject is dropped here and the default used instead.
+  // `push` sends a count with every deploy, so a value the API would reject is dropped here
+  // and the default used instead.
   test.each([
     ["a float", 1.5],
     ["a negative", -1],
@@ -75,10 +75,9 @@ describe("readWorkersSection", () => {
     expect(readWorkersSection({ api: { instances: 0 } }).workers["api"]?.instances).toBe(0);
   });
 
-  // Unlike the instance count, an unrecognized exposure is kept and carried to
-  // `push`, which names the values it accepts. Dropping it here would deploy the
-  // worker at the default exposure — public — which is the opposite of what a
-  // misspelled `private` was asking for.
+  // Unlike the instance count, an unrecognized exposure is kept and carried to `push`, which
+  // names the values it accepts — dropping it here would deploy at the default (public)
+  // exposure, the opposite of what a misspelled `private` was asking for.
   test("keeps an exposure it does not recognize, for push to refuse by name", () => {
     expect(readWorkersSection({ api: { exposure: "privat" } }).workers["api"]?.exposure).toBe(
       "privat",
@@ -110,9 +109,9 @@ describe("planWorkerEntry + commitWorkerEntry", () => {
   const writeWorkerEntry = (options: Parameters<typeof planWorkerEntry>[0]) =>
     planWorkerEntry(options).pipe(Effect.flatMap(commitWorkerEntry));
 
-  // The re-parse below is a syntax check, not a schema one: `instances = 1.5`
-  // is perfectly valid TOML that the worker schema rejects, so it would reach
-  // the user's config and only fail later, when the loader refuses the file.
+  // The re-parse below is a syntax check, not a schema one: `instances = 1.5` is valid TOML
+  // the worker schema rejects, so without it the value would reach the user's config and only
+  // fail later, when the loader refuses the file.
   test.each([
     ["a fraction", 1.5],
     ["a negative count", -1],
@@ -176,8 +175,6 @@ describe("planWorkerEntry + commitWorkerEntry", () => {
     );
   });
 
-  // `new` creates a worker; changing one that exists is a `config.toml` edit and
-  // the file is the user's. Refusing is also what keeps writes append-only.
   test("refuses a worker that is already configured, leaving the file alone", async () => {
     const before = '# hand-written\n[workers.api]\nruntime = "node" # mine\n';
     writeFileSync(configPath, before);
@@ -195,10 +192,9 @@ describe("planWorkerEntry + commitWorkerEntry", () => {
     expect(readFileSync(configPath, "utf8")).toBe(before);
   });
 
-  // How the entry is written — dotted, inline or a table — does not matter. The
-  // decoded config says it exists, which is the whole question, and answering it
-  // from the parser rather than the file text is what removed the need to know
-  // any TOML beyond how to render a value.
+  // How the entry is written — dotted, inline, or a table — doesn't matter: the decoded
+  // config already says it exists, so nothing here needs to understand TOML beyond
+  // rendering a value.
   test.each([
     ["dotted keys", 'workers.api.runtime = "node"\n'],
     ["an inline table", 'workers = { api = { runtime = "node" } }\n'],
@@ -220,10 +216,9 @@ describe("planWorkerEntry + commitWorkerEntry", () => {
     expect(readFileSync(configPath, "utf8")).toBe(before);
   });
 
-  // An inline `[workers]` is sealed: TOML forbids extending it, so appending
-  // `[workers.api]` renders a file nothing can parse. The name is absent from
-  // the decoded section, so the already-configured check cannot catch this —
-  // reading the rendered plan back is what does.
+  // An inline `[workers]` is sealed: TOML forbids extending it, so appending `[workers.api]`
+  // renders a file nothing can parse. The name is absent from the decoded section, so the
+  // already-configured check can't catch this — reading the rendered plan back is what does.
   test.each([
     ["an empty inline workers table", "workers = {}\n"],
     [
@@ -246,10 +241,9 @@ describe("planWorkerEntry + commitWorkerEntry", () => {
     expect(readFileSync(configPath, "utf8")).toBe(before);
   });
 
-  // The backstop is not limited to the inline case: a config.toml that does not
-  // parse to begin with cannot be appended to safely either, and finding that
-  // out after the scaffold is written is exactly what the plan/commit split
-  // exists to avoid.
+  // The backstop isn't limited to the inline case: a config.toml that doesn't parse to begin
+  // with can't be appended to safely either, and finding that out after the scaffold is
+  // written is exactly what the plan/commit split exists to avoid.
   test("refuses a config.toml that does not parse, leaving the file alone", async () => {
     const before = "this is not = = toml\n";
     writeFileSync(configPath, before);
@@ -267,9 +261,8 @@ describe("planWorkerEntry + commitWorkerEntry", () => {
     expect(readFileSync(configPath, "utf8")).toBe(before);
   });
 
-  // Why rendering is separate from writing: `new` writes the starter files before
-  // it records anything, so a failure that could only surface at the write would
-  // leave a scaffold on disk that nothing records.
+  // Why rendering is separate from writing: `new` writes the starter files before recording
+  // anything, so a failure at the write would otherwise leave an unrecorded scaffold on disk.
   test("renders without writing, and only writes when committed", async () => {
     writeFileSync(configPath, 'project_id = "demo"\n');
 
@@ -291,9 +284,9 @@ describe("planWorkerEntry + commitWorkerEntry", () => {
 });
 
 describe("readWorkersSection blank values", () => {
-  // Absent means the `public` default, so a blank `exposure` must not read as
-  // absent — that would silently widen a worker whose config tried to say
-  // something. `push` refuses the value instead.
+  // Absent means the `public` default, so a blank `exposure` must not read as absent — that
+  // would silently widen a worker whose config tried to say something. `push` refuses it
+  // instead.
   test("keeps an explicitly blank exposure so push can refuse it", () => {
     const section = readWorkersSection({ api: { runtime: "node", exposure: "" } });
 

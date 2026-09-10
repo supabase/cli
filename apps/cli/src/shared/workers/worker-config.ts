@@ -32,12 +32,9 @@ export interface WorkersSection {
 }
 
 /**
- * The worker is already recorded in `config.toml`.
- *
- * `workers new` creates a worker; changing one that exists is a different
- * operation, and the file is the user's to edit. Refusing is also what keeps
- * writes here append-only — amending an entry in place is what required knowing
- * enough TOML to find and rewrite it safely.
+ * The worker is already recorded in `config.toml`. `workers new` creates a worker; changing
+ * one that exists is a different operation, and the file is the user's to edit. Refusing also
+ * keeps writes append-only, avoiding the need to find and rewrite an entry in place.
  */
 export class WorkerAlreadyConfiguredError extends Data.TaggedError("WorkerAlreadyConfiguredError")<{
   readonly detail: string;
@@ -49,17 +46,11 @@ export class WorkerAlreadyConfiguredError extends Data.TaggedError("WorkerAlread
 }
 
 /**
- * Appending the new table would leave `config.toml` unparseable.
- *
- * `appendTomlSection` renders one table and puts it at the end, which is only
- * valid when the existing file is valid TOML that does not already seal the
- * `workers` key. A config whose `[workers]` is an inline table (`workers = {}`)
- * is the case in point: TOML inline tables cannot be extended, so appending
- * `[workers.api]` produces a file nothing can read.
- *
- * Rather than enumerate the representations that break, the plan is parsed
- * before it is returned. Anything that does not round-trip is refused while the
- * refusal is still free — `new` calls this before it writes the scaffold.
+ * Appending the new table would leave `config.toml` unparseable — e.g. a `[workers]` that's
+ * already an inline table (`workers = {}`) can't be extended, so appending `[workers.api]`
+ * produces a file nothing can read. Rather than enumerate every representation that breaks,
+ * the plan is parsed before it's returned and anything that doesn't round-trip is refused,
+ * before `new` writes the scaffold.
  */
 export class WorkerConfigWriteUnsafeError extends Data.TaggedError("WorkerConfigWriteUnsafeError")<{
   readonly detail: string;
@@ -74,18 +65,12 @@ const stringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
 
 /**
- * As {@link stringOrUndefined}, but an explicitly empty string survives.
- *
- * For `exposure`, "recorded but unusable" must not read as "not recorded".
- * Absent means the `public` default, so folding `exposure = ""` into `undefined`
- * hands a config that plainly tried to say something to the most open setting
- * there is — the exact silent-widening `push`'s `resolveExposure` exists to
- * refuse. Kept verbatim so it reaches that check like any other value the CLI
- * does not recognize.
- *
- * `runtime`, `size` and `source` keep the collapsing reader: their fallbacks are
- * a marker-file guess, a default size and the conventional directory, none of
- * which widens anything.
+ * As {@link stringOrUndefined}, but an explicitly empty string survives. For `exposure`,
+ * "recorded but unusable" must not read as "not recorded": absent means the `public` default,
+ * so folding `exposure = ""` into `undefined` would silently widen a config that plainly
+ * tried to say something to the most open setting there is. `runtime`, `size`, and `source`
+ * keep the collapsing reader, since their fallbacks (a marker-file guess, a default size, the
+ * conventional directory) don't widen anything.
  */
 const recordedStringOrUndefined = (value: unknown): string | undefined =>
   typeof value === "string" ? value : undefined;
@@ -107,11 +92,9 @@ const instanceCountOrUndefined = (value: unknown): number | undefined =>
  * object is dropped rather than read as a worker named after it.
  */
 export function readWorkersSection(workers: unknown): WorkersSection {
-  // Null-prototype, so a worker legitimately named `constructor`, `toString` or
-  // `hasOwnProperty` reads as absent when it is absent. A plain `{}` answers
-  // every one of those lookups with something inherited from
-  // `Object.prototype`, which is enough to make `workers new constructor` write
-  // its starter files and then refuse to record them.
+  // Null-prototype, so a worker named `constructor`, `toString`, or `hasOwnProperty` reads as
+  // absent when it is: a plain `{}` would answer those lookups from `Object.prototype`,
+  // enough to make `workers new constructor` write its starter files and refuse to record them.
   const entries: Record<string, WorkerEntry> = Object.create(null);
 
   if (!isRecord(workers)) {
@@ -125,9 +108,8 @@ export function readWorkersSection(workers: unknown): WorkersSection {
     entries[key] = {
       runtime: stringOrUndefined(value["runtime"]),
       size: stringOrUndefined(value["size"]),
-      // Left as whatever string was written, empty included: `push` is what
-      // names the accepted values, and dropping an unrecognized one here would
-      // silently deploy a worker at the default exposure instead.
+      // Left as written, empty included: `push` names the accepted values, and dropping an
+      // unrecognized one here would silently deploy at the default exposure instead.
       exposure: recordedStringOrUndefined(value["exposure"]),
       instances: instanceCountOrUndefined(value["instances"]),
       source: stringOrUndefined(value["source"]),
@@ -144,11 +126,10 @@ export interface WorkerEntryWrite {
 }
 
 /**
- * Render `config.toml` with `[workers.<name>]` appended, without writing it.
- *
- * Split from the write so callers can find out an entry already exists before
- * they scaffold anything: `new` writes the starter files first, and a failure
- * after that would leave a directory nothing records.
+ * Renders `config.toml` with `[workers.<name>]` appended, without writing it. Split from the
+ * write so callers can find out an entry already exists before they scaffold anything: `new`
+ * writes the starter files first, and a failure after that would leave a directory nothing
+ * records.
  */
 export const planWorkerEntry = Effect.fnUntraced(function* (options: {
   readonly configPath: string;
@@ -160,9 +141,8 @@ export const planWorkerEntry = Effect.fnUntraced(function* (options: {
 }) {
   const fs = yield* FileSystem.FileSystem;
 
-  // Append-only, so an entry that is already there cannot be amended. The
-  // decoded config is the authority on whether one exists — a question the
-  // parser has answered, and one no amount of regex over the file text answers
+  // Append-only, so an entry that already exists cannot be amended. The decoded config is
+  // the authority on whether one exists — regex over the file text can't answer that
   // reliably for a dotted or inline entry.
   if (options.existingWorkers[options.name] !== undefined) {
     return yield* Effect.fail(
@@ -173,10 +153,9 @@ export const planWorkerEntry = Effect.fnUntraced(function* (options: {
     );
   }
 
-  // Before rendering, because the re-parse below cannot catch this. A number
-  // like `1.5` or `-1` renders as valid TOML that only the *schema* rejects, so
-  // it would sail through a syntax check and land in the user's config as a
-  // `[workers]` section the loader then refuses.
+  // Before rendering, since the re-parse below is a syntax check only: `1.5` or `-1` render
+  // as valid TOML that only the schema rejects, so they'd sail through and land in the
+  // user's config as a `[workers]` section the loader then refuses.
   const unrenderable = Object.entries(options.patch).find(
     ([, value]) => typeof value === "number" && !isRenderableTomlNumber(value),
   );
@@ -194,9 +173,9 @@ export const planWorkerEntry = Effect.fnUntraced(function* (options: {
   const header = `workers.${tomlKey(options.name)}`;
   const next = appendTomlSection(text, header, options.patch);
 
-  // The rendered file has to parse, and the new table has to be readable back
-  // out of it. Appending text is a syntactic operation on a file this code did
-  // not write, so the only honest check is to read the result.
+  // The rendered file has to parse and the new table has to be readable back out of it —
+  // appending is a syntactic operation on a file this code didn't write, so reading the
+  // result back is the only honest check.
   const parsed = yield* Effect.try({
     try: () => SmolToml.parse(next),
     catch: (cause) =>
