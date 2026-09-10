@@ -90,9 +90,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const cache = mockLinkedProjectCacheTracked();
   const localPostgresImageChecks: Array<true> = [];
   const platformApi = mockCommandPlatformApiService({});
-  // Backs `resetLocalDatabase`'s real, native container-recreate — reached
-  // when the recovery-reset offer is accepted (CLI-2062: it now runs in-process
-  // instead of shelling out to a second `supabase-go` child).
+  // Backs `resetLocalDatabase`'s real, native container-recreate, reached when the
+  // recovery-reset offer is accepted.
   const child = mockContainerCliSpawner(
     defaultLocalResetRoute("test", { running: opts.resetShouldFail !== true }),
   );
@@ -115,14 +114,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
   const dbExec: string[] = [];
   const dbBatches: Array<ReadonlyArray<string>> = [];
-  // Go's default `[db] shadow_port` (`db-config.toml-read.ts`'s
-  // `DEFAULT_SHADOW_PORT`) — none of these tests override it. The migrations-
-  // catalog resolution's shadow (CLI-1956) now ALSO connects through this same
-  // fake `DbConnection` for its own platform-baseline setup/migration
-  // replay, so its SQL (BEGIN/REVOKE.../CREATE DATABASE contrib_regression) must
-  // be excluded from `dbExec`, which every "not yet applied" assertion below
-  // expects to stay empty until the REAL local-apply connection
-  // (`applyMigrationToLocal`, `toml.port`) runs.
+  // The default `[db] shadow_port` (none of these tests override it). The migrations-catalog
+  // shadow also connects through this fake `DbConnection`, so its SQL must be excluded from
+  // `dbExec`, which every "not yet applied" assertion expects to stay empty until real apply.
   const SHADOW_PORT = 54320;
   const dbConn = Layer.succeed(DbConnection, {
     connect: (cfg: PgConnInput) =>
@@ -255,15 +249,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     networkIdFlag,
     Layer.succeed(DnsResolverFlag, "native"),
     debugFlag,
-    // The local-reset bucket-seed core statically requires the (lazy) Management-API
-    // factory; never invoked on the local recovery reset (projectRef === "").
+    // The local-reset bucket-seed core statically requires the (lazy) Management-API factory,
+    // though it's never invoked on the local recovery reset.
     Layer.succeed(CommandPlatformApiFactory, {
       make: CommandPlatformApi.pipe(Effect.provide(platformApi.layer)),
     }),
     BunServices.layer,
-    // `child.layer` must be listed AFTER `BunServices.layer` — `Layer.mergeAll`
-    // resolves a duplicate service tag to whichever layer is listed LAST, so this
-    // mock overrides Bun's real `ChildProcessSpawner` instead of the reverse.
+    // `child.layer` must be listed after `BunServices.layer` — `Layer.mergeAll` resolves a
+    // duplicate service tag to whichever layer is listed last, so this mock overrides Bun's
+    // real `ChildProcessSpawner` instead of the reverse.
     child.layer,
     runtimeInfo,
     processControl.layer,
@@ -358,9 +352,6 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("--apply and --no-apply together with --experimental fail with the mutex error", () => {
-    // Go's declarative PersistentPreRunE gate (db_schema_declarative.go:49-99) runs
-    // BEFORE cobra's ValidateFlagGroups() mutex check (cobra@v1.10.2/command.go:985,
-    // 1010), so the mutex error only surfaces once the gate is open.
     const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -378,9 +369,6 @@ describe("db schema declarative sync integration", () => {
   it.effect(
     "--apply and --no-apply together without --experimental fail with the gate error, not the mutex error",
     () => {
-      // Mirrors storage's experimental-gate-vs-mutex ordering fix (CLI-1855 / CLI-1876):
-      // the pg-delta gate runs before the mutex check, so an unopened gate wins even
-      // when the flags would also violate mutual exclusivity.
       const { layer } = setup(tmp.current, { experimental: false });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
@@ -395,11 +383,6 @@ describe("db schema declarative sync integration", () => {
   it.effect(
     "--apply and --no-apply together with SUPABASE_EXPERIMENTAL env (no --experimental flag) fail with the mutex error",
     () => {
-      // Go's gate reads viper.GetBool("EXPERIMENTAL") (db_schema_declarative.go:78),
-      // which picks up SUPABASE_EXPERIMENTAL via viper.AutomaticEnv (root.go:318-334),
-      // so an env-only experimental session still opens the gate and lets the mutex
-      // check fire. resolveExperimental (not the raw ExperimentalFlag) is
-      // what makes the TS gate honor the env var the same way.
       const { layer } = setup(tmp.current, { experimental: false });
       const ENV = "SUPABASE_EXPERIMENTAL";
       return Effect.gen(function* () {
@@ -423,10 +406,6 @@ describe("db schema declarative sync integration", () => {
   it.effect(
     "an explicit --experimental=false closes the gate even when SUPABASE_EXPERIMENTAL is set",
     () => {
-      // viper's bound-pflag lookup returns the flag value whenever Changed is true —
-      // BEFORE falling back to AutomaticEnv (viper@v1.21.0/viper.go:1176-1178) — so an
-      // explicit --experimental=false must win over SUPABASE_EXPERIMENTAL=1, closing the
-      // gate instead of letting the env value override it.
       const { layer } = setup(tmp.current, {
         experimental: false,
         args: ["db", "schema", "declarative", "sync", "--experimental=false"],
@@ -447,12 +426,6 @@ describe("db schema declarative sync integration", () => {
   it.effect(
     "--apply and --no-apply together with SUPABASE_EXPERIMENTAL set only in the project .env fail with the mutex error",
     () => {
-      // Go's flags.LoadConfig runs loadNestedEnv (which os.Setenv's each project-.env key)
-      // before dbDeclarativeCmd.PersistentPreRunE reads viper.GetBool("EXPERIMENTAL")
-      // (apps/cli-go/cmd/db_schema_declarative.go:73-78, deleted in CLI-1970; last
-      // present at commit 7b469f5b3; pkg/config/config.go:789), so a
-      // SUPABASE_EXPERIMENTAL set only in supabase/.env opens the gate and lets the mutex
-      // check fire, same as the shell-env case above.
       const saved = process.env["SUPABASE_EXPERIMENTAL"];
       delete process.env["SUPABASE_EXPERIMENTAL"];
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
@@ -481,10 +454,7 @@ describe("db schema declarative sync integration", () => {
   );
 
   it.effect("rejects --apply=false --no-apply as a conflict (Go flag.Changed)", () => {
-    // cobra keys the mutex off flag.Changed, so an explicit `--apply=false` still
-    // counts as set and conflicts with `--no-apply`, even though its value is false.
-    // The gate runs first (see requirePgDelta's doc comment), so --experimental
-    // is required here for the mutex error to be the one that surfaces.
+    // The gate runs first, so `--experimental` is required here for the mutex error to surface.
     const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -505,16 +475,11 @@ describe("db schema declarative sync integration", () => {
       expect((failError(exit) as { message: string }).message).toContain(
         "no declarative schema found",
       );
-      // No tree under the former default either — nothing to point at.
       expect(stripAnsi(s.out.stderrText)).not.toContain("WARNING: found declarative schema files");
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("warns when the tree still lives under the former supabase/database default", () => {
-    // Upgrade path: the implicit default moved from supabase/database to
-    // supabase/schemas. A project that generated under the old default and never
-    // set declarative_schema_path must get an explanation, not a bare
-    // "no declarative schema found".
     const formerDir = join(tmp.current, "supabase", "database");
     mkdirSync(formerDir, { recursive: true });
     writeFileSync(join(formerDir, "public.sql"), "create table a();");
@@ -581,10 +546,7 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("--yes bypasses the bootstrap prompt when no declarative files exist", () => {
-    // Without --yes + non-TTY this fails at the "no declarative schema found" gate
-    // (prior test). With --yes, Go's PromptYesNo auto-confirms, so the bootstrap is
-    // attempted instead — it must NOT fail at that gate. No promptConfirm is queued,
-    // so reaching the prompt would also error.
+    // No `promptConfirmResponses` are queued, so reaching the prompt would also error.
     const s = setup(tmp.current, { experimental: true, stdinIsTty: false, yes: true, diffSql: "" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -595,10 +557,6 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("bootstrap prints the declarative-schema-written line after generating", () => {
-    // The bootstrap prints `Declarative schema written to <dir>` to stderr after
-    // writing the generated files, before sync's own diff (step 2). It prints the
-    // relative `supabase/schemas` default — never the absolute resolved dir
-    // (CLI-1980).
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -613,7 +571,6 @@ describe("db schema declarative sync integration", () => {
         .filter((c) => c.text === line);
       expect(written).toHaveLength(1);
       expect(written[0]?.stream).toBe("stderr");
-      // The generated files actually landed in the printed (resolved) dir.
       expect(
         existsSync(join(tmp.current, "supabase", "schemas", "public", "tables", "players.sql")),
       ).toBe(true);
@@ -622,8 +579,6 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("--yes bootstrap prints the declarative-schema-written line too", () => {
-    // The auto-confirmed (--yes / SUPABASE_YES) bootstrap reaches the same
-    // written-to print as the interactive accept.
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: false,
@@ -642,9 +597,7 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("bootstrap with migrations offers the smart target choice (not local-only)", () => {
-    // Go delegates the no-files bootstrap to runDeclarativeGenerate; with migrations
-    // present it offers local/linked/custom rather than silently generating from
-    // local. projectId "test" is an invalid ref so the linked choice is hidden.
+    // `projectId: "test"` is an invalid ref, so the linked choice is hidden.
     mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     const s = setup(tmp.current, {
@@ -662,9 +615,6 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("bootstrap linked target does not run the local Postgres image check", () => {
-    // The stale-image guard only matters once bootstrap chooses a local source. A
-    // linked/custom bootstrap can build fresh catalogs and skip local apply, so it
-    // must reach the target prompt before any local-container inspection.
     mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     const s = setup(tmp.current, {
@@ -745,10 +695,7 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("bootstrap: an unreadable migrations path is treated as no migrations", () => {
-    // Go's delegated hasMigrationFiles returns false on ANY ListLocalMigrations error
-    // (db_schema_declarative.go:164-169), flowing into the no-migrations local generate.
-    // Seeding supabase/migrations as a FILE makes the probe's list fail with ENOTDIR; it
-    // must be swallowed so the bootstrap reaches generation, not abort on the read.
+    // Seeding `supabase/migrations` as a file makes the probe's list fail with ENOTDIR.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "migrations"), "not a directory");
     const s = setup(tmp.current, {
@@ -761,8 +708,6 @@ describe("db schema declarative sync integration", () => {
       const exit = yield* Effect.exit(
         dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
       );
-      // The probe was softened: it reached generation (files written, sync
-      // completed on the empty diff), NOT an abort on the migrations directory read.
       expect(JSON.stringify(exit)).not.toContain("failed to read directory");
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(
@@ -772,10 +717,7 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("bootstrap: an unreadable ref file just omits the linked choice", () => {
-    // Go ignores smart-prompt LoadProjectRef errors (`if err == nil`,
-    // db_schema_declarative.go:222-224): a broken .temp/project-ref omits the linked
-    // choice and bootstrap continues. Seeding project-ref as a DIRECTORY makes the read
-    // fail; the bootstrap smart read must swallow it, not abort.
+    // Seeding `.temp/project-ref` as a directory makes the read fail.
     mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     mkdirSync(join(tmp.current, "supabase", ".temp", "project-ref"), { recursive: true });
@@ -791,7 +733,6 @@ describe("db schema declarative sync integration", () => {
       const exit = yield* Effect.exit(
         dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
       );
-      // Reached the smart prompt (didn't abort on the ref read); linked choice omitted.
       expect((s.out.promptSelectCalls[0]?.options ?? []).map((o) => o.value)).toEqual([
         "local",
         "custom",
@@ -801,10 +742,6 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("bootstrap caches the linked project after resolving the ref", () => {
-    // The bootstrap resolves the linked ref (config project_id → .temp/project-ref)
-    // when migrations exist, and the handler's finalizer writes the linked-project
-    // cache whether sync succeeds or fails. Here it resolves the ref, bootstraps
-    // from local, and completes on the empty diff — the cache must be written.
     mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     const s = setup(tmp.current, {
@@ -822,8 +759,6 @@ describe("db schema declarative sync integration", () => {
   });
 
   it.effect("does not cache when the workdir is not linked", () => {
-    // No project_id and no .temp/project-ref file → no ref resolves in the bootstrap,
-    // so flags.ProjectRef stays empty in Go and nothing is cached.
     mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
     const s = setup(tmp.current, {
@@ -883,7 +818,6 @@ describe("db schema declarative sync integration", () => {
         "ALTER TABLE a ADD COLUMN b int",
         expect.stringContaining("supabase_migrations.schema_migrations"),
       ]);
-      // No reset on success — the recovery reset's container-remove never ran.
       expect(localResetRemovedContainers(s.child.spawned)).toEqual([]);
       expect(s.out.rawChunks.some((c) => c.text.includes("Migration applied successfully"))).toBe(
         true,
@@ -906,14 +840,10 @@ describe("db schema declarative sync integration", () => {
       const error = failError(exit);
       expect(error).toMatchObject({
         message: expect.stringContaining("uuid-ossp"),
-        // Recovery commands ride on `suggestion` so `Output.fail` prints them
-        // instead of the generic "rerun with --debug" footer.
         suggestion: expect.stringContaining(
           "supabase db schema declarative generate --local --overwrite",
         ),
       });
-      // Hand-editing extension.sql is a false trail non-interactively: each
-      // declaration only unlocks the next refusal.
       expect(JSON.stringify(error)).not.toContain("extension.sql");
       expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
@@ -1033,7 +963,6 @@ describe("db schema declarative sync integration", () => {
       const exit = yield* dbSchemaDeclarativeSync(flags()).pipe(Effect.exit);
       expect(failError(exit)).toMatchObject({
         _tag: "DeclarativeCompatibilityError",
-        // Same unified template as the load-fail gate — only the evidence differs.
         message: expect.stringContaining(
           "This supabase/schemas tree looks like a legacy pg-delta export.",
         ),
@@ -1151,9 +1080,8 @@ describe("db schema declarative sync integration", () => {
 
   it.effect("staged export names its live-database source and honors the reset offer", () => {
     seedDeclarative(tmp.current);
-    // `resetLocalDatabase`'s container-recreate resolves its own project id
-    // from `@supabase/config` — pin it so the recreated container name matches
-    // the spawner route's assumption (same as the apply-failure reset test).
+    // `resetLocalDatabase` resolves its own project id from `@supabase/config`; pin it so the
+    // recreated container name matches the spawner route's assumption.
     writeFileSync(join(tmp.current, "supabase", "config.toml"), 'project_id = "test"\n');
     const s = setup(tmp.current, {
       stdinIsTty: true,
@@ -1164,12 +1092,9 @@ describe("db schema declarative sync integration", () => {
     });
     return Effect.gen(function* () {
       yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      // The export source is stated before the snapshot, so stale local drift
-      // cannot silently become the staged declarative tree.
       expect(stripAnsi(s.out.stderrText)).toContain(
         "Exporting from the running local database (not the migrations state).",
       );
-      // Accepting the offer really reset the local database before the export.
       expect(localResetRemovedContainers(s.child.spawned)).toContain("supabase_db_test");
       expect(
         existsSync(join(tmp.current, "supabase", "schemas-next", ".pgdelta-export.json")),
@@ -1230,10 +1155,9 @@ describe("db schema declarative sync integration", () => {
     "apply failure in a TTY offers reset+reapply and runs the reset natively in-process",
     () => {
       seedDeclarative(tmp.current);
-      // `resetLocalDatabase`'s container-recreate resolves its own project id
-      // from `@supabase/config` (config.toml / real env), independently of the
-      // mocked `CommandSettings.projectId` — pin it to "test" so the recreated
-      // container name matches the spawner route's assumption.
+      // `resetLocalDatabase` resolves its own project id from `@supabase/config`, independently
+      // of the mocked `CommandSettings.projectId`; pin it so the recreated container name
+      // matches the spawner route's assumption.
       writeFileSync(join(tmp.current, "supabase", "config.toml"), 'project_id = "test"\n');
       const s = setup(tmp.current, {
         experimental: true,
@@ -1247,9 +1171,6 @@ describe("db schema declarative sync integration", () => {
         expect(s.out.rawChunks.some((c) => c.text.includes("Migration failed to apply"))).toBe(
           true,
         );
-        // The recovery reset actually ran — recreated the local `db` container
-        // (CLI-2062: in-process, not a `supabase-go` child) — proving it's a real
-        // effect, not just a tracked call.
         expect(localResetRemovedContainers(s.child.spawned)).toContain("supabase_db_test");
         expect(localResetCreateArgs(s.child.spawned)).not.toBeUndefined();
         expect(s.out.rawChunks.some((c) => c.text.includes("Resetting local database"))).toBe(true);
@@ -1259,18 +1180,14 @@ describe("db schema declarative sync integration", () => {
           ),
         ).toBe(true);
         expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta", "debug"))).toBe(true);
-        // `resetLocalDatabase`'s own body never touches telemetry — the outer
-        // `sync` command's single `Effect.ensuring` finalizer must still fire
-        // EXACTLY once, not twice, matching Go's single-process `reset.Run` (no
-        // second `PersistentPostRun` from a separate child process) (CLI-2062).
+        // `resetLocalDatabase`'s own body never touches telemetry, so the outer command's single
+        // `Effect.ensuring` finalizer must still fire exactly once, not twice.
         expect(s.telemetry.flushCount).toBe(1);
       }).pipe(Effect.provide(s.layer));
     },
   );
 
   it.effect("surfaces the reset failure (not the apply error) when reset also fails", () => {
-    // Go returns resetErr here (`cmd/db_schema_declarative.go:414-423`), so the failure
-    // that actually blocked recovery is reported, not the original apply error ("boom").
     seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       experimental: true,
@@ -1286,21 +1203,16 @@ describe("db schema declarative sync integration", () => {
       expect(failError(exit)).toMatchObject({
         message: "supabase start is not running.",
       });
-      // Printed exactly once — no "database reset failed:" double-wrap (review CLI-1958).
       expect(
         s.out.rawChunks.some((c) =>
           c.text.includes("Database reset also failed: supabase start is not running."),
         ),
       ).toBe(true);
-      // A real failure, before any destructive container work.
       expect(localResetRemovedContainers(s.child.spawned)).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("forwards --network-id to the recovery reset", () => {
-    // `resetLocalDatabase` resolves `NetworkIdFlag` itself from the
-    // shared context (CLI-2062) — no argv-forwarding needed — so the recreated
-    // container must land on the custom network directly.
     seedDeclarative(tmp.current);
     writeFileSync(join(tmp.current, "supabase", "config.toml"), 'project_id = "test"\n');
     const s = setup(tmp.current, {
