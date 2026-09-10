@@ -1,6 +1,6 @@
-import type { CliConfig } from "@supabase/config";
-import { Effect, Data, FileSystem, Option, Path, Redacted, Schema } from "effect";
-import { StackConfigSchema, type AuthSettings, type StackConfig } from "@supabase/stack/effect";
+import { type CliConfig, validateCliConfig } from "@supabase/config/effect";
+import { Effect, Data, FileSystem, Option, Path, Redacted, Schema, SchemaIssue } from "effect";
+import { StackConfigSchema, type StackConfig } from "@supabase/stack/effect";
 
 import { loadLocalProjectContext } from "../../../command-internal/local-project-context.ts";
 import { parseDotEnv } from "../../../command-internal/dotenv.ts";
@@ -24,8 +24,6 @@ import {
   resolveAuthEmail,
   resolveAuthEmailSmtp,
   resolveAuthExternalProviders,
-  validateAuthExternalProviders,
-  validateAuthSmsProviders,
   resolveAuthHooks,
   resolveAuthMfa,
   resolveAuthSms,
@@ -35,7 +33,6 @@ import {
   resolveGotrueSessions,
   resolveGotrueWeb3,
 } from "../../../command-internal/local-config-values.ts";
-import { type AuthInput, validateAuthConfig } from "../../../command-internal/config-validate.ts";
 import {
   collectDotenvPrivateKeys,
   decryptSecret,
@@ -113,14 +110,6 @@ const envUint = (
   field: string,
   env: Readonly<Record<string, string>>,
 ) => envOverrideUint(name, field, value, env);
-const envSecret = (name: string, value: unknown, env: Readonly<Record<string, string>>) => {
-  const unwrapped = Redacted.isRedacted(value) ? Redacted.value(value) : undefined;
-  const configured =
-    typeof value === "string" ? value : typeof unwrapped === "string" ? unwrapped : undefined;
-  const resolved = envString(name, configured, env);
-  return resolved === undefined ? undefined : Redacted.make(resolved);
-};
-
 const envArray = (
   name: string,
   value: ReadonlyArray<string>,
@@ -237,9 +226,8 @@ const envPortOrConfigured = (
   configured: number,
   env: Readonly<Record<string, string>>,
 ): number | undefined => {
-  if (envOverride(name, undefined, env) !== undefined)
-    return envOverridePort(name, configured, `${sectionName}.${key}`, env);
-  return explicitPort(document, sectionName, key);
+  if (envOverride(name, undefined, env) !== undefined) return configured;
+  return explicitPort(document, sectionName, key) === undefined ? undefined : configured;
 };
 
 const envNestedPortOrConfigured = (
@@ -251,10 +239,9 @@ const envNestedPortOrConfigured = (
   configured: number,
   env: Readonly<Record<string, string>>,
 ): number | undefined => {
-  if (envOverride(name, undefined, env) !== undefined)
-    return envOverridePort(name, configured, `${sectionName}.${nestedSection}.${key}`, env);
+  if (envOverride(name, undefined, env) !== undefined) return configured;
   const nested = section(section(document, sectionName), nestedSection);
-  return typeof nested?.[key] === "number" ? nested[key] : undefined;
+  return typeof nested?.[key] === "number" ? configured : undefined;
 };
 
 const authProviderNames = [
@@ -397,22 +384,347 @@ const nestedListener = (
 const authSettings = (
   auth: CliConfig["auth"],
   document: Readonly<Record<string, unknown>> | undefined,
-  env: Readonly<Record<string, string>>,
-  signingKeysPath: string | undefined,
 ) => {
   const authDocument = section(document, "auth");
-  const resolvedEmail = resolveAuthEmail(auth.email, authDocument, env);
-  const resolvedSmtp = resolveAuthEmailSmtp(authDocument, env);
-  const resolvedMfa = resolveAuthMfa(auth.mfa, env);
-  const resolvedSms = resolveAuthSms(authDocument, auth.sms, env);
-  const resolvedExternal = resolveAuthExternalProviders(authDocument, auth.external, env);
-  const resolvedHooks = resolveAuthHooks(authDocument, auth.hook, env);
-  const resolvedCaptcha = resolveAuthCaptcha(authDocument, auth.captcha, env);
-  const resolvedSessions = resolveGotrueSessions(auth.sessions, env);
-  const resolvedRateLimit = resolveGotrueRateLimit(auth.rate_limit, env);
-  const resolvedWeb3 = resolveGotrueWeb3(auth.web3, env);
-  const resolvedOAuthServer = resolveGotrueOAuthServer(auth.oauth_server, env);
-  const passwordRequirements = envOverrideAuthPasswordRequirements(auth.password_requirements, env);
+  const resolvedEmail = auth.email;
+  const resolvedSmtp = section(authDocument && section(authDocument, "email"), "smtp")
+    ? auth.email.smtp
+    : undefined;
+  const resolvedMfa = auth.mfa;
+  const resolvedSms = auth.sms;
+  const resolvedExternal = auth.external;
+  const resolvedHooks = auth.hook;
+  const resolvedCaptcha = auth.captcha;
+  const resolvedSessions = auth.sessions;
+  const resolvedRateLimit = auth.rate_limit;
+  const resolvedWeb3 = auth.web3;
+  const resolvedOAuthServer = auth.oauth_server;
+  const passwordRequirements = auth.password_requirements;
+  const thirdParty = auth.third_party;
+
+  const hooks: Record<
+    string,
+    { enabled: boolean; uri?: string; secrets?: Redacted.Redacted<string> }
+  > = {};
+  const hookDocument = section(authDocument, "hook");
+  const hookValues = {
+    mfa_verification_attempt: resolvedHooks.mfa_verification_attempt,
+    password_verification_attempt: resolvedHooks.password_verification_attempt,
+    custom_access_token: resolvedHooks.custom_access_token,
+    send_sms: resolvedHooks.send_sms,
+    send_email: resolvedHooks.send_email,
+    before_user_created: resolvedHooks.before_user_created,
+  };
+  for (const [name, resolved] of Object.entries(hookValues)) {
+    if (hookDocument?.[name] === undefined) continue;
+    hooks[name] = {
+      enabled: resolved.enabled,
+      ...(resolved.uri === undefined || resolved.uri.length === 0 ? {} : { uri: resolved.uri }),
+      ...(resolved.secrets === undefined || resolved.secrets.length === 0
+        ? {}
+        : { secrets: secret(resolved.secrets) }),
+    };
+  }
+
+  const external: Record<string, unknown> = {};
+  const externalDocument = section(authDocument, "external");
+  for (const name of authProviderNames) {
+    const resolved = resolvedExternal[name];
+    if (
+      resolved === undefined ||
+      auth.external[name] === undefined ||
+      (name !== "apple" && externalDocument?.[name] === undefined)
+    )
+      continue;
+    external[name] = {
+      enabled: resolved.enabled,
+      client_id: resolved.client_id,
+      secret: secret(resolved.secret),
+      url: resolved.url,
+      redirect_uri: resolved.redirect_uri,
+      skip_nonce_check: resolved.skip_nonce_check,
+      email_optional: resolved.email_optional,
+    };
+  }
+
+  const provider = (value: Record<string, unknown>) => value;
+  const sms = {
+    ...pick(resolvedSms, ["enable_signup", "enable_confirmations", "template", "max_frequency"]),
+    twilio: provider({
+      enabled: resolvedSms.twilio.enabled,
+      account_sid: resolvedSms.twilio.account_sid,
+      message_service_sid: resolvedSms.twilio.message_service_sid,
+      auth_token: secret(resolvedSms.twilio.auth_token),
+    }),
+    twilio_verify: provider({
+      enabled: resolvedSms.twilio_verify.enabled,
+      account_sid: resolvedSms.twilio_verify.account_sid,
+      message_service_sid: resolvedSms.twilio_verify.message_service_sid,
+      auth_token: secret(resolvedSms.twilio_verify.auth_token),
+    }),
+    messagebird: provider({
+      enabled: resolvedSms.messagebird.enabled,
+      originator: resolvedSms.messagebird.originator,
+      access_key: secret(resolvedSms.messagebird.access_key),
+    }),
+    textlocal: provider({
+      enabled: resolvedSms.textlocal.enabled,
+      sender: resolvedSms.textlocal.sender,
+      api_key: secret(resolvedSms.textlocal.api_key),
+    }),
+    vonage: provider({
+      enabled: resolvedSms.vonage.enabled,
+      from: resolvedSms.vonage.from,
+      api_key: secret(resolvedSms.vonage.api_key),
+      api_secret: secret(resolvedSms.vonage.api_secret),
+    }),
+    ...(auth.sms.test_otp === undefined ? {} : { test_otp: auth.sms.test_otp }),
+  };
+
+  const email = {
+    enable_signup: resolvedEmail.enable_signup,
+    double_confirm_changes: resolvedEmail.double_confirm_changes,
+    enable_confirmations: resolvedEmail.enable_confirmations,
+    secure_password_change: resolvedEmail.secure_password_change,
+    max_frequency: resolvedEmail.max_frequency,
+    otp_length: resolvedEmail.otp_length,
+    otp_expiry: resolvedEmail.otp_expiry,
+    ...(resolvedSmtp === undefined
+      ? {}
+      : {
+          smtp: {
+            enabled: resolvedSmtp.enabled,
+            host: resolvedSmtp.host,
+            ...(resolvedSmtp.port === 0 ? {} : { port: resolvedSmtp.port }),
+            user: resolvedSmtp.user,
+            pass: secret(resolvedSmtp.pass),
+            admin_email: resolvedSmtp.admin_email,
+            sender_name: resolvedSmtp.sender_name,
+          },
+        }),
+    template: Object.fromEntries(
+      Object.entries(resolvedEmail.template).map(([name, value]) => [
+        name,
+        pick(value, ["subject", "content_path"]),
+      ]),
+    ),
+    notification: Object.fromEntries(
+      Object.entries(resolvedEmail.notification).map(([name, value]) => [
+        name,
+        pick(value, ["enabled", "subject", "content_path"]),
+      ]),
+    ),
+  };
+
+  return {
+    site_url: auth.site_url,
+    additional_redirect_urls: auth.additional_redirect_urls,
+    jwt_expiry: auth.jwt_expiry,
+    jwt_issuer: auth.jwt_issuer,
+    signing_keys_path: auth.signing_keys_path,
+    enable_refresh_token_rotation: auth.enable_refresh_token_rotation,
+    refresh_token_reuse_interval: auth.refresh_token_reuse_interval,
+    enable_manual_linking: auth.enable_manual_linking,
+    enable_signup: auth.enable_signup,
+    enable_anonymous_sign_ins: auth.enable_anonymous_sign_ins,
+    minimum_password_length: auth.minimum_password_length,
+    password_requirements: passwordRequirements,
+    publishable_key: secret(auth.publishable_key),
+    secret_key: secret(auth.secret_key),
+    jwt_secret: secret(auth.jwt_secret),
+    anon_key: secret(auth.anon_key),
+    service_role_key: secret(auth.service_role_key),
+    rate_limit: resolvedRateLimit,
+    ...(resolvedCaptcha === undefined
+      ? {}
+      : {
+          captcha: {
+            enabled: resolvedCaptcha.enabled,
+            provider: resolvedCaptcha.provider,
+            secret:
+              resolvedCaptcha.secret === undefined
+                ? undefined
+                : Redacted.make(resolvedCaptcha.secret),
+          },
+        }),
+    hook: hooks,
+    mfa: resolvedMfa,
+    sessions: resolvedSessions,
+    email,
+    sms,
+    external,
+    web3: resolvedWeb3,
+    oauth_server: resolvedOAuthServer,
+    third_party: thirdParty,
+  };
+};
+
+const functionsSettings = (
+  projectRoot: string,
+  path: Path.Path,
+  config: CliConfig,
+  document?: Record<string, unknown>,
+  projectEnvValues: Readonly<Record<string, string>> = {},
+) => {
+  const edge = config.edge_runtime;
+  const edgePolicy = edge.policy;
+  const edgeDenoVersion = edge.deno_version;
+  const documentFunctions = section(document, "functions");
+  const functions = Object.fromEntries(
+    Object.entries(config.functions).map(([name, value]) => [
+      name,
+      {
+        ...(value.enabled === undefined ? {} : { enabled: value.enabled }),
+        ...(value.verify_jwt === undefined ? {} : { verify_jwt: value.verify_jwt }),
+        ...(value.import_map === undefined
+          ? {}
+          : { import_map: functionRelativePath(path, projectRoot, value.import_map, name) }),
+        ...(value.entrypoint === undefined
+          ? {}
+          : { entrypoint: functionRelativePath(path, projectRoot, value.entrypoint, name) }),
+        ...(value.static_files === undefined
+          ? {}
+          : {
+              static_files: value.static_files.map((filePath) =>
+                functionRelativePath(path, projectRoot, filePath, name),
+              ),
+            }),
+        env: Object.fromEntries(
+          Object.entries(
+            isRecord(documentFunctions?.[name]) && isRecord(documentFunctions[name].env)
+              ? documentFunctions[name].env
+              : value.env,
+          ).flatMap(([key, item]) => {
+            const resolvedValue =
+              typeof item === "string" && /^env\([A-Za-z_][A-Za-z0-9_]*\)$/.test(item)
+                ? projectEnvValues[item.slice(4, -1)]
+                : item;
+            const resolved = secret(resolvedValue);
+            return resolved === undefined ? [] : [[key, resolved]];
+          }),
+        ),
+      },
+    ]),
+  );
+  return {
+    functions_root: "supabase/functions",
+    edge_runtime: {
+      ...(edgePolicy === undefined ? {} : { policy: edgePolicy }),
+      ...(edgeDenoVersion === undefined ? {} : { deno_version: edgeDenoVersion }),
+      ...(edge.secrets === undefined
+        ? {}
+        : {
+            secrets: Object.fromEntries(
+              Object.entries(edge.secrets).flatMap(([key, item]) => {
+                const resolved = secret(item);
+                return resolved === undefined ? [] : [[key, resolved]];
+              }),
+            ),
+          }),
+    },
+    functions,
+  };
+};
+
+const resolvedPort = (
+  name: string,
+  configured: number,
+  field: string,
+  env: Readonly<Record<string, string>>,
+) =>
+  envOverride(name, undefined, env) === undefined
+    ? configured
+    : envOverridePort(name, configured, field, env);
+
+const resolveAuthOverrides = (
+  auth: CliConfig["auth"],
+  document: Readonly<Record<string, unknown>> | undefined,
+  env: Readonly<Record<string, string>>,
+) => {
+  const authDocument = section(document, "auth");
+  const email = resolveAuthEmail(auth.email, authDocument, env);
+  const smtp = resolveAuthEmailSmtp(authDocument, env);
+  const hooks = resolveAuthHooks(authDocument, auth.hook, env);
+  const external = resolveAuthExternalProviders(authDocument, auth.external, env);
+  const externalResolved = { ...auth.external };
+  for (const name of authProviderNames) {
+    const value = external[name];
+    if (value === undefined) continue;
+    externalResolved[name] = {
+      ...externalResolved[name],
+      enabled: value.enabled,
+      client_id: value.clientId ?? externalResolved[name].client_id,
+      secret: value.secret,
+      url: value.url,
+      redirect_uri: value.redirectUri ?? externalResolved[name].redirect_uri,
+      skip_nonce_check: value.skipNonceCheck,
+      email_optional: value.emailOptional,
+    };
+  }
+  const figma = external.figma;
+  if (figma !== undefined) {
+    externalResolved.figma = {
+      ...externalResolved.figma,
+      enabled: figma.enabled,
+      client_id: figma.clientId ?? externalResolved.figma?.client_id,
+      secret: figma.secret,
+      url: figma.url,
+      redirect_uri: figma.redirectUri ?? externalResolved.figma?.redirect_uri,
+      skip_nonce_check: figma.skipNonceCheck,
+      email_optional: figma.emailOptional,
+    };
+  }
+  const hookValue = (
+    value: (typeof hooks)[keyof typeof hooks],
+    fallback: (typeof auth.hook)[keyof typeof auth.hook],
+  ) => value ?? fallback;
+  const hookResolved = {
+    mfa_verification_attempt: hookValue(
+      hooks.mfaVerificationAttempt,
+      auth.hook.mfa_verification_attempt,
+    ),
+    password_verification_attempt: hookValue(
+      hooks.passwordVerificationAttempt,
+      auth.hook.password_verification_attempt,
+    ),
+    custom_access_token: hookValue(hooks.customAccessToken, auth.hook.custom_access_token),
+    send_sms: hookValue(hooks.sendSms, auth.hook.send_sms),
+    send_email: hookValue(hooks.sendEmail, auth.hook.send_email),
+    before_user_created: hookValue(hooks.beforeUserCreated, auth.hook.before_user_created),
+  };
+  const resolvedEmailTemplate: CliConfig["auth"]["email"]["template"] = Object.fromEntries(
+    Object.entries(email.template).map(([name, value]) => [
+      name,
+      { subject: value.subject ?? "", content_path: value.content_path },
+    ]),
+  );
+  const resolvedEmailNotification: CliConfig["auth"]["email"]["notification"] = Object.fromEntries(
+    Object.entries(email.notification).map(([name, value]) => [
+      name,
+      {
+        enabled: value.enabled,
+        subject: value.subject ?? "",
+        content_path: value.content_path,
+      },
+    ]),
+  );
+  const resolvedEmail = {
+    ...email,
+    template: resolvedEmailTemplate,
+    notification: resolvedEmailNotification,
+  };
+  const resolvedSmtp =
+    smtp === undefined
+      ? undefined
+      : {
+          enabled: smtp.enabled,
+          host: smtp.host,
+          port: smtp.port,
+          user: smtp.user,
+          pass: smtp.pass,
+          admin_email: smtp.adminEmail,
+          sender_name: smtp.senderName,
+        };
   const thirdParty = {
     firebase: {
       enabled: envBool(
@@ -490,121 +802,10 @@ const authSettings = (
       ),
     },
   };
-
-  const hooks: Record<
-    string,
-    { enabled: boolean; uri?: string; secrets?: Redacted.Redacted<string> }
-  > = {};
-  const hookDocument = section(authDocument, "hook");
-  const hookValues = {
-    mfa_verification_attempt: resolvedHooks.mfaVerificationAttempt,
-    password_verification_attempt: resolvedHooks.passwordVerificationAttempt,
-    custom_access_token: resolvedHooks.customAccessToken,
-    send_sms: resolvedHooks.sendSms,
-    send_email: resolvedHooks.sendEmail,
-    before_user_created: resolvedHooks.beforeUserCreated,
-  };
-  for (const [name, resolved] of Object.entries(hookValues)) {
-    if (hookDocument?.[name] === undefined) continue;
-    hooks[name] = {
-      enabled: resolved.enabled,
-      ...(resolved.uri.length === 0 ? {} : { uri: resolved.uri }),
-      ...(resolved.secrets.length === 0 ? {} : { secrets: Redacted.make(resolved.secrets) }),
-    };
-  }
-
-  const external: Record<string, unknown> = {};
-  const externalDocument = section(authDocument, "external");
-  for (const name of authProviderNames) {
-    const resolved = resolvedExternal[name];
-    if (
-      resolved === undefined ||
-      auth.external[name] === undefined ||
-      (name !== "apple" && externalDocument?.[name] === undefined)
-    )
-      continue;
-    external[name] = {
-      enabled: resolved.enabled,
-      client_id: resolved.clientId,
-      secret: resolved.secret === undefined ? undefined : Redacted.make(resolved.secret),
-      url: resolved.url,
-      redirect_uri: resolved.redirectUri,
-      skip_nonce_check: resolved.skipNonceCheck,
-      email_optional: resolved.emailOptional,
-    };
-  }
-
-  const provider = (value: Record<string, unknown>) => value;
-  const sms = {
-    ...pick(resolvedSms, ["enable_signup", "enable_confirmations", "template", "max_frequency"]),
-    twilio: provider({
-      enabled: resolvedSms.twilio.enabled,
-      account_sid: resolvedSms.twilio.account_sid,
-      message_service_sid: resolvedSms.twilio.message_service_sid,
-      auth_token: secret(resolvedSms.twilio.auth_token),
-    }),
-    twilio_verify: provider({
-      enabled: resolvedSms.twilio_verify.enabled,
-      account_sid: resolvedSms.twilio_verify.account_sid,
-      message_service_sid: resolvedSms.twilio_verify.message_service_sid,
-      auth_token: secret(resolvedSms.twilio_verify.auth_token),
-    }),
-    messagebird: provider({
-      enabled: resolvedSms.messagebird.enabled,
-      originator: resolvedSms.messagebird.originator,
-      access_key: secret(resolvedSms.messagebird.access_key),
-    }),
-    textlocal: provider({
-      enabled: resolvedSms.textlocal.enabled,
-      sender: resolvedSms.textlocal.sender,
-      api_key: secret(resolvedSms.textlocal.api_key),
-    }),
-    vonage: provider({
-      enabled: resolvedSms.vonage.enabled,
-      from: resolvedSms.vonage.from,
-      api_key: secret(resolvedSms.vonage.api_key),
-      api_secret: secret(resolvedSms.vonage.api_secret),
-    }),
-    ...(auth.sms.test_otp === undefined ? {} : { test_otp: auth.sms.test_otp }),
-  };
-
-  const email = {
-    enable_signup: resolvedEmail.enable_signup,
-    double_confirm_changes: resolvedEmail.double_confirm_changes,
-    enable_confirmations: resolvedEmail.enable_confirmations,
-    secure_password_change: resolvedEmail.secure_password_change,
-    max_frequency: resolvedEmail.max_frequency,
-    otp_length: resolvedEmail.otp_length,
-    otp_expiry: resolvedEmail.otp_expiry,
-    ...(resolvedSmtp === undefined
-      ? {}
-      : {
-          smtp: {
-            enabled: resolvedSmtp.enabled,
-            host: resolvedSmtp.host,
-            ...(resolvedSmtp.port === 0 ? {} : { port: resolvedSmtp.port }),
-            user: resolvedSmtp.user,
-            pass: Redacted.make(resolvedSmtp.pass),
-            admin_email: resolvedSmtp.adminEmail,
-            sender_name: resolvedSmtp.senderName,
-          },
-        }),
-    template: Object.fromEntries(
-      Object.entries(resolvedEmail.template).map(([name, value]) => [
-        name,
-        pick(value, ["subject", "content_path"]),
-      ]),
-    ),
-    notification: Object.fromEntries(
-      Object.entries(resolvedEmail.notification).map(([name, value]) => [
-        name,
-        pick(value, ["enabled", "subject", "content_path"]),
-      ]),
-    ),
-  };
-
   return {
-    site_url: envString("SUPABASE_AUTH_SITE_URL", auth.site_url, env),
+    ...auth,
+    enabled: envBool("SUPABASE_AUTH_ENABLED", auth.enabled, "auth.enabled", env),
+    site_url: envString("SUPABASE_AUTH_SITE_URL", auth.site_url, env) ?? auth.site_url,
     additional_redirect_urls: envArray(
       "SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS",
       auth.additional_redirect_urls,
@@ -612,7 +813,7 @@ const authSettings = (
     ),
     jwt_expiry: envUint("SUPABASE_AUTH_JWT_EXPIRY", auth.jwt_expiry, "auth.jwt_expiry", env),
     jwt_issuer: envString("SUPABASE_AUTH_JWT_ISSUER", auth.jwt_issuer, env),
-    signing_keys_path: signingKeysPath,
+    signing_keys_path: envString("SUPABASE_AUTH_SIGNING_KEYS_PATH", auth.signing_keys_path, env),
     enable_refresh_token_rotation: envBool(
       "SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION",
       auth.enable_refresh_token_rotation,
@@ -649,205 +850,231 @@ const authSettings = (
       "auth.minimum_password_length",
       env,
     ),
-    password_requirements: passwordRequirements,
-    publishable_key: envSecret("SUPABASE_AUTH_PUBLISHABLE_KEY", auth.publishable_key, env),
-    secret_key: envSecret("SUPABASE_AUTH_SECRET_KEY", auth.secret_key, env),
-    jwt_secret: envSecret("SUPABASE_AUTH_JWT_SECRET", auth.jwt_secret, env),
-    anon_key: envSecret("SUPABASE_AUTH_ANON_KEY", auth.anon_key, env),
-    service_role_key: envSecret("SUPABASE_AUTH_SERVICE_ROLE_KEY", auth.service_role_key, env),
-    rate_limit: resolvedRateLimit,
-    ...(resolvedCaptcha === undefined
-      ? {}
-      : {
-          captcha: {
-            enabled: resolvedCaptcha.enabled,
-            provider: resolvedCaptcha.provider,
-            secret:
-              resolvedCaptcha.secret === undefined
-                ? undefined
-                : Redacted.make(resolvedCaptcha.secret),
-          },
-        }),
-    hook: hooks,
-    mfa: resolvedMfa,
-    sessions: resolvedSessions,
-    email,
-    sms,
-    external,
-    web3: resolvedWeb3,
-    oauth_server: resolvedOAuthServer,
+    password_requirements: envOverrideAuthPasswordRequirements(auth.password_requirements, env),
+    publishable_key: envString("SUPABASE_AUTH_PUBLISHABLE_KEY", auth.publishable_key, env),
+    secret_key: envString("SUPABASE_AUTH_SECRET_KEY", auth.secret_key, env),
+    jwt_secret: envString("SUPABASE_AUTH_JWT_SECRET", auth.jwt_secret, env),
+    anon_key: envString("SUPABASE_AUTH_ANON_KEY", auth.anon_key, env),
+    service_role_key: envString("SUPABASE_AUTH_SERVICE_ROLE_KEY", auth.service_role_key, env),
+    rate_limit: resolveGotrueRateLimit(auth.rate_limit, env),
+    captcha: resolveAuthCaptcha(authDocument, auth.captcha, env),
+    hook: hookResolved,
+    mfa: resolveAuthMfa(auth.mfa, env),
+    sessions: resolveGotrueSessions(auth.sessions, env),
+    email: { ...resolvedEmail, smtp: resolvedSmtp },
+    sms: resolveAuthSms(authDocument, auth.sms, env),
+    external: externalResolved,
+    web3: resolveGotrueWeb3(auth.web3, env),
+    oauth_server: resolveGotrueOAuthServer(auth.oauth_server, env),
     third_party: thirdParty,
   };
 };
 
-const authValidationInput = (resolved: AuthSettings): AuthInput => {
-  const hooks = [
-    ["mfa_verification_attempt", resolved.hook?.mfa_verification_attempt],
-    ["password_verification_attempt", resolved.hook?.password_verification_attempt],
-    ["custom_access_token", resolved.hook?.custom_access_token],
-    ["send_sms", resolved.hook?.send_sms],
-    ["send_email", resolved.hook?.send_email],
-    ["before_user_created", resolved.hook?.before_user_created],
-  ] as const;
-
-  const mfa = [
-    ["totp", resolved.mfa?.totp],
-    ["phone", resolved.mfa?.phone],
-    ["web_authn", resolved.mfa?.web_authn],
-  ] as const;
-
-  return {
-    siteUrl: resolved.site_url ?? "",
-    captcha:
-      resolved.captcha === undefined
-        ? undefined
-        : {
-            enabled: resolved.captcha.enabled === true,
-            provider: resolved.captcha.provider,
-            secret:
-              resolved.captcha.secret === undefined
-                ? undefined
-                : Redacted.value(resolved.captcha.secret),
-          },
-    hooks: hooks.flatMap(([type, hook]) =>
-      hook?.enabled === true
-        ? [
-            {
-              type,
-              uri: hook.uri ?? "",
-              secrets: hook.secrets === undefined ? "" : Redacted.value(hook.secrets),
-            },
-          ]
-        : [],
-    ),
-    mfa: mfa.map(([label, factor]) => ({
-      label,
-      enrollEnabled: factor?.enroll_enabled === true,
-      verifyEnabled: factor?.verify_enabled === true,
-    })),
-    smtp:
-      resolved.email?.smtp === undefined
-        ? undefined
-        : {
-            enabled: resolved.email.smtp.enabled === true,
-            host: resolved.email.smtp.host ?? "",
-            port: resolved.email.smtp.port ?? 0,
-            user: resolved.email.smtp.user ?? "",
-            pass:
-              resolved.email.smtp.pass === undefined
-                ? ""
-                : Redacted.value(resolved.email.smtp.pass),
-            adminEmail: resolved.email.smtp.admin_email ?? "",
-          },
-    thirdParty: [
-      ...(resolved.third_party?.firebase?.enabled === true
-        ? [
-            {
-              provider: "firebase" as const,
-              requiredField: resolved.third_party.firebase.project_id ?? "",
-            },
-          ]
-        : []),
-      ...(resolved.third_party?.auth0?.enabled === true
-        ? [
-            {
-              provider: "auth0" as const,
-              requiredField: resolved.third_party.auth0.tenant ?? "",
-            },
-          ]
-        : []),
-      ...(resolved.third_party?.aws_cognito?.enabled === true
-        ? [
-            {
-              provider: "cognito" as const,
-              requiredField: resolved.third_party.aws_cognito.user_pool_id ?? "",
-              cognitoUserPoolRegion: resolved.third_party.aws_cognito.user_pool_region,
-            },
-          ]
-        : []),
-      ...(resolved.third_party?.clerk?.enabled === true
-        ? [
-            {
-              provider: "clerk" as const,
-              requiredField: resolved.third_party.clerk.domain ?? "",
-            },
-          ]
-        : []),
-      ...(resolved.third_party?.workos?.enabled === true
-        ? [
-            {
-              provider: "workos" as const,
-              requiredField: resolved.third_party.workos.issuer_url ?? "",
-            },
-          ]
-        : []),
-    ],
-  };
-};
-const functionsSettings = (
-  projectRoot: string,
-  path: Path.Path,
+const resolveEffectiveCliConfig = (
   config: CliConfig,
-  document?: Record<string, unknown>,
-  projectEnvValues: Readonly<Record<string, string>> = {},
-) => {
+  document: Readonly<Record<string, unknown>> | undefined,
+  env: Readonly<Record<string, string>>,
+): CliConfig => {
+  const api = config.api;
+  const db = config.db;
+  const storage = config.storage;
+  const realtime = config.realtime;
+  const analytics = config.analytics;
+  const studio = config.studio;
+  const mail = config.local_smtp;
+  const pooler = db.pooler;
   const edge = config.edge_runtime;
-  const edgePolicy = envOverrideEdgeRuntimePolicy(edge.policy, projectEnvValues);
-  const edgeDenoVersion = envOverrideDenoVersion(edge.deno_version, projectEnvValues);
-  const documentFunctions = section(document, "functions");
-  const functions = Object.fromEntries(
-    Object.entries(config.functions).map(([name, value]) => [
-      name,
-      {
-        ...(value.enabled === undefined ? {} : { enabled: value.enabled }),
-        ...(value.verify_jwt === undefined ? {} : { verify_jwt: value.verify_jwt }),
-        ...(value.import_map === undefined
-          ? {}
-          : { import_map: functionRelativePath(path, projectRoot, value.import_map, name) }),
-        ...(value.entrypoint === undefined
-          ? {}
-          : { entrypoint: functionRelativePath(path, projectRoot, value.entrypoint, name) }),
-        ...(value.static_files === undefined
-          ? {}
-          : {
-              static_files: value.static_files.map((filePath) =>
-                functionRelativePath(path, projectRoot, filePath, name),
-              ),
-            }),
-        env: Object.fromEntries(
-          Object.entries(
-            isRecord(documentFunctions?.[name]) && isRecord(documentFunctions[name].env)
-              ? documentFunctions[name].env
-              : value.env,
-          ).flatMap(([key, item]) => {
-            const resolvedValue =
-              typeof item === "string" && /^env\([A-Za-z_][A-Za-z0-9_]*\)$/.test(item)
-                ? projectEnvValues[item.slice(4, -1)]
-                : item;
-            const resolved = secret(resolvedValue);
-            return resolved === undefined ? [] : [[key, resolved]];
-          }),
-        ),
-      },
-    ]),
-  );
-  return {
-    functions_root: "supabase/functions",
-    edge_runtime: {
-      ...(edgePolicy === undefined ? {} : { policy: edgePolicy }),
-      ...(edgeDenoVersion === undefined ? {} : { deno_version: edgeDenoVersion }),
-      ...(edge.secrets === undefined
-        ? {}
-        : {
-            secrets: Object.fromEntries(
-              Object.entries(edge.secrets).flatMap(([key, item]) => {
-                const resolved = secret(item);
-                return resolved === undefined ? [] : [[key, resolved]];
-              }),
-            ),
-          }),
+  const imagePresent = section(section(document, "storage"), "image_transformation") !== undefined;
+  const resolvedApi = {
+    ...api,
+    enabled: envBool("SUPABASE_API_ENABLED", api.enabled, "api.enabled", env),
+    port: resolvedPort("SUPABASE_API_PORT", api.port, "api.port", env),
+    schemas: envArray("SUPABASE_API_SCHEMAS", api.schemas, env),
+    extra_search_path: envArray("SUPABASE_API_EXTRA_SEARCH_PATH", api.extra_search_path, env),
+    max_rows: envOverrideApiMaxRows(api.max_rows, env),
+    tls: {
+      ...api.tls,
+      enabled: envBool("SUPABASE_API_TLS_ENABLED", api.tls.enabled, "api.tls.enabled", env),
+      cert_path: envString("SUPABASE_API_TLS_CERT_PATH", api.tls.cert_path, env),
+      key_path: envString("SUPABASE_API_TLS_KEY_PATH", api.tls.key_path, env),
     },
-    functions,
+    external_url: envString("SUPABASE_API_EXTERNAL_URL", api.external_url, env),
+    auto_expose_new_tables:
+      api.auto_expose_new_tables !== undefined ||
+      envOverride("SUPABASE_API_AUTO_EXPOSE_NEW_TABLES", undefined, env) !== undefined
+        ? envBool(
+            "SUPABASE_API_AUTO_EXPOSE_NEW_TABLES",
+            api.auto_expose_new_tables ?? false,
+            "api.auto_expose_new_tables",
+            env,
+          )
+        : undefined,
+  };
+  const resolvedStorage = {
+    ...storage,
+    enabled: envBool("SUPABASE_STORAGE_ENABLED", storage.enabled, "storage.enabled", env),
+    file_size_limit:
+      envString("SUPABASE_STORAGE_FILE_SIZE_LIMIT", String(storage.file_size_limit), env) ??
+      String(storage.file_size_limit),
+    image_transformation: imagePresent
+      ? {
+          ...storage.image_transformation,
+          enabled: envBool(
+            "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
+            storage.image_transformation?.enabled ?? false,
+            "storage.image_transformation.enabled",
+            env,
+          ),
+        }
+      : undefined,
+    s3_protocol: {
+      ...storage.s3_protocol,
+      enabled: envBool(
+        "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
+        storage.s3_protocol.enabled,
+        "storage.s3_protocol.enabled",
+        env,
+      ),
+    },
+    analytics: {
+      ...storage.analytics,
+      enabled: envBool(
+        "SUPABASE_STORAGE_ANALYTICS_ENABLED",
+        storage.analytics.enabled,
+        "storage.analytics.enabled",
+        env,
+      ),
+      max_namespaces: envOverrideUint(
+        "SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES",
+        "storage.analytics.max_namespaces",
+        storage.analytics.max_namespaces,
+        env,
+      ),
+      max_tables: envOverrideUint(
+        "SUPABASE_STORAGE_ANALYTICS_MAX_TABLES",
+        "storage.analytics.max_tables",
+        storage.analytics.max_tables,
+        env,
+      ),
+      max_catalogs: envOverrideUint(
+        "SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS",
+        "storage.analytics.max_catalogs",
+        storage.analytics.max_catalogs,
+        env,
+      ),
+    },
+    vector: {
+      ...storage.vector,
+      enabled: envBool(
+        "SUPABASE_STORAGE_VECTOR_ENABLED",
+        storage.vector.enabled,
+        "storage.vector.enabled",
+        env,
+      ),
+      max_buckets: envOverrideUint(
+        "SUPABASE_STORAGE_VECTOR_MAX_BUCKETS",
+        "storage.vector.max_buckets",
+        storage.vector.max_buckets,
+        env,
+      ),
+      max_indexes: envOverrideUint(
+        "SUPABASE_STORAGE_VECTOR_MAX_INDEXES",
+        "storage.vector.max_indexes",
+        storage.vector.max_indexes,
+        env,
+      ),
+    },
+  };
+  const resolvedEdge = {
+    ...edge,
+    enabled: envBool("SUPABASE_EDGE_RUNTIME_ENABLED", edge.enabled, "edge_runtime.enabled", env),
+    policy: envOverrideEdgeRuntimePolicy(edge.policy, env),
+    deno_version: envOverrideDenoVersion(edge.deno_version, env),
+    inspector_port: resolvedPort(
+      "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
+      edge.inspector_port,
+      "edge_runtime.inspector_port",
+      env,
+    ),
+  };
+  const resolvedAnalytics = {
+    ...analytics,
+    enabled: envBool("SUPABASE_ANALYTICS_ENABLED", analytics.enabled, "analytics.enabled", env),
+    backend: envOverrideAnalyticsBackend(analytics.backend, env),
+    vector_port:
+      resolvedPort(
+        "SUPABASE_ANALYTICS_VECTOR_PORT",
+        analytics.vector_port ?? 0,
+        "analytics.vector_port",
+        env,
+      ) || undefined,
+    gcp_project_id: envString("SUPABASE_ANALYTICS_GCP_PROJECT_ID", analytics.gcp_project_id, env),
+    gcp_project_number: envString(
+      "SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER",
+      analytics.gcp_project_number,
+      env,
+    ),
+    gcp_jwt_path: envString("SUPABASE_ANALYTICS_GCP_JWT_PATH", analytics.gcp_jwt_path, env),
+  };
+  const resolvedPooler = {
+    ...pooler,
+    enabled: envBool("SUPABASE_DB_POOLER_ENABLED", pooler.enabled, "db.pooler.enabled", env),
+    port: resolvedPort("SUPABASE_DB_POOLER_PORT", pooler.port, "db.pooler.port", env),
+    pool_mode: envOverridePoolMode(pooler.pool_mode, env),
+    default_pool_size: envOverrideDefaultPoolSize(pooler.default_pool_size, env),
+    max_client_conn: envOverrideMaxClientConn(pooler.max_client_conn, env),
+  };
+  const authEnabled = envBool("SUPABASE_AUTH_ENABLED", config.auth.enabled, "auth.enabled", env);
+  return {
+    ...config,
+    api: resolvedApi,
+    auth: authEnabled
+      ? resolveAuthOverrides(config.auth, document, env)
+      : { ...config.auth, enabled: false },
+    db: {
+      ...db,
+      port: resolvedPort("SUPABASE_DB_PORT", db.port, "db.port", env),
+      major_version: envOverrideMajorVersion(db.major_version, env),
+      health_timeout:
+        envString("SUPABASE_DB_HEALTH_TIMEOUT", db.health_timeout, env) ?? db.health_timeout,
+      settings: resolveDbSettingsEnvOverrides(db.settings, env),
+      pooler: resolvedPooler,
+    },
+    edge_runtime: resolvedEdge,
+    realtime: {
+      ...realtime,
+      enabled: envBool("SUPABASE_REALTIME_ENABLED", realtime.enabled, "realtime.enabled", env),
+      ip_version: envOverrideRealtimeIpVersion(realtime.ip_version, env),
+      max_header_length: envOverrideRealtimeMaxHeaderLength(realtime.max_header_length, env),
+    },
+    storage: resolvedStorage,
+    analytics: resolvedAnalytics,
+    studio: {
+      ...studio,
+      enabled: envBool("SUPABASE_STUDIO_ENABLED", studio.enabled, "studio.enabled", env),
+      port: resolvedPort("SUPABASE_STUDIO_PORT", studio.port, "studio.port", env),
+      api_url: envString("SUPABASE_STUDIO_API_URL", studio.api_url, env) ?? studio.api_url,
+      openai_api_key: envString("SUPABASE_STUDIO_OPENAI_API_KEY", studio.openai_api_key, env),
+    },
+    local_smtp: {
+      ...mail,
+      enabled: envBool("SUPABASE_LOCAL_SMTP_ENABLED", mail.enabled, "local_smtp.enabled", env),
+      port: resolvedPort("SUPABASE_LOCAL_SMTP_PORT", mail.port, "local_smtp.port", env),
+      smtp_port: resolvedPort(
+        "SUPABASE_LOCAL_SMTP_SMTP_PORT",
+        mail.smtp_port ?? 0,
+        "local_smtp.smtp_port",
+        env,
+      ),
+      pop3_port: resolvedPort(
+        "SUPABASE_LOCAL_SMTP_POP3_PORT",
+        mail.pop3_port ?? 0,
+        "local_smtp.pop3_port",
+        env,
+      ),
+      admin_email: envString("SUPABASE_LOCAL_SMTP_ADMIN_EMAIL", mail.admin_email, env),
+      sender_name: envString("SUPABASE_LOCAL_SMTP_SENDER_NAME", mail.sender_name, env),
+    },
   };
 };
 
@@ -856,9 +1083,10 @@ const configInput = (
   path: Path.Path,
   config: CliConfig,
   document?: Record<string, unknown>,
-  projectEnvValues: Readonly<Record<string, string>> = {},
-  effectiveEdgeEnabled?: boolean,
+  listenerEnvValues: Readonly<Record<string, string>> = {},
 ) => {
+  // The config has already been resolved and validated. Keep the environment
+  // separate here only for listener explicitness and deferred function env().
   const db = config.db;
   const api = config.api;
   const auth = config.auth;
@@ -868,248 +1096,63 @@ const configInput = (
   const analytics = config.analytics;
   const mail = config.local_smtp;
   const pooler = db.pooler;
-  const apiEnabled = envBool("SUPABASE_API_ENABLED", api.enabled, "api.enabled", projectEnvValues);
-  const apiSchemas = envArray("SUPABASE_API_SCHEMAS", api.schemas, projectEnvValues);
-  const apiExtraSearchPath = envArray(
-    "SUPABASE_API_EXTRA_SEARCH_PATH",
-    api.extra_search_path,
-    projectEnvValues,
-  );
-  const apiMaxRows = envOverrideApiMaxRows(api.max_rows, projectEnvValues);
-  const apiTls = {
-    enabled: envBool(
-      "SUPABASE_API_TLS_ENABLED",
-      api.tls.enabled,
-      "api.tls.enabled",
-      projectEnvValues,
-    ),
-    cert_path: envString("SUPABASE_API_TLS_CERT_PATH", api.tls.cert_path, projectEnvValues),
-    key_path: envString("SUPABASE_API_TLS_KEY_PATH", api.tls.key_path, projectEnvValues),
-  };
-  const apiResolved = {
-    ...api,
-    enabled: apiEnabled,
-    schemas: apiSchemas,
-    extra_search_path: apiExtraSearchPath,
-    max_rows: apiMaxRows,
-    tls: apiTls,
-    external_url: envString("SUPABASE_API_EXTERNAL_URL", api.external_url, projectEnvValues),
-    auto_expose_new_tables:
-      api.auto_expose_new_tables !== undefined ||
-      envOverride("SUPABASE_API_AUTO_EXPOSE_NEW_TABLES", undefined, projectEnvValues) !== undefined
-        ? envBool(
-            "SUPABASE_API_AUTO_EXPOSE_NEW_TABLES",
-            api.auto_expose_new_tables ?? false,
-            "api.auto_expose_new_tables",
-            projectEnvValues,
-          )
-        : undefined,
-  };
+  const apiResolved = api;
   const dbPort = envPortOrConfigured(
     "SUPABASE_DB_PORT",
     document,
     "db",
     "port",
     db.port,
-    projectEnvValues,
+    listenerEnvValues,
   );
-  const dbMajorVersion = envOverrideMajorVersion(db.major_version, projectEnvValues);
-  const dbSettings = resolveDbSettingsEnvOverrides(db.settings, projectEnvValues);
-  const realtimeResolved = {
-    ...realtime,
-    enabled: envBool(
-      "SUPABASE_REALTIME_ENABLED",
-      realtime.enabled,
-      "realtime.enabled",
-      projectEnvValues,
-    ),
-    ip_version: envOverrideRealtimeIpVersion(realtime.ip_version, projectEnvValues),
-    max_header_length: envOverrideRealtimeMaxHeaderLength(
-      realtime.max_header_length,
-      projectEnvValues,
-    ),
-  };
+  const dbMajorVersion = db.major_version;
+  const dbSettings = db.settings;
+  const realtimeResolved = realtime;
   const imageTransformationPresent =
     section(section(document, "storage"), "image_transformation") !== undefined;
-  const imageTransformation = imageTransformationPresent
-    ? {
-        enabled: envBool(
-          "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
-          storage.image_transformation?.enabled ?? false,
-          "storage.image_transformation.enabled",
-          projectEnvValues,
-        ),
-      }
-    : undefined;
-  const storageResolved = {
-    ...storage,
-    enabled: envBool(
-      "SUPABASE_STORAGE_ENABLED",
-      storage.enabled,
-      "storage.enabled",
-      projectEnvValues,
-    ),
-    file_size_limit: envString(
-      "SUPABASE_STORAGE_FILE_SIZE_LIMIT",
-      String(storage.file_size_limit),
-      projectEnvValues,
-    ),
-    image_transformation: imageTransformation,
-    s3_protocol: {
-      ...storage.s3_protocol,
-      enabled: envBool(
-        "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
-        storage.s3_protocol.enabled,
-        "storage.s3_protocol.enabled",
-        projectEnvValues,
-      ),
-    },
-    analytics: {
-      ...storage.analytics,
-      enabled: envBool(
-        "SUPABASE_STORAGE_ANALYTICS_ENABLED",
-        storage.analytics.enabled,
-        "storage.analytics.enabled",
-        projectEnvValues,
-      ),
-      max_namespaces: envOverrideUint(
-        "SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES",
-        "storage.analytics.max_namespaces",
-        storage.analytics.max_namespaces,
-        projectEnvValues,
-      ),
-      max_tables: envOverrideUint(
-        "SUPABASE_STORAGE_ANALYTICS_MAX_TABLES",
-        "storage.analytics.max_tables",
-        storage.analytics.max_tables,
-        projectEnvValues,
-      ),
-      max_catalogs: envOverrideUint(
-        "SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS",
-        "storage.analytics.max_catalogs",
-        storage.analytics.max_catalogs,
-        projectEnvValues,
-      ),
-    },
-    vector: {
-      ...storage.vector,
-      enabled: envBool(
-        "SUPABASE_STORAGE_VECTOR_ENABLED",
-        storage.vector.enabled,
-        "storage.vector.enabled",
-        projectEnvValues,
-      ),
-      max_buckets: envOverrideUint(
-        "SUPABASE_STORAGE_VECTOR_MAX_BUCKETS",
-        "storage.vector.max_buckets",
-        storage.vector.max_buckets,
-        projectEnvValues,
-      ),
-      max_indexes: envOverrideUint(
-        "SUPABASE_STORAGE_VECTOR_MAX_INDEXES",
-        "storage.vector.max_indexes",
-        storage.vector.max_indexes,
-        projectEnvValues,
-      ),
-    },
-  };
-  const edgeEnabled =
-    effectiveEdgeEnabled ??
-    envBool(
-      "SUPABASE_EDGE_RUNTIME_ENABLED",
-      config.edge_runtime.enabled,
-      "edge_runtime.enabled",
-      projectEnvValues,
-    );
-  const analyticsEnabled = envBool(
-    "SUPABASE_ANALYTICS_ENABLED",
-    analytics.enabled,
-    "analytics.enabled",
-    projectEnvValues,
-  );
-  const analyticsBackendValue = envOverrideAnalyticsBackend(analytics.backend, projectEnvValues);
-  const analyticsResolved = {
-    ...analytics,
-    enabled: analyticsEnabled,
-    backend: analyticsBackendValue,
-    vector_port:
-      envOverridePort(
-        "SUPABASE_ANALYTICS_VECTOR_PORT",
-        analytics.vector_port ?? 0,
-        "analytics.vector_port",
-        projectEnvValues,
-      ) || undefined,
-    gcp_project_id: envString(
-      "SUPABASE_ANALYTICS_GCP_PROJECT_ID",
-      analytics.gcp_project_id,
-      projectEnvValues,
-    ),
-    gcp_project_number: envString(
-      "SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER",
-      analytics.gcp_project_number,
-      projectEnvValues,
-    ),
-    gcp_jwt_path: envString(
-      "SUPABASE_ANALYTICS_GCP_JWT_PATH",
-      analytics.gcp_jwt_path,
-      projectEnvValues,
-    ),
-  };
-  const authEnabled = envBool(
-    "SUPABASE_AUTH_ENABLED",
-    auth.enabled,
-    "auth.enabled",
-    projectEnvValues,
-  );
-  const studioEnabled = envBool(
-    "SUPABASE_STUDIO_ENABLED",
-    studio.enabled,
-    "studio.enabled",
-    projectEnvValues,
-  );
+  const storageResolved = imageTransformationPresent
+    ? storage
+    : { ...storage, image_transformation: undefined };
+  const edgeEnabled = config.edge_runtime.enabled;
+  const analyticsEnabled = analytics.enabled;
+  const analyticsResolved = analytics;
+  const authEnabled = auth.enabled;
+  const studioEnabled = studio.enabled;
   const studioPort = envPortOrConfigured(
     "SUPABASE_STUDIO_PORT",
     document,
     "studio",
     "port",
     studio.port,
-    projectEnvValues,
+    listenerEnvValues,
   );
-  const studioApiUrl = envString("SUPABASE_STUDIO_API_URL", studio.api_url, projectEnvValues);
-  const mailEnabled = envBool(
-    "SUPABASE_LOCAL_SMTP_ENABLED",
-    mail.enabled,
-    "local_smtp.enabled",
-    projectEnvValues,
-  );
+  const studioApiUrl = studio.api_url;
+  const mailEnabled = mail.enabled;
   const mailPort = envPortOrConfigured(
     "SUPABASE_LOCAL_SMTP_PORT",
     document,
     "local_smtp",
     "port",
     mail.port,
-    projectEnvValues,
+    listenerEnvValues,
   );
-  const mailSmtpPort =
-    envOverridePort(
-      "SUPABASE_LOCAL_SMTP_SMTP_PORT",
-      mail.smtp_port ?? 0,
-      "local_smtp.smtp_port",
-      projectEnvValues,
-    ) || undefined;
-  const mailPop3Port =
-    envOverridePort(
-      "SUPABASE_LOCAL_SMTP_POP3_PORT",
-      mail.pop3_port ?? 0,
-      "local_smtp.pop3_port",
-      projectEnvValues,
-    ) || undefined;
-  const poolerEnabled = envBool(
-    "SUPABASE_DB_POOLER_ENABLED",
-    pooler.enabled,
-    "db.pooler.enabled",
-    projectEnvValues,
+  const mailSmtpPort = envPortOrConfigured(
+    "SUPABASE_LOCAL_SMTP_SMTP_PORT",
+    document,
+    "local_smtp",
+    "smtp_port",
+    mail.smtp_port ?? 0,
+    listenerEnvValues,
   );
+  const mailPop3Port = envPortOrConfigured(
+    "SUPABASE_LOCAL_SMTP_POP3_PORT",
+    document,
+    "local_smtp",
+    "pop3_port",
+    mail.pop3_port ?? 0,
+    listenerEnvValues,
+  );
+  const poolerEnabled = pooler.enabled;
   const poolerPort = envNestedPortOrConfigured(
     "SUPABASE_DB_POOLER_PORT",
     document,
@@ -1117,26 +1160,13 @@ const configInput = (
     "pooler",
     "port",
     pooler.port,
-    projectEnvValues,
+    listenerEnvValues,
   );
-  const poolerResolved = {
-    ...pooler,
-    enabled: poolerEnabled,
-    port: poolerPort,
-    pool_mode: envOverridePoolMode(pooler.pool_mode, projectEnvValues),
-    default_pool_size: envOverrideDefaultPoolSize(pooler.default_pool_size, projectEnvValues),
-    max_client_conn: envOverrideMaxClientConn(pooler.max_client_conn, projectEnvValues),
-  };
-  const signingKeysPath = envString(
-    "SUPABASE_AUTH_SIGNING_KEYS_PATH",
-    auth.signing_keys_path,
-    projectEnvValues,
-  );
-  const authResolvedSettings = authEnabled
-    ? authSettings(auth, document, projectEnvValues, signingKeysPath)
-    : undefined;
-  const jwtIssuer = envString("SUPABASE_AUTH_JWT_ISSUER", auth.jwt_issuer, projectEnvValues);
-  const jwtSecret = envSecret("SUPABASE_AUTH_JWT_SECRET", auth.jwt_secret, projectEnvValues);
+  const poolerResolved = pooler;
+  const signingKeysPath = auth.signing_keys_path;
+  const authResolvedSettings = authEnabled ? authSettings(auth, document) : undefined;
+  const jwtIssuer = auth.jwt_issuer;
+  const jwtSecret = secret(auth.jwt_secret);
   const jwtSigning = (): JwtSigning | undefined => {
     if (signingKeysPath !== undefined)
       return {
@@ -1154,11 +1184,7 @@ const configInput = (
       database: {
         version: String(dbMajorVersion),
         settings: {
-          health_timeout: envString(
-            "SUPABASE_DB_HEALTH_TIMEOUT",
-            db.health_timeout,
-            projectEnvValues,
-          ),
+          health_timeout: db.health_timeout,
           settings: dbSettings,
         },
       },
@@ -1190,29 +1216,17 @@ const configInput = (
       }),
       functions: capability(
         edgeEnabled,
-        functionsSettings(projectRoot, path, config, document, projectEnvValues),
+        functionsSettings(projectRoot, path, config, document, listenerEnvValues),
       ),
       studio: capability(studioEnabled, {
         // A host-only default must remain unset so the stack runtime can append
         // the allocated API listener port. Explicit URLs remain caller-owned.
         api_url: studioApiUrl === defaultStudioApiUrl ? undefined : studioApiUrl,
-        openai_api_key: envSecret(
-          "SUPABASE_STUDIO_OPENAI_API_KEY",
-          studio.openai_api_key,
-          projectEnvValues,
-        ),
+        openai_api_key: secret(studio.openai_api_key),
       }),
       mail: capability(mailEnabled, {
-        admin_email: envString(
-          "SUPABASE_LOCAL_SMTP_ADMIN_EMAIL",
-          mail.admin_email,
-          projectEnvValues,
-        ),
-        sender_name: envString(
-          "SUPABASE_LOCAL_SMTP_SENDER_NAME",
-          mail.sender_name,
-          projectEnvValues,
-        ),
+        admin_email: mail.admin_email,
+        sender_name: mail.sender_name,
       }),
       analytics: capability(analyticsEnabled, {
         backend: analyticsResolved.backend,
@@ -1230,22 +1244,14 @@ const configInput = (
     listeners: {
       api: apiListener(
         document,
-        {
-          ...config,
-          api: apiResolved,
-          auth: { ...config.auth, enabled: authEnabled },
-          realtime: { ...config.realtime, enabled: realtimeResolved.enabled },
-          storage: { ...config.storage, enabled: storageResolved.enabled },
-          edge_runtime: { ...config.edge_runtime, enabled: edgeEnabled },
-          analytics: { ...config.analytics, enabled: analyticsEnabled },
-        },
+        config,
         envPortOrConfigured(
           "SUPABASE_API_PORT",
           document,
           "api",
           "port",
           api.port,
-          projectEnvValues,
+          listenerEnvValues,
         ),
       ),
       database: listenerFromSection(document, "db", "port", dbPort),
@@ -1264,7 +1270,7 @@ const configInput = (
           "edge_runtime",
           "inspector_port",
           config.edge_runtime.inspector_port,
-          projectEnvValues,
+          listenerEnvValues,
         ),
         edgeEnabled,
       ),
@@ -1315,35 +1321,6 @@ const decryptConsumedSecrets = (
     return Object.fromEntries(entries);
   });
 
-const authValidationError = (
-  auth: AuthSettings,
-  config: CliConfig,
-  document: Readonly<Record<string, unknown>> | undefined,
-  projectEnvValues: Readonly<Record<string, string>>,
-): string | undefined => {
-  try {
-    validateAuthConfig(authValidationInput(auth));
-    const authDocument = section(document, "auth");
-    const figma = config.auth.external.figma;
-    if (
-      figma !== undefined &&
-      section(section(authDocument, "external"), "figma") !== undefined &&
-      envOverrideBool(
-        "SUPABASE_AUTH_EXTERNAL_FIGMA_ENABLED",
-        figma.enabled,
-        "auth.external.figma.enabled",
-        projectEnvValues,
-      )
-    )
-      return "auth.external.figma is enabled but unsupported by the experimental stack";
-    validateAuthSmsProviders(authDocument, config.auth.sms, projectEnvValues);
-    validateAuthExternalProviders(authDocument, config.auth.external, projectEnvValues);
-    return undefined;
-  } catch (cause) {
-    return cause instanceof Error ? cause.message : String(cause);
-  }
-};
-
 const configValidationError = (
   path: Path.Path,
   projectRoot: string,
@@ -1351,6 +1328,9 @@ const configValidationError = (
   projectEnvValues: Readonly<Record<string, string>>,
   effectiveEdgeEnabled: boolean,
 ): string | undefined => {
+  const figma = config.auth.external.figma;
+  if (config.auth.enabled && figma?.enabled === true)
+    return "auth.external.figma is enabled but unsupported by the experimental stack";
   if (!effectiveEdgeEnabled) return undefined;
   for (const [name, functionConfig] of Object.entries(config.functions)) {
     if (functionConfig.enabled === false) continue;
@@ -1388,28 +1368,37 @@ export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
         message: `No Supabase project configuration found in ${projectRoot}. Run supabase init first.`,
       });
 
-    const edgeEnabled = yield* Effect.try({
+    const effectiveInput = yield* Effect.try({
       try: () =>
-        envOverrideBool(
-          "SUPABASE_EDGE_RUNTIME_ENABLED",
-          context.config.edge_runtime.enabled,
-          "edge_runtime.enabled",
-          context.projectEnvValues,
-        ),
+        resolveEffectiveCliConfig(context.config, loaded.document, context.projectEnvValues),
       catch: (cause) =>
         new StackConfigError({
-          message:
-            cause instanceof Error ? cause.message : "invalid config for edge_runtime.enabled",
+          message: cause instanceof Error ? cause.message : "invalid config overrides",
         }),
     });
+    const dotenvPrivateKeys = collectDotenvPrivateKeys(context.projectEnvValues);
+    const validatedConfig = yield* validateCliConfig(withoutUndefined(effectiveInput)).pipe(
+      Effect.mapError((cause) => {
+        const issues = SchemaIssue.makeFormatterStandardSchemaV1({
+          leafHook: () => "Invalid value",
+          checkHook: () => undefined,
+        })(cause.issue).issues;
+        const path = issues[0]?.path
+          ?.map((segment) => String(typeof segment === "object" ? segment.key : segment))
+          .join(".");
+        return new StackConfigError({
+          message: path === undefined ? "invalid config" : `invalid config at ${path}`,
+        });
+      }),
+    );
     const validationError = yield* Effect.try({
       try: () =>
         configValidationError(
           path,
           projectRoot,
-          context.config,
+          validatedConfig,
           context.projectEnvValues,
-          edgeEnabled,
+          validatedConfig.edge_runtime.enabled,
         ),
       catch: (cause) =>
         new StackConfigError({
@@ -1422,22 +1411,15 @@ export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
     const environments = yield* readFunctionEnvironments(
       projectRoot,
       new Set(
-        Object.entries(context.config.functions)
+        Object.entries(validatedConfig.functions)
           .filter(([, functionConfig]) => functionConfig.enabled === false)
           .map(([name]) => name),
       ),
-      !edgeEnabled,
+      !validatedConfig.edge_runtime.enabled,
     );
     const input = yield* Effect.try({
       try: () =>
-        configInput(
-          projectRoot,
-          path,
-          context.config,
-          loaded.document,
-          context.projectEnvValues,
-          edgeEnabled,
-        ),
+        configInput(projectRoot, path, validatedConfig, loaded.document, context.projectEnvValues),
       catch: (cause) =>
         new StackConfigError({
           message:
@@ -1502,7 +1484,6 @@ export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
               },
             },
           };
-    const dotenvPrivateKeys = collectDotenvPrivateKeys(context.projectEnvValues);
     const decrypted = yield* decryptConsumedSecrets(mergedInput, dotenvPrivateKeys);
     const decoded = yield* Schema.decodeUnknownEffect(StackConfigSchema)(
       withoutUndefined(decrypted),
@@ -1517,19 +1498,5 @@ export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
           }),
       ),
     );
-    const authCapability = decoded.capabilities?.auth;
-    if (authCapability !== undefined && "settings" in authCapability) {
-      const auth = authCapability.settings;
-      if (auth !== undefined) {
-        const validationError = authValidationError(
-          auth,
-          context.config,
-          loaded.document,
-          context.projectEnvValues,
-        );
-        if (validationError !== undefined)
-          return yield* new StackConfigError({ message: validationError });
-      }
-    }
     return decoded;
   });

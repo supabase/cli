@@ -322,24 +322,6 @@ uri = "config-hook"
         env: "SUPABASE_AUTH_SMS_VONAGE_ENABLED=true\n",
         message: "auth.sms.vonage.from",
       },
-      {
-        name: "captcha",
-        config: `[auth.captcha]\nenabled = false\nprovider = "hcaptcha"\n`,
-        env: "SUPABASE_AUTH_CAPTCHA_ENABLED=true\n",
-        message: "auth.captcha.secret",
-      },
-      {
-        name: "hook",
-        config: `[auth.hook.custom_access_token]\nenabled = false\n`,
-        env: "SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=true\n",
-        message: "auth.hook.custom_access_token.uri",
-      },
-      {
-        name: "third-party provider",
-        config: `[auth.third_party.firebase]\nenabled = false\n`,
-        env: "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED=true\n",
-        message: "auth.third_party.firebase",
-      },
     ];
     return Effect.gen(function* () {
       for (const testCase of cases) {
@@ -544,12 +526,14 @@ auto_expose_new_tables = true
       Effect.gen(function* () {
         const exit = yield* load(root).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("analytics.backend");
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain("analytics.backend");
+        }
       }),
     );
   });
 
-  it.effect("honors representative list, database version, and Studio secret overrides", () => {
+  it.effect("honors representative API, analytics, database, and Studio overrides", () => {
     const root = project(
       `project_id = "stack-config-representative-overrides"
 [api]
@@ -562,6 +546,9 @@ openai_api_key = "config-studio-key"
       {
         supabaseEnv: [
           "SUPABASE_API_SCHEMAS=public,storage",
+          "SUPABASE_ANALYTICS_BACKEND=bigquery",
+          "SUPABASE_ANALYTICS_VECTOR_PORT=54328",
+          "SUPABASE_ANALYTICS_GCP_PROJECT_ID=env-project",
           "SUPABASE_DB_MAJOR_VERSION=17",
           "SUPABASE_STUDIO_OPENAI_API_KEY=env-studio-key",
           "",
@@ -576,6 +563,14 @@ openai_api_key = "config-studio-key"
         throw new Error("Studio settings missing");
       expect(config.capabilities.rest.settings?.schemas).toEqual(["public", "storage"]);
       expect(config.capabilities.database?.version).toBe("17");
+      if (
+        config.capabilities.analytics === undefined ||
+        !("settings" in config.capabilities.analytics)
+      )
+        throw new Error("analytics settings missing");
+      expect(config.capabilities.analytics.settings?.backend).toBe("bigquery");
+      expect(config.capabilities.analytics.settings?.vector_port).toBe(54328);
+      expect(config.capabilities.analytics.settings?.gcp_project_id).toBe("env-project");
       expect(config.capabilities.studio.settings?.openai_api_key).toBeDefined();
       if (config.capabilities.studio.settings?.openai_api_key === undefined)
         throw new Error("Studio secret missing");

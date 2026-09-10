@@ -473,6 +473,7 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
         "toProjectConfig",
         "toProjectConfigJsonSchema",
         "unmappedApiFields",
+        "validateCliConfig",
       ]
     `);
   });

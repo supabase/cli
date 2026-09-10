@@ -8,6 +8,7 @@ import type { CliProjectEnvironment } from "./project.ts";
 import * as project from "./project.ts";
 
 export { configJsonPath, configTomlPath, saveCliConfig } from "./io.ts";
+export { validateCliConfig } from "./validate.ts";
 
 /**
  * Narrowed to the public `LoadCliConfigOptions` (no `goViperCompat`). The
