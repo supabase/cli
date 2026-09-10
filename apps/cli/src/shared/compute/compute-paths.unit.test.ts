@@ -30,10 +30,10 @@ describe("compute directories", () => {
   it.live("resolve under supabase/compute/", () =>
     Effect.gen(function* () {
       expect(yield* runPath((path) => computeRootDir(path, PROJECT))).toBe(
-        `${PROJECT}/supabase/compute`,
+        yield* runPath((path) => path.join(PROJECT, "supabase", "compute")),
       );
       expect(yield* runPath((path) => computeDir(path, PROJECT, "api"))).toBe(
-        `${PROJECT}/supabase/compute/api`,
+        yield* runPath((path) => path.join(PROJECT, "supabase", "compute", "api")),
       );
     }),
   );
@@ -48,7 +48,9 @@ describe("compute directories", () => {
 
       expect(yield* sourceDir(undefined)).toBe(defaultDir);
       expect(yield* sourceDir("")).toBe(defaultDir);
-      expect(yield* sourceDir("packages/api")).toBe(`${PROJECT}/packages/api`);
+      expect(yield* sourceDir("packages/api")).toBe(
+        yield* runPath((path) => path.join(PROJECT, "packages", "api")),
+      );
     }),
   );
 
@@ -80,11 +82,15 @@ describe("displayPath", () => {
   it.live("prefers the relative form, and falls back to absolute when it would climb out", () =>
     Effect.gen(function* () {
       expect(
-        yield* runPath((path) => displayPath(path, PROJECT, `${PROJECT}/supabase/compute/api`)),
-      ).toBe("supabase/compute/api");
+        yield* runPath((path) =>
+          displayPath(path, PROJECT, path.join(PROJECT, "supabase", "compute", "api")),
+        ),
+      ).toBe(yield* runPath((path) => path.join("supabase", "compute", "api")));
       expect(yield* runPath((path) => displayPath(path, PROJECT, PROJECT))).toBe(".");
       expect(
-        yield* runPath((path) => displayPath(path, `${PROJECT}/deep/deeper`, "/elsewhere/api")),
+        yield* runPath((path) =>
+          displayPath(path, path.join(PROJECT, "deep", "deeper"), "/elsewhere/api"),
+        ),
       ).toBe("/elsewhere/api");
     }),
   );
@@ -99,12 +105,12 @@ describe("resolveComputeSource", () => {
         yield* runFs(
           resolveComputeSource({ projectRoot: PROJECT, cwd, raw: "../../packages/api" }),
         ),
-      ).toBe(`${PROJECT}/packages/api`);
+      ).toBe(yield* runPath((path) => path.join(PROJECT, "packages", "api")));
       expect(
         yield* runFs(
           resolveComputeSource({ projectRoot: PROJECT, cwd: PROJECT, raw: "packages/api/" }),
         ),
-      ).toBe(`${PROJECT}/packages/api`);
+      ).toBe(yield* runPath((path) => path.join(PROJECT, "packages", "api")));
     }),
   );
 
@@ -168,13 +174,13 @@ describe("resolveComputeSource containment on a real filesystem", () => {
     ).pipe(Effect.provide(BunServices.layer));
 
   it.live("resolves a genuine directory inside the project", () =>
-    withFixture((project, _outside, _fs, _path) =>
+    withFixture((project, _outside, _fs, path) =>
       Effect.gen(function* () {
         expect(
           yield* runFs(
             resolveComputeSource({ projectRoot: project, cwd: project, raw: "packages" }),
           ),
-        ).toBe(`${project}/packages`);
+        ).toBe(path.join(project, "packages"));
       }),
     ),
   );
@@ -228,13 +234,13 @@ describe("resolveComputeSource containment on a real filesystem", () => {
   // entry if the user quoted it. Trimming it pointed the scaffold at a different
   // directory than the one asked for.
   it.live("keeps whitespace that is part of the directory name", () =>
-    withFixture((project, _outside, _fs, _path) =>
+    withFixture((project, _outside, _fs, path) =>
       Effect.gen(function* () {
         expect(
           yield* runFs(
             resolveComputeSource({ projectRoot: project, cwd: project, raw: "packages/api " }),
           ),
-        ).toBe(`${project}/packages/api `);
+        ).toBe(path.join(project, "packages", "api "));
       }),
     ),
   );
@@ -254,13 +260,13 @@ describe("resolveComputeSource containment on a real filesystem", () => {
   );
 
   it.live("accepts a destination that does not exist yet", () =>
-    withFixture((project, _outside, _fs, _path) =>
+    withFixture((project, _outside, _fs, path) =>
       Effect.gen(function* () {
         expect(
           yield* runFs(
             resolveComputeSource({ projectRoot: project, cwd: project, raw: "packages/brand-new" }),
           ),
-        ).toBe(`${project}/packages/brand-new`);
+        ).toBe(path.join(project, "packages", "brand-new"));
       }),
     ),
   );

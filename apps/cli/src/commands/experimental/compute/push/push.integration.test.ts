@@ -1290,8 +1290,12 @@ describe("compute push", () => {
       // on, so the compute discovered here comes from that tree even though the
       // process is somewhere else entirely.
       const repo = yield* project();
-      yield* makeComputeProject();
-      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+      const elsewhere = yield* makeComputeProject();
+      const { layer, http } = setupCompute({
+        workdir: repo.dir,
+        cwd: elsewhere.dir,
+        routes: routes(),
+      });
 
       return yield* Effect.gen(function* () {
         yield* push({ names: [] });

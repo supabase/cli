@@ -151,7 +151,8 @@ When replacing a wrapper natively:
 
 ### Directory layout
 
-One directory per top-level command under `src/commands/`:
+One directory per command family under `src/commands/`, with opt-in families grouped
+under `src/commands/experimental/`:
 
 ```
 src/commands/<command>/
