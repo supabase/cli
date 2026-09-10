@@ -22,6 +22,7 @@ import { inspectDbTableStatsCommand } from "./table-stats/table-stats.command.ts
 import { inspectDbTotalIndexSizeCommand } from "./total-index-size/total-index-size.command.ts";
 import { inspectDbTotalTableSizesCommand } from "./total-table-sizes/total-table-sizes.command.ts";
 import { inspectDbTrafficProfileCommand } from "./traffic-profile/traffic-profile.command.ts";
+import { inspectDbToastSizesCommand } from "./toast-sizes/toast-sizes.command.ts";
 import { inspectDbUnusedIndexesCommand } from "./unused-indexes/unused-indexes.command.ts";
 import { inspectDbVacuumStatsCommand } from "./vacuum-stats/vacuum-stats.command.ts";
 
@@ -42,6 +43,7 @@ export const inspectDbCommand = Command.make("db").pipe(
     inspectDbVacuumStatsCommand,
     inspectDbTableStatsCommand,
     inspectDbTrafficProfileCommand,
+    inspectDbToastSizesCommand,
     inspectDbCacheHitCommand,
     inspectDbIndexUsageCommand,
     inspectDbTotalIndexSizeCommand,

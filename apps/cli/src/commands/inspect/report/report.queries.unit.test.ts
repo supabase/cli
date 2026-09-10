@@ -38,7 +38,7 @@ describe("reportIgnoreSchemas", () => {
 });
 
 describe("REPORT_QUERIES", () => {
-  it("has the 14 underscore CSV basenames Go embeds", () => {
+  it("has the 15 underscore CSV basenames Go embeds", () => {
     expect(REPORT_QUERIES.map((q) => q.fileName)).toEqual([
       "bloat",
       "blocking",
@@ -53,6 +53,7 @@ describe("REPORT_QUERIES", () => {
       "table_stats",
       "traffic_profile",
       "unused_indexes",
+      "toast_sizes",
       "vacuum_stats",
     ]);
   });
