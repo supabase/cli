@@ -3,9 +3,8 @@ import type { ConnectSuggestionContext } from "./connect-errors.ts";
 import type { DbConnectError, DbCopyError, DbExecError } from "./db-connection.errors.ts";
 
 /**
- * Plain Postgres connection parameters, mirroring pgconn's `pgconn.Config`.
- * The password is plain here;
- * driver layers wrap it (e.g. `Redacted`) at the boundary.
+ * Plain Postgres connection parameters. The password is plain here; driver layers wrap it
+ * (e.g. `Redacted`) at the boundary.
  */
 export interface PgConnInput {
   readonly host: string;
@@ -14,65 +13,54 @@ export interface PgConnInput {
   readonly password: string;
   readonly database: string;
   /**
-   * Additional HA failover hosts beyond the primary `host`/`port`, in order.
-   * pgconn accepts libpq multi-host connection strings
-   * (`postgres://h1:5432,h2:5433/db` or `host=h1,h2 port=5432,5433`) and dials
-   * each in turn. `host`/`port` are the *primary*
-   * (`config.Host`/`config.Port`, used for `IsLocalDatabase` and `.pgpass`); these
-   * are the remaining `config.Fallbacks`. Absent for the common single-host case.
+   * Additional HA failover hosts beyond the primary `host`/`port`, in order — libpq multi-host
+   * connection strings (`postgres://h1:5432,h2:5433/db`) dial each in turn. Absent for the
+   * common single-host case.
    */
   readonly fallbacks?: ReadonlyArray<{ readonly host: string; readonly port: number }>;
   /**
-   * libpq `options` startup parameter (Go's `pgconn.Config.RuntimeParams["options"]`).
-   * Legacy Supavisor pooler URLs identify the tenant via `?options=reference=<ref>`
-   * instead of a `<user>.<ref>` username; the driver layer must forward this so the
-   * connection reaches the right tenant. Empty/absent for direct and local connections.
+   * libpq `options` startup parameter. Legacy Supavisor pooler URLs identify the tenant via
+   * `?options=reference=<ref>` instead of a `<user>.<ref>` username, so the driver layer must
+   * forward this to reach the right tenant. Empty/absent for direct and local connections.
    */
   readonly options?: string;
   /**
-   * Additional libpq startup `RuntimeParams` parsed from a `--db-url` (e.g.
-   * `search_path`, `statement_timeout`, `application_name`) — every connection-string
-   * setting except pgconn's `notRuntimeParams` and `options` (carried separately). Go's
-   * `ToPostgresURL` re-appends all of these, so pg-delta introspects with the same
-   * session settings. Absent when the DSN carries none.
+   * Additional libpq startup parameters parsed from a `--db-url` (e.g. `search_path`,
+   * `statement_timeout`, `application_name`), excluding `options` (carried separately),
+   * re-applied so pg-delta introspects with the same session settings. Absent when the DSN
+   * carries none.
    */
   readonly runtimeParams?: Readonly<Record<string, string>>;
   /**
-   * libpq `sslmode` (Go's `pgconn.Config` TLS mode, parsed by `pgconn.ParseConfig`
-   * from a `--db-url` query string). Controls whether the driver layer negotiates
-   * TLS and whether it verifies the server certificate. Absent → the remote default
-   * (TLS without certificate verification, matching pgx's `prefer`/`require`).
+   * libpq `sslmode`, parsed from a `--db-url` query string. Controls whether the driver layer
+   * negotiates TLS and verifies the server certificate. Absent → TLS without certificate
+   * verification (libpq's `prefer`/`require` default).
    */
   readonly sslmode?: string;
   /**
-   * libpq `sslrootcert` (Go's `pgconn.Config` `TLSConfig.RootCAs`, from the DSN
-   * or `PGSSLROOTCERT`): path to a CA bundle the driver layer loads to verify the
-   * server certificate. pgconn treats `sslmode=require` + a root cert as
+   * libpq `sslrootcert`, from the DSN or `PGSSLROOTCERT`: path to a CA bundle the driver layer
+   * loads to verify the server certificate. `sslmode=require` plus a root cert behaves as
    * `verify-ca`. Absent → system roots / no CA pinning.
    */
   readonly sslrootcert?: string;
   /**
-   * libpq client-certificate auth (Go's `pgconn.Config` `TLSConfig.Certificates`,
-   * from the DSN or `PGSSLCERT`/`PGSSLKEY`/`PGSSLPASSWORD`). `sslcert`/`sslkey` are
-   * file paths loaded by the driver layer into the client cert; `sslpassword`
-   * decrypts an encrypted key. pgconn requires both `sslcert` and `sslkey` together,
-   * so the parser only ever sets them as a pair.
+   * libpq client-certificate auth, from the DSN or `PGSSLCERT`/`PGSSLKEY`/`PGSSLPASSWORD`.
+   * `sslcert`/`sslkey` are file paths loaded into the client cert; `sslpassword` decrypts an
+   * encrypted key. The parser only ever sets `sslcert`/`sslkey` as a pair.
    */
   readonly sslcert?: string;
   readonly sslkey?: string;
   readonly sslpassword?: string;
   /**
-   * libpq `connect_timeout` in seconds (Go's `pgconn.Config.ConnectTimeout`, from
-   * the DSN or `PGCONNECT_TIMEOUT`). Only set when explicitly provided and > 0; the
-   * driver layer applies Go's default otherwise (10s remote, 2s local — see
-   * `ToPostgresURL`/`ConnectLocalPostgres`).
+   * libpq `connect_timeout` in seconds, from the DSN or `PGCONNECT_TIMEOUT`. Only set when
+   * explicitly provided and > 0; the driver layer applies its own default otherwise (10s remote,
+   * 2s local).
    */
   readonly connectTimeoutSeconds?: number;
   /**
-   * Profile context for the connect-failure suggestion (`SetConnectSuggestion`,
-   * which reads the ambient `CurrentProfile` in `ConnectByUrl`). The resolver attaches
-   * it so the driver layer can map a refused/auth/IPv6 connect error to Go's actionable
-   * hint. Absent → the driver omits the suggestion (callers fall back to the generic one).
+   * Profile context for the connect-failure suggestion. The resolver attaches it so the driver
+   * layer can map a refused/auth/IPv6 connect error to an actionable hint. Absent → the driver
+   * omits the suggestion (callers fall back to the generic one).
    */
   readonly suggestionContext?: ConnectSuggestionContext;
 }
@@ -92,94 +80,58 @@ export interface DbBatchStatement {
  */
 export interface DbSession {
   /**
-   * SQL that restores the role this session stepped down to after authenticating
-   * as a temp/privileged login role (`SET SESSION ROLE postgres`). Absent when no
-   * step-down ran. A migration's own `RESET ROLE` reverts the session to the
-   * login role — not `postgres` — so file runners re-assert this immediately after
-   * each top-level role-reverting statement, at the end of each file, and before
-   * CLI-owned ledger writes (supabase/cli#6236). Must stay a fixed, non-user-derived
-   * statement: consumers embed it verbatim in batches.
+   * SQL that restores the role this session stepped down to after authenticating as a
+   * temp/privileged login role. Absent when no step-down ran. File runners re-assert it after
+   * each role-reverting statement (a migration's own `RESET ROLE` reverts to the login role, not
+   * this one) and before CLI-owned ledger writes. Must stay a fixed, non-user-derived statement.
    */
   readonly restoreRoleSql?: string;
   /** Run a single SQL statement, ignoring any returned rows. */
   readonly exec: (sql: string) => Effect.Effect<void, DbExecError>;
   /**
-   * Run statements as one extended-protocol batch with a single final Sync.
-   * On failure, {@link DbExecError.statementIndex} is the number of
-   * statements that completed before the error.
+   * Run statements as one extended-protocol batch with a single final Sync. On failure,
+   * {@link DbExecError.statementIndex} is the number of statements that completed before the
+   * error.
    *
-   * A batch runs on its own pooled connection, which the driver checks out per
-   * call. Failing to acquire it, or losing it before any of the batch reaches the
-   * wire, raises `DbConnectError` (a connection failure, surfaced verbatim —
-   * not masked as an exec error), consistent with {@link queryRaw}; only a batch
-   * that was actually written raises `DbExecError`.
+   * A batch runs on its own pooled connection. Failing to acquire it, or losing it before any of
+   * the batch reaches the wire, raises `DbConnectError` instead of `DbExecError`, consistent
+   * with {@link queryRaw}.
    */
   readonly execBatch: (
     statements: ReadonlyArray<DbBatchStatement>,
   ) => Effect.Effect<void, DbExecError | DbConnectError>;
   /**
-   * Run a parameterized SQL query and return the result rows as plain objects
-   * keyed by the query's column names (snake_case is preserved — the driver
-   * layer applies no row-name transform, mirroring `pgxv5.CollectRows`).
-   *
-   * Used by the `inspect db` subcommands, which each embed a SQL file and render
-   * the rows as a Glamour table. `params` are bound positionally (`$1`, `$2`, …),
-   * matching `conn.Query(ctx, sql, args...)`.
+   * Run a parameterized SQL query and return the result rows as plain objects keyed by the
+   * query's column names (snake_case is preserved; no row-name transform is applied). Used by
+   * the `inspect db` subcommands to render rows as a Glamour table. `params` are bound
+   * positionally (`$1`, `$2`, …).
    */
   readonly query: (
     sql: string,
     params?: ReadonlyArray<unknown>,
   ) => Effect.Effect<ReadonlyArray<Record<string, unknown>>, DbExecError>;
   /**
-   * Whether an extension named `name` already exists in `pg_extension`,
-   * **regardless of which schema it lives in**.
-   *
-   * The established behavior keys "did pgTAP already exist?" off a `pgx` `OnNotice` callback (notice
-   * code `42710`, `duplicate_object`). That notice fires whenever
-   * `CREATE EXTENSION IF NOT EXISTS pgtap ...` finds the extension already
-   * installed — extensions are global per-database, so the schema is irrelevant.
-   * `@effect/sql-pg`'s `PgClient` exposes no notice hook, so the port
-   * detects pre-existence with this query before enabling. Querying by `extname`
-   * only (not `extname` + `nspname`) matches that behavior: it must not drop a pgTAP the user
-   * pre-installed in another schema such as `public`.
+   * Whether an extension named `name` already exists in `pg_extension`, regardless of which
+   * schema it lives in. Extensions are global per database, so querying by `extname` alone (not
+   * `extname` + `nspname`) avoids treating a pgTAP already installed in another schema (e.g.
+   * `public`) as absent and dropping it.
    */
   readonly extensionExists: (name: string) => Effect.Effect<boolean, DbExecError>;
   /**
-   * Run a server-side `COPY (...) TO STDOUT` and return its raw bytes. Mirrors
-   * `copyToCSV`, which
-   * streams `pgconn.CopyTo` into a file. `sql` is the already-wrapped COPY
-   * statement (e.g. `COPY (<query>) TO STDOUT WITH CSV HEADER`); the driver does
-   * not wrap it. Used by `inspect report` to produce byte-identical CSVs by
-   * construction (the server serializes the values, never the TS side).
-   *
-   * The driver opens ONE dedicated raw connection (node-postgres' COPY protocol
-   * needs the raw client, which `@effect/sql-pg` does not expose) against the same
-   * resolved dial target the primary connection won — so TLS / fallback / DoH
-   * parity is preserved — and reuses it for every copy, matching the established single
-   * `pgconn` for all report queries. The connection is opened lazily on the first
-   * copy and closed when the owning session's scope closes. Failing to establish
-   * that connection raises `DbConnectError` (a connection-setup failure); only
-   * the COPY stream itself raises `DbCopyError`.
+   * Runs a server-side `COPY (...) TO STDOUT` and returns its raw bytes; `sql` is the
+   * already-wrapped COPY statement. Uses one dedicated raw connection, since node-postgres' COPY
+   * protocol needs it and `@effect/sql-pg` does not expose one, dialed against the same resolved
+   * target as the primary connection and reused for the session. Failing to open it raises
+   * `DbConnectError`; the COPY stream itself raises `DbCopyError`.
    */
   readonly copyToCsv: (sql: string) => Effect.Effect<Uint8Array, DbCopyError | DbConnectError>;
   /**
-   * Run a SQL statement and return its full result metadata, mirroring
-   * `pgx.Rows` surface used by `db query`:
-   * the ordered column names (`fields`), the row values **positionally** (so
-   * duplicate column names survive — node-postgres `rowMode: "array"`), and the
-   * raw command tag (`rows.CommandTag()`, e.g. `INSERT 0 1`, `CREATE TABLE`).
-   *
-   * A statement with no result columns (DDL/DML) returns `fields: []`; the caller
-   * prints `commandTag`. `@effect/sql-pg` exposes none of this (it returns row
-   * objects only), so the driver runs the query on a dedicated raw `pg` client —
-   * the same one `copyToCsv` uses — and captures the command tag from the
-   * `commandComplete` protocol message (node-postgres otherwise keeps only the
-   * first tag word, losing e.g. the `TABLE` in `CREATE TABLE`).
-   *
-   * Failing to establish that shared raw connection raises `DbConnectError`
-   * (a connection-setup failure, surfaced verbatim — not masked as an exec
-   * error), consistent with {@link copyToCsv}; the query itself raises
-   * `DbExecError`.
+   * Runs a SQL statement and returns its full result metadata for `db query`: ordered column
+   * names (`fields`), row values positionally (so duplicate column names survive), and the raw
+   * command tag, read directly from the `commandComplete` protocol message since node-postgres
+   * otherwise truncates it (e.g. dropping `TABLE` from `CREATE TABLE`). A statement with no
+   * result columns returns `fields: []`. Failing to open the connection raises `DbConnectError`;
+   * the query itself raises `DbExecError`.
    */
   readonly queryRaw: (sql: string) => Effect.Effect<QueryResult, DbExecError | DbConnectError>;
 }
@@ -188,10 +140,9 @@ export interface DbSession {
 export interface QueryResult {
   readonly fields: ReadonlyArray<string>;
   /**
-   * Postgres type OID per column (node-postgres `FieldDef.dataTypeID`). Lets the
-   * local/`--db-url` table/CSV formatter render `float4`/`float8` columns with Go's
-   * `%g` while integer columns stay plain — Go scans by field type
-   * (`internal/db/query`). Optional so other `queryRaw` callers/mocks need not set it.
+   * Postgres type OID per column. Lets the table/CSV formatter render `float4`/`float8` columns
+   * with `%g`-style formatting while integer columns stay plain. Optional so other `queryRaw`
+   * callers/mocks need not set it.
    */
   readonly fieldTypeIds?: ReadonlyArray<number>;
   readonly rows: ReadonlyArray<ReadonlyArray<unknown>>;
@@ -201,20 +152,15 @@ export interface QueryResult {
 /** Per-connection options the driver layer cannot infer from `cfg` alone. */
 export interface DbConnectOptions {
   /**
-   * Whether the target is the local stack (`utils.IsLocalDatabase`). Drives
-   * TLS: local connections
-   * set `cc.TLSConfig = nil` (`ConnectLocalPostgres`) → no TLS, while remote
-   * connections go through `ConnectByUrl`, where pgx defaults to `sslmode=prefer`
-   * and every non-TLS fallback is stripped → TLS is required (without certificate
-   * verification, matching pgx's default for `prefer`/`require`).
+   * Whether the target is the local stack. Drives TLS: local connections skip TLS entirely,
+   * while remote connections require it (without certificate verification, matching libpq's
+   * `prefer`/`require` default).
    */
   readonly isLocal: boolean;
   /**
-   * The active `--dns-resolver` value (`utils.DNSResolver.Value`). When
-   * `"https"` and the connection is remote, the driver resolves the host via
-   * Cloudflare DNS-over-HTTPS before dialing, mirroring Go's
-   * `cc.LookupFunc = FallbackLookupIP`. `"native"` (the
-   * default) uses the OS resolver. Ignored for local connections, matching Go.
+   * The active `--dns-resolver` value. When `"https"` and the connection is remote, the driver
+   * resolves the host via Cloudflare DNS-over-HTTPS before dialing; `"native"` (the default) uses
+   * the OS resolver. Ignored for local connections.
    */
   readonly dnsResolver: "native" | "https";
 }
@@ -227,10 +173,9 @@ interface DbConnectionShape {
 }
 
 /**
- * Opens raw Postgres connections for commands (`test db`, and later
- * `db reset` / `db dump`). The underlying driver is swappable behind this
- * interface — the default is `@effect/sql-pg`; a Bun.SQL fallback exists with
- * the same shape. Handlers depend only on this service, never on the driver.
+ * Opens raw Postgres connections for commands such as `test db`. The underlying driver is
+ * swappable behind this interface; handlers depend only on this service, never on the driver
+ * directly.
  */
 export class DbConnection extends Context.Service<DbConnection, DbConnectionShape>()(
   "supabase/cli/DbConnection",
