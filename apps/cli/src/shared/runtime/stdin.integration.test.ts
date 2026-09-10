@@ -10,17 +10,14 @@ import { stdinLayerFrom } from "./stdin.layer.ts";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
-// Exercises the real `stdinLayer` (its persistent, lazily-opened line reader) over a
-// controllable byte stream, instead of the array-indexing `mockStdin` double, so stdin
-// can be driven with deliberate chunking / delays; `Tty` is satisfied by `mockTty`.
+// Exercises the real `stdinLayer` over a controllable byte stream (not the
+// array-indexing `mockStdin` double) so stdin can be driven with deliberate chunking/delays.
 const withStdin = (stdin: Stream.Stream<Uint8Array, PlatformError>, stdinIsTty = false) =>
   stdinLayerFrom(stdin).pipe(Layer.provide(mockTty({ stdinIsTty, stdoutIsTty: false })));
 
 describe("stdinLayer", () => {
   it.live("dispenses successive lines across calls, buffering multi-line chunks", () => {
-    // Two chunks, the second carrying two lines: one persistent reader returns a, b, c
-    // across successive calls, holding the rest of a chunk for the next call instead of
-    // starting over. A final call on the exhausted stream yields None (the prompt default).
+    // Two chunks; the second carries two lines to prove buffering across calls.
     const layer = withStdin(Stream.fromIterable([enc("a\n"), enc("b\nc\n")]));
     return Effect.gen(function* () {
       const stdin = yield* Stdin;
@@ -45,8 +42,7 @@ describe("stdinLayer", () => {
   });
 
   it.live("preserves interior blank lines so answers stay aligned", () => {
-    // splitLines keeps blank interior lines: a caller that pipes "\ny\n" sees the
-    // blank line first (→ prompt default) and the y second, not y first.
+    // A caller piping "\ny\n" must see the blank line first, then "y" — not "y" first.
     const layer = withStdin(Stream.fromIterable([enc("\ny\n")]));
     return Effect.gen(function* () {
       const stdin = yield* Stdin;
@@ -56,8 +52,6 @@ describe("stdinLayer", () => {
   });
 
   it.live("times out to None when no line arrives within the window", () => {
-    // A pipe that stays open without sending a line: readLine must give up with None so
-    // the prompt takes its default instead of waiting for EOF.
     const layer = withStdin(Stream.never);
     return Effect.gen(function* () {
       const stdin = yield* Stdin;
@@ -67,10 +61,8 @@ describe("stdinLayer", () => {
 
   it.live("waits for a non-blocking pipe that has nothing to read yet", () =>
     Effect.gen(function* () {
-      // A non-blocking fd 0 with nothing to read yet fails the read with `WouldBlock` (how the
-      // layer reports `EAGAIN`, pinned over a real fd 0 below). That is "nothing yet", not EOF:
-      // the reader keeps asking until the answer lands, instead of taking the default for this
-      // prompt and every one after it.
+      // A non-blocking fd 0 with nothing to read fails with `WouldBlock` (how
+      // the layer reports `EAGAIN`) — "nothing yet", not EOF.
       let attempts = 0;
       const layer = withStdin(
         Stream.suspend(() => {
@@ -90,9 +82,8 @@ describe("stdinLayer", () => {
 
   it.effect("keeps waiting on a non-blocking pipe across a prompt that gave up", () =>
     Effect.gen(function* () {
-      // The first prompt times out between two looks, interrupting the wait. The next prompt
-      // must take the wait back up and see the answer once it lands, instead of inheriting the
-      // failed read as the reader's last word.
+      // A timed-out prompt must not leave the reader stuck on the failed read;
+      // the next prompt resumes waiting and sees the answer once it lands.
       const ready = yield* Ref.make(false);
       const layer = withStdin(
         Stream.unwrap(
@@ -120,9 +111,8 @@ describe("stdinLayer", () => {
 
   it.effect("collects a pipe across a non-blocking read that had nothing yet", () =>
     Effect.gen(function* () {
-      // The whole-pipe collects wait a non-blocking fd 0 out the same way, and a fresh reader
-      // over the still-open descriptor carries on where the last one stopped, so what came
-      // before the empty read and what comes after it read as one stream.
+      // `readPipedText` waits out a non-blocking fd 0 the same way readLine does,
+      // and a fresh reader continues where the last one stopped.
       let attempts = 0;
       const layer = withStdin(
         Stream.suspend(() => {
@@ -147,8 +137,8 @@ describe("stdinLayer", () => {
 
   it.effect("keeps reading after a prompt times out, finishing the line it was waiting on", () =>
     Effect.gen(function* () {
-      // A slow producer: the first prompt times out holding a partial line, and the bytes
-      // that complete it must still reach the next prompt.
+      // A slow producer: the first prompt times out mid-line; the bytes that
+      // complete it must still reach the next prompt.
       const queue = yield* Queue.unbounded<Uint8Array>();
       const layer = withStdin(Stream.fromQueue(queue));
       yield* Effect.gen(function* () {
@@ -166,9 +156,8 @@ describe("stdinLayer", () => {
 
   it.live("lets one prompt at a time pull from the pipe", () =>
     Effect.gen(function* () {
-      // Two prompts wait at once. The second must get `2`, held back from the chunk the first
-      // one pulled, instead of pulling a chunk of its own and skipping it. Each pull yields
-      // once, so a second pull could slip in while the first is in flight.
+      // Two prompts wait at once; the second must get the value held back from
+      // the first prompt's chunk, not pull (and skip) a chunk of its own.
       let pulls = 0;
       const layer = withStdin(
         Stream.fromEffectRepeat(
@@ -191,8 +180,8 @@ describe("stdinLayer", () => {
 
   it.live("reads a pipe only while a prompt is waiting", () =>
     Effect.gen(function* () {
-      // An endless producer, counted per chunk: nothing is pulled before the first prompt
-      // or between prompts, so whatever the prompts do not ask for stays in the pipe.
+      // Nothing is pulled before the first prompt or between prompts; the
+      // producer is counted per chunk to prove that.
       const pulled = yield* Ref.make(0);
       const layer = withStdin(
         Stream.fromEffectRepeat(
@@ -211,9 +200,8 @@ describe("stdinLayer", () => {
   );
 
   it.live("answers every prompt in order when a producer floods the pipe", () => {
-    // The 10,000th prompt still gets the 10,000th line, and an unbounded producer is only
-    // read as far as the prompts ask. The lines total well over 64 KiB, so the pending-line
-    // bound must reset at each line break.
+    // 10,000 lines total well over the 64 KiB pending-line bound, so that
+    // bound must reset at each line break, not accumulate across lines.
     const flood = Array.from({ length: 10_000 }, (_, index) => enc(`line-${index}\n`));
     const layer = withStdin(Stream.fromIterable(flood).pipe(Stream.concat(Stream.never)));
     return Effect.gen(function* () {
@@ -226,9 +214,9 @@ describe("stdinLayer", () => {
 
   it.live("gives up on a line that never ends instead of buffering it", () =>
     Effect.gen(function* () {
-      // A producer that never sends a newline (`yes | tr -d '\n'`), counted per 16 KiB
-      // chunk: the reader stops pulling once the pending line outgrows its 64 KiB bound
-      // (the fifth chunk), and every prompt from then on takes its default.
+      // A newline-less producer (`yes | tr -d '\n'`), counted per 16 KiB chunk:
+      // the reader stops pulling once the pending line exceeds its 64 KiB
+      // bound (at the fifth chunk).
       const pulled = yield* Ref.make(0);
       const chunk = enc("y".repeat(16 * 1024));
       const layer = withStdin(
@@ -245,9 +233,9 @@ describe("stdinLayer", () => {
   );
 
   it.live("answers the lines ahead of a runaway tail that shares their chunk", () => {
-    // `{ printf 'y\n'; cat blob-without-newline; } | …` can land the answer and the start
-    // of the blob in one pull. The answer is still delivered; the tail then trips the bound,
-    // so the `n` behind it is never read and every later prompt takes its default.
+    // The answer and the start of an unterminated blob can land in one pull;
+    // the answer still delivers, then the blob trips the bound so the "n"
+    // behind it is never read.
     const layer = withStdin(
       Stream.fromArray([enc("y\n"), enc("z".repeat(64 * 1024 + 1))]).pipe(
         Stream.concat(Stream.make(enc("n\n"))),
@@ -284,10 +272,10 @@ describe("stdinLayer", () => {
 
 describe("stdinLayer over fd 0", () => {
   it("waits out a non-blocking fd 0 until the answer lands", async () => {
-    // A parent that hands fd 0 down in non-blocking mode: perl flips `O_NONBLOCK` on the pipe
-    // (Bun cannot), confirms the mode on stderr and execs the reader. The first prompt finds
-    // the pipe empty and must run out its window to None instead of taking the empty read as a
-    // dead descriptor; the second must read the answer written once that window has closed.
+    // perl flips `O_NONBLOCK` on stdin (Bun cannot) and execs into the reader
+    // so fd 0 stays non-blocking. The first prompt must run its window out to
+    // None rather than treat the empty read as a dead descriptor; the second
+    // reads the answer once that window closes.
     const bun = Bun.which("bun");
     const perl = Bun.which("perl");
     if (!bun || !perl) throw new Error("bun and perl executables not found");
@@ -348,9 +336,9 @@ describe("stdinLayer over fd 0", () => {
   }, 30_000);
 
   it("answers prompts from a flooded pipe and leaves the rest for a child inheriting fd 0", async () => {
-    // The production adapter in a real process: 2 MiB of lines are piped in, three prompts
-    // take the first three, then a child inheriting fd 0 counts what is left in the pipe.
-    // A reader that drained stdin would leave it nothing; this one reads a chunk ahead.
+    // 2 MiB of lines piped in; three prompts take the first three, then a
+    // child inheriting fd 0 counts what's left. A reader that fully drained
+    // stdin would leave it nothing.
     const bun = Bun.which("bun");
     if (!bun) throw new Error("Bun executable not found");
     const here = (file: string) => JSON.stringify(fileURLToPath(new URL(file, import.meta.url)));

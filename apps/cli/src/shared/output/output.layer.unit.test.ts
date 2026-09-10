@@ -266,10 +266,6 @@ describe("Output", () => {
       process.argv = originalArgv.filter((arg) => arg !== "--debug");
       return Effect.gen(function* () {
         const out = yield* Output;
-        // Same shape `normalizeCause` produces for any declined confirmation prompt
-        // (logout, migration fetch/repair/down, db push/reset, functions deploy
-        // --prune, ...): Go's `recoverAndExit` prints only the red `context canceled`
-        // line for `context.Canceled` (apps/cli-go/cmd/root.go:287-303) — CLI-1973.
         yield* out.fail({ code: "LogoutCancelledError", message: CONTEXT_CANCELED_MESSAGE });
         expect(writes).toEqual(["\x1B[31mcontext canceled\x1B[39m\n"]);
       }).pipe(
@@ -292,8 +288,6 @@ describe("Output", () => {
       }) as typeof process.stderr.write;
       return Effect.gen(function* () {
         const out = yield* Output;
-        // Go prints a pre-set `utils.CmdSuggestion` even for `context.Canceled` —
-        // only the `SuggestDebugFlag` fallback is withheld (cmd/root.go:287-292).
         yield* out.fail({
           code: "E_TEST",
           message: CONTEXT_CANCELED_MESSAGE,
@@ -313,10 +307,8 @@ describe("Output", () => {
     it.effect("promptText passes validate callback to clack", () => {
       mockClack.text.mockImplementation(
         (opts: { validate?: (v: string | undefined) => string | undefined }) => {
-          // Call with a non-empty value (exercises the non-nullish branch of v ?? "")
           const validationResult = opts.validate?.("bad");
           expect(validationResult).toBe("invalid input");
-          // Call with undefined (exercises the nullish branch of v ?? "")
           const validationResultUndefined = opts.validate?.(undefined);
           expect(validationResultUndefined).toBe("invalid input");
           return Promise.resolve("good input");
@@ -434,12 +426,6 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    // Go's own interactive picker always writes to stderr (`internal/utils/prompt.go`'s
-    // `PromptChoice`: `tea.WithOutput(os.Stderr)`, "Interactive prompts should always be
-    // written to stderr") — but clack's `select()`/`autocomplete()` default to stdout, which
-    // would corrupt a command whose own stdout is a machine-readable payload even in text
-    // mode (e.g. `gen bearer-jwt`'s signed token — Codex review finding, CLI-1961). `{ stream:
-    // "stderr" }` is the opt-in escape hatch such a command passes.
     it.effect('promptSelect routes the picker to stderr when stream: "stderr" is requested', () => {
       mockClack.select.mockResolvedValue("pro");
       return Effect.gen(function* () {
@@ -735,11 +721,8 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    // CLI-2167 follow-up: `MachineErrorContext` is a command-scoped, opt-in
-    // cell — merged ALONGSIDE the output layer (not nested inside its own
-    // `Layer.provide`), matching how a real command runtime composes it, so
-    // the same live cell is visible both to this test's own `set` call and to
-    // `fail`'s read.
+    // Merged alongside the output layer (not nested inside its own
+    // `Layer.provide`) so the same live cell is visible to both `set` and `fail`.
     it.effect(
       "fail merges MachineErrorContext fields at the envelope top level when provided",
       () => {
@@ -779,9 +762,7 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    // PR #6168 review: `extra` spreads FIRST in `fail`, so a context field
-    // sharing a name with the envelope's own keys (`_tag`/`error`) can never
-    // clobber them — a non-colliding field alongside it still merges fine.
+    // `safe_field` proves a non-colliding context field still merges normally.
     it.effect(
       "fail: a MachineErrorContext field named _tag or error cannot clobber the envelope",
       () => {
@@ -1040,9 +1021,6 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    // CLI-2167 follow-up: same mechanism as the json layer's equivalent pair
-    // above — merged alongside `streamJsonOutputLayer`, not nested inside its
-    // `Layer.provide`.
     it.effect("fail merges MachineErrorContext fields at the event top level when provided", () => {
       const mock = mockStdio();
       const layer = Layer.mergeAll(
@@ -1078,9 +1056,7 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    // PR #6168 review: same reasoning as the json layer's equivalent test —
-    // `extra` spreads FIRST, so a context field named `type`/`error`/`timestamp`
-    // can never clobber the event's own keys; a non-colliding field still merges.
+    // `safe_field` proves a non-colliding context field still merges normally.
     it.effect(
       "fail: a MachineErrorContext field named type, error, or timestamp cannot clobber the event",
       () => {
