@@ -31,12 +31,8 @@ function normalizeAmbientEnv(
   return values;
 }
 
-// Detects a line of the form `KEY=<quote>...` (or `KEY: <quote>...`) whose
-// quoted value does NOT close on that same physical line — the start of a
-// godotenv-style multiline quoted value (e.g. a PEM block). Returns the quote
-// character and the index of the opening quote within `line`, or `null` if
-// the line doesn't open an unterminated quote (either no quote at all, or one
-// that already closes on this line).
+// Matches a `KEY=<quote>` (or `KEY: <quote>`) opener, used to detect the start of a
+// multiline quoted value (e.g. a PEM block) that doesn't close on the same line.
 const dotEnvValueOpenerPattern = /^\s*(?:export\s+)?[\w.-]+(?:\s*=\s*?|:\s+?)(['"`])/;
 
 function findUnescapedQuoteIndex(text: string, quote: string, from: number): number {
@@ -102,21 +98,10 @@ function parseDotEnv(
       let candidate = line;
       let consumedThrough = index;
 
-      // Check for an unterminated quote BEFORE attempting the single-line
-      // match: `dotEnvLinePattern`'s value alternatives fall back to an
-      // unquoted match (`[^#\r\n]+`) when none of the quoted alternatives
-      // close on this line, which would otherwise "succeed" with a truncated,
-      // still-quote-prefixed value instead of signaling a multiline value —
-      // masking the real bug rather than triggering accumulation. This is a
-      // godotenv-style quoted value spanning multiple physical lines (e.g. a
-      // PEM block); Go's `loadNestedEnv` parses this fine (`godotenv@v1.5.1`'s
-      // cursor-based scanner never splits into lines up front; see
-      // `dotenv.ts` for the Go-compatible reference implementation used
-      // elsewhere in this repo). Accumulate subsequent lines until the opened
-      // quote closes (or EOF), then match the same per-line pattern against
-      // the joined multiline chunk — its quoted-value alternatives use
-      // negated character classes (`[^"]` etc.), which already match embedded
-      // newlines once given the full span.
+      // Detect an unterminated quote before the single-line match: the pattern's unquoted
+      // fallback (`[^#\r\n]+`) would otherwise "succeed" with a truncated value instead of
+      // signaling a multiline value (e.g. a PEM block spanning several lines). Accumulate
+      // subsequent lines until the opened quote closes, then match the joined chunk.
       const opener = detectOpenQuoteStart(line);
       if (opener !== null) {
         for (let next = index + 1; next < lines.length; next += 1) {
@@ -180,28 +165,18 @@ export interface LoadCliProjectEnvironmentOptions {
   /** See {@link FindCliProjectPathsOptions.search}. */
   readonly search?: boolean;
   /**
-   * Skip reading/parsing `paths.envLocalPath` (`supabase/.env.local`)
-   * entirely. Mirrors Go's `loadDefaultEnv` (`apps/cli-go/pkg/config/
-   * config.go:1243-1250`), which omits `.env.local` from its candidate
-   * filename list whenever `SUPABASE_ENV=test` — so a malformed or
-   * intentionally non-test `.env.local` is invisible to Go in that mode and
-   * must not fail config loading here either. Defaults to `false` so
-   * existing callers that don't have a `SUPABASE_ENV` gate of their own
-   * (`packages/stack`, `secrets set`) are unaffected.
+   * Skip reading/parsing `paths.envLocalPath` (`supabase/.env.local`) entirely, so a
+   * malformed or intentionally non-test `.env.local` cannot fail config loading. Defaults
+   * to `false`.
    */
   readonly skipEnvLocal?: boolean;
 }
 
-/**
- * Not covered by semver — exported from `@supabase/config/internal` only. See
- * that module's header for why.
- */
+/** Not covered by semver — exported from `@supabase/config/internal` only. */
 export interface InternalResolveCliConfigOptions {
   /**
-   * Opt into Go/viper-parity `env()` matching (case-agnostic
-   * `^env\((.*)\)$`). Defaults to `false`, which uses the pre-PR-#5765 strict
-   * SCREAMING_SNAKE_CASE matcher (`ENV_CAPTURE_REGEX_STRICT`). Only the
-   * Go-parity CLI sets this to `true`.
+   * Opt into viper-style case-agnostic `env()` matching (`^env\((.*)\)$`). Defaults to
+   * `false`, which requires SCREAMING_SNAKE_CASE.
    */
   readonly goViperCompat?: boolean;
 }
@@ -245,18 +220,11 @@ export const loadCliProjectEnvironment = Effect.fnUntraced(function* (
 });
 
 /**
- * Effect-typed counterpart of `./lib/resolve.ts`'s plain sync
- * `resolveCliConfigValue`, additionally accepting the internal-only
- * `goViperCompat` option (see {@link InternalResolveCliConfigOptions}).
- * `../effect.ts` re-exports this explicitly, which wins over the sync
- * version's star re-export through `./index.ts` (see that module's doc
- * comment on the deliberate shadowing) — `@supabase/config/internal`
- * re-exports this same function typed to show `goViperCompat`.
+ * Effect-typed counterpart of the plain sync `resolveCliConfigValue` in
+ * `./lib/resolve.ts`, additionally accepting the internal-only `goViperCompat` option.
  *
- * `cliProjectEnv` only needs `.values` (`Pick<CliProjectEnvironment, "values">`) —
- * a caller that already has a project's env values but not the full
- * `CliProjectEnvironment` shape (e.g. `paths`/`loadedPaths`/`sources`) can pass
- * `{ values }` directly instead of threading through the whole loaded object.
+ * Accepts `Pick<CliProjectEnvironment, "values">` so a caller with only a project's env
+ * values, not the full loaded object, can pass `{ values }` directly.
  */
 export function resolveCliConfigValue<T>(
   value: T,

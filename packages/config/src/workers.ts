@@ -10,11 +10,8 @@ const links = [
   },
 ];
 
-/**
- * Worker names end up in hostnames, so they are DNS labels — the same pattern
- * the Management API validates `:name` against
- * (`v2/projects/{ref}/workers/{name}`).
- */
+// Worker names end up in hostnames, so they must be valid DNS labels, matching the
+// Management API's own validation.
 const workerName = Schema.String.check(Schema.isPattern(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/));
 
 const worker = Schema.Struct({
@@ -42,10 +39,8 @@ const worker = Schema.Struct({
     }),
   ),
   exposure: Schema.optionalKey(
-    // A plain string, like `runtime` and `size`: the Management API takes
-    // `spec.exposure` as an unconstrained string, and the CLI names the values it
-    // accepts when it reads one it does not know. Constraining it here would
-    // report a config that a newer CLI understands as unloadable.
+    // Left as an unconstrained string, matching the Management API: constraining it
+    // here would reject values a newer CLI understands.
     Schema.String.annotate({
       description: dedent`
         How the worker is reached: \`public\` gives it an internet-facing URL,
@@ -60,9 +55,8 @@ const worker = Schema.Struct({
     }),
   ),
   instances: Schema.optionalKey(
-    // Bounded to match `spec.instances` in the Management API's input schema. A
-    // value that gets past here is dropped rather than sent, so leaving it
-    // unbounded deploys a different count than the config asked for.
+    // Bounded to match the Management API's input schema; an out-of-range value would
+    // be dropped rather than sent, deploying a different count than the config asked for.
     Schema.Number.check(
       Schema.isInt().annotate({ expected: "a whole number of instances" }),
       Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "zero or more instances" }),
@@ -90,14 +84,7 @@ const worker = Schema.Struct({
   ),
 });
 
-/**
- * `[workers]` — one `[workers.<name>]` table per worker, mirroring the
- * `[functions.<slug>]` convention in the same file.
- *
- * Workers live at `supabase/workers/<name>/`; one whose code lives somewhere
- * else entirely uses its own `source`, which is anchored to the project root and
- * so can leave `supabase/`.
- */
+/** `[workers]` — one `[workers.<name>]` table per worker, keyed by worker name. */
 export const workers = Schema.Record(workerName, worker)
   .annotate({
     default: {},
