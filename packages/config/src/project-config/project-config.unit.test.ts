@@ -23,12 +23,9 @@ import {
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
 /**
- * A realistic v2 `data.attributes` payload exercising every mapped section
- * plus, in each section, at least one known-but-unmapped field, and — at the
- * top level — one whole unmapped section (`new_service`) and two metadata-
- * shaped keys (`$weird`, `_private`) inside `api`. Values were chosen and
- * hand-traced against `./registry.ts`/`./registry-auth.ts` (see the sibling
- * describe blocks below for the derivation of each expected output).
+ * A realistic v2 `data.attributes` payload exercising every mapped section plus at least one
+ * known-but-unmapped field per section, one whole unmapped section (`new_service`), and two
+ * metadata-shaped keys (`$weird`, `_private`) inside `api`.
  */
 const fullAttributesFixture: Record<string, unknown> = {
   database: {
@@ -156,16 +153,9 @@ function apiEnvelope(attributes: Record<string, unknown>): unknown {
 describe("fromConfigDocument", () => {
   test("projecting the default config keeps exactly the hosted sections", () => {
     const projected = fromConfigDocument(getDefaultCliConfig());
-    // `workers` survives as `{}`: the prune removes only containers the copy
-    // itself EMPTIED (secret stripping) — an originally-empty container is
-    // declared data (a record entry's value can be an empty struct by schema
-    // design, e.g. `storage.analytics.buckets` entries, where the key is the
-    // information). `realtime` is absent, not present-as-`{}` like `workers`:
-    // all 3 of its config-side fields are `DOCUMENT_ONLY_LOCAL_PATHS` entries
-    // (CLI-2316), all 3 are always-materialized (not `optionalKey`) so the
-    // default config always declares them, and the emptied-by-exclusion
-    // section prune (same rule as the secret-stripped case) removes it
-    // entirely — see the dedicated describe block below.
+    // `workers` survives as `{}` (an originally-empty container isn't pruned); `realtime` is
+    // absent entirely since all of its fields are `DOCUMENT_ONLY_LOCAL_PATHS` entries, always
+    // materialized, so the section-emptied-by-exclusion prune removes it.
     expect(Object.keys(projected).sort()).toEqual([
       "api",
       "auth",
@@ -213,14 +203,9 @@ describe("fromConfigDocument", () => {
   test("deep-copies rather than sharing the subtree reference", () => {
     const config = getDefaultCliConfig();
     const projected = fromConfigDocument(config);
-    // The top-level `api`/`db` containers are still freshly built (never the
-    // same object as `config`'s), even though `toEqual`-comparing them WHOLE
-    // against `config.api`/`config.db` would now fail: CLI-2316 strips
-    // several of their fields (`api.port`/`tls`/`external_url`,
-    // `db.port`/`shadow_port`/`health_timeout`/`major_version`/`pooler`/
-    // `migrations`/`seed` — see the dedicated describe block below) from the
-    // projection. `storage.s3_protocol` — an always-materialized nested
-    // object none of those exclusions touch — is the equality probe instead.
+    // `api`/`db` are freshly built but no longer whole-equal to `config`'s (several fields get
+    // stripped — see the dedicated describe block below), so `storage.s3_protocol`, an
+    // always-materialized nested object none of those exclusions touch, is the equality probe.
     expect(projected.api).not.toBe(config.api);
     expect(projected.db).not.toBe(config.db);
     expect(projected.storage?.s3_protocol).not.toBe(config.storage.s3_protocol);
@@ -256,8 +241,7 @@ describe("fromConfigDocument", () => {
     expect(projected.auth?.email?.smtp?.host).toBe("smtp.example.com");
     expect(projected.auth?.external?.github?.secret).toBeUndefined();
     expect(projected.auth?.external?.github?.client_id).toBe("id");
-    // Both experimental S3 fields are `secret()`-annotated (`../experimental.ts`),
-    // not just `s3_secret_key`.
+    // Both experimental S3 fields are `secret()`-annotated, not just `s3_secret_key`.
     expect(projected.experimental?.s3_secret_key).toBeUndefined();
     expect(projected.experimental?.s3_access_key).toBeUndefined();
 
@@ -265,13 +249,8 @@ describe("fromConfigDocument", () => {
     expect(Object.hasOwn(projected.auth?.captcha ?? {}, "secret")).toBe(false);
   });
 
-  // Drift-audit fix (round 30, ADR 0021): the schema types `smtp.port` as an
-  // unrestricted number, but the push wrapper stringifies it
-  // (`String(local.email.smtp.port)`, auth.sync.ts:2390) and the API arm's
-  // own row only ever reports a value `parseUint16` accepts — so without a
-  // matching document-side round trip, a fractional/out-of-range document
-  // port would disagree with what the API arm reports for the same pushed
-  // state.
+  // Without this round trip, a fractional/out-of-range port would disagree with what the API arm
+  // reports for the same pushed state.
   test("a fractional smtp.port is omitted (String->parseUint16 round trip), the rest of the block survives", () => {
     const projected = fromConfigDocument({
       auth: {
@@ -311,16 +290,11 @@ describe("fromConfigDocument", () => {
   });
 
   test("prunes an empty container left behind by secret stripping, rather than keeping it as litter", () => {
-    // `auth.captcha` here declares nothing but its secret leaf — a sparse
-    // `EffectiveConfig` literal, not a decoded document (decoding would
-    // materialize `enabled`/`provider` defaults alongside it and mask this
-    // case). `auth.site_url` keeps the surrounding `auth` section itself
-    // non-empty, isolating the nested prune. Once `secret` is stripped,
-    // `captcha` is left with zero keys and must be pruned rather than
-    // surviving as `{}` litter (CLI-2230's secret-strip empty-container
-    // finding) — an empty container carries no comparable information, but
-    // `subtractCliConfig` would otherwise keep it forever as phantom drift
-    // against any baseline that never declared `captcha` at all.
+    // `auth.captcha` here is a sparse literal (a decoded document would materialize
+    // `enabled`/`provider` defaults and mask this case); `auth.site_url` keeps `auth` itself
+    // non-empty. Once `secret` is stripped, `captcha` has zero keys left and must be pruned rather
+    // than surviving as `{}` litter, which `subtractCliConfig` would otherwise keep forever as
+    // phantom drift against a baseline that never declared `captcha` at all.
     const projected = fromConfigDocument({
       auth: { site_url: "https://example.com", captcha: { secret: "captcha-secret" } },
     });
@@ -329,11 +303,9 @@ describe("fromConfigDocument", () => {
   });
 
   test("a section that only contains a secret disappears entirely from the projection", () => {
-    // Unlike the nested case above, here the ENTIRE `experimental` section
-    // (both of whose declared fields are `secret()`-annotated,
-    // `../experimental.ts`) has nothing left after stripping — pruning must
-    // bubble all the way up through `fromConfigDocument`'s own per-section
-    // loop, not just `copyHostedValueWithoutSecrets`'s internal recursion.
+    // Unlike the nested case above, the entire `experimental` section (both declared fields are
+    // `secret()`-annotated) has nothing left after stripping, so pruning must bubble all the way
+    // up through the per-section loop, not just the internal recursion.
     const projected = fromConfigDocument({
       experimental: { s3_access_key: "access-key", s3_secret_key: "s3-secret" },
     });
@@ -341,21 +313,13 @@ describe("fromConfigDocument", () => {
     expect(projected).toEqual({});
   });
 
-  // Schema-derived, exhaustive counterpart to the 5-hand-picked-field test
-  // above (CLI-2230's review): rather than trusting a hand-picked field list
-  // to stay in sync with `CliConfigSchema`'s actual `x-secret` annotations,
-  // this enumerates every `x-secret` path pattern the schema declares
-  // (`secretPathPatterns`, `../lib/secret-paths.ts` — the same source of
-  // truth `isSecretPath` itself is built from), builds one probe document
-  // that populates every pattern reachable through a hosted section, and
-  // asserts none of them survive `fromConfigDocument`. This is the real
-  // "no x-secret path survives" contract; the hand-picked test above stays
-  // as a readable, minimal illustration of the same guarantee.
+  // Schema-derived, exhaustive counterpart to the hand-picked test above: enumerates every
+  // `x-secret` path pattern the schema declares, builds one probe document that populates every
+  // pattern reachable through a hosted section, and asserts none of them survive
+  // `fromConfigDocument`.
   test("no x-secret path from the schema's own pattern list survives fromConfigDocument, exhaustively", () => {
-    // Mirrors `HOSTED_SECTION_KEYS` (`./project-config.ts`): `fromConfigDocument`
-    // only ever copies these seven sections, so a secret pattern rooted
-    // anywhere else (`remotes.*`, `studio.*`, `edge_runtime.secrets.*`) is
-    // unreachable through it and deliberately excluded from this probe.
+    // `fromConfigDocument` only ever copies these seven sections, so a secret pattern rooted
+    // anywhere else (`remotes.*`, `studio.*`, …) is unreachable through it and excluded here.
     const HOSTED_TOP_LEVEL_KEYS = new Set([
       "api",
       "auth",
@@ -369,8 +333,6 @@ describe("fromConfigDocument", () => {
     const reachablePatterns = secretPathPatterns.filter((pattern) =>
       HOSTED_TOP_LEVEL_KEYS.has(pattern[0] ?? ""),
     );
-    // Guards the loop below against passing vacuously if the schema-derived
-    // pattern list is ever empty due to a broken import.
     expect(reachablePatterns.length).toBeGreaterThan(0);
 
     const WILDCARD_KEY = "probe_key";
@@ -378,9 +340,6 @@ describe("fromConfigDocument", () => {
       pattern.map((segment) => (segment === "*" ? WILDCARD_KEY : segment)),
     );
 
-    // Every concrete path must actually be recognized as secret by the same
-    // predicate `copyHostedValueWithoutSecrets` consults — otherwise this
-    // probe would be asserting nothing.
     for (const path of concretePaths) {
       expect(isSecretPath(path)).toBe(true);
     }
@@ -410,14 +369,10 @@ describe("fromConfigDocument", () => {
     }
 
     const probeDocument: Record<string, unknown> = {};
-    // A benign sibling one level up keeps its parent container non-empty
-    // regardless of pruning, so a passing assertion below actually proves
-    // the SECRET leaf was removed rather than the whole subtree
-    // disappearing for an unrelated reason (e.g. a bug that wipes the
-    // projection entirely). Skipped when the sibling path would itself be
-    // secret-shaped — `db.vault.*` matches every key under `db.vault`, so no
-    // sibling there can ever prove non-vacuousness; other sections' siblings
-    // still do.
+    // A benign sibling one level up keeps its parent container non-empty, so a passing assertion
+    // below proves the secret leaf was removed rather than the whole subtree disappearing for an
+    // unrelated reason. Skipped when the sibling path is itself secret-shaped (e.g. `db.vault.*`
+    // matches every key under `db.vault`).
     const survivingSiblingPaths: Array<ReadonlyArray<string>> = [];
     for (const path of concretePaths) {
       setAtPath(probeDocument, path);
@@ -509,11 +464,9 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
     expect(Object.hasOwn(projected.db?.pooler ?? {}, "port")).toBe(false);
     expect(Object.hasOwn(projected.db ?? {}, "migrations")).toBe(false);
     expect(Object.hasOwn(projected.db ?? {}, "seed")).toBe(false);
-    // Siblings prove the exclusion is targeted, not a section-wide wipe —
-    // `pool_mode`/`default_pool_size`/`max_client_conn` are real,
-    // `v2GetProjectConfig`-reported hosted facts (PR #6451 review round) and
-    // must stay comparable for `config diff`/`config pull`, unlike `enabled`/
-    // `port` right above, which the API never reports at all.
+    // Siblings prove the exclusion is targeted, not a section-wide wipe: `pool_mode`/
+    // `default_pool_size`/`max_client_conn` are real hosted facts that must stay comparable,
+    // unlike `enabled`/`port`, which the API never reports at all.
     expect(projected.api?.max_rows).toBe(42);
     expect(projected.db?.settings?.max_connections).toBe(5);
     expect(projected.db?.pooler).toEqual({
@@ -528,9 +481,8 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
       realtime: { enabled: false, ip_version: "IPv6", max_header_length: 1 },
     });
     const projected = fromConfigDocument(document);
-    // Every config-side `realtime` field is excluded, so — unlike `workers`,
-    // which survives as `{}` — the section disappears entirely: it was
-    // emptied BY this exclusion, the same prune rule as a secret-stripped
+    // Unlike `workers`, which survives as `{}`, this section disappears entirely: every field is
+    // excluded, so it was emptied by this exclusion, the same prune rule as a secret-stripped
     // section.
     expect(Object.hasOwn(projected, "realtime")).toBe(false);
   });
@@ -558,23 +510,16 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
   });
 
   test("db.major_version and db.pooler.{pool_mode,default_pool_size,max_client_conn} populate on BOTH arms (PR #6451 correction)", () => {
-    // These 4 fields are real, `v2GetProjectConfig`-reported hosted facts
-    // with no `config push` write path — but `ProjectConfig`'s actual
-    // current consumers are `config diff`/`config pull` (`v2GetProjectConfig`),
-    // not `config push` (still the legacy v1 `config-sync` mappers, with zero
-    // `ProjectConfig` involvement). Excluding them from the document arm —
-    // this test's ORIGINAL, incorrect assertion — made them permanently
-    // `unmanaged` for every stock project (the `supabase init` template
-    // declares all four), which blocked `config pull` from ever syncing the
+    // These 4 fields have no `config push` write path, but `ProjectConfig`'s real consumers are
+    // `config diff`/`config pull`; excluding them from the document arm would make them
+    // permanently unmanaged for every stock project, blocking `config pull` from ever syncing the
     // platform's real values down. They must stay symmetric across both arms.
     const documentSide = fromConfigDocument(
       decodeCliConfig({ db: { major_version: 15, pooler: { pool_mode: "session" } } }),
     );
     expect(documentSide.db?.major_version).toBe(15);
-    // `default_pool_size`/`max_client_conn` are schema-decoded defaults here
-    // (20/100, `../db.ts`) — present because the whole `pooler` struct
-    // materializes on decode, not because this document declared them.
-    // `enabled`/`port` are excluded regardless (the next test covers that).
+    // `default_pool_size`/`max_client_conn` are schema-decoded defaults (20/100), present because
+    // the whole `pooler` struct materializes on decode, not because this document declared them.
     expect(documentSide.db?.pooler).toEqual({
       pool_mode: "session",
       default_pool_size: 20,
@@ -597,15 +542,14 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
     const documentSide = fromConfigDocument(
       decodeCliConfig({ db: { pooler: { enabled: true, port: 54329 } } }),
     );
-    // `pooler` itself survives (its other 3 fields decode to their schema
-    // defaults) — only `enabled`/`port` are excluded from it.
+    // `pooler` itself survives (other fields decode to schema defaults); only `enabled`/`port`
+    // are excluded from it.
     expect(Object.hasOwn(documentSide.db?.pooler ?? {}, "enabled")).toBe(false);
     expect(Object.hasOwn(documentSide.db?.pooler ?? {}, "port")).toBe(false);
     expect(documentSide.db?.pooler?.pool_mode).toBe("transaction");
 
-    // The API arm never populates these either: no registry row maps them,
-    // since `v2GetProjectConfig`'s `pooler` struct has no `enabled`/`port`
-    // field to map from in the first place.
+    // The API arm never populates these either: `v2GetProjectConfig`'s `pooler` struct has no
+    // `enabled`/`port` field to map from.
     const apiSide = fromApiProjectConfig({
       pooler: { enabled: true, port: 54329, pool_mode: "session" },
     });
@@ -614,27 +558,12 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
     expect(apiSide.db?.pooler).toEqual({ pool_mode: "session" });
   });
 
-  // Exhaustive counterpart to the hand-picked tests above, iterating
-  // `DOCUMENT_ONLY_LOCAL_PATHS` itself rather than a second hand-picked field
-  // list. Unlike the x-secret exhaustiveness test just above — which builds
-  // its OWN probe programmatically from `secretPathPatterns`, so it can never
-  // go vacuous — this probe is still hand-written (`DOCUMENT_ONLY_LOCAL_PATHS`
-  // mixes whole-subtree and scalar-leaf entries of different value types, so
-  // one generic "put a marker at every path" builder can't populate it the
-  // way the all-string x-secret patterns allow). The `toBeDefined` check
-  // below on `document` is a PARTIAL guard, not a complete one (PR #6451
-  // review round): it always catches a typo'd or renamed path in the
-  // CONSTANT itself (`decodeCliConfig` only ever produces the schema's own
-  // spelling, never a typo'd one, so `readAtPath` finds nothing regardless of
-  // defaults). What it does NOT reliably catch is the probe below simply
-  // forgetting to set a value at a CORRECTLY-spelled listed path: 12 of
-  // these 18 paths are always-materialized (`withDecodingDefaultKey`, never
-  // `optionalKey`), so `decodeCliConfig` fills a schema default for them even
-  // when the probe omits an explicit value — `toBeDefined` passes on that
-  // default either way. Only the other 6 — `api.external_url` and the 5
-  // `experimental.*` entries, every one `optionalKey` — stay genuinely
-  // undefined unless the probe sets them explicitly, so only THOSE 6 catch a
-  // probe that forgot to populate a listed path.
+  // Exhaustive counterpart to the hand-picked tests above, iterating `DOCUMENT_ONLY_LOCAL_PATHS`
+  // itself; hand-written (not probe-generated like the x-secret exhaustiveness test above) since
+  // these paths mix whole-subtree and scalar-leaf entries of different types. The `toBeDefined`
+  // check below on `document` is a partial guard: it catches a typo'd or renamed path in the
+  // constant, but not the probe forgetting to set a correctly-spelled one, since most entries are
+  // always-materialized with a schema default regardless.
   test("no DOCUMENT_ONLY_LOCAL_PATHS entry survives fromConfigDocument, exhaustively", () => {
     expect(DOCUMENT_ONLY_LOCAL_PATHS.length).toBeGreaterThan(0);
 
@@ -670,8 +599,6 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
     const projected = fromConfigDocument(document);
 
     for (const path of DOCUMENT_ONLY_LOCAL_PATHS) {
-      // The probe actually populated this path — otherwise the assertion
-      // below would pass whether or not the exclusion code does anything.
       expect(readAtPath(document, path)).toBeDefined();
       expect(readAtPath(projected, path)).toBeUndefined();
     }
@@ -679,25 +606,15 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
     expect(projected.api?.max_rows).toBe(42);
     expect(projected.db?.settings?.max_connections).toBe(5);
     expect(projected.experimental?.webhooks).toEqual({ enabled: true });
-    // `major_version`/`pool_mode` are declared right alongside the excluded
-    // `pooler.enabled`/`pooler.port` above — proving the exclusion is
-    // per-field, not a `db.pooler`- or `db`-wide wipe (PR #6451 correction).
+    // Proves the exclusion is per-field, not a `db.pooler`- or `db`-wide wipe: these are declared
+    // right alongside the excluded `pooler.enabled`/`pooler.port` above.
     expect(projected.db?.major_version).toBe(15);
     expect(projected.db?.pooler?.pool_mode).toBe("session");
   });
 
-  // Integrity guard (PR #6451 review round): the bug this whole file's
-  // review round caught was exactly this overlap — `db.major_version` and 3
-  // of `db.pooler`'s fields were BOTH `comparableProjectConfigPaths` members
-  // (real registry rows, `./registry.ts`) AND `DOCUMENT_ONLY_LOCAL_PATHS`
-  // entries, which permanently blocked `config diff`/`config pull` from ever
-  // comparing or pulling them (see the corrected tests above). This test
-  // pins the invariant going forward: no comparable (registry-mapped) path,
-  // nor any of its ancestors, may ever be a `DOCUMENT_ONLY_LOCAL_PATHS`
-  // member — a future registry row added beneath an excluded prefix (e.g.
-  // under `db.migrations`, which today has none) would silently become
-  // uncomparable exactly like `major_version`/`pooler` did, and this test
-  // would catch it the moment that row is added.
+  // Guards against a comparable (registry-mapped) path, or any of its ancestors, ever being a
+  // `DOCUMENT_ONLY_LOCAL_PATHS` member: a future registry row added beneath an excluded prefix
+  // would silently become uncomparable the same way `major_version`/`pooler` once did.
   test("no comparableProjectConfigPaths entry (or its ancestors) is ever a DOCUMENT_ONLY_LOCAL_PATHS member", () => {
     expect(comparableProjectConfigPaths.length).toBeGreaterThan(0);
 
@@ -771,10 +688,8 @@ describe("fromApiProjectConfig — envelope unwrapping", () => {
     expect(thrown).toBeInstanceOf(ProjectConfigParseError);
     const error = thrown as ProjectConfigParseError;
     expect(error.cause).toBeDefined();
-    // `api.max_rows` is schema-concrete (mapped), so this fails at the
-    // lenient-schema decode itself — before any registry `transform` runs —
-    // and the message is built from the v4 schema-error formatter, not the
-    // registry's own `expectNumber` wording.
+    // Fails at the lenient-schema decode itself, before any registry `transform` runs, so the
+    // message comes from the schema-error formatter, not the registry's own `expectNumber` wording.
     expect(error.apiPath).toEqual(["api", "max_rows"]);
     expect(error.message).toContain(
       "Could not read the project config from the Management API response: at data.attributes.api.max_rows:",
@@ -782,9 +697,7 @@ describe("fromApiProjectConfig — envelope unwrapping", () => {
     expect(error.detail).toBeDefined();
   });
 
-  // A malformed envelope must throw rather than silently fall through to
-  // "bare attributes" — see unwrapApiResponse's docstring in
-  // `./project-config.ts`.
+  // A malformed envelope must throw rather than silently fall through to "bare attributes".
   test.each([
     [{ data: { attributes: 5 } }, "data.attributes is not an object"],
     [{ data: 5 }, "data is not an object"],
@@ -809,12 +722,8 @@ describe("fromApiProjectConfig — api section", () => {
     expect(result.api).toEqual({ schemas: ["public", "graphql_public"], enabled: true });
   });
 
-  // An explicit `db_schema: ""` is the remote's disable sentinel
-  // (api.sync.ts:84-87 early-returns without applying anything else from the
-  // section), so ONLY `enabled: false` is reported — the sibling fields'
-  // remote values are meaningless while the service is off. An *absent*
-  // `db_schema` does not gate the siblings (see the minimal fixtures in the
-  // surrounding tests, which map `max_rows` without one).
+  // An explicit `db_schema: ""` is the remote's disable sentinel, so only `enabled: false` is
+  // reported; an absent `db_schema` does not gate the siblings.
   test("an empty db_schema disables the Data API and omits the sibling fields", () => {
     const result = fromApiProjectConfig({
       api: { db_schema: "", db_extra_search_path: "public", max_rows: 100 },
@@ -827,10 +736,8 @@ describe("fromApiProjectConfig — api section", () => {
     expect(result.api?.max_rows).toBe(0);
   });
 
-  // NaN has no JSON literal — JSON.parse can only ever produce ±Infinity from
-  // an overflowing numeral (e.g. `1e400`), never NaN — so a NaN in the raw
-  // response can only be programmatic input; the pre-decode walk rejects it
-  // with the caller-misuse reason before any row's narrowing runs.
+  // NaN has no JSON literal, so it can only be programmatic caller input, not a real API response;
+  // the pre-decode walk rejects it with the caller-misuse reason before any row narrows it.
   test("a NaN max_rows is rejected pre-decode as a non-JSON primitive", () => {
     let thrown: unknown;
     try {
@@ -843,11 +750,8 @@ describe("fromApiProjectConfig — api section", () => {
     expect((thrown as ProjectConfigParseError).message).toContain("non-JSON primitive");
   });
 
-  // ±Infinity IS JSON-reachable (drift-audit fix, ADR 0019's 2026-08-27
-  // addendum) and so passes the pre-decode walk — but on a MAPPED field like
-  // `max_rows`, `expectInteger`/`expectNumber`'s own finite check still
-  // rejects it, this time with the api_response reason (a platform-response
-  // problem, not caller misuse).
+  // ±Infinity is JSON-reachable, so it passes the pre-decode walk, but `expectInteger`'s own
+  // finite check still rejects it on a mapped field, this time with the api_response reason.
   test("an Infinity max_rows decodes past the pre-decode walk but still throws api_response via expectInteger", () => {
     let thrown: unknown;
     try {
@@ -856,9 +760,8 @@ describe("fromApiProjectConfig — api section", () => {
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(ProjectConfigParseError);
-    // `reason` is absent here — per ProjectConfigParseError's own docstring
-    // ("api_response" is the default when absent), that IS the api_response
-    // classification, not merely "not caller_misuse".
+    // `reason` is absent here, which is itself the api_response classification (the documented
+    // default), not merely "not caller_misuse".
     expect((thrown as ProjectConfigParseError).reason ?? "api_response").toBe("api_response");
     expect((thrown as ProjectConfigParseError).apiPath).toEqual(["api", "max_rows"]);
   });
@@ -927,12 +830,9 @@ describe("fromApiProjectConfig — db section", () => {
     });
   });
 
-  // Codex round 31, THREAD B — deliberate, not a gap: a consumed path prunes
-  // its WHOLE subtree at apiPath granularity, so a platform-added key nested
-  // inside a consumed array's element (here, `comment` on a cidr entry) is
-  // never itemized by unmappedApiFields — full fidelity lives in
-  // `_apiResponse` instead (unmappedApiFields's own docstring, and the
-  // alsoConsumes design comment above consumedApiPathKeys).
+  // Not a gap: a consumed path prunes its whole subtree at apiPath granularity, so a
+  // platform-added key nested inside a consumed array element is never itemized by
+  // `unmappedApiFields` — full fidelity lives in `_apiResponse` instead.
   test("an extra key inside a consumed allowed_cidrs entry maps fine, is absent from unmappedApiFields, and survives in _apiResponse", () => {
     const result = fromApiProjectConfig({
       database: {
@@ -941,9 +841,8 @@ describe("fromApiProjectConfig — db section", () => {
         },
       },
     });
-    // Both allowed_cidrs/allowed_cidrs_v6 rows read this same apiPath and
-    // filter by `type` (registry.ts's own `filterCidrAddresses`), so a
-    // v4-only entry still produces an (empty) v6 array.
+    // Both allowed_cidrs/allowed_cidrs_v6 rows read the same apiPath and filter by `type`, so a
+    // v4-only entry still produces an empty v6 array.
     expect(result.db?.network_restrictions).toEqual({
       allowed_cidrs: ["1.2.3.4/32"],
       allowed_cidrs_v6: [],
@@ -991,10 +890,8 @@ describe("fromApiProjectConfig — db section", () => {
     expect(result.db?.settings).toEqual({ session_replication_role: "origin" });
   });
 
-  // Mirrors the pool_mode "statement" case above: guarded to the enum the
-  // config schema accepts, but — unlike pool_mode — this path IS consumed by
-  // a registry row (`sessionReplicationRoleRow`), so an out-of-enum value is
-  // omitted from typed output but does NOT surface in unmappedApiFields.
+  // Mirrors the pool_mode "statement" case, but this path is consumed by a registry row, so an
+  // out-of-enum value is omitted from typed output without surfacing in unmappedApiFields.
   test("an unrecognized session_replication_role is omitted from typed output and from unmappedApiFields, but stays in _apiResponse", () => {
     const result = fromApiProjectConfig({
       database: { postgres_settings: { session_replication_role: "weird" } },
@@ -1013,8 +910,7 @@ describe("fromApiProjectConfig — storage section", () => {
     expect(result.storage?.file_size_limit).toBe("50MiB");
   });
 
-  // Significant-digit (`%.4g`-equivalent) formatting cases, verified against
-  // the real `bytesSize` implementation before writing these assertions.
+  // Significant-digit (`%.4g`-equivalent) formatting cases.
   test.each([
     [1500, "1.465KiB"],
     [1234567890, "1.15GiB"],
@@ -1119,10 +1015,7 @@ describe("fromApiProjectConfig — auth section", () => {
   });
 
   test("sms_autoconfirm maps to auth.sms.enable_confirmations WITHOUT inverting", () => {
-    // Deliberate, per registry-auth.ts's smsBaseRows comment: unlike
-    // mailer_autoconfirm/email.enable_confirmations, this GoTrue key maps
-    // identically on both the pull (auth.sync.ts:1677) and push
-    // (auth.sync.ts:2485) sides.
+    // Unlike mailer_autoconfirm/email.enable_confirmations, this key isn't inverted.
     const result = fromApiProjectConfig({ auth: { sms_autoconfirm: true } });
     expect(result.auth?.sms?.enable_confirmations).toBe(true);
   });
@@ -1133,16 +1026,11 @@ describe("fromApiProjectConfig — auth section", () => {
   });
 
   test("sessions_timebox (hours) converts to a Go duration string", () => {
-    // hoursToDurationString(2) => durationString(2 * 3_600_000_000_000)
-    // => hours=2, minutes=0, secs=0 => "2h0m0s" (verified against
-    // registry-auth.ts's durationString before writing this assertion).
     const result = fromApiProjectConfig({ auth: { sessions_timebox: 2 } });
     expect(result.auth?.sessions?.timebox).toBe("2h0m0s");
   });
 
   test("smtp_max_frequency (seconds) converts to a Go duration string", () => {
-    // secondsToDurationString(60) => durationString(60_000_000_000)
-    // => hours=0, minutes=1, secs=0 => "1m0s".
     const result = fromApiProjectConfig({ auth: { smtp_max_frequency: 60 } });
     expect(result.auth?.email?.max_frequency).toBe("1m0s");
   });
@@ -1158,8 +1046,7 @@ describe("fromApiProjectConfig — auth section", () => {
   });
 
   test("smtp_port parses a numeric string (when SMTP is enabled)", () => {
-    // The port is gated on an enabled smtp_host like every SMTP sibling —
-    // the push writes only smtp_host: "" when disabling.
+    // Gated on an enabled smtp_host, like every SMTP sibling.
     const result = fromApiProjectConfig({
       auth: { smtp_host: "smtp.example.com", smtp_port: "2500" },
     });
@@ -1232,10 +1119,6 @@ describe("fromApiProjectConfig — auth section", () => {
     expect(result.auth?.sms?.test_otp).toEqual({ "15551234567": "123456" });
   });
 
-  // CLI-2316 follow-up: figma is now a real provider (../auth/providers.ts),
-  // mirroring github's shape (no url, has email_optional, no skip_nonce_check
-  // — verified against the real V1GetAuthServiceConfigOutput contract, which
-  // has no `external_figma_skip_nonce_check` field at all).
   test("figma maps like any other non-apple/google provider", () => {
     const apiSide = fromApiProjectConfig({
       auth: {
@@ -1260,9 +1143,8 @@ describe("fromApiProjectConfig — auth section", () => {
         },
       }),
     );
-    // The document arm copies the whole decoded provider struct (minus the
-    // secret leaf) verbatim — every schema-materialized field, not just the
-    // two declared above.
+    // The document arm copies the whole decoded provider struct (minus the secret leaf) verbatim,
+    // not just the two fields declared above.
     expect(documentSide.auth?.external?.figma).toEqual({
       enabled: true,
       client_id: "figma-id",
@@ -1273,10 +1155,6 @@ describe("fromApiProjectConfig — auth section", () => {
     });
   });
 
-  // CLI-2316 follow-up: `sms.otp_length`/`sms.otp_expiry` are new config-schema
-  // fields for pre-existing real GoTrue fields (`sms_otp_length`/`sms_otp_exp`)
-  // that the CLI's config-sync never modeled and neither did Go's own
-  // `sms` struct — not a Go-parity gap, a genuinely new mapping.
   test("sms_otp_length/sms_otp_exp map to auth.sms.otp_length/otp_expiry", () => {
     const apiSide = fromApiProjectConfig({ auth: { sms_otp_length: 6, sms_otp_exp: 60 } });
     expect(apiSide.auth?.sms?.otp_length).toBe(6);
@@ -1289,11 +1167,7 @@ describe("fromApiProjectConfig — auth section", () => {
     expect(documentSide.auth?.sms?.otp_expiry).toBe(120);
   });
 
-  // CLI-2316 follow-up: `sms.twilio.content_sid` is a new config-schema field
-  // for a pre-existing real GoTrue field (`sms_twilio_content_sid`),
-  // Twilio-only (no `sms_twilio_verify_content_sid` API counterpart) — same
-  // "omitted when the SMS provider is explicitly unset" gating as
-  // `account_sid`/`message_service_sid` (`smsCredentialStringRow`).
+  // Twilio-only: no `sms_twilio_verify_content_sid` API counterpart.
   test("sms_twilio_content_sid maps to auth.sms.twilio.content_sid, gated the same as its siblings", () => {
     const apiSide = fromApiProjectConfig({
       auth: { sms_provider: "twilio", sms_twilio_content_sid: "HXreal00000000000000000000000000" },
@@ -1343,10 +1217,8 @@ describe("fromApiProjectConfig — secrets (ADR 0019 rule 5)", () => {
     },
   );
 
-  // None of these four have a registry row at all (no config-schema
-  // counterpart), so they would otherwise leak their HMAC digest into
-  // `unmappedApiFields` — the `unmappedSecretApiPaths` orphan list
-  // (`./registry-auth.ts`) treats each as consumed anyway.
+  // None of these four have a registry row at all, so they'd otherwise leak their HMAC digest into
+  // `unmappedApiFields`; the orphan list treats each as consumed anyway.
   test.each([
     "external_figma_secret",
     "external_slack_secret",
@@ -1365,9 +1237,8 @@ describe("fromApiProjectConfig — secrets (ADR 0019 rule 5)", () => {
 });
 
 describe("fromApiProjectConfig — null convention", () => {
-  // `stringRow` (registry-auth.ts) declares a `transform` specifically so it
-  // can treat `null` as "omit" itself, rather than throwing via
-  // `expectString` — see the null-safety note on the row factories.
+  // `stringRow` declares a `transform` specifically so it can treat `null` as "omit" itself,
+  // rather than throwing via `expectString`.
   test("auth.site_url null is omitted via stringRow's own transform", () => {
     const result = fromApiProjectConfig({ auth: { site_url: null } });
     expect(result.auth).toBeUndefined();
@@ -1443,10 +1314,8 @@ describe("fromApiProjectConfig — _apiResponse (ADR 0019 rules 1/3/4)", () => {
 });
 
 describe("fromApiProjectConfig — clone/freeze robustness (CLI-2230)", () => {
-  // Attaching `_apiResponse` clones and freezes the raw attributes
-  // (`attachFrozenApiResponse`) BEFORE any depth check existed; each of these
-  // three payload shapes used to escape this package's documented
-  // `ProjectConfigParseError` contract with a raw, uncaught failure instead.
+  // Attaching `_apiResponse` clones and freezes the raw attributes; these payload shapes must
+  // throw the package's own `ProjectConfigParseError`, not a raw uncaught error.
   test("a pathologically deep raw attributes payload throws ProjectConfigParseError, not an uncaught RangeError", () => {
     let deeplyNested: Record<string, unknown> = { leaf: "value" };
     for (let i = 0; i < 100; i += 1) {
@@ -1611,18 +1480,12 @@ describe("comparableProjectConfigPaths / isComparableProjectConfigPath", () => {
   });
 
   test("comparableProjectConfigPaths does NOT rescue a diff against a document operand that never declared the sub-section at all", () => {
-    // The API side maps `email.smtp.enabled` unconditionally, even when the
-    // *document* operand's `auth` section is genuinely present (it declares
-    // `site_url`) but never mentions `[auth.email.smtp]` at all (CLI-2230's
-    // granularity finding). This pins the case `comparableProjectConfigPaths`
-    // does NOT cover: `auth.email.smtp.enabled` IS a comparable leaf path,
-    // yet it still survives `subtractCliConfig` as phantom drift, because the
-    // baseline has no `smtp` key at that depth to compare against
-    // (`subtractValue` keeps a value verbatim whenever its baseline
-    // counterpart is absent). Restricting to comparableProjectConfigPaths
-    // only removes the WHOLE-SECTION-granularity false positives (e.g.
-    // `realtime`); it cannot rescue this finer-grained one — see
-    // `comparableProjectConfigPaths`'s docstring.
+    // The API side maps `email.smtp.enabled` unconditionally, even when the document operand's
+    // `auth` section is present but never mentions `[auth.email.smtp]` at all.
+    // `auth.email.smtp.enabled` is a comparable leaf, yet it still survives as phantom drift,
+    // since `subtractCliConfig` keeps a value verbatim whenever its baseline counterpart is
+    // absent — restricting to comparable paths only catches whole-section false positives, not
+    // this finer-grained one.
     const apiSide = fromApiProjectConfig({ auth: { smtp_host: "" } });
     const documentSide = fromConfigDocument({ auth: { site_url: "https://example.com" } });
 
@@ -1675,14 +1538,10 @@ describe("unmappedApiFields", () => {
     expect(unmappedApiFields(result)).toEqual({});
   });
 
-  // `walkUnmapped`'s own `MAX_UNMAPPED_WALK_DEPTH` guard is no longer
-  // reachable through the public API on its own: every path that attaches
-  // `_apiResponse` (`fromApiProjectConfig`, `attachApiResponse`) now shares
-  // the same bound at construction time (`assertRawAttributesDepthWithinBound`,
-  // CLI-2230's clone/freeze finding), so a payload deep enough to trip
-  // `walkUnmapped`'s check always fails earlier, at construction — see
-  // "fromApiProjectConfig — clone/freeze robustness (CLI-2230)" above.
-  // `walkUnmapped`'s own guard remains as defense in depth.
+  // `walkUnmapped`'s own depth guard is no longer reachable through the public API on its own:
+  // every path that attaches `_apiResponse` now shares the same depth bound at construction time,
+  // so a payload deep enough always fails earlier — see the clone/freeze robustness tests above.
+  // The guard remains as defense in depth.
 });
 
 describe("review round: numeric and provider narrowing (CLI-2230)", () => {
@@ -1700,9 +1559,7 @@ describe("review round: numeric and provider narrowing (CLI-2230)", () => {
 
   test("fractional session hours map faithfully (no whole-hour rounding)", () => {
     const result = fromApiProjectConfig({ auth: { sessions_timebox: 1.5 } });
-    // Deliberate divergence from the legacy apply's Math.round
-    // (auth.sync.ts:1402-1407): a standalone mapping must represent the
-    // hosted value, not change it.
+    // A standalone mapping must represent the hosted value, not round it.
     expect(result.auth?.sessions?.timebox).toBe("1h30m0s");
   });
 
@@ -1746,19 +1603,9 @@ describe("review round: numeric and provider narrowing (CLI-2230)", () => {
 
 describe("review round: aliasing, unknown-empty sections, path encoding (CLI-2230)", () => {
   test("object elements inside hosted arrays are copied, not aliased", () => {
-    // `experimental.inspect.rules` was the only schema field shaped as an
-    // array of objects (this file's own `copyHostedValueWithoutSecrets`
-    // docstring used it as its example) — CLI-2316 excludes the whole
-    // `experimental.inspect` subtree as CLI-only, so it can no longer probe
-    // this. But `fromConfigDocument` runs no schema validation on its input
-    // (see that same docstring), so the object-in-array copy path is still
-    // reachable through any surviving array field — `api.schemas` (real
-    // schema type `string[]`) is used here as a structurally-typed carrier: a
-    // `Record<string, unknown>` operand is assignable to the exported
-    // `EffectiveConfig` parameter (every `EffectiveConfig` property is
-    // optional, so nothing named on it needs to reconcile against the
-    // index-signature type), with no cast, while still reaching this
-    // function's fully untyped runtime behavior.
+    // `api.schemas` is used as a probe for the array-of-objects copy path: a `Record<string,
+    // unknown>` operand is assignable to `EffectiveConfig` (every property optional) without a
+    // cast, and `fromConfigDocument` itself runs no schema validation on its input.
     const element = { nested: "value" };
     const probe: Record<string, unknown> = { api: { schemas: [element] } };
     const projected = fromConfigDocument(probe);
@@ -1773,9 +1620,8 @@ describe("review round: aliasing, unknown-empty sections, path encoding (CLI-223
   });
 
   test("a raw key that would collide with a registry path under join-encoding stays unmapped", () => {
-    // One key containing a NUL between "auth" and "site_url" must not collide
-    // with the consumed two-segment path ["auth", "site_url"] — pathKey
-    // JSON-encodes the segment array instead of joining on a delimiter.
+    // A NUL between "auth" and "site_url" must not collide with the consumed path ["auth",
+    // "site_url"]: pathKey JSON-encodes the segment array instead of joining on a delimiter.
     const collidingKey = ["auth", "site_url"].join(String.fromCharCode(0));
     const result = fromApiProjectConfig({ [collidingKey]: "x" });
     expect(unmappedApiFields(result)).toEqual({ [collidingKey]: "x" });
@@ -1796,9 +1642,8 @@ describe("review round: aliasing, unknown-empty sections, path encoding (CLI-223
   });
 
   test("an unrecognized password character-class string still omits the field", () => {
-    // An enum member this package version doesn't model — tolerable skew,
-    // same bucket as pool_mode "statement": absent from typed output and
-    // (path consumed) from unmappedApiFields; reachable via _apiResponse.
+    // An enum member this package version doesn't model — same bucket as pool_mode "statement":
+    // absent from typed output and unmappedApiFields, reachable via _apiResponse.
     const result = fromApiProjectConfig({ auth: { password_required_characters: "abc" } });
     expect(Object.hasOwn(result, "auth")).toBe(false);
     expect(unmappedApiFields(result)).toEqual({});
@@ -1827,10 +1672,9 @@ describe("review round: oauth_server rows, known-empty pruning, DAG walk (CLI-22
   });
 
   test("a shared-reference DAG is rejected in bounded time with a typed error", () => {
-    // ~40 shared levels × 2 properties = ~2^41 tree paths within the depth
-    // bound — the visit cap must reject it as pathological (typed, fast)
-    // instead of hanging. Real JSON off the network can never share
-    // references, so nothing legitimate hits this.
+    // ~40 shared levels × 2 properties ≈ 2^41 tree paths within the depth bound; the visit cap
+    // must reject this as pathological instead of hanging. Real JSON from the network never
+    // shares references.
     let node: Record<string, unknown> = { leaf: true };
     for (let level = 0; level < 40; level++) {
       node = { a: node, b: node };
@@ -1936,10 +1780,9 @@ describe("review round: pre-decode depth guard, caller-misuse reason, readonly m
 
 describe("review round: deep-readonly metadata, integer frequencies, provider narrowing (CLI-2230)", () => {
   test("nested _apiResponse arrays are readonly under a readonly-preserving guard and frozen at runtime", () => {
-    // The lib's own Array.isArray narrows to a MUTABLE any[] view
-    // (microsoft/TypeScript#17002) — the type's docstring directs consumers
-    // to a readonly-preserving guard like this one, under which mutation
-    // does not compile. Runtime deep-freeze backstops the lib-guard path.
+    // `Array.isArray` narrows to a mutable `any[]` view (microsoft/TypeScript#17002); a
+    // readonly-preserving guard like this one is needed for mutation to not compile. Runtime
+    // deep-freeze backstops the guard.
     const isReadonlyJsonArray = (
       value: ReadonlyJsonValue | undefined,
     ): value is ReadonlyArray<ReadonlyJsonValue> => Array.isArray(value);
@@ -2024,11 +1867,8 @@ describe("review round: operand guards, empty-entry preservation, duration bound
   });
 
   test("negative session hours render with their sign, like the legacy apply", () => {
-    // auth.sync.ts:1402-1404 renders sessions_timebox: -1 as "-1h0m0s" (the
-    // shared durationString prepends the sign), the document schema keeps
-    // timebox a plain string, and the push parser reads the leading "-" back
-    // (config-sync.duration.ts:101-104) — so a signed hosted value maps
-    // instead of throwing.
+    // `durationString` prepends the sign and the document schema keeps timebox a plain string, so
+    // a signed hosted value maps instead of throwing.
     expect(fromApiProjectConfig({ auth: { sessions_timebox: -1 } }).auth?.sessions?.timebox).toBe(
       "-1h0m0s",
     );
@@ -2057,7 +1897,7 @@ describe("review round: sibling validation, formatter overflow, prototype lookup
       "auth",
       "external_apple_additional_client_ids",
     ]);
-    // A null anchor with a VALID sibling still omits the field entirely.
+    // A null anchor with a valid sibling still omits the field entirely.
     const omitted = fromApiProjectConfig({
       auth: { external_apple_client_id: null, external_apple_additional_client_ids: "b,c" },
     });
@@ -2113,13 +1953,11 @@ describe("review round: duration/size bounds and freeze failures (CLI-2230)", ()
         sessions: { timebox: "1h0.5s", inactivity_timeout: "1m0.5s" },
       },
     });
-    // The push pipeline normalizes through the truncating legacy formatter
-    // (normalizeDurationStr, auth.sync.ts:986-987; config-sync.duration.ts:
-    // 39-45) BEFORE durationToHours converts — "1h0.5s" stores exactly one
-    // hour, so the canonical document spelling predicts that reading.
+    // The push pipeline truncates sub-second remainders before converting to hours, so "1h0.5s"
+    // stores exactly one hour and the canonical spelling predicts that reading.
     expect(projected.auth?.sessions?.timebox).toBe("1h0m0s");
     expect(projected.auth?.sessions?.inactivity_timeout).toBe("1m0s");
-    // Sub-minute magnitudes keep their fraction (legacy seconds branch does).
+    // Sub-minute magnitudes keep their fraction.
     const subMinute = fromConfigDocument({ auth: { sessions: { timebox: "59.5s" } } });
     expect(subMinute.auth?.sessions?.timebox).toBe("59.5s");
   });
@@ -2149,8 +1987,8 @@ describe("review round: absent anchors, exponent-free seconds, non-plain values 
       "auth",
       "external_google_additional_client_ids",
     ]);
-    // A VALID sibling with an absent anchor still omits the field (nothing
-    // to fold into) and stays consumed.
+    // A valid sibling with an absent anchor still omits the field (nothing to fold into) and
+    // stays consumed.
     const omitted = fromApiProjectConfig({
       auth: { external_google_additional_client_ids: "b,c" },
     });
@@ -2214,7 +2052,7 @@ describe("review round: clone taxonomy, precision bound, type discriminator, sec
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(ProjectConfigParseError);
-    // An envelope WITHOUT a type stays tolerated.
+    // An envelope without a type stays tolerated.
     const lenient = fromApiProjectConfig({ data: { attributes: { api: { max_rows: 5 } } } });
     expect(lenient.api?.max_rows).toBe(5);
   });
@@ -2249,11 +2087,8 @@ describe("review round: safe integers, Go truncation, bigint, fractional-hour bo
   });
 
   test("fractional nanoseconds round like the push parser (the pipeline authority)", () => {
-    // The push parser (config-sync.duration.ts:155) ROUNDS fractional
-    // nanoseconds — it is what actually processes the document on push, so
-    // canonicalization predicts its reading. (Go itself truncates; matching
-    // Go would canonicalize toward a hosted value the pipeline never
-    // produces.)
+    // The push parser rounds fractional nanoseconds; canonicalization predicts its reading rather
+    // than Go's own truncation, which would target a value push never produces.
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "1.0000000005s" } } });
     expect(projected.auth?.sessions?.timebox).toBe("1.000000001s");
   });
@@ -2276,10 +2111,8 @@ describe("review round: safe integers, Go truncation, bigint, fractional-hour bo
 });
 
 describe("review round: non-JSON primitives, tiny hours, readonly report, whole-second frequencies, disabled sentinel (CLI-2230)", () => {
-  // undefined and NaN have no JSON.parse-reachable spelling, so both stay
-  // caller-misuse. Drift-audit fix: ±Infinity is JSON-reachable
-  // (`JSON.parse('{"x":1e400}')` yields `Infinity`) and was wrongly rejected
-  // here too — see the sibling test below.
+  // `undefined` and `NaN` have no JSON.parse-reachable spelling, so both stay caller-misuse;
+  // ±Infinity is JSON-reachable (`1e400` overflows to it) and is handled by the sibling test below.
   test("undefined and NaN raw values throw the typed caller-misuse error", () => {
     for (const bad of [{ x: undefined }, { x: Number.NaN }]) {
       let thrown: unknown;
@@ -2334,26 +2167,21 @@ describe("review round: non-JSON primitives, tiny hours, readonly report, whole-
     const leaf = report["brand_new"];
     expect(Array.isArray(leaf)).toBe(true);
     expect(Object.isFrozen(leaf)).toBe(true);
-    // No non-finite value anywhere inside — the sanitizing walk must be a
-    // no-op and hand back the SAME array `_apiResponse` already holds,
-    // rather than a fresh (unfrozen) copy.
+    // No non-finite value anywhere inside, so the sanitizing walk is a no-op and hands back the
+    // same array `_apiResponse` already holds, not a fresh copy.
     expect(leaf).toBe(result._apiResponse?.["brand_new"]);
     expect(() => {
       // @ts-expect-error — the report's index is readonly.
       report["brand_new"] = null;
-      // The rebuilt top-level container is NOT frozen, so pin the compile
-      // error via the runtime no-op-or-throw distinction: assignment on the
-      // fresh record succeeds at runtime, which is why the compile-level
-      // readonly matters. Throw manually to keep the expectation uniform.
+      // The rebuilt container isn't frozen, so assignment would succeed at runtime; only the
+      // compile-time readonly guards it. Throws manually to keep the expectation uniform.
       throw new TypeError("compile-only guard");
     }).toThrow(TypeError);
   });
 
-  // Drift-audit follow-up to Fix 1: `walkUnmapped` returns an unmapped array
-  // leaf wholesale (never walked element-by-element the way an object is),
-  // so a non-finite number hiding inside one — even nested inside a plain
-  // object inside the array — would otherwise reach `unmappedApiFields`'s
-  // return unsanitized and violate its own ReadonlyJsonValue contract.
+  // `walkUnmapped` returns an unmapped array leaf wholesale rather than walking it
+  // element-by-element, so a non-finite number nested inside one must still be sanitized before
+  // it reaches `unmappedApiFields`'s return.
   test("a non-finite number hiding inside an unmapped array leaf (including nested in an object) surfaces as null via a sanitized copy", () => {
     const parsed: { brand_new: ReadonlyArray<unknown> } = JSON.parse(
       '{"brand_new":[1e400,{"x":-1e400,"y":1}]}',
@@ -2362,15 +2190,12 @@ describe("review round: non-JSON primitives, tiny hours, readonly report, whole-
     const result = fromApiProjectConfig(parsed);
     const report = unmappedApiFields(result);
     expect(report["brand_new"]).toEqual([null, { x: null, y: 1 }]);
-    // Sanitizing produces a FRESH copy — unlike the all-finite case above,
-    // this is no longer the shared frozen `_apiResponse` reference.
+    // Sanitizing produces a fresh copy here, unlike the all-finite case above.
     expect(report["brand_new"]).not.toBe(result._apiResponse?.["brand_new"]);
   });
 
-  // Codex round 31, THREAD C — unmappedApiFields must guard its own input
-  // boundary the same way the other public entry points do (toProjectConfig,
-  // attachApiResponse), rather than reading `config._apiResponse` directly
-  // and leaking a raw TypeError/Error past this package's typed contract.
+  // `unmappedApiFields` must guard its own input boundary like the other public entry points,
+  // rather than leaking a raw error past this package's typed contract.
   test("a non-object operand throws the typed caller-misuse error", () => {
     let thrown: unknown;
     try {
@@ -2408,11 +2233,9 @@ describe("review round: non-JSON primitives, tiny hours, readonly report, whole-
 
   test("document frequency durations quantize to whole seconds like the legacy push", () => {
     const projected = fromConfigDocument({ auth: { email: { max_frequency: "1.5s" } } });
-    // auth.sync.ts:2611-2616 floors to integer seconds on push — the hosted
-    // value can only ever be whole seconds, so the document converges on it.
+    // The hosted value can only ever be whole seconds, so the document converges on it.
     expect(projected.auth?.email?.max_frequency).toBe("1s");
-    // Session durations quantize through the push formatter's h/m
-    // truncation instead (normalizeDurationStr runs before durationToHours).
+    // Session durations quantize through the push formatter's h/m truncation instead.
     const sessions = fromConfigDocument({ auth: { sessions: { timebox: "1h0.5s" } } });
     expect(sessions.auth?.sessions?.timebox).toBe("1h0m0s");
   });
@@ -2430,10 +2253,8 @@ describe("review round: fraction exactness, hour round-trip, bigint discriminato
     const projected = fromConfigDocument({
       auth: { sessions: { timebox: "0.999999999999999999s" } },
     });
-    // The push parser's float accumulation reads this as exactly 1s — and
-    // ITS reading is the pipeline authority the canonical spelling predicts.
-    // (Go itself would truncate to 999999999ns; see parseDuration's
-    // authority-scoping note for why push wins for fractional arithmetic.)
+    // The push parser's float accumulation reads this as exactly 1s, and that reading is what the
+    // canonical spelling predicts, not Go's own truncation to 999999999ns.
     expect(projected.auth?.sessions?.timebox).toBe("1s");
   });
 
@@ -2460,15 +2281,14 @@ describe("review round: fraction exactness, hour round-trip, bigint discriminato
 describe("review round: Go fraction order, mu units, realms, disabled-gate validation (CLI-2230)", () => {
   test("short decimal fractions scale exactly like Go", () => {
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "0.2593ms" } } });
-    // Go computes int64(f * (unit/scale)) = 2593 * 100 = 259300ns exactly;
-    // the old operand order truncated a nanosecond short (259.299µs).
+    // Go computes int64(f * (unit/scale)) = 2593 * 100 = 259300ns exactly; the reverse operand
+    // order truncates a nanosecond short (259.299µs).
     expect(projected.auth?.sessions?.timebox).toBe("259.3µs");
   });
 
   test("the Greek small mu spelling stays verbatim (the push parser rejects it)", () => {
-    // Go accepts U+03BC, but the push parser takes only us/µs
-    // (config-sync.duration.ts:134) — canonicalizing "1μs" into a pushable
-    // spelling would fabricate a reading the pipeline never performs.
+    // Go accepts U+03BC, but the push parser only takes us/µs; canonicalizing "1μs" into a
+    // pushable spelling would fabricate a reading the pipeline never performs.
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "1μs" } } });
     expect(projected.auth?.sessions?.timebox).toBe("1μs");
   });
@@ -2502,9 +2322,8 @@ describe("review round: Go fraction order, mu units, realms, disabled-gate valid
 
 describe("review round: Go-range sessions, SMTP/provider/storage disabled sentinels (CLI-2230)", () => {
   test("year-scale whole-hour durations parse and map inside Go's range", () => {
-    // "8760h" is a valid push-side value (sent as 8760 hours); the earlier
-    // float-precision ceiling wrongly rejected it. Single whole-unit
-    // components stay exact at any magnitude inside Go's range.
+    // "8760h" is a valid push-side value; single whole-unit components stay exact at any
+    // magnitude inside Go's range.
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "8760h" } } });
     expect(projected.auth?.sessions?.timebox).toBe("8760h0m0s");
     const mapped = fromApiProjectConfig({ auth: { sessions_timebox: 8760 } });
@@ -2530,10 +2349,8 @@ describe("review round: Go-range sessions, SMTP/provider/storage disabled sentin
     );
   });
 
-  // Three-state fix (drift audit of CLI-2230/PR #6339): an ABSENT smtp_host
-  // says nothing about SMTP status — unlike the explicit "" sentinel above,
-  // it must not suppress the siblings. Mirrors smsProviderExplicitlyUnset's
-  // own absent-vs-sentinel rule a few rows below in registry-auth.ts.
+  // An absent smtp_host says nothing about SMTP status, unlike the explicit "" sentinel above, so
+  // it must not suppress the siblings.
   test("SMTP siblings map normally when smtp_host is ABSENT, not explicitly disabled", () => {
     const sparse = fromApiProjectConfig({
       auth: { smtp_user: "postmaster", smtp_admin_email: "a@b.c" },
@@ -2545,11 +2362,9 @@ describe("review round: Go-range sessions, SMTP/provider/storage disabled sentin
     expect(unmappedApiFields(sparse)).toEqual({});
   });
 
-  // `enabled=false` means no Iceberg/Vector catalog is provisioned, so the
-  // quota fields are retained-but-inert ceilings on a non-existent resource
-  // — DISABLED_SENTINEL_PRUNES drops them on BOTH arms, leaving
-  // `{enabled: false}` either way (CLI-2314: the document arm no longer
-  // omits the container entirely — see this file's own docstring).
+  // `enabled: false` means no catalog is provisioned, so the quota fields are inert ceilings on a
+  // non-existent resource; `DISABLED_SENTINEL_PRUNES` drops them on both arms, leaving
+  // `{enabled: false}` either way.
   test("a disabled storage.analytics/vector container projects only its toggle on both arms", () => {
     const projected = fromConfigDocument({
       storage: {
@@ -2628,11 +2443,8 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("null gating discriminators read as disabled and still prune their siblings", () => {
-    // The GET contract permits null for these booleans, and the legacy
-    // reconciliation reads a null discriminator as disabled (auth.sync.ts:
-    // 1315 captcha, :1336 hooks, :1789 external providers) — so the gated
-    // rows map null to false, letting the sentinel sweep prune the retained
-    // siblings instead of projecting them with no `enabled` key.
+    // The gated rows map null to false, letting the sentinel sweep prune the retained siblings
+    // instead of projecting them with no `enabled` key.
     const result = fromApiProjectConfig({
       auth: {
         external_github_enabled: null,
@@ -2663,10 +2475,9 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("CSV-backed arrays canonicalize to their push round-trip on the document side", () => {
-    // The push mapper joins these arrays with "," (auth.sync.ts:2294,
-    // api.sync.ts:138,140) and the pull direction re-splits, so an element
-    // holding a literal comma round-trips into a different array — the
-    // document projection converges on the value that actually exists hosted.
+    // The push mapper joins these arrays with "," and the pull direction re-splits, so an
+    // element holding a literal comma round-trips into a different array; the document
+    // projection converges on what actually exists hosted.
     const doc = fromConfigDocument({
       api: { schemas: ["public,graphql_public"], extra_search_path: [" public", "extensions "] },
       auth: { additional_redirect_urls: ["https://example.com/callback?a=1,2"] },
@@ -2685,10 +2496,8 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("an explicitly-unset SMS provider omits retained credentials entirely", () => {
-    // Legacy touches neither the flags nor the credentials on a null/empty
-    // sms_provider (auth.sync.ts:1664-1666, :1574-1655) — so nothing about
-    // the providers projects: no fabricated enabled flags, no retained
-    // credentials surviving as unmanaged phantom entries.
+    // Nothing about the providers projects when sms_provider is null/empty: no fabricated
+    // enabled flags, no retained credentials surviving as unmanaged phantom entries.
     const nullProvider = fromApiProjectConfig({
       auth: { sms_provider: null, sms_messagebird_originator: "retained" },
     });
@@ -2697,7 +2506,7 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
       auth: { sms_provider: "", sms_twilio_account_sid: "AC1" },
     });
     expect(Object.hasOwn(emptyProvider, "auth")).toBe(false);
-    // An ABSENT provider key says nothing — the credential still maps.
+    // An absent provider key says nothing — the credential still maps.
     const absentProvider = fromApiProjectConfig({
       auth: { sms_messagebird_originator: "retained" },
     });
@@ -2719,10 +2528,9 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("the sessions floor includes int64's own minimum, asymmetrically", () => {
-    // -2^63 ns IS a valid Go duration (the int64 minimum); its hours spelling
-    // rounds back to exactly -2^63 through magnitude-then-sign. The next
-    // more-negative float already products past 2^63, and the POSITIVE
-    // mirror of the endpoint stays rejected (+2^63 is one past max int64).
+    // -2^63 ns is a valid Go duration (the int64 minimum); its hours spelling rounds back to
+    // exactly -2^63 through magnitude-then-sign. The positive mirror of the endpoint stays
+    // rejected, since +2^63 is one past max int64.
     const endpoint = fromApiProjectConfig({
       auth: { sessions_timebox: -(2 ** 63) / 3_600_000_000_000 },
     });
@@ -2735,10 +2543,9 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("test_otp records canonicalize to their push round-trip on the document side", () => {
-    // The push wrapper serializes k=v pairs joined by commas (mapToEnv,
-    // auth.sync.ts:2603-2609) and the pull direction re-parses by splitting
-    // on every comma — a value holding a literal comma converges on the
-    // post-push hosted record.
+    // The push wrapper serializes k=v pairs joined by commas and the pull direction re-parses by
+    // splitting on every comma, so a value holding a literal comma converges on the post-push
+    // hosted record.
     const doc = fromConfigDocument({
       auth: { sms: { test_otp: { "15551234567": "123,456" } } },
     });
@@ -2796,9 +2603,8 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("an empty test_otp map normalizes to unmanaged absence", () => {
-    // The push wrapper omits sms_test_otp when the serialized map is empty
-    // (auth.sync.ts:2487-2495), so an explicit {} can never clear a retained
-    // remote value — projecting it would fabricate permanent drift.
+    // The push wrapper omits sms_test_otp when the serialized map is empty, so an explicit {}
+    // can never clear a retained remote value; projecting it would fabricate permanent drift.
     const empty = fromConfigDocument({ auth: { sms: { test_otp: {} } } });
     expect(Object.hasOwn(empty, "auth")).toBe(false);
     // A record whose entries all dissolve in the round-trip empties too.
@@ -2822,27 +2628,23 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("the document parser rejects the positive int64 endpoint the API arm rejects", () => {
-    // +2^63 ns is one past Go's maximum; a non-canonical spelling summing to
-    // exactly 2^63 stays verbatim instead of canonicalizing into a duration
-    // fromApiProjectConfig would reject.
+    // +2^63 ns is one past Go's maximum, so a non-canonical spelling summing to exactly 2^63
+    // stays verbatim rather than canonicalizing into a duration the API arm would reject.
     const positive = fromConfigDocument({
       auth: { sessions: { timebox: "2562047h47m16s854775808ns" } },
     });
     expect(positive.auth?.sessions?.timebox).toBe("2562047h47m16s854775808ns");
-    // The negative endpoint IS valid int64 and still canonicalizes.
+    // The negative endpoint is valid int64 and still canonicalizes.
     const negative = fromConfigDocument({
       auth: { sessions: { timebox: "-2562047h47m16s854775808ns" } },
     });
-    // The push-formatter truncation drops the sub-second tail on the
-    // document side; the API arm's faithful endpoint render is pinned above.
+    // The push-formatter truncation drops the sub-second tail on the document side.
     expect(negative.auth?.sessions?.timebox).toBe("-2562047h47m16s");
   });
 
   test("multiple enabled SMS providers converge on the push switch's first-enabled precedence", () => {
-    // The push switch selects the FIRST enabled provider in its fixed order
-    // and sends only that one (auth.sync.ts:2498-2539) — later enabled flags
-    // flip to false and their siblings prune, matching the API arm's report
-    // of the post-push hosted state.
+    // The push switch selects the first enabled provider in its fixed order and sends only that
+    // one; later enabled flags flip to false and their siblings prune.
     const doc = fromConfigDocument({
       auth: {
         sms: {
@@ -2871,13 +2673,9 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("negative unsigned-style document values clamp like the pull direction", () => {
-    // The push mapper sends the local value unchanged (auth.sync.ts:
-    // 2304-2309) and the pull direction clamps what the API reports — a
-    // pushed -1 projects back as 0, so the document spelling converges.
-    // `api.max_rows` is the one exception (thread 2, human review round on
-    // PR #6339): push OMITS max_rows entirely when non-positive
-    // (api.sync.ts:141), so the document arm omits rather than clamps —
-    // see the dedicated max_rows tests below for the full omit/keep matrix.
+    // A pushed -1 projects back as 0, so the document spelling converges. `api.max_rows` is the
+    // one exception: push omits it entirely when non-positive, so the document arm omits rather
+    // than clamps — see the dedicated max_rows tests below.
     const doc = fromConfigDocument({
       auth: { rate_limit: { anonymous_users: -1 } },
       api: { enabled: true, max_rows: -5 },
@@ -2893,21 +2691,17 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     expect(positive.auth?.rate_limit?.anonymous_users).toBe(30);
   });
 
-  // Thread 2 (human review round on PR #6339): api.sync.ts:141 only sends
-  // max_rows when strictly positive — the document arm mirrors that by
-  // omitting rather than clamping. The API arm is unaffected (hosted `0` is
-  // real, reported state).
+  // The push side only sends max_rows when strictly positive, so the document arm mirrors that
+  // by omitting rather than clamping; the API arm is unaffected since hosted `0` is real,
+  // reported state.
   test.each([
     ["0", 0],
     ["-0", -0],
     ["negative", -5],
     ["-Infinity", Number.NEGATIVE_INFINITY],
-    // TOML's `nan` literal is a real reachable document value here —
-    // `smol-toml` (this package's TOML parser, `io.ts`) parses
-    // `max_rows = nan` to `Number.NaN` — and `NaN <= 0` is `false`, which
-    // would have let a NaN slip past a naive non-positive check (engineer
-    // review round on PR #6339): `!(value > 0)` catches it because
-    // `NaN > 0` is also `false`.
+    // TOML's `nan` literal is a real reachable document value (`smol-toml` parses
+    // `max_rows = nan` to `Number.NaN`); `NaN <= 0` is `false`, so a naive non-positive check
+    // would miss it, but `!(value > 0)` catches it since `NaN > 0` is also `false`.
     ["NaN", Number.NaN],
   ])("api.max_rows: %s is omitted on the document arm", (_description, value) => {
     const doc = fromConfigDocument({ api: { enabled: true, max_rows: value } });
@@ -2940,12 +2734,8 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
           throw new Error("boom");
         },
       },
-      // The toProjectConfig-nested variant (engineer review round on PR
-      // #6339, item 2): the dispatcher's own `cliConfig` read succeeds fine
-      // (it just returns this plain object reference) — the throw happens
-      // one level deeper, inside fromConfigDocument's own { config,
-      // document } unwrapping, which used to read `input["config"]"`/
-      // `input["document"]` unguarded.
+      // The dispatcher's own `cliConfig` read succeeds fine; the throw happens one level deeper,
+      // inside `fromConfigDocument`'s own { config, document } unwrapping.
       {
         cliConfig: {
           get config(): EffectiveConfig {
@@ -2966,11 +2756,8 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     }
   });
 
-  // Direct fromConfigDocument calls (not routed through the toProjectConfig
-  // dispatcher above) — engineer review round on PR #6339, item 2: both the
-  // "config" and "document" properties of the { config, document } pair
-  // shape must be read through the same guarded boundary as every other
-  // accessor-backed operand this file handles.
+  // Both the "config" and "document" properties of the { config, document } pair must be read
+  // through the same guarded boundary as every other accessor-backed operand.
   test("a throwing config or document getter on the { config, document } pair surfaces as caller misuse", () => {
     const throwingConfig = {
       get config(): EffectiveConfig {
@@ -3003,9 +2790,8 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("an explicitly empty schemas array normalizes to unmanaged absence", () => {
-    // Push only sends db_schema when the array is non-empty (api.sync.ts:
-    // 137-139, "" being the disable sentinel), and the pull side reads ""
-    // as disabled — the API arm can never project [], so keeping it would
+    // Push only sends db_schema when the array is non-empty ("" is the disable sentinel), and
+    // the pull side reads "" as disabled, so the API arm can never project []; keeping it would
     // fabricate permanent drift.
     const empty = fromConfigDocument({ api: { enabled: true, schemas: [] } });
     expect(empty.api?.schemas).toBeUndefined();
@@ -3033,9 +2819,8 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("sub-minute fractional seconds quantize to the push formatter's toPrecision(10)", () => {
-    // The legacy seconds branch renders toPrecision(10) (config-sync.
-    // duration.ts:47-55) — "59.123456789s" pushes as "59.12345679s", so the
-    // canonical document spelling predicts that reading.
+    // The push formatter renders toPrecision(10): "59.123456789s" pushes as "59.12345679s", so
+    // the canonical spelling predicts that reading.
     const doc = fromConfigDocument({ auth: { sessions: { timebox: "59.123456789s" } } });
     expect(doc.auth?.sessions?.timebox).toBe("59.12345679s");
     // Cross-arm equality for the post-push hosted value.
@@ -3075,10 +2860,8 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("session canonicalization rides the push payload's hours round-trip", () => {
-    // Sessions travel as fractional hours (durationToHours = parse / 3.6e12,
-    // auth.sync.ts:2621-2627) and map back via Math.round(|hours| * 3.6e12) —
-    // "1024h4s" comes back one nanosecond high, so the canonical document
-    // spelling predicts that exact post-push reading.
+    // Sessions travel as fractional hours and map back via rounding; "1024h4s" comes back one
+    // nanosecond high, so the canonical spelling predicts that exact post-push reading.
     const doc = fromConfigDocument({ auth: { sessions: { timebox: "1024h4s" } } });
     expect(doc.auth?.sessions?.timebox).toBe("1024h0m4.000000001s");
     // Cross-arm equality with the hosted hours value the push would store.
@@ -3092,9 +2875,8 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("orphan secret paths validate like isSecret rows before being suppressed", () => {
-    // The four unmappedSecretApiPaths are in the consumed set, so without
-    // validation a contract-invalid value (string-or-null only) would vanish
-    // completely — never emitted AND hidden from unmappedApiFields.
+    // These paths are in the consumed set, so without validation a contract-invalid value would
+    // vanish completely, never emitted and hidden from unmappedApiFields.
     let thrown: unknown;
     try {
       fromApiProjectConfig({ auth: { external_slack_secret: 123 } });
@@ -3111,10 +2893,8 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
   });
 
   test("documents with auth or storage disabled still project their other declared fields (CLI-2314)", () => {
-    // `auth.enabled`/`storage.enabled` are local Docker toggles with no
-    // hosted counterpart — `DISABLED_SENTINEL_PRUNES` no longer treats them
-    // as a "drop every other declared field" gate, so a document that
-    // declares `enabled = false` alongside a real hosted field keeps it.
+    // `auth.enabled`/`storage.enabled` are local Docker toggles with no hosted counterpart, so a
+    // document that declares `enabled = false` alongside a real hosted field keeps that field.
     const projected = fromConfigDocument({
       auth: { enabled: false, site_url: "http://localhost:3000" },
       storage: { enabled: false, file_size_limit: "50MiB" },
@@ -3132,14 +2912,13 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     });
     expect(doc.auth?.rate_limit).toEqual({ sms_sent: 30 });
 
-    // API arm, smtp_host ABSENT: says nothing (same sibling rule as the SMTP
-    // three-state fix) — email_sent must NOT be pruned.
+    // API arm, smtp_host absent: says nothing about SMTP status, so email_sent must not be pruned.
     const apiAbsent = fromApiProjectConfig({
       auth: { smtp_user: "u", smtp_admin_email: "a@b.c", rate_limit_email_sent: 5 },
     });
     expect(apiAbsent.auth?.rate_limit).toEqual({ email_sent: 5 });
 
-    // API arm, smtp_host EXPLICITLY "" (disabled sentinel): still pruned.
+    // API arm, smtp_host explicitly "" (disabled sentinel): still pruned.
     const apiDisabled = fromApiProjectConfig({
       auth: { smtp_host: "", rate_limit_email_sent: 30 },
     });
@@ -3161,14 +2940,10 @@ describe("review round: oauth_server disabled sentinel (CLI-2230)", () => {
     expect(api.auth?.oauth_server).toEqual({ enabled: false });
   });
 
-  // `oauth_server_enabled=false` means the platform serves no OAuth
-  // consent-UI/dynamic-registration behavior, but genuinely retains
-  // `allow_dynamic_registration`/`authorization_url_path` as
-  // stored-but-inert state — DISABLED_SENTINEL_PRUNES drops them on BOTH
-  // arms, leaving `{enabled: false}` either way (CLI-2314: the document arm
-  // no longer omits the container entirely — see this file's own
-  // docstring). An enabled container survives with every field intact on
-  // the document arm.
+  // `oauth_server_enabled: false` means the platform serves no OAuth consent-UI/dynamic-
+  // registration behavior, but genuinely retains its other fields as stored-but-inert state;
+  // `DISABLED_SENTINEL_PRUNES` drops them on both arms, leaving `{enabled: false}` either way. An
+  // enabled container survives with every field intact on the document arm.
   test("a disabled auth.oauth_server container projects only its toggle on both arms", () => {
     const disabled = fromConfigDocument({
       auth: { oauth_server: { enabled: false, authorization_url_path: "/stale" } },
@@ -3194,16 +2969,11 @@ describe("review round: oauth_server disabled sentinel (CLI-2230)", () => {
 
 describe("DISABLED_SENTINEL_PRUNES — cross-arm symmetry re-derived from the data model (CLI-2314)", () => {
   /**
-   * One disabled-state fixture pair per {@link DISABLED_SENTINEL_PRUNES}
-   * entry: a document declaring the container disabled with every dropKey
-   * populated with a stale, non-default value, and the equivalent API
-   * attributes representing that same hosted state with the same sibling
-   * values. Machine-checks the claim behind each entry's own docstring — that
-   * the rule is re-derived from something the platform's data model already
-   * enforces (or retains) on both arms, not push-shaped reasoning the API arm
-   * doesn't independently share. A future entry added on push-only reasoning
-   * would need its own fixture here and would fail the loop below the moment
-   * the two arms disagree.
+   * One disabled-state fixture pair per {@link DISABLED_SENTINEL_PRUNES} entry, machine-checking
+   * that each rule is re-derived from something the platform's data model already enforces on
+   * both arms, not push-only reasoning the API arm doesn't independently share. A future entry
+   * added on push-only reasoning would need its own fixture here and would fail the loop below
+   * the moment the two arms disagree.
    */
   const fixturesByContainerPath: Record<
     string,
@@ -3316,15 +3086,10 @@ describe("DISABLED_SENTINEL_PRUNES — cross-arm symmetry re-derived from the da
   for (const rule of DISABLED_SENTINEL_PRUNES) {
     const key = rule.containerPath.join(".");
 
-    // Skipped, not weakened: `db.network_restrictions.enabled` has no v2 API
-    // contract field at all (registry.ts:332-337) — it's a document-only
-    // management toggle. `applyDisabledSentinels` can therefore never fire on
-    // the API arm for this container (its mapped shape never carries an
-    // `enabled` key to compare against `false`), so there is no "equivalent
-    // API response representing the same disabled state" this generic scheme
-    // could build. The asymmetry itself is the documented, correct behavior
-    // for this entry (see its own comment above `DISABLED_SENTINEL_PRUNES`),
-    // not a gap this test should paper over.
+    // Skipped, not weakened: `db.network_restrictions.enabled` has no v2 API contract field at
+    // all, so `applyDisabledSentinels` can never fire on the API arm for this container. The
+    // asymmetry is documented, correct behavior for this entry, not a gap this test should paper
+    // over.
     if (key === "db.network_restrictions") {
       continue;
     }
@@ -3353,11 +3118,10 @@ describe("DISABLED_SENTINEL_PRUNES — cross-arm symmetry re-derived from the da
 
 describe("review round: clone-snapshot validation, provenance, digit exactness (CLI-2230)", () => {
   test("a getter that changes answers cannot desynchronize validation from the attached snapshot", () => {
-    // Clone-first ordering: structuredClone reads the getter exactly once,
-    // and the VALIDATED value is the CLONE — so either the snapshot is plain
-    // JSON and attaches coherently (this case: first read returns 1), or the
-    // snapshot itself fails validation typed. No ordering lets a value that
-    // wasn't validated get attached.
+    // Clone-first ordering: structuredClone reads the getter exactly once, and the validated
+    // value is the clone, so either the snapshot is plain JSON and attaches coherently (this
+    // case: first read returns 1), or the snapshot itself fails validation typed — no ordering
+    // lets an unvalidated value get attached.
     let reads = 0;
     const sneaky: Record<string, unknown> = {};
     Object.defineProperty(sneaky, "flip", {
@@ -3416,8 +3180,8 @@ describe("review round: unified snapshot, exact scaling, signed frequencies, end
       },
     });
     const result = fromApiProjectConfig({ api: flippy });
-    // Whatever the first (and only) read produced is BOTH the mapped value
-    // and the metadata value — no desync possible.
+    // Whatever the first (and only) read produced is both the mapped value and the metadata
+    // value — no desync possible.
     expect(result.api?.max_rows).toBe(1);
     expect(result._apiResponse?.["api"]).toEqual({ max_rows: 1 });
   });
@@ -3452,14 +3216,11 @@ describe("review round: fractional-addition exactness (CLI-2230)", () => {
 });
 
 describe("fromConfigDocument — raw-presence masking (CliConfigWithRawPresence, thread 1, human review round on PR #6339)", () => {
-  // Engineer review round on PR #6339, item 6: pins the collision
-  // `unwrapConfigDocumentSource`'s shape-sniffing relies on — no top-level
-  // `CliConfig` field is literally named "config" or "document", so a real
-  // decoded document can never be misread as the { config, document } pair
-  // shape. A future top-level `[config]`/`[document]` section would
-  // silently reroute every bare-operand call into the pair arm; this test
-  // fails loudly the moment one is added, rather than the collision
-  // surfacing as a confusing runtime misread.
+  // Pins the collision `unwrapConfigDocumentSource`'s shape-sniffing relies on: no top-level
+  // `CliConfig` field is named "config" or "document", so a real decoded document can never be
+  // misread as the { config, document } pair shape. This fails loudly if a future top-level
+  // `[config]`/`[document]` section is ever added, rather than surfacing as a confusing runtime
+  // misread.
   test("no top-level CliConfig field is named config or document (the shape-sniffing collision this relies on)", () => {
     const topLevelKeys = Object.keys(CliConfigSchema.fields);
     expect(topLevelKeys).not.toContain("config");
@@ -3469,8 +3230,8 @@ describe("fromConfigDocument — raw-presence masking (CliConfigWithRawPresence,
   test("without a document, decode-materialized defaults leak through (the presence-relativity limit ADR 0021 documents)", () => {
     const config = decodeCliConfig({});
     const projected = fromConfigDocument(config);
-    // All 19 providers present with their schema-defaulted shape — this is
-    // exactly the limit CliConfigWithRawPresence exists to close.
+    // All 19 providers present with their schema-defaulted shape — the limit
+    // `CliConfigWithRawPresence` exists to close.
     expect(Object.keys(projected.auth?.external ?? {}).length).toBeGreaterThan(1);
   });
 
@@ -3481,13 +3242,12 @@ describe("fromConfigDocument — raw-presence masking (CliConfigWithRawPresence,
     const config = decodeCliConfig(document);
     const projected = fromConfigDocument({ config, document });
     expect(Object.keys(projected.auth?.external ?? {}).sort()).toEqual(["apple", "google"]);
-    // Declared with only client_id — the rest still comes from the DECODED
-    // schema-defaulted shape, masking only decides presence, not values.
+    // Declared with only client_id — the rest still comes from the decoded schema-defaulted
+    // shape; masking only decides presence, not values.
     expect(projected.auth?.external?.google).toEqual(config.auth.external.google);
-    // Apple is schema-defaulted `enabled: false` here (never raw-declared),
-    // so the pre-existing disabled-sentinel sweep (unrelated to presence
-    // masking) still prunes its siblings down to the toggle alone — apple
-    // "always sent" means always PRESENT, not exempt from that sweep.
+    // Apple is schema-defaulted `enabled: false` here (never raw-declared), so the
+    // disabled-sentinel sweep still prunes its siblings down to the toggle alone — "always sent"
+    // means always present, not exempt from that sweep.
     expect(projected.auth?.external?.apple).toEqual({ enabled: false });
   });
 
@@ -3499,15 +3259,12 @@ describe("fromConfigDocument — raw-presence masking (CliConfigWithRawPresence,
     expect(Object.hasOwn(projected.auth ?? {}, "captcha")).toBe(false);
   });
 
-  // Engineer review round on PR #6339, item 3: an own key set to an
-  // EXPLICIT `undefined` must read as absent, matching `presenceIn`'s
-  // own `x?.["key"] !== undefined` predicate exactly (a value comparison,
-  // not `Object.hasOwn`) — the degenerate case a naive `Object.hasOwn`
-  // check would get wrong.
+  // An own key set to explicit `undefined` must read as absent, matching `presenceIn`'s own
+  // `x?.["key"] !== undefined` predicate (a value comparison, not `Object.hasOwn`) — the
+  // degenerate case a naive `Object.hasOwn` check would get wrong.
   test("an own key set to explicit undefined reads as absent, same as omitted entirely", () => {
-    // `document` need not itself be schema-decodable — it's the raw
-    // presence signal, independent of `config` — so this deliberately
-    // malformed-looking `{ captcha: undefined }` shape is paired with an
+    // `document` need not itself be schema-decodable — it's the raw presence signal, independent
+    // of `config` — so this malformed-looking `{ captcha: undefined }` shape is paired with an
     // ordinary fully-defaulted decoded config instead of decoding itself.
     const document = { auth: { captcha: undefined } };
     expect(Object.hasOwn(document.auth, "captcha")).toBe(true);
@@ -3582,11 +3339,9 @@ describe("fromConfigDocument — raw-presence masking (CliConfigWithRawPresence,
     expect(Object.hasOwn(projected.auth ?? {}, "captcha")).toBe(false);
   });
 
-  // Engineer review round on PR #6339, item 4: absent/explicit-undefined
-  // `document` is legal (no masking, asserted elsewhere in this file); a
-  // PRESENT but non-object `document` is a different, caller-error case —
-  // silently disabling masking with no signal would be asymmetric with the
-  // throwing guard `config` already gets.
+  // Absent/explicit-undefined `document` is legal (no masking, asserted elsewhere in this file);
+  // a present but non-object `document` is a caller-error case — silently disabling masking with
+  // no signal would be asymmetric with the throwing guard `config` already gets.
   test.each([
     ["null", null],
     ["a string", "oops"],
@@ -3597,10 +3352,7 @@ describe("fromConfigDocument — raw-presence masking (CliConfigWithRawPresence,
       const config = decodeCliConfig({});
       let thrown: unknown;
       try {
-        // A JavaScript caller can hand a non-object `document` despite the
-        // compile-time type — same rationale as this file's other
-        // `as unknown as` runtime-misuse pins (e.g. `unmappedApiFields(null as
-        // unknown as ProjectConfig)` above).
+        // A JavaScript caller can hand a non-object `document` despite the compile-time type.
         fromConfigDocument({ config, document } as unknown as EffectiveConfig);
       } catch (error) {
         thrown = error;
@@ -3611,9 +3363,8 @@ describe("fromConfigDocument — raw-presence masking (CliConfigWithRawPresence,
   );
 
   test("saveCliConfig's LoadedCliConfig shape (no document field at all) falls back to the un-remedied, unmasked behavior", () => {
-    // Mirrors io.ts's saveCliConfig return literal exactly: no `document`
-    // key at all, not even `undefined` — there is no raw file to re-read on
-    // a save.
+    // Mirrors `saveCliConfig`'s return shape: no `document` key at all, not even `undefined` —
+    // there is no raw file to re-read on a save.
     const config = decodeCliConfig({});
     const saved = { path: "supabase/config.toml", format: "toml", config, ignoredPaths: [] };
     const projected = fromConfigDocument(saved);
