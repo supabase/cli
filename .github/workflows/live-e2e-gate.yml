@@ -19,6 +19,7 @@ jobs:
   lookup:
     name: Find exact-SHA live result
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       reuse: ${{ steps.lookup.outputs.reuse }}
     steps:
@@ -42,7 +43,9 @@ jobs:
           run_id="$(jq -r '.id' <<< "$latest")"
           echo "Latest live run ${run_id}: status=${status}, conclusion=${conclusion}"
           jobs="$(gh api --paginate "/repos/${REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100")"
-          executed="$(jq -s -r 'any(.[].jobs[]; (.name | endswith("Live e2e")) and .conclusion == "success" and any(.steps[]?; .name == "Run live e2e" and .conclusion == "success"))' <<< "$jobs")"
+          # Keep this exact job suffix and step name aligned with the producer
+          # and notifier; renaming either changes reuse semantics.
+          executed="$(jq -s -r 'any(.[].jobs[]; (.name == "Live e2e" or (.name | endswith(" / Live e2e"))) and .conclusion == "success" and any(.steps[]?; .name == "Run live e2e" and .conclusion == "success"))' <<< "$jobs")"
           if [[ "$status" == completed && "$conclusion" == success && "$executed" == true ]]; then
             echo "reuse=true" >> "$GITHUB_OUTPUT"
           else
@@ -58,13 +61,16 @@ jobs:
     with:
       ref: ${{ inputs.sha }}
       concurrency_group: live-e2e-stable-${{ inputs.sha }}
-    secrets: inherit
+    # Forward the one secret required by live-e2e-suite.yml.
+    secrets:
+      SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
 
   result:
     name: Verify live e2e gate
     needs: [lookup, run]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
       - name: Require a successful result
         env:

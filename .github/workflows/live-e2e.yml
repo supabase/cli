@@ -12,10 +12,15 @@ permissions:
 
 jobs:
   live-e2e:
+    # The reusable suite requires only this explicitly forwarded secret.
     name: Live e2e
     uses: ./.github/workflows/live-e2e-suite.yml
     with:
       ref: ${{ github.sha }}
+      # Pushes to develop share a branch group and cancel superseded pushes.
+      # Manual, scheduled, and stable-gate runs use independent groups because
+      # they each own separate temporary projects and may run concurrently.
       concurrency_group: live-e2e-${{ github.event_name == 'push' && github.ref || github.run_id }}
       cancel_in_progress: ${{ github.event_name == 'push' }}
-    secrets: inherit
+    secrets:
+      SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}

@@ -26,8 +26,11 @@ permissions:
 
 jobs:
   live-e2e:
+    # Consumers identify this reusable job by the exact " / Live e2e" suffix.
+    # Keep the suffix aligned with live-e2e-gate.yml and live-e2e-notify.yml.
     name: Live e2e
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 30
     concurrency:
       group: ${{ inputs.concurrency_group }}
       cancel-in-progress: ${{ inputs.cancel_in_progress }}
@@ -47,6 +50,7 @@ jobs:
       - name: Docker preflight
         run: docker info
 
+      # Consumers also use this exact step name when deciding whether a suite ran.
       - name: Run live e2e
         timeout-minutes: 20
         env:

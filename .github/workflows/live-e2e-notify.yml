@@ -13,6 +13,7 @@ jobs:
   notify:
     if: github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     continue-on-error: true
     steps:
       - name: Notify Slack
@@ -31,46 +32,89 @@ jobs:
         run: |
           set -euo pipefail
 
-          # A reusable suite job is named "Live e2e" or ends with "/ Live e2e".
-          # A reused gate has no such job and is intentionally ignored.
+          # A reusable suite job is named "Live e2e" or ends with the exact
+          # " / Live e2e" suffix. Keep this aligned with the producer and gate.
           suite_conclusion() {
-            jq -r '([.jobs[]? | select(.name == "Live e2e" or (.name | endswith("/ Live e2e"))) | .conclusion] | if any(.[]; . == "failure") then "failure" elif any(.[]; . == "success") then "success" else "none" end)'
+            jq -r '([.jobs[]? | select(.name == "Live e2e" or (.name | endswith(" / Live e2e"))) | .conclusion] | if any(.[]; . == "failure") then "failure" elif any(.[]; . == "success") then "success" else "none" end)'
           }
 
-          current_jobs="$(gh api --paginate "/repos/${REPOSITORY}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}/jobs?per_page=100")"
+          if ! current_jobs="$(gh api --paginate "/repos/${REPOSITORY}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}/jobs?per_page=100")"; then
+            echo "::warning::Could not inspect jobs for ${WORKFLOW_NAME} run ${RUN_ID}; suppressing notification because the suite result is unknown."
+            exit 0
+          fi
           current_suite="$(printf '%s\n' "$current_jobs" | jq -s '{jobs: map(.jobs[])}' | suite_conclusion)"
-          if [[ "$current_suite" == none ]]; then
+          startup_failure=false
+          if [[ "$current_suite" == none && "$WORKFLOW_NAME" == "Live E2E" && "$CONCLUSION" == failure ]]; then
+            current_suite=failure
+            startup_failure=true
+          elif [[ "$current_suite" == none || ("$current_suite" == failure && "$WORKFLOW_NAME" == "Release") ]]; then
+            # Release's generic notification covers release failures and runs
+            # that reused a staging result without creating a suite job.
             exit 0
           fi
 
-          if [[ "$current_suite" == success ]]; then
-            prior_conclusion=""
-            if (( RUN_ATTEMPT > 1 )); then
-              prior_jobs="$(gh api --paginate "/repos/${REPOSITORY}/actions/runs/${RUN_ID}/attempts/$((RUN_ATTEMPT - 1))/jobs?per_page=100")"
-              prior_conclusion="$(printf '%s\n' "$prior_jobs" | jq -s '{jobs: map(.jobs[])}' | suite_conclusion)"
+          prior_conclusion=""
+          if (( RUN_ATTEMPT > 1 )); then
+            if ! prior_jobs="$(gh api --paginate "/repos/${REPOSITORY}/actions/runs/${RUN_ID}/attempts/$((RUN_ATTEMPT - 1))/jobs?per_page=100")"; then
+              echo "::warning::Could not inspect the prior attempt for ${WORKFLOW_NAME} run ${RUN_ID}; suppressing transition notification."
+              exit 0
             fi
-            if [[ "$prior_conclusion" != failure && "$prior_conclusion" != success ]]; then
-              previous_runs="$(gh api --paginate "/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_ID}/runs?per_page=100" | jq -s -r --arg branch "$BRANCH" --argjson current_number "$RUN_NUMBER" 'map(.workflow_runs[]) | map(select(.run_number < $current_number and .head_branch == $branch and .status == "completed" and (.conclusion == "failure" or .conclusion == "success"))) | sort_by(.run_number) | reverse | .[] | [.id, (.run_attempt // 1)] | @tsv')"
-            else
-              previous_runs=""
+            prior_conclusion="$(printf '%s\n' "$prior_jobs" | jq -s '{jobs: map(.jobs[])}' | suite_conclusion)"
+            [[ "$prior_conclusion" != none ]] || prior_conclusion=""
+          fi
+
+          if ! history="$(gh api -X GET "/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_ID}/runs" -f "branch=${BRANCH}" -F per_page=25)"; then
+            if [[ "$current_suite" == success && -z "$prior_conclusion" ]]; then
+              echo "::warning::Could not inspect recent ${WORKFLOW_NAME} history; suppressing recovery notification."
+              exit 0
             fi
-            while IFS=$'\t' read -r prior_id prior_attempt; do
-              [[ -z "$prior_id" ]] && continue
-              prior_jobs="$(gh api --paginate "/repos/${REPOSITORY}/actions/runs/${prior_id}/attempts/${prior_attempt}/jobs?per_page=100")"
-              prior_suite="$(printf '%s\n' "$prior_jobs" | jq -s '{jobs: map(.jobs[])}' | suite_conclusion)"
-              if [[ "$prior_suite" == failure || "$prior_suite" == success ]]; then
-                prior_conclusion="$prior_suite"
-                break
+            echo "::warning::Could not inspect recent ${WORKFLOW_NAME} history; continuing with the confirmed current result."
+          else
+            candidates="$(jq -r --argjson current_number "$RUN_NUMBER" --argjson current_attempt "$RUN_ATTEMPT" '(.workflow_runs // []) | map(select((.run_number != $current_number or (.run_attempt // 1) != $current_attempt) and .status == "completed" and (.conclusion == "failure" or .conclusion == "success"))) | sort_by(.run_number, (.run_attempt // 1)) | reverse | .[] | [.id, (.run_attempt // 1), .run_number, .conclusion] | @tsv' <<< "$history")"
+            while IFS=$'\t' read -r candidate_id candidate_attempt candidate_number candidate_conclusion; do
+              [[ -z "$candidate_id" ]] && continue
+              if (( candidate_number > RUN_NUMBER || (candidate_number == RUN_NUMBER && candidate_attempt > RUN_ATTEMPT) )); then
+                relation=newer
+              else
+                relation=older
               fi
-            done <<< "$previous_runs"
+              if [[ "$relation" == newer || -z "$prior_conclusion" ]]; then
+                if ! candidate_jobs="$(gh api --paginate "/repos/${REPOSITORY}/actions/runs/${candidate_id}/attempts/${candidate_attempt}/jobs?per_page=100")"; then
+                  echo "::warning::Could not inspect candidate run ${candidate_id}; suppressing notification because history is incomplete."
+                  exit 0
+                fi
+                candidate_suite="$(printf '%s\n' "$candidate_jobs" | jq -s '{jobs: map(.jobs[])}' | suite_conclusion)"
+                if [[ "$candidate_suite" == none && "$WORKFLOW_NAME" == "Live E2E" && "$candidate_conclusion" == failure ]]; then
+                  candidate_suite=failure
+                fi
+                if [[ "$candidate_suite" == failure || "$candidate_suite" == success ]]; then
+                  if [[ "$relation" == newer ]]; then
+                    echo "A newer completed relevant suite exists; suppressing stale notification."
+                    exit 0
+                  fi
+                  prior_conclusion="$candidate_suite"
+                  break
+                fi
+              fi
+            done <<< "$candidates"
+          fi
+
+          if [[ "$current_suite" == success ]]; then
             [[ "$prior_conclusion" == failure ]] || exit 0
             header="✅ Live E2E recovered"
             text="Live E2E recovered"
-            detail="The previous relevant staging run failed; this run passed."
+            detail="The previous relevant ${WORKFLOW_NAME} live suite failed; this run passed."
           else
-            header="❌ Live E2E failed"
-            text="Live E2E failed"
-            detail="The staging suite failed."
+            [[ "$prior_conclusion" != failure ]] || exit 0
+            if [[ "$startup_failure" == true ]]; then
+              header="❌ Live E2E failed to start"
+              text="Live E2E failed to start"
+              detail="The Live E2E workflow failed before it produced a Live e2e job."
+            else
+              header="❌ Live E2E failed"
+              text="Live E2E failed"
+              detail="The ${WORKFLOW_NAME} live suite failed."
+            fi
           fi
 
           run_url="https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}"
