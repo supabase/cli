@@ -45,16 +45,9 @@ function setup(dir: string) {
   return { out, analytics, layer };
 }
 
-// Wires the REAL `analyticsLayer` (consent-gated, backed by
-// `telemetryRuntimeLayer` reading `dir`'s telemetry.json) instead of
-// `mockAnalytics()` — the un-mocked boundary `Analytics.capture` calls
-// actually pass through. No PostHog key is set in the test env, so
-// `analyticsLayer` resolves to its no-op branch regardless of consent
-// (real-network PostHog delivery has no test double anywhere in this repo);
-// this proves the command runs the real consent-gated layer end-to-end
-// without crashing, not the exact PostHog call count. The snapshot-timing
-// mechanism itself (pre-toggle consent surviving the handler's own disk
-// write) is proven directly in `runtime.layer.unit.test.ts`.
+// Uses the real analyticsLayer (no PostHog key set, so it always resolves to its
+// no-op branch) to prove the command runs the consent-gated layer end-to-end without
+// crashing. The snapshot-timing mechanism itself is proven in runtime.layer.unit.test.ts.
 function setupWithRealAnalytics(dir: string) {
   const out = mockOutput();
   const runtimeInfoLayer = mockRuntimeInfo({ homeDir: dir });
@@ -181,17 +174,9 @@ describe("telemetry integration", () => {
     ) as Effect.Effect<void>;
   });
 
-  // Go parity (`cmd/root.go:131-138,171-181`): `cli_command_executed` is gated on
-  // the consent SNAPSHOT taken before the handler runs, not the value the handler
-  // just wrote. These two assert the narrower wiring fix using `mockAnalytics()`
-  // (which unconditionally records every capture, bypassing consent entirely):
-  // `disable`/`enable` no longer force-suppress analytics via `analytics: false`,
-  // so the shared instrumentation wrapper actually reaches `Analytics.capture`.
-  // The snapshot-timing mechanism itself — that the pre-toggle value survives the
-  // handler's own on-disk write — is proven directly against `telemetryRuntimeLayer`
-  // in `shared/telemetry/runtime.layer.unit.test.ts`. The two tests further below
-  // run the same commands through the REAL, consent-gated `analyticsLayer`
-  // (not this mock) to prove the production wiring doesn't crash end-to-end.
+  // mockAnalytics() unconditionally records every capture, bypassing consent, so these
+  // assert only that disable/enable stopped force-suppressing analytics via
+  // `analytics: false`. See runtime.layer.unit.test.ts for the snapshot-timing proof.
   it.live("disable no longer force-suppresses cli_command_executed", () => {
     const dir = makeTempDir();
     const { analytics, layer } = setup(dir);
