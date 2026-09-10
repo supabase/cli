@@ -1,15 +1,16 @@
 /**
- * Post-recreate satellite-container restart + Kong reload, shared by both PG14's
- * `RestartDatabase` and PG15's `resetDatabase15` (`apps/cli-go/internal/db/reset/
- * reset.go:214-288`) — the ONLY two Go call sites of `restartServices`. Neither `db
- * start` nor `supabase start` calls any of this: it exists purely to bring the
- * satellite containers (storage/auth/realtime/pooler) back in sync with a `db`
- * container that was just recreated or force-restarted out from under them, and to
+ * Satellite-container lifecycle around a database recreate: the pre-teardown fence
+ * ({@link withSatelliteServicesStopped}) and the post-recreate restart + Kong reload,
+ * shared by both reset paths. Neither `db
+ * start` nor `supabase start` calls any of this: it exists purely to keep the
+ * satellite containers (storage/auth/realtime/pooler) out of the way of a `db`
+ * container that is being recreated or force-restarted under them, to bring them back
+ * afterwards, and to
  * reload Kong's nginx so its cached upstream addresses (which may have changed if a
  * satellite container came back on a different one) stop 502ing.
  */
 
-import { Data, Effect, Option, Result } from "effect";
+import { Cause, Data, Effect, Option, Result } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import {
@@ -17,7 +18,8 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
-import { aqua } from "../colors.ts";
+import { Output } from "../../shared/output/output.service.ts";
+import { aqua, yellow } from "../colors.ts";
 import {
   collectText,
   describeContainerCliFailure,
@@ -61,20 +63,20 @@ export function restartContainer(
 }
 
 /**
- * One satellite service's restart, tolerant of "not found" (Go's `!errdefs.IsNotFound(err)`
- * guard, `reset.go:231`) — a service excluded from the stack (e.g. `[realtime] enabled =
- * false`) has no container to restart, and that's not an error. Never fails the surrounding
- * `Effect.all` itself: resolves `Option.some(message)` on a genuine failure so the caller
- * can join every service's outcome the way Go's `errors.Join(result...)` does, and
- * `Option.none()` on success OR a tolerated not-found.
+ * One satellite service's `docker <action>`, tolerant of "not found" — a service
+ * excluded from the stack (e.g. `[realtime] enabled = false`) has no container to act
+ * on, and that's not an error. Never fails the surrounding `Effect.all` itself:
+ * resolves `Option.some(message)` on a genuine failure so the caller can join every
+ * service's outcome, and `Option.none()` on success OR a tolerated not-found.
  */
-const restartSatelliteService = (
+const satelliteServiceAction = (
   spawner: Spawner,
+  action: "restart" | "stop" | "start",
   containerId: string,
 ): Effect.Effect<Option.Option<string>> =>
   Effect.scoped(
     Effect.gen(function* () {
-      const child = yield* spawnContainerCli(spawner, ["restart", containerId], {
+      const child = yield* spawnContainerCli(spawner, [action, containerId], {
         stdin: "ignore",
         stdout: "ignore",
         stderr: "pipe",
@@ -87,18 +89,18 @@ const restartSatelliteService = (
       const trimmed = stderr.trim();
       if (isContainerNotFoundMessage(trimmed)) return Option.none();
       return Option.some(
-        `failed to restart ${containerId}: ${trimmed.length > 0 ? trimmed : `exit ${exitCode}`}`,
+        `failed to ${action} ${containerId}: ${trimmed.length > 0 ? trimmed : `exit ${exitCode}`}`,
       );
     }),
   ).pipe(
     Effect.catch((cause) =>
       Effect.succeed(
-        Option.some(`failed to restart ${containerId}: ${describeContainerCliFailure(cause)}`),
+        Option.some(`failed to ${action} ${containerId}: ${describeContainerCliFailure(cause)}`),
       ),
     ),
   );
 
-/** One or more satellite-service restarts failed. Messages are newline-joined, matching Go's `errors.Join`. */
+/** One or more satellite-service stops, starts, or restarts failed. Messages are newline-joined. */
 export class RestartServicesError extends Data.TaggedError("RestartServicesError")<{
   readonly message: string;
 }> {
@@ -108,28 +110,30 @@ export class RestartServicesError extends Data.TaggedError("RestartServicesError
 }
 
 /**
- * Port of Go's `restartServices` restart half (`reset.go:227-239`): restarts
- * storage/auth/realtime/pooler CONCURRENTLY (Go's `utils.WaitAll`, a goroutine per
- * service) — NOT PostgREST, which "automatically reconnects and listens for schema
- * changes" (Go's own comment) — and does NOT wait for them to become healthy
- * afterward ("those services may be excluded from starting"). Every per-service
- * failure (excluding a tolerated not-found) is joined into one newline-separated
- * message, matching `errors.Join`. Not exported outside this module — only
- * {@link restartServicesAndReloadKong} calls this directly.
+ * The services fenced and restarted around a database recreate. PostgREST is excluded:
+ * it reconnects and re-reads the schema on its own. Analytics is excluded too — it does
+ * re-run its migrations on every start, but against `_supabase`/`_analytics`, while every
+ * fenced init job runs against `postgres`, so it cannot collide with them. This fence is
+ * not an exhaustive stop of every migrating container, and does not claim to be.
  */
-function restartSatelliteServices(
+const satelliteContainerIds = (projectId: string): ReadonlyArray<string> => [
+  serviceContainerName("storage", projectId),
+  serviceContainerName("auth", projectId),
+  serviceContainerName("realtime", projectId),
+  serviceContainerName("pooler", projectId),
+];
+
+/** Runs one action across every satellite concurrently, joining each failure message into one newline-separated error. */
+const satelliteServicesAction = (
   spawner: Spawner,
+  action: "restart" | "stop" | "start",
   projectId: string,
-): Effect.Effect<void, RestartServicesError> {
-  const containerIds = [
-    serviceContainerName("storage", projectId),
-    serviceContainerName("auth", projectId),
-    serviceContainerName("realtime", projectId),
-    serviceContainerName("pooler", projectId),
-  ];
-  return Effect.gen(function* () {
+): Effect.Effect<void, RestartServicesError> =>
+  Effect.gen(function* () {
     const results = yield* Effect.all(
-      containerIds.map((containerId) => restartSatelliteService(spawner, containerId)),
+      satelliteContainerIds(projectId).map((containerId) =>
+        satelliteServiceAction(spawner, action, containerId),
+      ),
       { concurrency: "unbounded" },
     );
     const failures = results.filter(Option.isSome).map((result) => result.value);
@@ -137,7 +141,48 @@ function restartSatelliteServices(
       return yield* Effect.fail(new RestartServicesError({ message: failures.join("\n") }));
     }
   });
-}
+
+/**
+ * Runs `work` with the satellite containers stopped (#6445): a running storage/auth/
+ * realtime re-runs ITS OWN migrations against `postgres` the moment it reconnects to
+ * the recreated database, racing the one-shot init jobs that migrate the same database
+ * and failing one of them with `error running container: exit 1`. Stopping first also disarms the
+ * `unless-stopped` policy, so nothing crash-restarts back into the window.
+ *
+ * The restore covers the STOP as well as `work`: the four stops run concurrently and
+ * are joined only after all of them settle, so one genuine failure — or a Ctrl-C
+ * during the multi-second stop — would otherwise leave the others stopped for good
+ * (a stop disarms `unless-stopped`, and `supabase start` treats a running db with
+ * stopped satellites as "already running"). On success the caller's own
+ * `restartServicesAndReloadKong` brings them back instead (`docker restart` starts a
+ * stopped container). The restore reloads Kong too, since a container that stopped
+ * and started can come back on a different address (#6016), and it warns rather than
+ * failing: the caller's own error is the one worth reporting.
+ */
+export const withSatelliteServicesStopped = <A, E, R>(
+  spawner: Spawner,
+  projectId: string,
+  work: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | RestartServicesError, R | Output> =>
+  Effect.gen(function* () {
+    const output = yield* Output;
+    return yield* Effect.gen(function* () {
+      yield* satelliteServicesAction(spawner, "stop", projectId);
+      return yield* work;
+    }).pipe(
+      Effect.onError(() =>
+        satelliteServicesAction(spawner, "start", projectId).pipe(
+          Effect.andThen(reloadKong(spawner, projectId)),
+          Effect.catchCause((cause) =>
+            output.raw(
+              `${yellow("WARNING:")} local services may still be stopped after the failed reset: ${Cause.pretty(cause)}\n`,
+              "stderr",
+            ),
+          ),
+        ),
+      ),
+    );
+  });
 
 /**
  * Gateway-recovery hint, byte-matching Go's `suggestKongRecovery`
@@ -254,7 +299,7 @@ export function restartServicesAndReloadKong(
   projectId: string,
 ): Effect.Effect<void, RestartServicesError | KongReloadError> {
   return Effect.gen(function* () {
-    yield* restartSatelliteServices(spawner, projectId);
+    yield* satelliteServicesAction(spawner, "restart", projectId);
     yield* reloadKong(spawner, projectId);
   });
 }

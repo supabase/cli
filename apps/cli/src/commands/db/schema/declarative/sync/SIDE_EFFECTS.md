@@ -37,10 +37,10 @@ disabling safe compaction.
 
 ## Subprocesses / Containers
 
-| What                                                                                                                                                                                                           | When                                                              |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Two natively-provisioned shadows (migrated source + declarative target) via `acquireShadowDatabase` — ephemeral host ports, settings-keyed global baseline cache                                               | always                                                            |
-| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase` — only on the failed-apply recovery path | TTY only, apply failed, and the user confirms "reset and reapply" |
+| What                                                                                                                                                                                                               | When                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| Two natively-provisioned shadows (migrated source + declarative target) via `acquireShadowDatabase` — ephemeral host ports, settings-keyed global baseline cache                                                   | always                                                            |
+| `docker`/`podman` container recreate for the local `db` (+ satellite stop/restart, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase` — only on the failed-apply recovery path | TTY only, apply failed, and the user confirms "reset and reapply" |
 
 ## Environment Variables
 

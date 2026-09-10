@@ -1,12 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Sink, Stream } from "effect";
+import { Deferred, Effect, Fiber, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
   ContainerRestartError,
   KongReloadError,
   restartContainer,
   restartServicesAndReloadKong,
+  RestartServicesError,
+  withSatelliteServicesStopped,
 } from "./restart-services.ts";
 
 /** Matches the standing `mockSpawner` shape used across `docker-*.unit.test.ts` files. */
@@ -300,6 +303,141 @@ describe("restartServicesAndReloadKong", () => {
           "--nginx-conf",
           "/home/kong/custom_nginx.template",
         ]);
+      }),
+    );
+  });
+});
+
+describe("withSatelliteServicesStopped", () => {
+  const PROJECT_ID = "proj";
+
+  it.live("stops every satellite before the work runs, and leaves them stopped on success", () => {
+    const mock = mockSpawner(() => ({ exitCode: 0 }));
+    let stoppedWhenWorkRan: ReadonlyArray<string> = [];
+    return withSatelliteServicesStopped(
+      mock.spawner,
+      PROJECT_ID,
+      Effect.sync(() => {
+        stoppedWhenWorkRan = mock.spawned.filter((args) => args[0] === "stop").map((a) => a[1]!);
+      }),
+    ).pipe(
+      Effect.provide(mockOutput().layer),
+      Effect.map(() => {
+        expect(stoppedWhenWorkRan).toEqual(
+          expect.arrayContaining([
+            "supabase_storage_proj",
+            "supabase_auth_proj",
+            "supabase_realtime_proj",
+            "supabase_pooler_proj",
+          ]),
+        );
+        expect(mock.spawned.filter((args) => args[0] === "start")).toEqual([]);
+      }),
+    );
+  });
+
+  it.live("restarts the satellites when the work fails, and reports the work's own error", () => {
+    const mock = mockSpawner(() => ({ exitCode: 0 }));
+    const boom = new Error("work failed");
+    return withSatelliteServicesStopped(mock.spawner, PROJECT_ID, Effect.fail(boom)).pipe(
+      Effect.provide(mockOutput().layer),
+      Effect.flip,
+      Effect.map((error) => {
+        expect(error).toBe(boom);
+        expect(mock.spawned.filter((args) => args[0] === "start").map((a) => a[1])).toEqual(
+          expect.arrayContaining([
+            "supabase_storage_proj",
+            "supabase_auth_proj",
+            "supabase_realtime_proj",
+            "supabase_pooler_proj",
+          ]),
+        );
+      }),
+    );
+  });
+
+  it.live("tolerates a satellite that has no container", () => {
+    const mock = mockSpawner((args) =>
+      args[1] === "supabase_realtime_proj"
+        ? {
+            exitCode: 1,
+            stderr: "Error response from daemon: No such container: supabase_realtime_proj",
+          }
+        : { exitCode: 0 },
+    );
+    return withSatelliteServicesStopped(mock.spawner, PROJECT_ID, Effect.void).pipe(
+      Effect.provide(mockOutput().layer),
+    );
+  });
+
+  it.live("restarts the satellites when the reset is interrupted", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const mock = mockSpawner(() => ({ exitCode: 0 }));
+      const fiber = yield* Effect.forkChild(
+        withSatelliteServicesStopped(
+          mock.spawner,
+          PROJECT_ID,
+          Effect.gen(function* () {
+            yield* Deferred.succeed(started, undefined);
+            return yield* Effect.never;
+          }),
+        ).pipe(Effect.provide(mockOutput().layer)),
+      );
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(fiber);
+      expect(mock.spawned.filter((args) => args[0] === "start").map((a) => a[1])).toEqual(
+        expect.arrayContaining([
+          "supabase_storage_proj",
+          "supabase_auth_proj",
+          "supabase_realtime_proj",
+          "supabase_pooler_proj",
+        ]),
+      );
+    }),
+  );
+
+  it.live("restarts the satellites that stopped when another stop fails", () => {
+    const mock = mockSpawner((args) =>
+      args[0] === "stop" && args[1] === "supabase_storage_proj"
+        ? { exitCode: 1, stderr: "permission denied" }
+        : { exitCode: 0 },
+    );
+    const out = mockOutput();
+    return withSatelliteServicesStopped(mock.spawner, PROJECT_ID, Effect.void).pipe(
+      Effect.provide(out.layer),
+      Effect.flip,
+      Effect.map(() => {
+        expect(mock.spawned.filter((args) => args[0] === "start").map((a) => a[1])).toEqual(
+          expect.arrayContaining([
+            "supabase_auth_proj",
+            "supabase_realtime_proj",
+            "supabase_pooler_proj",
+          ]),
+        );
+      }),
+    );
+  });
+
+  it.live("fails without running the work when a stop genuinely fails", () => {
+    const mock = mockSpawner((args) =>
+      args[0] === "stop" && args[1] === "supabase_storage_proj"
+        ? { exitCode: 1, stderr: "permission denied" }
+        : { exitCode: 0 },
+    );
+    let ran = false;
+    return withSatelliteServicesStopped(
+      mock.spawner,
+      PROJECT_ID,
+      Effect.sync(() => {
+        ran = true;
+      }),
+    ).pipe(
+      Effect.provide(mockOutput().layer),
+      Effect.flip,
+      Effect.map((error) => {
+        expect(error).toBeInstanceOf(RestartServicesError);
+        expect(ran).toBe(false);
       }),
     );
   });

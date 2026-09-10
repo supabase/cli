@@ -11,6 +11,9 @@
  * `startSetupLocalDatabase`), matching Go's own structure:
  *
  * **PG >= 15** (`resetDatabase15`, `reset.go:114-142`):
+ * 0. Fence: `docker stop` storage/auth/realtime/pooler, so none of them can
+ *    re-run its own migrations against the recreated database and race the
+ *    one-shot init jobs (#6445). Restored best-effort if any step below fails.
  * 1. `docker container rm -f <db>` — NOT tolerant of "not found" (a genuine
  *    remove failure is a hard `failed to remove container`), unlike most other
  *    container lookups in this codebase.
@@ -36,6 +39,7 @@
  *    {@link restartServicesAndReloadKong} (`./restart-services.ts`).
  *
  * **PG <= 14** (`resetDatabase14`, `reset.go:96-112`):
+ * 0. The same fence as PG15 above, closing after step 3's health wait.
  * 1. `recreateDatabase` (`reset.go:157-176`) — connect as `supabase_admin` to
  *    `template1`, `DisconnectClients`, then four UNWRAPPED (no `BEGIN`/`COMMIT`)
  *    statements: `DROP`/`CREATE DATABASE postgres`, `DROP`/`CREATE DATABASE
@@ -67,8 +71,8 @@
  * just removed the volume, so there is nothing to probe), no `NoBackupVolume`/
  * fresh-volume concept, no `fromBackup` handling at all, `initCurrentBranch` is
  * NEVER called (Go's `resetDatabase`/`resetDatabase14`/`resetDatabase15` never
- * call it), and no rollback on failure (Go's `cmd/db.go` only wraps `--mode
- * start` in a `DockerRemoveAll` cleanup — the recreate dispatch has none).
+ * call it). The database itself is still never rolled back on failure; the only
+ * compensating action is the fence's satellite restore described in step 0.
  */
 
 import { Data, Effect, Result, Schedule, type FileSystem, type Path } from "effect";
@@ -125,6 +129,7 @@ import {
 import {
   restartContainer,
   restartServicesAndReloadKong,
+  withSatelliteServicesStopped,
   type ContainerRestartError,
   type KongReloadError,
   type RestartServicesError,
@@ -353,44 +358,50 @@ const recreateLocalDatabase15 = <E>(
   Effect.gen(function* () {
     const output = yield* Output;
 
-    yield* removeContainer(spawner, input.dbContainerId);
-    yield* removeVolume(spawner, input.dbContainerId);
+    yield* withSatelliteServicesStopped(
+      spawner,
+      input.projectId,
+      Effect.gen(function* () {
+        yield* removeContainer(spawner, input.dbContainerId);
+        yield* removeVolume(spawner, input.dbContainerId);
 
-    yield* ensureNetwork(spawner, input.networkId, {
-      [CLI_PROJECT_LABEL]: input.projectId,
-      [COMPOSE_PROJECT_LABEL]: input.projectId,
-    });
+        yield* ensureNetwork(spawner, input.networkId, {
+          [CLI_PROJECT_LABEL]: input.projectId,
+          [COMPOSE_PROJECT_LABEL]: input.projectId,
+        });
 
-    yield* output.raw("Recreating database...\n", "stderr");
+        yield* output.raw("Recreating database...\n", "stderr");
 
-    const resolvedPostgresImage = yield* input.resolvePostgresImage;
-    const postgresSpec = buildPostgresStartContainerSpec({
-      ...input.postgresSpec,
-      image: resolvedPostgresImage,
-    });
-    yield* createContainer(spawner, postgresSpec, input.containerOpts);
+        const resolvedPostgresImage = yield* input.resolvePostgresImage;
+        const postgresSpec = buildPostgresStartContainerSpec({
+          ...input.postgresSpec,
+          image: resolvedPostgresImage,
+        });
+        yield* createContainer(spawner, postgresSpec, input.containerOpts);
 
-    // Never swallowed — reset has no `--from-backup`-equivalent gate at all.
-    yield* waitForHealthyServices(spawner, [postgresSpec.containerName], {
-      timeoutSeconds: input.dbHealthTimeoutSeconds,
-      images: new Map([[postgresSpec.containerName, resolvedPostgresImage]]),
-    });
+        // Never swallowed — reset has no `--from-backup`-equivalent gate at all.
+        yield* waitForHealthyServices(spawner, [postgresSpec.containerName], {
+          timeoutSeconds: input.dbHealthTimeoutSeconds,
+          images: new Map([[postgresSpec.containerName, resolvedPostgresImage]]),
+        });
 
-    // UNCONDITIONAL — no fresh-volume gate: a reset just removed the volume above, so
-    // it's always fresh. Passes the RESOLVED reset `version`/`seedFlags`, unlike `db
-    // start`'s own call — see `db-setup.ts`'s header for this one real difference.
-    yield* runFreshDbSetup(spawner, {
-      fs: input.fs,
-      path: input.path,
-      workdir: input.workdir,
-      projectId: input.projectId,
-      networkId: input.networkId,
-      hostname: input.hostname,
-      dbPort: input.dbPort,
-      version: input.version,
-      seedFlags: input.seedFlags,
-      setup: input.setup,
-    });
+        // UNCONDITIONAL — no fresh-volume gate: a reset just removed the volume above, so
+        // it's always fresh. Passes the RESOLVED reset `version`/`seedFlags`, unlike `db
+        // start`'s own call — see `db-setup.ts`'s header for this one real difference.
+        yield* runFreshDbSetup(spawner, {
+          fs: input.fs,
+          path: input.path,
+          workdir: input.workdir,
+          projectId: input.projectId,
+          networkId: input.networkId,
+          hostname: input.hostname,
+          dbPort: input.dbPort,
+          version: input.version,
+          seedFlags: input.seedFlags,
+          setup: input.setup,
+        });
+      }),
+    );
 
     yield* output.raw("Restarting containers...\n", "stderr");
     yield* restartServicesAndReloadKong(spawner, input.projectId);
@@ -431,53 +442,69 @@ const recreateLocalDatabase14 = <E>(
         { isLocal: true, dnsResolver: "native" },
       );
 
-    // recreateDatabase: connect as `supabase_admin` to `template1`.
-    yield* Effect.scoped(
+    yield* withSatelliteServicesStopped(
+      spawner,
+      input.projectId,
       Effect.gen(function* () {
-        const session = yield* connectAs("supabase_admin", "template1");
-        yield* resetRecreateDatabases(session);
+        // recreateDatabase: connect as `supabase_admin` to `template1`.
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const session = yield* connectAs("supabase_admin", "template1");
+            yield* resetRecreateDatabases(session);
+          }),
+        );
+
+        // initDatabase: connect as `supabase_admin` to the default `postgres` database.
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const session = yield* connectAs("supabase_admin", "postgres");
+            const tmpDir = yield* fs
+              .makeTempDirectoryScoped({ prefix: "supabase-reset-db-setup-" })
+              .pipe(
+                Effect.mapError(
+                  (error) =>
+                    new DbSetupError({
+                      message: `failed to create temp directory: ${errMessage(error)}`,
+                      reason: "filesystem",
+                    }),
+                ),
+              );
+            yield* initSchema14(session, fs, path, tmpDir, setup.majorVersion);
+            // Same drop-then-conditionally-recreate sequence fresh setup runs
+            // (`db-setup.ts`'s `requiresPg14WebhooksCleanup`): the PG14 dump installs
+            // pg_net unconditionally because later statements grant on its schema, so
+            // without this drop a reset with webhooks disabled left pg_net installed and
+            // diverged from a fresh `supabase start` — visible as pg_net drift in the next
+            // engine's shadow baseline. `MigrateAndSeed` re-applies every migration below,
+            // so a user migration that creates pg_net still gets it back.
+            yield* removeDatabaseWebhooks(session, fs, path, tmpDir);
+            yield* applyApiPrivileges(
+              session,
+              fs,
+              path,
+              tmpDir,
+              toml.baseline.apiAutoExposeNewTables,
+            );
+            yield* applyDatabaseWebhooks(session, fs, path, tmpDir, toml.webhooksEnabled);
+          }),
+        );
+
+        // RestartDatabase: "Restarting containers..." FIRST, then a REAL restart of the `db`
+        // container itself (pg_cron must restart after `pg_terminate_backend`) — NOT tolerant
+        // of "not found", unlike the satellite restarts inside `restartServicesAndReloadKong`.
+        yield* output.raw("Restarting containers...\n", "stderr");
+        yield* restartContainer(spawner, input.dbContainerId);
+        yield* waitForHealthyServices(spawner, [input.dbContainerId], {
+          timeoutSeconds: input.dbHealthTimeoutSeconds,
+        });
       }),
     );
 
-    // initDatabase: connect as `supabase_admin` to the default `postgres` database.
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const session = yield* connectAs("supabase_admin", "postgres");
-        const tmpDir = yield* fs
-          .makeTempDirectoryScoped({ prefix: "supabase-reset-db-setup-" })
-          .pipe(
-            Effect.mapError(
-              (error) =>
-                new DbSetupError({
-                  message: `failed to create temp directory: ${errMessage(error)}`,
-                  reason: "filesystem",
-                }),
-            ),
-          );
-        yield* initSchema14(session, fs, path, tmpDir, setup.majorVersion);
-        // Same drop-then-conditionally-recreate sequence fresh setup runs
-        // (`db-setup.ts`'s `requiresPg14WebhooksCleanup`): the PG14 dump installs
-        // pg_net unconditionally because later statements grant on its schema, so
-        // without this drop a reset with webhooks disabled left pg_net installed and
-        // diverged from a fresh `supabase start` — visible as pg_net drift in the next
-        // engine's shadow baseline. `MigrateAndSeed` re-applies every migration below,
-        // so a user migration that creates pg_net still gets it back.
-        yield* removeDatabaseWebhooks(session, fs, path, tmpDir);
-        yield* applyApiPrivileges(session, fs, path, tmpDir, toml.baseline.apiAutoExposeNewTables);
-        yield* applyDatabaseWebhooks(session, fs, path, tmpDir, toml.webhooksEnabled);
-      }),
-    );
-
-    // RestartDatabase: "Restarting containers..." FIRST, then a REAL restart of the `db`
-    // container itself (pg_cron must restart after `pg_terminate_backend`) — NOT tolerant
-    // of "not found", unlike the satellite restarts inside `restartServicesAndReloadKong`.
-    yield* output.raw("Restarting containers...\n", "stderr");
-    yield* restartContainer(spawner, input.dbContainerId);
-    yield* waitForHealthyServices(spawner, [input.dbContainerId], {
-      timeoutSeconds: input.dbHealthTimeoutSeconds,
-    });
     yield* restartServicesAndReloadKong(spawner, input.projectId);
 
+    // The fence closed above, before `migrateAndSeed` — unlike PG15, where it spans the
+    // whole setup. This branch runs no one-shot init jobs, so the #6445 race the fence
+    // exists to prevent cannot occur here, and the established restart ordering stands.
     // Final connect as `postgres`/`postgres` -> apply.MigrateAndSeed(ctx, version, ...).
     yield* Effect.scoped(
       Effect.gen(function* () {

@@ -325,6 +325,13 @@ const removedVolumes = (spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<stri
 const restartedContainers = (spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<string> =>
   spawned.filter((s) => s.args[0] === "restart").map((s) => s.args[1] ?? "");
 
+const stoppedContainers = (spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<string> =>
+  spawned.filter((s) => s.args[0] === "stop").map((s) => s.args[1] ?? "");
+
+/** Index of the LAST satellite stop — the fence must close before the database is touched. */
+const lastSatelliteStopIndex = (spawned: ReadonlyArray<SpawnRecord>): number =>
+  spawned.reduce((last, s, index) => (s.args[0] === "stop" ? index : last), -1);
+
 const kongReloadCalls = (spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<SpawnRecord> =>
   spawned.filter((s) => s.args[0] === "exec" && s.args[1] === KONG_ID);
 
@@ -537,6 +544,19 @@ describe("db reset", () => {
         expect(out.stderrText).toContain("Recreating database...\n");
         expect(removedContainers(child.spawned)).toContain(DB_ID);
         expect(removedVolumes(child.spawned)).toContain(DB_ID);
+        // The satellites are fenced BEFORE the database is destroyed, so they cannot
+        // re-run their own migrations against the recreated database (#6445).
+        expect(stoppedContainers(child.spawned)).toEqual(
+          expect.arrayContaining([
+            "supabase_storage_test",
+            "supabase_auth_test",
+            "supabase_realtime_test",
+            "supabase_pooler_test",
+          ]),
+        );
+        expect(lastSatelliteStopIndex(child.spawned)).toBeLessThan(
+          child.spawned.findIndex((s) => s.args[0] === "container" && s.args[1] === "rm"),
+        );
         expect(createArgs(child.spawned)).not.toBeUndefined();
         // Default config: realtime, storage, and auth are all enabled (PG >= 15 default).
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
@@ -854,6 +874,15 @@ describe("db reset", () => {
           yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
           // recreateDatabase: no container/volume removal at all on this branch.
           expect(removedContainers(child.spawned)).toHaveLength(0);
+          // The satellites are fenced before the SQL recreate on this branch too.
+          expect(stoppedContainers(child.spawned)).toEqual(
+            expect.arrayContaining([
+              "supabase_storage_test",
+              "supabase_auth_test",
+              "supabase_realtime_test",
+              "supabase_pooler_test",
+            ]),
+          );
           expect(
             conn.execs.some((sql) => sql === "DROP DATABASE IF EXISTS postgres WITH (FORCE)"),
           ).toBe(true);
