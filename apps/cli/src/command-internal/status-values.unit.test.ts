@@ -175,8 +175,8 @@ describe("statusValues", () => {
     });
 
     it("omits FUNCTIONS_URL when the edge-runtime image short name is excluded", () => {
-      // The image repo name (`supabase/edge-runtime`) differs from the Dockerfile's
-      // build alias (`edgeruntime`) — the short name Go matches against is the former.
+      // The image repo name (`supabase/edge-runtime`) differs from the Dockerfile build
+      // alias (`edgeruntime`); the short name matched against is the former.
       const { values } = statusValues(
         baseConfig(),
         CONTAINER_IDS,
@@ -390,8 +390,8 @@ describe("statusValues", () => {
     });
 
     it("omits storage S3 fields when the storage-api image short name is excluded", () => {
-      // The image repo name (`supabase/storage-api`) differs from the Dockerfile's
-      // build alias (`storage`) — the short name Go matches against is the former.
+      // The image repo name (`supabase/storage-api`) differs from the Dockerfile build
+      // alias (`storage`); the short name matched against is the former.
       const { values } = statusValues(
         baseConfig(),
         CONTAINER_IDS,
@@ -412,12 +412,8 @@ describe("statusValues", () => {
   });
 
   describe("SUPABASE_*_ENABLED env overrides", () => {
-    // `status.toValues()` reads `utils.Config.*.Enabled`
-    // AFTER Viper's `SetEnvPrefix("SUPABASE")` + `AutomaticEnv()` binding
-    // has already applied any
-    // `SUPABASE_<SECTION>_ENABLED` override — generically, not just for auth.
-    // `resolveStatusLocalState` must read the same post-override value
-    // for every gate, not the raw decoded `config.<section>.enabled`.
+    // `resolveStatusLocalState` must read the post-env-override value for every `.enabled`
+    // gate, not the raw decoded `config.<section>.enabled`.
 
     it("includes API_URL/REST_URL when SUPABASE_API_ENABLED overrides a disabled api.enabled", () => {
       const config = baseConfig({ api: { enabled: false } });
@@ -466,10 +462,6 @@ describe("statusValues", () => {
     });
 
     it("includes the 5 auth fields when SUPABASE_AUTH_ENABLED overrides a disabled auth.enabled", () => {
-      // Reproduces the exact scenario a Go-started stack can hit: TOML says
-      // auth is disabled, but the running stack was actually started with
-      // SUPABASE_AUTH_ENABLED=true from the shell/dotenv, so Auth is up and
-      // status must still print its credentials.
       const config = baseConfig({ auth: { enabled: false } });
       const { values } = statusValues(
         config,
@@ -664,9 +656,7 @@ describe("statusValues", () => {
   });
 
   it("combines stopped-service exclusions with --exclude flag exclusions", () => {
-    // Both `stopped` (from the health-check diff) and `--exclude` (user flag)
-    // funnel into the same `excluded` array in the handler; the pure function
-    // only sees the merged list.
+    // Both `stopped` and `--exclude` funnel into the same `excluded` array in the handler.
     const excluded = [CONTAINER_IDS.storage, CONTAINER_IDS.studio];
     const { values } = statusValues(
       baseConfig(),
@@ -682,10 +672,9 @@ describe("statusValues", () => {
   });
 });
 
-// `--exclude` short names are the established contract, so they must stay on the
-// docker.io repo names even when the stack itself runs slim `ghcr.io/supabase/cli`
-// images. Re-imports the module so the flag is in effect while its
-// image-name constants are built.
+// `--exclude` short names must stay on the docker.io repo names even when the stack runs
+// slim images. Re-imports the module so the env var is in effect while its image-name
+// constants are built.
 describe("--exclude image short names under SUPABASE_USE_SLIM_IMAGES", () => {
   afterEach(() => {
     vi.unstubAllEnvs();

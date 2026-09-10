@@ -9,9 +9,7 @@ import {
 } from "./status-pretty.ts";
 import type { StatusOutputNames } from "./status-values.ts";
 
-// Default (un-overridden) output names, matching `status-values.ts`'s
-// `resolveOutputNames` with an empty override map — the KEYs the pretty
-// renderer looks values up by.
+// Default (un-overridden) output names — the keys the pretty renderer looks values up by.
 const NAMES: StatusOutputNames = {
   apiUrl: "API_URL",
   restUrl: "REST_URL",
@@ -47,9 +45,6 @@ const FULL_VALUES: Record<string, string> = {
 };
 
 describe("renderStatusPretty", () => {
-  // Byte-for-byte parity with a real `tablewriter@v1.1.4` + `tw.StyleRounded`
-  // render of `PrettyPrint` group layout (verified by running the actual
-  // vendored Go module against this exact value set — see the port plan).
   it("matches the Go rounded-table fixture for a fully running stack", () => {
     const out = stripAnsi(renderStatusPretty(FULL_VALUES, NAMES));
 
@@ -98,9 +93,7 @@ describe("renderStatusPretty", () => {
     expect(out).toBe(expected);
   });
 
-  // Byte-for-byte parity with a real render of a single-row group (Database),
-  // confirming the header-vs-single-short-row column sizing. All other groups
-  // are empty in this fixture, so only the Database box should appear.
+  // All other groups are empty in this fixture, so only the Database box should appear.
   it("matches the Go rounded-table fixture for a single-row group", () => {
     const out = stripAnsi(
       renderStatusPretty({ DB_URL: FULL_VALUES.DB_URL ?? "" }, { ...NAMES, dbUrl: "DB_URL" }),
@@ -118,8 +111,7 @@ describe("renderStatusPretty", () => {
     expect(out).toBe(["", "", expectedTable, "", "", ""].join("\n"));
   });
 
-  // All other groups are empty in this fixture, so only the APIs box appears
-  // (only Project URL, the rest of the group's rows are excluded/disabled).
+  // All other groups are empty in this fixture; only Project URL is present in APIs.
   it("matches the Go rounded-table fixture for a partial APIs group", () => {
     const out = stripAnsi(renderStatusPretty({ API_URL: "http://127.0.0.1:54321" }, NAMES));
 
@@ -135,8 +127,6 @@ describe("renderStatusPretty", () => {
   });
 
   it("skips a row whose value is missing from the value map", () => {
-    // Only Studio present; Mailpit/MCP absent from the map entirely (excluded
-    // or disabled upstream in `status-values.ts`) — same as an empty string.
     const out = stripAnsi(renderStatusPretty({ STUDIO_URL: "http://127.0.0.1:54323" }, NAMES));
 
     expect(out).toContain("Studio");
@@ -161,14 +151,9 @@ describe("renderStatusPretty", () => {
     expect(out).toBe(["", "", "", "", ""].join("\n"));
   });
 
-  // `renderStatusPretty` is a pure lookup: it renders whatever `values`
-  // are reachable through `names`' keys, with no opinion on how the caller
-  // derived either. This is NOT asserting that `--override-name` reaches
-  // pretty-mode output in production — `status.handler.ts` deliberately always
-  // calls this function with un-overridden names (matching `PrettyPrint`,
-  // which unmarshals a fresh empty `EnvSet{}` rather than the CLI's overridden
-  // `CustomName`). This test only proves the renderer's KEY-based lookup itself
-  // works correctly for an arbitrary names/values pairing.
+  // This is not asserting that `--override-name` reaches pretty-mode output in production —
+  // `status.handler.ts` always calls this function with un-overridden names. It only proves
+  // the renderer's key-based lookup works for an arbitrary names/values pairing.
   it("resolves values through whatever KEY the names parameter specifies", () => {
     const overriddenNames: StatusOutputNames = {
       ...NAMES,
@@ -181,10 +166,8 @@ describe("renderStatusPretty", () => {
   });
 });
 
-// None of `status`'s 18 fixed field labels or 5 fixed group titles are wide
-// enough to exercise these two branches through the public
-// `renderStatusPretty` API today (see the file-level doc comment on
-// `status-pretty.ts`) — covered directly here as defensive Go-parity logic.
+// No fixed label or group title is wide enough to exercise these branches through the
+// public `renderStatusPretty` API today — covered directly here instead.
 describe("wrapStatusLabel", () => {
   it("returns the text unwrapped when it fits within the width", () => {
     expect(wrapStatusLabel("Edge Functions", 16)).toEqual(["Edge Functions"]);
@@ -215,9 +198,6 @@ describe("wrapStatusLabel", () => {
   });
 
   it("returns the input unchanged for a whitespace-only label wider than the column", () => {
-    // Every "word" from splitting on spaces is itself empty, so `current` never
-    // accumulates anything to flush after the loop — the `lines` array stays
-    // empty and the function falls back to the original text.
     expect(wrapStatusLabel("     ", 2)).toEqual(["     "]);
   });
 });
@@ -229,8 +209,8 @@ describe("statusColumnLayout", () => {
   });
 
   it("widens both columns evenly when the header is wider than the data", () => {
-    // Base data-driven layout: col0="a"(1+2=3), col1="b"(1+2=3), dataInner=3+1+3=7.
-    // A 10-char header needs innerWidth=12, so 5 extra columns split 3/2.
+    // col0="a" (1+2=3), col1="b" (1+2=3), dataInner=7; a 10-char header needs innerWidth=12,
+    // so 5 extra columns split 3/2.
     const layout = statusColumnLayout(10, ["a"], ["b"]);
     expect(layout.targetInner).toBe(12);
     expect(layout.col0Padded).toBe(6);
