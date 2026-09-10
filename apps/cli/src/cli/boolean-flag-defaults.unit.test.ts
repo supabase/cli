@@ -6,7 +6,7 @@ import {
   userGlobalFlagParams,
 } from "../docs/docs-introspection.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
-import { rootCommand } from "./root.ts";
+import { rootCommandForFeatures } from "./root.ts";
 
 /**
  * `Flag.boolean(name)` alone builds a required param, so omitting it fails the whole command
@@ -52,6 +52,12 @@ function booleanFlagsRequiringAValue(command: Command.Command.Any): ReadonlyArra
 
 describe("boolean flag wiring", () => {
   it("gives every boolean flag a default, so omitting it is not a parse error", () => {
-    expect(booleanFlagsRequiringAValue(rootCommand)).toEqual([]);
+    for (const stackBackend of ["legacy", "stack"] as const) {
+      for (const computeEnabled of [false, true]) {
+        expect(
+          booleanFlagsRequiringAValue(rootCommandForFeatures({ stackBackend, computeEnabled })),
+        ).toEqual([]);
+      }
+    }
   });
 });

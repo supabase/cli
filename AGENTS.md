@@ -28,7 +28,7 @@ These workspaces should generally follow this structure:
 - Standard scripts: `test`, `types:check`
 - Standard devDependencies: `@tsconfig/bun`, `@types/bun`, `typescript`
 
-Generic linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`knip`) are repo-wide, not per-package: the tools are root devDependencies configured by `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). Effect-specific linting covers `packages/stack`, all files under `apps/cli/src/commands/experimental/stack`, and the shared `apps/cli/src/command-internal/experimental-feature.ts` helper through `.oxlintrc.effect.json`; run it with the root `lint:effect:check` or `lint:effect:fix` scripts. The root `check:all`/`fix:all` scripts are the sole repo-wide quality entrypoints and use Turbo to orchestrate the root-owned generic `lint:*`/`fmt:*`/`knip:*` scripts and package `types:check` targets; `fix:all` runs the Effect lint fix after those generic fixes complete. Package-local work can run `pnpm types:check` and the package's test scripts; `pnpm exec oxlint`, `pnpm exec oxfmt`, and `pnpm exec knip-bun` from the repo root also work directly.
+Generic linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`knip`) are repo-wide, not per-package: the tools are root devDependencies configured by `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). Effect-specific linting covers `packages/stack`, all files under `apps/cli/src/commands/experimental/stack` and `apps/cli/src/commands/experimental/compute`, the shared `apps/cli/src/shared/compute` runtime helpers (excluding embedded starter templates), the Compute test fixture helper, and the shared `apps/cli/src/command-internal/experimental-feature.ts` helper through `.oxlintrc.effect.json`; run it with the root `lint:effect:check` or `lint:effect:fix` scripts. The root `check:all`/`fix:all` scripts are the sole repo-wide quality entrypoints and use Turbo to orchestrate the root-owned generic `lint:*`/`fmt:*`/`knip:*` scripts and package `types:check` targets; `fix:all` runs the Effect lint fix after those generic fixes complete. Package-local work can run `pnpm types:check` and the package's test scripts; `pnpm exec oxlint`, `pnpm exec oxfmt`, and `pnpm exec knip-bun` from the repo root also work directly.
 
 Expected exceptions:
 
@@ -53,7 +53,7 @@ Expected exceptions:
 - `CliConfig` — the full config-file document (`supabase/config.toml`/`.json`), the local superset
   including local-only sections.
 - `ProjectConfig` — the hosted-project subset: a sparse overlay of the hosted sections (api, auth,
-  db, realtime, storage, workers, experimental) describing what a Supabase project looks like on
+  db, realtime, storage, compute, experimental) describing what a Supabase project looks like on
   the platform.
 - `CliSettings` — the CLI's own runtime settings (platform `apiUrl`, access token, telemetry flags,
   `supabaseHome`, …), owned by `apps/cli`.

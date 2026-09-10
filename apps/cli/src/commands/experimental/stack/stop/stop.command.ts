@@ -2,7 +2,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
-import { experimentalStackStop } from "./stop.handler.ts";
+import { stackStop } from "./stop.handler.ts";
 
 const config = {
   stack: Flag.string("stack").pipe(
@@ -15,9 +15,9 @@ const config = {
   ),
 } as const;
 
-export type ExperimentalStackStopFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type StackStopFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const experimentalStackStopCommand = Command.make("stop", config).pipe(
+export const stackStopCommand = Command.make("stop", config).pipe(
   Command.withDescription("Stop a managed local Supabase stack while preserving its data."),
   Command.withShortDescription("Stop a managed local stack"),
   Command.withExamples([
@@ -27,9 +27,6 @@ export const experimentalStackStopCommand = Command.make("stop", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    experimentalStackStop(flags).pipe(
-      withCommandTelemetry({ flags, config }),
-      withJsonErrorHandling,
-    ),
+    stackStop(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
 );

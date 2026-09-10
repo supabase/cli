@@ -33,7 +33,7 @@ export type ReadonlyJsonValue =
 
 /**
  * The hosted-project subset of {@link CliConfig}: the sections a Management API project-config
- * response can speak for (`api`, `auth`, `db`, `realtime`, `storage`, `workers`, `experimental`),
+ * response can speak for (`api`, `auth`, `db`, `realtime`, `storage`, `compute`, `experimental`),
  * never the local-only sections that only make sense for a checkout on disk.
  *
  * Sparse (`DeepPartial`) rather than schema-defaulted, since an API response never mentions a
@@ -121,6 +121,7 @@ export const DOCUMENT_ONLY_LOCAL_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
   ["realtime", "ip_version"],
   ["realtime", "max_header_length"],
   ["experimental", "stack"],
+  ["experimental", "compute"],
   ["experimental", "orioledb_version"],
   ["experimental", "s3_host"],
   ["experimental", "s3_region"],

@@ -9,12 +9,12 @@ This document explains how the CLI's on-disk config document loading works, acro
   — the full local superset, including local-only sections (`studio`, ports, `edge_runtime`,
   `analytics`, …) plus `[remotes.*]` overrides. Owned by `@supabase/config`.
 - `ProjectConfig`: the hosted-project subset — the sections a hosted project manages (`api`,
-  `auth`, `db`, `realtime`, `storage`, `workers`, `experimental`), produced by `toProjectConfig`
+  `auth`, `db`, `realtime`, `storage`, `compute`, `experimental`), produced by `toProjectConfig`
   from either a `CliConfig` document or a Management API v2 project-config response (CLI-2230).
   Sparse by design: it carries only what its source actually said, so it composes with the
   subtraction core (`subtractCliConfig`/`omitDefaultValues`, operand type `EffectiveConfig`)
   without fabricating drift from schema defaults. An API-sourced value may speak for fewer
-  fields than the section list implies — `realtime` maps no fields today, and `workers`/
+  fields than the section list implies — `realtime` maps no fields today, and `compute`/
   `experimental` have no v2 project-config API counterpart at all — so a comparison consumer
   should restrict itself to `comparableProjectConfigPaths`/`isComparableProjectConfigPath`
   rather than treating a section's presence in that list as a per-field guarantee. Owned by

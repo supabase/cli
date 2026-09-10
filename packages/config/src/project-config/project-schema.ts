@@ -102,7 +102,7 @@ const hostedSectionsStruct = Schema.Struct({
   db: CliConfigSchema.fields.db,
   realtime: CliConfigSchema.fields.realtime,
   storage: CliConfigSchema.fields.storage,
-  workers: CliConfigSchema.fields.workers,
+  compute: CliConfigSchema.fields.compute,
   experimental: CliConfigSchema.fields.experimental,
 });
 

@@ -6,7 +6,8 @@ import { upgradeNoticeHook } from "../command-internal/upgrade-notice.ts";
 import { analyticsLayer } from "../telemetry/analytics.layer.ts";
 import { defaultCompleteDeps, tryComplete } from "./complete.ts";
 import { resolveStackBackend } from "../commands/experimental/stack/stack-backend.ts";
-import { rootCommand, rootCommandForBackend } from "./root.ts";
+import { resolveComputeEnabled } from "../commands/experimental/compute/compute-backend.ts";
+import { rootCommandForFeatures } from "./root.ts";
 
 const args = await Effect.runPromise(
   Effect.gen(function* () {
@@ -15,28 +16,32 @@ const args = await Effect.runPromise(
   }).pipe(Effect.provide(BunServices.layer)),
 );
 
-const backendExit = await Effect.runPromiseExit(
-  resolveStackBackend({ args, cwd: process.cwd(), env: process.env }).pipe(
-    Effect.provide(BunServices.layer),
-  ),
+const selectionExit = await Effect.runPromiseExit(
+  Effect.gen(function* () {
+    const stackBackend = yield* resolveStackBackend({ args, cwd: process.cwd(), env: process.env });
+    const computeEnabled = yield* resolveComputeEnabled({
+      args,
+      cwd: process.cwd(),
+      env: process.env,
+    });
+    return { stackBackend, computeEnabled };
+  }).pipe(Effect.provide(BunServices.layer)),
 );
-const selectedRoot =
-  Exit.isSuccess(backendExit) && backendExit.value === "stack"
-    ? rootCommandForBackend("stack")
-    : rootCommand;
-const completionRoot = Exit.isSuccess(backendExit) ? selectedRoot : undefined;
+const selectedRoot = rootCommandForFeatures(
+  Exit.isSuccess(selectionExit)
+    ? selectionExit.value
+    : { stackBackend: "legacy", computeEnabled: false },
+);
+const selectionCause = Exit.isFailure(selectionExit) ? selectionExit.cause : undefined;
 
 if (
   !(await tryComplete(
-    defaultCompleteDeps(
-      completionRoot,
-      Exit.isFailure(backendExit) ? backendExit.cause : undefined,
-    ),
+    defaultCompleteDeps(Exit.isSuccess(selectionExit) ? selectedRoot : undefined, selectionCause),
   ))
 ) {
   await runCli(selectedRoot, {
     analyticsLayer: analyticsLayer,
     afterSuccess: upgradeNoticeHook,
-    ...(Exit.isFailure(backendExit) ? { beforeParse: Effect.failCause(backendExit.cause) } : {}),
+    ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),
   });
 }

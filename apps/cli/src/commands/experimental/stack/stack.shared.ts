@@ -16,15 +16,15 @@ import {
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 
-/** The target selected by the CLI adapter for one experimental stack command. */
-interface ExperimentalStackTarget {
+/** The target selected by the CLI adapter for one stack command. */
+interface StackTarget {
   readonly projectRoot: string;
   readonly id?: StackId;
   readonly name?: string;
   readonly runtime?: StackRuntimePreference;
 }
 
-export class ExperimentalStackTargetError extends Data.TaggedError("ExperimentalStackTargetError")<{
+export class StackTargetError extends Data.TaggedError("ExperimentalStackTargetError")<{
   readonly message: string;
   readonly reason: "flags" | "invalid-config";
   readonly suggestion?: string;
@@ -39,22 +39,22 @@ export class ExperimentalStackTargetError extends Data.TaggedError("Experimental
  * Configuration and targeting are supplied by the CLI adapter so later stack
  * commands can reuse the same project, name, id, and environment rules.
  */
-interface ExperimentalStackTargetResolverShape {
+interface StackTargetResolverShape {
   readonly resolve: (input: {
     readonly projectRoot: string;
     readonly name?: string;
     readonly id?: string;
     readonly runtime: "auto" | "docker" | "native";
-  }) => Effect.Effect<ExperimentalStackTarget, ExperimentalStackTargetError, ExperimentalStackApi>;
+  }) => Effect.Effect<StackTarget, StackTargetError, StackApi>;
 }
 
-export class ExperimentalStackTargetResolver extends Context.Service<
-  ExperimentalStackTargetResolver,
-  ExperimentalStackTargetResolverShape
+export class StackTargetResolver extends Context.Service<
+  StackTargetResolver,
+  StackTargetResolverShape
 >()("supabase/experimental-stack/TargetResolver") {}
 
-export class ExperimentalStackApi extends Context.Service<
-  ExperimentalStackApi,
+export class StackApi extends Context.Service<
+  StackApi,
   {
     readonly findStack: (
       ...args: Parameters<typeof findStack>
@@ -83,37 +83,35 @@ export class ExperimentalStackApi extends Context.Service<
   }
 >()("supabase/experimental-stack/StackApi") {}
 
-export const validateExperimentalStackTarget = (input: {
+export const validateStackTarget = (input: {
   readonly stack?: string;
   readonly stackId?: string;
-}): Effect.Effect<void, ExperimentalStackTargetError> =>
+}): Effect.Effect<void, StackTargetError> =>
   Effect.gen(function* () {
     if (input.stack !== undefined && input.stackId !== undefined) {
-      return yield* new ExperimentalStackTargetError({
+      return yield* new StackTargetError({
         message: "--stack and --stack-id cannot be used together",
         reason: "flags",
       });
     }
   });
 
-export const validateExperimentalStackId = (
-  id: string,
-): Effect.Effect<StackId, ExperimentalStackTargetError> =>
+export const validateStackId = (id: string): Effect.Effect<StackId, StackTargetError> =>
   isStackId(id)
     ? Effect.succeed(id)
     : Effect.fail(
-        new ExperimentalStackTargetError({
+        new StackTargetError({
           message: "--stack-id must be a lowercase SHA-256 stack id",
           reason: "flags",
         }),
       );
 
-export const rejectExperimentalStackOutput = (
+export const rejectStackOutput = (
   outputFlag: Option.Option<Option.Option<string>>,
-): Effect.Effect<void, ExperimentalStackTargetError> =>
+): Effect.Effect<void, StackTargetError> =>
   Option.isSome(outputFlag) && Option.isSome(outputFlag.value)
     ? Effect.fail(
-        new ExperimentalStackTargetError({
+        new StackTargetError({
           message: "The legacy -o/--output flag is not supported here; use --output-format json.",
           reason: "flags",
           suggestion:
@@ -122,8 +120,8 @@ export const rejectExperimentalStackOutput = (
       )
     : Effect.void;
 
-export const experimentalStackApiLayer = Layer.effect(
-  ExperimentalStackApi,
+export const stackApiLayer = Layer.effect(
+  StackApi,
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -148,18 +146,18 @@ export const experimentalStackApiLayer = Layer.effect(
 );
 
 /** Runtime configuration for the first stack command. Later commands reuse this layer. */
-export const experimentalStackTargetResolverLayer = Layer.succeed(ExperimentalStackTargetResolver, {
+export const stackTargetResolverLayer = Layer.succeed(StackTargetResolver, {
   resolve: (input) =>
     Effect.gen(function* () {
-      const id = input.id === undefined ? undefined : yield* validateExperimentalStackId(input.id);
-      const stackApi = yield* ExperimentalStackApi;
+      const id = input.id === undefined ? undefined : yield* validateStackId(input.id);
+      const stackApi = yield* StackApi;
       const inspection =
         id === undefined
           ? undefined
           : yield* stackApi.inspectStack(id).pipe(
               Effect.mapError(
                 (error) =>
-                  new ExperimentalStackTargetError({
+                  new StackTargetError({
                     message: `Unable to inspect stack ${id}: ${error.message}`,
                     reason: error instanceof StackNotFoundError ? "flags" : "invalid-config",
                     cause: error,
@@ -181,7 +179,7 @@ export const experimentalStackTargetResolverLayer = Layer.succeed(ExperimentalSt
             inspection.descriptor.runtime.kind === "container" &&
             inspection.descriptor.runtime.engine !== requestedRuntime.engine))
       ) {
-        return yield* new ExperimentalStackTargetError({
+        return yield* new StackTargetError({
           message: "The requested runtime does not match the existing stack",
           reason: "flags",
         });

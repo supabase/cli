@@ -3,31 +3,31 @@ import {
   type StackDescriptor,
   type OpenStackError,
   type StackDiscoveryError,
-  type StackStopError,
+  type StackStopError as ApiStackStopError,
 } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
-  ExperimentalStackApi,
-  ExperimentalStackTargetError,
-  rejectExperimentalStackOutput,
-  validateExperimentalStackId,
-  validateExperimentalStackTarget,
+  StackApi,
+  StackTargetError,
+  rejectStackOutput,
+  validateStackId,
+  validateStackTarget,
 } from "../stack.shared.ts";
-import type { ExperimentalStackStopFlags } from "./stop.command.ts";
-import { ExperimentalStackStopError } from "./stop.errors.ts";
+import type { StackStopFlags } from "./stop.command.ts";
+import { StackCommandStopError } from "./stop.errors.ts";
 
-const mapTargetError = (error: ExperimentalStackTargetError) =>
-  new ExperimentalStackStopError({
+const mapTargetError = (error: StackTargetError) =>
+  new StackCommandStopError({
     reason: error.reason,
     message: error.message,
     ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
     cause: error,
   });
 
-const stopError = (error: StackDiscoveryError | OpenStackError | StackStopError) => {
+const stopError = (error: StackDiscoveryError | OpenStackError | ApiStackStopError) => {
   const classification = Match.value(error).pipe(
     Match.tag("StackNotFoundError", "InvalidStackIdentityError", () => ({
       reason: "flags" as const,
@@ -53,7 +53,7 @@ const stopError = (error: StackDiscoveryError | OpenStackError | StackStopError)
     })),
     Match.exhaustive,
   );
-  return new ExperimentalStackStopError({
+  return new StackCommandStopError({
     ...classification,
     message: error.message,
     cause: error,
@@ -62,17 +62,15 @@ const stopError = (error: StackDiscoveryError | OpenStackError | StackStopError)
 
 const stoppedPayload = (id: StackDescriptor["id"]) => ({ found: true, id, lifecycle: "stopped" });
 
-export const experimentalStackStop = Effect.fn("experimental.stack.stop")(function* (
-  flags: ExperimentalStackStopFlags,
-) {
+export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: StackStopFlags) {
   const telemetryState = yield* TelemetryState;
   const body = Effect.gen(function* () {
     const output = yield* Output;
     const settings = yield* CommandSettings;
-    const stackApi = yield* ExperimentalStackApi;
+    const stackApi = yield* StackApi;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
-    yield* rejectExperimentalStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
-    yield* validateExperimentalStackTarget({
+    yield* rejectStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
+    yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
     }).pipe(Effect.mapError(mapTargetError));
@@ -86,7 +84,7 @@ export const experimentalStackStop = Effect.fn("experimental.stack.stop")(functi
               ...(Option.isSome(flags.stack) ? { name: flags.stack.value } : {}),
             })
             .pipe(Effect.mapError(stopError))
-        : yield* validateExperimentalStackId(id).pipe(
+        : yield* validateStackId(id).pipe(
             Effect.mapError(mapTargetError),
             Effect.map((validId) =>
               Option.some({
@@ -97,7 +95,7 @@ export const experimentalStackStop = Effect.fn("experimental.stack.stop")(functi
           );
     if (Option.isNone(targetOption)) {
       if (Option.isSome(flags.stack))
-        return yield* new ExperimentalStackStopError({
+        return yield* new StackCommandStopError({
           reason: "flags",
           message: `No managed stack named "${flags.stack.value}" was found for this project.`,
           suggestion: "Choose an existing --stack name or omit --stack for the current project.",

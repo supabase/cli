@@ -16,11 +16,16 @@ This file applies to the `apps/cli` workspace. Read it fully before touching any
 
 ```
 src/
-├── commands/          # one directory per top-level command (see File Structure and Naming below)
+├── commands/          # command families; experimental/ groups opt-in implementations
 ├── command-internal/  # helpers used by ≥2 command families but not general-purpose infra (see Hoist Before You Duplicate)
 ├── shared/             # cross-cutting infra used by every command: output, telemetry, runtime, auth, cli, config, ...
 └── main.ts             # entry point: main.ts → cli/root.ts → commands/…
 ```
+
+Keep opt-in command implementations under `src/commands/experimental/` (for example,
+`compute/` and `stack/`). This folder organizes source code; it does not register an
+`experimental` command namespace. `src/cli/root.ts` owns the public command tree and
+feature-flag registration.
 
 ---
 
@@ -148,7 +153,8 @@ When replacing a wrapper natively:
 
 ### Directory layout
 
-One directory per top-level command under `src/commands/`:
+One directory per command family under `src/commands/`, with opt-in families grouped
+under `src/commands/experimental/`:
 
 ```
 src/commands/<command>/
@@ -260,6 +266,28 @@ when a change is intentional, update the tests and `SIDE_EFFECTS.md` in the same
 
 This contract does not constrain internal refactors, new flags/features, or bug fixes that leave
 the established surface unchanged — treat those like any other TypeScript workspace.
+
+### Experimental feature registration
+
+Experimental command implementations live under `src/commands/experimental/`,
+while `src/cli/root.ts` owns their public paths. Resolve opt-in booleans with
+`command-internal/experimental-feature.ts`: environment `1`/`0` overrides the
+project setting, and an unset or empty value uses the config. Invalid environment
+values are typed failures on applicable command paths. Keep config-discovery
+failure policy explicit and cover TOML, JSON, precedence, and disabled behavior.
+
+An opt-in family must be absent from the command tree, help, and completion when
+disabled, without hint stubs. Mark enabled help as experimental and keep the family
+out of stable generated command documentation. Environment opt-ins do not write
+project configuration.
+
+Experimental command paths may change outside the stable compatibility promise.
+Before renaming a family, identify published config, disk, server, and telemetry
+boundaries and record the approved compatibility decision in the PR; do not infer
+that experimental means never shipped. For the Compute transition, no local
+compatibility aliases or migrations are required. Its Compute error tags
+intentionally start new fingerprints; server-owned contracts remain unchanged.
+Update tests, generated schemas, and side-effect documentation with the change.
 
 ---
 

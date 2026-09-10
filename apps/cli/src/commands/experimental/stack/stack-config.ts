@@ -45,7 +45,7 @@ import {
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 
-/** A config error suitable for an experimental stack command's user-facing boundary. */
+/** A config error suitable for a stack command's user-facing boundary. */
 export class StackConfigError extends Data.TaggedError("StackConfigError")<{
   readonly message: string;
 }> {
@@ -1381,7 +1381,7 @@ const configValidationError = (
   return undefined;
 };
 
-/** Loads and translates the effective project config for all experimental stack commands. */
+/** Loads and translates the effective project config for all stack commands. */
 export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
   Effect.gen(function* () {
     const path = yield* Path.Path;

@@ -14,5 +14,5 @@
       "@supabase/pg-topo": ["./node_modules/@supabase/pg-topo/dist/index.d.ts"]
     }
   },
-  "exclude": ["supabase", "src/shared/workers/stacks"]
+  "exclude": ["supabase", "src/shared/compute/stacks"]
 }

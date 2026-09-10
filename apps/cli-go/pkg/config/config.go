@@ -239,12 +239,12 @@ type (
 		Functions    FunctionConfig `toml:"functions" json:"functions"`
 		Analytics    analytics      `toml:"analytics" json:"analytics"`
 		Experimental experimental   `toml:"experimental" json:"experimental"`
-		// Workers is parsed but never read here. The [workers] section is owned by
+		// Compute is parsed but never read here. The [compute] section is owned by
 		// the TS CLI; this field exists only so a config the TS schema accepts does
 		// not trip UnmarshalExact in the delegated Go child (`flags.LoadConfig`).
 		// The json tag is the one that matters: the decoder runs with
 		// dc.TagName = "json". Omitted from toml so Go never emits the section.
-		Workers map[string]any `toml:"-" json:"workers"`
+		Compute map[string]any `toml:"-" json:"compute"`
 	}
 
 	config struct {
@@ -343,6 +343,7 @@ type (
 		S3AccessKey     string         `toml:"s3_access_key" json:"s3_access_key"`
 		S3SecretKey     string         `toml:"s3_secret_key" json:"s3_secret_key"`
 		Stack           bool           `toml:"-" json:"stack"`
+		Compute         bool           `toml:"-" json:"compute"`
 		Webhooks        *webhooks      `toml:"webhooks" json:"webhooks"`
 		PgDelta         *PgDeltaConfig `toml:"pgdelta" json:"pgdelta"`
 		Inspect         inspect        `toml:"inspect" json:"inspect"`

@@ -122,6 +122,14 @@ describe("buildDocsSpec", () => {
     ]);
   });
 
+  it("excludes the gated Compute commands from the default docs spec", () => {
+    const { spec } = builtSpec();
+    const computeCommands = spec.commands.filter((command) =>
+      command.id.startsWith("supabase-compute"),
+    );
+    expect(computeCommands).toEqual([]);
+  });
+
   it("keeps every load-bearing per-command field shape", () => {
     const { spec } = builtSpec();
     for (const command of spec.commands) {
