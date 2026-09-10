@@ -1,13 +1,11 @@
 /**
  * The shadow baseline cache's acquire/export/restore flow, driven end to end against a tiny
- * in-test Docker model (create/start/stop/rm all mutate the same container table, and `docker cp`
- * really moves bytes in and out of it) plus the REAL filesystem under a per-test temp workdir, so
- * the tar artifact, its atomic publish, and its retention rule are exercised for real.
+ * in-test Docker model plus the real filesystem under a per-test temp workdir, so the tar
+ * artifact, its atomic publish, and its retention rule are exercised for real.
  *
- * Scenario-oriented on purpose: every test is a sequence of real acquires and releases, and the
- * assertions are on the resulting Docker state, the tar on disk, and what the caller was told
- * about the baseline — not on internal call ordering, except where the ordering IS the contract
- * (the export must stop the container before copying and start it again afterwards).
+ * Scenario-oriented: assertions are on the resulting Docker state, the tar on disk, and what the
+ * caller was told about the baseline — not on internal call ordering, except where ordering is
+ * the contract (the export must stop the container before copying and start it again after).
  */
 
 import { accessSync, chmodSync, constants } from "node:fs";
@@ -70,10 +68,6 @@ const withShadowCacheHome = <A, E, R>(
     withShadowCacheEnv(value, body),
   );
 
-// ---------------------------------------------------------------------------
-// A fake Postgres the readiness probe can connect to
-// ---------------------------------------------------------------------------
-
 function fakeCluster(opts: { readonly failConnect?: boolean } = {}) {
   const connected: Array<string> = [];
   const layer = Layer.succeed(DbConnection, {
@@ -94,10 +88,6 @@ function fakeCluster(opts: { readonly failConnect?: boolean } = {}) {
   });
   return { layer, connected };
 }
-
-// ---------------------------------------------------------------------------
-// Inputs
-// ---------------------------------------------------------------------------
 
 const shadowSetup = (): ShadowDbSetupInput<never> => ({
   majorVersion: 17,
@@ -161,9 +151,8 @@ const soleTarName = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, path
 const keyOf = (tarName: string) => tarName.slice("shadow-baseline-".length, -".tar".length);
 
 /**
- * What a correct cold export publishes under `tarName`: the fake PGDATA archive carrying the
- * baseline marker stamped with THAT filename's own key. Derived from the name rather than hardcoded
- * so the assertion fails if the export ever stamps a different key than it publishes under.
+ * What a correct cold export publishes under `tarName`: the fake PGDATA archive with the baseline
+ * marker stamped with that filename's own key.
  */
 const expectedTarFor = (tarName: string) =>
   fakePgDataTar(pgDataBaselineMarkerContent(keyOf(tarName)));
@@ -195,8 +184,8 @@ describe("acquireShadowDatabase", () => {
         const handle = yield* acquireShadowDatabase(docker.spawner, input);
         expect(handle.baselinePresent).toBe(false);
 
-        // `--rm` intact, no PGDATA copies either way, and the snapshot step is a no-op. The one
-        // `cp-secret` is the pgsodium root key every shadow has always been given.
+        // `--rm` intact, no PGDATA copies, and the snapshot step is a no-op. The one `cp-secret`
+        // is the pgsodium root key every shadow gets.
         expect(docker.calls("create")[0] ?? []).toContain("--rm");
         yield* handle.snapshotBaseline;
         expect(docker.steps()).toEqual(["create", "cp-secret", "start"]);
@@ -383,15 +372,15 @@ describe("acquireShadowDatabase", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        // Recursive mkdir on an EXISTING directory creates nothing and succeeds regardless of
+        // Recursive mkdir on an existing directory creates nothing and succeeds regardless of
         // permission, so the acquire's probe must check write access explicitly — otherwise a
         // read-only root selects the doomed cold cycle on every default-ON invocation.
         const cacheDir = shadowCacheDir(path);
         yield* fs.makeDirectory(cacheDir, { recursive: true });
         chmodSync(cacheDir, 0o500);
         // chmod cannot revoke write access from a privileged user (root ignores permission
-        // bits), so mirror the workers-push suite's guard: assert the degrade only when the
-        // denial is real for the CURRENT user; otherwise the cached path proceeding is correct.
+        // bits), so assert the degrade only when the denial is real for the current user;
+        // otherwise the cached path proceeding is correct.
         const writable = (() => {
           try {
             accessSync(cacheDir, constants.W_OK);
@@ -455,8 +444,8 @@ describe("acquireShadowDatabase", () => {
 
         yield* handle.snapshotBaseline;
 
-        // Ordering IS the contract here: stop before the copy (a live PGDATA is not coherent to
-        // copy), the baseline marker stamped in between (it must be the LAST thing written to
+        // Ordering is the contract here: stop before the copy (a live PGDATA is not coherent to
+        // copy), the baseline marker stamped in between (it must be the last thing written to
         // PGDATA, so nothing after the platform baseline can be missing from what it vouches
         // for), start plus a readiness probe after it (the caller is about to reconnect).
         expect(docker.steps()).toEqual([

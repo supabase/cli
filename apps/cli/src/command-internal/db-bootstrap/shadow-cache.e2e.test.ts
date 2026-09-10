@@ -1,25 +1,19 @@
 /**
- * The shadow baseline cache's ONE subprocess scenario (golden path only, per the repo's e2e-scope
- * policy): the SAME `db diff` invocation run TWICE against a real local stack must cold-publish a
+ * The shadow baseline cache's one subprocess scenario (golden path only): running the same
+ * `db diff` invocation twice against a real local stack must cold-publish a
  * `shadow-baseline-<key>.tar` on the first run, warm-restore that exact tar on the second, and
  * produce byte-identical diff output either way.
  *
- * A black-box `runSupabase` subprocess test, like the other local Docker-stack `*.e2e.test.ts`
- * suites: the facts it is here to prove are the ones only the real wiring can — that `db diff`
- * actually routes through `acquireShadowDatabase`, that the cache engages with
- * `SUPABASE_SHADOW_CACHE` genuinely UNSET (the shipped default — the run removes the harness's
- * isolation pin rather than opting in) and that
- * `${SUPABASE_HOME}/cache/shadow-baseline` survives a real process boundary, that the cache key is STABLE across two
- * separate CLI processes (an in-process test computes it once), and that a warm-restored cluster
- * yields the same migration SQL as a cold-provisioned one. It replaces an earlier in-process
- * version of this file that called `acquireShadowDatabase` directly with a synthetic layer
- * graph — that shape could stay green while the `db diff` wiring, the env propagation, or the cache
- * enablement was broken.
+ * Proves what only real process wiring can: that `db diff` actually routes through
+ * `acquireShadowDatabase`, that the cache engages with `SUPABASE_SHADOW_CACHE` genuinely unset
+ * (the shipped default), that the cache directory survives a real process boundary, that the
+ * cache key is stable across two separate CLI processes, and that a warm-restored cluster yields
+ * the same migration SQL as a cold-provisioned one.
  *
- * The acquire/export/restore MECHANICS (cold export, warm restore, tar validation and rejection,
+ * The acquire/export/restore mechanics (cold export, warm restore, tar validation and rejection,
  * retention/LRU, cache-off and bypass paths) are covered exhaustively by
- * `shadow-cache.integration.test.ts` against its in-test Docker model plus a real filesystem, and
- * the pure key/retention logic by `shadow-cache.unit.test.ts`. Nothing branch-shaped belongs here.
+ * `shadow-cache.integration.test.ts`, and the pure key/retention logic by
+ * `shadow-cache.unit.test.ts`. Nothing branch-shaped belongs here.
  */
 
 import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
@@ -33,29 +27,18 @@ const CLEANUP_TIMEOUT_MS = 120_000;
 
 const START_TIMEOUT_MS = 280_000;
 const DIFF_TIMEOUT_MS = 180_000;
-// One full `start` plus the cold/warm `db diff` pair, with lifecycle overhead for `init`, the
-// filesystem inspection between runs, and the fast-failing port-conflict retries below (a
-// conflicting publish fails in `docker create`/`start`, i.e. seconds, never a whole
-// `DIFF_TIMEOUT_MS`) — same "budget each subprocess separately" shape as `diff.declarative.e2e.test.ts`.
+// One full `start` plus the cold/warm `db diff` pair, with lifecycle overhead for `init`,
+// filesystem inspection, and fast-failing port-conflict retries.
 const LIFECYCLE_OVERHEAD_MS = 90_000;
 
 /**
- * `db diff`'s shadow port, published on the host by the shadow container. Docker itself has to
- * bind it, so a test CANNOT truly reserve it up front: binding a listener and releasing it proves
- * nothing about the window between the release and the container's own bind. The honest mitigation
- * is therefore two-part — pick ports far from the `[db] shadow_port` default (54320) that a stray
- * local stack or a neighbouring suite would be holding, and retry the scenario on the next
- * candidate when the CLI reports a real bind conflict.
+ * `db diff`'s shadow port. Docker has to bind it, so a test cannot truly reserve it up front —
+ * retry on the next candidate (derived from this process's pid, so concurrent runs don't race for
+ * one shared port) when the CLI reports a real bind conflict.
  *
- * Fed through `SUPABASE_DB_SHADOW_PORT` (`db-config.toml-read.ts`'s `envOverride`) rather
- * than by rewriting the generated `config.toml`, so the `init` template stays exactly as a user's
- * would be. The port is deliberately NOT part of the cache key (see `shadowCacheKey`), so
- * retrying on a different one cannot change which tar the run looks for.
- *
- * The candidate sequence is derived from this process's own pid, so two independently concurrent
- * runs of this suite start from different bases instead of racing for one shared pair, and a
- * locally-occupied port only costs one retry step. The base stays inside the IANA dynamic range
- * (49152-65535) with room for every candidate below its ceiling.
+ * Fed through `SUPABASE_DB_SHADOW_PORT` rather than rewriting the generated `config.toml`, so the
+ * `init` template stays exactly as a user's would be. Not part of the cache key, so retrying on a
+ * different port cannot change which tar the run looks for.
  */
 const SHADOW_PORT_CANDIDATE_COUNT = 8;
 const SHADOW_PORT_BASE = 49152 + ((process.pid * 37) % (16384 - SHADOW_PORT_CANDIDATE_COUNT));
@@ -69,11 +52,7 @@ const DIFF_ARGS = ["db", "diff", "--local", "--use-pg-delta"] as const;
 /** `shadow-cache.ts`'s published artifact name — `shadow-baseline-<16 hex key>.tar`. */
 const BASELINE_TAR_PATTERN = /^shadow-baseline-[0-9a-f]{16}\.tar$/u;
 
-/**
- * Docker's own bind-conflict wording, as it reaches stderr through the shadow's
- * `docker create`/`docker start` failure. Only used to decide whether to retry on another
- * candidate port — never asserted on.
- */
+/** Docker's own bind-conflict wording on stderr; only used to decide whether to retry. */
 function isShadowPortConflict(stderr: string): boolean {
   return /port is already allocated|address already in use|Bind for \S+ failed/iu.test(stderr);
 }
@@ -109,10 +88,8 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
     { timeout: START_TIMEOUT_MS + 2 * DIFF_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS },
     async () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-shadow-cache-e2e-"));
-      // One temp `SUPABASE_HOME` for every run in this test, so the two `db diff` processes share
-      // the global `${SUPABASE_HOME}/cache/shadow-baseline` directory the cache publishes into —
-      // `runSupabase` otherwise mints (and disposes) a fresh home per invocation, which would make
-      // every run a cold one.
+      // One temp `SUPABASE_HOME` per test run so both `db diff` processes share the same cache
+      // directory; `runSupabase` otherwise mints a fresh home per invocation.
       home = makeTempHome();
       const cacheDir = path.join(home.dir, "cache", "shadow-baseline");
 

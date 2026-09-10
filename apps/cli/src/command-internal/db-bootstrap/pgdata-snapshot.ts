@@ -1,31 +1,17 @@
 /**
- * Generic PGDATA snapshot/restore primitives — container-agnostic on purpose. `shadow-cache.ts`
- * is the only caller today, but nothing here assumes "shadow": these are the building blocks for
- * savepointing ANY local Postgres container and restoring it into a fresh one — the shadow's
- * disk-level baseline cache today, a future save/restore for the long-running
- * `supabase_db_<project>` stack container tomorrow.
+ * Generic PGDATA snapshot/restore primitives, container-agnostic: `shadow-cache.ts` is the only
+ * caller today, but these are reusable building blocks for savepointing any local Postgres
+ * container.
  *
- * **Coherence contract:** the container must be STOPPED before {@link exportPgDataTar}
- * runs — a snapshot of a running Postgres's data directory is not a consistent thing to copy.
- * Callers own the stop/start around the export; this module only moves bytes.
+ * The container must be stopped before {@link exportPgDataTar} runs — a snapshot of a running
+ * Postgres's data directory is not a consistent thing to copy. Callers own the stop/start.
  *
- * TODO(hot-save): the STOPPED contract could generalize to a consistency MODE. `frozen` —
- * `docker pause` → copy → `docker unpause` — yields a crash-consistent copy (connections stall
- * ~1s instead of dropping; restore boots through normal WAL recovery). `online` —
- * `pg_backup_start()` → fuzzy copy → `pg_backup_stop()`, writing the returned `backup_label`
- * into the artifact — is the zero-stall, Postgres-native form, and the ONLY one that also works
- * for a future NATIVE (non-container) Postgres process, where no freezer exists and recovery
- * replays the backup-labeled WAL range instead. Neither is worth the surface for the shadow
- * cache (its export runs once per key on an already-cold path); implement when a live-stack
- * savepoint feature needs to export without downtime.
+ * TODO(hot-save): support `frozen` (`docker pause`/copy/unpause) and `online`
+ * (`pg_backup_start`/`pg_backup_stop`) consistency modes for a live-stack savepoint feature that
+ * can't afford downtime.
  *
- * **Ownership caveat:** the restore side ({@link pgDataRestoreArchive}) MUST be delivered as
- * a tar stream unpacked via `docker cp - <id>:<path>`, never a directory copy — a directory copy
- * resets ownership to the extracting user (root) and Postgres refuses to start on a data directory
- * it does not own, whereas the tar-stream form preserves each member's uid/gid verbatim.
- *
- * The artifact is a plain file, so it fits a future NATIVE (non-Docker) Postgres service just as
- * well — nothing about the format is container-specific.
+ * {@link pgDataRestoreArchive} must be delivered as a tar stream via `docker cp -`, never a
+ * directory copy — a directory copy resets file ownership and Postgres refuses to start.
  */
 
 import { Effect, Option, Stream, type FileSystem } from "effect";
@@ -38,39 +24,29 @@ import type { StartContainerSpec } from "./docker-create-args.ts";
 type Spawner = ChildProcessSpawner["Service"];
 
 /**
- * `PGDATA` in every `supabase/postgres` image — the directory {@link exportPgDataTar}
- * exports and {@link pgDataRestoreArchive} restores. Hardcoded rather than read from the
- * container's own `PGDATA` env: the entrypoint scripts this codebase generates
- * (`postgres.service.ts`) never override it, and the value is part of the tar's own layout, so a
- * mismatch has to be a deliberate change here.
+ * PGDATA path inside every `supabase/postgres` image. Hardcoded rather than read from the
+ * container's own `PGDATA` env, since the tar layout depends on this exact value.
  */
 export const PGDATA_PATH = "/var/lib/postgresql/data";
 
 /**
- * `docker cp - <id>:<dest>` unpacks the archive's members RELATIVE to `dest`, and
- * {@link PGDATA_PATH}'s export tar has `data/` as its own top-level member, so the restore
- * target is PGDATA's parent. A POSIX constant, not `path.dirname` — this is a container path and
- * must not follow the host's separator.
+ * `docker cp` unpacks an archive's members relative to `dest`, and the export tar has `data/` as
+ * its own top-level member, so the restore target must be PGDATA's parent. A POSIX constant, not
+ * `path.dirname`, since this is a container path.
  */
 export const PGDATA_PARENT_PATH = "/var/lib/postgresql";
 
-// ---------------------------------------------------------------------------
-// What a valid snapshot must contain
-// ---------------------------------------------------------------------------
-
 /**
  * PGDATA's own directory name — `docker cp <id>:<dir> -` names its members after the source
- * BASENAME, so `data/` is the export tar's top-level entry (see {@link PGDATA_PARENT_PATH}).
+ * basename, so `data/` is the export tar's top-level entry.
  */
 const PGDATA_DIR_NAME = PGDATA_PATH.slice(PGDATA_PARENT_PATH.length + 1);
 
 /**
- * The entry whose presence proves an archive really carries an exported cluster: every Postgres
- * data directory has a `PG_VERSION` file at its root, and `initdb` writes it first. An archive that
- * unpacks cleanly but lacks it is the corruption a restore cannot otherwise notice.
- *
- * On its own it proves only "*a* PostgreSQL cluster", which is strictly weaker than what a cache
- * key promises — hence {@link PGDATA_BASELINE_MARKER_ENTRY}.
+ * Proves an archive carries an exported cluster: every Postgres data directory has a
+ * `PG_VERSION` file at its root, written first by `initdb`. On its own this only proves "a
+ * PostgreSQL cluster", weaker than what a cache key promises — see
+ * {@link PGDATA_BASELINE_MARKER_ENTRY}.
  */
 export const PGDATA_CLUSTER_ENTRY = `${PGDATA_DIR_NAME}/PG_VERSION`;
 

@@ -1,39 +1,12 @@
 /**
- * A plain, full local-database reset — Go's `reset.Run(ctx, "", 0, flags.DbConfig, fsys)`
- * called against the local target (`internal/db/reset/reset.go:57-77`), with an EMPTY
- * version and NO `--last` filtering. Hoisted out of `commands/db/reset/reset.handler.ts`'s
- * own `cfg.isLocal` branch (CLI-1955) so it is callable in-process by any Effect context
- * that provides the services below (CLI-2062) — the two `db schema declarative`
- * call sites (`declarative.smart-target.ts`'s local-reset prompt,
- * `sync.handler.ts`'s failed-apply recovery reset) used to shell out to a SEPARATE
- * `supabase-go` child process for this (`DeclarativeSeam.execInherit`), which is
- * itself a divergence from real Go: Go's `db schema declarative`/`sync` call
- * `reset.Run` as a plain in-process function, sharing the outer command's own
- * `PersistentPostRun` (telemetry flush / linked-project-cache write) rather than firing
- * a second, independent one from a child process's own `Execute()`. Calling this
- * function in-process collapses back to that single-firing behavior.
- *
+ * Resets the local database in-process — shared by `db reset`'s handler and the `db schema
+ * declarative`/`sync` local-reset paths, so neither needs to shell out to a separate process.
  * `db reset`'s own handler is the only caller that ever passes a non-empty
- * `version`/`seedFlags` override (`--version`/`--last`/`--no-seed`/`--sql-paths`) — the
- * declarative callers always want the plain full reset and call with no arguments.
+ * `version`/`seedFlags` override; the declarative callers always want the plain full reset.
  *
- * Resolves every service it needs (`DebugFlag`, `NetworkIdFlag`,
- * `RuntimeInfo`, `ChildProcessSpawner`, `FileSystem`, `Path`, `CommandSettings`, the
- * project `.env` + `resolveExperimentalWithProjectEnv` gate) itself via `yield*`,
- * exactly like `dbReset` did inline before this extraction — so it is
- * self-contained and does not need `DbResetFlags`/`CliArgs`/
- * `resolveDbTargetFlags` (the top-level `db reset` command's own flag-parsing
- * concerns, which stay in `reset.handler.ts`).
- *
- * Emits the exact same two stderr lines the removed `execInherit` subprocess used to
- * produce via the Go child's inherited stdio (`Resetting local database...` /
- * `Finished supabase db reset on branch <branch>.`) — always via `output.raw`,
- * regardless of `output.format`, matching a child process's inherited stdio, which
- * never receives `-o`/`--output-format` and always prints Go-native text. Deliberately
- * does NOT emit the JSON `output.success(...)` envelope: that belongs to a real
- * top-level `db reset` invocation only (`reset.handler.ts` emits it itself, after
- * calling this function) — neither Go's in-process `reset.Run` nor the removed
- * `execInherit` subprocess ever produced a machine-JSON envelope for this nested call.
+ * Always prints its own two stderr lines via `output.raw`, regardless of `output.format`, but
+ * never the JSON `output.success(...)` envelope — that belongs to a top-level `db reset`
+ * invocation only, emitted by its own handler after calling this function.
  */
 
 import { Data, Effect, FileSystem, Option, Path } from "effect";
@@ -63,12 +36,8 @@ import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
 
 /**
- * The local database container is not running. Byte-matches Go's
- * `utils.ErrNotRunning` (`internal/utils/misc.go:116`), `"<aqua>supabase start</aqua>
- * is not running."`, returned by `AssertSupabaseDbIsRunning` before the local
- * reset (`internal/db/reset/reset.go:57`). Exported only so the exhaustive
- * actionability guard can inspect its declaration; runtime callers consume the
- * enclosing effect rather than importing this class.
+ * The local database container is not running. Exported only so the exhaustive actionability
+ * guard can inspect its declaration; runtime callers consume the enclosing effect instead.
  */
 class ResetLocalDbNotRunningError extends Data.TaggedError("ResetLocalDbNotRunningError")<{
   readonly message: string;
@@ -78,7 +47,7 @@ class ResetLocalDbNotRunningError extends Data.TaggedError("ResetLocalDbNotRunni
   }
 }
 
-/** Go's `toLogMessage` (`internal/db/reset/reset.go:88-91`). */
+/** ` to version: X`, or `...` when resetting to the latest migration. */
 const toLogMessage = (version: string): string =>
   version.length > 0 ? ` to version: ${version}` : "...";
 

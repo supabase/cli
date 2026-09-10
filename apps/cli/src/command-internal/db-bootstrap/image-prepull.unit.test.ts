@@ -4,7 +4,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ImagePrepullError, ensureImagesCached } from "./image-prepull.ts";
 
-/** Matches the standing `mockSpawner` shape in `docker-lifecycle.unit.test.ts`, generalized to a per-call handler so each argv can respond differently (needed for "some images cached, others not"). */
+/** Per-call variant of `docker-lifecycle.unit.test.ts`'s `mockSpawner`, so each argv can respond differently. */
 function mockSpawner(
   handler: (args: ReadonlyArray<string>) => { exitCode: number; stdout?: string; stderr?: string },
 ) {
@@ -56,9 +56,7 @@ describe("ensureImagesCached", () => {
         const cached =
           image === "public.ecr.aws/supabase/postgres:15" ||
           image === "public.ecr.aws/supabase/kong:3";
-        // A confirmed "no such image" (not merely a non-zero exit) is what tells
-        // `hasLocalImage` this candidate is a genuine cache miss rather than some other
-        // inspect failure, which now fails fast instead of falling through to a pull.
+        // This stderr text is what `hasLocalImage` treats as a confirmed cache miss.
         return cached
           ? { exitCode: 0 }
           : { exitCode: 1, stderr: `Error response from daemon: No such image: ${image}` };

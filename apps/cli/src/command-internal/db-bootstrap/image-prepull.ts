@@ -1,20 +1,7 @@
 /**
- * Port of Go's `ensureImagesCached` (`apps/cli-go/internal/start/start.go:225-262`,
- * deleted in CLI-1966; last present at commit a253ccba2):
- * guarantees every image `supabase start` needs is resolved/pulled into the
- * local Docker cache BEFORE any container is created, using the same
- * multi-registry fallback as the per-container start path
- * (`makeDockerImageResolver`).
- *
- * Go's caller (`internal/start/start.go:264-291`, `run`) also runs a
- * best-effort `docker-compose`-based pre-pull first
- * (`pullImagesUsingCompose`) and treats `ensureImagesCached` as the hard-failing
- * backstop that catches whatever the compose pre-pull's `IgnoreFailures` step
- * skipped. This port does not implement docker-compose integration anywhere
- * (an intentional architecture decision for this port), so
- * {@link ensureImagesCached} is the ONLY image pre-pull step here, not a
- * backstop for a separate best-effort pass — every image must resolve through
- * this call before any container starts.
+ * Resolves and pulls every image `supabase start` needs into the local Docker cache before any
+ * container is created, using the same multi-registry fallback as the per-container start path.
+ * This is the only pre-pull step; every image must resolve through it before a container starts.
  */
 
 import { Data, Effect, Result } from "effect";
@@ -31,10 +18,8 @@ import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "../docker-sug
 type Spawner = ChildProcessSpawner["Service"];
 
 /**
- * One or more images failed to resolve/pull from every registry candidate.
- * Mirrors Go's `errors.Join(result...)` (`start.go:257`): the message
- * aggregates every failed image's own error rather than surfacing only the
- * first failure, so a caller can see every broken image in one report.
+ * One or more images failed to resolve/pull from every registry candidate. The message
+ * aggregates every failed image's own error rather than surfacing only the first failure.
  */
 export class ImagePrepullError extends Data.TaggedError("ImagePrepullError")<{
   readonly message: string;
@@ -53,17 +38,11 @@ export class ImagePrepullError extends Data.TaggedError("ImagePrepullError")<{
 }
 
 /**
- * Resolves every image in `images` concurrently (Go's `utils.WaitAll` —
- * unbounded goroutines) via the shared registry-fallback resolver, and returns
- * a map from the ORIGINAL image reference to the resolved image URL a caller
- * must use to reference that image afterward (e.g. as
- * `StartContainerSpec.image`) — resolving the same image twice would be
- * wasteful and could, in theory, land on a different registry candidate on a
- * second, independent call.
+ * Resolves every image in `images` concurrently through the shared registry-fallback resolver.
  *
- * `images` is deduped here (Go's `seen := map[string]struct{}{}`,
- * `start.go:238-249`) — callers are not expected to have already deduped their
- * service image list.
+ * Returns a map from each original image reference to the resolved image URL callers must use
+ * to reference that image afterward — re-resolving the same image could land on a different
+ * registry candidate on a second call. `images` is deduped internally.
  */
 export function ensureImagesCached(
   spawner: Spawner,

@@ -1,74 +1,12 @@
 /**
- * `db reset --local`'s container-recreate half — a strict 1:1 port of Go's
- * `resetDatabase`/`resetDatabase14`/`resetDatabase15`
- * (`apps/cli-go/internal/db/reset/reset.go:81-176`). This is DELIBERATELY NOT a
- * thin wrapper over {@link startDatabase} (`./start-database.ts`, the
- * `StartDatabase`-equivalent `db start`/`supabase start` share) — Go's own
- * `resetDatabase15` never calls `StartDatabase` either. It is a distinctly
- * different composition over the SAME underlying primitives
- * (`ensureNetwork`, `buildPostgresStartContainerSpec`,
- * `createContainer`, `waitForHealthyServices`,
- * `startSetupLocalDatabase`), matching Go's own structure:
- *
- * **PG >= 15** (`resetDatabase15`, `reset.go:114-142`):
- * 1. `docker container rm -f <db>` — NOT tolerant of "not found" (a genuine
- *    remove failure is a hard `failed to remove container`), unlike most other
- *    container lookups in this codebase.
- * 2. `docker volume rm -f <db>` — tolerant of "not found" via the `-f` flag
- *    ITSELF (verified against a real Docker daemon: `force` makes a missing
- *    volume's removal a no-op), so no special-casing is needed here either.
- * 3. `ensureNetwork` (Go's `DockerStart` always ensures the network
- *    exists, on every call — this is hoisted out of `createContainer` for
- *    the SAME reason `start-database.ts` hoists it).
- * 4. `Recreating database...\n` to stderr (NOT `Starting database...`).
- * 5. Build + create + start the Postgres container (byte-identical inputs to
- *    `startDatabase`'s own — there is no `fromBackup` variant on this
- *    path, reset has no restore concept) via the same
- *    `buildPostgresStartContainerSpec`/`createContainer`.
- * 6. Health wait — NEVER swallowed (no `--from-backup`-equivalent gate here at
- *    all).
- * 7. `startSetupLocalDatabase` — UNCONDITIONALLY (no fresh-volume gate: a
- *    reset just removed the volume, so it's always fresh) and with the
- *    RESOLVED reset `version`/`seedFlags` (not `""` like `db start`'s own call)
- *    — see `db-setup.ts`'s own header for this one genuine parameter
- *    difference between the shared function's two real Go callers.
- * 8. `Restarting containers...\n` to stderr, then
- *    {@link restartServicesAndReloadKong} (`./restart-services.ts`).
- *
- * **PG <= 14** (`resetDatabase14`, `reset.go:96-112`):
- * 1. `recreateDatabase` (`reset.go:157-176`) — connect as `supabase_admin` to
- *    `template1`, `DisconnectClients`, then four UNWRAPPED (no `BEGIN`/`COMMIT`)
- *    statements: `DROP`/`CREATE DATABASE postgres`, `DROP`/`CREATE DATABASE
- *    _supabase`. Go batches these via a pgconn protocol trick that has no TS
- *    equivalent — not needed here: none of the four can ever run inside a
- *    transaction anyway, so plain sequential `session.exec` calls, relying on
- *    Effect's own short-circuit-on-failure, reproduce Go's "stop at first
- *    error" behavior exactly (verified empirically against real Postgres 14/15
- *    with the pinned pgconn/pgx versions — the batching trick is real, but its
- *    OBSERVABLE effect is identical to sequential execution for this
- *    particular statement set).
- * 2. `initDatabase` (`reset.go:144-154`) — connect as `supabase_admin` to the
- *    default `postgres` database, then Go's EXPORTED `InitSchema14` (schema SQL
- *    ONLY, deliberately WITHOUT globals.sql — see `initSchema14`'s
- *    own doc comment for why this is NOT the same as `db start`'s PG<=14 path)
- *    + `ApplyApiPrivileges` (the exact same exported function `SetupDatabase`
- *    also calls), then pg_net activation when Database Webhooks is enabled.
- * 3. `RestartDatabase` (`reset.go:214-225`) — `Restarting containers...\n`
- *    FIRST, then a REAL `docker restart` of the `db` container itself (NOT
- *    tolerant of "not found" — pg_cron must restart after
- *    `pg_terminate_backend`, Go's own comment), health wait (not swallowed),
- *    then {@link restartServicesAndReloadKong} — so Kong reload happens on
- *    the PG14 path too, after the db container restart.
- * 4. Final connect as `postgres`/`postgres` → `apply.MigrateAndSeed` with the
- *    resolved reset `version`/`seedFlags` — the same seed-override logic PG15's
- *    `startSetupLocalDatabase` call applies.
- *
- * Deliberately absent, matching Go exactly: no volume-existence probe (a reset
- * just removed the volume, so there is nothing to probe), no `NoBackupVolume`/
- * fresh-volume concept, no `fromBackup` handling at all, `initCurrentBranch` is
- * NEVER called (Go's `resetDatabase`/`resetDatabase14`/`resetDatabase15` never
- * call it), and no rollback on failure (Go's `cmd/db.go` only wraps `--mode
- * start` in a `DockerRemoveAll` cleanup — the recreate dispatch has none).
+ * `db reset --local`'s container-recreate composition — not a thin wrapper over
+ * {@link startDatabase}, since the shared `StartDatabase`-equivalent primitive is never called
+ * from a reset either. Reuses the same underlying primitives (`ensureNetwork`,
+ * `buildPostgresStartContainerSpec`, `createContainer`, `waitForHealthyServices`,
+ * `startSetupLocalDatabase`) with a distinct sequence per major version: PG >= 15 recreates the
+ * container/volume/network and re-runs setup; PG <= 14 recreates the two databases in place and
+ * reinitializes the schema. Neither path probes for an existing volume, supports
+ * `--from-backup`, or rolls back on failure.
  */
 
 import { Data, Effect, Result, Schedule, type FileSystem, type Path } from "effect";
@@ -138,13 +76,10 @@ const errMessage = (e: unknown): string =>
     : String(e);
 
 /**
- * One or more replication slots are still active (retryable — the WAL sender
- * that owns the slot may still be tearing down), OR counting them failed
- * outright (permanent — Go's `backoff.PermanentError`, `reset.go:204-206`:
- * a query-execution failure is never retried, only "count > 0" is). Exported
- * only so the exhaustive actionability guard can inspect its
- * declaration; runtime callers discriminate it through the
- * {@link RecreateLocalDatabaseError} union's `_tag`.
+ * One or more replication slots are still active (retryable — the WAL sender that owns the slot
+ * may still be tearing down), or counting them failed outright (permanent). Exported only so the
+ * exhaustive actionability guard can inspect its declaration; runtime callers discriminate it
+ * through the {@link RecreateLocalDatabaseError} union's `_tag`.
  */
 export class ResetReplicationSlotsError extends Data.TaggedError("ResetReplicationSlotsError")<{
   readonly message: string;
@@ -159,7 +94,7 @@ export class ResetReplicationSlotsError extends Data.TaggedError("ResetReplicati
 
 /** Every failure the PG14/PG15 `db reset` recreate composition can produce. */
 export type RecreateLocalDatabaseError =
-  // PG15 (`resetDatabase15`)
+  // PG15
   | NetworkCreateError
   | ContainerRemoveError
   | VolumeRemoveError
@@ -167,7 +102,7 @@ export type RecreateLocalDatabaseError =
   | ImagePrepullError
   | HealthCheckTimeoutError
   | StartSetupLocalDatabaseError
-  // PG14 (`resetDatabase14`)
+  // PG14
   | DbConnectError
   | DbExecError
   | ResetReplicationSlotsError
@@ -186,48 +121,37 @@ export interface RecreateLocalDatabaseInput<E> {
   readonly projectId: string;
   readonly networkId: string;
   readonly hostname: string;
-  /** `localDbContainerId(projectId)` — also this composition's own volume name (Go: `utils.DbId` names both). */
+  /** Also this composition's own volume name. */
   readonly dbContainerId: string;
   readonly dbPort: number;
   readonly containerOpts: ContainerOpts;
   /** Fed straight to `buildPostgresStartContainerSpec` — reset has no `fromBackup` concept at all. */
   readonly postgresSpec: Omit<PostgresStartServiceInput, "image" | "fromBackup">;
-  /** Lazy — evaluated right where Go's `DockerStart` would resolve it (PG15 path only). */
+  /** Lazy: only resolved on the PG15 path. */
   readonly resolvePostgresImage: Effect.Effect<string, ImagePrepullError>;
   readonly dbHealthTimeoutSeconds: number;
   /** The resolved reset migration version (`""` for every pending migration). */
   readonly version: string;
   /** `db reset`'s `--no-seed`/`--sql-paths` — see {@link resolveResetSeedConfig}. */
   readonly seedFlags: { readonly noSeed: boolean; readonly sqlPaths: ReadonlyArray<string> };
-  /** The exact same shape `start-database.ts`'s `StartDatabaseInput.setup` uses, since Go's `resetDatabase15` calls the SAME `SetupLocalDatabase` `db start` does — hoisted to {@link FreshDbSetupInput}. */
+  /** The same shape `start-database.ts`'s `StartDatabaseInput.setup` uses — hoisted to {@link FreshDbSetupInput}. */
   readonly setup: FreshDbSetupInput<E>;
 }
 
-/** Go's `pgerrcode.InvalidCatalogName` (`3D000`) — "database doesn't exist yet" on a first-ever reset. */
+/** Postgres SQLSTATE for "database doesn't exist yet", expected on a first-ever reset. */
 const PG_INVALID_CATALOG_NAME = "3D000";
 
 /**
- * Port of Go's `DisconnectClients` (`reset.go:183-212`): disable new connections
- * to `postgres`/`_supabase`, terminate existing backends, then wait for WAL
- * senders to drop their replication slots (constant 1-second backoff, 10
- * retries max — Go's `NewBackoffPolicy(ctx, 10*time.Second)`).
+ * Disables new connections to `postgres`/`_supabase`, terminates existing backends, then waits
+ * for WAL senders to drop their replication slots (1-second backoff, 10 retries max).
  *
- * Exported ONLY so `recreate-local-database.unit.test.ts` can pin the retry
- * schedule's exact 10-retry boundary against a plain mocked {@link
- * DbSession} (no real filesystem/Docker I/O), using the same `TestClock`
- * + `Effect.forkChild` pattern as `db-bootstrap/await-storage-ready.unit.test.ts` —
- * driving the full `dbReset` composite effect through a fake clock isn't
- * reliable (its many REAL filesystem awaits race unpredictably against a
- * virtual-time nudge issued from the outside), so this narrower, no-real-I/O
- * entry point is the one actually worth pinning this way; the full retry-count
- * behavior stays covered end-to-end by `reset.integration.test.ts`'s own
- * `it.live` tests. Not otherwise used outside this module.
+ * Exported only so `recreate-local-database.unit.test.ts` can pin the retry schedule's exact
+ * boundary against a mocked {@link DbSession} with no real filesystem/Docker I/O; end-to-end
+ * retry behavior stays covered by `reset.integration.test.ts`'s `it.live` tests.
  */
 export const resetDisconnectClients = Effect.fnUntraced(function* (session: DbSession) {
-  // Must be executed separately because looping in a transaction is unsupported
-  // (Go's own comment, `reset.go:184-185`) — sequential, unwrapped execs, relying on
-  // Effect's short-circuit-on-failure to stop at the first bad statement, exactly
-  // like pgconn's own batch-pipeline semantics would.
+  // Must run sequentially, unwrapped: looping these in a transaction is unsupported, and
+  // Effect's short-circuit-on-failure stops at the first bad statement.
   const disconnectResult = yield* Effect.forEach(
     [
       "ALTER DATABASE postgres ALLOW_CONNECTIONS false",
@@ -239,15 +163,10 @@ export const resetDisconnectClients = Effect.fnUntraced(function* (session: DbSe
   ).pipe(Effect.result);
   if (Result.isFailure(disconnectResult)) {
     const failure = disconnectResult.failure;
-    // Go: `if errors.As(err, &pgErr) && pgErr.Code != pgerrcode.InvalidCatalogName { return wrapped }`
-    // — surfaced ONLY for a genuine PgError whose code isn't 3D000. `failure.code` is NOT reliably
-    // only-ever-set-for-a-real-ErrorResponse: the driver layer's exec-error mapping
-    // (`toExecError`) falls back to `extractSqlState`, which can surface a bare node
-    // system errno (`ECONNRESET`, `ETIMEDOUT`, …) as `code` too — those are NOT SQLSTATEs, and
-    // `errors.As(err, &pgErr)` never matches a socket error in Go, so this must check
-    // `isSqlState` before treating `code` as a genuine PgError code. A non-PgError failure
-    // (network blip, no `code`, or a `code` that isn't a real SQLSTATE) AND a 3D000 PgError are
-    // BOTH silently swallowed.
+    // `failure.code` isn't reliably PgError-only: the driver's exec-error mapping falls back to
+    // a bare OS errno (`ECONNRESET`, `ETIMEDOUT`, ...) as `code` too, so `isSqlState` must gate
+    // treating it as a real Postgres error code. A non-PgError failure and a 3D000 PgError are
+    // both silently swallowed.
     if (
       failure.code !== undefined &&
       isSqlState(failure.code) &&
@@ -397,12 +316,8 @@ const recreateLocalDatabase15 = <E>(
   });
 
 /**
- * Port of Go's `resetDatabase14` (`reset.go:96-112`) — see this module's own
- * header for the full sequence and citations. Loads `config.toml` once, ahead of
- * `initDatabase` (needs `api.auto_expose_new_tables`) and the final
- * `MigrateAndSeed` (needs `db.migrations.enabled`/`[db.seed]`/pg-delta gate) —
- * the same "each caller re-loads its own config" duplication `db start`'s own
- * handler and `startSetupLocalDatabase` both already take independently.
+ * Loads `config.toml` once, ahead of `initDatabase` (needs `api.auto_expose_new_tables`) and the
+ * final `MigrateAndSeed` (needs `db.migrations.enabled`/`[db.seed]`/pg-delta gate).
  */
 const recreateLocalDatabase14 = <E>(
   spawner: Spawner,
@@ -431,7 +346,6 @@ const recreateLocalDatabase14 = <E>(
         { isLocal: true, dnsResolver: "native" },
       );
 
-    // recreateDatabase: connect as `supabase_admin` to `template1`.
     yield* Effect.scoped(
       Effect.gen(function* () {
         const session = yield* connectAs("supabase_admin", "template1");
@@ -439,7 +353,6 @@ const recreateLocalDatabase14 = <E>(
       }),
     );
 
-    // initDatabase: connect as `supabase_admin` to the default `postgres` database.
     yield* Effect.scoped(
       Effect.gen(function* () {
         const session = yield* connectAs("supabase_admin", "postgres");

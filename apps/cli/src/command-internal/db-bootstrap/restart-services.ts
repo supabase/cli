@@ -1,12 +1,9 @@
 /**
- * Post-recreate satellite-container restart + Kong reload, shared by both PG14's
- * `RestartDatabase` and PG15's `resetDatabase15` (`apps/cli-go/internal/db/reset/
- * reset.go:214-288`) — the ONLY two Go call sites of `restartServices`. Neither `db
- * start` nor `supabase start` calls any of this: it exists purely to bring the
- * satellite containers (storage/auth/realtime/pooler) back in sync with a `db`
- * container that was just recreated or force-restarted out from under them, and to
- * reload Kong's nginx so its cached upstream addresses (which may have changed if a
- * satellite container came back on a different one) stop 502ing.
+ * Post-recreate satellite-container restart + Kong reload, shared by both PG14's and PG15's
+ * `db reset` paths. Neither `db start` nor `supabase start` calls this: it exists purely to
+ * bring the satellite containers (storage/auth/realtime/pooler) back in sync with a `db`
+ * container that was just recreated or force-restarted out from under them, and to reload Kong's
+ * nginx so its cached upstream addresses (which may have changed) stop 502ing.
  */
 
 import { Data, Effect, Option, Result } from "effect";
@@ -40,13 +37,9 @@ export class ContainerRestartError extends Data.TaggedError("ContainerRestartErr
 }
 
 /**
- * Port of Go's `Docker.ContainerRestart(ctx, utils.DbId, container.StopOptions{})`
- * (`apps/cli-go/internal/db/reset/reset.go:218-220`), used ONLY by PG14's
- * `RestartDatabase` to restart the `db` container itself after `pg_terminate_backend`
- * (pg_cron must restart, per Go's own comment). Unlike the satellite restarts below,
- * this one does NOT tolerate "not found" — Go's own `RestartDatabase` has no
- * `errdefs.IsNotFound` guard on this call at all, so ANY failure is a hard
- * `failed to restart container: %w`.
+ * Restarts the `db` container itself, used only by PG14's reset path after
+ * `pg_terminate_backend` (pg_cron must restart). Unlike the satellite restarts below, this does
+ * not tolerate "not found" — any failure is a hard error.
  */
 export function restartContainer(
   spawner: Spawner,
@@ -61,12 +54,10 @@ export function restartContainer(
 }
 
 /**
- * One satellite service's restart, tolerant of "not found" (Go's `!errdefs.IsNotFound(err)`
- * guard, `reset.go:231`) — a service excluded from the stack (e.g. `[realtime] enabled =
- * false`) has no container to restart, and that's not an error. Never fails the surrounding
- * `Effect.all` itself: resolves `Option.some(message)` on a genuine failure so the caller
- * can join every service's outcome the way Go's `errors.Join(result...)` does, and
- * `Option.none()` on success OR a tolerated not-found.
+ * One satellite service's restart, tolerant of "not found" — a service excluded from the stack
+ * has no container to restart, and that's not an error. Never fails the surrounding `Effect.all`
+ * itself: resolves `Option.some(message)` on a genuine failure so the caller can join every
+ * service's outcome, and `Option.none()` on success or a tolerated not-found.
  */
 const restartSatelliteService = (
   spawner: Spawner,
@@ -153,7 +144,7 @@ function kongRecoverySuggestion(kongId: string): string {
   );
 }
 
-/** Kong could not be reloaded — fails the WHOLE command (unlike `functions serve`'s best-effort reload). */
+/** Kong could not be reloaded — fails the whole command (unlike `functions serve`'s best-effort reload). */
 export class KongReloadError extends Data.TaggedError("KongReloadError")<{
   readonly message: string;
   readonly suggestion: string;
@@ -163,7 +154,7 @@ export class KongReloadError extends Data.TaggedError("KongReloadError")<{
   }
 }
 
-/** `docker exec <id> <cmd...>`, combined stdout+stderr into one buffer — mirrors Go's shared `io.Writer` in `DockerExecOnceWithStream(ctx, KongId, "", nil, cmd, &out, &out)`. Never fails the Effect itself: a spawn failure (no docker/podman) folds into `exitCode: 1`. */
+/** `docker exec <id> <cmd...>`, combined stdout+stderr into one buffer. Never fails the Effect itself: a spawn failure (no docker/podman) folds into `exitCode: 1`. */
 function execCaptureCombined(
   spawner: Spawner,
   containerId: string,

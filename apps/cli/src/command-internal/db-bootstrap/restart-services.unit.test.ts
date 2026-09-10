@@ -127,12 +127,9 @@ describe("restartServicesAndReloadKong", () => {
             restarted.push(args[1] ?? "");
             inFlight++;
             if (inFlight === 4) yield* Deferred.succeed(barrier, undefined);
-            // Every one of the four restarts blocks here until ALL FOUR are in flight
-            // simultaneously (Go's `utils.WaitAll`, a goroutine per service — reset.go:259-271).
-            // If `restartSatelliteServices` ever regressed to a sequential restart (e.g.
-            // `concurrency: 1`), the second restart would never even be DISPATCHED until the
-            // first resolves, so `inFlight` would never reach 4 and this `await` would hang
-            // forever, timing out the test instead of silently passing.
+            // Each restart blocks here until all four are in flight simultaneously. A
+            // sequential restart would never dispatch the second call until the first resolves,
+            // so `inFlight` would never reach 4 and this await would hang forever.
             yield* Deferred.await(barrier);
           } else if (args[0] === "container" && args[1] === "inspect" && args[2] === KONG_ID) {
             // Kong excluded from the stack — skips the reload, keeping this test focused on

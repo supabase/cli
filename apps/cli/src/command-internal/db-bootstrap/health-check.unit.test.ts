@@ -15,20 +15,14 @@ import {
   type HealthCheckPostgrestGateway,
 } from "./health-check.ts";
 
-/**
- * Ends a scripted `logs` script, failing the stream after the chunks before it
- * have already been emitted — the real "daemon dropped the pipe mid-dump" case.
- */
+/** Ends a scripted `logs` script, failing the stream after already-emitted chunks — the real "daemon dropped the pipe mid-dump" case. */
 const LOG_STREAM_FAILS = Symbol("log stream fails");
 
 /**
- * A spawner that answers `docker container inspect`/`docker logs` calls.
- * `inspectResponse` is called once per `(containerId, callIndex)` pair — the
- * `callIndex` (0-based, per container) lets a test script a container's
- * health across successive polling rounds. `docker logs` calls (the
- * timeout-path debug dump) succeed with whatever `logs` scripts for that
- * container — an array so a test can script chunk boundaries, optionally
- * terminated by {@link LOG_STREAM_FAILS} — and with empty output otherwise.
+ * A spawner that answers `docker container inspect`/`docker logs` calls. `inspectResponse` is
+ * called once per `(containerId, callIndex)` pair, so a test can script a container's health
+ * across successive polling rounds. `docker logs` calls succeed with whatever `logs` scripts for
+ * that container, optionally terminated by {@link LOG_STREAM_FAILS}, and empty output otherwise.
  */
 type LogChunks = ReadonlyArray<string | typeof LOG_STREAM_FAILS>;
 
@@ -781,11 +775,9 @@ const shadowConnConfig: PgConnInput = {
 };
 
 /**
- * A `DbConnection` whose `connect` fails the first `failTimes` calls
- * (`Number.POSITIVE_INFINITY` never succeeds), recording every dialled config
- * and how many probe sessions were released. `closedSessions` is what proves
- * the readiness probe hands nothing back to the caller: the downstream code
- * opens its own connection through `connectShadowDatabase` afterwards.
+ * A `DbConnection` whose `connect` fails the first `failTimes` calls, recording every dialled
+ * config and how many probe sessions were released. `closedSessions` proves the readiness probe
+ * hands nothing back to the caller.
  */
 function mockShadowDbConnection(
   opts: { readonly failTimes?: number; readonly connectMillis?: number } = {},

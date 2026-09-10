@@ -1,23 +1,11 @@
 /**
- * Port of Go's `NewContainerConfig`/`NewHostConfig`
- * (`apps/cli-go/internal/db/start/start.go:63-131`), plus `StartDatabase`'s
- * `fromBackup` entrypoint/bind override (`start.go:143-164`): builds the
- * {@link StartContainerSpec} for both `supabase start`'s Postgres
- * container (always `fromBackup: undefined`, matching `apps/cli-go/internal/
- * start/start.go:295`'s always-empty `fromBackup` call) and `db start`'s own
- * native container bootstrap, which is the only real caller of the
- * `fromBackup` branch. Below, a bare `start.go:NNN` means `internal/db/start/
- * start.go` (still live) unless prefixed `internal/start/`, which is the
- * deleted, unreachable `internal/start/start.go` (CLI-1966; last present at
- * commit a253ccba25c21356ccd33044c4474aecb77d1ae4) -- see `../SIDE_EFFECTS.md`.
+ * Builds the {@link StartContainerSpec} for the Postgres container both `supabase start` and
+ * `db start`'s native container bootstrap use, including `db start`'s `fromBackup`
+ * entrypoint/bind override.
  *
- * Deliberately out of scope, per the approved start-port plan:
- *  - `SetupLocalDatabase` (initial schema bootstrap, `start.go:184-187`) — an
- *    explicit follow-up, not container construction.
- *  - Actually creating/starting the container and waiting for it to become
- *    healthy — that's {@link createContainer} (`./container-lifecycle.ts`)
- *    and {@link waitForHealthyServices} (`./health-check.ts`), wired
- *    up by each caller's own handler.
+ * Out of scope: initial schema bootstrap, and actually creating/starting the container and
+ * waiting for it to become healthy — see {@link createContainer} and
+ * {@link waitForHealthyServices}, wired up by each caller's own handler.
  */
 
 import type { CliConfig } from "@supabase/config";
@@ -32,21 +20,15 @@ import { START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
 import { START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
 import { START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
 
-/** Go's `Db.Password` default (`pkg/config/config.go:459`). In Go this is the only
- * value the field can ever hold on a db path: viper decodes with the `json` tag
- * (`config.go:749-750`), and `json:"-"` (`pkg/config/db.go:88`) both blocks the
- * `SUPABASE_DB_PASSWORD` env binding and makes a literal `[db] password` key a fatal
- * `UnmarshalExact` error (`'db' has invalid keys: password`). The TS port honors the
- * toml key as a deliberate extension — see `buildShadowPostgresContainerSpec`'s
- * `password` field below. Matches `DEFAULT_DB_PASSWORD` in
- * `local-config-values.ts`, not imported from there since that constant
- * isn't exported and status/stop's resolver is otherwise unrelated to this module. */
+/**
+ * The default database password. `[db] password` in config.toml is a TS-only extension — see
+ * `buildShadowPostgresContainerSpec`'s `password` field below.
+ */
 const POSTGRES_PASSWORD = "postgres";
 
 /**
- * The exact in-container path Go's PG >= 15 entrypoint heredocs the pgsodium
- * root key to (`start.go:96`) — now a `secretFiles` `docker cp` target instead
- * (see {@link buildPostgresStartContainerSpec}), not a heredoc.
+ * In-container path for the pgsodium root key, delivered via
+ * {@link buildPostgresStartContainerSpec}'s `secretFiles` docker cp rather than a heredoc.
  */
 const POSTGRES_PGSODIUM_ROOT_KEY_PATH = "/etc/postgresql-custom/pgsodium_root.key";
 
@@ -58,7 +40,7 @@ const POSTGRES_PGSODIUM_ROOT_KEY_PATH = "/etc/postgresql-custom/pgsodium_root.ke
  */
 const POSTGRES_SCHEMA_SQL_PATH = "/etc/postgresql.schema.sql";
 
-/** Go's `container.HealthConfig` literals (`apps/cli-go/internal/db/start/start.go:85-90`). */
+/** Healthcheck timing constants. */
 const POSTGRES_HEALTHCHECK_INTERVAL_SECONDS = 10;
 const POSTGRES_HEALTHCHECK_TIMEOUT_SECONDS = 2;
 const POSTGRES_HEALTHCHECK_RETRIES = 3;
@@ -75,84 +57,53 @@ const POSTGRES_HEALTHCHECK_TEST: ReadonlyArray<string> = [
   "5432",
 ];
 
-/** Go's `utils.DbAliases` (`apps/cli-go/internal/utils/config.go:36`). */
+/** Docker network aliases for the Postgres container. */
 const POSTGRES_NETWORK_ALIASES: ReadonlyArray<string> = ["db", "db.supabase.internal"];
 
-/** Go's version-compare threshold (`apps/cli-go/internal/db/start/start.go:79`). */
+/** Version threshold below which `POSTGRES_INITDB_ARGS` gets a `--lc-collate=C.UTF-8` override. */
 const POSTGRES_INITDB_VERSION_THRESHOLD = "15.8.1.005";
 
 const POSTGRES_CONFIG_HEADER = "\n# supabase [db.settings] configuration\n";
 
 export interface PostgresStartServiceInput {
-  /** Decoded `[db]` section — every field this builder needs (`port`, `major_version`, `settings`) lives here. */
+  /** Decoded `[db]` section: `port`, `major_version`, and `settings`. */
   readonly db: CliConfig["db"];
   /** Decoded `[experimental]` section — only the OrioleDB/S3 fields are read. */
   readonly experimental: CliConfig["experimental"];
-  /** Already-resolved (default-or-configured, decrypted) `auth.jwt_secret` — same shape `resolveLocalConfigValues` produces. */
+  /** Resolved `auth.jwt_secret`, as produced by `resolveLocalConfigValues`. */
   readonly jwtSecret: string;
   /** `config.auth.jwt_expiry`. */
   readonly jwtExpiry: number;
-  /** Go's `Config.ProjectId`, already sanitized — see `serviceContainerName`'s doc comment. */
+  /** Already sanitized — see `serviceContainerName`'s doc comment. */
   readonly projectId: string;
-  /** `utils.NetId` — the local stack's docker network id. */
+  /** The local stack's Docker network id. */
   readonly networkId: string;
-  /** `utils.Config.Db.Image`, already resolved/pulled (see `./image-prepull.ts`) — the container's own image. */
+  /** Already resolved/pulled (see `./image-prepull.ts`) — the container's own image. */
   readonly image: string;
   /**
-   * `utils.Config.Db.Image` BEFORE registry resolution — Go's
-   * `POSTGRES_INITDB_ARGS` version-tag comparison (`start.go:79`) always runs
-   * against this un-rewritten value; the registry candidate only ever
-   * overwrites the container's `Image` field, afterward, inside `DockerStart`
-   * (`docker.go:365,371`). Passed separately from {@link image} because a
-   * `SUPABASE_INTERNAL_IMAGE_REGISTRY` override containing a port (e.g.
-   * `localhost:5000`) would otherwise inject an extra colon that breaks
-   * {@link postgresImageVersionTag}'s first-colon tag split.
+   * `image` before registry resolution: the version-tag comparison in
+   * {@link postgresImageVersionTag} always runs against this un-rewritten value, since a
+   * `SUPABASE_INTERNAL_IMAGE_REGISTRY` override containing a port would otherwise inject an
+   * extra colon that breaks the tag split.
    */
   readonly configImage: string;
-  /** Already-resolved `db.root_key` value. Defaults to {@link POSTGRES_DEFAULT_ROOT_KEY} when omitted — see that constant's doc comment for why. */
+  /** Already-resolved `db.root_key`. Defaults to {@link POSTGRES_DEFAULT_ROOT_KEY} when omitted. */
   readonly rootKey?: string;
   /**
    * Absolute host path to a `--from-backup` logical-dump file, already resolved against the
-   * caller's cwd (Go's `filepath.Join(utils.CurrentDirAbs, fromBackup)`, `start.go:160-161`) —
-   * `db start`'s ONLY caller. When set, switches to a THIRD entrypoint variant
-   * ({@link postgresEntrypointScriptRestore}) regardless of `db.major_version` (Go's
-   * `StartDatabase` override applies unconditionally, `start.go:143-159`) and appends the
-   * `<hostPath>:/etc/backup.sql:ro` bind Go's own `StartDatabase` appends
-   * (`start.go:163`, via `utils.ToDockerPath` — {@link toDockerMountPath} here). `undefined` for
-   * `supabase start`, which always calls `StartDatabase` with an empty `fromBackup`
-   * (`apps/cli-go/internal/start/start.go:295`, deleted in CLI-1966; last present at
-   * commit a253ccba2).
+   * caller's cwd. `db start`'s only caller. When set, switches to
+   * {@link postgresEntrypointScriptRestore} regardless of `db.major_version` and appends a
+   * `<hostPath>:/etc/backup.sql:ro` bind. `undefined` for `supabase start`.
    */
   readonly fromBackup?: string;
 }
 
 /**
- * Port of Go's `(a *settings) ToPostgresConfig()`
- * (`apps/cli-go/pkg/config/db.go:181-190`): serializes `db.settings` as TOML —
- * only the fields actually set, matching Go's nil-pointer fields never being
- * written — replaces every `"` with `'`, and prepends the fixed header
- * comment.
+ * Serializes `db.settings` as TOML: only the fields actually set, with `"` replaced by `'`, and
+ * the fixed header comment prepended.
  *
- * Reuses the shared {@link encodeToml} (`go-output.encoders.ts`, backed
- * by `smol-toml`) for the actual line rendering: `smol-toml`'s `stringifyTable`
- * already skips `undefined`/`null` values exactly like Go's TOML encoder
- * (`github.com/BurntSushi/toml`'s `eStruct`) skips nil pointers — verified
- * against that library's source, which omits a nil field unconditionally, with
- * no `omitempty` tag required — and its integer/string/boolean formatting
- * already matches Go's (unquoted numbers/bools, double-quoted strings, single-
- * quoted here afterward). The one divergence: `smol-toml`'s `stringify` always
- * appends a trailing `\n`, even for an empty object (`stringify({})` →
- * `"\n"`), whereas Go's `ToTomlBytes` of an all-nil-pointer struct returns the
- * empty string (`TestSettingsToPostgresConfig`'s "Empty settings should
- * result in empty string" case) — so the empty-settings case is special-cased
- * below instead of delegated to `encodeToml`.
- *
- * `settings` itself is typed optional (`CliConfig["db"]["settings"]`
- * includes `undefined`) because `db.ts` wraps the whole `[db.settings]` table
- * in `Schema.optionalKey` — in practice the schema's own `withDecodingDefaultKey`
- * always fills in `{}` when the section is absent, but this stays defensive
- * against the static type either way, matching Go's `settings` being a plain
- * (never-nil) struct value.
+ * The empty-settings case is special-cased rather than delegated to {@link encodeToml}, since
+ * `encodeToml` always appends a trailing newline even for an empty object.
  */
 export function postgresSettingsToPostgresConfig(settings: CliConfig["db"]["settings"]): string {
   const defined = Object.fromEntries(
