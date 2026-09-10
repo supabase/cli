@@ -1,45 +1,28 @@
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
 import { join, win32 } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option, Path, Redacted } from "effect";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 
 import { StackConfigError, loadStackConfig } from "./stack-config.ts";
+import { createStackConfigProject, stackConfigTempRoot } from "./stack-config.test-fixtures.ts";
 
 const load = (projectRoot: string) =>
   loadStackConfig(projectRoot).pipe(Effect.provide(BunServices.layer));
-const roots: string[] = [];
-afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
-});
-
-function project(contents: string, signingKeys?: string): string {
-  const root = mkdtempSync(join(tmpdir(), "supabase-stack-config-"));
-  roots.push(root);
-  mkdirSync(join(root, "supabase"), { recursive: true });
-  mkdirSync(join(root, "supabase", "functions", "hello"), { recursive: true });
-  mkdirSync(join(root, "supabase", "functions", "world"), { recursive: true });
-  mkdirSync(join(root, "supabase", "functions", "plain"), { recursive: true });
-  mkdirSync(join(root, "supabase", "functions", "old.backup"), { recursive: true });
-  mkdirSync(join(root, "supabase", "functions", "_shared"), { recursive: true });
-  writeFileSync(join(root, "supabase", "config.toml"), contents);
-  writeFileSync(join(root, "supabase", ".env"), "CONFIG_FN=config-value\n");
-  writeFileSync(
-    join(root, "supabase", "functions", ".env"),
-    'SHARED=shared\nOVERRIDE=shared\nQUOTED="hello # world" # comment\n',
-  );
-  writeFileSync(
-    join(root, "supabase", "functions", "hello", ".env"),
-    "LOCAL=local\nOVERRIDE=local\n",
-  );
-  writeFileSync(join(root, "supabase", "functions", "world", ".env"), "WORLD=yes\n");
-  if (signingKeys !== undefined)
-    writeFileSync(join(root, "supabase", "signing-keys.json"), signingKeys);
+function project(contents: string): string {
+  const root = createStackConfigProject(contents, {
+    sharedFunctionEnvironment: 'SHARED=shared\nOVERRIDE=shared\nQUOTED="hello # world" # comment\n',
+    supabaseEnv: "CONFIG_FN=config-value\n",
+    functionEnvironments: {
+      hello: "LOCAL=local\nOVERRIDE=local\n",
+      world: "WORLD=yes\n",
+    },
+    functionNames: ["hello", "world", "plain", "old.backup", "_shared"],
+  });
   return root;
 }
 
@@ -496,8 +479,7 @@ enabled = false
   });
 
   it.effect("fails clearly when the project has not been initialized", () => {
-    const root = mkdtempSync(join(tmpdir(), "supabase-stack-config-empty-"));
-    roots.push(root);
+    const root = stackConfigTempRoot.current;
     return Effect.gen(function* () {
       const exit = yield* loadStackConfig(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);

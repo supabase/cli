@@ -1,23 +1,13 @@
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixtures use host adapters at this boundary
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixtures use host adapters at this boundary
-import { join } from "node:path";
 import { Buffer } from "node:buffer";
 
 import { encrypt, PrivateKey } from "eciesjs";
 import { BunServices } from "@effect/platform-bun";
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option, Redacted } from "effect";
 
 import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { StackConfigError, loadStackConfig } from "./stack-config.ts";
-
-const roots: string[] = [];
-
-afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
-});
+import { createStackConfigProject } from "./stack-config.test-fixtures.ts";
 
 function withEnvironment<A, E, R>(
   values: Readonly<Record<string, string | undefined>>,
@@ -38,21 +28,10 @@ function project(
     readonly functionEnvironments?: Readonly<Record<string, string>>;
   } = {},
 ): string {
-  const root = mkdtempSync(join(tmpdir(), "supabase-stack-config-env-"));
-  roots.push(root);
-  const supabase = join(root, "supabase");
-  const functions = join(supabase, "functions");
-  mkdirSync(functions, { recursive: true });
-  for (const name of ["hello", "world", "disabled"])
-    mkdirSync(join(functions, name), { recursive: true });
-  writeFileSync(join(root, ".env"), options.rootEnv ?? "");
-  writeFileSync(join(supabase, "config.toml"), config);
-  writeFileSync(join(supabase, ".env"), options.supabaseEnv ?? "");
-  if (options.sharedFunctionEnvironment !== undefined)
-    writeFileSync(join(functions, ".env"), options.sharedFunctionEnvironment);
-  for (const [name, contents] of Object.entries(options.functionEnvironments ?? {})) {
-    writeFileSync(join(functions, name, ".env"), contents);
-  }
+  const root = createStackConfigProject(config, {
+    prefix: "supabase-stack-config-env-",
+    ...options,
+  });
   return root;
 }
 
@@ -160,6 +139,61 @@ site_url = "from-config"
         expect(enabled.capabilities.auth.settings).toBeDefined();
       }),
     );
+  });
+
+  it.effect("applies JWT environment overrides while auth is disabled", () => {
+    const root = project(
+      `project_id = "stack-config-disabled-auth-jwt"
+`,
+      {
+        supabaseEnv: [
+          "SUPABASE_AUTH_ENABLED=false",
+          "SUPABASE_AUTH_JWT_ISSUER=https://issuer.example.test",
+          "SUPABASE_AUTH_JWT_SECRET=01234567890123456789012345678901",
+          "",
+        ].join("\n"),
+      },
+    );
+    const signingPathRoot = project(
+      `project_id = "stack-config-disabled-auth-signing-path"
+[auth]
+enabled = false
+`,
+      { supabaseEnv: "SUPABASE_AUTH_SIGNING_KEYS_PATH=keys.json\n" },
+    );
+    return Effect.gen(function* () {
+      const config = yield* load(root);
+      expect(config.capabilities?.auth).toEqual({ enabled: false });
+      expect(config.security?.jwt?.issuer).toBe("https://issuer.example.test");
+      const signing = config.security?.jwt?.signing;
+      expect(signing?.kind).toBe("symmetric");
+      if (signing?.kind !== "symmetric") throw new Error("symmetric signing missing");
+      expect(Redacted.value(signing.secret)).toBe("01234567890123456789012345678901");
+      const signingPath = yield* load(signingPathRoot);
+      expect(signingPath.security?.jwt?.signing).toEqual({
+        kind: "jwks-file",
+        path: "supabase/keys.json",
+      });
+    });
+  });
+
+  it.effect("rejects an env-enabled SMTP section without a port", () => {
+    const root = project(
+      `project_id = "stack-config-smtp-env-enable-missing-port"
+[auth.email.smtp]
+enabled = false
+host = "smtp.example.test"
+user = "smtp-user"
+pass = "smtp-pass"
+admin_email = "admin@example.test"
+`,
+      { supabaseEnv: "SUPABASE_AUTH_EMAIL_SMTP_ENABLED=true\n" },
+    );
+    return Effect.gen(function* () {
+      const exit = yield* load(root).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.email.smtp.port");
+    });
   });
 
   it.effect("does not decrypt an unused provider secret when auth is disabled", () => {
