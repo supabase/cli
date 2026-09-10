@@ -81,23 +81,33 @@ describe("whoami integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits the profile object for --output-format json", () => {
+  it.live("emits stable CLI identity fields for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* whoami({});
-      expect(out.messages.find((message) => message.type === "success")?.data).toEqual(
-        SAMPLE_PROFILE,
-      );
+      expect(JSON.parse(out.stdoutText)).toEqual({
+        id: SAMPLE_PROFILE.gotrue_id,
+        email: SAMPLE_PROFILE.primary_email,
+        username: SAMPLE_PROFILE.username,
+      });
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits the profile object for --output-format stream-json", () => {
+  it.live("emits stable CLI identity fields for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* whoami({});
-      expect(out.messages.find((message) => message.type === "success")?.data).toEqual(
-        SAMPLE_PROFILE,
-      );
+      expect(out.events).toEqual([
+        {
+          type: "result",
+          data: {
+            id: SAMPLE_PROFILE.gotrue_id,
+            email: SAMPLE_PROFILE.primary_email,
+            username: SAMPLE_PROFILE.username,
+          },
+          timestamp: expect.any(String),
+        },
+      ]);
     }).pipe(Effect.provide(layer));
   });
 
