@@ -141,7 +141,7 @@ Docker-dependent.
 Once the db and functions steps run, they consume their own established environment variables
 exactly as documented in their own `SIDE_EFFECTS.md` files (e.g. `SUPABASE_DB_PASSWORD`,
 `SUPABASE_DB_SHADOW_PORT`, `SUPABASE_SHADOW_CACHE`, `SUPABASE_NETWORK_ID`,
-`SUPABASE_USE_SLIM_IMAGES`, `SUPABASE_EXPERIMENTAL_PG_DELTA` for db;
+`SUPABASE_USE_SLIM_IMAGES` for db;
 `SUPABASE_EDGE_RUNTIME_DENO_VERSION`, `SUPABASE_INTERNAL_IMAGE_REGISTRY`, `BITBUCKET_CLONE_DIR` for
 functions) — `pull` does not read or override any of these itself, it only supplies the resolved
 `ref`.

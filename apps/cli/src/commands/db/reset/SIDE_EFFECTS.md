@@ -4,7 +4,8 @@ Reinitialises a database from local migrations (plus seed). Both targets are
 fully native. The **remote** path (`--linked`, or a remote `--db-url`)
 drops all user schemas, upserts vault secrets, then either re-applies migrations
 (the default) or, on a versionless `--experimental`/`SUPABASE_EXPERIMENTAL` reset
-with pg-delta not enabled, applies the declarative `[db.migrations].schema_paths`
+with pg-delta explicitly disabled (`[experimental.pgdelta] enabled = false`; pg-delta
+is enabled by default), applies the declarative `[db.migrations].schema_paths`
 files instead (the `MigrateAndSeed` EXPERIMENTAL branch, CLI-1958), then
 seeds. The **local** path (`--local`/default, or a `--db-url` pointing at the local
 stack) is ALSO fully native (CLI-1955 removed the hidden Go `db __db-bootstrap` seam

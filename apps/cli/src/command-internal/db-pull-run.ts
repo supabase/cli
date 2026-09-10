@@ -42,7 +42,6 @@ import {
   writeDeclarativeSchemas,
 } from "../commands/db/shared/pgdelta.write.ts";
 import {
-  parseBoolEnv,
   resolveDeclarativeFromArgs,
   resolvePullDiffEngine,
   schemaPathsTransitionWarning,
@@ -87,8 +86,7 @@ import { updateMigrationHistory } from "../commands/db/pull/pull.sync.ts";
 export type { DbPullFlags };
 
 // Established output contract; ends with a `.`.
-const DEPRECATION_LINE =
-  "Flag --use-pg-delta has been deprecated, use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.";
+const DEPRECATION_LINE = "Flag --use-pg-delta has been deprecated, use --declarative instead.";
 
 /**
  * Explains the in-sync non-zero exit. Go prints its generic
@@ -390,7 +388,6 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
       pgDeltaDefault: shouldUsePgDelta({
         configEnabled: toml.pgDelta.enabled,
         usePgDeltaFlag: false,
-        envEnabled: parseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
       }),
     });
 
