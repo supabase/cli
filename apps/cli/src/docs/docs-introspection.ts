@@ -1,28 +1,11 @@
 import type { Command, GlobalFlag, Param, Primitive } from "effect/unstable/cli";
 
 /**
- * `.config.flags`/`.config.arguments` (a command's own declared params),
- * `.contextConfig.flags` (flags inherited via `Command.withSharedFlags`), and
- * `.globalFlags` (a command's own declared global flags) are genuinely absent
- * from the public `Command`/`Command.Any` TypeScript interface — only `name`,
- * `description`, `shortDescription`, `alias`, `examples`, `subcommands`,
- * `annotations`, and `hidden` are public — but they exist at runtime
- * (`internal/command.ts`'s `makeCommand`, via `Object.assign`; that internal
- * module is not importable — its package.json export map entry is `null` — so
- * there is no type-safe import to reach for instead).
- *
- * A bare `as unknown as` would silently paper over that gap (forbidden by
- * this repo's typing rules — see `CLAUDE.md`), so this narrows through a
- * runtime type guard instead, the same `"<field>" in value` shape
- * `param-introspection.ts`'s `isWrappedParam` establishes for
- * the identical problem. The guard checks the nested arrays consumers
- * actually dereference, so if a future `effect` version drops or reshapes
- * one of these fields, `commandInternals` throws a descriptive error
- * instead of silently completing against `undefined`.
- *
- * `cli/complete.ts` keeps its own private equivalents of these
- * guards — deliberately not hoisted, so the docs generator stays purely
- * additive over the existing tree.
+ * `.config.flags`/`.contextConfig.flags`/`.globalFlags` exist on `Command` at runtime but are
+ * absent from the public `Command`/`Command.Any` type, and the internal module that defines
+ * them isn't importable. This narrows through a runtime type guard instead of an `as` cast
+ * (same pattern as `param-introspection.ts`'s `isWrappedParam`), so a future `effect` shape
+ * change throws a descriptive error here instead of silently reading `undefined`.
  */
 export interface CommandInternals {
   readonly config: {
@@ -74,27 +57,18 @@ export function flattenSubcommands(
 }
 
 /**
- * A command's user-facing scoped global flag params — the flags commands
- * declare themselves. The parser's built-ins (`GlobalFlag.BuiltIns`) are only
- * injected at parse time and never stored on a command's `.globalFlags`, so
- * the reference omits them by construction (no filter needed — same fact that
- * let `complete.ts` drop its similar guard, issue #6482). Whether
- * the reference should document the built-ins that `--help` and completion
- * now show is a docs-surface decision tracked as a follow-up.
+ * A command's own declared global flag params. The parser's built-ins (`GlobalFlag.BuiltIns`)
+ * are injected at parse time and never stored on `.globalFlags`, so they're excluded here by
+ * construction.
  */
 export function userGlobalFlagParams(command: Command.Command.Any): ReadonlyArray<Param.AnyFlag> {
   return commandInternals(command).globalFlags.map((entry) => entry.flag);
 }
 
 /**
- * `Flag.choice`/`Flag.choiceWithValue`'s `choiceKeys` (the valid value set) is
- * attached to the `Choice`-tagged `Primitive<A>` via `Object.assign` at
- * runtime (`Primitive.choice`,
- * `.repos/effect/packages/effect/src/unstable/cli/Primitive.ts`) but carries
- * an `@internal` JSDoc tag and is absent from the public `Primitive<A>`
- * interface — the identical gap `CommandInternals` above works around
- * for `Command`, so this reuses the same runtime type-guard idiom instead of
- * an `as` cast.
+ * `choiceKeys` (the valid value set for `Flag.choice`/`Flag.choiceWithValue`) is attached to
+ * the `Primitive<A>` at runtime but carries an `@internal` tag and is absent from the public
+ * type, so this narrows through the same runtime type-guard idiom as `CommandInternals` above.
  */
 interface ChoicePrimitive {
   readonly choiceKeys: ReadonlyArray<string>;

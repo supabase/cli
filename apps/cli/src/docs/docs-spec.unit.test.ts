@@ -78,13 +78,8 @@ describe("docsStripOverlayHeading", () => {
 
 describe("buildDocsSpec", () => {
   it("never publishes an unlisted command subtree", () => {
-    // The guarantee is that `Command.unlisted` keeps a family out of the public
-    // docs reference. Nothing pinned it, for the `experimental` family or for the
-    // older `db test|branch|remote` precedent, so a future refactor could quietly
-    // start publishing them.
-    //
-    // Derived from the tree rather than matching a `supabase-experimental*`
-    // prefix, so it covers every unlisted subtree that exists now or later.
+    // Walks the tree rather than matching a `supabase-experimental*` prefix, so it also
+    // catches any other unlisted subtree, present or future.
     const { spec } = builtSpec();
     const emitted = new Set(spec.commands.map((command) => command.id));
 
@@ -383,9 +378,8 @@ describe("build guards fail loudly", () => {
         overlays,
         examples: { "supabase-lonk": [{ id: "a", code: "x" }] },
       });
-    // the stale-table throw fires first on this synthetic tree; assert the
-    // content guard directly by checking its message is reachable when the
-    // table validation is satisfied — covered via the real-tree fixture below.
+    // The synthetic tree fails table validation before it reaches content validation; the
+    // content guard is asserted separately below against the real tree.
     expect(build).toThrow(/stale static-table entries/);
     const { content } = builtSpec();
     const badExamples = { ...content.examples, "supabase-not-a-command": [{ id: "a" }] };
