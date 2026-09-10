@@ -18,10 +18,9 @@ const RESPONSE_ERROR_TAGS: ReadonlySet<HttpClientError.HttpClientErrorReason["_t
 const MAX_BODY_LEN = 1024;
 
 /**
- * Truncate + sanitize a response body for inclusion in an error message.
- * Mirrors the policy applied by `mapHttpError` so handlers that bypass
- * the typed client (e.g. `sso add` and `sso update` raw-HTTP POST/PUT) can
- * share the same defence-in-depth.
+ * Truncates and sanitizes a response body for inclusion in an error message.
+ * Shared by handlers that bypass the typed client (e.g. `sso add`/`sso update`
+ * raw-HTTP POST/PUT) and `mapHttpError`, so both apply the same defense-in-depth.
  */
 export function sanitizeErrorBody(input: string): string {
   const capped = input.length > MAX_BODY_LEN ? input.slice(0, MAX_BODY_LEN) : input;
@@ -29,24 +28,20 @@ export function sanitizeErrorBody(input: string): string {
 }
 
 /**
- * Sanitizes an API-provided NAME (branch/project/org) for inline embedding in
- * a single-line terminal message. `sanitizeErrorBody` deliberately
- * preserves `\n`/`\t` so JSON response bodies stay readable — but inside an
- * inline name those characters let a hostile name forge additional CLI output
- * lines (PR #6168 review). Collapse them to a single space on top of the
- * body sanitizer's control-char stripping and length cap.
+ * Sanitizes an API-provided name (branch/project/org) for inline embedding in
+ * a single-line terminal message. Collapses `\n`/`\t` — preserved by
+ * `sanitizeErrorBody` for JSON readability — to a single space, so a hostile
+ * name can't forge additional output lines.
  */
 export function sanitizeInlineName(input: string): string {
   return sanitizeErrorBody(input).replace(/[\n\t]+/g, " ");
 }
 
 /**
- * Renders `name (ref)` when `name` is known and non-empty after
- * sanitization, or bare `ref` otherwise — both sanitized via
- * {@link sanitizeInlineName}. Computing the sanitized name FIRST (and
- * gating on ITS length, not the raw input's) is defense-in-depth: a name
- * that's entirely control characters must degrade to the bare-ref form, not
- * render as `` (ref)`` with a phantom leading space.
+ * Renders `name (ref)` when `name` is non-empty after sanitization via
+ * {@link sanitizeInlineName}, or bare `ref` otherwise. Gating on the
+ * sanitized length (not the raw input's) keeps a name of only control
+ * characters from rendering as `` (ref)`` with a phantom leading space.
  */
 export function formatNamedRef(name: string | undefined, ref: string): string {
   const safeRef = sanitizeInlineName(ref);
@@ -54,25 +49,11 @@ export function formatNamedRef(name: string | undefined, ref: string): string {
   return safeName === undefined || safeName.length === 0 ? safeRef : `${safeName} (${safeRef})`;
 }
 
-// Strip ASCII control characters from the response body before embedding it in an error
-// message. The Management API is trusted, but defence-in-depth: a body containing `\r\n`
-// could fracture a structured log line, and `\x00` could truncate output in shells that
-// treat NUL as EOS. Tab is preserved so JSON whitespace round-trips visually intact.
+// Strips ASCII control chars, DEL, C1 controls (U+0080-U+009F, e.g. the CSI
+// equivalent U+009B), bidi override chars (can reorder/hide terminal text),
+// and Unicode line separators — defense-in-depth against escape injection,
+// spoofing, and log-line fracturing. `\n` and `\t` are kept for JSON readability.
 function stripControlChars(input: string): string {
-  // Strip ASCII control chars except \t (0x09), \n (0x0a), \r (0x0d) and DEL (0x7f).
-  // Then also strip CR — we keep \n and \t because they appear in legitimate JSON
-  // pretty-printing and shouldn't visually corrupt single-line stderr output.
-  //
-  // Also strips (benefits every caller of this function, and of
-  // `sanitizeInlineName`, which builds on it):
-  // - C1 controls (0x80-0x9F) — U+009B is CSI on some terminals, equivalent to
-  //   the ESC+`[` sequence `sanitizeErrorBody`/friends are otherwise
-  //   guarding against.
-  // - Bidi controls (U+200E, U+200F, U+202A-U+202E, U+2066-U+2069) — can
-  //   visually reorder or hide surrounding text in a terminal/log.
-  // - Unicode line separators (U+2028, U+2029) — fracture single-line output
-  //   the same way `\r`/`\n` do, without being one of the two whitespace
-  //   characters this function otherwise keeps for JSON readability.
   let out = "";
   for (let i = 0; i < input.length; i++) {
     const code = input.charCodeAt(i);
@@ -117,13 +98,13 @@ export type StatusErrorFactory<E> = new (args: {
 }) => E;
 
 /**
- * Build an error mapper that classifies a `SupabaseApiError` into either a typed network
- * error or a typed unexpected-status error. Pulled out of individual command families so
- * they share the dispatch logic, the body truncation, and the `RESPONSE_ERROR_TAGS` policy.
+ * Builds an error mapper that classifies a `SupabaseApiError` into either a
+ * typed network error or a typed unexpected-status error. Shared by command
+ * families for consistent dispatch logic, body truncation, and the
+ * `RESPONSE_ERROR_TAGS` policy.
  *
- * `networkMessage` and `statusMessage` are templates: they build the human-readable error
- * string with the same exact phrasing the Go CLI uses, so Go-parity status messages and
- * existing error-message assertions continue to hold.
+ * `networkMessage` and `statusMessage` build the exact error-message wording
+ * each command's established output and tests expect.
  */
 export function mapHttpError<N, S>(opts: {
   readonly networkError: NetworkErrorFactory<N>;
@@ -136,9 +117,8 @@ export function mapHttpError<N, S>(opts: {
   return (cause) =>
     Effect.gen(function* () {
       if (cause instanceof SupabaseApiInputError || cause instanceof HttpBody.HttpBodyError) {
-        // These failures occur while the generated client validates or builds
-        // the request. Keep their identity because this generic mapper cannot
-        // safely infer user provenance or reclassify them as response errors.
+        // Client-side validation/build failures: keep their identity, since
+        // this generic mapper can't safely reclassify them as response errors.
         return yield* Effect.fail(cause);
       }
       if (HttpClientError.isHttpClientError(cause)) {
@@ -161,8 +141,7 @@ export function mapHttpError<N, S>(opts: {
           new opts.networkError({ message: opts.networkMessage(description) }),
         );
       }
-      // SchemaError — the server returned a response whose body failed schema
-      // decoding (a 200 the generated client could not parse). This is not a
+      // SchemaError: a 200 response whose body failed schema decoding. Not a
       // transport failure, so flag `decode` to classify it as an API-response
       // problem rather than a network problem.
       return yield* Effect.fail(

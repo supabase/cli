@@ -6,15 +6,13 @@ import { join } from "node:path";
 const LOCAL_HOST = "127.0.0.1";
 const LOOPBACK_NO_PROXY = `localhost,${LOCAL_HOST},[::1]`;
 
-/** Docker CLI's reserved "no context store entry" name (`docker/cli` `cli/command/cli.go`'s `DefaultContextName`). */
+/** Docker CLI's name for the default context, which has no context-store entry. */
 const DEFAULT_CONTEXT_NAME = "default";
 
 /**
- * Docker CLI's config directory: `$DOCKER_CONFIG` or `~/.docker`
- * (`docker/cli` `cliconfig.Dir()`), read from here rather than
- * `client.Client`'s own resolution since this module never spawns a real
- * Docker client — it only needs the same two on-disk files that resolution
- * reads.
+ * Docker CLI's config directory (`$DOCKER_CONFIG` or `~/.docker`), read
+ * directly since this module only needs the on-disk config and context-store
+ * files, not a full Docker client.
  */
 function dockerConfigDir(): string {
   const override = process.env["DOCKER_CONFIG"];
@@ -22,12 +20,9 @@ function dockerConfigDir(): string {
 }
 
 /**
- * `cli.CurrentContext()` name resolution (`docker/cli`
- * `cli/command/cli.go`'s `resolveContextName`): `DOCKER_CONTEXT` env, else the
- * config file's `currentContext`, else `"default"`. Only reached when
- * `DOCKER_HOST` is unset — `resolveContextName` itself forces `"default"`
- * when `DOCKER_HOST`/`--host` is set, which {@link getHostname} below
- * already handles as its own, earlier branch.
+ * Resolves the active Docker CLI context: `DOCKER_CONTEXT` env, else the
+ * config file's `currentContext`, else `"default"`. Only called when
+ * `DOCKER_HOST` is unset; {@link getHostname} handles that case separately.
  */
 function currentDockerContextName(): string {
   const fromEnv = process.env["DOCKER_CONTEXT"];
@@ -42,8 +37,7 @@ function currentDockerContextName(): string {
       return config.currentContext;
     }
   } catch {
-    // Missing/malformed config.json → the default context, same as Go's own
-    // silent fallback when it can't load the config file here.
+    // Missing or malformed config.json falls back to the default context.
   }
   return DEFAULT_CONTEXT_NAME;
 }
@@ -51,11 +45,8 @@ function currentDockerContextName(): string {
 /**
  * Reads a non-default context's daemon endpoint from Docker CLI's context
  * store: `<configDir>/contexts/meta/<sha256hex(name)>/meta.json`'s
- * `Endpoints.docker.Host` (`docker/cli` `cli/context/store/metadatastore.go`).
- * The `"default"` context has no store entry (it's Go's synthetic
- * always-available context, resolved without a client, see
- * `cli.Initialize`), so it's never looked up here — matching the earlier
- * `"default"` short-circuit in {@link currentDockerContextName}'s caller.
+ * `Endpoints.docker.Host`. The `"default"` context has no store entry, so
+ * it's never looked up here.
  */
 function dockerContextEndpointHost(contextName: string): string | undefined {
   if (contextName === DEFAULT_CONTEXT_NAME) {
@@ -70,18 +61,15 @@ function dockerContextEndpointHost(contextName: string): string | undefined {
     const host = meta.Endpoints?.docker?.Host;
     return typeof host === "string" && host.length > 0 ? host : undefined;
   } catch {
-    // Missing/malformed context store entry → treat as unresolvable, same as
-    // Go silently falling back to the loopback default below.
+    // Missing or malformed context store entry: treat as unresolvable.
     return undefined;
   }
 }
 
 /**
- * Extracts the bare host from a `tcp://host:port` daemon endpoint, mirroring
- * `client.ParseHostURL` + `net.SplitHostPort`. Returns
+ * Extracts the bare host from a `tcp://host:port` daemon endpoint. Returns
  * `undefined` for a non-`tcp://` endpoint (e.g. `unix://`, `npipe://`) or an
- * unparseable one, in which case the caller falls back to the loopback
- * default, matching `net.SplitHostPort` failure/non-TCP handling.
+ * unparseable one.
  */
 function hostFromTcpEndpoint(endpoint: string): string | undefined {
   try {
@@ -89,10 +77,8 @@ function hostFromTcpEndpoint(endpoint: string): string | undefined {
     if (url.protocol !== "tcp:" || url.hostname.length === 0) {
       return undefined;
     }
-    // WHATWG `URL.hostname` returns an IPv6 host bracketed (`[::1]`), but Go's
-    // `net.SplitHostPort` returns the bare host (`::1`). Strip a
-    // single surrounding bracket pair so local-stack probes dial/compare the
-    // same host Go does; IPv4 and named hosts are returned unchanged.
+    // WHATWG URL.hostname brackets IPv6 (`[::1]`); strip the brackets so the
+    // returned host matches IPv4/named hosts' unbracketed form.
     const host = url.hostname;
     return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   } catch {
@@ -101,28 +87,20 @@ function hostFromTcpEndpoint(endpoint: string): string | undefined {
 }
 
 /**
- * Resolves the hostname used for local Supabase service connections, mirroring
- * `utils.GetHostname`:
+ * Resolves the hostname used for local Supabase service connections:
  *
- * 1. `SUPABASE_SERVICES_HOSTNAME` env override — set in dev containers or when
- * the Docker daemon is not reachable on the container's own loopback.
- * 2. The Docker daemon host when `DOCKER_HOST` is a `tcp://host:port` endpoint
- * (`Docker.DaemonHost()` + `client.ParseHostURL` + `net.SplitHostPort`).
- * 3. Otherwise, the ACTIVE DOCKER CONTEXT's daemon endpoint, when it's a
- * `tcp://` one — `Docker.DaemonHost()` comes from a client built via
- * `command.NewDockerCli()` + `cli.Initialize()`, whose endpoint resolution walks `DOCKER_HOST` ->
- * `DOCKER_CONTEXT` -> the config file's `currentContext` -> the context
- * store (`docker/cli` `cli/command/cli.go`'s `getDockerEndPoint`/
- * `resolveContextName`) — not just `DOCKER_HOST`. The `docker`/`podman`
- * binary this module's callers shell out to for `ps`/`inspect` already
- * resolves the same active context itself, so without this step `status`
- * could correctly inspect a remote daemon while printing unusable
- * `127.0.0.1` API/DB/Studio URLs for it.
+ * 1. `SUPABASE_SERVICES_HOSTNAME` env override — for dev containers or when
+ *    the Docker daemon isn't reachable on the container's own loopback.
+ * 2. The Docker daemon host when `DOCKER_HOST` is a `tcp://host:port` endpoint.
+ * 3. Otherwise, the active Docker context's daemon endpoint when it's a
+ *    `tcp://` one. The `docker`/`podman` binary this module's callers shell
+ *    out to already resolves the active context itself, so without this step
+ *    a remote daemon could be inspected correctly while printing unusable
+ *    `127.0.0.1` URLs for it.
  * 4. `127.0.0.1` otherwise (the default unix-socket daemon, or an
- * unresolvable/malformed context).
+ *    unresolvable/malformed context).
  *
- * Shared across commands that connect to the local stack (`gen types`,
- * `test db`, `status`, `stop`, and later `db reset` / `db dump`).
+ * Shared by every command that connects to the local Supabase stack.
  */
 export function getHostname(): string {
   const override = process.env["SUPABASE_SERVICES_HOSTNAME"];

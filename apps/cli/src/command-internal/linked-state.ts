@@ -10,16 +10,14 @@ import { readProjectRefFile, tempPaths } from "./temp-paths.ts";
 /**
  * Discriminated linked-state result.
  *
- *   - `parentRef` set → the linked ref (`projectRef`) is a BRANCH of a known,
- *     DIFFERENT parent. `branch` is the branch's own resolved name, present
- *     only when the best-effort API lookup found it — "assumed branch, name
- *     unknown" is exactly this shape with `branch` absent.
- *   - `parentRef` absent → a plain project link (or a linked ref with no
- *     evidence of a distinct parent at all).
- *   - `projectName`/`orgSlug`/`orgId` always describe whichever ref is shown
- *     on the "Project:" line (`parentRef ?? projectRef`) — sourced from
- *     `linked-project.json`, so only ever present when that cache is what
- *     supplied the parent candidate.
+ * - `parentRef` set: the linked ref (`projectRef`) is a branch of a known,
+ *   different parent. `branch` is the branch's resolved name, present only
+ *   when the best-effort lookup found it.
+ * - `parentRef` absent: a plain project link, or a linked ref with no
+ *   evidence of a distinct parent.
+ * - `projectName`/`orgSlug`/`orgId` describe whichever ref is shown on the
+ *   "Project:" line (`parentRef ?? projectRef`), present only when
+ *   `linked-project.json` supplied the parent candidate.
  */
 export type LinkedState =
   | { readonly linked: false }
@@ -34,26 +32,19 @@ export type LinkedState =
     };
 
 /**
- * Soft "currently linked ref" lookup: env `SUPABASE_PROJECT_ID` → the
- * `<workdir>/supabase/.temp/project-ref` file, never a prompt, never a
- * failure. Loosely based on `ProjectRefResolver.resolveOptional(Option.none())`
- * (reproduced without depending on that service, so `resolveLinkedState`
- * stays usable from a runtime — e.g. `status`'s — that never wires up the
- * resolver) but DELIBERATELY STRICTER than it: both candidates are validated
- * against `PROJECT_REF_PATTERN` here, which `resolveOptional` itself does not
- * do. This is a security boundary, not just a reproduction gap — SECURITY
- * (PR #6168 review): `readProjectRefFile` follows symlinks and accepts
- * any non-empty content, and `status -o json`/`--output-format json` emits
- * this value verbatim into machine output. A malicious/compromised worktree
- * could symlink `supabase/.temp/project-ref` -> `~/.supabase/access-token`
- * (or any other secret file) to exfiltrate it through CI logs or an agent's
- * captured output. A candidate that does NOT match `PROJECT_REF_PATTERN` is
- * therefore treated exactly as if it were absent — falling through to the
- * next candidate — so non-ref-shaped content (garbage OR a symlinked
- * secret) never reaches ANY output channel, text or machine, and degrades
- * to `Not linked.` / `linked_project: null` instead. Also reports WHICH
- * candidate won, since an env override sitting on top of an unrelated
- * workdir's cache needs different trust rules than the workdir's own file.
+ * Soft "currently linked ref" lookup: env `SUPABASE_PROJECT_ID`, else the
+ * `<workdir>/supabase/.temp/project-ref` file; never prompts, never fails.
+ * Deliberately independent of `ProjectRefResolver`, so this stays usable from
+ * a runtime (e.g. `status`'s) that never wires that resolver up.
+ *
+ * Both candidates are validated against `PROJECT_REF_PATTERN`: this value is
+ * emitted verbatim by `status -o json`/`--output-format json`, and
+ * `readProjectRefFile` follows symlinks, so an unvalidated candidate could
+ * exfiltrate a symlinked secret file's contents. A non-matching candidate is
+ * treated as absent rather than reaching any output channel.
+ *
+ * Reports which candidate won, since an env override and the workdir's own
+ * cache file carry different trust rules.
  */
 const resolveSoftLinkedRef = Effect.fnUntraced(function* () {
   const cliSettings = yield* CommandSettings;
@@ -76,48 +67,24 @@ const resolveSoftLinkedRef = Effect.fnUntraced(function* () {
 });
 
 /**
- * Resolves the current linked-state display (project or branch). Used by
- * `status` to show the linked project/branch without requiring a link
- * beforehand. TS-only surface (CLI-2167 follow-up, no Go counterpart).
+ * Resolves the current linked-state display (project or branch) for
+ * `status`, without requiring a link. Never fails — every step degrades
+ * rather than propagating an error:
  *
- * NEVER FAILS — every step degrades rather than propagating an error:
- *
- *   - Not linked at all → `{ linked: false }`.
- *   - `linked-project.json` CONFIRMS the linked ref is its own `ref` → a
- *     plain project link (its `name`/org fields, when known); zero API calls.
- *   - `linked-project.json` CONFIRMS a genuinely DIFFERENT parent, and the
- *     linked ref came from the `project-ref` FILE → a branch link. Always
- *     renders the branch-linked shape (parent ref + whatever name/org the
- *     cache knows), attempting the best-effort branch-name lookup
- *     ({@link findBranchName}) and degrading to the bare
- *     "assumed branch, name unknown" shape — NOT to a plain/bare project
- *     line — on any acquisition or API failure. This is the fix for the real
- *     bug this feature shipped to fix: the user must still see they're on a
- *     branch even when the lookup can't run (no token, offline, API error).
- *     The cache lifecycle invariants `link`/`resolveLinkedParentRef`
- *     maintain are what let a file-sourced ref trust the cache through a
- *     lookup failure.
- *   - Same cache/ref divergence, but the linked ref came from `SUPABASE_PROJECT_ID`
- *     (env) → the cache belongs to the WORKDIR, not necessarily to whatever
- *     `SUPABASE_PROJECT_ID` happens to point at (e.g. workdir linked to
- *     project A, `SUPABASE_PROJECT_ID=B` for an unrelated project B) — an env
- *     override carries none of those invariants. The lookup still runs, but
- *     the parent claim requires it to have POSITIVELY found `B` among `A`'s
- *     branches; on no-match, failure, or timeout, degrade all the way to the
- *     plain `{ linked: true, projectRef }` shape (no parent, no branch line,
- *     no cache-sourced name/org) rather than asserting "B is a branch of A"
- *     on nothing but the cache's mere presence (PR #6168 review). An
- *     env-override CI workflow that DOES link a real branch still renders
- *     correctly, since that lookup positively confirms.
- *   - No cache at all (missing/unreadable/malformed) → the plain
- *     `{ linked: true, projectRef }` shape, with ZERO API calls (PR #6168
- *     review). `resolveLinkedParentRef`'s own env/file chain is now
- *     ALWAYS self-referential here (its cache candidate only ever
- *     participates when a link has actually completed — see its doc
- *     comment), so querying it could only ever match the linked ref's own
- *     DEFAULT branch row (misrendering an ordinary project as "a branch of
- *     itself") or 403 on the real platform when the linked ref genuinely is
- *     a branch — there is no positive-confirmation case left to attempt.
+ * - Not linked → `{ linked: false }`.
+ * - The cache confirms the linked ref is its own parent → a plain project
+ *   link, zero API calls.
+ * - The cache names a different parent and the ref came from the
+ *   `project-ref` file → a branch link. Attempts the best-effort
+ *   {@link findBranchName} lookup, but degrades to "assumed branch, name
+ *   unknown" rather than a plain line on any failure, so the user still sees
+ *   they're on a branch when the lookup can't run.
+ * - Same divergence, but the ref came from `SUPABASE_PROJECT_ID` (env) — the
+ *   cache belongs to the workdir, not necessarily to what the env var points
+ *   at, so the branch claim additionally requires the lookup to positively
+ *   confirm it; otherwise it degrades to the plain `{ linked: true,
+ *   projectRef }` shape.
+ * - No cache at all → the plain shape, with zero API calls.
  */
 export const resolveLinkedState = Effect.fnUntraced(function* () {
   const cliSettings = yield* CommandSettings;
@@ -146,25 +113,22 @@ export const resolveLinkedState = Effect.fnUntraced(function* () {
     };
 
     if (cached.value.ref === linkedRef.value) {
-      // The cache confirms the linked ref IS the parent — a plain project link.
+      // The cache confirms the linked ref is the parent — a plain project link.
       return { linked: true, projectRef: linkedRef.value, ...cacheFields } as const;
     }
 
-    // The cache names a genuinely DIFFERENT parent than the linked ref.
+    // The cache names a different parent than the linked ref.
     const parentRef = cached.value.ref;
     const branch = yield* findBranchName(parentRef, linkedRef.value, {
       spinnerLabel: "Checking linked branch...",
     });
     if (branch === undefined && soft.source === "env") {
-      // An env override's lookup didn't POSITIVELY confirm a branch, and the
-      // cache carries none of the file-sourced trust invariants (it belongs
-      // to the WORKDIR, not necessarily to whatever `SUPABASE_PROJECT_ID`
-      // points at) — make no parent claim at all (PR #6168 review).
+      // An env override's lookup didn't confirm a branch, and the cache may
+      // belong to an unrelated project — make no parent claim at all.
       return { linked: true, projectRef: linkedRef.value } as const;
     }
-    // Either file-sourced (the cache's trust invariants apply) or
-    // env-sourced with a POSITIVE lookup confirmation — always the
-    // branch-linked shape, degrading only the `branch` name.
+    // File-sourced, or env-sourced with a confirmed lookup: always render
+    // the branch-linked shape, degrading only the `branch` name.
     return {
       linked: true,
       projectRef: linkedRef.value,
@@ -174,32 +138,19 @@ export const resolveLinkedState = Effect.fnUntraced(function* () {
     } as const;
   }
 
-  // No cache at all — render the plain shape with ZERO API calls (PR #6168
-  // review). With `resolveLinkedParentRef`'s own fix (its cache
-  // candidate only participates when a link actually completed), its
-  // env/file chain is now ALWAYS self-referential here — it's the exact same
-  // soft linked-ref chain `resolveSoftLinkedRef` above just read — so
-  // querying it could only ever (a) match the linked ref's own DEFAULT
-  // branch row when it's an ordinary parent, misrendering the project as "a
-  // branch of itself", or (b) 403 on the real platform when the linked ref
-  // genuinely is a branch (branches endpoints are parent-scoped). There is
-  // no positive-confirmation case left to attempt.
+  // No cache at all: render the plain shape with zero API calls. Querying
+  // `resolveLinkedParentRef` here would only match the ref's own default
+  // branch (misrendering it as "a branch of itself") or 403 when it
+  // genuinely is a branch — there's no positive-confirmation case to attempt.
   return { linked: true, projectRef: linkedRef.value } as const;
 });
 
-// Every string in this human-text block is untrusted display data — not just
-// API-derived names/org slug/id, but the refs themselves. `projectRef` is now
-// pattern-validated upstream (`resolveSoftLinkedRef`, PR #6168 review —
-// closes the `.temp/project-ref` symlink/token-exfiltration vector), but
-// `parentRef` (`linked-project.json`'s `ref`, via `parseCachedLinkedProject`)
-// is still only validated as a non-empty string — a malicious/corrupted cache
-// file could inject ANSI/OSC/newline controls into `supabase status` stdout
-// via the parent ref itself, not just a branch/org name. Sanitize every
-// rendered value regardless — defense-in-depth for `projectRef` too, since a
-// display-layer guarantee shouldn't depend on remembering every upstream
-// validation site. Machine payloads (`-o`/`--output-format`) stay
-// data-faithful — JSON/YAML/TOML/env encoding already neutralizes control
-// chars there; this sanitization is for the human text block only.
+// Every rendered string here is untrusted display data, including the refs
+// themselves (`parentRef` from `linked-project.json` is only validated as
+// non-empty, so a corrupted cache file could inject terminal control
+// sequences). Sanitize unconditionally rather than relying on upstream
+// validation. Machine payloads (`-o`/`--output-format`) skip this — their own
+// encoders already neutralize control chars.
 function formatOrgLabel(slug: string | undefined, id: string | undefined): string {
   if (slug !== undefined && id !== undefined) {
     return slug === id
@@ -210,9 +161,8 @@ function formatOrgLabel(slug: string | undefined, id: string | undefined): strin
 }
 
 /**
- * Pure formatter for `LinkedState` — the full multi-line block,
- * including its trailing newline. Not linked stays a single plain line (no
- * header block, unchanged from the prior single-line format):
+ * Pure formatter for `LinkedState` — the full multi-line block, including its
+ * trailing newline. Not linked renders a single plain line:
  *
  * ```
  * Not linked.
@@ -252,19 +202,13 @@ export function formatLinkedStateBlock(state: LinkedState): string {
 }
 
 /**
- * Additive flat snake_case keys for a Go machine-format payload
- * (`-o env|json|yaml|toml`) — merge into the format's own key/value map
- * AFTER its existing keys so their order is undisturbed (irrelevant for
- * `-o env`/`-o json`, which sort keys anyway; preserved for `-o yaml`/`-o toml`,
- * which don't). `encodeEnv`'s `toEnvKey` upper-cases these unchanged, so
- * `linked_project_ref` becomes `LINKED_PROJECT_REF`, etc. Empty when not
- * linked — absence of every key IS "not linked" for these formats, not a
- * `linked: false`/empty-string entry. Degraded branch-linked state still
- * emits every field it knows (`linked_project_ref`, `linked_parent_project_ref`,
- * `linked_project_name`, org fields) — only `linked_branch` is absent. TS-only
- * QoL (CLI-2167 follow-up, no Go counterpart), letting an agent driving a
- * machine format discover the linked project/branch without a separate
- * `link`/`branches` call.
+ * Additive flat snake_case keys for the `-o env|json|yaml|toml` machine
+ * format, merged into the format's own key/value map after its existing keys
+ * (order matters for `-o yaml`/`-o toml`; env/json sort keys anyway).
+ * `encodeEnv` upper-cases these unchanged (`linked_project_ref` →
+ * `LINKED_PROJECT_REF`). Empty when not linked — absence of every key is
+ * what signals "not linked" for these formats. A degraded branch-linked
+ * state still emits every field it knows; only `linked_branch` is absent.
  */
 export function linkedStateGoFields(state: LinkedState): Readonly<Record<string, string>> {
   if (!state.linked) return {};
@@ -278,9 +222,11 @@ export function linkedStateGoFields(state: LinkedState): Readonly<Record<string,
   };
 }
 
-/** The `linked_project` shape merged into a TS `--output-format json`/`stream-json`
- * structured success payload — see {@link linkedStateGoFields} for the
- * Go-machine-format counterpart. */
+/**
+ * The `linked_project` shape merged into a `--output-format json`/
+ * `stream-json` structured success payload. See {@link linkedStateGoFields}
+ * for the `-o` machine-format counterpart.
+ */
 export interface LinkedStateJsonField {
   readonly project_ref: string;
   readonly branch?: string;
@@ -291,10 +237,9 @@ export interface LinkedStateJsonField {
 }
 
 /**
- * Additive nested field for a TS `--output-format json`/`stream-json`
- * structured success payload: `null` when not linked, so its mere presence
- * never collides with an existing top-level key. TS-only QoL (CLI-2167
- * follow-up, no Go counterpart).
+ * Additive nested field for a `--output-format json`/`stream-json` structured
+ * success payload: `null` when not linked, so its mere presence never
+ * collides with an existing top-level key.
  */
 export function linkedStateJsonField(state: LinkedState): LinkedStateJsonField | null {
   if (!state.linked) return null;
