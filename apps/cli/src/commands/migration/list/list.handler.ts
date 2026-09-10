@@ -33,9 +33,8 @@ const runList = Effect.fnUntraced(function* (
   const path = yield* Path.Path;
   const dnsResolver = yield* DnsResolverFlag;
 
-  // Mutually-exclusive flag groups, in registration order: the target group
-  // first, then {db-url, password}. `setFlags` is already
-  // alphabetically sorted, matching the established group-error formatting.
+  // Mutually-exclusive flag groups, checked target group first, then {db-url,
+  // password}; `setFlags` is already sorted, matching the established error format.
   if (target.setFlags.length > 1) {
     return yield* Effect.fail(
       new MigrationTargetFlagsError({
@@ -53,8 +52,7 @@ const runList = Effect.fnUntraced(function* (
   }
 
   // `--project-ref` never implies `--linked` and must not be silently
-  // discarded on a non-linked target — see push.handler.ts's identical guard
-  // (db push) for the full TS-only rationale.
+  // discarded on a non-linked target; see push.handler.ts's identical guard.
   if (Option.isSome(flags.projectRef) && (target.connType ?? "linked") !== "linked") {
     return yield* Effect.fail(
       new MigrationTargetFlagsError({
@@ -65,7 +63,6 @@ const runList = Effect.fnUntraced(function* (
   }
 
   const listBody = Effect.gen(function* () {
-    // list defaults to `--linked`.
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       connType: target.connType ?? "linked",
@@ -76,8 +73,6 @@ const runList = Effect.fnUntraced(function* (
 
     const remote = yield* Effect.scoped(
       Effect.gen(function* () {
-        // The connect diagnostic prints to stderr before dialing,
-        // local/remote per the resolved connection.
         yield* output.raw(
           `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
           "stderr",
@@ -104,9 +99,8 @@ const runList = Effect.fnUntraced(function* (
     }
   });
 
-  // `--linked` resolves the project ref and writes the linked-project cache so
-  // telemetry carries the org/project grouping. `--local` / `--db-url` leave the
-  // ref empty.
+  // `--linked` resolves the project ref and writes the linked-project cache; `--local`
+  // / `--db-url` leave the ref empty.
   if ((target.connType ?? "linked") === "linked") {
     const projectRef = yield* ProjectRefResolver;
     const linkedProjectCache = yield* LinkedProjectCache;
