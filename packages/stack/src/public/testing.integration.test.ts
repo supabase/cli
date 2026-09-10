@@ -9,8 +9,7 @@ import { CAPABILITY_NAMES } from "./Capability.ts";
 import { StackIdSchema } from "./StackId.ts";
 import type { StackStatus } from "./Status.ts";
 
-// Promise facade fixtures intentionally model async operations.
-// oxlint-disable effecttsgo/async-function
+// oxlint-disable effecttsgo/async-function -- fixtures model the Promise facade's async operations.
 
 const stackId = StackIdSchema.make(
   "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
@@ -287,7 +286,6 @@ describe("test stack resource", () => {
 
   it("uses the managed runtime state root without mutating process environment", async () => {
     const events: Array<string> = [];
-    // This read is the assertion that createTestStackWith leaves global environment untouched.
     // oxlint-disable-next-line effecttsgo/process-env -- test-only environment immutability assertion.
     const originalHome = process.env.SUPABASE_HOME;
     let environment: Parameters<NonNullable<TestStackOperations["createStack"]>>[1] | undefined;

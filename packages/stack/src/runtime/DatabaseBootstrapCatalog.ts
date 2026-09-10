@@ -14,9 +14,8 @@ const secretValue = (state: PersistedStackState, slot: string): string | undefin
 /**
  * Builds the initial database bootstrap from fully materialized state.
  *
- * This helper intentionally does not read artifact SQL files or perform
- * caller-driven reset/migration/seed work. It returns only the managed
- * material required by the fixed runtime bootstrap reconciliation.
+ * Returns only the managed material the fixed runtime bootstrap reconciliation needs; it does
+ * not read artifact SQL files or perform caller-driven reset/migration/seed work.
  */
 export const databaseBootstrapPlan = (
   state: PersistedStackState,

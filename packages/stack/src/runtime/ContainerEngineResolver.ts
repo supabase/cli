@@ -11,9 +11,9 @@ import { makeDockerEngine } from "./DockerEngine.ts";
 import { makePodmanEngine } from "./PodmanEngine.ts";
 
 /**
- * Host-composition seam for selecting one concrete container engine. The
- * service is intentionally narrow so createStack can be tested without a
- * local daemon while production uses the real Docker/Podman adapters.
+ * Host-composition seam for selecting one concrete container engine, kept narrow so
+ * createStack can be tested without a local daemon while production uses the real Docker/Podman
+ * adapters.
  */
 export interface ContainerEngineResolverShape {
   readonly resolve: (

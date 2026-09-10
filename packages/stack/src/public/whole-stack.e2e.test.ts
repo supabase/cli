@@ -1,4 +1,4 @@
-// This E2E intentionally exercises the public Promise facade and real host APIs.
+// This E2E exercises the public Promise facade and real host APIs.
 // oxlint-disable effecttsgo/async-function -- user-facing Promise facade scenario.
 // oxlint-disable effecttsgo/new-promise -- WebSocket event handoff uses the platform Promise API.
 // oxlint-disable effecttsgo/global-fetch -- user-shaped HTTP requests use global fetch.
@@ -44,8 +44,7 @@ const ALL_RUNTIME_CASES = [
   { name: "native", runtime: { kind: "native" as const } },
   { name: "Docker", runtime: { kind: "container" as const, engine: "docker" as const } },
 ] as const;
-// Test registration must select the CI matrix case before an Effect program exists.
-// oxlint-disable-next-line effecttsgo/process-env
+// oxlint-disable-next-line effecttsgo/process-env -- selects the CI runtime matrix before an Effect program exists.
 const SELECTED_RUNTIME = process.env["SUPABASE_STACK_E2E_RUNTIME"];
 if (
   SELECTED_RUNTIME !== undefined &&

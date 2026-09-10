@@ -2030,8 +2030,7 @@ describe("Effect stack lifecycle handoff", () => {
               }),
             ),
           );
-          // Register exact cleanup before launching the replacement. The cached effect makes the
-          // explicit assertion below and scope finalization share one stop/destroy transition.
+          // Cache the stop/destroy effect so the assertion below and the finalizer share one transition.
           yield* Effect.addFinalizer(() => cleanupRecovered.pipe(Effect.ignore));
           yield* replaced.start();
           expect((yield* readOwnerMetadata(env.stateRoot, openId, env))?.rpcRelease).toBe(
