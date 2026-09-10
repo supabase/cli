@@ -179,16 +179,13 @@ describe("inspect db query runner", () => {
     const { layer, out, connection } = setup({ rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags());
-      // The query ran with the embedded SQL and both params (escaped schemas + db name).
       expect(connection.querySql).toBe(dbStatsSpec.sql);
       expect(connection.queryParams?.[1]).toBe("postgres");
       expect(Array.isArray(connection.queryParams?.[0])).toBe(true);
-      // stdout is byte-exact with the rendered glamour table.
       const expected = renderGlamourTable(dbStatsSpec.headers, [
         dbStatsSpec.project(DB_STATS_ROW, { conn: LOCAL_CONN, isLocal: true }),
       ]);
       expect(out.stdoutText).toBe(expected);
-      // The leading Name column is the resolved database name.
       expect(out.stdoutText).toContain("postgres");
       expect(out.stdoutText).toContain("8192 kB");
       expect(out.stdoutText).toContain("WAL Size");
@@ -206,9 +203,6 @@ describe("inspect db query runner", () => {
   });
 
   it.live("renders an empty backtick-wrapped cell as two literal backticks (role-stats)", () => {
-    // Every role-stats cell wraps in `` `…` ``; the postgres
-    // row has no custom config, so glamour emits an empty code span as the two
-    // literal backtick characters, including the resulting column width.
     const ROLE_ROW = {
       role_name: "postgres",
       active_connections: 3,
@@ -278,7 +272,6 @@ describe("inspect db query runner", () => {
     const { layer, resolver } = setup({ rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags());
-      // `--linked` is the default; the runner derives connType="linked" from absence.
       expect(resolver.resolveInput?.connType).toBe("linked");
       expect(Option.isNone(resolver.resolveInput?.dbUrl ?? Option.some("x"))).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -319,9 +312,6 @@ describe("inspect db query runner", () => {
   });
 
   it.live("--local=false is Changed and routes to local (not linked)", () => {
-    // `--local=false` is explicitly passed regardless of value; value-based
-    // detection would miss it and fall through to the linked default. This test guards
-    // that regression.
     const { layer, resolver } = setup({ rows: [DB_STATS_ROW], cliArgs: ["--local=false"] });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags({ local: false }));
@@ -330,8 +320,6 @@ describe("inspect db query runner", () => {
   });
 
   it.live("--linked --local=false raises the mutual-exclusion error", () => {
-    // Both flags are Changed (one explicit false, one true) → cobra raises the
-    // mutual-exclusion error regardless of their boolean values.
     const { layer } = setup({ cliArgs: ["--linked", "--local=false"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(inspectDbDbStats(flags({ linked: true, local: false })));
@@ -365,8 +353,6 @@ describe("inspect db query runner", () => {
     const { layer, resolver } = setup({ rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags({ projectRef: Option.some(FLAG_REF) }));
-      // `inspect db` never caches the ref — the resolver call it threads the flag
-      // into is the strongest observable this harness offers.
       expect(resolver.resolveInput?.connType).toBe("linked");
       expect(resolver.resolveInput?.linkedProjectRef).toEqual(Option.some(FLAG_REF));
     }).pipe(Effect.provide(layer));

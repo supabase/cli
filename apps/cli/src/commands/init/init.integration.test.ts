@@ -63,10 +63,9 @@ function findFailure(exit: Exit.Exit<unknown, unknown>): Record<string, unknown>
 }
 
 /**
- * Renders a handler failure exactly like the real CLI does — `normalizeCause`
- * followed by the production text output layer's `fail` — and returns the
- * captured stderr writes (ANSI-stripped). This locks the composed two-line
- * stderr contract documented in SIDE_EFFECTS.md, not just the error fields.
+ * Renders a handler failure exactly like the real CLI does and returns the captured stderr
+ * writes (ANSI-stripped). Locks the composed stderr contract from SIDE_EFFECTS.md, not just
+ * the error fields.
  */
 function renderFailureToStderr(exit: Exit.Exit<unknown, unknown>) {
   return Effect.gen(function* () {
@@ -141,15 +140,11 @@ describe("init", () => {
         withIntellijSettings: false,
       }).pipe(Effect.provide(layer), Effect.exit);
 
-      // `experimental` is marked required in PreRun, so the user sees
-      // cobra's standard message. No suggestion — the text output layer
-      // appends the generic `--debug` troubleshooting hint instead.
       const error = findFailure(exit);
       expect(error["_tag"]).toBe("InitExperimentalRequiredError");
       expect(error["message"]).toBe(`required flag(s) "experimental" not set`);
       expect(error["suggestion"]).toBeUndefined();
 
-      // Composed stderr byte-matches `recoverAndExit`'s output.
       expect(yield* renderFailureToStderr(exit)).toEqual([
         `required flag(s) "experimental" not set\n`,
         "Try rerunning the command with --debug to troubleshoot the error.\n",
@@ -177,8 +172,6 @@ describe("init", () => {
       yield* init(initFlags).pipe(Effect.provide(layer));
       const exit = yield* init(initFlags).pipe(Effect.provide(layer), Effect.exit);
 
-      // Byte-matches the wrapped `O_EXCL` `*os.PathError` from
-      // `utils.InitConfig` (`config.go:243-246`) plus its CmdSuggestion.
       const error = findFailure(exit);
       expect(error["_tag"]).toBe("InitConfigExistsError");
       expect(error["message"]).toBe(
@@ -188,7 +181,6 @@ describe("init", () => {
         "Run supabase init --force to overwrite existing config file.",
       );
 
-      // Composed stderr byte-matches `recoverAndExit`'s output (Linux/macOS).
       expect(yield* renderFailureToStderr(exit)).toEqual([
         "failed to create config file: open supabase/config.toml: file exists\n",
         "Run supabase init --force to overwrite existing config file.\n",
@@ -216,11 +208,6 @@ describe("init", () => {
       yield* init(initFlags).pipe(Effect.provide(layer));
       const exit = yield* init(initFlags).pipe(Effect.provide(layer), Effect.exit);
 
-      // On Windows, `utils.ConfigPath` is built with `filepath.Join`
-      // (`utils/misc.go:82`) — backslash separator — and the `O_EXCL` open
-      // fails with `ERROR_FILE_EXISTS`, rendered by `syscall.Errno.Error()` as
-      // `The file exists.`. The suggestion is unchanged because
-      // `errors.Is(err, os.ErrExist)` matches on Windows too.
       const error = findFailure(exit);
       expect(error["_tag"]).toBe("InitConfigExistsError");
       expect(error["message"]).toBe(
@@ -230,7 +217,6 @@ describe("init", () => {
         "Run supabase init --force to overwrite existing config file.",
       );
 
-      // Composed stderr byte-matches `recoverAndExit`'s output (Windows).
       expect(yield* renderFailureToStderr(exit)).toEqual([
         "failed to create config file: open supabase\\config.toml: The file exists.\n",
         "Run supabase init --force to overwrite existing config file.\n",
@@ -298,12 +284,6 @@ describe("init", () => {
     );
   });
 
-  // ---------------------------------------------------------------------------
-  // `-i` + `--yes`/`SUPABASE_YES` — `PromptForIDESettings` goes through
-  // `PromptYesNo`, so the global YES auto-accepts the VS Code question with the
-  // `[Y/n] y` stderr echo instead of prompting anyway (CLI-1974).
-  // ---------------------------------------------------------------------------
-
   const BASE_INIT_FLAGS = {
     useOrioledb: false,
     force: false,
@@ -322,7 +302,6 @@ describe("init", () => {
 
       expect(out.promptConfirmCalls).toHaveLength(0);
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
-      // Go returns after writing VS Code settings — IntelliJ is never asked.
       expect(out.stderrText).not.toContain("IntelliJ");
       expect(
         yield* Effect.tryPromise(() => readFile(join(tempDir, ".vscode", "settings.json"), "utf8")),
@@ -359,8 +338,6 @@ describe("init", () => {
   });
 
   it.live("init -i --yes writes VS Code settings even when stdout is piped (Go parity)", () => {
-    // Go gates the IDE prompts on `-i` + a TTY stdin only (`cmd/init.go:40`); with
-    // YES set no clack UI is rendered, so a piped stdout must not skip the write.
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
