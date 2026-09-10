@@ -4,14 +4,13 @@
  * `shadow-baseline-<key>.tar` on the first run, warm-restore that exact tar on the second, and
  * produce byte-identical diff output either way.
  *
- * Proves what only real process wiring can: that `db diff` actually routes through
+ * Proves what only real process wiring can: that `db diff` routes through
  * `acquireShadowDatabase`, that the cache engages with `SUPABASE_SHADOW_CACHE` genuinely unset
  * (the shipped default), that the cache directory survives a real process boundary, that the
- * cache key is stable across two separate CLI processes, and that a warm-restored cluster yields
- * the same migration SQL as a cold-provisioned one.
+ * cache key is stable across two separate CLI processes, and that a warm-restored cluster
+ * yields the same migration SQL as a cold-provisioned one.
  *
- * The acquire/export/restore mechanics (cold export, warm restore, tar validation and rejection,
- * retention/LRU, cache-off and bypass paths) are covered exhaustively by
+ * The acquire/export/restore mechanics are covered exhaustively by
  * `shadow-cache.integration.test.ts`, and the pure key/retention logic by
  * `shadow-cache.unit.test.ts`. Nothing branch-shaped belongs here.
  */
@@ -109,9 +108,9 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
 
       // Same drift setup as `db/diff/diff.declarative.e2e.test.ts`: create a fresh function
       // directly in the local database so `db diff --local` has real, deterministic SQL to
-      // produce — the payload whose byte-identity across the cold and warm runs is the actual
-      // user-visible contract here. (The next engine ignores `schema_paths` when building its
-      // migrations baseline, so declared schema files cannot supply the drift.)
+      // produce — the byte-identity of that output across cold/warm runs is the actual
+      // user-visible contract here. Schema files can't supply this drift since the next engine
+      // ignores `schema_paths` when building its migrations baseline.
       const createFunction = await runSupabase(
         [
           "db",
@@ -145,7 +144,7 @@ as $$ select 1; $$;`,
           exitTimeoutMs: DIFF_TIMEOUT_MS,
           env: {
             // Remove the harness's isolation pin (`spawnSupabase` injects `=0`) so the suite
-            // runs with the key GENUINELY ABSENT — the shipped default-ON state — rather than
+            // runs with the key genuinely absent — the shipped default-on state — rather than
             // an explicit opt-in.
             SUPABASE_SHADOW_CACHE: undefined,
             SUPABASE_DB_SHADOW_PORT: String(shadowPort),
@@ -172,14 +171,14 @@ as $$ select 1; $$;`,
         break;
       }
 
-      // --- Run 1: cold. The baseline was provisioned and exported as one keyed tar. ---
+      // Run 1 (cold): the baseline was provisioned and exported as one keyed tar.
       expect(cold, "every candidate shadow port reported a bind conflict").toBeDefined();
       if (cold === undefined) return;
       expect(cold.exitCode, `stdout:\n${cold.stdout}\nstderr:\n${cold.stderr}`).toBe(0);
       expect(coldTars, `cache dir: ${cacheDir}\nstderr:\n${cold.stderr}`).toHaveLength(1);
       expect(coldTars[0]).toMatch(BASELINE_TAR_PATTERN);
 
-      // --- Run 2: warm. The same key restored that snapshot instead of rebuilding it. ---
+      // Run 2 (warm): the same key restored that snapshot instead of rebuilding it.
       expect(warm).toBeDefined();
       if (warm === undefined) return;
       expect(warm.exitCode, `stdout:\n${warm.stdout}\nstderr:\n${warm.stderr}`).toBe(0);
@@ -187,18 +186,16 @@ as $$ select 1; $$;`,
       // cold provision, and either would otherwise hide a broken warm path behind a passing run.
       expect(warm.stderr).not.toContain("cached shadow baseline unusable");
       expect(warm.stderr).not.toContain("shadow baseline not cached");
-      // Same single tar, same filename: the key is reproducible across processes, and the warm run
-      // published nothing of its own.
       const warmTars = await baselineTars(cacheDir);
       expect(warmTars).toEqual(coldTars);
       // Warm hits refresh mtime so a frequently used key survives LRU/TTL retention.
       const warmMtimeMs = (await stat(path.join(cacheDir, warmTars[0]!))).mtimeMs;
       expect(warmMtimeMs).toBeGreaterThan(coldMtimeMs);
 
-      // The user-visible contract is unchanged by which path ran: stdout carries the migration SQL
-      // (no `-f`, so `db diff` prints it), and a restored cluster must diff to exactly the same
-      // statements as a freshly baselined one. The regex tolerates pretty-print variations
-      // (quoting/whitespace), same anchor as `diff.declarative.e2e.test.ts`.
+      // stdout carries the migration SQL (no `-f`, so `db diff` prints it); a restored cluster
+      // must diff to exactly the same statements as a freshly baselined one. The regex tolerates
+      // pretty-print variations (quoting/whitespace), same anchor as
+      // `diff.declarative.e2e.test.ts`.
       expect(cold.stdout).toMatch(
         /CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION\s+"?public"?\s*\.\s*"?probe_fn"?\s*\(\)/i,
       );

@@ -76,10 +76,8 @@ const errMessage = (e: unknown): string =>
     : String(e);
 
 /**
- * One or more replication slots are still active (retryable — the WAL sender that owns the slot
- * may still be tearing down), or counting them failed outright (permanent). Exported only so the
- * exhaustive actionability guard can inspect its declaration; runtime callers discriminate it
- * through the {@link RecreateLocalDatabaseError} union's `_tag`.
+ * One or more replication slots are still active (retryable — the WAL sender that owns the
+ * slot may still be tearing down), or counting them failed outright (permanent).
  */
 export class ResetReplicationSlotsError extends Data.TaggedError("ResetReplicationSlotsError")<{
   readonly message: string;
@@ -125,7 +123,7 @@ export interface RecreateLocalDatabaseInput<E> {
   readonly dbContainerId: string;
   readonly dbPort: number;
   readonly containerOpts: ContainerOpts;
-  /** Fed straight to `buildPostgresStartContainerSpec` — reset has no `fromBackup` concept at all. */
+  /** Fed straight to `buildPostgresStartContainerSpec` — reset has no `fromBackup` concept. */
   readonly postgresSpec: Omit<PostgresStartServiceInput, "image" | "fromBackup">;
   /** Lazy: only resolved on the PG15 path. */
   readonly resolvePostgresImage: Effect.Effect<string, ImagePrepullError>;
@@ -144,10 +142,6 @@ const PG_INVALID_CATALOG_NAME = "3D000";
 /**
  * Disables new connections to `postgres`/`_supabase`, terminates existing backends, then waits
  * for WAL senders to drop their replication slots (1-second backoff, 10 retries max).
- *
- * Exported only so `recreate-local-database.unit.test.ts` can pin the retry schedule's exact
- * boundary against a mocked {@link DbSession} with no real filesystem/Docker I/O; end-to-end
- * retry behavior stays covered by `reset.integration.test.ts`'s `it.live` tests.
  */
 export const resetDisconnectClients = Effect.fnUntraced(function* (session: DbSession) {
   // Must run sequentially, unwrapped: looping these in a transaction is unsupported, and
@@ -163,10 +157,10 @@ export const resetDisconnectClients = Effect.fnUntraced(function* (session: DbSe
   ).pipe(Effect.result);
   if (Result.isFailure(disconnectResult)) {
     const failure = disconnectResult.failure;
-    // `failure.code` isn't reliably PgError-only: the driver's exec-error mapping falls back to
-    // a bare OS errno (`ECONNRESET`, `ETIMEDOUT`, ...) as `code` too, so `isSqlState` must gate
-    // treating it as a real Postgres error code. A non-PgError failure and a 3D000 PgError are
-    // both silently swallowed.
+    // `failure.code` isn't reliably PgError-only: the driver's exec-error mapping can also set
+    // `code` to a bare OS errno (`ECONNRESET`, `ETIMEDOUT`, ...), so `isSqlState` must gate
+    // treating it as a real Postgres code. A non-PgError failure and a 3D000 PgError are both
+    // silently swallowed.
     if (
       failure.code !== undefined &&
       isSqlState(failure.code) &&
@@ -211,16 +205,10 @@ export const resetDisconnectClients = Effect.fnUntraced(function* (session: DbSe
   );
 });
 
-// Go builds these four as a single `migration.MigrationFile{Statements: [...]}`
-// and calls `.ExecBatch` (`reset.go:165-173`), which formats a failed statement
-// with the same rich error context (caret-marked position, `Detail` line, the
-// SQLSTATE-42704 extension hint, `At statement: <index>`) real migration files
-// get — NOT a real SQL transaction: `DROP`/`CREATE DATABASE` cannot run inside a
-// `BEGIN`/`COMMIT` block at all, so these stay bare, sequential, UNWRAPPED
-// `session.exec` calls instead of using the TS batch primitive, whose single Sync
-// would group them in an implicit transaction. Each
-// statement's index matches its position in this list, mirroring Go's
-// `m.Statements` indexing.
+// `DROP`/`CREATE DATABASE` cannot run inside a `BEGIN`/`COMMIT` block, so these run as bare,
+// sequential statements rather than the batch primitive (which would wrap them in a
+// transaction). Each statement's index matches its position in this list, used for error
+// formatting.
 const RESET_RECREATE_DATABASES_STATEMENTS = [
   "DROP DATABASE IF EXISTS postgres WITH (FORCE)",
   "CREATE DATABASE postgres WITH OWNER postgres",
@@ -229,10 +217,9 @@ const RESET_RECREATE_DATABASES_STATEMENTS = [
 ] as const;
 
 /**
- * Port of Go's `recreateDatabase` (`reset.go:157-176`): connect as
- * `supabase_admin` to `template1`, disconnect clients, then four UNWRAPPED
- * statements. "We are not dropping roles here because they are cluster level
- * entities. Use stop && start instead." (Go's own comment.)
+ * Connects as `supabase_admin` to `template1`, disconnects clients, then runs four sequential
+ * statements. Roles are not dropped here since they are cluster-level entities — use stop then
+ * start instead.
  */
 const resetRecreateDatabases = Effect.fnUntraced(function* (session: DbSession) {
   yield* resetDisconnectClients(session);
@@ -251,10 +238,7 @@ const resetRecreateDatabases = Effect.fnUntraced(function* (session: DbSession) 
   }
 });
 
-/**
- * Port of Go's `resetDatabase15` (`reset.go:114-142`) — see this module's own
- * header for the full sequence and citations.
- */
+/** PG >= 15 recreate path — see this module's own header for the full sequence. */
 const recreateLocalDatabase15 = <E>(
   spawner: Spawner,
   input: RecreateLocalDatabaseInput<E>,
@@ -289,15 +273,14 @@ const recreateLocalDatabase15 = <E>(
     });
     yield* createContainer(spawner, postgresSpec, input.containerOpts);
 
-    // Never swallowed — reset has no `--from-backup`-equivalent gate at all.
+    // Never swallowed — reset has no `--from-backup`-equivalent gate.
     yield* waitForHealthyServices(spawner, [postgresSpec.containerName], {
       timeoutSeconds: input.dbHealthTimeoutSeconds,
       images: new Map([[postgresSpec.containerName, resolvedPostgresImage]]),
     });
 
-    // UNCONDITIONAL — no fresh-volume gate: a reset just removed the volume above, so
-    // it's always fresh. Passes the RESOLVED reset `version`/`seedFlags`, unlike `db
-    // start`'s own call — see `db-setup.ts`'s header for this one real difference.
+    // No fresh-volume gate needed: a reset just removed the volume above, so it's always fresh.
+    // Passes the resolved reset `version`/`seedFlags`, unlike `db start`'s own call.
     yield* runFreshDbSetup(spawner, {
       fs: input.fs,
       path: input.path,
@@ -369,21 +352,20 @@ const recreateLocalDatabase14 = <E>(
           );
         yield* initSchema14(session, fs, path, tmpDir, setup.majorVersion);
         // Same drop-then-conditionally-recreate sequence fresh setup runs
-        // (`db-setup.ts`'s `requiresPg14WebhooksCleanup`): the PG14 dump installs
-        // pg_net unconditionally because later statements grant on its schema, so
-        // without this drop a reset with webhooks disabled left pg_net installed and
-        // diverged from a fresh `supabase start` — visible as pg_net drift in the next
-        // engine's shadow baseline. `MigrateAndSeed` re-applies every migration below,
-        // so a user migration that creates pg_net still gets it back.
+        // (`db-setup.ts`'s `requiresPg14WebhooksCleanup`): the PG14 dump installs pg_net
+        // unconditionally, so without this drop a reset with webhooks disabled would leave
+        // pg_net installed, causing drift against a fresh `supabase start`. `MigrateAndSeed`
+        // re-applies every migration below, so a user migration that creates pg_net still gets
+        // it back.
         yield* removeDatabaseWebhooks(session, fs, path, tmpDir);
         yield* applyApiPrivileges(session, fs, path, tmpDir, toml.baseline.apiAutoExposeNewTables);
         yield* applyDatabaseWebhooks(session, fs, path, tmpDir, toml.webhooksEnabled);
       }),
     );
 
-    // RestartDatabase: "Restarting containers..." FIRST, then a REAL restart of the `db`
-    // container itself (pg_cron must restart after `pg_terminate_backend`) — NOT tolerant
-    // of "not found", unlike the satellite restarts inside `restartServicesAndReloadKong`.
+    // "Restarting containers..." first, then an actual restart of the `db` container itself
+    // (pg_cron must restart after `pg_terminate_backend`); not tolerant of "not found", unlike
+    // the satellite restarts inside `restartServicesAndReloadKong`.
     yield* output.raw("Restarting containers...\n", "stderr");
     yield* restartContainer(spawner, input.dbContainerId);
     yield* waitForHealthyServices(spawner, [input.dbContainerId], {
@@ -391,7 +373,7 @@ const recreateLocalDatabase14 = <E>(
     });
     yield* restartServicesAndReloadKong(spawner, input.projectId);
 
-    // Final connect as `postgres`/`postgres` -> apply.MigrateAndSeed(ctx, version, ...).
+    // Final connect as `postgres`/`postgres` to migrate and seed.
     yield* Effect.scoped(
       Effect.gen(function* () {
         const session = yield* connectAs("postgres", "postgres");
@@ -408,12 +390,8 @@ const recreateLocalDatabase14 = <E>(
   });
 
 /**
- * Runs the exact Go `resetDatabase`/`resetDatabase14`/`resetDatabase15` sequence —
- * see this module's header for the full call order and citations. The caller has
- * already printed `Resetting local database…`, matching Go's own `resetDatabase`
- * wrapper (`reset.go:81-87`) minus that one line (which the seam this replaces
- * used to print itself, and which `db/reset/reset.handler.ts` now prints
- * directly, exactly like before).
+ * Runs the PG14/PG15 recreate sequence — see this module's header for the full call order. The
+ * caller has already printed `Resetting local database…`.
  */
 export const recreateLocalDatabase = <E>(
   spawner: Spawner,

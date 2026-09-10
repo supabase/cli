@@ -35,10 +35,7 @@ import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
 
-/**
- * The local database container is not running. Exported only so the exhaustive actionability
- * guard can inspect its declaration; runtime callers consume the enclosing effect instead.
- */
+/** The local database container is not running. */
 class ResetLocalDbNotRunningError extends Data.TaggedError("ResetLocalDbNotRunningError")<{
   readonly message: string;
 }> {
@@ -63,10 +60,7 @@ const PLAIN_FULL_RESET: ResetLocalDatabaseInput = {
   seedFlags: { noSeed: false, sqlPaths: [] },
 };
 
-/**
- * Resets the local database in-process. See this module's own header for the full
- * design rationale. Mirrors `internal/db/reset/reset.go:57-77`.
- */
+/** Resets the local database in-process. See this module's own header for the full design rationale. */
 export const resetLocalDatabase = Effect.fnUntraced(function* (
   input: ResetLocalDatabaseInput = PLAIN_FULL_RESET,
 ) {
@@ -77,31 +71,22 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const runtimeInfo = yield* RuntimeInfo;
   const networkIdFlag = yield* NetworkIdFlag;
-  // Threaded into `buildLocalDbContainerInputs`'s own `setup.debug`, so a failed
-  // fresh-volume Realtime/Storage/Auth migrate job on the PG15 recreate path tees its own
-  // stderr, matching Go's `initSchema15` passing `utils.GetDebugLogger()` as that job's
-  // stderr writer (`start.go:349-353`) — reached by BOTH real Go callers of
-  // `SetupLocalDatabase` (`db start` and `db reset`'s PG15 recreate).
+  // Threaded into `buildLocalDbContainerInputs`'s `setup.debug`, so a failed fresh-volume
+  // Realtime/Storage/Auth migrate job on the PG15 recreate path tees its own stderr.
   const debug = yield* DebugFlag;
 
   const workdir = cliSettings.workdir;
-  // Go's `ParseDatabaseConfig` runs `loadNestedEnv` (which `os.Setenv`s each project-.env key)
-  // before `reset.Run` reads `viper.GetBool("EXPERIMENTAL")`, so a `SUPABASE_EXPERIMENTAL` set
-  // only in `supabase/.env` is honored. Load the project env first and resolve against it, as
-  // `dbReset` does for its own experimental gate.
+  // Load the project env first so a `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` is
+  // honored by the experimental gate below.
   const projectEnv = yield* loadProjectEnv(fs, path, workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
 
-  // Go's `flags.LoadConfig` (root `PersistentPreRunE` → the local target's per-connType
-  // `LoadConfig`, `internal/utils/flags/db_url.go:77-80`) runs full config validation before
-  // `reset.Run` ever reaches `AssertSupabaseDbIsRunning` / the destructive `resetDatabase`
-  // (`internal/db/reset/reset.go:57-61`). Re-validate here as an explicit, independent gate
-  // (the same pattern `db start`/`db push` use), so "a malformed config aborts before the
-  // local database is recreated" is enforced by this function directly.
+  // Validate config before checking whether the container is running, so a malformed config
+  // aborts before the local database is recreated — the same pattern `db start`/`db push` use.
   yield* checkDbToml(fs, path, workdir);
 
-  // AssertSupabaseDbIsRunning — error if the local db container is down.
+  // Error if the local db container is down.
   const running = yield* isLocalDbRunning(
     spawner,
     fs,
@@ -116,12 +101,11 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
       }),
     );
   }
-  // resetDatabase: "Resetting local database…" then recreate + migrate + seed.
+  // "Resetting local database…" then recreate + migrate + seed.
   yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
 
-  // Build the SAME prelude `db start`'s own handler builds (config values +
-  // `resolveDbBootstrapConfig`) — Go's `resetDatabase15`/`resetDatabase14`
-  // recreate the `db` container with byte-identical inputs to `StartDatabase`'s own.
+  // Build the same prelude `db start`'s own handler builds (config values +
+  // `resolveDbBootstrapConfig`), so the container is recreated with identical inputs.
   const inputs = yield* buildLocalDbContainerInputs(
     spawner,
     workdir,
@@ -151,61 +135,42 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
     dbContainerId,
     dbPort: values.dbPort,
     containerOpts,
-    // `db reset` has no `fromBackup` concept at all, so `postgresSpecBase` — the
-    // exact same fields `db start` splices its own `fromBackup` on top of — is
-    // already this composition's WHOLE `postgresSpec`.
+    // `db reset` has no `fromBackup` concept, so `postgresSpecBase` is already the whole
+    // `postgresSpec` here.
     postgresSpec: postgresSpecBase,
     resolvePostgresImage,
     dbHealthTimeoutSeconds: bootstrapConfig.dbHealthTimeoutSeconds,
     version: input.version,
     seedFlags: input.seedFlags,
-    // `db reset` resolves `--experimental` EARLIER than this prelude (it gates the
-    // remote-target Go-delegation decision too, reached before `cfg.isLocal` is even
-    // known) via the Go-parity nested-env walk (`resolveExperimentalWithProjectEnv`
-    // over `projectEnv`, above) — override the prelude's OWN `setup.experimental` (resolved
-    // from its `@supabase/config`-backed context instead) with that earlier value, to
-    // preserve this pre-existing divergence exactly. See `buildLocalDbContainerInputs`'s
-    // own header.
+    // `db reset` resolves `--experimental` earlier than this prelude does, via the nested-env
+    // walk above; override the prelude's own `setup.experimental` with that value so the two
+    // stay consistent.
     setup: { ...setup, experimental },
   });
 
-  // Seed objects from supabase/buckets when storage is up (Go gates buckets on
-  // an existing, healthy storage container). Reuses the ported seed-buckets
-  // local path; its summary is suppressed (reset emits its own result).
+  // Seed objects from supabase/buckets when storage is up; summary is suppressed since reset
+  // emits its own result.
   const storageReady = yield* awaitStorageReady(spawner, projectId);
   if (storageReady) {
-    // Go's `buckets.Run(ctx, "", false, fsys)` — non-interactive: overwrite/prune
-    // confirmations take their defaults instead of blocking on input.
-    //
-    // `resolvedConfig` passes through the SAME config this function already resolved
-    // via `buildLocalDbContainerInputs`'s `context` (itself loaded through
-    // `loadLocalProjectContext`, which mirrors Go's full nested-env walk —
-    // `.env.<SUPABASE_ENV>.local`, `.env.local`, `.env.<SUPABASE_ENV>`, `.env`, across
-    // both `supabase/` and the project root, `pkg/config/config.go:1220-1257`) — so
-    // `seedBucketsRun` never independently reloads config.toml through
-    // `@supabase/config`'s narrower `loadCliConfig` → `loadCliProjectEnvironment`
-    // (`supabase/.env`/`.env.local` plus ambient env only,
-    // `packages/config/src/project.ts:209-245`), which used to reject a config whose
-    // `env(VAR)` reference is backed by e.g. `supabase/.env.development` — genuinely
-    // Go-valid (Go's `godotenv.Load` calls `os.Setenv`, so the value is real ambient env
-    // by the time Go resolves it, `config.go:1260-1261`) and already accepted by
-    // `checkDbToml` and the real recreate above (review CLI-1958). Same pattern
-    // `start.handler.ts` already uses for its own `seedBucketsRun` calls.
+    // Non-interactive: overwrite/prune confirmations take their defaults instead of blocking on
+    // input. `resolvedConfig` reuses the config already resolved via
+    // `buildLocalDbContainerInputs`'s full nested-env walk, so `seedBucketsRun` never
+    // independently reloads config.toml through a narrower env resolution that could reject a
+    // config whose `env(VAR)` reference is backed by a non-default dotenv file. Same pattern
+    // `start.handler.ts` uses for its own `seedBucketsRun` calls.
     yield* seedBucketsRun({
       projectRef: "",
       emitSummary: false,
       interactive: false,
-      // Go loads nested env before `buckets.Run`, so `SUPABASE_YES` in `supabase/.env`
-      // auto-confirms bucket/vector/analytics prune prompts.
+      // `SUPABASE_YES` set in `supabase/.env` auto-confirms bucket/vector/analytics prune
+      // prompts.
       yes,
       resolvedConfig: { config, document: loaded?.document },
-      // The same nested-dotenv walk this function already resolved for
-      // `yes`/`experimental` above — no independent reload in the seed core.
+      // The same nested-dotenv walk already resolved for `yes`/`experimental` above.
       projectEnvValues: projectEnv,
     }).pipe(
-      // A genuinely invalid bucket entry (bad name, unparseable `file_size_limit`, …) —
-      // recreate already dropped/rebuilt the DB, so aborting now would leave the reset
-      // half-done; warn and skip buckets so the reset finishes like Go instead.
+      // An invalid bucket entry (bad name, unparseable `file_size_limit`, …) can't abort here —
+      // recreate already dropped/rebuilt the DB — so warn and skip buckets instead.
       Effect.catchTag("SeedConfigLoadError", (error) =>
         output.raw(
           `${yellow("WARNING:")} skipped seeding storage buckets: ${error.message}\n`,
@@ -215,7 +180,6 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
     );
   }
 
-  // "Finished supabase db reset on branch <branch>." (both Aqua).
   const branch = Option.getOrElse(yield* detectGitBranch(workdir), () => "main");
   yield* output.raw(`Finished ${aqua("supabase db reset")} on branch ${aqua(branch)}.\n`, "stderr");
 });

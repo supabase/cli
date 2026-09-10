@@ -76,7 +76,6 @@ describe("ensureImagesCached", () => {
             ["supabase/kong:3", "public.ecr.aws/supabase/kong:3"],
           ]),
         );
-        // One `image inspect` call per UNIQUE image, not one per (duplicated) input entry.
         const inspectCalls = mock.spawned.filter(
           (call) => call[0] === "image" && call[1] === "inspect",
         );
@@ -96,10 +95,8 @@ describe("ensureImagesCached", () => {
           if (args[0] === "image" && args[1] === "inspect") {
             const count = yield* Ref.updateAndGet(started, (n) => n + 1);
             if (count < 2) {
-              // A sequential (non-concurrent) implementation would never let the
-              // second image's `image inspect` call start until this one
-              // returns, so awaiting here would hang forever — proving
-              // concurrency is what lets this test complete at all.
+              // A sequential implementation would hang here forever, since the second call
+              // never starts until this one returns.
               yield* Deferred.await(bothStarted);
             } else {
               yield* Deferred.succeed(bothStarted, undefined);
@@ -128,9 +125,8 @@ describe("ensureImagesCached", () => {
     }),
   );
 
-  // Every pull attempt fails, so this drives the real DOCKER_PULL_RETRY_DELAYS_MS
-  // backoff (4s + 8s) to exhaustion across all 3 registry candidates (~36s) —
-  // needs more than Vitest's 5s default.
+  // Every pull attempt fails, driving the real `DOCKER_PULL_RETRY_DELAYS_MS` backoff to
+  // exhaustion across all 3 registry candidates (~36s) — needs more than Vitest's 5s default.
   it.live(
     "aggregates every failed image's message into one combined error",
     () => {

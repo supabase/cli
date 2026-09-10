@@ -1,17 +1,15 @@
 /**
- * Generic PGDATA snapshot/restore primitives, container-agnostic: `shadow-cache.ts` is the only
- * caller today, but these are reusable building blocks for savepointing any local Postgres
- * container.
+ * Generic PGDATA snapshot/restore primitives, reusable beyond `shadow-cache.ts` for savepointing
+ * any local Postgres container.
  *
  * The container must be stopped before {@link exportPgDataTar} runs — a snapshot of a running
- * Postgres's data directory is not a consistent thing to copy. Callers own the stop/start.
+ * Postgres data directory is not consistent to copy; callers own the stop/start.
+ * {@link pgDataRestoreArchive} must be delivered as a tar stream via `docker cp -`, never a
+ * directory copy, since a directory copy resets file ownership and Postgres refuses to start.
  *
  * TODO(hot-save): support `frozen` (`docker pause`/copy/unpause) and `online`
  * (`pg_backup_start`/`pg_backup_stop`) consistency modes for a live-stack savepoint feature that
  * can't afford downtime.
- *
- * {@link pgDataRestoreArchive} must be delivered as a tar stream via `docker cp -`, never a
- * directory copy — a directory copy resets file ownership and Postgres refuses to start.
  */
 
 import { Effect, Option, Stream, type FileSystem } from "effect";
@@ -44,54 +42,37 @@ const PGDATA_DIR_NAME = PGDATA_PATH.slice(PGDATA_PARENT_PATH.length + 1);
 
 /**
  * Proves an archive carries an exported cluster: every Postgres data directory has a
- * `PG_VERSION` file at its root, written first by `initdb`. On its own this only proves "a
- * PostgreSQL cluster", weaker than what a cache key promises — see
- * {@link PGDATA_BASELINE_MARKER_ENTRY}.
+ * `PG_VERSION` file at its root, written by `initdb`. Weaker than what a cache key promises —
+ * see {@link PGDATA_BASELINE_MARKER_ENTRY}.
  */
 export const PGDATA_CLUSTER_ENTRY = `${PGDATA_DIR_NAME}/PG_VERSION`;
 
 /**
- * A file this module writes into PGDATA's ROOT ({@link stampPgDataBaselineMarker}) as the
- * last step before the export copies the directory out. Postgres ignores unknown regular files at
- * the data directory's root (`pg_upgrade` and friends routinely leave some there), and a restored
- * container simply carries it along, so the cost of the stamp is one 512-byte tar member.
+ * A file this module writes into PGDATA's root ({@link stampPgDataBaselineMarker}) as the last
+ * step before export. Postgres ignores unknown regular files there, so a restored container
+ * simply carries it along at the cost of one 512-byte tar member.
  *
- * SCREAMING_SNAKE on purpose, and not by taste: `docker cp` tars a directory through Go's
- * `filepath.Walk`, which visits each level in sorted order, so an uppercase root file lands
- * immediately next to `PG_VERSION` — near the front of a ~90MB archive rather than behind every
- * `base/` page. That is a PERFORMANCE hint for {@link validatePgDataArchive} only:
- * the scan is correct at any position, and settles late (not wrongly) if a Docker release ever
- * reorders its walk.
+ * Uppercase so it sorts near `PG_VERSION` at the front of the archive when `docker cp` tars the
+ * directory in sorted order — a scan hint only; {@link validatePgDataArchive} is correct at any
+ * position.
  */
 export const PGDATA_BASELINE_MARKER_NAME = "SUPABASE_BASELINE";
 
 /**
- * The marker's tar entry — what {@link validatePgDataArchive} looks for, and the reason a
- * cached snapshot means "the Supabase platform baseline this key promises" rather than merely "a
- * PostgreSQL cluster".
+ * The marker's tar entry — what {@link validatePgDataArchive} looks for to confirm a snapshot is
+ * the platform baseline this key promises, not merely a PostgreSQL cluster.
  *
- * Its whole value is WHEN it is written: {@link stampPgDataBaselineMarker} is called from the
- * export step alone, after the caller's own baseline has completed and immediately before the
- * copy-out. So an archive produced before the baseline ran — a wiring regression that moves the
- * snapshot earlier, or a hand-placed bare PGDATA tar dropped into the cache directory — cannot
- * carry it, and is rejected before anything is restored.
+ * {@link stampPgDataBaselineMarker} writes it only after the caller's baseline completes and
+ * immediately before the copy-out, so an archive produced earlier — or a hand-placed bare PGDATA
+ * tar — cannot carry it and is rejected before anything is restored.
  */
 export const PGDATA_BASELINE_MARKER_ENTRY = `${PGDATA_DIR_NAME}/${PGDATA_BASELINE_MARKER_NAME}`;
 
 /**
- * The marker's CONTENT: the caller's own identity token for what the snapshot carries — for the
- * shadow baseline cache, the cache key the archive is published under, which is also its
- * filename's stem (`shadowBaselineTarFileName`, `shadow-cache.ts`).
- *
- * Presence alone is strictly weaker than a snapshot's own filename claims: a perfectly valid
- * archive COPIED or RENAMED over another key's cache file passes a name-only check and warm-restores
- * a baseline built from different roles/vault values/service versions. Binding the marker to the
- * key — stamped at export, compared at validation ({@link validatePgDataArchive}) — is what
- * makes an archive vouch for the filename it is stored under, not merely for "some baseline".
- *
- * The trailing newline is the canonical form on BOTH sides: it makes the stamped file a normal
- * one-line text file (`cat`-able while debugging a cache directory) and both halves of the contract
- * go through this one function, so the two can never drift.
+ * The marker's content is the cache key the archive is published under (also its filename's
+ * stem), so a snapshot copied or renamed over another key's cache file fails validation instead
+ * of silently restoring the wrong baseline. Stamped with a trailing newline so the file stays
+ * plain text, and both halves of the check go through this one function.
  */
 export const pgDataBaselineMarkerContent = (key: string): string => `${key}\n`;
 
@@ -102,10 +83,9 @@ export const PGDATA_REQUIRED_ENTRIES: ReadonlyArray<string> = [
 ];
 
 /**
- * Internal-only "the snapshot could not be produced" signal — deliberately NOT a
- * `Data.TaggedError`: every caller of {@link exportPgDataTar} decides for itself how to
- * degrade (the shadow baseline cache warns and continues uncached), so this must not be mistaken
- * for a CLI-facing error.
+ * Internal "snapshot could not be produced" signal, not a `Data.TaggedError`: callers of
+ * {@link exportPgDataTar} each decide how to degrade (the shadow baseline cache warns and
+ * continues uncached), so this must not be mistaken for a CLI-facing error.
  */
 export interface PgDataSnapshotUnavailable {
   readonly reason: string;
@@ -117,12 +97,8 @@ const pgDataSnapshotUnavailable = (reason: string): PgDataSnapshotUnavailable =>
 
 /**
  * The one-member tar {@link stampPgDataBaselineMarker} pushes into the container:
- * `SUPABASE_BASELINE` relative to the `docker cp` destination, which is PGDATA itself, carrying
- * {@link pgDataBaselineMarkerContent}'s token for `key`.
- *
- * Exported for the unit test that round-trips it through this module's own scanner — the stamp and
- * the check have to agree on the entry name AND on the content encoding, and nothing else proves
- * that they do.
+ * `SUPABASE_BASELINE`, relative to PGDATA, carrying {@link pgDataBaselineMarkerContent}'s
+ * token for `key`. Exported so a unit test can round-trip it through this module's own scanner.
  */
 export const pgDataBaselineMarkerTar = (
   key: string,
@@ -139,20 +115,11 @@ export const pgDataBaselineMarkerTar = (
   });
 
 /**
- * Writes {@link PGDATA_BASELINE_MARKER_ENTRY} into the container's PGDATA, so the export
- * that follows carries it and {@link validatePgDataArchive} can tell a snapshot of a
- * COMPLETED baseline for `key` apart from any other cluster — including a valid snapshot of a
- * DIFFERENT key that was copied over this key's cache file.
- *
- * Delivered as a stdin tar through `docker cp -`, the same form the restore side uses
- * (`extractPreStartArchiveIntoContainer`, `container-lifecycle.ts`) and for the same reason:
- * it needs no daemon-visible host path, so it works against local, remote-context, and confined
- * Docker clients alike. `docker cp` into a STOPPED container is fully supported — which is exactly
- * the state this module's coherence contract already requires of the export.
- *
- * The caller owns the ORDERING that gives the marker its meaning: this must be the last mutation
- * before {@link exportPgDataTar}, and must run only once whatever the snapshot is supposed to
- * capture is genuinely in place.
+ * Writes {@link PGDATA_BASELINE_MARKER_ENTRY} into the container's PGDATA so the following
+ * export carries it, letting {@link validatePgDataArchive} tell a completed baseline for `key`
+ * apart from any other cluster (including a different key's snapshot copied over this cache
+ * file). Delivered as a stdin tar via `docker cp -` so it needs no daemon-visible host path.
+ * Must run as the last mutation before {@link exportPgDataTar}.
  */
 export const stampPgDataBaselineMarker = (
   spawner: Spawner,
@@ -167,20 +134,11 @@ export const stampPgDataBaselineMarker = (
   });
 
 /**
- * Streams `docker cp <containerId>:${PGDATA_PATH} -`'s tar straight to a temp file next to
- * `tarPath` and `rename`s it into place. The stream never lands in memory: the child's stdout is
- * piped into `FileSystem.sink`, so a large snapshot costs one buffer's worth of heap.
- *
- * The container must already be STOPPED (see this module's own header) — the caller owns the
- * stop/start around this call. The `rename` is the LAST step and is what publishes the entry: a
- * partially written tar must never be observable under the final name. Any failure removes the
- * temp file; nothing is left behind for a later run to find.
- *
- * The temp name is scoped by pid alone, so two exports to the same `tarPath` are safe across
- * processes but not within one: a same-process concurrent writer's pre-clean would unlink this
- * writer's live temp file, and the eventual `rename` could publish the other writer's
- * half-written bytes. Callers own that serialization — `shadow-cache.ts` holds
- * `shadowExportMutex` around every call.
+ * Streams `docker cp <containerId>:${PGDATA_PATH} -` to a temp file next to `tarPath` and
+ * `rename`s it into place, so a partially written tar is never visible under the final name;
+ * any failure removes the temp file. The container must already be stopped (callers own the
+ * stop/start), and the temp name is scoped by pid alone, so concurrent exports to the same
+ * `tarPath` must be externally serialized (`shadow-cache.ts` holds `shadowExportMutex`).
  */
 export const exportPgDataTar = (
   spawner: Spawner,
@@ -190,9 +148,8 @@ export const exportPgDataTar = (
 ): Effect.Effect<void, PgDataSnapshotUnavailable> => {
   const tempPath = `${tarPath}.${process.pid}.partial`;
   return Effect.gen(function* () {
-    // Clear any pre-existing file at the temp path (a crashed same-pid predecessor, or an
-    // adversarially pre-created one on a shared host) so the exclusive-create below starts from
-    // a genuinely fresh inode — see the sink's own comment.
+    // Clears a leftover temp file (crashed predecessor or pre-created by another process) so the
+    // exclusive-create below starts from a fresh inode.
     yield* fs.remove(tempPath).pipe(Effect.orElseSucceed(() => undefined));
     yield* Effect.scoped(
       Effect.gen(function* () {
@@ -212,14 +169,11 @@ export const exportPgDataTar = (
         const [exitCode, , stderr] = yield* Effect.all(
           [
             child.exitCode.pipe(Effect.map(Number)),
-            // `0o600`: the archive is a full PGDATA — vault secret values, the JWT secret, and
-            // role password hashes are all in its pages — so it must not be group/world-readable
-            // on a shared host. `rename` preserves the mode, so the published tar inherits it.
-            // `wx` (O_EXCL), not `w`: a plain truncating open would inherit an attacker-
-            // PRE-CREATED file's permissive mode instead of applying `mode` (which only governs
-            // creation). With the best-effort remove above, `wx` only ever fails if someone
-            // recreated the path in the race window — and that failure degrades to an uncached
-            // run, never to a world-readable tar.
+            // 0o600: the archive contains vault secrets, the JWT secret, and role password
+            // hashes, so it must not be group/world-readable; `rename` preserves the mode.
+            // `wx` (O_EXCL) avoids inheriting a pre-created file's more permissive mode; if the
+            // path was recreated in the race window, this degrades to an uncached run rather
+            // than a world-readable tar.
             Stream.run(child.stdout, fs.sink(tempPath, { flag: "wx", mode: 0o600 })),
             collectText(child.stderr),
           ],
@@ -251,10 +205,6 @@ export const exportPgDataTar = (
   }).pipe(Effect.onError(() => fs.remove(tempPath).pipe(Effect.orElseSucceed(() => undefined))));
 };
 
-// ---------------------------------------------------------------------------
-// Archive validation
-// ---------------------------------------------------------------------------
-
 /** POSIX tar's fixed block size: headers, file content, and the end marker are all multiples of it. */
 const TAR_BLOCK_SIZE = 512;
 
@@ -263,20 +213,16 @@ const TAR_NO_BYTES = new Uint8Array(0);
 const tarDecoder = new TextDecoder();
 
 /**
- * The most content {@link scanTarChunkForEntries} will ever buffer for `captureEntry`. The
- * only entry any caller captures is the baseline marker, whose content is one short identity token,
- * so a larger member cannot be a marker this module wrote: it is left UNCAPTURED (`captured` stays
- * `undefined`, which every reader treats as "does not match"), rather than being read into memory
- * on the word of an untrusted archive's own size field. Keeps the scan's O(1) memory property
- * intact whatever a hand-placed tar in the cache directory claims.
+ * Cap on how much of a captured entry {@link scanTarChunkForEntries} buffers. An oversized
+ * entry (larger than any marker this module writes) is left uncaptured rather than trusted on
+ * an untrusted archive's size field.
  */
 const TAR_CAPTURE_MAX_BYTES = 1024;
 
 /**
- * {@link scanTarChunkForEntries}'s carry-over state — everything needed to resume a header
- * walk at an arbitrary chunk boundary, and nothing else. `carry` holds the bytes of a header block
- * a chunk ended in the middle of (always `< 512`); `skip` counts the file-content bytes still to be
- * STEPPED OVER without buffering, which is what keeps a ~90MB archive off the heap.
+ * {@link scanTarChunkForEntries}'s carry-over state for resuming a header walk across chunk
+ * boundaries. `carry` holds a header block split across chunks (always `< 512` bytes); `skip`
+ * counts file-content bytes still to step over without buffering.
  */
 export interface TarScanState {
   readonly carry: Uint8Array;
@@ -284,22 +230,22 @@ export interface TarScanState {
   /** Consecutive all-zero blocks seen; two in a row is tar's end-of-archive marker. */
   readonly zeroBlocks: number;
   /**
-   * The required entries not seen yet. Empty means every one of them was found; whatever is left
-   * once the scan settles is what the archive is missing, which is what the caller reports.
+   * Required entries not yet seen. What remains when the scan settles is what the archive is
+   * missing.
    */
   readonly missing: ReadonlySet<string>;
   readonly ended: boolean;
   /** A block that is neither zero nor a checksum-valid header: not a tar (or a truncated one). */
   readonly malformed: boolean;
   /**
-   * The one entry whose CONTENT the walk reads rather than steps over — the baseline marker, whose
-   * bytes say which key the archive belongs to. `undefined` for a presence-only walk.
+   * The one entry whose content the walk reads instead of stepping over — the baseline marker,
+   * whose bytes say which key the archive belongs to. `undefined` for a presence-only walk.
    */
   readonly captureEntry: string | undefined;
   /**
-   * {@link captureEntry}'s content bytes. `undefined` until its header is seen, and STILL undefined
-   * afterwards when the entry was too large to capture ({@link TAR_CAPTURE_MAX_BYTES}) —
-   * both mean "no content to compare against", which is the safe verdict either way.
+   * {@link captureEntry}'s content bytes. `undefined` until its header is seen, or still
+   * `undefined` afterwards if the entry was too large to capture
+   * ({@link TAR_CAPTURE_MAX_BYTES}) — either way treated as "no content to compare against".
    */
   readonly captured: Uint8Array | undefined;
   /** Content bytes of {@link captureEntry} still to be captured; `0` once complete or not capturing. */
@@ -307,9 +253,8 @@ export interface TarScanState {
 }
 
 /**
- * A fresh walk looking for `required` — every entry of which must appear for the scan to pass —
- * capturing `captureEntry`'s content along the way when given (it must be one of `required`, so
- * that "found everything" also means "the captured entry's header was seen").
+ * A fresh walk requiring every entry in `required`, capturing `captureEntry`'s content along
+ * the way when given (it must be one of `required`).
  */
 export const initialTarScanState = (
   required: Iterable<string>,
@@ -365,10 +310,9 @@ const tarNumericField = (block: Uint8Array, offset: number, length: number): num
 };
 
 /**
- * Tar's own integrity check on a header block: the stored checksum is the sum of all 512 bytes
- * with the checksum field itself read as spaces. Both the unsigned and the (historical) signed
- * summation are accepted, as every tar reader does. This is what tells a genuine header apart from
- * arbitrary bytes, so a non-tar file cannot be walked as if it were one.
+ * Tar's header checksum: the sum of all 512 bytes with the checksum field itself read as
+ * spaces. Both the unsigned and historical signed summation are accepted, as every tar reader
+ * does; this is what tells a genuine header apart from arbitrary bytes.
  */
 const tarChecksumValid = (block: Uint8Array): boolean => {
   const stored = tarNumericField(block, 148, 8);
@@ -394,13 +338,11 @@ const tarEntryName = (block: Uint8Array): string => {
 const tarBlockIsZero = (block: Uint8Array): boolean => block.every((byte) => byte === 0);
 
 /**
- * Folds one stream chunk into a tar HEADER walk looking for every entry still in `state.missing`,
- * capturing `state.captureEntry`'s content if it has one. Pure and chunk-boundary-agnostic: every
- * other member's content is stepped over by byte count rather than buffered, so the whole scan
- * costs one partial header block plus (at most)
- * {@link TAR_CAPTURE_MAX_BYTES} of memory no matter how large the archive is. Stops (and
- * stays stopped) at the first of: the last required entry found (with its capture complete), the
- * end-of-archive marker, or a block that is not a valid header.
+ * Folds one stream chunk into a tar header walk for entries still in `state.missing`,
+ * capturing `state.captureEntry`'s content if given. Non-captured content is stepped over by
+ * byte count, bounding memory to one partial header block plus at most
+ * {@link TAR_CAPTURE_MAX_BYTES}. Stops at the first required entry found (with capture
+ * complete), the end-of-archive marker, or an invalid header block.
  */
 export const scanTarChunkForEntries = (state: TarScanState, chunk: Uint8Array): TarScanState => {
   if (tarScanSettled(state)) return state;
@@ -412,10 +354,9 @@ export const scanTarChunkForEntries = (state: TarScanState, chunk: Uint8Array): 
   let capturePending = state.capturePending;
   const { captureEntry } = state;
   /**
-   * Appends the leading `capturePending` bytes of a content run being consumed. Content bytes are
-   * always consumed front-to-back, and `capturePending` never exceeds what is left of the capture
-   * entry's own content, so this is correct whether the run is the tail carried over from the
-   * previous chunk or a fresh member's content in this one.
+   * Appends the leading `capturePending` bytes of a content run. `capturePending` never exceeds
+   * what remains of the capture entry's content, so this is correct whether the run is carried
+   * over from the previous chunk or fresh in this one.
    */
   const takeCapture = (bytes: Uint8Array): void => {
     if (capturePending <= 0 || captured === undefined) return;
@@ -486,9 +427,8 @@ export const scanTarChunkForEntries = (state: TarScanState, chunk: Uint8Array): 
     if (size === undefined || size < 0) {
       return settle({ ended: false, malformed: true });
     }
-    // Arm the capture on the capture entry's FIRST occurrence only (`wasMissing`), so a duplicate
-    // member later in the archive cannot overwrite what the real one said. An oversized entry is
-    // left uncaptured — see {@link TAR_CAPTURE_MAX_BYTES}.
+    // Arm the capture only on the entry's first occurrence (`wasMissing`), so a later duplicate
+    // member cannot overwrite it. An oversized entry is left uncaptured; see {@link TAR_CAPTURE_MAX_BYTES}.
     if (wasMissing && name === captureEntry && size <= TAR_CAPTURE_MAX_BYTES) {
       captured = TAR_NO_BYTES;
       capturePending = size;
@@ -519,43 +459,26 @@ export const scanTarChunkForEntries = (state: TarScanState, chunk: Uint8Array): 
 };
 
 /**
- * Why an archive at `tarPath` must not be restored under `key` — the two distinguishable ways
- * {@link validatePgDataArchive} can reject one. Both implicate the FILE, never the
- * infrastructure, so both are safe for a caller to act on by discarding it.
+ * The two ways {@link validatePgDataArchive} can reject an archive for `key`. Both implicate
+ * the file, not the infrastructure, so a caller can safely act on either by discarding it.
  */
 export type PgDataArchiveProblem =
   /** The header stream never carried one of {@link PGDATA_REQUIRED_ENTRIES}. */
   | { readonly _tag: "missing-entries"; readonly entries: ReadonlyArray<string> }
   /**
-   * Every entry is there, but the marker vouches for a DIFFERENT key than the one this archive is
-   * stored under. `found` is the marker's own token (trimmed), or `undefined` when it carried none
-   * that could be read (an oversized or truncated marker member).
+   * Every entry is there, but the marker vouches for a different key than the one this archive
+   * is stored under. `found` is the marker's own token (trimmed), or `undefined` when it
+   * carried none that could be read.
    */
   | { readonly _tag: "wrong-key"; readonly expected: string; readonly found: string | undefined };
 
 /**
- * Whether `tarPath` is a snapshot that may be restored as `key`'s baseline — `Option.none()` when
- * it is, the reason it is not otherwise.
+ * Whether `tarPath` is a snapshot that may be restored as `key`'s baseline: `Option.none()` when
+ * it may, otherwise the reason it may not.
  *
- * Three failures, each invisible to the restore itself. Without `PG_VERSION`, an archive that is
- * syntactically fine but carries no cluster (an EMPTY tar qualifies) restores SILENTLY:
- * `docker cp -` extracts nothing, the Postgres entrypoint finds an empty PGDATA and runs a fresh
- * `initdb`, readiness passes, and the caller is handed a bare cluster it believes carries the
- * platform baseline. Without the baseline marker, that same silent-success shape survives one level
- * up: a REAL but bare PGDATA tar (dropped into the cache directory by hand, or produced by a future
- * regression that exports before the baseline runs) restores, starts, and answers — and only the
- * resulting diff would ever show it. And without the marker's CONTENT, it survives one level up
- * again: a genuine, fully baselined snapshot of ANOTHER key, copied or renamed over this key's
- * cache file, passes every name-only check while carrying different roles, vault values, and
- * service-version schema — see {@link pgDataBaselineMarkerContent}. Validating the header
- * stream up front is the only place any of the three is observable, so callers must check BEFORE
- * restoring.
- *
- * Reads the file locally — no Docker, no extraction — and stops as soon as both entries have been
- * seen and the marker's few bytes read; see {@link PGDATA_BASELINE_MARKER_NAME} for why that
- * is normally within the archive's first blocks. Even a full walk only parses HEADERS (every other
- * member's content is stepped over by byte count), so the cost is one sequential read with O(1)
- * memory. Only a genuine read failure fails; a valid tar that does not qualify simply reports why.
+ * Guards against three silent-failure levels: no cluster at all (missing `PG_VERSION`), a bare
+ * PGDATA never baselined (missing marker), and a different key's baseline copied over this
+ * cache file (marker content mismatch). Reads the file locally with O(1) memory.
  */
 export const validatePgDataArchive = (
   fs: FileSystem.FileSystem,
@@ -595,16 +518,15 @@ const pgDataArchiveProblem = (
   if (entries.length > 0) return Option.some({ _tag: "missing-entries", entries });
   const stamped = tarScanCapturedText(state);
   if (stamped === pgDataBaselineMarkerContent(key)) return Option.none();
-  // Trimmed for the report only — the comparison above is on the exact canonical form, so a marker
-  // padded with whitespace is a mismatch rather than something to normalize into a match.
+  // Trimmed for the report only; the comparison above uses the exact canonical form, so a
+  // whitespace-padded marker is still a mismatch.
   return Option.some({ _tag: "wrong-key", expected: key, found: stamped?.trim() });
 };
 
 /**
- * Builds the {@link StartContainerSpec.preStartArchives} entry that restores a
+ * Builds the {@link StartContainerSpec.preStartArchives} entry that restores an
  * {@link exportPgDataTar} tar into a container between `docker create` and `docker start`.
- * `containerPath` is PGDATA's PARENT, not PGDATA itself — see {@link PGDATA_PARENT_PATH}'s
- * own doc comment for why.
+ * `containerPath` is PGDATA's parent, not PGDATA itself; see {@link PGDATA_PARENT_PATH}.
  */
 export const pgDataRestoreArchive = (
   fs: FileSystem.FileSystem,

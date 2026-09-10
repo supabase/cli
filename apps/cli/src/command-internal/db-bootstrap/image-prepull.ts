@@ -79,12 +79,8 @@ export function ensureImagesCached(
     }
 
     if (failures.length > 0) {
-      // Go sets the install hint once, sequentially, after the concurrent
-      // resolve finishes (`SuggestDockerInstallIfConnectionFailed`,
-      // `start.go:254-259`) rather than from inside the resolver itself, where
-      // concurrent goroutines would race on the shared `CmdSuggestion` global.
-      // There is no such global here, so the hint is appended directly onto
-      // the joined message instead.
+      // The install hint is appended once after every resolve finishes, rather than emitted
+      // from inside the resolver, to avoid duplicate hints from concurrent failures.
       const hint = failures.some(isDockerDaemonUnreachable) ? `\n\n${SUGGEST_DOCKER_INSTALL}` : "";
       return yield* Effect.fail(
         new ImagePrepullError({
