@@ -5,6 +5,11 @@
 # This guarantees that we keep patch files LF everywhere.
 patches/*.patch text eol=lf
 
+# error-tag-stability.unit.test.ts splits this fixture on newlines to diff it
+# against a live-scanned tag set. Pin it to LF so a CRLF checkout on Windows
+# can't leave a trailing `\r` on every entry and make every tag mismatch.
+apps/cli/src/shared/telemetry/__fixtures__/error-tags.txt text eol=lf
+
 # Generated artifacts. `linguist-generated` keeps these out of GitHub's language
 # statistics and collapses them in pull request diffs -- they are build output to
 # be regenerated, not code to review, and together they outweigh the hand-written
