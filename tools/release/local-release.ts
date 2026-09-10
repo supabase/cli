@@ -172,7 +172,6 @@ async function main() {
     );
   }
 
-  // All build output goes into a system temp directory — never into the git repo.
   const tmpDir = await mkdtemp(path.join(tmpdir(), "supabase-local-release-"));
 
   try {
@@ -181,8 +180,6 @@ async function main() {
     const umbrellaName: string = cliPkgJson.name;
 
     console.log(`\nBuilding ${umbrellaName}@${version} (${platform.platformPkg})...\n`);
-
-    // ── Build platform package ────────────────────────────────────────────
 
     const tmpPlatformDir = path.join(tmpDir, platform.platformPkg);
     const tmpPlatformBinDir = path.join(tmpPlatformDir, "bin");
@@ -198,10 +195,9 @@ async function main() {
     {
       const goBinary = path.join(tmpPlatformBinDir, `supabase-go${platform.ext}`);
       console.log(`[2/3] Compiling Go CLI binary (${platform.goos}/${platform.goarch})...`);
-      // Run go build from within the Go source directory so Go can find
-      // the go.mod there. Passing an absolute path as a positional arg
-      // causes Go to resolve the module from CWD instead, which fails
-      // because the repo root has no go.mod.
+      // go build must run from the Go source directory: passing an absolute path as a positional
+      // arg makes Go resolve the module from CWD instead, which fails because the repo root has
+      // no go.mod.
       await $`go build -trimpath -ldflags="-s -w" -o ${goBinary} .`.cwd(goSource).env({
         ...process.env,
         GOOS: platform.goos,
@@ -209,8 +205,6 @@ async function main() {
         CGO_ENABLED: "0",
       });
     }
-
-    // ── Build umbrella package shim ───────────────────────────────────────
 
     const tmpCliDir = path.join(tmpDir, "cli");
     const tmpCliDistDir = path.join(tmpCliDir, "dist");
@@ -221,9 +215,6 @@ async function main() {
     console.log("[3/3] Building Node.js shim...");
     await $`bun build ${shimSrc} --outfile=${shimOut} --target=node`;
 
-    // ── Write package.json files ──────────────────────────────────────────
-
-    // Platform package: copy as-is, bump version.
     const platformPkgJson = await Bun.file(
       path.join(root, "packages", platform.platformPkg, "package.json"),
     ).json();
@@ -233,10 +224,8 @@ async function main() {
       `${JSON.stringify(platformPkgJson, null, "\t")}\n`,
     );
 
-    // Umbrella package: build a minimal package.json.
-    // The shim only uses Node built-ins — all @supabase/* and catalog: deps
-    // are bundled in the platform binary and must not appear in the published
-    // package.json (catalog: and workspace:* are invalid outside pnpm workspaces).
+    // The shim only uses Node built-ins; @supabase/* and catalog: deps are bundled in the platform
+    // binary and must not appear here (catalog: and workspace:* are invalid outside pnpm workspaces).
     const resolvedOptionalDeps: Record<string, string> = {};
     for (const pkg of PLATFORM_PACKAGES) {
       resolvedOptionalDeps[`@supabase/${pkg}`] = version;
@@ -256,20 +245,16 @@ async function main() {
       `${JSON.stringify(publishPkgJson, null, "\t")}\n`,
     );
 
-    // ── Write .npmrc with registry and auth token ─────────────────────────
-
     const npmrc = [`registry=${REGISTRY}`, `//localhost:${PORT}/:_authToken=${token}`, ""].join(
       "\n",
     );
     await Bun.write(path.join(tmpPlatformDir, ".npmrc"), npmrc);
     await Bun.write(path.join(tmpCliDir, ".npmrc"), npmrc);
 
-    // ── Publish ───────────────────────────────────────────────────────────
-
     console.log(`\nPublishing @supabase/${platform.platformPkg}@${version} to local registry...`);
-    // Use bun publish for the platform binary package: pnpm normalises file
-    // modes in tarballs and strips the execute bit from files not in the
-    // package's `bin` field. bun publish preserves modes, matching production.
+    // bun publish (not pnpm) for the platform binary package: pnpm normalizes tarball file modes
+    // and strips the execute bit from files outside the package's `bin` field; bun publish
+    // preserves modes, matching production.
     await $`bun publish --access public --tag local --registry ${REGISTRY} --no-git-checks`.cwd(
       tmpPlatformDir,
     );
@@ -290,7 +275,6 @@ Or install globally:
   supabase --version
 `);
   } finally {
-    // Always remove the temp directory — even on failure.
     await rm(tmpDir, { recursive: true, force: true });
   }
 }
