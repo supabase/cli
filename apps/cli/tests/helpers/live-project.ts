@@ -6,6 +6,7 @@ import path from "node:path";
 import { makeApiClient, type OperationOutput } from "@supabase/api/effect";
 import { Cause, Data, Effect, Exit, Schedule } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import { getDomain } from "tldts";
 
 import {
   deriveLiveProjectHost,
@@ -450,7 +451,7 @@ function writeProfile(
       const directory = await mkdtemp(path.join(tmpdir(), "supabase-live-profile-"));
       const profilePath = path.join(directory, "profile.yaml");
       try {
-        const poolerHost = new URL(dbUrl).hostname;
+        const poolerHost = getDomain(new URL(dbUrl).hostname) ?? "";
         await writeFile(
           profilePath,
           [
