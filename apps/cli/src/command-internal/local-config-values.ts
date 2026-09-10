@@ -381,7 +381,7 @@ export class InvalidAnalyticsBackendEnvOverrideError extends Error {
  * declared type is a plain `string`, not the literal union, so a call-site ternary would
  * re-widen the result.
  */
-function envOverrideAnalyticsBackend(
+export function envOverrideAnalyticsBackend(
   configured: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   skipEnvOverride = false,
@@ -2591,8 +2591,8 @@ export function resolveAuthSms(
  * {@link resolveAuthSms}'s env-override-aware result, same document-based, post-override
  * pattern as {@link validateAuthExternalProviders} below.
  */
-function validateAuthSmsProviders(
-  authDocument: Record<string, unknown> | undefined,
+export function validateAuthSmsProviders(
+  authDocument: Readonly<Record<string, unknown>> | undefined,
   sms: CliConfig["auth"]["sms"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
@@ -2874,8 +2874,8 @@ export function resolveAuthExternalProviders(
  * check has for KNOWN providers too (that check only sees the decoded, pre-override TOML value),
  * so this now covers both known and unmodeled provider names uniformly.
  */
-function validateAuthExternalProviders(
-  authDocument: Record<string, unknown> | undefined,
+export function validateAuthExternalProviders(
+  authDocument: Readonly<Record<string, unknown>> | undefined,
   external: CliConfig["auth"]["external"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),

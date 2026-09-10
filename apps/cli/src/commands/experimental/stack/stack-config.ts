@@ -1,6 +1,6 @@
 import type { CliConfig } from "@supabase/config";
 import { Effect, Data, FileSystem, Option, Path, Redacted, Schema } from "effect";
-import { StackConfigSchema, type StackConfig } from "@supabase/stack/effect";
+import { StackConfigSchema, type AuthSettings, type StackConfig } from "@supabase/stack/effect";
 
 import { loadLocalProjectContext } from "../../../command-internal/local-project-context.ts";
 import { parseDotEnv } from "../../../command-internal/dotenv.ts";
@@ -8,6 +8,7 @@ import {
   envOverride,
   envOverrideApiMaxRows,
   envOverrideAuthPasswordRequirements,
+  envOverrideAnalyticsBackend,
   envOverrideBool,
   envOverrideDefaultPoolSize,
   envOverrideDenoVersion,
@@ -23,6 +24,8 @@ import {
   resolveAuthEmail,
   resolveAuthEmailSmtp,
   resolveAuthExternalProviders,
+  validateAuthExternalProviders,
+  validateAuthSmsProviders,
   resolveAuthHooks,
   resolveAuthMfa,
   resolveAuthSms,
@@ -32,6 +35,7 @@ import {
   resolveGotrueSessions,
   resolveGotrueWeb3,
 } from "../../../command-internal/local-config-values.ts";
+import { type AuthInput, validateAuthConfig } from "../../../command-internal/config-validate.ts";
 import {
   collectDotenvPrivateKeys,
   decryptSecret,
@@ -394,6 +398,7 @@ const authSettings = (
   auth: CliConfig["auth"],
   document: Readonly<Record<string, unknown>> | undefined,
   env: Readonly<Record<string, string>>,
+  signingKeysPath: string | undefined,
 ) => {
   const authDocument = section(document, "auth");
   const resolvedEmail = resolveAuthEmail(auth.email, authDocument, env);
@@ -486,7 +491,10 @@ const authSettings = (
     },
   };
 
-  const hooks: Record<string, unknown> = {};
+  const hooks: Record<
+    string,
+    { enabled: boolean; uri?: string; secrets?: Redacted.Redacted<string> }
+  > = {};
   const hookDocument = section(authDocument, "hook");
   const hookValues = {
     mfa_verification_attempt: resolvedHooks.mfaVerificationAttempt,
@@ -512,7 +520,7 @@ const authSettings = (
     if (
       resolved === undefined ||
       auth.external[name] === undefined ||
-      externalDocument?.[name] === undefined
+      (name !== "apple" && externalDocument?.[name] === undefined)
     )
       continue;
     external[name] = {
@@ -554,7 +562,7 @@ const authSettings = (
     vonage: provider({
       enabled: resolvedSms.vonage.enabled,
       from: resolvedSms.vonage.from,
-      api_key: resolvedSms.vonage.api_key,
+      api_key: secret(resolvedSms.vonage.api_key),
       api_secret: secret(resolvedSms.vonage.api_secret),
     }),
     ...(auth.sms.test_otp === undefined ? {} : { test_otp: auth.sms.test_otp }),
@@ -574,7 +582,7 @@ const authSettings = (
           smtp: {
             enabled: resolvedSmtp.enabled,
             host: resolvedSmtp.host,
-            port: resolvedSmtp.port,
+            ...(resolvedSmtp.port === 0 ? {} : { port: resolvedSmtp.port }),
             user: resolvedSmtp.user,
             pass: Redacted.make(resolvedSmtp.pass),
             admin_email: resolvedSmtp.adminEmail,
@@ -604,7 +612,7 @@ const authSettings = (
     ),
     jwt_expiry: envUint("SUPABASE_AUTH_JWT_EXPIRY", auth.jwt_expiry, "auth.jwt_expiry", env),
     jwt_issuer: envString("SUPABASE_AUTH_JWT_ISSUER", auth.jwt_issuer, env),
-    signing_keys_path: auth.signing_keys_path,
+    signing_keys_path: signingKeysPath,
     enable_refresh_token_rotation: envBool(
       "SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION",
       auth.enable_refresh_token_rotation,
@@ -672,6 +680,110 @@ const authSettings = (
   };
 };
 
+const authValidationInput = (resolved: AuthSettings): AuthInput => {
+  const hooks = [
+    ["mfa_verification_attempt", resolved.hook?.mfa_verification_attempt],
+    ["password_verification_attempt", resolved.hook?.password_verification_attempt],
+    ["custom_access_token", resolved.hook?.custom_access_token],
+    ["send_sms", resolved.hook?.send_sms],
+    ["send_email", resolved.hook?.send_email],
+    ["before_user_created", resolved.hook?.before_user_created],
+  ] as const;
+
+  const mfa = [
+    ["totp", resolved.mfa?.totp],
+    ["phone", resolved.mfa?.phone],
+    ["web_authn", resolved.mfa?.web_authn],
+  ] as const;
+
+  return {
+    siteUrl: resolved.site_url ?? "",
+    captcha:
+      resolved.captcha === undefined
+        ? undefined
+        : {
+            enabled: resolved.captcha.enabled === true,
+            provider: resolved.captcha.provider,
+            secret:
+              resolved.captcha.secret === undefined
+                ? undefined
+                : Redacted.value(resolved.captcha.secret),
+          },
+    hooks: hooks.flatMap(([type, hook]) =>
+      hook?.enabled === true
+        ? [
+            {
+              type,
+              uri: hook.uri ?? "",
+              secrets: hook.secrets === undefined ? "" : Redacted.value(hook.secrets),
+            },
+          ]
+        : [],
+    ),
+    mfa: mfa.map(([label, factor]) => ({
+      label,
+      enrollEnabled: factor?.enroll_enabled === true,
+      verifyEnabled: factor?.verify_enabled === true,
+    })),
+    smtp:
+      resolved.email?.smtp === undefined
+        ? undefined
+        : {
+            enabled: resolved.email.smtp.enabled === true,
+            host: resolved.email.smtp.host ?? "",
+            port: resolved.email.smtp.port ?? 0,
+            user: resolved.email.smtp.user ?? "",
+            pass:
+              resolved.email.smtp.pass === undefined
+                ? ""
+                : Redacted.value(resolved.email.smtp.pass),
+            adminEmail: resolved.email.smtp.admin_email ?? "",
+          },
+    thirdParty: [
+      ...(resolved.third_party?.firebase?.enabled === true
+        ? [
+            {
+              provider: "firebase" as const,
+              requiredField: resolved.third_party.firebase.project_id ?? "",
+            },
+          ]
+        : []),
+      ...(resolved.third_party?.auth0?.enabled === true
+        ? [
+            {
+              provider: "auth0" as const,
+              requiredField: resolved.third_party.auth0.tenant ?? "",
+            },
+          ]
+        : []),
+      ...(resolved.third_party?.aws_cognito?.enabled === true
+        ? [
+            {
+              provider: "cognito" as const,
+              requiredField: resolved.third_party.aws_cognito.user_pool_id ?? "",
+              cognitoUserPoolRegion: resolved.third_party.aws_cognito.user_pool_region,
+            },
+          ]
+        : []),
+      ...(resolved.third_party?.clerk?.enabled === true
+        ? [
+            {
+              provider: "clerk" as const,
+              requiredField: resolved.third_party.clerk.domain ?? "",
+            },
+          ]
+        : []),
+      ...(resolved.third_party?.workos?.enabled === true
+        ? [
+            {
+              provider: "workos" as const,
+              requiredField: resolved.third_party.workos.issuer_url ?? "",
+            },
+          ]
+        : []),
+    ],
+  };
+};
 const functionsSettings = (
   projectRoot: string,
   path: Path.Path,
@@ -782,6 +894,16 @@ const configInput = (
     max_rows: apiMaxRows,
     tls: apiTls,
     external_url: envString("SUPABASE_API_EXTERNAL_URL", api.external_url, projectEnvValues),
+    auto_expose_new_tables:
+      api.auto_expose_new_tables !== undefined ||
+      envOverride("SUPABASE_API_AUTO_EXPOSE_NEW_TABLES", undefined, projectEnvValues) !== undefined
+        ? envBool(
+            "SUPABASE_API_AUTO_EXPOSE_NEW_TABLES",
+            api.auto_expose_new_tables ?? false,
+            "api.auto_expose_new_tables",
+            projectEnvValues,
+          )
+        : undefined,
   };
   const dbPort = envPortOrConfigured(
     "SUPABASE_DB_PORT",
@@ -792,21 +914,7 @@ const configInput = (
     projectEnvValues,
   );
   const dbMajorVersion = envOverrideMajorVersion(db.major_version, projectEnvValues);
-  const resolvedDbSettings = resolveDbSettingsEnvOverrides(db.settings, projectEnvValues);
-  const {
-    session_replication_role: dbSessionReplicationRole,
-    ...dbSettingsWithoutSessionReplicationRole
-  } = resolvedDbSettings;
-  const normalizeDbSessionReplicationRole = (
-    value: string | undefined,
-  ): "local" | "origin" | "replica" | undefined => {
-    if (value === "local" || value === "origin" || value === "replica") return value;
-    return undefined;
-  };
-  const dbSettings = {
-    ...dbSettingsWithoutSessionReplicationRole,
-    session_replication_role: normalizeDbSessionReplicationRole(dbSessionReplicationRole),
-  };
+  const dbSettings = resolveDbSettingsEnvOverrides(db.settings, projectEnvValues);
   const realtimeResolved = {
     ...realtime,
     enabled: envBool(
@@ -821,6 +929,18 @@ const configInput = (
       projectEnvValues,
     ),
   };
+  const imageTransformationPresent =
+    section(section(document, "storage"), "image_transformation") !== undefined;
+  const imageTransformation = imageTransformationPresent
+    ? {
+        enabled: envBool(
+          "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
+          storage.image_transformation?.enabled ?? false,
+          "storage.image_transformation.enabled",
+          projectEnvValues,
+        ),
+      }
+    : undefined;
   const storageResolved = {
     ...storage,
     enabled: envBool(
@@ -834,9 +954,7 @@ const configInput = (
       String(storage.file_size_limit),
       projectEnvValues,
     ),
-    image_transformation: {
-      enabled: storage.image_transformation?.enabled,
-    },
+    image_transformation: imageTransformation,
     s3_protocol: {
       ...storage.s3_protocol,
       enabled: envBool(
@@ -909,11 +1027,7 @@ const configInput = (
     "analytics.enabled",
     projectEnvValues,
   );
-  const analyticsBackendValue = envOverride(
-    "SUPABASE_ANALYTICS_BACKEND",
-    analytics.backend,
-    projectEnvValues,
-  );
+  const analyticsBackendValue = envOverrideAnalyticsBackend(analytics.backend, projectEnvValues);
   const analyticsResolved = {
     ...analytics,
     enabled: analyticsEnabled,
@@ -1013,37 +1127,55 @@ const configInput = (
     default_pool_size: envOverrideDefaultPoolSize(pooler.default_pool_size, projectEnvValues),
     max_client_conn: envOverrideMaxClientConn(pooler.max_client_conn, projectEnvValues),
   };
+  const signingKeysPath = envString(
+    "SUPABASE_AUTH_SIGNING_KEYS_PATH",
+    auth.signing_keys_path,
+    projectEnvValues,
+  );
   const authResolvedSettings = authEnabled
-    ? authSettings(auth, document, projectEnvValues)
+    ? authSettings(auth, document, projectEnvValues, signingKeysPath)
     : undefined;
   const jwtIssuer = envString("SUPABASE_AUTH_JWT_ISSUER", auth.jwt_issuer, projectEnvValues);
   const jwtSecret = envSecret("SUPABASE_AUTH_JWT_SECRET", auth.jwt_secret, projectEnvValues);
   const jwtSigning = (): JwtSigning | undefined => {
-    if (auth.signing_keys_path !== undefined)
+    if (signingKeysPath !== undefined)
       return {
         kind: "jwks-file",
-        path: stackProjectPath(path, auth.signing_keys_path),
+        path: stackProjectPath(path, signingKeysPath),
       };
     if (jwtSecret !== undefined) return { kind: "symmetric", secret: jwtSecret };
     return undefined;
   };
+  const signing = jwtSigning();
   const capability = <T>(enabled: boolean, settings: T) =>
     enabled ? { settings } : { enabled: false as const };
   return {
     capabilities: {
       database: {
         version: String(dbMajorVersion),
-        settings: { health_timeout: db.health_timeout, settings: dbSettings },
+        settings: {
+          health_timeout: envString(
+            "SUPABASE_DB_HEALTH_TIMEOUT",
+            db.health_timeout,
+            projectEnvValues,
+          ),
+          settings: dbSettings,
+        },
       },
       rest: capability(apiResolved.enabled, {
         schemas: apiResolved.schemas,
         extra_search_path: apiResolved.extra_search_path,
         max_rows: apiResolved.max_rows,
-        auto_expose_new_tables: apiResolved.auto_expose_new_tables,
+        ...(apiResolved.auto_expose_new_tables === undefined
+          ? {}
+          : { auto_expose_new_tables: apiResolved.auto_expose_new_tables }),
         tls: apiResolved.tls,
         external_url: apiResolved.external_url,
       }),
-      auth: authEnabled ? { settings: authResolvedSettings } : { enabled: false as const },
+      auth:
+        authResolvedSettings === undefined
+          ? { enabled: false as const }
+          : { settings: { ...authResolvedSettings, signing_keys_path: signingKeysPath } },
       realtime: capability(realtimeResolved.enabled, {
         ip_version: realtimeResolved.ip_version,
         max_header_length: realtimeResolved.max_header_length,
@@ -1140,7 +1272,7 @@ const configInput = (
     security: {
       jwt: {
         ...(jwtIssuer === undefined ? {} : { issuer: jwtIssuer }),
-        ...(jwtSigning() === undefined ? {} : { signing: jwtSigning() }),
+        ...(signing === undefined ? {} : { signing }),
       },
     },
   };
@@ -1183,26 +1315,42 @@ const decryptConsumedSecrets = (
     return Object.fromEntries(entries);
   });
 
+const authValidationError = (
+  auth: AuthSettings,
+  config: CliConfig,
+  document: Readonly<Record<string, unknown>> | undefined,
+  projectEnvValues: Readonly<Record<string, string>>,
+): string | undefined => {
+  try {
+    validateAuthConfig(authValidationInput(auth));
+    const authDocument = section(document, "auth");
+    const figma = config.auth.external.figma;
+    if (
+      figma !== undefined &&
+      section(section(authDocument, "external"), "figma") !== undefined &&
+      envOverrideBool(
+        "SUPABASE_AUTH_EXTERNAL_FIGMA_ENABLED",
+        figma.enabled,
+        "auth.external.figma.enabled",
+        projectEnvValues,
+      )
+    )
+      return "auth.external.figma is enabled but unsupported by the experimental stack";
+    validateAuthSmsProviders(authDocument, config.auth.sms, projectEnvValues);
+    validateAuthExternalProviders(authDocument, config.auth.external, projectEnvValues);
+    return undefined;
+  } catch (cause) {
+    return cause instanceof Error ? cause.message : String(cause);
+  }
+};
+
 const configValidationError = (
   path: Path.Path,
   projectRoot: string,
   config: CliConfig,
-  document: Readonly<Record<string, unknown>> | undefined,
   projectEnvValues: Readonly<Record<string, string>>,
   effectiveEdgeEnabled: boolean,
 ): string | undefined => {
-  const figma = config.auth.external.figma;
-  if (
-    figma !== undefined &&
-    section(section(section(document, "auth"), "external"), "figma") !== undefined &&
-    envOverrideBool(
-      "SUPABASE_AUTH_EXTERNAL_FIGMA_ENABLED",
-      figma.enabled,
-      "auth.external.figma.enabled",
-      projectEnvValues,
-    )
-  )
-    return "auth.external.figma is enabled but unsupported by the experimental stack";
   if (!effectiveEdgeEnabled) return undefined;
   for (const [name, functionConfig] of Object.entries(config.functions)) {
     if (functionConfig.enabled === false) continue;
@@ -1260,7 +1408,6 @@ export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
           path,
           projectRoot,
           context.config,
-          loaded.document,
           context.projectEnvValues,
           edgeEnabled,
         ),
@@ -1280,12 +1427,6 @@ export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
           .map(([name]) => name),
       ),
       !edgeEnabled,
-    ).pipe(
-      Effect.mapError((cause) =>
-        cause instanceof StackConfigError
-          ? cause
-          : new StackConfigError({ message: String(cause) }),
-      ),
     );
     const input = yield* Effect.try({
       try: () =>
@@ -1361,14 +1502,14 @@ export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
               },
             },
           };
-    const dotenvPrivateKeys = collectDotenvPrivateKeys({
-      ...context.projectEnvValues,
-      ...process.env,
-    });
+    const dotenvPrivateKeys = collectDotenvPrivateKeys(context.projectEnvValues);
     const decrypted = yield* decryptConsumedSecrets(mergedInput, dotenvPrivateKeys);
-    return yield* Schema.decodeUnknownEffect(StackConfigSchema)(withoutUndefined(decrypted), {
-      onExcessProperty: "error",
-    }).pipe(
+    const decoded = yield* Schema.decodeUnknownEffect(StackConfigSchema)(
+      withoutUndefined(decrypted),
+      {
+        onExcessProperty: "error",
+      },
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new StackConfigError({
@@ -1376,4 +1517,19 @@ export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
           }),
       ),
     );
+    const authCapability = decoded.capabilities?.auth;
+    if (authCapability !== undefined && "settings" in authCapability) {
+      const auth = authCapability.settings;
+      if (auth !== undefined) {
+        const validationError = authValidationError(
+          auth,
+          context.config,
+          loaded.document,
+          context.projectEnvValues,
+        );
+        if (validationError !== undefined)
+          return yield* new StackConfigError({ message: validationError });
+      }
+    }
+    return decoded;
   });

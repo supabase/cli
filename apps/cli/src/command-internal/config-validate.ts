@@ -372,6 +372,171 @@ export function validateApiTlsPresence(
   }
 }
 
+/** Validates the auth subtree when the effective auth capability is enabled. */
+export function validateAuthConfig(auth: AuthInput): void {
+  if (auth.siteUrl.length === 0) {
+    throw new ConfigValidateError("Missing required field in config: auth.site_url");
+  }
+
+  if (auth.captcha !== undefined) {
+    const provider = auth.captcha.provider;
+    if (
+      provider !== undefined &&
+      provider.length > 0 &&
+      provider !== "hcaptcha" &&
+      provider !== "turnstile"
+    ) {
+      throw new ConfigValidateError(
+        "failed to parse config: decoding failed due to the following error(s):\n\n'auth.captcha.provider' must be one of [hcaptcha turnstile]",
+      );
+    }
+    if (auth.captcha.enabled) {
+      if (auth.captcha.provider === undefined) {
+        throw new ConfigValidateError("Missing required field in config: auth.captcha.provider");
+      }
+      if (auth.captcha.secret === undefined || auth.captcha.secret.length === 0) {
+        throw new ConfigValidateError("Missing required field in config: auth.captcha.secret");
+      }
+    }
+  }
+
+  if (auth.passkey !== undefined) {
+    if (!auth.passkey.webauthnPresent) {
+      throw new ConfigValidateError(
+        "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
+      );
+    }
+    if (auth.passkey.rpId === undefined || auth.passkey.rpId.length === 0) {
+      throw new ConfigValidateError("Missing required field in config: auth.webauthn.rp_id");
+    }
+    if (auth.passkey.rpOrigins === undefined || auth.passkey.rpOrigins.length === 0) {
+      throw new ConfigValidateError("Missing required field in config: auth.webauthn.rp_origins");
+    }
+  }
+
+  for (const hook of auth.hooks) {
+    if (hook.uri.length === 0) {
+      throw new ConfigValidateError(`Missing required field in config: auth.hook.${hook.type}.uri`);
+    }
+    let scheme: string;
+    try {
+      scheme = goUrlParse(hook.uri).scheme;
+    } catch (cause) {
+      throw new ConfigValidateError(`failed to parse template url: ${messageOf(cause)}`);
+    }
+    if (scheme === "http" || scheme === "https") {
+      if (hook.secrets.length === 0) {
+        throw new ConfigValidateError(
+          `Missing required field in config: auth.hook.${hook.type}.secrets`,
+        );
+      }
+      for (const secret of hook.secrets.split("|")) {
+        if (!HOOK_SECRET_PATTERN.test(secret)) {
+          throw new ConfigValidateError(
+            `Invalid hook config: auth.hook.${hook.type}.secrets must be formatted as "v1,whsec_<base64_encoded_secret>" with a minimum length of 32 characters.`,
+          );
+        }
+      }
+    } else if (scheme === "pg-functions") {
+      if (hook.secrets.length > 0) {
+        throw new ConfigValidateError(
+          `Invalid hook config: auth.hook.${hook.type}.secrets is unsupported for pg-functions URI`,
+        );
+      }
+    } else {
+      throw new ConfigValidateError(
+        `Invalid hook config: auth.hook.${hook.type}.uri should be a HTTP, HTTPS, or pg-functions URI`,
+      );
+    }
+  }
+
+  for (const factor of auth.mfa) {
+    if (factor.enrollEnabled && !factor.verifyEnabled) {
+      throw new ConfigValidateError(
+        `Invalid MFA config: auth.mfa.${factor.label}.enroll_enabled requires verify_enabled`,
+      );
+    }
+  }
+
+  if (auth.smtp !== undefined && auth.smtp.enabled) {
+    if (auth.smtp.host.length === 0) {
+      throw new ConfigValidateError("Missing required field in config: auth.email.smtp.host");
+    }
+    if (auth.smtp.port === 0) {
+      throw new ConfigValidateError("Missing required field in config: auth.email.smtp.port");
+    }
+    if (auth.smtp.user.length === 0) {
+      throw new ConfigValidateError("Missing required field in config: auth.email.smtp.user");
+    }
+    if (auth.smtp.pass.length === 0) {
+      throw new ConfigValidateError("Missing required field in config: auth.email.smtp.pass");
+    }
+    if (auth.smtp.adminEmail.length === 0) {
+      throw new ConfigValidateError(
+        "Missing required field in config: auth.email.smtp.admin_email",
+      );
+    }
+  }
+
+  for (const thirdParty of auth.thirdParty) {
+    switch (thirdParty.provider) {
+      case "firebase":
+        if (thirdParty.requiredField.length === 0) {
+          throw new ConfigValidateError(
+            "Invalid config: auth.third_party.firebase is enabled but without a project_id.",
+          );
+        }
+        break;
+      case "auth0":
+        if (thirdParty.requiredField.length === 0) {
+          throw new ConfigValidateError(
+            "Invalid config: auth.third_party.auth0 is enabled but without a tenant.",
+          );
+        }
+        break;
+      case "cognito":
+        if (thirdParty.requiredField.length === 0) {
+          throw new ConfigValidateError(
+            "Invalid config: auth.third_party.cognito is enabled but without a user_pool_id.",
+          );
+        }
+        if (
+          thirdParty.cognitoUserPoolRegion === undefined ||
+          thirdParty.cognitoUserPoolRegion.length === 0
+        ) {
+          throw new ConfigValidateError(
+            "Invalid config: auth.third_party.cognito is enabled but without a user_pool_region.",
+          );
+        }
+        break;
+      case "clerk":
+        if (thirdParty.requiredField.length === 0) {
+          throw new ConfigValidateError(
+            "Invalid config: auth.third_party.clerk is enabled but without a domain.",
+          );
+        }
+        if (!CLERK_DOMAIN_PATTERN.test(thirdParty.requiredField)) {
+          throw new ConfigValidateError(
+            "Invalid config: auth.third_party.clerk has invalid domain, it usually is like clerk.example.com or example.clerk.accounts.dev. Check https://clerk.com/setup/supabase on how to find the correct value.",
+          );
+        }
+        break;
+      case "workos":
+        if (thirdParty.requiredField.length === 0) {
+          throw new ConfigValidateError(
+            "Invalid config: auth.third_party.workos is enabled but without a issuer_url.",
+          );
+        }
+        break;
+    }
+  }
+  if (auth.thirdParty.length > 1) {
+    throw new ConfigValidateError(
+      "Invalid config: Only one third_party provider allowed to be enabled at a time.",
+    );
+  }
+}
+
 /**
  * Runs every `Config.Validate` branch this module owns (see the module header's table), in
  * Go's exact order, first-failure-wins. Pure — no I/O, no Effect. Callers own their own
@@ -440,203 +605,7 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     throw new ConfigValidateError("Missing required field in config: local_smtp.port");
   }
 
-  // the auth.* sub-sequence, all inside `if c.Auth.Enabled`.
-  if (input.auth !== undefined) {
-    const auth = input.auth;
-
-    // auth.site_url.
-    if (auth.siteUrl.length === 0) {
-      throw new ConfigValidateError("Missing required field in config: auth.site_url");
-    }
-
-    // auth.captcha. The provider enum check runs FIRST,
-    // regardless of `enabled` (it's actually a decode-time check in Go, reproduced here so both
-    // callers see it from one place); only then does the `enabled`-gated presence check run.
-    if (auth.captcha !== undefined) {
-      const provider = auth.captcha.provider;
-      if (
-        provider !== undefined &&
-        provider.length > 0 &&
-        provider !== "hcaptcha" &&
-        provider !== "turnstile"
-      ) {
-        throw new ConfigValidateError(
-          "failed to parse config: decoding failed due to the following error(s):\n\n'auth.captcha.provider' must be one of [hcaptcha turnstile]",
-        );
-      }
-      if (auth.captcha.enabled) {
-        if (auth.captcha.provider === undefined) {
-          throw new ConfigValidateError("Missing required field in config: auth.captcha.provider");
-        }
-        if (auth.captcha.secret === undefined || auth.captcha.secret.length === 0) {
-          throw new ConfigValidateError("Missing required field in config: auth.captcha.secret");
-        }
-      }
-    }
-
-    // signing_keys read is caller-side I/O, not part of this function.
-
-    // auth.passkey / auth.webauthn. Caller only builds `passkey` when
-    // `[auth.passkey] enabled` is true.
-    if (auth.passkey !== undefined) {
-      if (!auth.passkey.webauthnPresent) {
-        throw new ConfigValidateError(
-          "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
-        );
-      }
-      if (auth.passkey.rpId === undefined || auth.passkey.rpId.length === 0) {
-        throw new ConfigValidateError("Missing required field in config: auth.webauthn.rp_id");
-      }
-      if (auth.passkey.rpOrigins === undefined || auth.passkey.rpOrigins.length === 0) {
-        throw new ConfigValidateError("Missing required field in config: auth.webauthn.rp_origins");
-      }
-    }
-
-    // auth.hook.*, caller pre-filtered to
-    // enabled-only and pre-ordered per the fixed hook-type iteration order.
-    for (const hook of auth.hooks) {
-      if (hook.uri.length === 0) {
-        throw new ConfigValidateError(
-          `Missing required field in config: auth.hook.${hook.type}.uri`,
-        );
-      }
-      // Parse with `net/url.Parse` semantics before the scheme switch and fail the
-      // whole load on a malformed URI (e.g. an unterminated IPv6 host like `http://[::1`) —
-      // a bare scheme-prefix regex would accept that. Reuse `goUrlParse` (the same
-      // port already used for `studio.api_url` above) instead of re-deriving
-      // a scheme by hand.
-      let scheme: string;
-      try {
-        scheme = goUrlParse(hook.uri).scheme;
-      } catch (cause) {
-        throw new ConfigValidateError(`failed to parse template url: ${messageOf(cause)}`);
-      }
-      if (scheme === "http" || scheme === "https") {
-        if (hook.secrets.length === 0) {
-          throw new ConfigValidateError(
-            `Missing required field in config: auth.hook.${hook.type}.secrets`,
-          );
-        }
-        for (const secret of hook.secrets.split("|")) {
-          if (!HOOK_SECRET_PATTERN.test(secret)) {
-            throw new ConfigValidateError(
-              `Invalid hook config: auth.hook.${hook.type}.secrets must be formatted as "v1,whsec_<base64_encoded_secret>" with a minimum length of 32 characters.`,
-            );
-          }
-        }
-      } else if (scheme === "pg-functions") {
-        if (hook.secrets.length > 0) {
-          throw new ConfigValidateError(
-            `Invalid hook config: auth.hook.${hook.type}.secrets is unsupported for pg-functions URI`,
-          );
-        }
-      } else {
-        throw new ConfigValidateError(
-          `Invalid hook config: auth.hook.${hook.type}.uri should be a HTTP, HTTPS, or pg-functions URI`,
-        );
-      }
-    }
-
-    // auth.mfa.*, caller pre-ordered totp/phone/web_authn.
-    for (const factor of auth.mfa) {
-      if (factor.enrollEnabled && !factor.verifyEnabled) {
-        throw new ConfigValidateError(
-          `Invalid MFA config: auth.mfa.${factor.label}.enroll_enabled requires verify_enabled`,
-        );
-      }
-    }
-
-    // email template/notification content read + exclusivity is
-    // caller-side, via resolveEmailTemplateContentPath below.
-
-    // auth.email.smtp, gated on the raw table being present AND enabled.
-    if (auth.smtp !== undefined && auth.smtp.enabled) {
-      if (auth.smtp.host.length === 0) {
-        throw new ConfigValidateError("Missing required field in config: auth.email.smtp.host");
-      }
-      if (auth.smtp.port === 0) {
-        throw new ConfigValidateError("Missing required field in config: auth.email.smtp.port");
-      }
-      if (auth.smtp.user.length === 0) {
-        throw new ConfigValidateError("Missing required field in config: auth.email.smtp.user");
-      }
-      if (auth.smtp.pass.length === 0) {
-        throw new ConfigValidateError("Missing required field in config: auth.email.smtp.pass");
-      }
-      if (auth.smtp.adminEmail.length === 0) {
-        throw new ConfigValidateError(
-          "Missing required field in config: auth.email.smtp.admin_email",
-        );
-      }
-    }
-
-    // auth.third_party.*, caller pre-filtered to
-    // enabled-only and pre-ordered firebase, auth0, cognito, clerk, workos. Each provider's
-    // required field(s) are checked as encountered; the "more than one enabled" check runs only
-    // after every entry has individually validated.
-    for (const thirdParty of auth.thirdParty) {
-      switch (thirdParty.provider) {
-        case "firebase": {
-          if (thirdParty.requiredField.length === 0) {
-            throw new ConfigValidateError(
-              "Invalid config: auth.third_party.firebase is enabled but without a project_id.",
-            );
-          }
-          break;
-        }
-        case "auth0": {
-          if (thirdParty.requiredField.length === 0) {
-            throw new ConfigValidateError(
-              "Invalid config: auth.third_party.auth0 is enabled but without a tenant.",
-            );
-          }
-          break;
-        }
-        case "cognito": {
-          if (thirdParty.requiredField.length === 0) {
-            throw new ConfigValidateError(
-              "Invalid config: auth.third_party.cognito is enabled but without a user_pool_id.",
-            );
-          }
-          if (
-            thirdParty.cognitoUserPoolRegion === undefined ||
-            thirdParty.cognitoUserPoolRegion.length === 0
-          ) {
-            throw new ConfigValidateError(
-              "Invalid config: auth.third_party.cognito is enabled but without a user_pool_region.",
-            );
-          }
-          break;
-        }
-        case "clerk": {
-          if (thirdParty.requiredField.length === 0) {
-            throw new ConfigValidateError(
-              "Invalid config: auth.third_party.clerk is enabled but without a domain.",
-            );
-          }
-          if (!CLERK_DOMAIN_PATTERN.test(thirdParty.requiredField)) {
-            throw new ConfigValidateError(
-              "Invalid config: auth.third_party.clerk has invalid domain, it usually is like clerk.example.com or example.clerk.accounts.dev. Check https://clerk.com/setup/supabase on how to find the correct value.",
-            );
-          }
-          break;
-        }
-        case "workos": {
-          if (thirdParty.requiredField.length === 0) {
-            throw new ConfigValidateError(
-              "Invalid config: auth.third_party.workos is enabled but without a issuer_url.",
-            );
-          }
-          break;
-        }
-      }
-    }
-    if (auth.thirdParty.length > 1) {
-      throw new ConfigValidateError(
-        "Invalid config: Only one third_party provider allowed to be enabled at a time.",
-      );
-    }
-  }
+  if (input.auth !== undefined) validateAuthConfig(input.auth);
 
   // every [functions.*] key, unconditional, not
   // gated on auth.enabled.

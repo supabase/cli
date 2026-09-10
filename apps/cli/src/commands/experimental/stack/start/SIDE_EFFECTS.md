@@ -29,6 +29,9 @@ Failed decryption returns a typed configuration error without logging the
 plaintext, ciphertext, or private key. Listener port numbers remain dynamically
 allocated unless explicitly configured or supplied through a supported
 `SUPABASE_*_PORT` override.
+Effective auth settings are validated after environment overrides and secret
+decryption. Validation is skipped when auth is disabled, and optional sections
+retain their existing presence rules.
 
 Text output includes the stack id, lifecycle, endpoints, and dormant
 capabilities. Structured output includes the same status fields. The command reads configured

@@ -308,6 +308,247 @@ uri = "config-hook"
     });
   });
 
+  it.effect("rejects incomplete auth sections after effective environment overrides", () => {
+    const cases = [
+      {
+        name: "external provider",
+        config: `[auth.external.github]\nenabled = false\n`,
+        env: "SUPABASE_AUTH_EXTERNAL_GITHUB_ENABLED=true\n",
+        message: "auth.external.github.client_id",
+      },
+      {
+        name: "SMS provider",
+        config: `[auth.sms.vonage]\nenabled = false\n`,
+        env: "SUPABASE_AUTH_SMS_VONAGE_ENABLED=true\n",
+        message: "auth.sms.vonage.from",
+      },
+      {
+        name: "captcha",
+        config: `[auth.captcha]\nenabled = false\nprovider = "hcaptcha"\n`,
+        env: "SUPABASE_AUTH_CAPTCHA_ENABLED=true\n",
+        message: "auth.captcha.secret",
+      },
+      {
+        name: "hook",
+        config: `[auth.hook.custom_access_token]\nenabled = false\n`,
+        env: "SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=true\n",
+        message: "auth.hook.custom_access_token.uri",
+      },
+      {
+        name: "third-party provider",
+        config: `[auth.third_party.firebase]\nenabled = false\n`,
+        env: "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED=true\n",
+        message: "auth.third_party.firebase",
+      },
+    ];
+    return Effect.gen(function* () {
+      for (const testCase of cases) {
+        const root = project(
+          `project_id = "stack-config-auth-invalid-${testCase.name}"\n${testCase.config}`,
+          {
+            supabaseEnv: testCase.env,
+          },
+        );
+        const exit = yield* load(root).pipe(Effect.exit);
+        expect(Exit.isFailure(exit), testCase.name).toBe(true);
+        if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain(testCase.message);
+      }
+    });
+  });
+
+  it.effect("gates auth validation on the effective auth capability", () => {
+    const root = project(
+      `project_id = "stack-config-auth-effective-gate"
+[auth]
+enabled = false
+[auth.external.github]
+enabled = false
+`,
+      {
+        supabaseEnv: [
+          "SUPABASE_AUTH_ENABLED=true",
+          "SUPABASE_AUTH_EXTERNAL_GITHUB_ENABLED=true",
+          "",
+        ].join("\n"),
+      },
+    );
+    return Effect.gen(function* () {
+      const enabled = yield* load(root).pipe(Effect.exit);
+      expect(Exit.isFailure(enabled)).toBe(true);
+      if (Exit.isFailure(enabled)) expect(String(enabled.cause)).toContain("auth.external.github");
+
+      const disabled = yield* withEnvVar("SUPABASE_AUTH_ENABLED", "false", load(root));
+      expect(disabled.capabilities?.auth).toEqual({ enabled: false });
+    });
+  });
+
+  it.effect("accepts a valid encrypted HTTPS auth hook", () => {
+    const hookSecret = `v1,whsec_${"A".repeat(32)}`;
+    const root = project(
+      `project_id = "stack-config-auth-encrypted-hook"
+[auth.hook.custom_access_token]
+enabled = true
+uri = "https://hooks.example.test"
+secrets = "${encrypted(privateKey, hookSecret)}"
+`,
+      { supabaseEnv: `DOTENV_PRIVATE_KEY=${privateKey}\n` },
+    );
+    return Effect.gen(function* () {
+      const config = yield* load(root);
+      if (config.capabilities?.auth === undefined || !("settings" in config.capabilities.auth))
+        throw new Error("auth settings missing");
+      const hook = config.capabilities.auth.settings?.hook?.custom_access_token;
+      expect(hook?.uri).toBe("https://hooks.example.test");
+      expect(hook?.secrets).toBeDefined();
+      if (hook?.secrets === undefined) throw new Error("hook secret missing");
+      expect(Redacted.value(hook.secrets)).toBe(hookSecret);
+    });
+  });
+
+  it.effect(
+    "redacts plaintext and encrypted Vonage API keys and preserves disabled SMTP shape",
+    () => {
+      const encryptedApiKey = encrypted(privateKey, "encrypted-vonage-api-key");
+      const plaintextRoot = project(`project_id = "stack-config-vonage-plaintext"
+[auth.email.smtp]
+enabled = false
+[auth.sms.vonage]
+enabled = true
+from = "from"
+api_key = "plaintext-vonage-api-key"
+api_secret = "vonage-api-secret"
+`);
+      const encryptedRoot = project(
+        `project_id = "stack-config-vonage-encrypted"
+[auth.sms.vonage]
+enabled = true
+from = "from"
+api_key = "${encryptedApiKey}"
+api_secret = "vonage-api-secret"
+`,
+        { supabaseEnv: `DOTENV_PRIVATE_KEY=${privateKey}\n` },
+      );
+      return Effect.gen(function* () {
+        const plaintext = yield* load(plaintextRoot);
+        const plaintextAuth = plaintext.capabilities?.auth;
+        if (plaintextAuth === undefined || !("settings" in plaintextAuth))
+          throw new Error("plaintext auth settings missing");
+        expect(plaintextAuth.settings?.sms?.vonage?.api_key).toBeDefined();
+        expect(Redacted.value(plaintextAuth.settings!.sms!.vonage!.api_key!)).toBe(
+          "plaintext-vonage-api-key",
+        );
+        expect(plaintextAuth.settings?.email?.smtp).not.toHaveProperty("port");
+
+        const encryptedConfig = yield* load(encryptedRoot);
+        const encryptedAuth = encryptedConfig.capabilities?.auth;
+        if (encryptedAuth === undefined || !("settings" in encryptedAuth))
+          throw new Error("encrypted auth settings missing");
+        expect(encryptedAuth.settings?.sms?.vonage?.api_key).toBeDefined();
+        expect(Redacted.value(encryptedAuth.settings!.sms!.vonage!.api_key!)).toBe(
+          "encrypted-vonage-api-key",
+        );
+      });
+    },
+  );
+
+  it.effect("applies stack environment overrides while preserving optional settings", () => {
+    const root = project(
+      `project_id = "stack-config-stack-overrides"
+[api]
+enabled = true
+auto_expose_new_tables = false
+[storage]
+[storage.image_transformation]
+enabled = false
+[db]
+health_timeout = "2m"
+[auth]
+signing_keys_path = "keys.json"
+`,
+      {
+        supabaseEnv: [
+          "SUPABASE_API_AUTO_EXPOSE_NEW_TABLES=true",
+          "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=true",
+          "SUPABASE_DB_HEALTH_TIMEOUT=45s",
+          "SUPABASE_AUTH_SIGNING_KEYS_PATH=overridden-keys.json",
+          "SUPABASE_AUTH_EXTERNAL_APPLE_ENABLED=true",
+          "SUPABASE_AUTH_EXTERNAL_APPLE_CLIENT_ID=apple-client",
+          "SUPABASE_AUTH_EXTERNAL_APPLE_SECRET=apple-secret",
+          "",
+        ].join("\n"),
+      },
+    );
+    const absentImageRoot = project('project_id = "stack-config-absent-image"\n', {
+      supabaseEnv: "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=true\n",
+    });
+    const absentApiRoot = project('project_id = "stack-config-absent-api-field"\n');
+    const explicitFalseApiRoot = project(
+      `project_id = "stack-config-explicit-false-api-field"
+[api]
+auto_expose_new_tables = true
+`,
+      { supabaseEnv: "SUPABASE_API_AUTO_EXPOSE_NEW_TABLES=false\n" },
+    );
+    return Effect.gen(function* () {
+      const config = yield* load(root);
+      if (config.capabilities?.rest === undefined || !("settings" in config.capabilities.rest))
+        throw new Error("REST settings missing");
+      expect(config.capabilities.rest.settings?.auto_expose_new_tables).toBe(true);
+      if (config.capabilities.storage === undefined || !("settings" in config.capabilities.storage))
+        throw new Error("storage settings missing");
+      expect(config.capabilities.storage.settings?.image_transformation).toEqual({ enabled: true });
+      expect(config.capabilities.database?.settings?.health_timeout).toBe("45s");
+      expect(config.security?.jwt?.signing).toEqual({
+        kind: "jwks-file",
+        path: "supabase/overridden-keys.json",
+      });
+      if (config.capabilities.auth === undefined || !("settings" in config.capabilities.auth))
+        throw new Error("auth settings missing");
+      expect(config.capabilities.auth.settings?.signing_keys_path).toBe("overridden-keys.json");
+      expect(config.capabilities.auth.settings?.external?.apple).toMatchObject({
+        enabled: true,
+        client_id: "apple-client",
+      });
+
+      const absentImage = yield* load(absentImageRoot);
+      if (
+        absentImage.capabilities?.storage === undefined ||
+        !("settings" in absentImage.capabilities.storage)
+      )
+        throw new Error("absent-image storage settings missing");
+      expect(absentImage.capabilities.storage.settings?.image_transformation).toBeUndefined();
+
+      const absentApi = yield* load(absentApiRoot);
+      if (
+        absentApi.capabilities?.rest === undefined ||
+        !("settings" in absentApi.capabilities.rest)
+      )
+        throw new Error("absent-api REST settings missing");
+      expect(absentApi.capabilities.rest.settings?.auto_expose_new_tables).toBeUndefined();
+
+      const explicitFalseApi = yield* load(explicitFalseApiRoot);
+      if (
+        explicitFalseApi.capabilities?.rest === undefined ||
+        !("settings" in explicitFalseApi.capabilities.rest)
+      )
+        throw new Error("explicit-false REST settings missing");
+      expect(explicitFalseApi.capabilities.rest.settings?.auto_expose_new_tables).toBe(false);
+    });
+  });
+
+  it.effect("rejects an invalid analytics backend environment override", () => {
+    const root = project('project_id = "stack-config-invalid-analytics-backend"\n');
+    return withEnvVar(
+      "SUPABASE_ANALYTICS_BACKEND",
+      "invalid-backend",
+      Effect.gen(function* () {
+        const exit = yield* load(root).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("analytics.backend");
+      }),
+    );
+  });
+
   it.effect("honors representative list, database version, and Studio secret overrides", () => {
     const root = project(
       `project_id = "stack-config-representative-overrides"
