@@ -20,7 +20,7 @@ export type PushResource =
   | "auth"
   | "storage";
 
-/** Push order — the order `config push` has always processed its services in. */
+/** Push order — the established order `config push` processes its services in. */
 export const PUSH_RESOURCES: ReadonlyArray<PushResource> = [
   "api",
   "db.settings",
@@ -87,12 +87,9 @@ export function pushResponseBlock(resource: PushResource): "api" | "database" | 
 }
 
 /**
- * Longest-prefix lookup: resolves a comparable config path to the resource
- * whose v1 endpoint can express it, or `"unsupported"` — both for a path
- * declared-comparable but with no v1 field, and for a path outside every
- * registered prefix (never expected for a path drawn from
- * `changeSet.changes` — see this module's unit test's drift guard). Never
- * `undefined`, so a resource lookup is total for every caller.
+ * Longest-prefix lookup: resolves a comparable config path to the resource whose v1 endpoint can
+ * express it, or `"unsupported"` for a path with no v1 field or outside every registered prefix.
+ * Never `undefined`, so a resource lookup is total for every caller.
  */
 export function pushResourceForPath(path: ReadonlyArray<string>): PushResource | "unsupported" {
   for (const unsupportedPrefix of PUSH_UNSUPPORTED_PREFIXES) {
@@ -158,18 +155,10 @@ export function planConfigPush(changeSet: ConfigChangeSet): PushPlan {
 }
 
 /**
- * Whether a resource is even eligible to be pushed, given the decoded config
- * (`db.network_restrictions`'s own `enabled` flag) and the local projection
- * (`db.ssl_enforcement`'s declared presence — undeclared means the
- * raw-presence mask already dropped the whole subtree). `api`, `db.settings`,
- * `auth`, and `storage` have no such gate: `api`/`db.settings` never had one,
- * and `auth.enabled`/`storage.enabled` no longer gate their resource either
- * (CLI-2314, correcting a prior mistake) — that flag controls only the local
- * GoTrue/Storage Docker service, with no Management API equivalent, so
- * gating the whole resource on it silently dropped a user's declared
- * hosted-auth/storage changes whenever they simply didn't run that service
- * locally. `db.network_restrictions.enabled` stays a genuine gate: it is a
- * real hosted-side management opt-out, not a local-service toggle.
+ * Whether a resource is even eligible to be pushed. `db.network_restrictions` gates on its own
+ * `enabled` flag (a real hosted-side opt-out); `db.ssl_enforcement` gates on declared presence in
+ * the local projection. `auth`/`storage`'s local `enabled` toggle controls only the Docker
+ * service, with no Management API equivalent, so it never gates their resource.
  */
 export function pushResourceEnabled(
   resource: PushResource,
@@ -210,12 +199,9 @@ export const PUSH_ADDON_GATES: ReadonlyArray<PushAddonGate> = [
 ];
 
 /**
- * Whether an addon gate's cost-aware prompt should fire for this push: the
- * routed change list turns on `verify_enabled` OR `enroll_enabled` (either
- * flip is a new paid capability on its own — enrolment alone already starts
- * SMS/WebAuthn charges), UNLESS the addon is already active on the project
- * (`remote`'s `verify_enabled` is `true`), in which case there is no new
- * cost to confirm.
+ * Whether an addon gate's cost-aware prompt should fire: the routed changes turn on
+ * `verify_enabled` or `enroll_enabled` (enrolment alone already starts SMS/WebAuthn charges),
+ * unless the addon is already active on the project (`remote`'s `verify_enabled` is `true`).
  */
 export function pushAddonPromptNeeded(
   changes: ReadonlyArray<ConfigChange>,
@@ -239,15 +225,10 @@ export function changesCommunicated(
 }
 
 /**
- * Applies a declined paid-MFA-addon prompt to the routed auth change list.
- * Drops the addon's `verify_enabled`/`enroll_enabled` changes; when the
- * remote currently has either flag `true`, replaces them with synthetic
- * `update` changes setting both to `false` instead — so the request body
- * carries an explicit disable, leaving the project in the same state the
- * user would get by disabling the addon directly. When the remote already
- * has both flags `false` (or unset), the changes are simply dropped:
- * omitting them leaves the remote's current (already disabled) state
- * untouched.
+ * Applies a declined paid-MFA-addon prompt to the routed auth change list. Drops the addon's
+ * `verify_enabled`/`enroll_enabled` changes; when the remote currently has either flag `true`,
+ * replaces them with synthetic `update` changes setting both to `false`, so the request body
+ * carries an explicit disable rather than silently omitting a currently-enabled addon.
  */
 export function applyMfaAddonDecline(
   changes: ReadonlyArray<ConfigChange>,

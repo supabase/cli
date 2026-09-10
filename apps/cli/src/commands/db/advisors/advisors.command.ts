@@ -56,10 +56,9 @@ export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
           level: flags.level,
           "fail-on": flags.failOn,
         },
-        // type/level/fail-on are Flag.choice and are auto-detected as safe via
-        // `config` below; --db-url stays redacted (plain string, may carry secrets).
-        // --project-ref has no established telemetry-safety baseline either, so
-        // it stays redacted too.
+        // type/level/fail-on are auto-detected as safe via `config` below; --db-url stays
+        // redacted (may carry secrets), and --project-ref stays redacted too (no established
+        // telemetry-safety baseline).
         config,
       }),
       withJsonErrorHandling,

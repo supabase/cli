@@ -13,35 +13,20 @@ import { comparePaths, pathIn } from "./push.paths.ts";
 import { PUSH_RESOURCES, pushResponseBlock, type PushResource } from "./push.plan.ts";
 import type { PushSecretReport } from "./push.secrets.ts";
 
-/** The v2 response blocks `config push` actually reads from — derived from `PUSH_RESOURCES`
- *  rather than a hand-kept list, so a block `config diff`/`config pull` care about but push never
- *  touches (`pooler`, `realtime`) never inflates the summary's "not returned" caveat. */
+/** Response blocks `config push` writes to, derived from `PUSH_RESOURCES` so a block only
+ *  `config diff`/`config pull` care about never inflates the "not returned" caveat below. */
 const PUSH_RESPONSE_BLOCKS: ReadonlySet<string> = new Set(
   PUSH_RESOURCES.map((resource) => pushResponseBlock(resource)),
 );
 
 /**
- * Pure formatters and payload builders for `config push` — no Effect, no
- * services, unit-testable in isolation. Consumes only the shapes an
- * encoder's `PushEncoded` result carries (`encoded`/`unencodable`/
- * `extras`/`forced`, declared structurally below rather than imported, so
- * this module never depends on `push.encoders.ts`), `PushSecretReport`,
- * `PushResource`, and `../config.format.ts`'s shared helpers.
+ * Pure formatters and payload builders for `config push` — no Effect, no services,
+ * unit-testable in isolation.
  *
- * Every non-constant string interpolated into TEXT output goes through
- * `configRenderPath` (which itself sanitizes via
- * `sanitizeInlineName`) — path segments are unconstrained
- * declared-config-key strings (an `sms.test_otp` phone number, a
- * `[remotes.*]` name), so a hostile value could otherwise emit raw ANSI or
- * forge output lines. Secret VALUES never reach this module: every secret
- * input is typed `PushSecretReport` (`PushSecretDecision` with
- * `plaintext` omitted) — callers cannot even accidentally pass a plaintext
- * through.
- *
- * `service`/`PushResource` values are OPAQUE IDENTIFIERS (dotted keys
- * mirroring `config.toml` paths, plus the fixed `"experimental.webhooks"`),
- * never themselves a config path — never rendered through
- * `configRenderPath`.
+ * Every value interpolated into text output goes through `configRenderPath`/`sanitizeInlineName`,
+ * since path segments come from unconstrained declared config keys and could otherwise inject
+ * ANSI escapes. Secret values never reach this module: inputs are always `PushSecretReport`,
+ * which omits `plaintext`.
  */
 
 /** A declared change this encoder could not structurally express, with why. */
@@ -80,19 +65,16 @@ const RESOURCE_DISPLAY_NAME: Readonly<Record<PushResource, string>> = {
   storage: "Storage",
 };
 
-/** Global path order, applied wherever entries from more than one resource's encoder output get
- * concatenated (`pushNotes`/`pushPayload`) — each encoder already sorts its OWN
- * `unencodable`/`forced` list, but the handler appends those lists across resources in push order,
- * not path order. */
+/** Re-sorts entries the handler concatenates across resources (`pushNotes`/`pushPayload`); each
+ *  encoder already sorts its own list, but concatenation is in push order, not path order. */
 function sortByPath<T extends { readonly path: ReadonlyArray<string> }>(
   entries: ReadonlyArray<T>,
 ): ReadonlyArray<T> {
   return [...entries].sort((a, b) => comparePaths(a.path, b.path));
 }
 
-/** One `<path> [<label>]` / `local:` / `remote:` block, always followed by a blank line — the
- * same shape `configRenderChangeLines` uses for ordinary property changes, so appending any
- * mix of these directly after that renderer's output never introduces (or omits) a blank line. */
+/** One `<path> [<label>]` / `local:` / `remote:` block, always ending in a blank line, matching
+ *  `configRenderChangeLines`'s shape so the two can be concatenated without blank-line drift. */
 function renderBlock(
   path: ReadonlyArray<string>,
   label: string,
@@ -103,17 +85,9 @@ function renderBlock(
 }
 
 /**
- * `[secret]` blocks — rendered BEFORE the confirmation prompt, so a credential
- * that will not be sent (`not_set`, or a `send` secret whose own container
- * ended up unencodable) is disclosed alongside one that will (`send` AND
- * actually placed in the request body), inside the same resource block.
- * `unchanged`/`gated` decisions never render (nothing changed, or the
- * secret's container is off — already silent the same way a `disabled`
- * resource status is). `secretsEncoded` is the encoder's own record of which
- * `send` decisions it actually placed a plaintext for — a container can
- * carry a `send` decision and still drop it as `unencodable` (its
- * required-together group unresolvable), so a `send` status alone never
- * implies the secret is being sent.
+ * `[secret]` blocks, rendered before the confirmation prompt so a credential that won't be sent
+ * is disclosed alongside one that will. A `send` status alone doesn't mean the secret reached the
+ * request body — check `secretsEncoded`, since its container can still drop it as unencodable.
  */
 function renderSecretBlocks(
   secrets: ReadonlyArray<PushSecretReport>,
@@ -160,8 +134,8 @@ function renderExtraBlocks(extras: ReadonlyArray<PushExtra>): string {
 }
 
 /** `[group-write]` blocks — an undeclared companion the target endpoint required alongside a
- * declared change, sent at its config schema default because the remote didn't return a current
- * value for it (see `pushNotes`' matching note). */
+ *  declared change, sent at its config schema default since the remote returned no current value
+ *  (see `pushNotes`'s matching note). */
 function renderForcedBlocks(forced: ReadonlyArray<PushForced>): string {
   return forced
     .map((entry) =>
@@ -177,26 +151,21 @@ function renderForcedBlocks(forced: ReadonlyArray<PushForced>): string {
 
 export interface PushUpdatingLineInput {
   readonly resource: PushResource;
-  /** The routed changes this write actually communicated (already narrowed by the caller). */
+  /** The routed changes this write actually communicated, already narrowed by the caller. */
   readonly changes: ReadonlyArray<ConfigChange>;
-  /** The resource's full secret-decision list; only `send`/`not_set` entries render. Callers with
-   *  no secrets (every resource but `auth`) simply pass `[]`. */
+  /** Only `send`/`not_set` entries render. Callers with no secrets pass `[]`. */
   readonly secrets: ReadonlyArray<PushSecretReport>;
-  /** The encoder result's own `secretsEncoded` — which `send` decisions the request body actually
-   *  placed a plaintext for. A `send` decision whose path is absent here renders as NOT being
-   *  sent, because its container was dropped as `unencodable` (see `renderSecretBlocks`). */
+  /** Paths the request body actually placed a plaintext for. A `send` decision whose path is
+   *  absent here renders as not sent (see `renderSecretBlocks`). */
   readonly secretsEncoded: ReadonlyArray<ReadonlyArray<string>>;
   readonly extras: ReadonlyArray<PushExtra>;
   readonly forced: ReadonlyArray<PushForced>;
 }
 
 /**
- * The `Updating <resource> service with config:` block for a resource with at
- * least one pushable difference. `changes` renders through the same
- * per-property format `config diff` uses; secret/content/group-write blocks
- * follow, each in the same 3-line-plus-blank-line shape, so the combined
- * block always ends on a blank line (there is always at least one line item,
- * since callers only reach this when there is something to write).
+ * The `Updating <resource> service with config:` block for a resource with at least one pushable
+ * difference. `changes` renders through the same per-property format `config diff` uses; the
+ * combined block always ends on a blank line.
  */
 export function pushUpdatingLine(input: PushUpdatingLineInput): string {
   return (
@@ -214,9 +183,8 @@ export function pushUpToDateLine(resource: PushResource): string {
 }
 
 /**
- * The `Remote <resource> config has N difference(s) config push cannot
- * write...` line — a pushable difference existed, but every one of it ended
- * up `unencodable` (`count`), so nothing was written and no prompt ran.
+ * The `Remote <resource> config has N difference(s) config push cannot write...` line — every
+ * pushable difference ended up `unencodable`, so nothing was written and no prompt ran.
  */
 export function pushNotPushableLine(resource: PushResource, count: number): string {
   return `Remote ${RESOURCE_DISPLAY_NAME[resource]} config has ${configPlural(count, "difference", "differences")} config push cannot write (see notes below).\n`;
@@ -228,8 +196,8 @@ export interface PushNotesInput {
   readonly unsupported: ReadonlyArray<ReadonlyArray<string>>;
   /** Declared paths an encoder could not structurally express, with why. */
   readonly unencodable: ReadonlyArray<PushUnencodable>;
-  /** Count of `changeSet.unmanaged` entries NOT already covered by a disabled resource's own
-   *  `Note:`-free `disabled` status — count only, the full list stays in the payload. */
+  /** Count of `changeSet.unmanaged` entries not already covered by a disabled resource's own
+   *  `disabled` status — count only; the full list stays in the payload. */
   readonly unmanagedCount: number;
   /** Undeclared companion values actually written at their config default (only from resources
    *  whose write ran). */
@@ -313,25 +281,20 @@ export interface PushPayloadInput {
   readonly unencodable: ReadonlyArray<PushUnencodable>;
   readonly forced: ReadonlyArray<PushForced>;
   /** `changeSet.unmanaged`, unfiltered — the note above is count-only, the payload keeps the
-   *  full list (including paths under a gated-off resource). */
+   *  full list. */
   readonly unmanaged: ReadonlyArray<ReadonlyArray<string>>;
-  /** Count of `unmanaged` entries NOT already covered by a disabled resource's own `disabled`
-   *  status — the same gate-filtered count `pushNotes`'s note reports, used here so the
-   *  json/stream-json summary sentence agrees with the stderr note instead of counting the
-   *  unfiltered `unmanaged` list, which the payload's own `unmanaged` field keeps in full. */
+  /** Gate-filtered count matching `pushNotes`'s note, so the summary sentence agrees with the
+   *  stderr note even though `unmanaged` above stays unfiltered. */
   readonly unmanagedCount: number;
-  /** Every declared secret's decision, unfiltered — partitions `changeSet.masked` across all
-   *  six buckets below (`gated` is now included, unlike the pre-fix-pass payload). */
+  /** Every declared secret's decision, unfiltered — partitions `changeSet.masked` across all six
+   *  buckets below. */
   readonly secrets: ReadonlyArray<PushSecretReport>;
-  /** Whether the auth resource's write actually ran — decides whether a `status: "send"` secret
-   *  lands in `sent`/`unencodable` (write ran) or `skipped` (declined, or auth not written for
-   *  any other reason): the payload reports what was OBSERVED to happen, not the pre-prompt
-   *  decision. */
+  /** Whether the auth write ran — decides whether a `status: "send"` secret lands in
+   *  `sent`/`unencodable` or `skipped`; reports what was observed, not the pre-prompt decision. */
   readonly authWriteRan: boolean;
-  /** The auth encoder's own `secretsEncoded` — the secret paths a write actually placed a
-   *  plaintext for. NOT every `status: "send"` decision: a container can carry a `send` decision
-   *  and still end up dropped as `unencodable` (its group unresolvable), so `sent` must read from
-   *  here rather than from the raw decision list — meaningful only when `authWriteRan`. */
+  /** The auth encoder's own `secretsEncoded` — paths a write actually placed a plaintext for. A
+   *  `send` decision can still be dropped as `unencodable`, so `sent` reads from here rather than
+   *  the raw decision list. Meaningful only when `authWriteRan`. */
   readonly secretsSent: ReadonlyArray<ReadonlyArray<string>>;
   /** Addon cost prompts (`auth_mfa_phone`, `auth_mfa_web_authn`) declined this run. */
   readonly declinedAddons: ReadonlyArray<string>;
@@ -340,12 +303,9 @@ export interface PushPayloadInput {
 }
 
 /**
- * One-line json/stream-json `message` summarizing what a push did, with a
- * caveat sentence appended for anything withheld — modeled on
- * `configDiffSummaryMessage` (`../diff/diff.format.ts`), so an agent
- * echoing `.message` never reports success while some declared property was
- * left unpushed. Caveats are appended in a fixed order, one sentence per
- * non-empty category.
+ * One-line json/stream-json `message` summarizing what a push did, with a caveat sentence
+ * appended for anything withheld, so an agent echoing `.message` never reports success while a
+ * declared property went unpushed.
  */
 export function pushSummaryMessage(input: PushPayloadInput): string {
   const updated = input.services.filter((service) => service.status === "updated");
@@ -414,9 +374,10 @@ export function pushSummaryMessage(input: PushPayloadInput): string {
 
 /**
  * The structured result for `--output-format json|stream-json`.
- * `project_ref`/`services[].service`/`services[].status` keep the existing
- * contract; everything else is additive. Paths are segment arrays — a record
- * key may itself contain a `.`.
+ *
+ * `project_ref`/`services[].service`/`services[].status` are the established contract;
+ * everything else is additive. Paths are segment arrays since a record key may itself contain a
+ * `.`.
  */
 export function pushPayload(input: PushPayloadInput): Record<string, unknown> {
   const byStatus = (status: PushSecretReport["status"]) =>
@@ -443,11 +404,8 @@ export function pushPayload(input: PushPayloadInput): Record<string, unknown> {
       unchanged: byStatus("unchanged"),
       not_set: byStatus("not_set"),
       gated: byStatus("gated"),
-      // A `send` decision the auth write ran but did NOT place in the request
-      // body — its container was dropped as `unencodable` (its
-      // required-together group unresolvable), even while OTHER auth fields
-      // still triggered the write. Distinct from `skipped`, which means the
-      // write itself never ran.
+      // A `send` decision whose container was dropped as unencodable even though the write ran —
+      // distinct from `skipped`, where the write itself never ran.
       unencodable: input.authWriteRan
         ? sendDecisions
             .map((secret) => secret.path)
@@ -461,23 +419,13 @@ export function pushPayload(input: PushPayloadInput): Record<string, unknown> {
   };
 }
 
-// --- branch/project target detection (CLI-2168) -----------------------------
-//
-// Pure formatters and payload builders for `config push`'s target-echo and
-// branch confirmation — no Effect, no services, unit-testable in isolation.
-// Every interpolated ref/name goes through `formatNamedRef`
-// (`sanitizeInlineName` underneath), so an API-provided branch/project
+// Every interpolated ref/name goes through `formatNamedRef`, so an API-provided branch/project
 // name can't inject ANSI/OSC/newline controls into the terminal.
 
 /**
- * The target-echo block, printed to stderr before any further network call.
- * Only the NO-NAME-AVAILABLE degradation shape — a plain project whose name
- * could not be resolved — stays byte-identical to the pre-CLI-2168
- * `Pushing config to project: <ref>` text (existing tests pin exactly that
- * shape). The plain-project SUCCESS path text is NOT byte-identical to the
- * old behavior: it now also shows the resolved name whenever one is
- * available, which for a real project is always, since `name` is a required
- * API field.
+ * The target-echo block, printed to stderr before any further network call. The no-name
+ * degradation shape (a project whose name could not be resolved) stays exactly
+ * `Pushing config to project: <ref>`, pinned by existing tests.
  */
 export function configPushTargetLines(target: ConfigPushTarget): string {
   if (target.kind === "project") {
@@ -511,10 +459,9 @@ export function configPushBranchPromptLabel(
     : `Do you want to push config to branch "${sanitizeInlineName(target.branch)}" (${ref})?${hint}`;
 }
 
-/** Additive machine-payload fields describing the resolved target
- * (CLI-2168/CLI-2289). `is_branch` is omitted (not `false`) when the target
- * couldn't be determined at all — asserting `false` would be as dishonest as
- * asserting `true`; an absent key is the correct "we don't know" signal. */
+/** Additive machine-payload fields describing the resolved target. `is_branch` is omitted, not
+ *  `false`, when the target couldn't be determined — an absent key is the correct "unknown"
+ *  signal. */
 export function configPushPayloadFields(target: ConfigPushTarget): {
   readonly is_branch?: boolean;
   readonly branch?: string;
