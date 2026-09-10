@@ -19,8 +19,7 @@ const mapOrgsListError = mapHttpError({
   statusMessage: (status, body) => `Unexpected error retrieving organizations: ${body} (${status})`,
 });
 
-// Region codes offered in the interactive prompt, in the established order,
-// which also matches the `--region` enum.
+// Order matches the `--region` enum choices.
 const REGION_CODES = [
   "ap-east-1",
   "ap-northeast-1",
@@ -82,8 +81,6 @@ export const promptOrgId = Effect.fnUntraced(function* () {
  */
 export const promptProjectRegion = Effect.fnUntraced(function* () {
   const output = yield* Output;
-  // Established prompt layout: the region code renders as the primary label
-  // and the friendly name as the description.
   const options = REGION_CODES.map((code) => ({
     value: code,
     label: code,
@@ -93,15 +90,13 @@ export const promptProjectRegion = Effect.fnUntraced(function* () {
     "Which region do you want to host the project in?",
     options,
   );
-  // Narrow the `string` choice back to a region literal so it satisfies the
-  // typed create-project input. The chosen value always comes from the options,
-  // so the fallback is never reached in practice.
+  // Narrows the `string` selection back to a region literal for the typed input; the fallback
+  // is unreachable since the choice always comes from `REGION_CODES`.
   const matched = REGION_CODES.find((code) => code === chosen);
   return matched ?? "us-east-1";
 });
 
 const PASSWORD_LENGTH = 16;
-// Established charset: lower + upper + digits (62 chars), no separators.
 const PASSWORD_CHARSET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
 /**

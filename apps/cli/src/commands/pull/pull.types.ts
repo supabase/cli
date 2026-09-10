@@ -7,8 +7,8 @@ export type PullStepStatus = "changed" | "unchanged" | "skipped" | "planned" | "
 export interface PullStepFailure {
   readonly message: string;
   readonly suggestion?: string;
-  /** The squashed cause's own `_tag`, when it has one — lets a machine consumer of the JSON
-   *  payload classify a non-first (never re-failed) step failure without parsing `message`. */
+  /** The cause's own `_tag`, when present — lets a machine consumer classify a step failure
+   *  without parsing `message`. */
   readonly code?: string;
 }
 
@@ -17,7 +17,7 @@ export interface PullStepResult {
   readonly status: PullStepStatus;
   /** Workdir-relative paths written by this step. Empty when nothing was written. */
   readonly written: ReadonlyArray<string>;
-  /** Per-step machine detail, shape varies by step (see plan's payload section). */
+  /** Per-step machine detail; shape varies by step. See SIDE_EFFECTS.md's JSON payload shape. */
   readonly detail: Record<string, unknown>;
   /** Present for `status: "skipped"` (e.g. "not_needed", "declined", "--with-migration-history not set"). */
   readonly reason?: string;
