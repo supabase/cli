@@ -402,11 +402,6 @@ const functionsConfigEnvironment = (state: PersistedStackState): string => {
   return JSON.stringify(result);
 };
 
-const common = (workload: PlannedWorkload, port: number): Record<string, string> => ({
-  SUPABASE_STACK_WORKLOAD: workload.id,
-  SUPABASE_STACK_PRIVATE_PORT: String(port),
-});
-
 const functionsRoot = (state: PersistedStackState): string =>
   valueAt(state, "functions", "functions_root");
 
@@ -548,8 +543,6 @@ const withRestSettings = (
   inputs: WorkloadRuntimeInputs = {},
 ): Record<string, string> =>
   compactEnvironment({
-    ...common(workload, port),
-    ...capabilityEnv(state, "rest", "PGRST"),
     PGRST_DB_URI: dbUrl(state, "authenticator", runtime),
     PGRST_DB_SCHEMAS: valueAt(state, "rest", "schemas"),
     PGRST_DB_EXTRA_SEARCH_PATH: valueAt(state, "rest", "extra_search_path"),
@@ -706,7 +699,6 @@ const withAuthSettings = (
   inputs: WorkloadRuntimeInputs = {},
 ): Record<string, string> =>
   compactEnvironment({
-    ...common(workload, port),
     ...capabilityEnv(
       state,
       "auth",
@@ -857,7 +849,6 @@ const withStorageSettings = (
 ): Record<string, string> => {
   const fileSizeLimit = parseFileSize(valueAt(state, "storage", "file_size_limit"));
   return compactEnvironment({
-    ...common(workload, port),
     ...capabilityEnv(
       state,
       "storage",
@@ -943,7 +934,6 @@ const analyticsEnv = (
   const backend = valueAt(state, "analytics", "backend");
   const gcpJwtPath = inputs.analytics?.gcpJwtPath ?? "";
   return compactEnvironment({
-    ...common(workload, port),
     ...capabilityEnv(state, "analytics", "ANALYTICS", (key) => key === "ANALYTICS_GCP_JWT_PATH"),
     PORT: String(port),
     PHX_HTTP_PORT: String(port),
@@ -984,8 +974,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     args: (state, _workload, port) => databaseArgs(state, port, "native"),
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       compactEnvironment({
-        ...common(workload, port),
-        ...capabilityEnv(state, "database", "POSTGRES"),
         PGDATA:
           runtime === "container"
             ? "/var/lib/postgresql/data"
@@ -1020,7 +1008,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     args: () => [],
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       compactEnvironment({
-        ...common(workload, port),
         ...capabilityEnv(state, "realtime", "REALTIME"),
         PORT: String(port),
         DB_HOST: dbHost(runtime),
@@ -1062,7 +1049,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     bindings: { primary: { containerPort: 5001 } },
     args: () => [],
     env: (state, workload, port, runtime = "native") => ({
-      ...common(workload, port),
       IMGPROXY_BIND: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${port}`,
       IMGPROXY_LOCAL_FILESYSTEM_ROOT: "/",
     }),
@@ -1080,7 +1066,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       ...functionsInspectorArgs(state, runtime),
     ],
     env: (state, workload, port, runtime = "native", inputs = {}) => ({
-      ...common(workload, port),
       ...edgeRuntimeJwtEnvironment(state, inputs),
       EDGE_RUNTIME_PORT: String(port),
       FUNCTIONS_CONTAINER_ROOT,
@@ -1110,7 +1095,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     args: () => [],
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       compactEnvironment({
-        ...common(workload, port),
         ...capabilityEnv(state, "studio", "STUDIO"),
         PORT: String(port),
         HOSTNAME: "0.0.0.0",
@@ -1149,10 +1133,9 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     readiness: { protocol: "http", path: "/api/platform/profile" },
   },
   "studio:pgmeta": {
-    bindings: { primary: { containerPort: 8080 }, admin: { containerPort: 8081 } },
+    bindings: { primary: { containerPort: 8080 } },
     args: () => [],
     env: (state, workload, port, runtime = "native") => ({
-      ...common(workload, port),
       ...capabilityEnv(state, "studio", "PG_META"),
       PG_META_PORT: String(port),
       PG_META_DB_HOST: dbHost(runtime),
@@ -1172,7 +1155,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     },
     args: () => [],
     env: (state, workload, port, runtime = "native") => ({
-      ...common(workload, port),
       ...capabilityEnv(state, "mail", "MAIL"),
       MP_UI_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${workloadPort(state, "mail:mail", "ui", runtime, 8025)}`,
       MP_SMTP_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${workloadPort(state, "mail:mail", "smtp", runtime, 1025)}`,
@@ -1208,7 +1190,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     bindings: { primary: { containerPort: 9001 } },
     args: (_state, _workload, _port) => ["--config", "share/doc/vector/config/vector.yaml"],
     env: (state, workload, port, runtime = "native") => ({
-      ...common(workload, port),
       ...capabilityEnv(state, "analytics", "VECTOR"),
       VECTOR_API_ADDRESS: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${port}`,
       VECTOR_API_PORT: String(port),
@@ -1244,7 +1225,6 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       if (adminPort === undefined || primaryPort === undefined)
         throw new Error("Pooler private port assignments must be validated before env resolution");
       return {
-        ...common(workload, port),
         ...capabilityEnv(state, "pooler", "POOLER"),
         // `port` is the readiness binding (admin); proxy listeners use the primary SQL binding.
         // validatePrivateAssignments guarantees both native bindings are assigned.
@@ -1301,18 +1281,30 @@ const declaredBindings = (
     return binding === undefined ? [] : [[name, binding] as const];
   });
 
+const selectedBindings = (
+  state: Pick<PersistedStackState, "definition">,
+  bindings: WorkloadBindings,
+): ReadonlyArray<readonly [WorkloadBindingName, WorkloadBinding]> => {
+  const inspectorSettings = state.definition?.capabilities.functions.settings.inspector;
+  const inspectorRequested =
+    isRecord(inspectorSettings) || state.definition?.listeners.functionsInspector.enabled === true;
+  return declaredBindings(bindings).filter(
+    ([binding]) => binding !== "inspector" || inspectorRequested,
+  );
+};
+
 /** Derive the exact private endpoint reservations required by a compiled plan. */
 export const privateBindingIntentsFor = (
   plan: ExecutionPlan,
+  state: Pick<PersistedStackState, "definition">,
 ): ReadonlyArray<WorkloadBindingIntent> =>
   plan.workloads.flatMap((workload) => {
     const spec = specs[workload.id];
-    return spec === undefined
-      ? []
-      : declaredBindings(spec.bindings).map(([binding]) => ({
-          workloadId: workload.id,
-          binding,
-        }));
+    if (spec === undefined) return [];
+    return selectedBindings(state, spec.bindings).map(([binding]) => ({
+      workloadId: workload.id,
+      binding,
+    }));
   });
 
 export const validatePrivateAssignments = (
@@ -1322,7 +1314,7 @@ export const validatePrivateAssignments = (
   const spec = specs[workload.id];
   if (spec === undefined) return Effect.void;
   // Runtime env resolution assumes every declared binding was assigned here.
-  for (const [binding] of declaredBindings(spec.bindings)) {
+  for (const [binding] of selectedBindings(state, spec.bindings)) {
     if (
       !state.privatePorts.some(
         (assignment) => assignment.workloadId === workload.id && assignment.binding === binding,
@@ -1403,7 +1395,7 @@ export const containerResolutionFor = (
     ),
     mounts: spec.containerMounts?.(state, workload, inputs) ?? [],
     networkAliases: [catalog.containerAlias],
-    publications: declaredBindings(spec.bindings).flatMap(([binding, definition]) => {
+    publications: selectedBindings(state, spec.bindings).flatMap(([binding, definition]) => {
       const assignment = state.privatePorts.find(
         (entry) => entry.workloadId === workload.id && entry.binding === binding,
       );

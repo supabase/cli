@@ -95,16 +95,23 @@ export interface SupervisorIngressOptions {
   >;
 }
 
-const listenerIntents = (input: LifecycleInput): ListenerIntents => ({
-  api: input.definition.listeners.api,
-  database: input.definition.listeners.database,
-  pooler: input.definition.listeners.pooler,
-  studio: input.definition.listeners.studio,
-  mailUi: input.definition.listeners.mailUi,
-  smtp: input.definition.listeners.smtp,
-  pop3: input.definition.listeners.pop3,
-  functionsInspector: input.definition.listeners.functionsInspector,
-});
+const listenerIntents = (input: LifecycleInput): ListenerIntents => {
+  const usable = new Set(input.plan.routes.map(({ listener }) => listener));
+  const select = <K extends keyof ListenerIntents>(field: K): ListenerIntents[K] =>
+    usable.has(field)
+      ? input.definition.listeners[field]
+      : { ...input.definition.listeners[field], enabled: false };
+  return {
+    api: select("api"),
+    database: select("database"),
+    pooler: select("pooler"),
+    studio: select("studio"),
+    mailUi: select("mailUi"),
+    smtp: select("smtp"),
+    pop3: select("pop3"),
+    functionsInspector: select("functionsInspector"),
+  };
+};
 
 const defaultApiMaterial = (
   state: LifecycleInput["state"],
@@ -207,7 +214,11 @@ export const makeSupervisorIngress = (
           if (existing !== undefined) return { ...existing.reservation, fresh: false };
           const reservationScope = Scope.forkUnsafe(ownerScope);
           const reservation = yield* coordinator
-            .acquire(options.stackId, listenerIntents(input), privateBindingIntentsFor(input.plan))
+            .acquire(
+              options.stackId,
+              listenerIntents(input),
+              privateBindingIntentsFor(input.plan, input.state),
+            )
             .pipe(
               Effect.provideContext(options.context),
               Effect.provideService(Scope.Scope, reservationScope),

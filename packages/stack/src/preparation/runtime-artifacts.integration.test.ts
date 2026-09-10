@@ -164,6 +164,7 @@ describe("runtime artifact preparation", () => {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-artifact-engine-" });
         const resolver = {
+          isInstalled: () => Effect.succeed(false),
           resolve: () =>
             Effect.fail(
               new ContainerEngineProtocolError({

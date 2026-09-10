@@ -514,7 +514,7 @@ auto_expose_new_tables = true
       const config = yield* load(root);
       if (config.capabilities?.rest === undefined || !("settings" in config.capabilities.rest))
         throw new Error("REST settings missing");
-      expect(config.capabilities.rest.settings?.auto_expose_new_tables).toBe(true);
+      expect(config.capabilities.rest.settings).not.toHaveProperty("auto_expose_new_tables");
       if (config.capabilities.storage === undefined || !("settings" in config.capabilities.storage))
         throw new Error("storage settings missing");
       expect(config.capabilities.storage.settings?.image_transformation).toEqual({ enabled: true });
@@ -545,7 +545,7 @@ auto_expose_new_tables = true
         !("settings" in absentApi.capabilities.rest)
       )
         throw new Error("absent-api REST settings missing");
-      expect(absentApi.capabilities.rest.settings?.auto_expose_new_tables).toBeUndefined();
+      expect(absentApi.capabilities.rest.settings).not.toHaveProperty("auto_expose_new_tables");
 
       const explicitFalseApi = yield* load(explicitFalseApiRoot);
       if (
@@ -553,7 +553,9 @@ auto_expose_new_tables = true
         !("settings" in explicitFalseApi.capabilities.rest)
       )
         throw new Error("explicit-false REST settings missing");
-      expect(explicitFalseApi.capabilities.rest.settings?.auto_expose_new_tables).toBe(false);
+      expect(explicitFalseApi.capabilities.rest.settings).not.toHaveProperty(
+        "auto_expose_new_tables",
+      );
     });
   });
 

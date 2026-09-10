@@ -80,8 +80,10 @@ Docker modes. It begins from the PostgreSQL-only default, progressively activate
 realistic traffic, and verifies stop/start cycles, stable ports, and persistent data. The
 CLI is not involved in these runtime tests.
 
-Podman is supported only on local Linux hosts and must be selected explicitly; the runtime does not
-auto-detect container engines.
+When `runtime` is omitted for a new stack, the package selects Docker when the Docker client is
+installed and native otherwise. The check runs `docker --version`, so a stopped Docker daemon still
+selects Docker. Existing stacks reuse their persisted runtime without probing; native, Docker, and
+Podman preferences remain explicit when supplied. Podman is supported only on local Linux hosts.
 
 Stack identity is the length-delimited SHA-256 tuple of the canonical project root, Git branch
 context (or `ordinary-workspace` outside Git), and stack name. Separate worktree roots, branches,

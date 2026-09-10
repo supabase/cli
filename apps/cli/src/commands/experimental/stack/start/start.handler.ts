@@ -171,7 +171,8 @@ const stackStartError = (error: unknown) => {
       : Match.value(stackError).pipe(
           Match.tag("ContainerEngineError", () => ({
             reason: "runtime" as const,
-            suggestion: "Ensure the selected container engine is running and retry the command.",
+            suggestion:
+              "Check that the selected container engine is installed and its daemon is running, then retry the command.",
           })),
           Match.tag("ContainerPullError", () => ({
             reason: "registry" as const,

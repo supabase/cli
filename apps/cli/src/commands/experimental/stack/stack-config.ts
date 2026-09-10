@@ -1219,10 +1219,6 @@ const configInput = (
         schemas: apiResolved.schemas,
         extra_search_path: apiResolved.extra_search_path,
         max_rows: apiResolved.max_rows,
-        ...(apiResolved.auto_expose_new_tables === undefined
-          ? {}
-          : { auto_expose_new_tables: apiResolved.auto_expose_new_tables }),
-        tls: apiResolved.tls,
         external_url: apiResolved.external_url,
       }),
       auth:
@@ -1238,7 +1234,6 @@ const configInput = (
         image_transformation: storageResolved.image_transformation,
         buckets: storageResolved.buckets,
         s3_protocol: storageResolved.s3_protocol,
-        analytics: storageResolved.analytics,
         vector: storageResolved.vector,
       }),
       functions: capability(
@@ -1389,15 +1384,13 @@ export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
       projectRoot,
       (message) => new StackConfigError({ message }),
     );
-    const loaded = context.loaded;
-    if (loaded === null)
-      return yield* new StackConfigError({
-        message: `No Supabase project configuration found in ${projectRoot}. Run supabase init first.`,
-      });
-
     const effectiveInput = yield* Effect.try({
       try: () =>
-        resolveEffectiveCliConfig(context.config, loaded.document, context.projectEnvValues),
+        resolveEffectiveCliConfig(
+          context.config,
+          context.loaded?.document,
+          context.projectEnvValues,
+        ),
       catch: (cause) =>
         new StackConfigError({
           message: cause instanceof Error ? cause.message : "invalid config overrides",
@@ -1446,7 +1439,13 @@ export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
     );
     const input = yield* Effect.try({
       try: () =>
-        configInput(projectRoot, path, validatedConfig, loaded.document, context.projectEnvValues),
+        configInput(
+          projectRoot,
+          path,
+          validatedConfig,
+          context.loaded?.document,
+          context.projectEnvValues,
+        ),
       catch: (cause) =>
         new StackConfigError({
           message:

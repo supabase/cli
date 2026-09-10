@@ -34,7 +34,6 @@ const disabledListenerIntents: ListenerIntents = {
 const state: PersistedStackState = {
   format: "supabase-stack-state-v1",
   identity: {
-    stackId: "stack-runtime-spec-test",
     projectRoot: "/tmp/supabase-runtime-spec",
     branchContext: "ordinary-workspace",
     stackName: "runtime-spec",
@@ -168,7 +167,9 @@ describe("workload runtime catalog", () => {
         projectRoot: state.identity.projectRoot,
         runtime: { kind: "native" },
       }).pipe(Effect.provide(NodeServices.layer));
-      const intents = privateBindingIntentsFor(compiled.executionPlan);
+      const intents = privateBindingIntentsFor(compiled.executionPlan, {
+        definition: compiled.definition,
+      });
       expect(intents).toContainEqual({ workloadId: "database:database", binding: "primary" });
       expect(intents).toContainEqual({ workloadId: "mail:mail", binding: "ui" });
       expect(intents).toContainEqual({ workloadId: "mail:mail", binding: "smtp" });
@@ -209,6 +210,28 @@ describe("workload runtime catalog", () => {
         hostPort: 30_018,
         containerPort: 9229,
       });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("does not reserve disabled pooler or unconfigured inspector bindings", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "native" },
+        config: { capabilities: { pooler: { enabled: false } } },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const configured = { ...state, definition: compiled.definition };
+      const intents = privateBindingIntentsFor(compiled.executionPlan, configured);
+      expect(intents.some(({ workloadId }) => workloadId === "pooler:pooler")).toBe(false);
+      expect(
+        intents.some(
+          ({ workloadId, binding }) =>
+            workloadId === "functions:edge-runtime" && binding === "inspector",
+        ),
+      ).toBe(false);
+      expect(
+        containerResolutionFor(configured, planned("functions:edge-runtime"))?.publications,
+      ).not.toContainEqual(expect.objectContaining({ containerPort: 9229 }));
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -268,7 +291,7 @@ describe("workload runtime catalog", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("compiles pgmeta's primary and admin ports before the Vector companion", () =>
+  it.live("compiles pgmeta's primary port before the Vector companion", () =>
     Effect.gen(function* () {
       const compiled = yield* compileStack({
         projectRoot: state.identity.projectRoot,
@@ -280,12 +303,13 @@ describe("workload runtime catalog", () => {
           },
         },
       }).pipe(Effect.provide(NodeServices.layer));
-      const relevant = privateBindingIntentsFor(compiled.executionPlan).filter(
+      const relevant = privateBindingIntentsFor(compiled.executionPlan, {
+        definition: compiled.definition,
+      }).filter(
         ({ workloadId }) => workloadId === "studio:pgmeta" || workloadId === "analytics:vector",
       );
       expect(relevant).toEqual([
         { workloadId: "studio:pgmeta", binding: "primary" },
-        { workloadId: "studio:pgmeta", binding: "admin" },
         { workloadId: "analytics:vector", binding: "primary" },
       ]);
 
@@ -299,7 +323,7 @@ describe("workload runtime catalog", () => {
       const store = yield* makeStackStateStore({ stateRoot: root });
       yield* store.initialize(stackId, {
         ...state,
-        identity: { ...identity, stackId },
+        identity,
         desiredLifecycle: "running",
         ports: [],
         privatePorts: [],
@@ -312,29 +336,23 @@ describe("workload runtime catalog", () => {
       }).acquire(
         stackId,
         disabledListenerIntents,
-        privateBindingIntentsFor(compiled.executionPlan),
+        privateBindingIntentsFor(compiled.executionPlan, { definition: compiled.definition }),
       );
       const pgmetaPrimary = reservation.privateAssignments.find(
         ({ workloadId, binding }) => workloadId === "studio:pgmeta" && binding === "primary",
       );
-      const pgmetaAdmin = reservation.privateAssignments.find(
-        ({ workloadId, binding }) => workloadId === "studio:pgmeta" && binding === "admin",
-      );
       const vectorPrimary = reservation.privateAssignments.find(
         ({ workloadId, binding }) => workloadId === "analytics:vector" && binding === "primary",
       );
-      if (pgmetaPrimary === undefined || pgmetaAdmin === undefined || vectorPrimary === undefined)
+      if (pgmetaPrimary === undefined || vectorPrimary === undefined)
         throw new Error("Compiled plan did not reserve pgmeta and Vector bindings");
-      expect(pgmetaAdmin.port).not.toBe(pgmetaPrimary.port);
       expect(vectorPrimary.port).not.toBe(pgmetaPrimary.port);
-      expect(vectorPrimary.port).not.toBe(pgmetaAdmin.port);
       const pgmetaResolution = containerResolutionFor(
         { ...state, privatePorts: reservation.privateAssignments },
         planned("studio:pgmeta"),
       );
       expect(pgmetaResolution?.publications).toEqual([
         { address: "127.0.0.1", hostPort: pgmetaPrimary.port, containerPort: 8080 },
-        { address: "127.0.0.1", hostPort: pgmetaAdmin.port, containerPort: 8081 },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -347,7 +365,6 @@ describe("workload runtime catalog", () => {
       if (spec === undefined) continue;
       const port = 30_000 + index;
       expect(spec.containerPort).toBeGreaterThan(0);
-      expect(spec.env(state, workload, port).SUPABASE_STACK_WORKLOAD).toBe(id);
       expect(spec.readiness.protocol).toMatch(/http|tcp/u);
       expect(spec.args(state, workload, port)).toBeInstanceOf(Array);
       expect(typeof spec.cwd(state, workload)).toBe("string");
@@ -381,9 +398,6 @@ describe("workload runtime catalog", () => {
       });
       const realtime = planned("realtime:realtime");
       expect(runtimeSpecFor(realtime)?.env(state, realtime, 32000).PORT).toBe("32000");
-      expect(
-        runtimeSpecFor(realtime)?.env(state, realtime, 32000).SUPABASE_STACK_PRIVATE_PORT,
-      ).toBe("32000");
       const secondState: PersistedStackState = {
         ...state,
         privatePorts: state.privatePorts.map((assignment) => ({

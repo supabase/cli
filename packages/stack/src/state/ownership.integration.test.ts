@@ -77,9 +77,9 @@ const identity: StackIdentity = {
   stackName: "default",
 };
 
-const stateFor = (stackId: string): PersistedStackState => ({
+const stateFor = (): PersistedStackState => ({
   format: "supabase-stack-state-v1",
-  identity: { ...identity, stackId },
+  identity,
   runtime: { kind: "native" },
   desiredLifecycle: "unconfigured",
   ports: [],
@@ -114,7 +114,7 @@ describe("stack ownership", () => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-init-" });
         const stackId = yield* deriveStackId(identity);
         const store = yield* makeStackStateStore({ stateRoot: root });
-        const candidate = stateFor(stackId);
+        const candidate = stateFor();
         const [first, second] = yield* Effect.all(
           [store.initialize(stackId, candidate), store.initialize(stackId, candidate)],
           { concurrency: 2 },
@@ -149,6 +149,12 @@ describe("stack ownership", () => {
           controlEndpointFor(stackId, environment, lease.metadata.leasePort),
         );
         yield* publishOwnership(lease);
+        const paths = yield* resolveStackPaths({ stateRoot: root, stackId });
+        const persisted = yield* Schema.decodeEffect(
+          Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+        )(yield* fs.readFileString(paths.controlMetadata));
+        expect(persisted).not.toHaveProperty("stackId");
+        expect(persisted).not.toHaveProperty("endpoint");
         expect(yield* readOwnerMetadata(root, stackId, environment)).toEqual(lease.metadata);
 
         const competing = yield* acquireOwnership({
@@ -296,7 +302,7 @@ describe("stack ownership", () => {
     ),
   );
 
-  it.live("fails closed when owner metadata belongs to another identity", () =>
+  it.live("derives control identity and endpoint from the stack directory", () =>
     withPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -317,12 +323,31 @@ describe("stack ownership", () => {
         yield* publishOwnership(lease);
         const metadataPath = lease.metadataPath;
         const text = yield* fs.readFileString(metadataPath);
-        yield* fs.writeFileString(metadataPath, text.replace(stackId, "b".repeat(64)));
-        const read = yield* readOwnerMetadata(root, stackId, environment).pipe(Effect.exit);
-        expect(errorOf(read)).toBeInstanceOf(StackStateInvalidError);
+        const persisted = yield* Schema.decodeEffect(
+          Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+        )(text);
+        yield* fs.writeFileString(
+          metadataPath,
+          jsonText({
+            ...persisted,
+            stackId: "b".repeat(64),
+            endpoint: { kind: "unix", path: "/wrong/control.sock" },
+            unexpected: true,
+          }),
+        );
+        const rejected = yield* readOwnerMetadata(root, stackId, environment).pipe(Effect.exit);
+        expect(errorOf(rejected)).toBeInstanceOf(StackStateInvalidError);
+        yield* fs.writeFileString(
+          metadataPath,
+          jsonText({
+            ...persisted,
+            stackId: "b".repeat(64),
+            endpoint: { kind: "unix", path: "/wrong/control.sock" },
+          }),
+        );
+        expect(yield* readOwnerMetadata(root, stackId, environment)).toEqual(lease.metadata);
         yield* lease.release;
-        // A malformed replacement cannot be removed by this stale finalizer.
-        expect(yield* fs.exists(metadataPath)).toBe(true);
+        expect(yield* fs.exists(metadataPath)).toBe(false);
       }),
     ),
   );

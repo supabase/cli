@@ -3,6 +3,7 @@ import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSp
 import {
   makeProcessCommandRunner,
   type ContainerEngine,
+  ContainerCommandError,
   type ContainerEngineFailure,
   type ContainerEngineKind,
   type ContainerPlatform,
@@ -16,11 +17,16 @@ import { makePodmanEngine } from "./PodmanEngine.ts";
  * adapters.
  */
 export interface ContainerEngineResolverShape {
+  /** Checks for an installed client without requiring a running daemon. */
+  readonly isInstalled: (
+    kind: ContainerEngineKind,
+  ) => Effect.Effect<boolean, ContainerEngineFailure, ChildProcessSpawner>;
   readonly resolve: (
     preference: ContainerEngineKind,
   ) => Effect.Effect<ContainerEngine, ContainerEngineFailure, ChildProcessSpawner>;
 }
 
+/** @effect-expect-leaking ChildProcessSpawner */
 export class ContainerEngineResolver extends Context.Service<
   ContainerEngineResolver,
   ContainerEngineResolverShape
@@ -32,7 +38,18 @@ const hostContainerPlatform = (): ContainerPlatform => {
   return { os: "linux", desktop: false };
 };
 
-const defaultResolver: ContainerEngineResolverShape = {
+export const defaultContainerEngineResolver: ContainerEngineResolverShape = {
+  isInstalled: (kind) =>
+    Effect.gen(function* () {
+      const runner = yield* makeProcessCommandRunner({ executable: kind });
+      const result = yield* runner.run({ args: ["--version"] });
+      if (result.exitCode !== 0)
+        return yield* new ContainerCommandError({
+          operation: "version",
+          message: `${kind} --version exited (${String(result.exitCode)})`,
+        });
+      return true;
+    }).pipe(Effect.catchTag("ContainerExecutableNotFoundError", () => Effect.succeed(false))),
   resolve: (kind) =>
     Effect.gen(function* () {
       const runner = yield* makeProcessCommandRunner({ executable: kind });
@@ -47,4 +64,4 @@ export const resolveContainerEngine = (
   kind: ContainerEngineKind,
   resolver?: ContainerEngineResolverShape,
 ): Effect.Effect<ContainerEngine, ContainerEngineFailure, ChildProcessSpawner> =>
-  (resolver ?? defaultResolver).resolve(kind);
+  (resolver ?? defaultContainerEngineResolver).resolve(kind);

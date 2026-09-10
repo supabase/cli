@@ -122,7 +122,6 @@ const credentials = {
 const stoppedState = (): PersistedStackState => ({
   format: "supabase-stack-state-v1",
   identity: {
-    stackId,
     projectRoot: "/tmp/project",
     branchContext: "branch",
     stackName: "stack",
@@ -1257,6 +1256,7 @@ describe("Effect stack lifecycle handoff", () => {
           runtime: { kind: "container", engine: "docker" },
         }).pipe(
           Effect.provideService(ContainerEngineResolver, {
+            isInstalled: () => Effect.succeed(true),
             resolve: () => Effect.succeed(engine),
           }),
         );
@@ -1513,6 +1513,7 @@ describe("Effect stack lifecycle handoff", () => {
           platform: { os: "linux" },
         });
         const resolver = {
+          isInstalled: () => Effect.succeed(true),
           resolve: () => Effect.succeed(engine),
         };
         const stack = yield* createStack({
@@ -1924,7 +1925,7 @@ describe("Effect stack lifecycle handoff", () => {
                   : undefined;
               const initialState: PersistedStackState = {
                 format: "supabase-stack-state-v1",
-                identity: toPersistedIdentity(identity, id),
+                identity: toPersistedIdentity(identity),
                 runtime: { kind: "native" },
                 desiredLifecycle,
                 ports: [],

@@ -94,6 +94,34 @@ export interface StackStateStore {
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const withoutKeys = (
+  value: Readonly<Record<string, unknown>>,
+  keys: ReadonlyArray<string>,
+): Record<string, unknown> => {
+  const result = { ...value };
+  for (const key of keys) delete result[key];
+  return result;
+};
+
+/** Drops settings removed from the local model when reading older durable state. */
+const normalizeDurableState = (raw: Readonly<Record<string, unknown>>): unknown => {
+  const identity = isRecord(raw.identity) ? withoutKeys(raw.identity, ["stackId"]) : raw.identity;
+  const definition = raw.definition;
+  if (!isRecord(definition) || !isRecord(definition.capabilities)) return { ...raw, identity };
+  const capabilities: Record<string, unknown> = { ...definition.capabilities };
+  const obsolete: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
+    ["database", ["network_restrictions", "ssl_enforcement", "vault"]],
+    ["rest", ["auto_expose_new_tables", "tls"]],
+    ["storage", ["analytics"]],
+  ];
+  for (const [capability, keys] of obsolete) {
+    const module = capabilities[capability];
+    if (!isRecord(module) || !isRecord(module.settings)) continue;
+    capabilities[capability] = { ...module, settings: withoutKeys(module.settings, keys) };
+  }
+  return { ...raw, identity, definition: { ...definition, capabilities } };
+};
+
 const stateError = (message: string, cause?: unknown) =>
   new StackStateInvalidError({ message, ...(cause === undefined ? {} : { cause }) });
 
@@ -138,7 +166,7 @@ const decodeState = (
   for (const slot of Object.keys(raw.secrets))
     if (!/^[A-Za-z0-9_.:/-]+$/.test(slot))
       return Effect.fail(stateError(`Persisted secret slot key is invalid: ${slot}`));
-  return Schema.decodeUnknownEffect(PersistedStackStateSchema)(raw, {
+  return Schema.decodeUnknownEffect(PersistedStackStateSchema)(normalizeDurableState(raw), {
     onExcessProperty: "error",
   }).pipe(
     Effect.mapError((error) => stateError(`Invalid persisted stack state: ${String(error)}`)),
@@ -154,13 +182,12 @@ const validateIdentityForStackId = (
   identity: PersistedStackState["identity"],
   stackId: string,
 ): Effect.Effect<void, StackStateInvalidError, Crypto.Crypto> => {
-  const { stackId: persistedStackId, ...tuple } = identity;
-  return deriveStackId(tuple).pipe(
+  return deriveStackId(identity).pipe(
     Effect.mapError((error) =>
       stateError(`Unable to validate persisted identity: ${error.message}`),
     ),
     Effect.flatMap((derived) =>
-      persistedStackId === stackId && derived === stackId
+      derived === stackId
         ? Effect.void
         : Effect.fail(stateError("Persisted identity does not match its StackId directory")),
     ),

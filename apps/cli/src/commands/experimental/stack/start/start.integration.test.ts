@@ -1,5 +1,5 @@
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
 import { join } from "node:path";
@@ -49,6 +49,9 @@ const project = (): string => {
   writeFileSync(join(root, "supabase", "config.toml"), 'project_id = "start-test"\n');
   return root;
 };
+
+const emptyProject = (): string =>
+  mkdtempSync(join(tmpdir(), "supabase-experimental-stack-start-empty-"));
 
 const resolverLayer = stackTargetResolverLayer.pipe(
   Layer.provideMerge(stackApiLayer),
@@ -112,7 +115,12 @@ const flags = (overrides: Partial<Parameters<typeof stackStart>[0]> = {}) => ({
 
 function handlerLayer(opts: {
   root: string;
-  target: { projectRoot: string; name?: string; id?: string; runtime?: { kind: "native" } };
+  target: {
+    projectRoot: string;
+    name?: string;
+    id?: string;
+    runtime?: { kind: "native" } | { kind: "container"; engine: "docker" };
+  };
   stack: EffectStack;
   onCreate?: (options: unknown) => void;
   onOpen?: () => void;
@@ -153,6 +161,56 @@ function handlerLayer(opts: {
 }
 
 describe("stack start targeting", () => {
+  it.live("leaves auto runtime selection to the package for a new stack", () => {
+    const root = project();
+    let createOptions: unknown;
+    const stack = fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64))));
+    const setup = handlerLayer({
+      root,
+      target: { projectRoot: root },
+      stack,
+      onCreate: (options) => {
+        createOptions = options;
+      },
+    });
+    return Effect.gen(function* () {
+      yield* stackStart(flags({ runtime: "auto" }));
+      expect(createOptions).toEqual({ projectRoot: root });
+    }).pipe(
+      Effect.provide(setup.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("forwards an explicit Docker runtime to the package", () => {
+    const root = project();
+    let createOptions: unknown;
+    const stack = fakeStack("d".repeat(64), () => Effect.succeed(status("d".repeat(64))));
+    const setup = handlerLayer({
+      root,
+      target: {
+        projectRoot: root,
+        name: "feature-docker",
+        runtime: { kind: "container", engine: "docker" },
+      },
+      stack,
+      onCreate: (options) => {
+        createOptions = options;
+      },
+    });
+    return Effect.gen(function* () {
+      yield* stackStart(flags({ stack: Option.some("feature-docker"), runtime: "docker" }));
+      expect(createOptions).toEqual({
+        projectRoot: root,
+        name: "feature-docker",
+        runtime: { kind: "container", engine: "docker" },
+      });
+    }).pipe(
+      Effect.provide(setup.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
   it.effect("resolves the current project target", () => {
     const root = project();
     return Effect.gen(function* () {
@@ -332,7 +390,8 @@ describe("stack start targeting", () => {
       expect(failure).toBeInstanceOf(StackCommandStartError);
       if (failure instanceof StackCommandStartError) {
         expect(failure.reason).toBe("runtime");
-        expect(failure.suggestion).toContain("container engine");
+        expect(failure.suggestion).toContain("container engine is installed");
+        expect(failure.suggestion).toContain("daemon is running");
         expect(failure[ErrorActionabilityId]).toEqual(actionability.dockerNotRunning);
       }
       expect(stopped).toBe(false);
@@ -436,17 +495,21 @@ describe("stack start targeting", () => {
     );
   });
 
-  it.live("classifies a missing project configuration as invalid config", () => {
-    const root = mkdtempSync(join(tmpdir(), "supabase-experimental-stack-start-invalid-"));
-    const stack = fakeStack("9".repeat(64), () => Effect.succeed(status("9".repeat(64))));
+  it.live("starts with default configuration when no project config exists", () => {
+    const root = emptyProject();
+    let started = false;
+    const stack = fakeStack("9".repeat(64), (config) => {
+      started = true;
+      expect(config).toMatchObject({
+        config: { capabilities: { database: { settings: { health_timeout: "2m" } } } },
+      });
+      return Effect.succeed(status("9".repeat(64)));
+    });
     const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
-      const failure = yield* stackStart(flags()).pipe(Effect.flip);
-      expect(failure).toBeInstanceOf(StackCommandStartError);
-      if (failure instanceof StackCommandStartError) {
-        expect(failure.reason).toBe("invalid-config");
-        expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
-      }
+      yield* stackStart(flags());
+      expect(started).toBe(true);
+      expect(existsSync(join(root, "supabase", "config.toml"))).toBe(false);
     }).pipe(
       Effect.provide(setup.layer),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),

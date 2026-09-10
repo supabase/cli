@@ -33,9 +33,9 @@ const identity = {
   stackName: "default",
 } as const;
 
-const state = (stackId: string, definition?: StackDefinition): PersistedStackState => ({
+const state = (definition?: StackDefinition): PersistedStackState => ({
   format: "supabase-stack-state-v1",
-  identity: { ...identity, stackId },
+  identity,
   runtime: { kind: "native" },
   desiredLifecycle: "stopped",
   definition,
@@ -76,7 +76,7 @@ const completeStateFixture = Effect.gen(function* () {
       },
     },
   });
-  const complete = state(stackId, compiled.definition);
+  const complete = state(compiled.definition);
   yield* store.initialize(stackId, complete);
   const encoded = yield* Schema.encodeEffect(PersistedStackStateSchema)(complete);
   return { fs, path, store, root, stackId, complete, encoded };
@@ -164,8 +164,12 @@ describe("atomic stack state", () => {
   it.live("rejects malformed nested state documents", () =>
     withPlatform(
       Effect.gen(function* () {
-        const { fs, path, store, root, stackId, encoded } = yield* completeStateFixture;
+        const { fs, path, store, root, stackId, complete, encoded } = yield* completeStateFixture;
         const statePath = path.join(root, stackId, "state.json");
+        const persisted = yield* Schema.decodeEffect(
+          Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+        )(yield* fs.readFileString(statePath));
+        expect(persisted).not.toHaveProperty("identity.stackId");
         const nestedUnknown = {
           ...encoded,
           definition: {
@@ -194,6 +198,51 @@ describe("atomic stack state", () => {
         yield* fs.writeFileString(statePath, yield* jsonText(nestedUnknown));
         const unknownExit = yield* store.read(stackId).pipe(Effect.exit);
         expect(errorOf(unknownExit)).toBeInstanceOf(StackStateInvalidError);
+
+        const oldSnapshot = {
+          ...encoded,
+          identity: { ...encoded.identity, stackId },
+          secrets: { preserved: { policy: "managed", value: "secret-value" } },
+          definition: {
+            ...encoded.definition,
+            capabilities: {
+              ...encoded.definition?.capabilities,
+              database: {
+                ...encoded.definition?.capabilities.database,
+                settings: {
+                  ...encoded.definition?.capabilities.database.settings,
+                  network_restrictions: { enabled: true, allowed_cidrs: ["10.0.0.0/8"] },
+                  ssl_enforcement: { enabled: true },
+                  vault: {},
+                },
+              },
+              rest: {
+                ...encoded.definition?.capabilities.rest,
+                settings: {
+                  ...encoded.definition?.capabilities.rest.settings,
+                  auto_expose_new_tables: true,
+                  tls: { enabled: false },
+                },
+              },
+              storage: {
+                ...encoded.definition?.capabilities.storage,
+                settings: {
+                  ...encoded.definition?.capabilities.storage.settings,
+                  analytics: { enabled: false },
+                },
+              },
+            },
+          },
+        };
+        yield* fs.writeFileString(statePath, yield* jsonText(oldSnapshot));
+        const recovered = yield* store.read(stackId);
+        expect(recovered).toEqual({ ...complete, secrets: oldSnapshot.secrets });
+        if (recovered === undefined) throw new Error("Expected recovered state");
+        yield* store.replace(stackId, recovered);
+        const rewritten = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          yield* fs.readFileString(statePath),
+        );
+        expect(rewritten).toEqual({ ...encoded, secrets: oldSnapshot.secrets });
 
         const missingDefault = {
           ...encoded,
@@ -280,7 +329,7 @@ describe("atomic stack state", () => {
         };
         const stackId = yield* deriveStackId(value);
         const store = yield* makeStackStateStore({ stateRoot: root });
-        const before = { ...state(stackId), identity: { ...value, stackId } };
+        const before = { ...state(), identity: value };
         yield* store.initialize(stackId, before);
         const candidate = {
           ...before,
@@ -325,7 +374,7 @@ describe("atomic stack state", () => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-read-race-" });
         const stackId = yield* deriveStackId(identity);
         const store = yield* makeStackStateStore({ stateRoot: root });
-        yield* store.initialize(stackId, state(stackId));
+        yield* store.initialize(stackId, state());
         const statePath = path.join(root, stackId, "state.json");
         const racingFs: FileSystem.FileSystem = {
           ...fs,
@@ -375,16 +424,16 @@ describe("atomic stack state", () => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-format-" });
         const store = yield* makeStackStateStore({ stateRoot: root });
         const stackId = yield* deriveStackId(identity);
-        yield* store.initialize(stackId, state(stackId));
+        yield* store.initialize(stackId, state());
         yield* fs.writeFileString(
           path.join(root, stackId, "state.json"),
-          yield* jsonText({ ...state(stackId), format: "supabase-stack-state-v2" }),
+          yield* jsonText({ ...state(), format: "supabase-stack-state-v2" }),
         );
         const unsupported = yield* store.read(stackId).pipe(Effect.exit);
         expect(errorOf(unsupported)).toBeInstanceOf(StackStateFormatUnsupportedError);
         yield* fs.writeFileString(
           path.join(root, stackId, "state.json"),
-          yield* jsonText({ ...state(stackId), format: 1 }),
+          yield* jsonText({ ...state(), format: 1 }),
         );
         const malformed = yield* store.read(stackId).pipe(Effect.exit);
         expect(errorOf(malformed)).toBeInstanceOf(StackStateInvalidError);
@@ -400,7 +449,7 @@ describe("atomic stack state", () => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-identity-" });
         const store = yield* makeStackStateStore({ stateRoot: root });
         const stackId = yield* deriveStackId(identity);
-        const original = state(stackId);
+        const original = state();
         const forged = {
           ...original,
           identity: { ...original.identity, projectRoot: "/tmp/forged" },
@@ -420,7 +469,7 @@ describe("atomic stack state", () => {
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
         const stackId = yield* deriveStackId(identity);
-        const oldValue = state(stackId);
+        const oldValue = state();
         const newValue = {
           ...oldValue,
           desiredLifecycle: "running" as const,

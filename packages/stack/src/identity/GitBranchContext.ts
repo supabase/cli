@@ -42,6 +42,31 @@ const canonicalGitDirectory = (
     ),
   );
 
+const hasGitRepositoryMarkers = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  gitDirectory: string,
+): Effect.Effect<boolean, PlatformError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const head = yield* fs.exists(path.join(gitDirectory, "HEAD"));
+    const hasLocalObjectsAndRefs =
+      (yield* fs.exists(path.join(gitDirectory, "objects"))) &&
+      (yield* fs.exists(path.join(gitDirectory, "refs")));
+    if (hasLocalObjectsAndRefs) return true;
+
+    if (!(yield* fs.exists(path.join(gitDirectory, "commondir")))) return false;
+    if (!head) return false;
+    const commonDirectory = (yield* fs.readFileString(path.join(gitDirectory, "commondir"))).trim();
+    if (commonDirectory.length === 0) return false;
+    const canonicalCommonDirectory = yield* fs.realPath(
+      path.resolve(gitDirectory, commonDirectory),
+    );
+    return (
+      (yield* fs.exists(path.join(canonicalCommonDirectory, "objects"))) &&
+      (yield* fs.exists(path.join(canonicalCommonDirectory, "refs")))
+    );
+  });
+
 const locateGitDirectory = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -52,7 +77,14 @@ const locateGitDirectory = (
     while (true) {
       const gitEntry = path.join(directory, ".git");
       if (yield* fs.exists(gitEntry)) {
-        return yield* canonicalGitDirectory(fs, path, directory, gitEntry);
+        const entryInfo = yield* fs.stat(gitEntry);
+        const gitDirectory = yield* canonicalGitDirectory(fs, path, directory, gitEntry);
+        if (
+          entryInfo.type !== "Directory" ||
+          (yield* hasGitRepositoryMarkers(fs, path, gitDirectory))
+        ) {
+          return gitDirectory;
+        }
       }
       const parent = path.dirname(directory);
       if (parent === directory) {

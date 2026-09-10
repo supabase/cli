@@ -17,7 +17,6 @@ const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
 const identityFor = (projectRoot: string): PersistedStackState["identity"] => ({
-  stackId,
   projectRoot,
   branchContext: "ordinary-workspace",
   stackName: "runtime-input-owner",

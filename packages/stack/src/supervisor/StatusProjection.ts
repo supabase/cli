@@ -1,11 +1,10 @@
-import { Effect, Schema } from "effect";
+import { Effect } from "effect";
 import {
   CAPABILITY_NAMES,
   type CapabilityName,
   type CapabilityStatus,
 } from "../public/Capability.ts";
-import { StackStateInvalidError } from "../public/Errors.ts";
-import { StackIdSchema } from "../public/StackId.ts";
+import type { StackId } from "../public/StackId.ts";
 import {
   PORT_FIELD_PROTOCOL,
   type ArtifactPreparationStatus,
@@ -75,55 +74,50 @@ const stackLifecycle = (
 };
 
 export const statusFor = (
+  id: StackId,
   state: PersistedStackState,
   observed: ReadonlyArray<ObservedWorkload>,
   active: ReadonlySet<CapabilityName>,
   phase: ActualPhase,
   artifacts: ReadonlyArray<ArtifactPreparationStatus> = [],
-): Effect.Effect<StackStatus, StackStateInvalidError> =>
-  Schema.decodeEffect(StackIdSchema)(state.identity.stackId).pipe(
-    Effect.mapError(
-      (error) =>
-        new StackStateInvalidError({ message: `Invalid persisted StackId: ${String(error)}` }),
-    ),
-    Effect.map((id) => {
-      const definition = state.definition;
-      const capabilities = CAPABILITY_NAMES.map((name) => {
-        const capability = capabilityState(name, state, observed, active, phase);
-        const error = capabilityError(name, observed, capability);
-        return {
-          name,
-          activation:
-            definition?.capabilities[name].activation ?? (name === "database" ? "eager" : "lazy"),
-          state: capability,
-          ...(error === undefined ? {} : { error }),
-        };
-      });
-      const versions: Partial<Record<CapabilityName, string>> = {};
-      if (definition !== undefined)
-        for (const name of CAPABILITY_NAMES) versions[name] = definition.capabilities[name].version;
-      const endpoints = state.ports.reduce<StackStatus["endpoints"]>((result, assignment) => {
-        const protocol = PORT_FIELD_PROTOCOL[assignment.field];
-        const listener = definition?.listeners[assignment.field];
-        return {
-          ...result,
-          [assignment.field]: {
-            protocol,
-            address: listener?.address ?? "127.0.0.1",
-            port: assignment.port,
-            url: `${protocol}://${listener?.address ?? "127.0.0.1"}:${assignment.port}`,
-          },
-        };
-      }, {});
+): Effect.Effect<StackStatus> =>
+  Effect.sync(() => {
+    const definition = state.definition;
+    const capabilities = CAPABILITY_NAMES.map((name) => {
+      const capability = capabilityState(name, state, observed, active, phase);
+      const error = capabilityError(name, observed, capability);
       return {
-        id,
-        lifecycle: stackLifecycle(state, phase),
-        desiredLifecycle: state.desiredLifecycle,
-        runtime: state.runtime,
-        endpoints,
-        versions,
-        capabilities,
-        artifacts,
-      } satisfies StackStatus;
-    }),
-  );
+        name,
+        activation:
+          definition?.capabilities[name].activation ?? (name === "database" ? "eager" : "lazy"),
+        state: capability,
+        ...(error === undefined ? {} : { error }),
+      };
+    });
+    const versions: Partial<Record<CapabilityName, string>> = {};
+    if (definition !== undefined)
+      for (const name of CAPABILITY_NAMES) versions[name] = definition.capabilities[name].version;
+    const endpoints = state.ports.reduce<StackStatus["endpoints"]>((result, assignment) => {
+      const protocol = PORT_FIELD_PROTOCOL[assignment.field];
+      const listener = definition?.listeners[assignment.field];
+      return {
+        ...result,
+        [assignment.field]: {
+          protocol,
+          address: listener?.address ?? "127.0.0.1",
+          port: assignment.port,
+          url: `${protocol}://${listener?.address ?? "127.0.0.1"}:${assignment.port}`,
+        },
+      };
+    }, {});
+    return {
+      id,
+      lifecycle: stackLifecycle(state, phase),
+      desiredLifecycle: state.desiredLifecycle,
+      runtime: state.runtime,
+      endpoints,
+      versions,
+      capabilities,
+      artifacts,
+    } satisfies StackStatus;
+  });

@@ -6,12 +6,9 @@ import type { PersistedStackState } from "../state/StackState.ts";
 import { StackPreparationError } from "../public/Errors.ts";
 import { databaseBootstrapPlan } from "./DatabaseBootstrapCatalog.ts";
 
-const stackId = "a".repeat(64);
-
 const stateFrom = (definition: PersistedStackState["definition"]): PersistedStackState => ({
   format: "supabase-stack-state-v1",
   identity: {
-    stackId,
     projectRoot: "/tmp/project",
     branchContext: "ordinary-workspace",
     stackName: "default",

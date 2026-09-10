@@ -10,9 +10,11 @@ import {
   Option,
   Path,
   Stream,
+  Sink,
 } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { NodeServices } from "@effect/platform-node";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { ContainerArtifact } from "../model/CapabilityModule.ts";
 import { StackIdSchema } from "../public/StackId.ts";
@@ -31,6 +33,7 @@ import {
   type ContainerVolumeSpec,
 } from "./ContainerEngine.ts";
 import { makeDockerEngine, serializeDockerCommand } from "./DockerEngine.ts";
+import { defaultContainerEngineResolver } from "./ContainerEngineResolver.ts";
 import { makePodmanEngine, serializePodmanCommand } from "./PodmanEngine.ts";
 import { makeContainerRuntime } from "./ContainerRuntime.ts";
 import { RuntimeDriverError, type RuntimeWorkloadKey } from "./RuntimeDriver.ts";
@@ -265,6 +268,33 @@ const pendingStartRace = (operation: "stop" | "remove") =>
   });
 
 describe("container runtime", () => {
+  it.live("checks only the Docker client version when selecting an installed runtime", () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const spawner = ChildProcessSpawner.make((command) => {
+      if (!ChildProcess.isStandardCommand(command)) return Effect.die("unexpected piped command");
+      commands.push([command.command, ...command.args]);
+      return Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          stdin: Sink.drain,
+          stdout: Stream.empty,
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+          unref: Effect.succeed(Effect.void),
+        }),
+      );
+    });
+    return Effect.gen(function* () {
+      expect(yield* defaultContainerEngineResolver.isInstalled("docker")).toBe(true);
+      expect(commands).toEqual([["docker", "--version"]]);
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+  });
+
   it.live("executes the exact command argv through a bounded process boundary", () =>
     Effect.gen(function* () {
       const runner = yield* makeProcessCommandRunner({
@@ -2772,7 +2802,6 @@ describe("container runtime", () => {
         yield* store.initialize(testStackId, {
           format: "supabase-stack-state-v1",
           identity: {
-            stackId: testStackId,
             projectRoot: root,
             branchContext: "ordinary-workspace",
             stackName: "container-follower",

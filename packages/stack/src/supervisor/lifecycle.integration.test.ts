@@ -94,7 +94,7 @@ const makeFixture = (runtime: StackRuntime = { kind: "native" }) =>
     const store = yield* makeStackStateStore({ stateRoot: root });
     yield* store.initialize(id, {
       format: "supabase-stack-state-v1",
-      identity: { ...identity, stackId: id },
+      identity,
       runtime,
       desiredLifecycle: "unconfigured",
       ports: [],
@@ -374,7 +374,7 @@ describe("durable lifecycle controller", () => {
         expect(yield* fs.exists(`${fixture.root}/${fixture.id}`)).toBe(false);
         const recreated = yield* fixture.store.initialize(fixture.id, {
           format: "supabase-stack-state-v1",
-          identity: { ...identity, stackId: fixture.id },
+          identity,
           runtime: { kind: "native" },
           desiredLifecycle: "unconfigured",
           ports: [],
