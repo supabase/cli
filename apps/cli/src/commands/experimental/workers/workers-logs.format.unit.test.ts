@@ -6,14 +6,10 @@ import { renderWorkerLogLine, workerLogLevel } from "./workers-logs.format.ts";
 const ESCAPE = "\u001b";
 
 /**
- * Colour is decided by the stream, so the tests supply one — and by the
- * environment, so the tests pin that too. `supportsColor` consults
- * NO_COLOR / CLICOLOR / CLICOLOR_FORCE / CI *before* it ever asks the stream,
- * so a fake stream alone does not make these deterministic: under CI, where
- * `CI` is set, a `hasColors: () => true` stream still renders plain.
- *
- * Neutralised the same way `colors.unit.test.ts` does it — empty string
- * reads as unset for every variable the gate consults.
+ * Colour depends on both the stream and the environment (`supportsColor`
+ * checks NO_COLOR/CLICOLOR/CLICOLOR_FORCE/CI before the stream), so a fake
+ * stream alone isn't deterministic — under CI a `hasColors: () => true`
+ * stream still renders plain unless the env vars are neutralised too.
  */
 const PLAIN = { hasColors: () => false };
 const COLOURED = { hasColors: () => true };
@@ -32,11 +28,8 @@ const AT = Date.parse("2026-08-31T14:45:32.576Z");
 
 /**
  * The expected `HH:MM:SS` prefix for an instant, in this machine's zone.
- *
- * Derived rather than hardcoded: the renderer prints local time, so a literal
- * `"14:45:32"` would pass only on a UTC machine and fail everywhere else. Written
- * with the same field accessors the renderer uses, so what it pins is the format
- * and the zone choice, not an arithmetic that could drift with the clock.
+ * Derived, not hardcoded, so this passes off a UTC machine too; uses the same
+ * field accessors the renderer does, so it pins the format and zone choice.
  */
 function localTime(timestampMs: number): string {
   const at = new Date(timestampMs);
@@ -91,8 +84,6 @@ describe("workerLogLevel", () => {
   });
 
   it("reports no level for guest output rather than guessing one", () => {
-    // Nothing short of parsing tenant text could tell, so absent is the honest
-    // answer.
     expect(workerLogLevel(entry())).toBeUndefined();
   });
 
@@ -109,8 +100,6 @@ describe("renderWorkerLogLine", () => {
   });
 
   it("composes the request line from attributes, not the message", () => {
-    // On the wire `event_message` is only "GET /" - status and duration live in
-    // log_attributes, so the useful line has to be assembled.
     const line = renderWorkerLogLine(
       entry({
         stream: "worker_ingress_logs",
@@ -137,7 +126,6 @@ describe("renderWorkerLogLine", () => {
   });
 
   it("falls back to the message for an unknown stream", () => {
-    // The log contract is additive-only, so a new stream must still print.
     const line = renderWorkerLogLine(
       entry({ stream: "worker_future_logs", message: "something new" }),
       { showStream: false, colorStream: PLAIN },
@@ -147,8 +135,7 @@ describe("renderWorkerLogLine", () => {
   });
 
   it("renders local time, not UTC", () => {
-    // Pinned against a fixed offset rather than the ambient zone, so the choice is
-    // asserted on a UTC machine too, where local and UTC would otherwise coincide.
+    // Pinned against a fixed offset, so this also fails correctly on a UTC machine.
     const utc = new Date(AT).toISOString().slice(11, 19);
     const offsetMinutes = new Date(AT).getTimezoneOffset();
     const line = renderWorkerLogLine(entry(), { showStream: false, colorStream: PLAIN });
@@ -193,8 +180,6 @@ describe("renderWorkerLogLine", () => {
     expect(line).toBe(`${T}  kept`);
   });
 
-  // A carriage return returns the cursor to column zero, so a line carrying one
-  // can overwrite the timestamp and tag already printed to its left.
   it("strips a carriage return so a line cannot overwrite its own prefix", () => {
     const line = renderWorkerLogLine(entry({ message: "harmless\r00:00:00  forged" }), {
       showStream: false,
@@ -214,8 +199,6 @@ describe("renderWorkerLogLine", () => {
     ).toBe(`${T}  first\nsecond`);
   });
 
-  // The request path is chosen by whoever called the worker, so it is as
-  // untrusted as anything the worker printed itself.
   it("strips control sequences from request attributes", () => {
     const line = renderWorkerLogLine(
       entry({
@@ -234,7 +217,6 @@ describe("renderWorkerLogLine", () => {
     expect(line).not.toContain(ESCAPE);
   });
 
-  // A build reason is relayed from the builder, which reports what it was given.
   it("strips control sequences from build attributes", () => {
     const line = renderWorkerLogLine(
       entry({
@@ -278,7 +260,6 @@ describe("renderWorkerLogLine", () => {
       colorStream: COLOURED,
     });
 
-    // The timestamp stays plain so nothing a script greps on changes colour.
     expect(errorLine.startsWith(`${T}  `)).toBe(true);
     expect(warnLine.startsWith(`${T}  `)).toBe(true);
     expect(errorLine).toContain(`${ESCAPE}[31m`);
@@ -330,7 +311,6 @@ describe("renderWorkerLogLine", () => {
       { showStream: true, colorStream: PLAIN },
     );
 
-    // A ragged left edge is harder to scan than a slightly wider one.
     expect(app.indexOf("workers shim")).toBe(build.indexOf("deploy_accepted"));
   });
 

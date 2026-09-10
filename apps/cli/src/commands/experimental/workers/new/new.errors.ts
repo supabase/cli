@@ -7,11 +7,9 @@ import {
 
 /**
  * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
- * directory (`validateWorkdirIsDirectory`). Only reachable when the user
- * explicitly set it — beats every prompt and filesystem write, so a typo'd
- * `--workdir` can never scaffold a fresh `supabase/workers/…` tree (plus a new
- * `config.toml`) at the wrong path. Mirrors `FunctionsNewWorkdirError`,
- * `new`'s sibling in `supabase functions`.
+ * directory. Only reachable when the user explicitly set it — checked before
+ * every prompt and filesystem write, so a typo'd `--workdir` can never
+ * scaffold a fresh `supabase/workers/…` tree at the wrong path.
  */
 export class WorkersNewWorkdirError extends Data.TaggedError("WorkersNewWorkdirError")<{
   readonly message: string;

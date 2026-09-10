@@ -59,27 +59,11 @@ import {
 import type { WorkersPushFlags } from "./push.command.ts";
 
 /**
- * `supabase experimental workers push [name...]` — build (when there is code to build) and
- * deploy the worker into the linked project. Registered under `deploy` as an
- * alias, for anyone reaching for the `supabase functions` verb out of habit.
- *
- * The runtime, size, exposure and source directory come from `[workers.<name>]`
- * in `supabase/config.toml`. A directory pushed without ever running `new` gets
- * its runtime guessed from marker files instead — reported, with a nudge to pin
- * it down rather than re-guess on every push.
- *
- * A `dockerfile` worker is tarred and uploaded, and the build happens
- * server-side from that context, never on your machine. A catalog runtime with
- * code takes the same path, with the base image and a copy synthesized in place
- * of your Dockerfile. Every runtime this CLI offers has code to package, so
- * there is no path here that skips the upload.
- *
- * The command waits for that server-side build by default, so a plain push
- * reports the build's verdict rather than only that the deploy was accepted.
- * The build routinely runs for minutes, though, which makes every successful
- * deploy as slow as the slowest one — so `--no-wait` returns as soon as the
- * platform accepts the deploy, for an inner-loop redeploy or a CI step that
- * only needs the spec on file.
+ * `supabase experimental workers push [name...]` — deploys the named workers
+ * (or every worker, if none are named), reading runtime, size, exposure, and
+ * source from `[workers.<name>]`; an unrecorded runtime is guessed and
+ * reported. Builds run server-side from an uploaded context and are waited on
+ * by default; `--no-wait` returns once the deploy is accepted.
  */
 
 const resolveRuntime = Effect.fnUntraced(function* (options: {
@@ -133,11 +117,8 @@ const resolveSize = Effect.fnUntraced(function* (options: {
 
 /**
  * `--instances` for one deploy, then the recorded count, then
- * {@link DEFAULT_WORKER_INSTANCES}. Never left unset, because every deploy sends
- * a complete spec and an omitted count rescales the worker.
- *
- * No unparseable case to report: the config schema and the flag are both bounded
- * to a non-negative integer before the handler runs.
+ * {@link DEFAULT_WORKER_INSTANCES}. Never left unset, since every deploy sends
+ * a complete spec and an omitted count would rescale the worker.
  */
 function resolveInstances(options: {
   readonly recorded: number | undefined;
@@ -148,20 +129,11 @@ function resolveInstances(options: {
 
 /**
  * `--exposure` for one deploy, then the recorded exposure, then
- * {@link DEFAULT_WORKER_EXPOSURE}. Never left unset, because every deploy sends a
- * complete spec and an omitted exposure would re-expose a worker somebody had
- * deliberately made private.
- *
- * `--exposure` is a `Flag.choice`, so only a recorded value can be unrecognized
- * — and that is refused rather than coerced, the same way `resolveSize` treats a
- * size it does not know: silently deploying a `private`-typo'd worker as public
- * is the one outcome nobody asked for.
- *
- * The flag decides one deploy and nothing writes it down, so an override the
- * config does not already agree with is reported the way `resolveRuntime`
- * reports a guess: on stderr, naming the line to set. Without it, taking a
- * worker off the internet with `--exposure private` lasts exactly until the next
- * bare `push` puts it back.
+ * {@link DEFAULT_WORKER_EXPOSURE}. Never left unset, since an omitted exposure
+ * would re-expose a worker made private. An unrecognized recorded value is
+ * refused rather than coerced, and a diverging override is reported on
+ * stderr, since it applies to this deploy only and the next bare `push` would
+ * otherwise revert it.
  */
 const resolveExposure = Effect.fnUntraced(function* (options: {
   readonly name: string;
@@ -170,18 +142,15 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
 }) {
   if (Option.isSome(options.override)) {
     const chosen = options.override.value;
-    // What a later bare `push` would resolve to: the recorded value if the CLI
-    // knows it, the default if there is none, and `undefined` for one it cannot
-    // read — which is not `chosen` either, so that case is nudged too.
+    // What a later bare `push` would resolve to, so a diverging override can be flagged.
     const withoutTheFlag =
       options.recorded === undefined
         ? DEFAULT_WORKER_EXPOSURE
         : parseWorkerExposure(options.recorded);
     if (withoutTheFlag !== chosen) {
       const output = yield* Output;
-      // stderr, so it never lands inside a payload stdout is carrying — and
-      // unguarded by format, like the runtime nudge: a CI run is exactly where
-      // a one-deploy exposure quietly reverting matters most.
+      // stderr and every format, so it never lands inside a payload stdout is
+      // carrying, and a CI run still sees the exposure quietly reverting.
       yield* output.raw(
         `--exposure ${chosen} applies to this deploy only: supabase/config.toml ${
           options.recorded === undefined
@@ -201,9 +170,7 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
   if (recorded === undefined) {
     return yield* Effect.fail(
       new UnknownWorkerExposureError({
-        // A blank value gets its own sentence: `an unknown exposure ""` reads
-        // like a parser quirk, when what actually happened is that the key is
-        // there and says nothing.
+        // A blank value gets its own sentence rather than reading as a parser quirk.
         detail:
           options.recorded.trim() === ""
             ? `supabase/config.toml records a blank exposure for "${options.name}".`
@@ -218,12 +185,9 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
 /**
  * What to do about a worker whose source directory is not there at all.
  *
- * `supabase experimental workers new` is only an answer for a name the config has never
- * heard of — `new` refuses any name already under `[workers.<name>]`, so
- * offering it to a configured worker would answer with a second error. A
- * configured worker is missing a directory, not a config entry, and when the
- * entry pins an explicit `source` the path itself is as likely to be the
- * mistake as the absent directory.
+ * `workers new` refuses any name already configured, so it isn't an answer
+ * here — the worker's directory is missing, not its config entry. When the
+ * entry pins an explicit `source`, the path itself may be the mistake.
  */
 function missingSourceSuggestion(input: {
   readonly name: string;
@@ -243,12 +207,9 @@ function missingSourceSuggestion(input: {
 /**
  * What to do about a source directory that exists but holds nothing to deploy.
  *
- * Deliberately does not point at `supabase experimental workers new`. That command refuses
- * any name already present in `config.toml`, which is where a pushed worker
- * almost always comes from, and it refuses a directory that exists and is not
- * empty — so for both callers here it would answer with a second error rather
- * than a fix. The directory is already in place and already wired up; the only
- * thing missing is the code.
+ * Doesn't point at `workers new`: it refuses any configured name and any
+ * non-empty directory, so both callers here would get a second error instead
+ * of a fix. The directory is already wired up; only the code is missing.
  */
 function addYourCode(sourceDisplay: string): string {
   return `Add your worker's code to ${sourceDisplay}, then run this command again.`;
@@ -283,10 +244,8 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
 
   const sourceDisplay = displayPath(project.projectRoot, worker.sourceDir);
 
-  // Checked before the runtime is resolved, not after: with no recorded
-  // runtime, `resolveRuntime` classifies the directory and announces what it
-  // guessed. Doing that first meant reporting an inference about a path that
-  // does not exist, and only then failing on the path.
+  // Checked before the runtime is resolved: without this, an unrecorded runtime
+  // would be classified and announced for a path that doesn't exist.
   {
     const sourceMissing = new WorkerSourceMissingError({
       detail: `There is no worker source at ${sourceDisplay}.`,
@@ -297,11 +256,8 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
         entry: worker.entry,
       }),
     });
-    // Only "no such path" means the worker was never scaffolded. A permission
-    // or I/O error on the directory is a different problem with a different
-    // fix, and answering it with "there is no worker source, run `workers new`"
-    // both misdiagnoses it and points at a directory that already exists — so
-    // every other reason propagates as itself.
+    // Only "no such path" means the worker was never scaffolded; every other
+    // reason (permission, I/O) propagates as itself rather than misdiagnosing it.
     const info = yield* fs
       .stat(worker.sourceDir)
       .pipe(
@@ -311,10 +267,8 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
             : Effect.fail(error),
         ),
       );
-    // Something is there, it is just not a directory. Reporting that as "there
-    // is no worker source" is false twice over: the path is occupied, and
-    // `workers new` refuses a destination that exists and is not a directory,
-    // so the scaffold suggestion would answer with a second error.
+    // Something is there, it's just not a directory — reporting "no worker
+    // source" would be false, and the path is occupied besides.
     if (info.type !== "Directory") {
       return yield* Effect.fail(
         new WorkerSourceMissingError({
@@ -323,13 +277,9 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
         }),
       );
     }
-    // An empty directory packages and deploys perfectly happily, producing an
-    // image with nothing in it — a success message for a worker that cannot
-    // serve anything. Refuse before uploading rather than after.
-    //
-    // Read errors propagate rather than reading as empty: a directory the CLI
-    // cannot open is not a directory with nothing in it, and the two want
-    // opposite things from the user.
+    // An empty directory packages and deploys happily, producing an image with
+    // nothing in it — refused here rather than after the upload. A read error
+    // propagates rather than reading as empty, since the two want opposite fixes.
     const contents = yield* fs.readDirectory(worker.sourceDir);
     if (contents.length === 0) {
       return yield* Effect.fail(
@@ -347,10 +297,8 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     sourceDir: worker.sourceDir,
   });
 
-  // Size: whatever `new --size` recorded, else the alpha envelope's own
-  // default. Never left unset, because a worker that is actually running always
-  // has some concrete size — and never silently coerced, because a size the CLI
-  // does not recognize is a config mistake worth naming.
+  // Never left unset, since a running worker always has a concrete size, and
+  // never silently coerced, since an unrecognized size is a config mistake worth naming.
   const size = yield* resolveSize({ name, recorded: worker.entry?.size });
 
   const instances = resolveInstances({
@@ -358,9 +306,8 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     override: input.instances,
   });
 
-  // Resolved before anything is packaged or uploaded, alongside the runtime and
-  // size, so a config that records an exposure this CLI does not know is refused
-  // while the refusal is still free.
+  // Resolved before anything is packaged or uploaded, so an unrecognized
+  // exposure is refused while the refusal is still free.
   const exposure = yield* resolveExposure({
     name,
     recorded: worker.entry?.exposure,
@@ -381,10 +328,8 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
       "stderr",
     );
 
-    // The guard above counts directory entries, so a tree of nothing but empty
-    // subdirectories reaches here and packages to zero files. For a catalog
-    // runtime that deploys an image with no handler in it — the exact "nothing
-    // to deploy" case that guard exists to refuse.
+    // The guard above only counts directory entries, so a tree of nothing but
+    // empty subdirectories still reaches here and packages to zero files.
     if (packaged.fileCount === 0) {
       return yield* Effect.fail(
         new WorkerSourceMissingError({
@@ -414,21 +359,16 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   };
 
   const deploying = yield* output.task("Deploying worker...");
-  // The response to the deploy itself is the last thing this command can learn
-  // without waiting: the platform answers it only after accepting the spec and
-  // the uploaded context, and it carries the accepted spec back. Everything
-  // after this point is the server-side container build.
+  // The last thing this command can learn without waiting: the platform answers
+  // the deploy only after accepting the spec and context, carrying it back.
   const accepted = yield* deployWorker(api, projectRef, name, { spec, contextUploadId }).pipe(
     Effect.tapError(() => deploying.fail()),
   );
 
-  // Polled only when the deploy response left the build unresolved.
-  // `V2DeployAWorkerOutput` permits a terminal `active` or `failed` on the
-  // deploy itself, and that verdict is this deploy's — a fresh `GET` can only
-  // contradict it: `awaitWorkerBuild` reads a post-deploy 404 as "still
-  // building", so an already-`failed` deploy could burn the whole poll budget
-  // and surface as a timeout, and a concurrent deployment could answer with a
-  // state that belongs to someone else's build.
+  // Polled only when the deploy response left the build unresolved: a fresh GET
+  // can only contradict that verdict, since `awaitWorkerBuild` reads a
+  // post-deploy 404 as "still building" — polling an already-`failed` deploy
+  // could burn the whole budget and surface as a timeout instead.
   const settled =
     input.noWait || accepted.buildState !== "building"
       ? accepted
@@ -442,10 +382,8 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
               : Effect.void,
         }).pipe(Effect.tapError(() => deploying.fail()));
 
-  // Checked whether or not the build was waited on: the verdict can arrive on
-  // the deploy response as readily as on a poll. A spec already in `failed` is
-  // a refusal the command should report as one, rather than exiting zero on a
-  // worker that will never come up.
+  // Checked regardless of whether the build was waited on: the verdict can
+  // arrive on the deploy response as readily as on a poll.
   if (settled.buildState === "failed") {
     yield* deploying.clear();
     return yield* Effect.fail(
@@ -465,56 +403,36 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
       ? workerUrl(projectRef, settings.projectHost, name)
       : undefined;
 
-  // Dropped while the build is still running, rather than passed through.
-  // `image_version` is optional-but-permitted on the deploy response, so a
-  // re-push of a worker that is already serving can echo the image it is
-  // serving *now* — the previous build's, not this one's. Rendered beside
-  // `State building` that names an image this deploy did not produce, and a
-  // script reading `image_version` next to `build_state: "building"` would take
-  // it for the new one. Only reachable under `--no-wait`; the default polls
-  // until the build leaves `building`, so `settled` carries the real image.
+  // Dropped while still building: `image_version` on the deploy response can
+  // echo a worker's previously serving image, not this deploy's, and a script
+  // reading it beside `build_state: "building"` would mistake it for the new
+  // one. Only reachable under `--no-wait` — the default polls until it settles.
   const imageVersion = settled.buildState === "building" ? undefined : settled.imageVersion;
 
   // Suppressed when `-o` is in play: the payload owns stdout, and these lines
   // would land in the middle of it.
   if (output.format === "text" && !input.machineOutput) {
-    // Declarative line first, then the details — the shape every other command
-    // that reports a completed remote change uses. `renderWorkerDetails` drops
+    // Declarative line first, then the details. `renderWorkerDetails` drops
     // empty-valued rows, so optional fields need no conditional spreads.
     yield* output.raw(`Deployed Worker ${aqua(name, process.stdout)} to project ${projectRef}\n`);
     yield* output.raw(
       renderWorkerDetails([
-        // Labelled `State`, and placed first, the way `workers status` renders
-        // the same field: under `--no-wait` it is the one row that says the
-        // worker is not serving yet, so it should not be hunted for at the
-        // bottom of the block.
+        // Placed first: under `--no-wait` this is the one row saying the worker
+        // isn't serving yet, so it shouldn't be hunted for at the bottom.
         ["State", settled.buildState],
         ["Runtime", runtime],
         ["Size", formatApiSize(settled.spec.size)],
-        // Empty under `--no-wait`: this deploy's image does not exist until the
-        // build produces one, and `renderWorkerDetails` drops an
-        // empty-valued row.
+        // Empty under `--no-wait`, since this deploy's image doesn't exist yet.
         ["Image", imageVersion ?? ""],
         ["Access", settled.spec.exposure],
         ["URL", url ?? ""],
       ]),
     );
     if (settled.buildState === "building") {
-      // A success trailer rather than an inline stderr line: this is a "what to
-      // run next" hint, which `stop`, `bootstrap`, `migration repair` and
-      // `gen signing-key` all route through `emitSuccessTrailer` so it prints
-      // once at the end of the run instead of scrolling away. It matters here
-      // more than for those: pushing several workers would otherwise bury each
-      // worker's hint under the next worker's packaging and deploy output.
-      //
-      // One short sentence per line, with the command aqua'd the way every
-      // other follow-up hint in this shell writes them. The single wrapped
-      // paragraph this replaced re-flowed differently at every terminal width
-      // and buried the command mid-sentence.
-      //
-      // No "drop `--no-wait` next time" line to go with it: reaching here means
-      // the caller asked not to wait, so the only thing left to tell them is
-      // where the build's verdict will show up.
+      // A success trailer, not an inline stderr line, so pushing several workers
+      // doesn't bury each hint under the next worker's output. One short
+      // sentence per line, since a single wrapped paragraph re-flowed
+      // unpredictably and buried the command mid-sentence.
       yield* emitSuccessTrailer(
         `\nYour build was submitted successfully.\n` +
           `Run ${aqua(`supabase experimental workers status ${name}${input.refSuffix}`)} to check on it.\n`,
@@ -528,9 +446,9 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     size: settled.spec.size,
     exposure: settled.spec.exposure,
     instances: settled.spec.instances,
-    // Omitted rather than present-and-undefined: `-o toml` hands the payload to
-    // smol-toml, which cannot represent undefined and would throw *after* the
-    // upload and deploy had completed. Same reason `url` is spread below.
+    // Omitted rather than present-and-undefined: `-o toml` hands this to
+    // smol-toml, which can't represent undefined and would throw after the
+    // deploy completed. Same reason `url` is spread below.
     ...(imageVersion === undefined ? {} : { image_version: imageVersion }),
     build_state: settled.buildState,
     ...(url === undefined ? {} : { url }),
@@ -538,16 +456,10 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
 });
 
 /**
- * Names the workers a failed run never got to.
- *
- * The loop stops on the first failure, so everything after it was never
- * attempted — and the error itself only names the worker that broke. Left
- * unsaid, the user has to reconstruct the remainder from argument order, or
- * from the discovery walk's ordering when the push was a bare `push`.
- *
- * Written on stderr in every format, unlike the per-worker announcements: a
- * machine-format run is a CI run, which is exactly where nobody is watching the
- * loop and "what still needs deploying" is the question the failure raises.
+ * Names the workers a failed run never got to. The loop stops on the first
+ * failure, and the error itself only names the worker that broke, so this is
+ * how the remaining names get reported. Written on stderr in every format,
+ * since a machine-format run is a CI run where nobody is watching the loop.
  */
 const reportUnattempted = Effect.fnUntraced(function* (skipped: ReadonlyArray<string>) {
   if (skipped.length === 0) {
@@ -560,21 +472,12 @@ const reportUnattempted = Effect.fnUntraced(function* (skipped: ReadonlyArray<st
 });
 
 /**
- * Names the workers whose builds the run left running.
- *
- * Under `--no-wait` a worker is accepted while its build is still in flight, and
- * its follow-up hint goes out as a success trailer. `runCli` drains trailers
- * only on exit code 0 (`shared/cli/run.ts`, `afterSuccess`), so a later worker
- * failing discards every hint the run had queued — including for builds that are
- * still running on the platform, which the failure does nothing to stop.
- *
- * Reported here instead, on the path that actually runs. Same stderr-in-every-
- * format rule as {@link reportUnattempted} and the same reason: a machine-format
- * run is a CI run, and "what is still in flight" is as much a part of the
- * failure's answer as "what never started".
- *
- * Empty on a waiting run, without needing to check the flag: a worker the run
- * waited for has left `building` by the time it returns.
+ * Names the workers whose builds the run left running. Under `--no-wait` a
+ * worker's follow-up hint goes out as a success trailer, but trailers only
+ * drain on exit code 0 — so a later failure would otherwise discard the hint
+ * for a build still running on the platform. Reported here instead, on the
+ * path that actually runs, using the same stderr-in-every-format rule as
+ * {@link reportUnattempted}.
  */
 const reportStillBuilding = Effect.fnUntraced(function* (building: ReadonlyArray<string>) {
   if (building.length === 0) {
@@ -585,18 +488,13 @@ const reportStillBuilding = Effect.fnUntraced(function* (building: ReadonlyArray
 });
 
 /**
- * `supabase experimental workers push [name...]` — deploy the named workers, or every worker
- * in the project when none are named, mirroring `supabase functions deploy`.
+ * `supabase experimental workers push [name...]` — deploys the named workers,
+ * or every worker when none are named.
  *
- * Deploys run one at a time rather than concurrently: each is a server-side
- * container build, and interleaving several would both hammer the alpha's
- * per-project capacity and shred the progress output. The first failure stops
- * the run, because a build that failed is usually the thing to fix before
- * spending minutes on the rest.
- *
- * Under `--no-wait` that serialization only covers the package/upload/deploy
- * legs; the builds themselves then run concurrently on the platform, which is
- * what the caller asked for by opting out of the wait.
+ * Deploys run one at a time: each is a server-side container build, and several
+ * at once would hammer the alpha's per-project capacity. The first failure
+ * stops the run; under `--no-wait`, only the package/upload/deploy legs are
+ * serialized — the builds themselves run concurrently.
  */
 export const workersPush = Effect.fn("experimental.workers.push")(function* (
   flags: WorkersPushFlags,
@@ -610,10 +508,9 @@ export const workersPush = Effect.fn("experimental.workers.push")(function* (
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  // The ref is resolved outside the finalizers because caching it is one of
-  // them; everything that can fail on its own — loading `config.toml`,
-  // validating names, discovering workers — belongs inside, so a malformed
-  // config still flushes telemetry. Same shape as `config/push`.
+  // Resolved here, outside the block below, since caching it is one of that
+  // block's own finalizers — everything else that can fail belongs inside so
+  // those failures still flush telemetry.
   const projectRef = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
@@ -639,13 +536,13 @@ export const workersPush = Effect.fn("experimental.workers.push")(function* (
     const names = [...new Set(requested)];
 
     // Before the first deploy, not after the last one: this payload always
-    // carries a `workers` array, so `-o env` can never encode it, and finding
-    // that out at the end means failing with the remote project already changed.
+    // carries a `workers` array, which `-o env` can never encode, so finding
+    // that out at the end would mean failing with the remote project already changed.
     yield* rejectWorkersEnvOutput();
 
     const machineOutput = yield* workersMachineOutputRequested();
-    // Computed once for the whole run, the way `status` and `delete` do: an
-    // explicit `--project-ref` has to survive into every hint this push emits.
+    // Computed once for the whole run: an explicit `--project-ref` has to
+    // survive into every hint this push emits.
     const refSuffix = workersProjectRefSuffix(flags.projectRef);
     const deployed: Array<Record<string, unknown>> = [];
     // Accepted, but not finished: their builds outlive a failure further down
@@ -653,18 +550,9 @@ export const workersPush = Effect.fn("experimental.workers.push")(function* (
     const stillBuilding: Array<string> = [];
     for (const [index, name] of names.entries()) {
       if (names.length > 1 && !machineOutput && output.format === "text") {
-        // stderr, unblanked and labelled, the way `functions deploy` announces
-        // each function: a bare name with a leading blank line put a section
-        // header into whatever was consuming stdout.
-        //
-        // Counted, because each worker's package/upload/build takes minutes and
-        // the name alone says nothing about how much of the run is left.
-        //
-        // Text only, on both axes: `machineOutput` tracks `-o`, which leaves
-        // `output.format` as `text`, so neither check covers the other. This is
-        // progress rather than an outcome, and `--output-format json` asked for
-        // a stream of events — unlike the unattempted-workers report below,
-        // which every format gets because it says what still needs deploying.
+        // Progress, not an outcome, so this is text-only on both axes:
+        // `machineOutput` tracks `-o` (which leaves `output.format` as `text`),
+        // and `--output-format json` asked for a stream of events instead.
         yield* output.raw(
           `Deploying Worker ${index + 1}/${names.length}: ${aqua(name)}\n`,
           "stderr",
@@ -684,8 +572,6 @@ export const workersPush = Effect.fn("experimental.workers.push")(function* (
           ? {}
           : { pollRetrySchedule: options.pollRetrySchedule }),
       }).pipe(
-        // In flight before what never started: one is a thing the user now has
-        // to follow, the other a thing they have to re-run.
         Effect.tapError(() =>
           reportStillBuilding(stillBuilding).pipe(
             Effect.andThen(reportUnattempted(names.slice(index + 1))),

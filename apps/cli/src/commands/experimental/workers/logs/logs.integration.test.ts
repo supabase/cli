@@ -55,10 +55,9 @@ function flags(overrides: Record<string, unknown> = {}) {
 }
 
 /**
- * Follow options that drive the loop instantly and stop after N polls.
- *
- * The real schedule is spaced in seconds; `recurs` also gives the tail an end, so
- * a test does not have to deliver a signal just to finish.
+ * Follow options that drive the loop instantly and stop after N polls: the real
+ * schedule is spaced in seconds, and `recurs` gives the tail an end so a test
+ * doesn't need to deliver a signal to finish.
  */
 function followFor(polls: number) {
   return {
@@ -72,10 +71,8 @@ function logsResponse(rows: ReadonlyArray<unknown>) {
 }
 
 /**
- * The query parameters the handler actually sent.
- *
- * Read off the recorded request rather than the URL: `HttpClientRequest` keeps
- * `urlParams` beside the URL rather than appended to it.
+ * The query parameters the handler actually sent, read off the recorded
+ * request rather than the URL: `HttpClientRequest` keeps `urlParams` separate.
  */
 function sentQuery(request: { readonly urlParams: Readonly<Record<string, string>> }) {
   return request.urlParams;
@@ -98,8 +95,7 @@ describe("workers logs", () => {
     return Effect.gen(function* () {
       yield* workersLogs(flags());
 
-      // `<time>  [app]    <message>` — the tag is present because no --kind
-      // pinned a stream.
+      // Strips the `<time>  [app]` prefix; the tag appears since no --kind pinned a stream.
       const messages = out.stdoutText
         .trimEnd()
         .split("\n")
@@ -164,14 +160,10 @@ describe("workers logs", () => {
       const start = query.iso_timestamp_start;
       const end = query.iso_timestamp_end;
 
-      // A lone bound yields a one-minute window server-side and sending neither
-      // is an outright error, so both must always be present.
       expect(start).toBeTruthy();
       expect(end).toBeTruthy();
       expect(start!.endsWith("Z")).toBe(true);
       expect(end!.endsWith("Z")).toBe(true);
-      // Over 24h the server silently clamps to start+24h, returning an older
-      // slice than the one asked for.
       expect(Date.parse(end!) - Date.parse(start!)).toBeLessThan(24 * 60 * 60 * 1000);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -225,8 +217,6 @@ describe("workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      // The log contract is additive-only: unknown streams must be ignored, not
-      // rejected.
       yield* workersLogs(flags());
 
       expect(out.stdoutText).toContain("from the future");
@@ -282,7 +272,6 @@ describe("workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      // `limit 0` would be a 400, so no-history has to mean no query.
       yield* workersLogs(flags({ tail: 0 }));
 
       expect(http.routeKeys).not.toContain(workerLogsRoute());
@@ -372,8 +361,6 @@ describe("workers logs", () => {
     });
 
     return Effect.gen(function* () {
-      // The endpoint reports a failed query with a 200, so reading `result`
-      // first would report success.
       const error = yield* workersLogs(flags()).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerLogsQueryFailedError);
@@ -512,7 +499,6 @@ describe("workers logs", () => {
       };
       expect(payload.worker_name).toBe("api");
       expect(payload.logs[0]?.level).toBe("error");
-      // Both timestamp forms, and the raw attributes.
       expect(payload.logs[0]?.timestamp).toBe(new Date(T1).toISOString());
       expect(payload.logs[0]?.timestamp_ms).toBe(T1);
       const attributes = payload.logs[0]?.attributes as Record<string, string> | undefined;
@@ -551,9 +537,6 @@ describe("workers logs", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The command has run by the time the ref fails to resolve, so its post-run
-  // event still has to be written. Resolution sits above the query, so the
-  // failing-query test above does not cover this path.
   it.live("flushes telemetry when the project ref cannot be resolved", () => {
     const repo = project();
     const { layer, telemetry, http } = setupWorkers({
@@ -587,8 +570,6 @@ describe("workers logs", () => {
         flags({ projectRef: Option.some(WORKERS_PROJECT_REF) }),
       ).pipe(Effect.flip);
 
-      // A copy-pasted suggestion must not silently re-resolve to whatever this
-      // checkout happens to be linked to.
       const suggestion = error instanceof WorkerNotDeployedError ? error.suggestion : "";
       expect(suggestion).toContain(`--project-ref ${WORKERS_PROJECT_REF}`);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -614,8 +595,6 @@ describe("workers logs", () => {
       expect(out.stdoutText).toContain("second");
       expect(out.stdoutText).toContain("third");
 
-      // Every request, history and polls alike, must carry both bounds: a lone
-      // start silently yields a one-minute window and neither is an error.
       for (const request of http.requests) {
         const query = sentQuery(request);
         expect(query.iso_timestamp_start).toBeTruthy();
@@ -634,7 +613,7 @@ describe("workers logs", () => {
       routes: {
         [LOGS_ROUTE]: [
           logsResponse([workerLogRow({ id: "a", tsMs: T1, message: "only once" })]),
-          // The cursor lags deliberately, so the same row comes back.
+          // The cursor lags, which is why the same row appears in both responses.
           logsResponse([
             workerLogRow({ id: "a", tsMs: T1, message: "only once" }),
             workerLogRow({ id: "b", tsMs: T2, message: "and this" }),
@@ -658,7 +637,7 @@ describe("workers logs", () => {
       routes: {
         [LOGS_ROUTE]: [
           logsResponse([workerLogRow({ id: "a", tsMs: T3, message: "newest first" })]),
-          // Older than the cursor, which is why the cursor lags at all.
+          // Older than the cursor — this is what the grace period is for.
           logsResponse([workerLogRow({ id: "late", tsMs: T1, message: "arrived late" })]),
         ],
       },
@@ -676,10 +655,7 @@ describe("workers logs", () => {
     const { layer, out, http } = setupWorkers({
       workdir: repo.dir,
       routes: {
-        // A tail-zero follow still asks whether the worker exists: with no history
-        // query, zero rows would otherwise be indistinguishable from a typo.
         [GET_WORKER_ROUTE]: { status: 200, body: { data: workerResource({ name: "api" }) } },
-        // After the run starts, since a tail-zero follow prints only what arrives.
         [LOGS_ROUTE]: logsResponse([
           workerLogRow({ id: "new", tsMs: Date.now() + 5_000, message: "brand new" }),
         ]),
@@ -690,8 +666,6 @@ describe("workers logs", () => {
       yield* workersLogs(flags({ follow: true, tail: 0 }), followFor(1));
 
       expect(out.stdoutText).toContain("brand new");
-      // No history request; every log request belongs to the poll loop, and none
-      // may ask for `limit 0`, which the endpoint rejects.
       const sql = http.requests.map((request) => sentQuery(request).sql).filter(Boolean);
       expect(sql).not.toHaveLength(0);
       for (const query of sql) {
@@ -718,20 +692,13 @@ describe("workers logs", () => {
 
       const entries = out.events.filter((event) => event.type === "log-entry");
       expect(entries).toHaveLength(2);
-      // A tail has no terminal payload, so no single `result` is emitted.
       expect(out.events.filter((event) => event.type === "result")).toHaveLength(0);
-      // An error line is routed to stderr so a consumer can split diagnostics.
       expect(entries[0]).toMatchObject({ stream: "stderr", source: "history" });
       expect(entries[1]).toMatchObject({ stream: "stdout", source: "live" });
-      // `line` carries the composed sentence, not the raw `event_message`: the
-      // status and duration live in `log_attributes`, and `log-entry` has no
-      // field a consumer could recover them from.
       expect(entries[0]).toMatchObject({ line: "500 GET / 23ms" });
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `-o` outranks `--output-format` when both are set, and `-o pretty` encodes
-  // nothing — so this pair asks for the text rendering, not for JSON.
   it.live("renders text when -o pretty overrides --output-format json", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -749,8 +716,6 @@ describe("workers logs", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Same precedence, on the branch that refuses a tail: `-o pretty` means this
-  // run has no single-payload format to be incompatible with.
   it.live("allows --follow when -o pretty overrides --output-format json", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -781,15 +746,11 @@ describe("workers logs", () => {
         );
 
         expect(error).toBeInstanceOf(WorkersFollowNotSupportedError);
-        // Refused before any query is paid for.
         expect(setup.http.requests).toHaveLength(0);
       }
     }).pipe(Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `--tail 0 --follow` is "skip history, print what arrives". The poll window
-  // still reaches a grace period behind the cursor so late relays are caught, so
-  // the floor has to be the line's own timestamp rather than a narrower window.
   it.live("does not replay pre-invocation lines for --tail 0 --follow", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -813,8 +774,6 @@ describe("workers logs", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // No history query means zero rows proves nothing, so the tail has to ask
-  // directly — otherwise a typo waits forever on logs that cannot arrive.
   it.live("still checks the worker exists for --tail 0 --follow", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -828,16 +787,14 @@ describe("workers logs", () => {
       );
 
       expect(error).toBeInstanceOf(WorkerNotDeployedError);
-      // Text mode is not silent across that request.
       expect(out.progressEvents).toContainEqual(
         expect.objectContaining({ type: "start", message: "Checking worker..." }),
       );
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `ts_ms` feeds `new Date(...).toISOString()` while the payload is built, which
-  // happens for text runs too. Out of Date range that throws `RangeError`, which
-  // is a defect rather than the typed unreadable-response failure.
+  // `ts_ms` feeds `new Date(...).toISOString()`, which throws `RangeError` on an
+  // out-of-range value.
   it.live("fails typed rather than throwing on an out-of-range timestamp", () => {
     const repo = project();
     const { layer } = setupWorkers({
@@ -854,8 +811,6 @@ describe("workers logs", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A 404 answers the same way every time. Retrying it held the error back for a
-  // minute and spent the endpoint's ten-per-minute allowance getting nowhere.
   it.live("surfaces a definitive poll failure without retrying it", () => {
     const repo = project();
     const { layer, http } = setupWorkers({
@@ -868,16 +823,13 @@ describe("workers logs", () => {
     return Effect.gen(function* () {
       yield* workersLogs(flags({ follow: true }), {
         pollSchedule: Schedule.recurs(0),
-        // Would retry three times over if the failure were treated as transient.
         retrySchedule: Schedule.recurs(3),
       }).pipe(Effect.flip);
 
-      // History, then the one poll that failed — no second attempt at it.
       expect(http.requests).toHaveLength(2);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A rate limit is the server asking for exactly that, so it still rides out.
   it.live("retries a rate-limited poll", () => {
     const repo = project();
     const { layer, http } = setupWorkers({
@@ -901,8 +853,6 @@ describe("workers logs", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `--tail` bounds the history a run opens with; reusing it as the poll size
-  // meant `--tail 1 --follow` asked each poll for a single row.
   it.live("polls with a page size independent of --tail", () => {
     const repo = project();
     const { layer, http } = setupWorkers({
@@ -923,8 +873,6 @@ describe("workers logs", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The query orders newest-first, so a full page means there is more below it.
-  // Advancing the cursor on that page alone dropped the remainder for good.
   it.live("drains a burst larger than one page before advancing the cursor", () => {
     const repo = project();
     const fullPage = Array.from({ length: 1000 }, (_, index) =>
@@ -934,8 +882,7 @@ describe("workers logs", () => {
       workdir: repo.dir,
       routes: {
         [LOGS_ROUTE]: [
-          // Non-empty, so the run does not spend its second request on the
-          // deployed-worker check that an empty history triggers.
+          // Non-empty, so the run skips the deployed-worker check an empty history would trigger.
           logsResponse([workerLogRow({ id: "seed", tsMs: T1 - 100_000, message: "seed" })]),
           logsResponse(fullPage),
           logsResponse([workerLogRow({ id: "straggler", tsMs: T1, message: "older line" })]),
@@ -946,25 +893,18 @@ describe("workers logs", () => {
     return Effect.gen(function* () {
       yield* workersLogs(flags({ follow: true }), followFor(0));
 
-      // The second page is only requested because the first came back full.
       expect(http.requests).toHaveLength(3);
       expect(out.stdoutText).toContain("older line");
       expect(out.stdoutText).toContain("burst 999");
-      // Oldest first across pages, not merely within each one.
       expect(out.stdoutText.indexOf("older line")).toBeLessThan(out.stdoutText.indexOf("burst 0"));
-      // The short third page proved the window was empty below it, so nothing
-      // was skipped and the run stays quiet.
       expect(out.stderrText).not.toContain("Skipped part of a burst");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The drain walks backwards from the newest rows, so running out of pages
-  // leaves the *oldest* part of the burst unfetched while the cursor advances
-  // past it. Those lines are gone, and a silent hole is worse than a noisy one.
   it.live("says so on stderr when a burst outruns the page budget", () => {
     const repo = project();
-    // Five full pages, each older than the last so every page narrows the window
-    // and the loop runs to its bound rather than stopping early.
+    // Each page older than the last, so every page narrows the window and the
+    // loop runs to its bound.
     const pages = Array.from({ length: 5 }, (_unused, page) =>
       logsResponse(
         Array.from({ length: 1000 }, (_row, index) =>
@@ -989,12 +929,9 @@ describe("workers logs", () => {
     return Effect.gen(function* () {
       yield* workersLogs(flags({ follow: true }), followFor(0));
 
-      // The budget, and not one request more: the sixth page is never asked for.
       expect(http.requests).toHaveLength(6);
       expect(out.stderrText).toContain("Skipped part of a burst larger than 5000 lines");
-      // Actionable rather than a bare apology.
       expect(out.stderrText).toContain("--kind");
-      // The lines it did reach are still printed.
       expect(out.stdoutText).toContain("page 0 line 999");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -1026,8 +963,6 @@ describe("workers logs", () => {
     return Effect.gen(function* () {
       yield* workersLogs(flags({ follow: true }), followFor(1));
 
-      // A sustained burst would otherwise repeat the notice every interval and
-      // bury the very lines it is warning about.
       const notices = out.stderrText.split("Skipped part of a burst").length - 1;
       expect(notices).toBe(1);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -1048,8 +983,6 @@ describe("workers logs", () => {
       });
 
       expect(processControl.exitCode).toBe(130);
-      // The point of recording rather than exiting: `process.exit` from inside
-      // the race branch would have killed the runtime before this ran.
       expect(telemetry.flushed).toBe(true);
       expect(processControl.exitCalls).toEqual([]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));

@@ -68,10 +68,7 @@ describe("workers list", () => {
 
       const rows = stdout.split("\n").filter((line) => /\|/.test(line) && /api|box|old/.test(line));
       expect(rows).toHaveLength(3);
-      // Sorted by name, so `api`, `box`, then the scaffolded-but-undeployed `old`.
       expect(rows[0]).toContain("2gb (1 vCPU)");
-      // The URL is deliberately not a column: one derivable field pushed the
-      // table past 130 columns. The machine payload still carries it.
       expect(stdout).not.toContain("https://");
       expect(rows[1]).toContain("sandbox");
       expect(rows[2]).toContain("not deployed");
@@ -95,8 +92,6 @@ describe("workers list", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A local directory with no `[workers.<name>]` entry: pushable, and the
-  // runtime is the only thing a push would have to work out for itself.
   it.live("calls out a deployed worker that config.toml does not know about", () => {
     const created = makeWorkersProject({
       "supabase/config.toml": `project_id = "demo"\n`,
@@ -124,8 +119,6 @@ describe("workers list", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Two of them, so the advisory has to read as a list rather than as one name
-  // with a stray verb.
   it.live("calls out every deployed worker config.toml does not know about", () => {
     const created = makeWorkersProject({
       "supabase/config.toml": `project_id = "demo"\n`,
@@ -159,9 +152,6 @@ describe("workers list", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Deletion is asynchronous, so a worker can be listed while it is being torn
-  // down. Reporting its build state would show `active` for something on its
-  // way out.
   it.live("shows a worker being torn down as deleting", () => {
     const repo = project(`project_id = "demo"\n\n[workers.api]\nruntime = "node"\n`);
     const { layer, out } = setupWorkers({
@@ -181,9 +171,6 @@ describe("workers list", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Nothing local at all: `deployOneWorker` checks the source directory before
-  // it ever infers a runtime, so "would have to guess the runtime" named the
-  // wrong prerequisite for this one.
   it.live("tells a worker with no local source to restore it, not to expect a guess", () => {
     const repo = project(`project_id = "demo"\n`);
     const { layer, out } = setupWorkers({
@@ -283,7 +270,6 @@ describe("workers list", () => {
     return Effect.gen(function* () {
       yield* workersList({ projectRef: Option.none() });
 
-      // `-o` payloads own stdout outright: no clack success line may share it.
       const parsed = JSON.parse(out.stdoutText);
       expect(parsed.project_ref).toBe(WORKERS_PROJECT_REF);
       expect(parsed.workers).toHaveLength(2);
@@ -373,9 +359,6 @@ describe("workers list", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A directory under the workers root with no `[workers.<name>]` entry is what
-  // a bare `push` discovers and deploys, so an inventory that leaves it out can
-  // say "No workers found" about a worker `push` would happily deploy.
   it.live("includes a local worker directory that has no config entry", () => {
     const repo = project('project_id = "demo"\n');
     mkdirSync(join(repo.dir, "supabase", "workers", "scaffolded"), { recursive: true });
@@ -390,15 +373,10 @@ describe("workers list", () => {
 
       expect(out.stdoutText).toContain("scaffolded");
       expect(out.stdoutText).not.toContain("No workers found");
-      // Never deployed, so it is not announced as a deployed-but-unconfigured
-      // orphan either.
       expect(out.stderrText).not.toContain("scaffolded");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The API omits `spec.runtime` only for a context-only build, so for a
-  // deployed worker its absence *is* dockerfile. Falling back to the local
-  // config there made `-o json` report a runtime the text table contradicted.
   it.live("reports a deployed dockerfile worker as dockerfile in both renderings", () => {
     const repo = project('project_id = "demo"\n\n[workers.api]\nruntime = "node"\n');
     const { layer, out } = setupWorkers({
@@ -419,9 +397,6 @@ describe("workers list", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // An undeployed worker has no `size`/`instances` and a private one no `url`,
-  // so a realistic inventory hands the encoder a payload full of holes. Pins
-  // that they are omitted rather than rendered or thrown on.
   it.live("encodes TOML for an inventory holding undeployed and private workers", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -463,15 +438,12 @@ describe("workers list", () => {
 
       expect(out.stdoutText).toContain("project_ref:");
       expect(out.stdoutText).toContain("name: api");
-      // The table would have gone to stdout too, and broken the document.
       expect(out.stdoutText).not.toContain("NAME");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `pretty` is the human default; `table` and `csv` are accepted by the global
-  // flag for `db query`'s benefit, and every resource command is meant to ignore
-  // them and render text. Falling through to the TOML encoder is the trap the
-  // payload allowlist closes.
+  // `table`/`csv` are accepted by the global flag for `db query`'s benefit; every
+  // other resource command, including this one, renders text for them too.
   it.live.each(["pretty", "table", "csv"] as const)(
     "renders text rather than TOML for -o %s",
     (goOutput) => {
@@ -507,10 +479,8 @@ describe("workers list", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // CLI-2285: `loadWorkersProject`'s JSON-capable read must thread the
-  // ancestor-search predicate — the workdir's own default resolution only
-  // probes config.toml, so a config.json-only project invoked from a
-  // subdirectory relied on this second climb to be found at all.
+  // The default workdir resolution only probes config.toml, so a config.json-only
+  // project invoked from a subdirectory relies on this second climb to be found.
   it.live(
     "discovers a config.json-only project's [workers.*] entry from a subdirectory when --workdir is defaulted",
     () => {

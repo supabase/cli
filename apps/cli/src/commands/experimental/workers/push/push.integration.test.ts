@@ -47,8 +47,6 @@ function flags(overrides: Partial<WorkersPushFlags> = {}): WorkersPushFlags {
     names: ["api"],
     instances: Option.none(),
     exposure: Option.none(),
-    // Mirrors the command default: a push waits for the build, and only the
-    // scenarios that are about the early return opt out of it.
     noWait: false,
     projectRef: Option.none(),
     ...overrides,
@@ -115,9 +113,8 @@ function stattableAsCurrentUser(path: string): boolean {
 }
 
 function push(flagOverrides: Partial<WorkersPushFlags> = {}) {
-  // Both schedules are injected: the outer poll and the per-read retry. The
-  // production retry is spaced in seconds, so leaving it in place made the
-  // transient-failure test wait on a real clock.
+  // Both schedules are injected so the transient-failure test doesn't wait on
+  // the production retry's real-seconds clock.
   return workersPush(flags(flagOverrides), {
     pollSchedule: IMMEDIATE,
     pollRetrySchedule: IMMEDIATE,
@@ -162,7 +159,6 @@ describe("workers push", () => {
       expect(out.stdoutText).toContain("Runtime");
       expect(out.stdoutText).toContain(`https://${WORKERS_PROJECT_REF}.supabase.co/workers/v1/api`);
       expect(out.stdoutText).toContain("v1");
-      // The build settled, so there is nothing left to follow up on.
       expect(out.stderrText).not.toContain("supabase experimental workers status api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -181,17 +177,11 @@ describe("workers push", () => {
       ]);
 
       expect(out.stdoutText).toContain("Deployed Worker api");
-      // No image exists yet, so the row is dropped rather than rendered empty.
       expect(out.stdoutText).not.toContain("Image");
       expect(out.stderrText).toContain("supabase experimental workers status api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `V2DeployAWorkerOutput` permits a terminal state on the deploy response
-  // itself, and that verdict is this deploy's. A poll on top of it can only
-  // contradict it — `awaitWorkerBuild` reads a post-deploy 404 as "still
-  // building", so an already-settled deploy would burn the poll budget and
-  // surface as a timeout instead of the answer the platform already gave.
   describe("honours a terminal deploy response instead of polling", () => {
     const settledOnDeploy = (repoDir: string, state: "active" | "failed") =>
       setupWorkers({
@@ -284,10 +274,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `[workers.*] runtime` and `size` are plain strings in the config schema, so
-  // an unrecognized value reaches the handler rather than failing the parse.
-  // Naming the accepted values beats echoing a schema error, and the refusal
-  // has to land before anything is packaged or uploaded.
   it.live("names the runtimes on offer when config records one it does not know", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "cobol"\n`,
@@ -367,9 +353,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The whole point of recording it: every deploy sends a complete spec, so a
-  // worker deliberately made private has to stay private across pushes rather
-  // than being re-exposed by the next one.
   it.live("keeps a worker private when config records it that way", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "2gb"\nexposure = "private"\n`,
@@ -384,8 +367,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Hand-written config, so the casing is the user's own — `PRIVATE` plainly
-  // means `private`, and the canonical form is what gets sent.
   it.live("reads a recorded exposure case-insensitively", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "PRIVATE"\n`,
@@ -414,9 +395,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `[workers.*] exposure` is a plain string in the config schema, so a typo
-  // reaches the handler. Coercing it to the default would deploy a `privat`
-  // worker to the whole internet — refused before anything is packaged instead.
   it.live("names the exposures on offer when config records one it does not know", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "privat"\n`,
@@ -433,10 +411,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The blank case, which reads as "not recorded" if the config reader collapses
-  // it: absent means the `public` default, so a worker whose config plainly
-  // tried to say something would go to the whole internet. Refused like any
-  // other value the CLI does not recognize.
   it.live("refuses a blank recorded exposure instead of defaulting it to public", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = ""\n`,
@@ -447,18 +421,12 @@ describe("workers push", () => {
       const error = yield* push().pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(UnknownWorkerExposureError);
-      // Named as blank rather than as an unknown `""`, which reads like a
-      // parser quirk instead of an empty key.
       expect((error as UnknownWorkerExposureError).detail).toContain("blank exposure");
       expect((error as UnknownWorkerExposureError).suggestion).toContain("public, private");
-      // Nothing was packaged, uploaded or deployed — least of all publicly.
       expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `--exposure` decides one deploy and nothing writes it down. Every deploy
-  // sends a complete spec, so a worker taken off the internet by the flag goes
-  // back on it at the next bare push — quietly, unless the run says so.
   describe("says when --exposure will not outlive the deploy", () => {
     const pushWith = (config: string, exposure: "public" | "private") => {
       const repo = project({ "supabase/config.toml": config });
@@ -476,7 +444,6 @@ describe("workers push", () => {
         yield* run();
 
         expect(out.stderrText).toContain("records no exposure for api");
-        // The exact line to set, the way the runtime guess names its own.
         expect(out.stderrText).toContain('[workers.api] exposure = "private"');
       }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
     });
@@ -495,8 +462,6 @@ describe("workers push", () => {
       }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
     });
 
-    // A recorded value the CLI cannot read is not `chosen` either: the next bare
-    // push refuses rather than deploying, which is still not what this run did.
     it.live("nudges when the config records something it cannot read", () => {
       const { repo, layer, out, run } = pushWith(
         `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "privat"\n`,
@@ -510,8 +475,6 @@ describe("workers push", () => {
       }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
     });
 
-    // Nothing drifts, so nothing to say — the flag restated what the config
-    // already holds, case-insensitively.
     it.live("stays quiet when the config already agrees", () => {
       const { repo, layer, out, run } = pushWith(
         `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "PRIVATE"\n`,
@@ -525,8 +488,6 @@ describe("workers push", () => {
       }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
     });
 
-    // The same non-drift, reached the other way: no recorded exposure and a flag
-    // naming the default a bare push would have picked anyway.
     it.live("stays quiet when the flag restates the default", () => {
       const { repo, layer, out, run } = pushWith(
         `project_id = "demo"\n\n[workers.api]\nruntime = "node"\n`,
@@ -541,8 +502,6 @@ describe("workers push", () => {
     });
   });
 
-  // The flag is the authority for the deploy it runs, so an unrecognized
-  // recorded value it replaces is moot rather than fatal.
   it.live("lets --exposure stand in for an exposure config records badly", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nexposure = "privat"\n`,
@@ -618,8 +577,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The reason is optional in the API contract, so the detail has to read as a
-  // sentence without one rather than trailing a bare colon.
   it.live("reports a failed build that came with no reason", () => {
     const repo = project();
     const { layer } = setupWorkers({
@@ -640,10 +597,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The accepted spec is the platform's answer, not the request echoed back — so
-  // a worker the platform did not expose has no URL to print even when the deploy
-  // asked for `public`, and inventing one from the ref would name an address
-  // that does not resolve.
   it.live("omits the URL for a worker the platform did not expose publicly", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -673,9 +626,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The schedules every other test injects are a seam: the command itself calls
-  // the handler with no options at all. The stubbed worker settles on the first
-  // poll, so the production schedules never get to space anything out.
   it.live("deploys when called the way the command wires it, with no test seams", () => {
     const repo = project();
     const { layer, out, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
@@ -712,10 +662,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Every "run this next" string here is copy-pasted verbatim. From an unlinked
-  // checkout — or one linked elsewhere — dropping the `--project-ref` the user
-  // typed either fails to resolve or silently addresses a same-named worker in
-  // whatever project this checkout points at.
   describe("carries an explicit --project-ref into its hints", () => {
     const unlinked = (repoDir: string, routeOverrides = {}) =>
       setupWorkers({
@@ -778,8 +724,6 @@ describe("workers push", () => {
       }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
     });
 
-    // The mirror image: when the link supplied the ref, repeating it back is
-    // noise on a command that already resolves to the right project.
     it.live("but leaves it off when the link supplied the ref", () => {
       const repo = project();
       const { layer, out } = setupWorkers({ workdir: repo.dir, routes: routes() });
@@ -808,12 +752,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `config.json` is a supported project format. `push` only reads the workers
-  // section, so it has to honour one: loading TOML-only left the section empty,
-  // which meant a guessed runtime and default size and instance count for a
-  // worker that had configured all three.
-  // The context is already uploaded by the time the deploy is refused, so the
-  // failure has to be reported as the deploy's, not the upload's.
   it.live("reports a rejected deploy after the context has been uploaded", () => {
     const repo = project();
     const { layer, http } = setupWorkers({
@@ -856,15 +794,10 @@ describe("workers push", () => {
         exposure: "public",
         instances: 3,
       });
-      // Every value came from config, so nothing was inferred from the files.
       expect(out.stderrText).not.toContain("guessed");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The presigned URL's query string is a write-capable credential, so it must
-  // not ride along in the error text — which rules out the library's own
-  // `HttpClientError.message`, since that appends the method and URL that
-  // failed. A transport failure is the case that would carry it.
   it.live("keeps the presigned signature out of an upload transport failure", () => {
     const repo = project();
     const { layer, http } = setupWorkers({
@@ -886,9 +819,7 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Both of the next two arrive as a 404 on the same route; only `error.code`
-  // separates them, so they are asserted against the bodies the API really
-  // sends rather than a shape of our own invention.
+  // Both of the next two arrive as a 404 on the same route; only `error.code` separates them.
   it.live("reports a project outside the alpha as unavailable", () => {
     const repo = project();
     const { layer } = setupWorkers({
@@ -960,8 +891,6 @@ describe("workers push", () => {
       const error = yield* push().pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerSourceMissingError);
-      // `api` is under `[workers.api]`, and `new` refuses a name the config
-      // already carries — so the answer is the absent directory, not a scaffold.
       expect((error as WorkerSourceMissingError).suggestion).not.toContain("workers new");
       expect((error as WorkerSourceMissingError).suggestion).toContain(
         "supabase/workers/api and add your worker's code",
@@ -980,19 +909,12 @@ describe("workers push", () => {
 
       expect(error).toBeInstanceOf(WorkerSourceMissingError);
       expect((error as WorkerSourceMissingError).detail).toContain("is empty");
-      // `workers new` defines no `--force`, and refuses both a name already in
-      // `config.toml` and a directory that is not empty — so recovery advice
-      // that names it would answer with a second error instead of a fix.
       expect((error as WorkerSourceMissingError).suggestion).not.toContain("--force");
       expect((error as WorkerSourceMissingError).suggestion).not.toContain("workers new");
       expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The one case `workers new` really does answer: a name that reached `push`
-  // from argv alone, with no `[workers.<name>]` entry and nothing on disk.
-  // Names are only validated as DNS labels before dispatch, so this is
-  // reachable — a typo, or a worker nobody has scaffolded yet.
   it.live("offers to scaffold a worker the config has never heard of", () => {
     const repo = project({ "supabase/config.toml": 'project_id = "demo"\n' });
     rmSync(join(repo.dir, "supabase", "workers", "api"), { recursive: true, force: true });
@@ -1009,9 +931,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A worker whose `source` points somewhere that is not there: the path in
-  // config is as likely to be the mistake as the absent directory, so the
-  // suggestion names both.
   it.live("points at the config entry when a configured source is missing", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsource = "./services/api"\n`,
@@ -1031,10 +950,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A file sitting where the source directory should be is not a missing
-  // worker: the path is occupied, and `workers new` refuses a destination that
-  // exists and is not a directory, so pointing there would answer with a second
-  // error.
   it.live("reports a file at the source path as not a directory", () => {
     const repo = project({});
     const source = join(repo.dir, "supabase", "workers", "api");
@@ -1054,12 +969,8 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // "Cannot read it" and "it is not there" want opposite things from the user,
-  // and `Effect.option` on the stat collapsed them into the second — so an
-  // unreadable source was reported as an unscaffolded worker, with a suggestion
-  // to run `workers new` over a path that is already occupied. A symlink loop
-  // is the cheapest stat failure that is not a missing path, and unlike a
-  // chmod it behaves the same when the suite runs as root.
+  // A symlink loop is the cheapest stat failure that isn't a missing path, and
+  // unlike a chmod it behaves the same when the suite runs as root.
   it.live("reports an unstattable source rather than calling it missing", () => {
     const repo = project({});
     const source = join(repo.dir, "supabase", "workers", "api");
@@ -1076,8 +987,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Same rule one line down: `orElseSucceed([])` on the read reported a
-  // directory the CLI cannot open as a directory with nothing in it.
   it.live("reports an unreadable source rather than calling it empty", () => {
     const repo = project({});
     const source = join(repo.dir, "supabase", "workers", "api");
@@ -1111,10 +1020,6 @@ describe("workers push", () => {
     );
   });
 
-  // Packaging stores symlinks rather than following them, so a link out of the
-  // tree would package a path the build cannot resolve. It is refused while
-  // packaging — before a slot is minted — so nothing is uploaded for a context
-  // that could never build.
   it.live("refuses a source that links outside itself, before minting a slot", () => {
     const repo = project();
     symlinkSync("../../config.toml", join(repo.dir, "supabase", "workers", "api", "escape.toml"));
@@ -1147,7 +1052,6 @@ describe("workers push", () => {
     return Effect.gen(function* () {
       yield* push();
 
-      // The blip was retried rather than aborting a deploy already in flight.
       expect(
         http.routeKeys.filter((key) => key === `GET ${workersRoute("/api")}`).length,
       ).toBeGreaterThan(1);
@@ -1155,9 +1059,6 @@ describe("workers push", () => {
   });
 
   it.live("acts on the workdir's project, not the process's directory", () => {
-    // `--workdir`/`SUPABASE_WORKDIR` names the project every command acts
-    // on, so the worker discovered here comes from that tree even though the
-    // process is somewhere else entirely.
     const repo = project();
     const elsewhere = makeWorkersProject();
     const { layer, http } = setupWorkers({ workdir: repo.dir, routes: routes() });
@@ -1201,15 +1102,12 @@ describe("workers push", () => {
     return Effect.gen(function* () {
       yield* push({ names: [] });
 
-      // Both deployed, in a stable (sorted) order.
       expect(http.routeKeys).toContain(`POST ${workersRoute("/api/deploy")}`);
       expect(http.routeKeys).toContain(`POST ${workersRoute("/web/deploy")}`);
       expect(http.routeKeys.indexOf(`POST ${workersRoute("/api/deploy")}`)).toBeLessThan(
         http.routeKeys.indexOf(`POST ${workersRoute("/web/deploy")}`),
       );
       expect(out.stdoutText).toContain("web");
-      // Each worker is announced with its place in the run, and the run closes
-      // by naming everything it deployed.
       expect(out.stderrText).toContain("Deploying Worker 1/2: api");
       expect(out.stderrText).toContain("Deploying Worker 2/2: web");
       expect(out.stdoutText).toContain(
@@ -1218,11 +1116,8 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The other half of that stat: an entry that is there but cannot be read is a
-  // real filesystem problem, not a name to skip. Dropping it would deploy a
-  // subset of the project and report success. Root ignores the permission bits,
-  // and CI sometimes runs as root, so this asserts the outcome that actually
-  // applies rather than skipping.
+  // Asserts against the outcome that actually applies (root ignores permission
+  // bits, and CI sometimes runs as root) rather than skipping.
   it.live("fails rather than skipping a workers entry it cannot stat", () => {
     const repo = project();
     const workersRoot = join(repo.dir, "supabase", "workers");
@@ -1254,9 +1149,6 @@ describe("workers push", () => {
     );
   });
 
-  // A dangling link in the workers root is listed by the directory read but has
-  // nothing to stat. Discovery skips it rather than failing the whole run over a
-  // path that names no worker.
   it.live("skips a dangling link in the workers root while discovering", () => {
     const repo = project();
     symlinkSync("nowhere", join(repo.dir, "supabase", "workers", "ghost"));
@@ -1270,11 +1162,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A bare `push` promises to deploy every worker in the project, and a worker
-  // with no config entry is known only by its directory. Reading an unlistable
-  // workers root as "no workers here" therefore answers a real filesystem
-  // problem with "nothing to deploy" — the same absence-versus-unreadable
-  // confusion as the source-directory guards, one level up.
   it.live("fails rather than reporting an unlistable workers root as empty", () => {
     const repo = project({ "supabase/config.toml": 'project_id = "demo"\n' });
     const workersRoot = join(repo.dir, "supabase", "workers");
@@ -1332,18 +1219,12 @@ describe("workers push", () => {
 
       expect(error).toBeInstanceOf(WorkerBuildFailedError);
       expect(out.stderrText).toContain("Not attempted: web");
-      // Named rather than deployed: the run really did stop.
       expect(http.routeKeys).not.toContain(`POST ${workersRoute("/web/deploy")}`);
-      // No summary either — nothing finished.
       expect(out.stdoutText).not.toContain("Deployed 2 Workers");
-      // Nothing was left running: a waiting run has no build in flight to name.
       expect(out.stderrText).not.toContain("Still building");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `runCli` drains success trailers only on exit code 0, so a later failure
-  // discards the follow-up hint for a build that is still running — and the
-  // failure does nothing to stop that build. The failure path has to say so.
   it.live("names the builds a failed --no-wait run left running", () => {
     const repo = project({
       "supabase/config.toml":
@@ -1372,8 +1253,6 @@ describe("workers push", () => {
       expect(error).toBeInstanceOf(WorkerBuildFailedError);
       expect(out.stderrText).toContain("Still building: api");
       expect(out.stderrText).toContain("Not attempted: zap");
-      // In flight before never started: one is a thing to follow, the other a
-      // thing to re-run.
       expect(out.stderrText.indexOf("Still building")).toBeLessThan(
         out.stderrText.indexOf("Not attempted"),
       );
@@ -1435,7 +1314,6 @@ describe("workers push", () => {
       const success = out.messages.findLast(
         (message) => message.type === "success" && message.data !== undefined,
       );
-      // One entry per worker deployed, since a bare push can deploy several.
       expect(success?.data).toMatchObject({ project_ref: WORKERS_PROJECT_REF });
       expect(success?.data?.["workers"]).toEqual([
         {
@@ -1452,10 +1330,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `image_version` is optional-but-permitted on the deploy response, so a
-  // re-push of a worker that is already serving can echo the image it is
-  // serving now — the previous build's. Reporting that beside `State building`
-  // names an image this deploy did not produce.
   describe("does not report the previous image while a re-push is still building", () => {
     const rePush = (repoDir: string, format?: "json") =>
       setupWorkers({
@@ -1469,8 +1343,7 @@ describe("workers push", () => {
                 name: "api",
                 runtime: "node",
                 buildState: "building",
-                // The worker was already live, so the platform echoes the image
-                // it is still serving.
+                // The platform echoes the image a re-pushed worker is still serving.
                 imageVersion: "v7",
               }),
             },
@@ -1501,8 +1374,6 @@ describe("workers push", () => {
         const success = out.messages.findLast(
           (message) => message.type === "success" && message.data !== undefined,
         );
-        // Whole-payload rather than a missing-key assertion: beside
-        // `build_state: "building"`, an `image_version` reads as this build's.
         expect(success?.data?.["workers"]).toEqual([
           {
             worker_name: "api",
@@ -1524,15 +1395,11 @@ describe("workers push", () => {
       return Effect.gen(function* () {
         yield* push();
 
-        // The mirror case: blanking is tied to `building`, not to re-pushes.
         expect(out.stdoutText).toContain("v1");
       }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
     });
   });
 
-  // Under `--no-wait` the payload reports the accepted deploy rather than a
-  // finished one: the build has not produced an image, and saying `active`
-  // would tell a script the worker is already serving.
   it.live("reports the build as still running in json mode under --no-wait", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -1561,8 +1428,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `--output-format json` asked for a stream of events, so progress does not
-  // belong in it — unlike the "not attempted" report, which every format gets.
   it.live("keeps per-worker progress out of json mode", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\n\n[workers.web]\nruntime = "node"\n`,
@@ -1593,9 +1458,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `-o env` cannot express the `workers` array. Discovering that at emit time
-  // meant failing with the project already changed, inviting a retry that
-  // deployed all over again.
   it.live("refuses -o env before making any request at all", () => {
     const repo = project();
     const { layer, http } = setupWorkers({
@@ -1612,9 +1474,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The "nothing to deploy" guard counts directory entries, so without this a tree
-  // of empty subdirectories packages to zero files and deploys an image with no
-  // handler in it.
   it.live("refuses a source holding only empty directories, before minting a slot", () => {
     const repo = project({ "supabase/workers/api/nested/.keep": "" });
     rmSync(join(repo.dir, "supabase", "workers", "api", "index.js"));
@@ -1631,8 +1490,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The runtime guess is an inference about the contents of a directory, so it
-  // has no business being reported for a directory that is not there.
   it.live("does not report a guessed runtime when the source is missing", () => {
     const repo = project({ "supabase/config.toml": 'project_id = "demo"\n' });
     rmSync(join(repo.dir, "supabase", "workers", "api"), { recursive: true, force: true });
@@ -1646,8 +1503,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `image_version` is optional in the response. Present-but-undefined made the
-  // TOML encoder throw, after the upload and deploy had already completed.
   it.live("encodes -o toml when the deployed worker has no image version", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -1669,8 +1524,6 @@ describe("workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A malformed config.toml must fail inside the finalizers, or the run skips the
-  // telemetry flush every invocation is supposed to perform.
   it.live("flushes telemetry when the project config cannot be loaded", () => {
     const repo = project({ "supabase/config.toml": "project_id = [unclosed\n" });
     const { layer, telemetry } = setupWorkers({ workdir: repo.dir, routes: routes() });

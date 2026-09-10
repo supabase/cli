@@ -70,18 +70,11 @@ function defaultFirst<T>(values: ReadonlyArray<T>, defaultValue: T): Array<T> {
 }
 
 /**
- * Whether this run has a terminal to ask on.
- *
- * `-o json|yaml|toml|env` leaves `output.format` as `text`, and the prompts go
- * through Clack, which writes its terminal UI to stdout with no stream
- * override — so a machine format is as non-interactive as a redirected stdout,
- * whichever flag asked for it.
- *
- * `output.interactive` only tracks *stdout*, so on its own it still let
- * `printf 'api\n' | supabase experimental workers new` feed the pipe straight
- * into the name prompt instead of taking the documented non-interactive path. A
- * prompt is only answerable from a keyboard, so stdin has to be a terminal too
- * — the same pair `workers delete` guards its confirmation with.
+ * Whether this run has a terminal to ask on. `-o json|yaml|toml|env` leaves
+ * `output.format` as `text` but still writes Clack's UI to stdout, so it's as
+ * non-interactive as a redirected stdout. `output.interactive` only tracks
+ * stdout, so piped stdin also needs `tty.stdinIsTty` — a prompt is only
+ * answerable from a keyboard.
  */
 const canPromptFor = Effect.fnUntraced(function* (machineOutput: boolean) {
   const output = yield* Output;
@@ -92,12 +85,9 @@ const canPromptFor = Effect.fnUntraced(function* (machineOutput: boolean) {
 /**
  * The worker name, asked for when the command line did not carry one.
  *
- * The name is the one input here that cannot be defaulted — it is the
- * directory, the `config.toml` key and the hostname — so a bare
- * `supabase experimental workers new` asks rather than failing the parse. The
- * prompt validates against everything the command would otherwise refuse a
- * moment later, so a mistyped or already-recorded name is corrected in place
- * instead of ending the run.
+ * The name can't be defaulted — it's the directory, the config key, and the
+ * hostname — so a bare invocation asks rather than failing the parse. The
+ * prompt validates the same rules the command would otherwise enforce later.
  */
 const resolveName = Effect.fnUntraced(function* (options: {
   readonly explicit: Option.Option<string>;
@@ -184,11 +174,10 @@ const resolveSize = Effect.fnUntraced(function* (options: {
 });
 
 /**
- * Recorded on every scaffold, not just when it is asked for: `push` sends a
- * complete spec each time, so a worker whose `exposure` is absent from
- * `config.toml` is deployed public by the next bare `push`. Writing the value
- * down — default included, the way `runtime` and `size` are — is what makes
- * `--exposure private` stick past the deploy that chose it.
+ * Recorded on every scaffold, not just when asked for: `push` sends a
+ * complete spec each time, so an absent `exposure` in `config.toml` deploys
+ * public on the next bare `push`. Writing the value down, default included,
+ * is what makes `--exposure private` stick.
  */
 const resolveExposure = Effect.fnUntraced(function* (options: {
   readonly explicit: Option.Option<WorkerExposure>;
@@ -218,14 +207,10 @@ const resolveExposure = Effect.fnUntraced(function* (options: {
 /**
  * The instance count to record, and whether to record it at all.
  *
- * Not prompted for, unlike the other dials: how many instances a worker needs is
- * an operational answer nobody has while scaffolding it, so the flag records
- * one when it is given and the file stays quiet when it is not.
- *
- * `undefined` — meaning "write no key" — for the default count, because an
- * absent `instances` and `instances = 1` mean the same thing to `push`, and a
- * scaffold should not commit a line that says nothing. A `0` is not that: it
- * scales the worker to nothing, so it is written like any other explicit count.
+ * Not prompted for, unlike the other dials — nobody knows the right instance
+ * count while scaffolding. `undefined` (write no key) for the default, since
+ * an absent `instances` and `instances = 1` mean the same thing to `push`; a
+ * `0` is a real choice (scale to nothing), so it's always written.
  */
 function recordedInstances(explicit: Option.Option<number>): number | undefined {
   const instances = Option.getOrUndefined(explicit);
@@ -273,11 +258,10 @@ export const workersNew = Effect.fn("experimental.workers.new")(function* (flags
     const name = yield* resolveName({ explicit: flags.name, canPrompt, project });
     yield* validateWorkerName(name);
 
-    // Refused before anything is asked or written. `new` creates a worker;
-    // changing one that already exists is a `config.toml` edit, and the file is
-    // the user's. Checking here rather than only in `planWorkerEntry` means the
-    // runtime and size prompts never run for a name that was going to be
-    // refused anyway; the name prompt rejects it up front for the same reason.
+    // Refused before anything is asked or written: `new` creates a worker, and
+    // changing one that already exists is a `config.toml` edit that belongs to
+    // the user. Checking here means the runtime/size prompts never run for a
+    // name that would be refused anyway.
     if (project.section.workers[name] !== undefined) {
       return yield* Effect.fail(
         new WorkerAlreadyConfiguredError({
@@ -287,18 +271,11 @@ export const workersNew = Effect.fn("experimental.workers.new")(function* (flags
       );
     }
 
-    // A DEFAULTED workdir's reader (`workers list`/`push`/`status`, used
-    // via `loadWorkersProject`) can discover a config.json-only
-    // ancestor project by climbing (CLI-2285); this command's own writer
-    // above is TOML-only and never climbs, so the two can disagree about
-    // which project is "the" project. When they do, and that ancestor
-    // already configures this name, writing a same-named worker here would
-    // silently create a second, disagreeing `[workers.<name>]` under a
-    // different root instead of the collision already refused above for
-    // this command's OWN root. An explicit `--workdir`/`SUPABASE_WORKDIR`
-    // never has this gap — both views are pinned to the same root then — so
-    // this only runs for a defaulted workdir, and only costs an extra read
-    // when it is.
+    // A defaulted workdir can discover a config.json-only ancestor project that
+    // an explicit `--workdir` would not, so the two can disagree about which
+    // project is "the" project. When they do, and that ancestor already
+    // configures this name, writing here would create a second, disagreeing
+    // entry instead of refusing it.
     if (!cliSettings.explicitWorkdir) {
       const discovered = yield* loadWorkersProject().pipe(Effect.option);
       if (
@@ -315,21 +292,18 @@ export const workersNew = Effect.fn("experimental.workers.new")(function* (flags
       }
     }
 
-    // Resolved before anything is written, so cancelling any prompt leaves
-    // nothing behind — the name included. With nowhere to ask, the defaults
-    // stand; only the name has nothing to fall back to.
+    // Resolved before anything is written, so cancelling any prompt leaves nothing
+    // behind. With nowhere to ask, the defaults stand — only the name has no fallback.
     const runtime = yield* resolveRuntime({ explicit: flags.runtime, canPrompt });
     const size = yield* resolveSize({ explicit: flags.size, canPrompt });
     const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
     const instances = recordedInstances(flags.instances);
 
-    // Validated before anything is written: this is the directory the starter
-    // files land in, so a value naming the project root, `supabase/`, or
-    // anywhere outside the project must never get as far as the write below.
-    //
-    // `--source` resolves against the directory the user typed it in, the way a
-    // shell would read it: `--source generated` from `apps/web` means
-    // `apps/web/generated`.
+    // Validated before anything is written: this is the directory the starter files
+    // land in, so a value naming the project root, `supabase/`, or anywhere outside
+    // the project must never reach the write below. `--source` resolves against the
+    // directory the user typed it in, the way a shell would: `--source generated`
+    // from `apps/web` means `apps/web/generated`.
     const destination = Option.isSome(flags.source)
       ? yield* resolveWorkerSource({
           projectRoot: project.projectRoot,
@@ -341,20 +315,17 @@ export const workersNew = Effect.fn("experimental.workers.new")(function* (flags
           target: join(project.workersDir, name),
           subject: `The default directory for "${name}"`,
           // The default directory is `supabase/workers/<name>` with a validated
-          // name, so it cannot be the project root, `supabase/`, or a directory
-          // the CLI owns. A symlink escaping the project is the only way it
-          // reaches this failure, so that is what the suggestion names.
+          // name, so only a symlink escaping the project can reach this
+          // failure — which is what the suggestion names.
           suggestion:
             "supabase/workers, or a directory above it, is a symlink leading outside the project. Replace it with a real directory, or pass --source to scaffold somewhere else inside the project.",
         });
 
-    // Nothing here replaces what is already on disk. Scaffolding over an
-    // existing directory would have to delete it first, and a command whose job
-    // is to create a worker has no business removing whatever happens to share
-    // its name — so it says what is in the way and leaves the choice to the user.
+    // Nothing here replaces what is already on disk: scaffolding over an existing
+    // directory would have to delete it first, which isn't this command's job — it
+    // names what's in the way and leaves the choice to the user.
     if (!(yield* destinationIsFree(destination))) {
-      // Absolute when `--workdir`/`SUPABASE_WORKDIR` was set explicitly — same
-      // rule as the success message below — since a project-root-relative
+      // Absolute when `--workdir` was set explicitly, since a project-root-relative
       // path would be misleading once `--workdir` differs from cwd.
       const shown = cliSettings.explicitWorkdir
         ? destination
@@ -367,15 +338,14 @@ export const workersNew = Effect.fn("experimental.workers.new")(function* (flags
       );
     }
 
-    // Recorded as forward slashes whatever platform wrote it. `config.toml` is
-    // committed and shared, and `path.relative` yields `packages\api` on
-    // Windows — a backslash the POSIX resolvers on every other machine read as
-    // a literal character in a filename rather than a separator.
+    // Recorded as forward slashes whatever platform wrote it: `config.toml` is
+    // shared, and `path.relative` yields backslashes on Windows that POSIX
+    // resolvers elsewhere would read as a literal filename character.
     const source = Option.isSome(flags.source)
       ? relative(project.projectRoot, destination).split(sep).join("/")
       : undefined;
 
-    // Planned before anything is written. Every way this can fail is knowable
+    // Planned before anything is written: every way this can fail is knowable
     // from the current config.toml, so finding out afterwards would leave a
     // scaffold on disk that nothing records.
     const configWrite = yield* planWorkerEntry({
@@ -401,12 +371,10 @@ export const workersNew = Effect.fn("experimental.workers.new")(function* (flags
 
     yield* commitWorkerEntry(configWrite);
 
-    // Relative to the project root when the workdir was defaulted — the
-    // common case, where it also reads as relative to the terminal the
-    // command was run from. An explicit `--workdir` breaks that: the project
-    // root can be nowhere near the actual cwd, so a relative path here would
-    // point somewhere the user never typed. The absolute path is unambiguous
-    // either way.
+    // Relative to the project root when the workdir was defaulted, since it also
+    // reads as relative to the terminal the command ran from. An explicit
+    // `--workdir` breaks that — the project root can be nowhere near the actual
+    // cwd — so the absolute path is used instead.
     const sourceDisplay = cliSettings.explicitWorkdir
       ? destination
       : displayPath(project.projectRoot, destination);
@@ -417,9 +385,7 @@ export const workersNew = Effect.fn("experimental.workers.new")(function* (flags
       size,
       vcpu: vcpuForSize(size),
       exposure,
-      // The count a deploy will use, whether or not it was written down — a
-      // payload that omitted it for the default would read as "unknown" rather
-      // than "one".
+      // The count a deploy will use, whether or not it was written down.
       instances: instances ?? DEFAULT_WORKER_INSTANCES,
       source: sourceDisplay,
       config_path: project.configPath,
@@ -436,25 +402,21 @@ export const workersNew = Effect.fn("experimental.workers.new")(function* (flags
       return;
     }
 
-    // Leads with a declarative line the way every other scaffold does
-    // (`functions new`: "Created new Function at supabase/functions/hello"),
-    // then the details. Guidance goes in a closing sentence rather than a
-    // pseudo-row, since no other command puts a next step inside its output
-    // table.
+    // Leads with a declarative line, then the details; guidance goes in a closing
+    // sentence rather than a pseudo-row, since no other command puts a next step
+    // inside its output table.
     yield* output.raw(`Created new Worker at ${bold(sourceDisplay, process.stdout)}\n`);
     yield* output.raw(
       renderWorkerDetails([
         ["Runtime", runtime],
         ["Size", `${size} (${vcpuForSize(size)} vCPU)`],
         ["Access", exposure],
-        // `declared`, the way `workers status` labels the same number: nothing
-        // is running yet, so a bare count would read as a live tally.
+        // "declared", not a bare count: nothing is running yet.
         ["Instances", `${instances ?? DEFAULT_WORKER_INSTANCES} declared`],
       ]),
     );
-    // On the success trailer rather than inline, the way `bootstrap` emits its
-    // "start your app" line: the shell prints trailers once at the end of the
-    // run, so the next step is the last thing on screen.
+    // On the success trailer rather than inline, so the next step is the last
+    // thing on screen.
     yield* emitSuccessTrailer(
       `Deploy it with ${aqua(`supabase experimental workers push ${name}`)}.\n`,
     );

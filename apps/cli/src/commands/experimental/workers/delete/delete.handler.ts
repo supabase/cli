@@ -31,25 +31,11 @@ import {
 import type { WorkersDeleteFlags } from "./delete.command.ts";
 
 /**
- * `supabase experimental workers delete [name]` — delete the worker; its instances and image
- * are torn down asynchronously. Whether it exists is asked of the API, never of
- * a local file.
- *
- * Note what it does *not* remove: the worker's directory and its `config.toml`
- * entry stay on disk, so `push <name>` brings it straight back — which is why
- * the command says so.
- *
- * Being irreversible, an interactive session has to type the worker's name back
- * to proceed — the same "confirm by typing it" pattern as GitHub's own repo
- * deletion, rather than a bare y/n that is too easy to reflexively confirm.
- * `--yes`/`SUPABASE_YES` skips it for scripts, resolved through
- * `resolveYes` like every other confirming command rather than through a
- * local flag that would shadow the root one. It also makes an already-absent
- * worker a success: teardown run twice should not fail the second time.
- *
- * Without a terminal to prompt on there is no third option: `interactive` tracks
- * stdout, so merely redirecting output would otherwise delete unattended. This
- * refuses instead, and says which flag would have authorised it.
+ * `supabase experimental workers delete [name]` — deletes the worker via the API
+ * (never checking local files); an already-absent worker counts as success. The
+ * worker's directory and `config.toml` entry stay on disk so `push <name>` can
+ * redeploy it. Interactive runs require typing the name to confirm (`--yes`/
+ * `SUPABASE_YES` skips it); without a terminal to prompt on, the command refuses.
  */
 export const workersDelete = Effect.fn("experimental.workers.delete")(function* (
   flags: WorkersDeleteFlags,
@@ -60,17 +46,13 @@ export const workersDelete = Effect.fn("experimental.workers.delete")(function* 
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const tty = yield* Tty;
-  // `--yes` OR `SUPABASE_YES`, matching `projects delete` and every other
-  // command that guards a destructive step behind a prompt.
   const yes = yield* resolveYes;
 
-  // The ref is resolved outside the finalizers because caching it is one of
-  // them; everything that can fail on its own — loading `config.toml`,
-  // validating the name, resolving the worker — belongs inside, so those
-  // failures still flush telemetry. Same shape as `config/push`.
+  // Resolved here, outside the block below, since caching it is one of that
+  // block's own finalizers — everything else that can fail belongs inside so
+  // those failures still flush telemetry.
   const projectRef = yield* resolver.resolve(flags.projectRef);
-  // Every retry this command suggests is for a *destructive* re-run, so the ref
-  // has to survive the copy-paste.
+  // Retry suggestions repeat a destructive command, so the ref must survive the copy-paste.
   const refSuffix = workersProjectRefSuffix(flags.projectRef);
 
   yield* Effect.gen(function* () {
@@ -78,18 +60,14 @@ export const workersDelete = Effect.fn("experimental.workers.delete")(function* 
     const name = yield* validateWorkerName(flags.name);
     const worker = yield* describeWorkerForReporting(project, name);
 
-    // Before the first API call, not at emit time: the emit branch is reached
-    // *after* the DELETE, so `--yes -o env` deleted the worker and only then
-    // exited non-zero with no payload — which a script reads as a failed delete.
+    // Checked before the DELETE call: checking at emit time would let `--yes -o env`
+    // delete the worker, then exit non-zero with no payload for the caller to read.
     yield* rejectWorkersEnvOutput();
 
     const fetching = yield* output.task("Fetching worker...");
-    // The lookup is a courtesy, not a prerequisite: it supplies the instance
-    // tally the confirmation quotes and the "already gone" verdict. The API
-    // grants the read and the delete separately — `edge_functions:read` for
-    // `GET`, `edge_functions:write` for `DELETE` — so a credential holding only
-    // the latter could not delete a worker it is entitled to delete. A refused
-    // read now leaves the worker *unknown* and the delete goes ahead.
+    // The GET is informational only: read (`edge_functions:read`) and delete
+    // (`edge_functions:write`) are separate grants, so a 403 here must not block
+    // a credential that is only entitled to delete.
     const lookup = yield* getWorker(api, projectRef, name).pipe(
       Effect.map((found) => ({ readable: true, worker: Option.getOrUndefined(found) })),
       Effect.catchIf(
@@ -103,35 +81,24 @@ export const workersDelete = Effect.fn("experimental.workers.delete")(function* 
     const deployed = lookup.worker;
     const machineOutput = yield* workersMachineOutputRequested();
 
-    // `--yes` is the scripted path, and `deleteWorker` already treats a DELETE
-    // 404 as done — "a delete that races another one is still a delete that
-    // happened". The pre-flight GET contradicted that for teardown: a script run
-    // twice exited non-zero the second time, for a worker in exactly the state
-    // it asked for. Interactively the error stays: somebody typed this command
-    // and wants to hear the worker was not there.
+    // `--yes` treats a DELETE 404 as success (a delete racing another delete still
+    // happened), but this pre-flight check fails interactively so a re-run tells
+    // the user nothing was there instead of silently succeeding.
     if (lookup.readable && deployed === undefined && !yes) {
       return yield* Effect.fail(
         new WorkerNotDeployedError({
           detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
-          // `status`'s wording, inherited, pointed the wrong way here: somebody
-          // deleting "api" and hearing "nothing is deployed" does not want to
-          // deploy it — they want to see what *is* deployed.
+          // Points at `list`, not `push` — the user wants to see what's deployed, not deploy it.
           suggestion: `See what is deployed with \`supabase experimental workers list${refSuffix}\`.`,
         }),
       );
     }
 
     if (!yes) {
-      // `-o json` leaves `output.format` as `text`, so the format check alone
-      // still let the warning and the prompt run — onto the stdout the user had
-      // asked to carry a payload. A machine format is as non-interactive as a
-      // redirected stdout, whichever flag asked for it.
-      //
-      // `output.interactive` only tracks *stdout*, so on its own it still let
-      // `printf 'api\n' | supabase experimental workers delete api` feed the pipe straight
-      // into the prompt and delete without `--yes`. The confirmation is only
-      // meaningful from a keyboard, so stdin has to be a terminal too — the same
-      // pair `projects delete` guards its prompt with.
+      // Four checks, none alone sufficient: `-o json` leaves `output.format` as
+      // `text`, so machine mode needs its own check; `output.interactive` only
+      // tracks stdout, so piped stdin (e.g. `echo api | ... delete api`) also
+      // needs `tty.stdinIsTty` — a confirmation typed from a pipe isn't real.
       if (output.format !== "text" || machineOutput || !output.interactive || !tty.stdinIsTty) {
         return yield* Effect.fail(
           new WorkerDeleteConfirmationRequiredError({
@@ -141,12 +108,9 @@ export const workersDelete = Effect.fn("experimental.workers.delete")(function* 
         );
       }
 
-      // The live tally when the API reports one, labelled "declared" when it
-      // does not. `spec.instances` is the target, which for a worker still
-      // provisioning differs from what is running — and a destructive prompt is
-      // the wrong place to overstate.
-      // Absent when the read was refused: the prompt still asks for the name,
-      // it just cannot quote a count it was not allowed to see.
+      // Uses the live instance count when known; otherwise falls back to the
+      // declared target so a still-provisioning worker doesn't understate what
+      // gets torn down. Both are absent when the read was refused.
       const live = deployed?.instances?.live;
       const declared = deployed?.spec.instances;
       const terminating =
@@ -161,8 +125,7 @@ export const workersDelete = Effect.fn("experimental.workers.delete")(function* 
         `This permanently deletes "${name}" from project ${projectRef}.${terminating}\n`,
       );
       const typed = yield* output.promptText(`Type ${name} to confirm`);
-      // Trimmed: a trailing space from a paste is not a different answer, and
-      // making someone re-run a destructive command over one is just friction.
+      // Trimmed so a pasted trailing space doesn't force a re-run.
       if (typed.trim() !== name) {
         return yield* Effect.fail(
           new WorkerDeleteNotConfirmedError({
@@ -173,9 +136,8 @@ export const workersDelete = Effect.fn("experimental.workers.delete")(function* 
       }
     }
 
-    // Skipped only when the fetch actually said there is nothing there. An
-    // unreadable worker still gets the DELETE — that request is the one the
-    // credential is entitled to make, and the API treats a 404 on it as done.
+    // Skipped only when the GET confirmed nothing exists; an unreadable worker
+    // still gets the DELETE, since that's the request the credential may hold.
     if (deployed !== undefined || !lookup.readable) {
       const deleting = yield* output.task("Deleting worker...");
       yield* deleteWorker(api, projectRef, name).pipe(Effect.tapError(() => deleting.fail()));
@@ -219,21 +181,17 @@ export const workersDelete = Effect.fn("experimental.workers.delete")(function* 
         `Deleted Worker ${aqua(name, process.stdout)} from project ${projectRef}\n`,
       );
 
-      // "Deleted" reads more final than it is *when there is something left* —
-      // so only say so when there is. For an orphan there is nothing local to
-      // keep, and pointing at `push` would send the user at a command that has
-      // no source to deploy.
+      // Says "Kept" only when something remains; an orphaned worker has no
+      // source or entry left, and pointing at `push` there would be a dead end.
       const kept = [
         ...(keptSource === undefined ? [] : [keptSource]),
         ...(keptEntry ? ["its supabase/config.toml entry"] : []),
       ];
       if (kept.length > 0) {
         yield* output.raw(renderWorkerDetails([["Kept", kept.join(", ")]]));
-        // Only when the source is still there: a retained `config.toml` entry
-        // alone is not enough to redeploy from, so `push` would fail on the very
-        // command this line recommends.
+        // Only when the source remains: a config.toml entry alone can't redeploy,
+        // so `push` would fail on the very command this recommends.
         if (keptSource !== undefined) {
-          // Trailer, like every other "what to run next" line in this shell.
           yield* emitSuccessTrailer(
             `Redeploy it with ${aqua(`supabase experimental workers push ${name}${refSuffix}`)}.\n`,
           );

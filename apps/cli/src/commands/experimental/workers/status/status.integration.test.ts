@@ -71,8 +71,8 @@ describe("workers status", () => {
   });
 
   it.live("reports the deployed runtime, not a stale config.toml entry", () => {
-    // config.toml says node; the deployment carries no spec.runtime, which the
-    // API only omits for a context-only (Dockerfile) build.
+    // The deployment carries no spec.runtime, which the API only omits for a
+    // context-only build.
     const repo = project();
     const { layer, out } = setupWorkers({
       workdir: repo.dir,
@@ -139,9 +139,6 @@ describe("workers status", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Mid-scale the snapshot and the desired spec disagree; reading the numerator
-  // from one and the denominator from the other rendered fractions like
-  // `3/1 ready`.
   it.live("reads the whole tally from one snapshot while scaling", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -169,8 +166,6 @@ describe("workers status", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // Deletion is asynchronous, so pushing here races the tombstone or resurrects
-  // the worker the user is removing.
   it.live("withholds the build retry while the worker is being deleted", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -223,7 +218,6 @@ describe("workers status", () => {
 
       expect(out.stdoutText).toContain("failed");
       expect(out.stdoutText).toContain("exit status 1");
-      // The retry hint is a success trailer, which lands on stderr.
       expect(out.stderrText).toContain("supabase experimental workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -303,9 +297,6 @@ describe("workers status", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A `source` that escapes the project cannot be resolved, so the describe
-  // falls back to the default directory. Printing that named a path the entry
-  // does not, presenting a guess as established local state.
   it.live("omits the source when the configured one cannot be resolved", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsource = "../../elsewhere"\n`,
@@ -365,14 +356,10 @@ describe("workers status", () => {
         declared_instances: 1,
         instances: { declared: 1, live: 1, ready: 1, stale: 0 },
       });
-      // The detail lines are text-mode only.
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The JSON layer appends each success to stdout, so emitting the payload twice
-  // made `JSON.parse(stdout)` fail outright and gave `stream-json` two terminal
-  // result events.
   it.live("emits exactly one structured result in json mode", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -393,9 +380,6 @@ describe("workers status", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // A worker deployed from another checkout has no entry and no directory here,
-  // so `supabase/workers/<name>` is pure inference — reporting it as the
-  // worker's source named a path that was not there.
   it.live("omits the source for a worker with nothing local to point at", () => {
     const repo = project({ "supabase/config.toml": 'project_id = "demo"\n' });
     const { layer, out } = setupWorkers({
@@ -416,9 +400,6 @@ describe("workers status", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `root` is an ordinary worker name: a valid DNS label, and `[workers]` has no
-  // reserved keys — `readWorkersSection` reads every table under it as a worker.
-  // Here as a guard against the name picking up a special case it never had.
   it.live("inspects a deployed worker named root", () => {
     const repo = project();
     const { layer, out, http } = setupWorkers({
@@ -439,9 +420,6 @@ describe("workers status", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `state_reason`, `image_version`, `deleting` and `instances_error` are all
-  // optional, so a healthy worker's payload is mostly holes. Pins that they are
-  // omitted rather than rendered.
   it.live("encodes TOML for a worker whose optional fields are absent", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
@@ -463,9 +441,6 @@ describe("workers status", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The project is consulted only for the optional Source row, so an unrelated
-  // local parse error should not stand between the user and a remote worker
-  // they named explicitly.
   it.live("inspects a remote worker despite an unparseable local config", () => {
     const repo = project({ "supabase/config.toml": "project_id = [unclosed\n" });
     const otherRef = "qrstuvwxyzabcdefghij";
@@ -487,9 +462,6 @@ describe("workers status", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // The URL is derived from the exposure the platform reports, not assumed: a
-  // worker it did not expose has no address to print, and the row is dropped
-  // rather than rendered empty.
   it.live("omits the URL for a worker that is not publicly exposed", () => {
     const repo = project();
     const { layer, out } = setupWorkers({
