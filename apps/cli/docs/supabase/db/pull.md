@@ -17,7 +17,7 @@ On a project without pg-delta enabled, don't use `--declarative`. The export als
 1. Delete the files the export wrote to the declarative directory (`supabase/schemas/` by default). Files that were already there are left in place.
 2. Restore `[db.migrations].schema_paths` in `config.toml` to its previous value, or remove it if the export added it.
 
-pg-delta plans are execution-aware: when a plan crosses a transaction boundary — for example `ALTER TYPE ... ADD VALUE` followed by a statement that uses the new enum value, which cannot run in the same transaction — `db pull` writes one ordered migration file per plan unit instead of a single file (for example `<ts>_remote_schema_schema_changes.sql` and `<ts+1s>_remote_schema_after_enum_values.sql`), each recorded in the migration history. The common case (a single unit) still produces exactly one `<ts>_remote_schema.sql` file.
+pg-delta plans are execution-aware: when a plan crosses a transaction boundary — for example `ALTER TYPE ... ADD VALUE` followed by a statement that uses the new enum value, which cannot run in the same transaction — `db pull` writes one ordered migration file per plan unit instead of a single file (for example `<ts>_remote_schema_1.sql` and `<ts+1s>_remote_schema_2.sql`), each recorded in the migration history. Units whose statements cannot run inside a transaction start with a `-- pg-delta: transaction=false` directive that the CLI apply paths honor. The common case (a single unit) still produces exactly one `<ts>_remote_schema.sql` file.
 
 By default the emitted SQL is formatted with the same settings the declarative export uses (uppercase keywords, wrapped at a max width of 180, indented and column-aligned). Configure overrides with `[experimental.pgdelta] format_options` in `config.toml`, or set `format_options = "null"` to opt out and emit raw, unformatted statements.
 
@@ -26,6 +26,8 @@ When `[experimental.pgdelta] enabled = true` (the default for projects created b
 Under the pg-delta engine, the pull captures your own customizations in Supabase-managed schemas automatically. Examples are triggers on managed tables like `auth.users` and RLS policies on `storage.objects` and `storage.buckets`. Under the legacy migra engine, the initial pull's `pg_dump` skips managed schemas. The diff pass that follows appends your trigger and RLS policy changes there to the same migration. If an older CLI reports that `auth` and `storage` were excluded, capture existing customizations there with `--schema auth,storage`.
 
 When pulling from a remote database with `--db-url`, prefer a direct connection (`db.<project-ref>.supabase.co:5432`) over the connection pooler so pg-delta can introspect the full catalog reliably.
+
+Under the pg-delta engine, your own customizations in Supabase-managed schemas are captured automatically: triggers on managed tables whose function lives outside the managed schemas (for example a trigger on `auth.users` calling a function in `public`), RLS policies on any `auth` table, and RLS policies on `storage.objects`, `storage.buckets`, and `realtime.messages`. Other objects you create inside managed schemas, such as your own functions or indexes, are not diffed. Under the legacy migra engine, trigger and RLS policy changes in managed schemas are diffed, and the initial `pg_dump` baseline includes them too.
 
 ## Debugging empty pg-delta pulls
 
