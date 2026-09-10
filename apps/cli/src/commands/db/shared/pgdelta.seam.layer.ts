@@ -19,10 +19,9 @@ const shadowDockerCause = (stderr: string): { readonly docker: "daemon" } | Reco
 
 /**
  * Whether an underlying failure signals the Docker daemon is unreachable, across every tagged
- * error class this seam composes over — `ShadowDbError.reason === "docker_daemon"`,
- * `ImagePrepullError.reason === "docker_daemon"`, `LocalDbRunningError.daemonDown`,
- * and every `*.docker === "daemon"` field. Checked structurally rather than per-tag so a
- * new error class in the union doesn't silently drop its own daemon signal.
+ * error class this seam composes over. Checked structurally (`reason`/`docker`/`daemonDown`
+ * fields) rather than per-tag, so a new error class in the union can't silently drop its own
+ * daemon signal.
  */
 function hasDaemonSignal(cause: {
   readonly message: string;
@@ -39,10 +38,9 @@ function hasDaemonSignal(cause: {
 }
 
 /**
- * Maps any failure from the native local-database bring-up stack (shadow create/setup, health
- * checks, config loading) into the seam's own {@link DeclarativeShadowDbError}, carrying
- * the underlying message. Every component error class in that stack declares `message: string`,
- * so this accepts the whole union structurally rather than enumerating each tag.
+ * Maps any failure from the native local-database bring-up stack into the seam's own
+ * {@link DeclarativeShadowDbError}. Every component error class declares `message: string`, so
+ * this accepts the whole union structurally rather than enumerating each tag.
  */
 export const toShadowDbError = (cause: {
   readonly message: string;
@@ -59,8 +57,7 @@ export const toShadowDbError = (cause: {
 
 /**
  * Real `DeclarativeSeam`: fully native. `ensureLocalDatabaseStarted` shares the same
- * `startLocalDatabase` bring-up `db start` uses; `ensureLocalPostgresImageCurrent` was
- * already native (CLI-1956) and is unchanged here.
+ * `startLocalDatabase` bring-up `db start` uses.
  */
 export const declarativeSeamLayer = Layer.effect(
   DeclarativeSeam,
@@ -69,13 +66,9 @@ export const declarativeSeamLayer = Layer.effect(
     const spawner = yield* ChildProcessSpawner;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    // Captures every OTHER service `startLocalDatabase` needs internally (Output,
-    // RuntimeInfo, HttpClient, DbConnection, DockerRun, NetworkIdFlag, the
-    // `--experimental`/CliArgs global-flag machinery, …) into a plain `Context` so each closure
-    // below can `Effect.provideContext` it and satisfy `DeclarativeSeamShape`'s
-    // `Effect<T, E>` (no leftover requirements) without hand-enumerating every transitive
-    // dependency — mirrors `command-platform-api-factory.layer.ts`'s identical
-    // capture-and-provide shape.
+    // Captures every service `startLocalDatabase` needs into a plain `Context`, so each
+    // closure below can `Effect.provideContext` it and satisfy `DeclarativeSeamShape` without
+    // hand-enumerating every transitive dependency.
     const context = yield* Effect.context<StartLocalDatabaseDeps>();
 
     return DeclarativeSeam.of({
@@ -93,9 +86,8 @@ export const declarativeSeamLayer = Layer.effect(
                 new DeclarativeShadowDbError({
                   message: cause.message,
                   ...(cause.daemonDown === true ? { docker: "daemon" as const } : {}),
-                  // Same propagation as the start-failure catch below: the inspect error's
-                  // Docker-install recovery text (Go's `utils.CmdSuggestion`) must survive the
-                  // seam, or the normalizer falls back to its generic debug hint.
+                  // The inspect error's Docker-install recovery text must survive the seam, or
+                  // the normalizer falls back to its generic debug hint.
                   ...(cause.suggestion !== undefined ? { suggestion: cause.suggestion } : {}),
                 }),
             ),
