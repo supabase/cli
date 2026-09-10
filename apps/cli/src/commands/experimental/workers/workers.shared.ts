@@ -134,11 +134,6 @@ interface ResolvedWorker {
 }
 
 /**
- * Effectful because confining `sourceDir` to the project needs the
- * filesystem: `source` comes from a committed `config.toml`, and an
- * in-project directory can symlink outside it.
- */
-/**
  * As {@link describeWorker}, but never failing on the source path.
  *
  * `status` and `delete` treat the source as an output detail, not a
@@ -166,6 +161,11 @@ export const describeWorkerForReporting = Effect.fnUntraced(function* (
   } satisfies ResolvedWorker;
 });
 
+/**
+ * Effectful because confining `sourceDir` to the project needs the
+ * filesystem: `source` comes from a committed `config.toml`, and an
+ * in-project directory can symlink outside it.
+ */
 export const describeWorker = Effect.fnUntraced(function* (project: WorkersProject, name: string) {
   const fs = yield* FileSystem.FileSystem;
   const entry = project.section.workers[name];
