@@ -141,9 +141,8 @@ export const rootCommandForBackend = (backend: StackBackend = "legacy"): CliRoot
           const cliArgs = yield* CliArgs;
 
           const aiTool = yield* AiTool.pipe(Effect.provide(aiToolLayer));
-          // An explicit Go --output is a complete format choice (even `-o pretty`
-          // must keep its human table), so the agent JSON default only applies
-          // when that flag is absent.
+          // An explicit --output is a complete format choice (even `-o pretty` keeps its
+          // human table), so the agent JSON default only applies when it's absent.
           const outputFormat = resolveAgentOutputFormat({
             explicitOutputFormat,
             goOutputFormat: goOutput,
@@ -152,8 +151,6 @@ export const rootCommandForBackend = (backend: StackBackend = "legacy"): CliRoot
             isBuiltInTextRequest: isBuiltInTextRequest(cliArgs.args),
           });
 
-          // Build args to prepend to every proxy exec call.
-          // --output: use explicit --output if set, otherwise map from --output-format.
           const globalArgs: string[] = [];
           if (Option.isSome(goOutput)) {
             globalArgs.push("--output", goOutput.value);
@@ -170,12 +167,9 @@ export const rootCommandForBackend = (backend: StackBackend = "legacy"): CliRoot
           if (createTicket) globalArgs.push("--create-ticket");
           if (agent !== "auto") globalArgs.push("--agent", agent);
 
-          // Go's `-o {json,yaml,toml,env,csv}` selects a machine encoder the
-          // handler writes via `output.raw`. Keep the text layer (so errors still
-          // render as red text on stderr, matching Go), but suppress its progress
-          // spinner — otherwise clack writes ANSI to stdout and corrupts the
-          // payload (CLI-1546). `-o pretty` / `-o table` (`db query`'s human
-          // default) / no `-o` keep the normal text/json layers.
+          // Machine formats keep the text layer's error rendering but suppress the progress
+          // spinner, which would otherwise corrupt the stdout payload. `-o pretty`/`-o table`
+          // (db query's human default) and no `-o` keep the normal text/json layers.
           const goFmt = Option.getOrUndefined(goOutput);
           const isGoMachineFormat = goFmt !== undefined && goFmt !== "pretty" && goFmt !== "table";
           const outputLayer = isGoMachineFormat

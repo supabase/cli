@@ -12,13 +12,9 @@ import { isIPv6 } from "node:net";
 import { aqua } from "./colors.ts";
 
 /**
- * Go's generic `ipv6Suggestion()`: the
- * command-agnostic hint shown when a direct connection fails because the host is
- * IPv6-only, pointing users at the IPv4 transaction pooler via `--db-url`. Go's
- * `SetConnectSuggestion` sets this on the dump failure when the captured container
- * stderr classifies as an IPv6 error (and, on the no-fallback path, may further
- * enrich it with the project's actual pooler URL via `SuggestIPv6Pooler`). Byte-exact
- * to Go, including the `Aqua`-coloured `--db-url`.
+ * Command-agnostic hint shown when a direct connection fails because the host is IPv6-only,
+ * pointing users at the IPv4 transaction pooler via `--db-url`. Reproduces the established
+ * message text exactly, including the aqua-coloured `--db-url`.
  */
 export function ipv6Suggestion(): string {
   return (
@@ -28,8 +24,8 @@ export function ipv6Suggestion(): string {
   );
 }
 
-// `ipv6LiteralPattern`: an IPv6 address in brackets
-// (Go dial form) or parens (libpq form). Run against the original-case message.
+// An IPv6 address in brackets (dial form) or parens (libpq form). Run against the
+// original-case message.
 const IPV6_LITERAL_PATTERN = /(?:\[[0-9a-fA-F:]+\]|\([0-9a-fA-F:]+\))/;
 // Node's dial-failure shape (`connect ENETUNREACH 2600:…:5432`). The port may be
 // followed by whitespace, end-of-string, or a closing paren — the connect-failure
@@ -37,11 +33,9 @@ const IPV6_LITERAL_PATTERN = /(?:\[[0-9a-fA-F:]+\]|\([0-9a-fA-F:]+\))/;
 const NODE_ENETUNREACH_PATTERN = /\benetunreach\s+([0-9a-fA-F:]+):\d+(?:[\s)]|$)/i;
 
 /**
- * Port of `isIPv6ConnectivityError`. Lower-cases the
- * message and matches the getaddrinfo / dial failures that mean the host is
- * IPv6-only and unreachable from this environment. "no route to host" and
- * "cannot assign requested address" only count when an IPv6 literal is present
- * (they are otherwise ambiguous).
+ * Lower-cases the message and matches the getaddrinfo/dial failures that mean the host is
+ * IPv6-only and unreachable from this environment. "no route to host" and "cannot assign
+ * requested address" only count when an IPv6 literal is present (otherwise ambiguous).
  */
 export function isIPv6ConnectivityError(message: string): boolean {
   const lower = message.toLowerCase();
@@ -57,28 +51,23 @@ export function isIPv6ConnectivityError(message: string): boolean {
 }
 
 /**
- * `utils.SuggestEnvVar`: the hint shown when
- * a connection fails on password authentication, pointing users at the
+ * Hint shown when a connection fails on password authentication, pointing users at the
  * `SUPABASE_DB_PASSWORD` env var.
  */
 export const SUGGEST_ENV_VAR =
   "Connect to your database by setting the env var correctly: SUPABASE_DB_PASSWORD";
 
 /**
- * TS-only addition — `SetConnectSuggestion` has no local/remote distinction,
- * so a refused `--local` connection (Docker/Postgres not running) got the same
- * remote-only "Network Restrictions" dashboard hint as an actual network-restricted
- * connection, which is a dead end locally. Shown instead of that hint when
- * `ctx.isLocal` is true — see `connectSuggestion`.
+ * Shown instead of the remote-only "Network Restrictions" hint when `ctx.isLocal` is true — a
+ * refused `--local` connection (Docker/Postgres not running) needs a different fix than an
+ * actual network-restricted remote connection. See `connectSuggestion`.
  */
 export const SUGGEST_LOCAL_STACK = "Make sure Docker is running, then run: supabase start";
 
 /**
- * `SetConnectSuggestion` remote-only "Network Restrictions" hint,
- * shown for a connection refused/blocked
- * by IP allow-listing. Shared by both the always-remote `Address not in tenant
- * allow_list` branch and the non-local `ECONNREFUSED`/`connection refused`
- * branch in `connectSuggestion`.
+ * Remote-only "Network Restrictions" hint, shown for a connection refused or blocked by IP
+ * allow-listing. Shared by both the always-remote `Address not in tenant allow_list` branch
+ * and the non-local `ECONNREFUSED`/`connection refused` branch in `connectSuggestion`.
  */
 function suggestNetworkRestrictions(dashboardUrl: string): string {
   return `Make sure your local IP is allowed in Network Restrictions and Network Bans.\n${dashboardUrl}/project/_/database/settings`;
@@ -86,27 +75,21 @@ function suggestNetworkRestrictions(dashboardUrl: string): string {
 
 /** Context the connect-suggestion needs but cannot derive from the error alone. */
 export interface ConnectSuggestionContext {
-  /** Active profile's dashboard URL (`CurrentProfile.DashboardURL`). */
+  /** Active profile's dashboard URL. */
   readonly dashboardUrl: string;
-  /** Active profile name (`CurrentProfile.Name`). */
+  /** Active profile name. */
   readonly profileName: string;
 }
 
 /**
- * Flatten an error's `cause` chain into a single searchable string of every
- * nested `message` and `code`. The `@effect/sql` `SqlError` wraps the
- * node-postgres / node `net` driver error on its `cause`; a multi-address dial
- * wraps an `AggregateError` whose `errors[]` carry the per-IP `ECONNREFUSED` /
- * `ENETUNREACH` system errors — an aggregate node contributes NOTHING itself
- * and only its LAST child is visited, because that is the attempt pgconn
- * surfaces: its fallback loop overwrites the error on every attempt so only the
- * last one survives, and `SetConnectSuggestion`
- * classifies exactly that `err.Error()` string. The parent's
- * own fields must be skipped: node's `aggregateErrors` copies `errors[0].code`
- * onto the aggregate itself (`lib/internal/errors.js`, Bun matches), so reading
- * them would blame an abandoned first attempt. Including the `code` strings of
- * the visited nodes lets the matcher key off node's `ECONNREFUSED` the way Go
- * keys off pgconn's `connect: connection refused`.
+ * Flattens an error's `cause` chain into a single searchable string of every nested `message`
+ * and `code`. The `@effect/sql` `SqlError` wraps the node-postgres/node `net` driver error on
+ * its `cause`; a multi-address dial wraps an `AggregateError` whose `errors[]` carry the
+ * per-IP `ECONNREFUSED`/`ENETUNREACH` system errors — an aggregate node contributes nothing
+ * itself and only its last child is visited, since pgconn's own fallback loop overwrites its
+ * error on every attempt so only the last one survives. The parent's own fields are skipped:
+ * node's `aggregateErrors` copies `errors[0].code` onto the aggregate itself (`lib/internal/
+ * errors.js`, Bun matches), so reading them would blame an abandoned first attempt.
  */
 function collectConnectErrorText(error: unknown): string {
   const parts: string[] = [];
@@ -130,9 +113,8 @@ function collectConnectErrorText(error: unknown): string {
 }
 
 /**
- * The connection identity pgconn embeds in its `connectError` text:
- * the config-level (primary) host, user, and database —
- * never the password.
+ * The connection identity embedded in the established connect-failure text: the config-level
+ * (primary) host, user, and database — never the password.
  */
 export interface ConnectFailureTarget {
   readonly host: string;
@@ -141,11 +123,10 @@ export interface ConnectFailureTarget {
 }
 
 /**
- * Walk to the deepest underlying driver error: unwrap `cause` chains (the
- * `@effect/sql` `SqlError` exposes its `ConnectionError` reason as `cause`, and
- * the reason exposes the node-postgres error the same way) and descend into the
- * LAST entry of an `AggregateError`'s `errors[]` — pgconn's multi-address
- * fallback loop likewise surfaces the last attempt's error.
+ * Walks to the deepest underlying driver error: unwraps `cause` chains (the `@effect/sql`
+ * `SqlError` exposes its `ConnectionError` reason as `cause`, and the reason exposes the
+ * node-postgres error the same way) and descends into the last entry of an `AggregateError`'s
+ * `errors[]` — pgconn's multi-address fallback loop likewise surfaces the last attempt's error.
  */
 function deepestConnectCause(error: unknown): unknown {
   let current: unknown = error;
@@ -177,8 +158,7 @@ const DIAL_ERROR_CODES = new Set([
 // Connect-timeout failures that carry no errno `code`, matched by their exact
 // driver text: node-postgres' client connect timeout (`pg/lib/client.js`), its
 // pool acquire timeout (`pg/lib/pool.js`), and this layer's own probe timeout
-// (`acquireProbedPool`). All three are the port of `connect_timeout`
-// firing — a `context.DeadlineExceeded`, which satisfies `net.Error`.
+// (`acquireProbedPool`). All three correspond to a connect-timeout firing.
 const CONNECT_TIMEOUT_MESSAGES = new Set([
   "Connection timed out",
   "timeout expired",
@@ -186,10 +166,9 @@ const CONNECT_TIMEOUT_MESSAGES = new Set([
 ]);
 
 /**
- * Whether a connect failure is a dial-level error — refused, timed out, or
- * unreachable — rather than a server, auth, TLS, or config error. Sets
- * `DbConnectError.retryable`, which the fresh-db bootstrap's connect
- * retry keys off (`db-setup.ts`, #6136).
+ * Whether a connect failure is a dial-level error — refused, timed out, or unreachable —
+ * rather than a server, auth, TLS, or config error. Sets `DbConnectError.retryable`, which
+ * the fresh-db bootstrap's connect retry keys off (`db-setup.ts`).
  */
 export function isDialFailure(error: unknown): boolean {
   const cause = deepestConnectCause(error);
@@ -200,7 +179,7 @@ export function isDialFailure(error: unknown): boolean {
 // The complete documented Node/OpenSSL X509 certificate-verification code
 // family (Node tls docs "X509 certificate error codes", OpenSSL's
 // `X509_verify_cert_error` set), complemented by node's ERR_TLS_*/ERR_SSL_*
-// prefixes at the use site. pgconn stages by connection PHASE — ANY `startTLS`
+// prefixes at the use site. pgconn stages by connection phase — any `startTLS`
 // failure becomes `tls error (…)` — but node exposes no
 // phase marker, so the full code family is the proxy. These strings are unique
 // to TLS-layer verification: server SQLSTATEs and dial/DNS `E…` errnos are
@@ -274,7 +253,7 @@ export const isSqlState = (code: string): boolean => SQLSTATE_PATTERN.test(code)
  * say `failed to receive message (unexpected EOF)`) is rendered verbatim rather
  * than guessing a stage.
  *
- * Known stage-label caveat: pgconn labels by auth PHASE, which node-postgres
+ * Known stage-label caveat: pgconn labels by auth phase, which node-postgres
  * does not expose — a wrong password over SCRAM arrives mid-SASL, so pgconn renders
  * `failed SASL auth (FATAL: password authentication failed … (SQLSTATE 28P01))`
  * where this renders `server error (…)` with the identical
@@ -327,28 +306,23 @@ export function connectFailureMessage(target: ConnectFailureTarget, error: unkno
   return `failed to connect to \`host=${target.host} user=${target.user} database=${target.database}\`: ${detail}`;
 }
 
-// Dial errno codes that mean the target address itself is unreachable. Combined
-// with an IPv6 `address` they are node's equivalents of Go's IPv6-connectivity
-// texts: ENETUNREACH → `network is unreachable`, EHOSTUNREACH → `no route to
-// host`, EADDRNOTAVAIL → `cannot assign requested address`.
+// Dial errno codes that mean the target address itself is unreachable. Combined with an IPv6
+// `address` they correspond to the textual checks in {@link isIPv6ConnectivityError}:
+// ENETUNREACH → "network is unreachable", EHOSTUNREACH → "no route to host", EADDRNOTAVAIL →
+// "cannot assign requested address".
 const IPV6_DIAL_CODES = new Set(["ENETUNREACH", "EHOSTUNREACH", "EADDRNOTAVAIL"]);
 
 /**
- * Whether the error chain carries a node dial failure whose errno + `address`
- * fields identify an unreachable IPv6 target. This is the structured complement
- * to {@link isIPv6ConnectivityError}: node system errors carry the dialed
- * address as a field (`connect EHOSTUNREACH 2600:…:5432` has `code` and
- * `address`), whereas Go's classifier reads the same facts out of pgconn's
- * message text. Narrower than `isIPv6ConnectivityErrorCause` — it never
- * treats `ENOTFOUND` (a plain DNS miss, e.g. a typo'd host) as IPv6, matching
- * Go, where a failed lookup renders `hostname resolving error` and sets no
- * suggestion. Use THIS one for the connect suggestion; the container-level
- * pooler fallback keeps the broader `isIPv6ConnectivityErrorCause`.
- * Like {@link deepestConnectCause}, an `AggregateError` descends into its
- * LAST child only — the attempt pgconn surfaces and the
- * one Go's classifier reads. Depth-bounded recursion (no
- * `seen` set): a pathological cause cycle re-walks at most 8 levels, which is
- * cheap and cannot loop.
+ * Whether the error chain carries a node dial failure whose errno + `address` fields identify
+ * an unreachable IPv6 target. This is the structured complement to
+ * {@link isIPv6ConnectivityError}: node system errors carry the dialed address as a field
+ * (`connect EHOSTUNREACH 2600:…:5432` has `code` and `address`) rather than embedding it in
+ * the message text. Narrower than `isIPv6ConnectivityErrorCause` — it never treats `ENOTFOUND`
+ * (a plain DNS miss, e.g. a typo'd host) as IPv6. Use this one for the connect suggestion; the
+ * container-level pooler fallback keeps the broader `isIPv6ConnectivityErrorCause`. Like
+ * {@link deepestConnectCause}, an `AggregateError` descends into only its last child.
+ * Depth-bounded recursion (no `seen` set): a pathological cause cycle re-walks at most 8
+ * levels, which is cheap and cannot loop.
  */
 function hasIPv6DialCause(error: unknown, depth = 0): boolean {
   if (depth > 8 || typeof error !== "object" || error === null) return false;
@@ -370,41 +344,30 @@ function hasIPv6DialCause(error: unknown, depth = 0): boolean {
 }
 
 /**
- * Port of `SetConnectSuggestion`: map a
- * Postgres connect failure to an actionable hint that replaces the generic
- * "Try rerunning the command with --debug" suggestion. Go matches `pgconn`'s
- * error text; this matches the equivalent node-postgres / node `net` driver text
- * and codes (e.g. `ECONNREFUSED` for `connect: connection refused`) gathered from
- * the `SqlError` cause/aggregate chain. The branch order mirrors `if/else if`.
- * Returns `undefined` when no specific suggestion applies (the caller then falls
- * back to the generic suggestion, like Go leaving `CmdSuggestion` empty).
+ * Maps a Postgres connect failure to an actionable hint that replaces the generic "Try
+ * rerunning the command with --debug" suggestion, by matching the node-postgres/node `net`
+ * driver text and codes (e.g. `ECONNREFUSED` for a refused connection) gathered from the
+ * `SqlError` cause/aggregate chain. Returns `undefined` when no specific suggestion applies.
  *
- * Sourcing note: the rendered message ({@link connectFailureMessage}) and
- * this classifier inspect the SAME surfaced attempt, as Go guarantees by
- * construction — pgconn's fallback loop overwrites its error on every attempt so
- * only the last one survives, and `SetConnectSuggestion`
- * classifies exactly that rendered `err.Error()` string. The
- * collectors above therefore descend into only the LAST aggregate child, the
- * same attempt {@link deepestConnectCause} surfaces for rendering, so the
- * displayed cause and the suggestion can never disagree.
+ * The rendered message ({@link connectFailureMessage}) and this classifier inspect the same
+ * surfaced attempt: pgconn's fallback loop keeps only the last error on every attempt, so the
+ * collectors above descend into only the last aggregate child too — the displayed cause and
+ * the suggestion can never disagree.
  */
 export function connectSuggestion(
   error: unknown,
   ctx: ConnectSuggestionContext & { readonly isLocal: boolean },
 ): string | undefined {
   const text = collectConnectErrorText(error);
-  // connect: connection refused - "Address not in tenant allow_list" only ever comes from the remote pooler
-  // rejecting the caller's IP, so it always means network restrictions.
+  // "Address not in tenant allow_list" only ever comes from the remote pooler rejecting the
+  // caller's IP, so it always means network restrictions.
   if (text.includes("Address not in tenant allow_list")) {
     return suggestNetworkRestrictions(ctx.dashboardUrl);
   }
-  // connect: connection refused — don't send the user to the
-  // dashboard's Network Restrictions page for a --local connection.
+  // Don't send the user to the dashboard's Network Restrictions page for a --local connection.
   if (text.includes("ECONNREFUSED") || text.includes("connection refused")) {
     return ctx.isLocal ? SUGGEST_LOCAL_STACK : suggestNetworkRestrictions(ctx.dashboardUrl);
   }
-  // Wrong password (Go: "SCRAM exchange: Wrong password" / "failed SASL auth";
-  // node-postgres surfaces the server's `28P01` "password authentication failed").
   if (
     text.includes("SCRAM exchange: Wrong password") ||
     text.includes("failed SASL auth") ||
@@ -412,16 +375,13 @@ export function connectSuggestion(
   ) {
     return SUGGEST_ENV_VAR;
   }
-  // Go: `isIPv6ConnectivityError` on the pgconn text. node system errors carry
-  // the dialed address as a structured field instead of libpq's parenthesized
-  // literal, so also consult the errno + `address` classifier.
+  // Node system errors carry the dialed address as a structured field instead of libpq's
+  // parenthesized literal, so also consult the errno + `address` classifier.
   if (isIPv6ConnectivityError(text) || hasIPv6DialCause(error)) {
     return ipv6Suggestion();
   }
-  // connect: no route to host / Tenant or user not found → wrong profile.
-  // node's "no route to host" is `connect EHOSTUNREACH <ip>:<port>`; an IPv6
-  // EHOSTUNREACH was already captured by the IPv6 branch above, mirroring Go's
-  // branch order ("Assumes IPv6 check has been performed before this").
+  // node's "no route to host" is `connect EHOSTUNREACH <ip>:<port>`; an IPv6 EHOSTUNREACH was
+  // already captured by the IPv6 branch above, so this only fires for the IPv4 remainder.
   if (
     text.includes("no route to host") ||
     text.includes("EHOSTUNREACH") ||
@@ -443,11 +403,10 @@ function hasStringCode(error: unknown): error is {
 
 /**
  * Classifies Node socket/getaddrinfo causes that carry errno-style `code` fields.
- * `ENOTFOUND` is intentionally broader than Go's text classifier (it can include
- * typo'd hosts); callers must combine this with a direct `db.<ref>` host gate.
- * Used by the container-level pooler fallback (`gen types` / `db dump`); the
- * connect-suggestion path uses the narrower `hasIPv6DialCause` instead,
- * which must not treat a DNS miss as IPv6.
+ * `ENOTFOUND` is intentionally broader than {@link isIPv6ConnectivityError} (it can include
+ * typo'd hosts); callers must combine this with a direct `db.<ref>` host gate. Used by the
+ * container-level pooler fallback (`gen types`/`db dump`); the connect-suggestion path uses
+ * the narrower `hasIPv6DialCause` instead, which must not treat a DNS miss as IPv6.
  */
 export function isIPv6ConnectivityErrorCause(error: unknown): boolean {
   if (error instanceof AggregateError) {

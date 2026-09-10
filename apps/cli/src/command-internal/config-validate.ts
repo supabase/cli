@@ -11,150 +11,57 @@ import { BRANCH_PROJECT_REF_PATTERN } from "./ref-patterns.ts";
 import { goUrlParse } from "./storage-url.ts";
 
 /**
- * Single home for config validation,
- * consolidating the two independent TypeScript implementations of that logic:
+ * Single home for config validation, consolidating two independent implementations:
  *
- * - **D** = `db-config.toml-read.ts` — raw smol-toml document + `EnvLookup`,
- * Effect-based, fails with `DbConfigLoadError`. Feeds ~15 db/migration commands via
- * `db-config.layer.ts`.
- * - **L** = `local-config-values.ts` — decoded `@supabase/config` `CliConfig`,
- * synchronous `node:fs`, throws plain `Error`. Feeds `status-values.ts` and
- * `stop/stop.handler.ts`.
+ * - **D** = `db-config.toml-read.ts` — raw smol-toml document + `EnvLookup`, Effect-based,
+ *   fails with `DbConfigLoadError`. Feeds ~15 db/migration commands via `db-config.layer.ts`.
+ * - **L** = `local-config-values.ts` — decoded `@supabase/config` `CliConfig`, synchronous
+ *   `node:fs`, throws plain `Error`. Feeds `status-values.ts` and `stop/stop.handler.ts`.
  *
- * **This file is the SINGLE home for `Config.Validate` parity going forward.
- * Per-command reimplementations of any branch below are forbidden** — hoist here instead,
- * per `apps/cli/AGENTS.md`'s "Hoist Before You Duplicate" policy.
+ * Per-command reimplementations of any branch {@link validateResolvedConfig} owns are
+ * forbidden — hoist here instead (see `apps/cli/AGENTS.md`'s "Hoist Before You Duplicate").
  *
- * ## Status of this commit
+ * A few branches stay caller-only and are never routed through this module:
+ * `remotes[*].project_id` and `auth.sms`/`auth.external` are D-only (L instead relies on
+ * `@supabase/config`'s own schema, or needs the raw pre-decode document); `auth.jwt_secret`
+ * length checking lives in each caller's own key-generation flow.
  *
- * {@link validateResolvedConfig} is now IMPLEMENTED and fully wired into BOTH callers: L
- * (`local-config-values.ts`'s `resolveLocalConfigValues`) and D
- * (`db-config.toml-read.ts`'s `readDbToml`) each build a
- * {@link ConfigValidationInput} from their own decoded config (a `CliConfig` + raw
- * `document` for L, a raw smol-toml document + `EnvLookup` for D) and call this function once,
- * at the correct position. Wiring D through this module also fixed D's `db.major_version
- * === 0` divergence (D used to fall through to the generic invalid-value message; it now
- * throws the same "Missing required field in config: db.major_version" as L already
- * did).
- *
- * ## Full eventual scope: every validation branch this module owns
- *
- * In order, first-failure-wins:
- *
- * - `project_id` required
- * - `api.port` / `api.tls.{cert,key}_path` presence (the actual file reads stay per-caller I/O)
- * - `db.port`, `db.major_version` (0 / 12 / 13-17 switch)
- * - `storage.buckets.*` names vs `BUCKET_NAME_PATTERN`
- * - `studio.port` / `studio.api_url` (L-only — D has no studio section)
- * - `local_smtp.port` (L-only)
- * - `auth.*` sub-sequence, in order: site_url; captcha enum + presence (enum itself decode-time);
- * signing_keys read (caller-side I/O); passkey/webauthn; hooks (vs `HOOK_SECRET_PATTERN`);
- * mfa; email template/notification content-vs-content_path (caller-side I/O) + smtp; third_party
- * (vs `CLERK_DOMAIN_PATTERN`)
- * - `functions.*` slugs vs `FUNCTION_SLUG_PATTERN`
- * - `edge_runtime.deno_version` (0 / 1 / 2 switch)
- * - `analytics.backend` must be `postgres`/`bigquery` (decode-time enum)
- * - `analytics.gcp_*` fields, gated on `backend === "bigquery"`
- * - `experimental.webhooks` / `experimental.pgdelta.format_options`
- *
- * ## Explicitly OUT of scope forever (D-only, NEVER part of this module)
- *
- * - `remotes[*].project_id` pattern (vs `PROJECT_REF_PATTERN`) —
- * D's own remote-merge-phase check (`findInvalidRemoteProjectId`), never shared with L.
- * - `auth.sms` — stays 100% inline in D; L instead relies on
- * `@supabase/config`'s `sms` schema enforcing the same provider-switch priority at decode time
- * (`packages/config/src/auth/sms.ts`), since L decodes through that schema and D doesn't.
- * - `auth.external` — inline in BOTH D
- * (`db-config.toml-read.ts`'s "B5: external providers") and L
- * ({@link resolveLocalConfigValues}'s `validateAuthExternalProviders`, called after this
- * module's shared check, same ordering tradeoff as sms below) — never routed through this
- * shared module, since it needs the RAW pre-decode document to see provider names
- * `@supabase/config`'s schema doesn't model.
- * - `auth.jwt_secret` length check (`generateAPIKeys`) — each caller's own
- * key-generation flow (D and L both already implement this separately), not part of
- * this module's pure-check set.
- *
- * `expandEnv` also stays in D (env-substitution machinery, not a validation leaf).
- *
- * ## Known ordering tradeoff (accepted — do not "fix")
- *
- * The established auth-block order is site_url → captcha → signing_keys[IO] → passkey → hooks → mfa →
- * email[IO]+smtp → **sms → external** → third_party. Since sms/external are D-only and never
- * part of this module, but third_party IS shared, D cannot call
- * {@link validateResolvedConfig} in a way that preserves relative ordering across the
- * sms/external ↔ third_party boundary without complex multi-phase calls. Decision (applies once
- * D is wired up in a follow-up commit): D calls {@link validateResolvedConfig} ONCE with
- * the full input (including third_party), positioned after D's own signing-keys and
- * email-template I/O reads; D's inline sms/external checks then run AFTER that single call
- * succeeds. This means: if third_party is broken, its error surfaces first; D's
- * sms/external checks never run in that case. The only real behavior change from today: for the
- * (untested, unrealistic) case where sms/external AND third_party are BOTH simultaneously
- * broken in the same config.toml, the original ordering would report the sms/external error first, but
- * the refactored D reports third_party's error first, since third_party is checked inside the
- * single earlier shared call. This is an accepted, narrow, documented gap.
- *
- * The same category of tradeoff now also applies to L: `resolveLocalConfigValues` calls
- * {@link validateResolvedConfig} exactly ONCE, at the very end, after every value this
- * module needs has been derived — including L's 3 I/O reads (signing keys, `api.tls` cert/key,
- * email template/notification content), which stay at their original textual position (per-caller
- * I/O, same as D's). Every pure check this module owns is therefore checked in Go's exact
- * relative order against every OTHER pure check, but an I/O read that in L's source sits
- * between two pure sections (e.g. the signing-keys read sits between the captcha check and the
- * passkey/hooks/mfa/email/smtp/third_party checks) now effectively runs BEFORE any of those
- * later pure checks, rather than interleaved at its original relative position — the same
- * narrow, accepted, documented tradeoff, not something to "fix" by splitting this function into
- * multiple calls. Every existing test constructs exactly one validation failure at a time, so
- * this has zero effect on any real test.
+ * D and L each call {@link validateResolvedConfig} exactly once, positioned after their own
+ * per-section I/O reads (signing keys, `api.tls` cert/key, email template content) and, for D,
+ * before its own inline sms/external checks. This means an error from a pure branch this
+ * module owns always surfaces ahead of a caller-only I/O or sms/external error, even in the
+ * rare case where both would independently fail — an accepted, narrow ordering gap, not a bug
+ * to fix by splitting this function into multiple calls.
  */
 
-// The project-ref pattern: exactly 20 lowercase ASCII letters. `ref-patterns.ts` is the
-// single canonical definition; re-exported under this module's established name since D's
-// `findInvalidRemoteProjectId` is today the only consumer — the `remotes[*].project_id` check
-// itself stays D-only forever, see the module header above.
+// Re-exported under this module's established name; `ref-patterns.ts` is the canonical
+// definition. The `remotes[*].project_id` check itself stays D-only.
 export const PROJECT_REF_PATTERN = BRANCH_PROJECT_REF_PATTERN;
 
-// The storage bucket-name pattern.
-// Validation runs this over every `[storage.buckets.*]` key
-// during config load, aborting before any db command when a
-// name does not match. The source string is reused verbatim in the error message via
-// `.source`. Used by both D
-// (`db-config.toml-read.ts`) and L (`local-config-values.ts`), and internally by
-// {@link validateResolvedConfig}'s storage-bucket-names step.
+// Storage bucket-name pattern; `.source` is reused verbatim in the error message.
+// Shared by D and L, and internally by {@link validateResolvedConfig}'s storage-bucket-names step.
 export const BUCKET_NAME_PATTERN = /^(\w|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$/;
 
-// The function-slug pattern. Validation
-// runs this over every `[functions.*]` key during config load,
-// rejecting the config before any db command. `.source` is reused
-// in the message. Used by both D and L
-// (same reason as {@link BUCKET_NAME_PATTERN} above), and internally by
-// {@link validateResolvedConfig}'s function-slugs step.
+// Function-slug pattern; `.source` is reused verbatim in the error message.
+// Shared by D and L, and internally by {@link validateResolvedConfig}'s function-slugs step.
 export const FUNCTION_SLUG_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
-// `hookSecretPattern`. Used by both D and L
-// (same reason as {@link BUCKET_NAME_PATTERN} above), and internally by
-// {@link validateResolvedConfig}'s hooks step.
+// Shared by D and L, and internally by {@link validateResolvedConfig}'s hooks step.
 export const HOOK_SECRET_PATTERN = /^v1,whsec_[A-Za-z0-9+/=]{32,88}$/u;
 
-// `clerkDomainPattern`. Used by both D and L
-// (same reason as {@link BUCKET_NAME_PATTERN} above), and internally by
-// {@link validateResolvedConfig}'s third_party step.
+// Shared by D and L, and internally by {@link validateResolvedConfig}'s third_party step.
 export const CLERK_DOMAIN_PATTERN =
   /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/u;
 
-// Go's `strconv.ParseBool` accepted forms (`go-viper/mapstructure` `decodeBool` under
-// viper's forced `WeaklyTypedInput`): a string decodes to bool via ParseBool, an empty
-// string is `false`, and any other value is a parse error.
+// Accepted boolean string forms, matching Go's `strconv.ParseBool`; any other value is a
+// parse error.
 const GO_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 const GO_BOOL_FALSE = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);
 
 /**
- * Parse a config bool the way Go does (`strconv.ParseBool` via mapstructure's weakly
- * typed decode). Returns the bool, or `undefined` for a malformed value (which Go
- * surfaces as a `failed to parse config` error).
- *
- * Used by both D (`db-config.toml-read.ts`'s `resolveBool`/`resolveBoolOrFail`) and
- * L (`local-config-values.ts`'s `envOverrideBool`) for their `SUPABASE_*`
- * bool-flavored env overrides and TOML bool decoding.
+ * Parses a config bool value: accepts the same string forms as `strconv.ParseBool`, returns
+ * `undefined` for anything else (surfaced by callers as a `failed to parse config` error).
+ * Used by both D and L for `SUPABASE_*` bool-flavored env overrides and TOML bool decoding.
  */
 export function parseGoBool(value: string): boolean | undefined {
   if (GO_BOOL_TRUE.has(value)) return true;
@@ -163,12 +70,9 @@ export function parseGoBool(value: string): boolean | undefined {
 }
 
 /**
- * Thrown by {@link validateResolvedConfig}. Deliberately does NOT override `.name` in a
- * constructor — it stays the inherited `"Error"` — so `.toString()`/`.name`/`instanceof Error`
- * checks are indistinguishable from a plain `new Error(message)`. Both D and L's existing
- * callers/tests observe only `.message` (via `cause instanceof Error ? cause.message : ...` or
- * `.toThrow("substring")`), so swapping their inline `throw new Error(...)` calls for this class
- * is a byte-identical, purely internal refactor.
+ * Thrown by {@link validateResolvedConfig}. Does not override `.name` — it stays the inherited
+ * `"Error"` — so `instanceof Error` and `.name` checks can't distinguish it from a plain
+ * `Error`; only `.message` is meant to be observed.
  */
 export class ConfigValidateError extends Error {
   static readonly [ErrorActionabilityFingerprintId] = "ConfigValidateError";
@@ -188,7 +92,7 @@ export interface ApiInput {
   };
 }
 
-/** `[db]`, post-env-override. Required — Go validates `db.port`/`db.major_version` unconditionally. */
+/** `[db]`, post-env-override. `db.port`/`db.major_version` are always validated, unconditionally. */
 export interface DbInput {
   readonly port: number;
   readonly majorVersion: number;
@@ -207,12 +111,9 @@ export interface LocalSmtpInput {
   readonly port: number;
 }
 
-/** `[auth.captcha]`. `provider` is deliberately `string | undefined`, not a narrow union — see
- * divergence #2 in the module's port plan: D passes a raw, untyped TOML string (the enum check
- * is live for D); L's `@supabase/config`-decoded value is already schema-narrowed to
- * `"hcaptcha" | "turnstile" | undefined` before this function ever sees it, making the branch
- * dead-but-harmless for L specifically, while still needing the same widened type to keep this
- * field honest and reusable across both callers.
+/** `[auth.captcha]`. `provider` is `string | undefined`, not a narrow union: D passes a raw,
+ * untyped TOML string (the enum check is live for D), while L's already schema-narrowed
+ * `"hcaptcha" | "turnstile" | undefined` value makes the same check a no-op for L.
  */
 export interface CaptchaInput {
   readonly enabled: boolean;
@@ -228,7 +129,7 @@ export interface PasskeyInput {
 }
 
 /** One enabled `[auth.hook.<type>]` entry. Caller pre-filters to enabled-only and pre-orders
- * per Go's fixed hook-type iteration order. */
+ * per the established hook-type iteration order. */
 export interface HookInput {
   readonly type:
     | "mfa_verification_attempt"
@@ -251,7 +152,7 @@ export interface MfaFactorInput {
 }
 
 /** `[auth.email.smtp]`. Present iff the raw TOML table itself is present (this section's
- * presence-based `enabled` default — NOT the decoded, always-defaulted value). */
+ * presence-based `enabled` default, not the decoded, always-defaulted value). */
 export interface SmtpInput {
   readonly enabled: boolean;
   readonly host: string;
@@ -295,8 +196,7 @@ export interface AnalyticsInput {
 }
 
 /** `[experimental]`. Unconditional entry — internally gated. `webhooksPresent`/`webhooksEnabled`
- * hinge on TOML-section PRESENCE (not the decoded, always-defaulted `enabled` value) — see
- * the callers' own doc comments for why. */
+ * hinge on TOML-section presence, not the decoded, always-defaulted `enabled` value. */
 export interface ExperimentalInput {
   readonly webhooksPresent?: boolean;
   readonly webhooksEnabled?: boolean;
@@ -304,18 +204,16 @@ export interface ExperimentalInput {
 }
 
 /**
- * Normalized POST-env-override primitives mirroring Go's decoded config, for VALIDATED fields
- * only. Every section is OPTIONAL — an absent section means "this caller doesn't run that Go
- * branch, skip it" (e.g. D omits `studio`/`localSmtp` entirely; both D and L omit `auth` when
- * auth is disabled). See the module header for the full ported-branch table and out-of-scope
- * list.
+ * Normalized post-env-override primitives for validated fields only. Every section is
+ * optional — an absent section means this caller doesn't run that branch (e.g. D omits
+ * `studio`/`localSmtp` entirely; both D and L omit `auth` when auth is disabled).
  */
 export interface ConfigValidationInput {
-  /** L only — D's `project_id` isn't part of `Config.Validate`'s shared surface. */
+  /** L only — D doesn't validate `project_id` here. */
   readonly projectId?: string;
   /** L only — D has no `[api]` section. */
   readonly api?: ApiInput;
-  /** Both, unconditional in Go. */
+  /** Both, always validated. */
   readonly db: DbInput;
   /** Both, unconditional (`[]` = none). */
   readonly storageBucketNames: ReadonlyArray<string>;
@@ -373,20 +271,18 @@ export function validateApiTlsPresence(
 }
 
 /**
- * Runs every `Config.Validate` branch this module owns (see the module header's table), in
- * Go's exact order, first-failure-wins. Pure — no I/O, no Effect. Callers own their own
- * per-section I/O reads (signing keys, `api.tls` cert/key, email template/notification content)
- * at the correct Go position themselves, using the pure helpers exported below.
+ * Runs every validation branch this module owns, in established first-failure-wins order.
+ * Pure — no I/O, no Effect. Callers own their own per-section I/O reads (signing keys,
+ * `api.tls` cert/key, email template/notification content) at the correct position
+ * themselves, using the pure helpers exported below.
  */
 export function validateResolvedConfig(input: ConfigValidationInput): void {
-  // checked FIRST, before every other field.
   if (input.projectId !== undefined && input.projectId.length === 0) {
     throw new ConfigValidateError("Missing required field in config: project_id");
   }
 
-  // api.port / api.tls.{cert,key}_path, gated on api.enabled. The actual
-  // cert/key file reads are caller-side I/O (see resolveApiTlsPath below); this only
-  // checks the "exactly one of cert/key set" presence rule.
+  // The actual cert/key file reads are caller-side I/O; this only checks the "exactly one of
+  // cert/key set" presence rule.
   if (input.api?.enabled) {
     validateApiPort(input.api.enabled, input.api.port);
     if (input.api.tls.enabled) {
@@ -394,12 +290,9 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     }
   }
 
-  // db.port, unconditional, no `enabled` gate.
   if (input.db.port === 0) {
     throw new ConfigValidateError("Missing required field in config: db.port");
   }
-  // db.major_version switch: 0 / 12 have dedicated messages, 13/14/15/17
-  // are supported, anything else is the generic invalid-value message.
   if (input.db.majorVersion === 0) {
     throw new ConfigValidateError("Missing required field in config: db.major_version");
   }
@@ -414,7 +307,6 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     );
   }
 
-  // every [storage.buckets.*] key, unconditional.
   for (const name of input.storageBucketNames) {
     if (!BUCKET_NAME_PATTERN.test(name)) {
       throw new ConfigValidateError(
@@ -423,7 +315,6 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     }
   }
 
-  // studio.port / studio.api_url, gated on studio.enabled. L-only.
   if (input.studio?.enabled) {
     if (input.studio.port === 0) {
       throw new ConfigValidateError("Missing required field in config: studio.port");
@@ -435,23 +326,19 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     }
   }
 
-  // local_smtp.port, gated on local_smtp.enabled. L-only.
   if (input.localSmtp?.enabled && input.localSmtp.port === 0) {
     throw new ConfigValidateError("Missing required field in config: local_smtp.port");
   }
 
-  // the auth.* sub-sequence, all inside `if c.Auth.Enabled`.
   if (input.auth !== undefined) {
     const auth = input.auth;
 
-    // auth.site_url.
     if (auth.siteUrl.length === 0) {
       throw new ConfigValidateError("Missing required field in config: auth.site_url");
     }
 
-    // auth.captcha. The provider enum check runs FIRST,
-    // regardless of `enabled` (it's actually a decode-time check in Go, reproduced here so both
-    // callers see it from one place); only then does the `enabled`-gated presence check run.
+    // The provider enum check runs before the `enabled` check since it's conceptually a
+    // decode-time check, reproduced here so both callers see it from one place.
     if (auth.captcha !== undefined) {
       const provider = auth.captcha.provider;
       if (
@@ -476,8 +363,7 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
 
     // signing_keys read is caller-side I/O, not part of this function.
 
-    // auth.passkey / auth.webauthn. Caller only builds `passkey` when
-    // `[auth.passkey] enabled` is true.
+    // Caller only builds `passkey` when `[auth.passkey] enabled` is true.
     if (auth.passkey !== undefined) {
       if (!auth.passkey.webauthnPresent) {
         throw new ConfigValidateError(
@@ -492,19 +378,16 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
       }
     }
 
-    // auth.hook.*, caller pre-filtered to
-    // enabled-only and pre-ordered per the fixed hook-type iteration order.
+    // Caller pre-filters to enabled-only hooks, pre-ordered by the fixed hook-type sequence.
     for (const hook of auth.hooks) {
       if (hook.uri.length === 0) {
         throw new ConfigValidateError(
           `Missing required field in config: auth.hook.${hook.type}.uri`,
         );
       }
-      // Parse with `net/url.Parse` semantics before the scheme switch and fail the
-      // whole load on a malformed URI (e.g. an unterminated IPv6 host like `http://[::1`) —
-      // a bare scheme-prefix regex would accept that. Reuse `goUrlParse` (the same
-      // port already used for `studio.api_url` above) instead of re-deriving
-      // a scheme by hand.
+      // Uses `goUrlParse`'s stricter semantics (the same port used for `studio.api_url`
+      // above) so a malformed URI like an unterminated IPv6 host (`http://[::1`) fails the
+      // whole load instead of passing a bare scheme-prefix regex.
       let scheme: string;
       try {
         scheme = goUrlParse(hook.uri).scheme;
@@ -537,7 +420,6 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
       }
     }
 
-    // auth.mfa.*, caller pre-ordered totp/phone/web_authn.
     for (const factor of auth.mfa) {
       if (factor.enrollEnabled && !factor.verifyEnabled) {
         throw new ConfigValidateError(
@@ -546,10 +428,9 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
       }
     }
 
-    // email template/notification content read + exclusivity is
-    // caller-side, via resolveEmailTemplateContentPath below.
+    // Email template/notification content read + exclusivity check is caller-side, via
+    // resolveEmailTemplateContentPath below.
 
-    // auth.email.smtp, gated on the raw table being present AND enabled.
     if (auth.smtp !== undefined && auth.smtp.enabled) {
       if (auth.smtp.host.length === 0) {
         throw new ConfigValidateError("Missing required field in config: auth.email.smtp.host");
@@ -570,10 +451,9 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
       }
     }
 
-    // auth.third_party.*, caller pre-filtered to
-    // enabled-only and pre-ordered firebase, auth0, cognito, clerk, workos. Each provider's
-    // required field(s) are checked as encountered; the "more than one enabled" check runs only
-    // after every entry has individually validated.
+    // Caller pre-filters to enabled-only providers, pre-ordered firebase/auth0/cognito/clerk/
+    // workos. Each provider's required fields are checked as encountered; "more than one
+    // enabled" is checked only after every entry validates individually.
     for (const thirdParty of auth.thirdParty) {
       switch (thirdParty.provider) {
         case "firebase": {
@@ -638,8 +518,6 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     }
   }
 
-  // every [functions.*] key, unconditional, not
-  // gated on auth.enabled.
   for (const slug of input.functionSlugs) {
     if (!FUNCTION_SLUG_PATTERN.test(slug)) {
       throw new ConfigValidateError(
@@ -648,8 +526,6 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     }
   }
 
-  // edge_runtime.deno_version switch, unconditional, not gated on
-  // edge_runtime.enabled.
   if (input.edgeRuntimeDenoVersion === 0) {
     throw new ConfigValidateError("Missing required field in config: edge_runtime.deno_version");
   }
@@ -659,8 +535,8 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     );
   }
 
-  // Decode-time enum — reproduced here so
-  // both callers' env-override paths (which bypass their own decode-time schema guard) see it.
+  // Decode-time enum, reproduced here so both callers' env-override paths (which bypass
+  // their own decode-time schema guard) see it.
   const backend = input.analytics.backend;
   if (
     backend !== undefined &&
@@ -672,7 +548,6 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
       "failed to parse config: decoding failed due to the following error(s):\n\n'analytics.backend' must be one of [postgres bigquery]",
     );
   }
-  // analytics.gcp_*, gated on enabled && backend === "bigquery".
   if (input.analytics.enabled && backend === "bigquery") {
     if (input.analytics.gcpProjectId.length === 0) {
       throw new ConfigValidateError("Missing required field in config: analytics.gcp_project_id");
@@ -689,14 +564,11 @@ export function validateResolvedConfig(input: ConfigValidationInput): void {
     }
   }
 
-  // experimental.webhooks, hinges on TOML-section PRESENCE, not the
-  // decoded (always-defaulted) `enabled` value.
   if (input.experimental.webhooksPresent === true && input.experimental.webhooksEnabled !== true) {
     throw new ConfigValidateError(
       "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
     );
   }
-  // experimental.pgdelta.format_options, must be valid JSON when set.
   if (
     input.experimental.pgdeltaFormatOptions !== "" &&
     !isValidJson(input.experimental.pgdeltaFormatOptions)
@@ -716,8 +588,6 @@ function isValidJson(value: string): boolean {
   }
 }
 
-// ── signing keys (path rule: guarded by an isAbsolute check) ──
-
 /** Absolute → verbatim; relative → join(workdir, "supabase", p). */
 export function resolveSigningKeysPath(workdir: string, signingKeysPath: string): string {
   return isAbsolute(signingKeysPath) ? signingKeysPath : join(workdir, "supabase", signingKeysPath);
@@ -733,9 +603,7 @@ export function signingKeysDecodeErrorMessage(cause: unknown): string {
   return `failed to decode signing keys: ${messageOf(cause)}`;
 }
 // D only asserts Array.isArray(JSON.parse(text)); L further decodes into Jwk[] to sign
-// with the first key — that JWK-specific decode/signing logic stays in L, unrelated to parity.
-
-// ── email template / notification ──
+// with the first key — that JWK-specific decode/signing logic stays in L.
 
 /**
  * Whether `candidatePath` resolves inside (or exactly to) `root`. Both
@@ -756,56 +624,34 @@ function isPathContainedInRoot(root: string, candidatePath: string): boolean {
 const MAX_SYMLINK_FOLLOW_DEPTH = 40;
 
 /**
- * Canonicalizes `path` when it exists, or returns `undefined` when it
- * genuinely doesn't — the signal {@link canonicalPathForContainment} needs
- * to decide whether to keep walking up towards an existing ancestor.
+ * Canonicalizes `path` when it exists, or returns `undefined` when it genuinely doesn't — the
+ * signal {@link canonicalPathForContainment} needs to decide whether to keep walking up
+ * towards an existing ancestor.
  *
- * "Exists" is decided with `lstatSync` (which doesn't itself dereference
- * `path`), not by whether `realpathSync` succeeded — a dangling symlink, a
- * symlink whose target directory is unsearchable (`EACCES`), or a symlink
- * loop (`ELOOP`) all make `realpathSync` throw even though `path` genuinely
- * exists on disk. Such a symlink is followed one hop by hand
- * (`readlinkSync`) and its target canonicalized in turn, so the containment
- * check always sees where the symlink actually points rather than a lexical
- * guess that ignores it. Anything else existing-but-uncanonicalizable (or a
- * symlink chain past {@link MAX_SYMLINK_FOLLOW_DEPTH}) is returned as-is —
- * refusing to vouch for it lexically; the containment check still compares
- * it honestly, and any subsequent read fails with its own real error.
+ * "Exists" is decided with `lstatSync` (which doesn't dereference `path`), not by whether
+ * `realpathSync` succeeded — a dangling symlink, an unsearchable symlink target (`EACCES`), or
+ * a symlink loop (`ELOOP`) all make `realpathSync` throw even though `path` exists on disk.
+ * Such a symlink is followed one hop by hand (`readlinkSync`, bounded by
+ * {@link MAX_SYMLINK_FOLLOW_DEPTH}) and its target canonicalized in turn, so containment
+ * always sees where the symlink actually points. A symlink chain still unresolved at the depth
+ * bound returns the lexical path as-is, so a genuine loop is rejected rather than laundered
+ * into an accept by the ancestor walk-up.
  *
- * `lstatSync` itself can also throw here, for a related reason — resolving
- * `path`'s own dirent can itself fail (EACCES resolving an ancestor
- * directory, ENAMETOOLONG, ...), and `throwIfNoEntry: false` only suppresses
- * `ENOENT`. That's reported as `undefined` — the same "can't canonicalize
- * this one, keep walking up" signal as a genuinely missing path — rather
- * than returned lexically as-is: this path's OWN unstattable dirent doesn't
- * block resolving an ancestor of it, and {@link canonicalPathForContainment}'s
- * walk-up loop resolves the deepest ancestor it CAN (e.g. the unsearchable
- * directory itself, since resolving a directory's own name only requires
- * search permission on its PARENT) and re-appends the unstattable tail
- * lexically onto that canonical ancestor. That keeps an honest in-root file
- * behind an unsearchable ancestor from being falsely rejected merely because
- * the project root happens to be reached through its own symlink (e.g.
- * macOS's `/tmp` -> `/private/tmp`), while an escaping symlink whose target
- * sits behind an unstattable component is still rejected, since that
- * target's own ancestor still canonicalizes to something outside the root.
- * The same "defer to the ancestor walk-up" treatment also applies when `lstatSync` itself
- * succeeds on a NON-symlink entry that `realpathSync` still couldn't resolve (observed on Darwin,
- * where resolving a chmod-000 directory's own canonical name additionally requires search
- * permission on itself, not just its parent) — the ONE exception is an unresolved symlink CHAIN
- * at {@link MAX_SYMLINK_FOLLOW_DEPTH}, which keeps returning the lexical path rather than
- * deferring, so a genuine loop is never laundered into an accept via the walk-up.
+ * `lstatSync` can itself fail for reasons unrelated to the path's own existence (an unreadable
+ * ancestor directory, a too-long name, or — on some platforms — a directory needing search
+ * permission on itself to resolve its own name). That's treated the same as "doesn't exist
+ * yet": {@link canonicalPathForContainment}'s walk-up resolves the deepest ancestor it can and
+ * re-appends the unresolvable tail lexically, so an honest in-root path behind a restricted
+ * ancestor isn't falsely rejected, while an escaping symlink whose target sits behind the same
+ * kind of restricted component is still rejected on its own target's ancestor.
  */
 function canonicalizeExistingPath(path: string, depth: number): string | undefined {
   try {
     return realpathSync(path);
   } catch {
-    // Wraps ONLY the `lstatSync` call, not the recursive
-    // `canonicalPathForContainment` follow-up below: folding that into this
-    // same try would mean a deep throw there returns the OUTER symlink's own
-    // lexically-in-root path, turning a rejection into an accept. Same
-    // reasoning as why `readlinkSync` below stays unguarded — there's no
-    // fail-closed lexical answer on its failure either, so a raw error is
-    // the honest outcome there too.
+    // Wraps only the `lstatSync` call, not the recursive canonicalization below it: including
+    // that would let a deep throw there return the outer symlink's own lexically-in-root path,
+    // turning a rejection into an accept.
     let entry: Stats | undefined;
     try {
       entry = lstatSync(path, { throwIfNoEntry: false });
@@ -821,47 +667,29 @@ function canonicalizeExistingPath(path: string, depth: number): string | undefin
           depth + 1,
         );
       }
-      // A symlink chain still unresolved at MAX_SYMLINK_FOLLOW_DEPTH must NOT be treated as
-      // "doesn't exist" here — returning `undefined` would let the caller's ancestor walk-up
-      // canonicalize past the entire unresolvable loop and could land on an ordinary in-root
-      // ancestor, silently ACCEPTING an unresolvable symlink loop instead of failing closed on
-      // it. This is the one case that must keep returning the lexical, never-canonicalized path.
+      // Must not be treated as "doesn't exist": returning `undefined` here would let the
+      // ancestor walk-up canonicalize past the whole unresolvable loop and silently accept it
+      // instead of failing closed.
       return path;
     }
-    // A non-symlink entry (plain file or directory) that `lstat` can see but `realpath` still
-    // can't resolve. On Linux this is essentially unreachable; on Darwin it's confirmed
-    // reachable for a chmod-000 directory even when resolving ITS OWN canonical name — Darwin's
-    // realpath(3) requires search permission on the directory itself, not just its parent
-    // (POSIX only requires the latter). Deferring to the same "doesn't exist yet" ancestor
-    // walk-up as a genuinely missing path lets a resolvable ancestor further up (e.g. the
-    // symlinked project root sitting above the restricted directory) canonicalize this
-    // correctly, instead of falling back to an unresolved lexical guess that can misreport an
-    // honest in-root path as escaping. Unlike the symlink-chain case above, there is no
-    // loop-safety property at stake here — a plain entry can't recurse.
+    // A non-symlink entry `lstat` can see but `realpath` can't resolve — e.g. a chmod-000
+    // directory on Darwin, whose realpath(3) needs search permission on itself, not just its
+    // parent. Deferred to the same "doesn't exist yet" ancestor walk-up as a genuinely missing
+    // path, since a plain entry can't recurse into a loop.
     return undefined;
   }
 }
 
 /**
- * Canonicalizes `path` for the containment check, tolerating a path (or an
- * ancestor of it) that genuinely doesn't exist yet — that's the normal case
- * for a missing template file, which should surface as a missing-file
- * error, not a containment error. Walks up to the deepest EXISTING
- * ancestor, resolves that with `realpathSync` (dereferencing any symlinks
- * in it — including a symlinked project root itself, e.g. macOS's `/tmp`
- * -> `/private/tmp`), then re-appends the missing tail lexically. The
- * walk-up is an iterative loop, not recursion, so it stays correct against
- * a pathologically long chain of missing ancestors (a stack-depth overflow
- * was observed around 20,000 components with a naive recursive walk); each
- * ancestor is still checked via {@link canonicalizeExistingPath}, so an
- * intermediate dangling/unsearchable/looping symlink is followed rather
- * than lexically skipped over as if it were an ordinary missing directory.
- *
- * A dangling, unsearchable, or looping symlink is never laundered as a
- * missing tail component — see {@link canonicalizeExistingPath} for how
- * "exists but can't canonicalize" is told apart from "doesn't exist" and
- * followed to its real target. Recurses (bounded by `depth`) only to follow
- * that kind of symlink; the ancestor walk-up itself is iterative.
+ * Canonicalizes `path` for the containment check, tolerating a path (or an ancestor of it)
+ * that genuinely doesn't exist yet — the normal case for a missing template file, which
+ * should surface as a missing-file error, not a containment error. Walks up to the deepest
+ * existing ancestor, resolves it with `realpathSync` (dereferencing any symlinks, including a
+ * symlinked project root itself), then re-appends the missing tail lexically. The walk-up is
+ * iterative, not recursive, so it stays correct against a pathologically long chain of missing
+ * ancestors; each ancestor still goes through {@link canonicalizeExistingPath}, so an
+ * intermediate dangling/unsearchable/looping symlink is followed rather than lexically
+ * skipped.
  */
 function canonicalPathForContainment(path: string, depth = 0): string {
   const canonical = canonicalizeExistingPath(path, depth);
@@ -884,21 +712,16 @@ function canonicalPathForContainment(path: string, depth = 0): string {
 }
 
 /**
- * Pure exclusivity decision + path to read for one template/notification entry. Throws
- * {@link ConfigValidateError} with the exclusivity message when `contentPath === ""` and
- * `contentPresent`. Returns the absolute, canonicalized (symlink-dereferenced) path to read, or
- * `undefined` when there's nothing to read (both `contentPath` and `content` absent — skip, not
- * an error). `contentPath` set (even when `content` is ALSO set) always wins — "both set" is not
- * rejected, `content_path` silently wins/overwrites.
+ * Pure exclusivity decision plus the path to read for one template/notification entry. Throws
+ * {@link ConfigValidateError} when `contentPath === ""` and `contentPresent` (`content_path`
+ * is required instead of `content`). Returns the absolute, canonicalized path to read, or
+ * `undefined` when there's nothing to read; a set `contentPath` always wins over `content`
+ * silently — "both set" is never rejected as a conflict.
  *
- * The resolved candidate and `base` are both canonicalized (`canonicalPathForContainment`) and
- * the candidate must resolve inside `base` (`isPathContainedInRoot`) — an absolute path, a `..`
- * escape, or an in-root symlink pointing outside the project root all throw, since every caller
- * reads or uploads the returned path's bytes. This applies unconditionally to every caller of
- * this function (config validation, `config push` content loading, `start`'s eager pre-Docker
- * containment pass) — there is no flag or opt-out.
- *
- * `base` is the caller-resolved project root for both templates and notifications.
+ * The resolved candidate and `base` are both canonicalized and the candidate must resolve
+ * inside `base` — an absolute path, a `..` escape, or an in-root symlink pointing outside the
+ * project root all throw. This applies unconditionally to every caller (config validation,
+ * `config push` content loading, `start`'s pre-Docker containment pass) — there is no opt-out.
  */
 export function resolveEmailTemplateContentPath(args: {
   readonly section: "template" | "notification";
@@ -926,12 +749,9 @@ export function resolveEmailTemplateContentPath(args: {
   const resolvedCanonical = canonicalPathForContainment(candidate);
   const canonicalBase = canonicalPathForContainment(args.base);
   if (!isPathContainedInRoot(canonicalBase, resolvedCanonical)) {
-    // Echo the DECLARED value (`args.contentPath`), not `resolvedCanonical` —
-    // the declared value is either what's literally in config.toml or an
-    // env-var override the caller already resolved, both already known to
-    // the user; the fully symlink-dereferenced canonical target is not, and
-    // echoing it back would hand a hostile config a way to probe what an
-    // in-root symlink resolves to on the runner (weak recon, but needless).
+    // Echoes the declared value, not `resolvedCanonical` — the declared value is already known
+    // to the user (it's literally in config.toml or an env override they set), while echoing
+    // the symlink-dereferenced target back would let a hostile config probe where it resolves.
     throw new ConfigValidateError(
       `Invalid config for auth.email.${args.section}.${args.name}.content_path: ` +
         `"${args.contentPath}" resolves outside the project root ${args.base} — ` +
@@ -942,16 +762,13 @@ export function resolveEmailTemplateContentPath(args: {
 }
 
 /**
- * Notification `content_path` resolution with the legacy fallback. Older
- * scaffolds documented these paths relative to `supabase/` (the file lives at
- * `<root>/supabase/templates/...` while config says `./templates/...`).
- * Project-root resolution is canonical; when the root-resolved file is
- * missing (confirmed absent, not merely unverifiable) but the
- * supabase-relative one exists, that path wins so existing configs keep
- * working. An unverifiable candidate at either path never causes a silent
- * switch — see {@link probeFile}. Shared by config validation, `config
- * push` content loading, and the Kong template mount builder so every
- * consumer sees the SAME file.
+ * Notification `content_path` resolution with a legacy fallback: older scaffolds documented
+ * these paths relative to `supabase/` (file at `<root>/supabase/templates/...`, config says
+ * `./templates/...`). Project-root resolution is canonical; when that file is confirmed
+ * missing but the supabase-relative one exists, the legacy path wins so old configs keep
+ * working. An unverifiable candidate at either path never triggers the fallback (see
+ * {@link probeFile}). Shared by config validation, `config push` content loading, and the Kong
+ * template mount builder so every consumer sees the same file.
  */
 function resolveNotificationContentPath(base: string, contentPath: string): string {
   if (isAbsolute(contentPath)) return contentPath;
@@ -964,19 +781,13 @@ function resolveNotificationContentPath(base: string, contentPath: string): stri
 }
 
 /**
- * Tri-state existence probe for the notification legacy-fallback decision
- * above: "exists" (a confirmed regular file), "missing" (confirmed absent —
- * `ENOENT`, or a directory sitting at this path), or "unknown" (any other
- * stat failure — EACCES, ELOOP, ENAMETOOLONG, ...; `throwIfNoEntry: false`
- * only suppresses `ENOENT`). The two call sites need OPPOSITE defaults for
- * "unknown": the root-resolved path must stay selected on "unknown" (it must
- * not be silently abandoned for the legacy twin just because it's
- * unreadable — that's the "directory must not suppress the fallback" case,
- * generalized to any unstattable dirent), while the legacy twin must only
- * ever be selected on a CONFIRMED "exists" (an "unknown" legacy twin must
- * not silently win over the declared path either). A single boolean return
- * can't express both defaults; returning a tri-state and letting the caller
- * choose per call site is what fixes it.
+ * Tri-state existence probe for the notification legacy-fallback decision above: `"exists"`
+ * (a confirmed regular file), `"missing"` (confirmed absent, or a directory at this path), or
+ * `"unknown"` (any other stat failure — EACCES, ELOOP, ...). The two call sites need opposite
+ * defaults for `"unknown"`: the root-resolved path must stay selected on `"unknown"` (an
+ * unreadable file must not be silently abandoned for its legacy twin), while the legacy twin
+ * must only be selected on a confirmed `"exists"`. A single boolean can't express both
+ * defaults, so the tri-state lets each caller choose.
  */
 function probeFile(path: string): "exists" | "missing" | "unknown" {
   try {
