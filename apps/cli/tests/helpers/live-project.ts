@@ -126,6 +126,16 @@ export function selectPrimaryPoolerConfig(
   return configs.find((config) => config.database_type === "PRIMARY");
 }
 
+/** The profile's `pooler_host` is the registrable domain, not the pooler hostname. */
+export function resolvePoolerDomain(dbUrl: string): string {
+  const hostname = new URL(dbUrl).hostname;
+  const domain = getDomain(hostname);
+  if (domain === null) {
+    throw new Error(`unable to derive a pooler domain from ${hostname}`);
+  }
+  return domain;
+}
+
 export function resolvePoolerDatabaseUrl(
   connectionString: string,
   poolMode: PoolerConfig["pool_mode"],
@@ -451,7 +461,7 @@ function writeProfile(
       const directory = await mkdtemp(path.join(tmpdir(), "supabase-live-profile-"));
       const profilePath = path.join(directory, "profile.yaml");
       try {
-        const poolerHost = getDomain(new URL(dbUrl).hostname) ?? "";
+        const poolerHost = resolvePoolerDomain(dbUrl);
         await writeFile(
           profilePath,
           [
