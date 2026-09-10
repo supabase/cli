@@ -79,7 +79,7 @@ describe("docsStripOverlayHeading", () => {
 describe("buildDocsSpec", () => {
   it("never publishes an unlisted command subtree", () => {
     // The guarantee is that `Command.unlisted` keeps a family out of the public
-    // docs reference. Nothing pinned it, for the `experimental` family or for the
+    // docs reference. Nothing pinned it for gated command families or for the
     // older `db test|branch|remote` precedent, so a future refactor could quietly
     // start publishing them.
     //
@@ -125,6 +125,14 @@ describe("buildDocsSpec", () => {
       "management-api",
       "other-commands",
     ]);
+  });
+
+  it("excludes the gated Compute commands from the default docs spec", () => {
+    const { spec } = builtSpec();
+    const computeCommands = spec.commands.filter((command) =>
+      command.id.startsWith("supabase-compute"),
+    );
+    expect(computeCommands).toEqual([]);
   });
 
   it("keeps every load-bearing per-command field shape", () => {

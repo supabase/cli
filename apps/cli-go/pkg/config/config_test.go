@@ -352,17 +352,52 @@ instances = 3
 		})
 	}
 
-	t.Run("accepts experimental compute", func(t *testing.T) {
-		t.Setenv("SUPABASE_EXPERIMENTAL_COMPUTE", "")
-		config := NewConfig()
-		fsys := fs.MapFS{"supabase/config.toml": &fs.MapFile{Data: []byte("[experimental]\ncompute = true\n")}}
-		require.NoError(t, config.Load("", fsys))
-		assert.True(t, config.Experimental.Compute)
-	})
+	for _, tt := range []struct {
+		name       string
+		configData string
+		projectID  string
+		want       bool
+	}{
+		{
+			name:       "base true",
+			configData: "[experimental]\ncompute = true\n",
+			want:       true,
+		},
+		{
+			name:       "base false",
+			configData: "[experimental]\ncompute = false\n",
+			want:       false,
+		},
+		{
+			name:       "remote true",
+			configData: "[remotes.prod]\nproject_id = \"abcdefghijklmnopqrst\"\n[remotes.prod.experimental]\ncompute = true\n",
+			projectID:  "abcdefghijklmnopqrst",
+			want:       true,
+		},
+		{
+			name:       "remote false",
+			configData: "[remotes.prod]\nproject_id = \"abcdefghijklmnopqrst\"\n[remotes.prod.experimental]\ncompute = false\n",
+			projectID:  "abcdefghijklmnopqrst",
+			want:       false,
+		},
+	} {
+		t.Run("accepts experimental compute "+tt.name, func(t *testing.T) {
+			t.Setenv("SUPABASE_EXPERIMENTAL_COMPUTE", "")
+			config := NewConfig()
+			config.ProjectId = tt.projectID
+			fsys := fs.MapFS{
+				"supabase/config.toml": &fs.MapFile{Data: []byte(tt.configData)},
+			}
 
-	t.Run("does not emit experimental stack", func(t *testing.T) {
+			require.NoError(t, config.Load("", fsys))
+			assert.Equal(t, tt.want, config.Experimental.Compute)
+		})
+	}
+
+	t.Run("does not emit experimental stack or compute", func(t *testing.T) {
 		config := NewConfig()
 		config.Experimental.Stack = true
+		config.Experimental.Compute = true
 
 		encodedToml, err := ToTomlBytes(config.Experimental)
 		require.NoError(t, err)
@@ -370,6 +405,7 @@ instances = 3
 		_, err = toml.Decode(string(encodedToml), &encoded)
 		require.NoError(t, err)
 		assert.NotContains(t, encoded, "stack")
+		assert.NotContains(t, encoded, "compute")
 
 		var buf bytes.Buffer
 		require.NoError(t, config.Eject(&buf))
@@ -379,6 +415,7 @@ instances = 3
 		experimental, ok := rendered["experimental"].(map[string]any)
 		if assert.True(t, ok) {
 			assert.NotContains(t, experimental, "stack")
+			assert.NotContains(t, experimental, "compute")
 		}
 	})
 }

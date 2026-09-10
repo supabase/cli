@@ -1,5 +1,14 @@
 # `supabase compute new [name]`
 
+## Feature gate
+
+This command is registered only when `experimental.compute` is enabled. Set
+`SUPABASE_EXPERIMENTAL_COMPUTE=1` to enable it, or `0` to disable it; an unset
+or empty variable uses the project configuration, and any other non-empty value
+leaves the Compute command tree unregistered. When disabled, it is absent from
+help and completion; direct invocation follows the normal unknown-command path
+and the command handler does not run.
+
 > **Local-disk only.** Nothing is deployed and no Management API route is
 > called; `compute push` is what talks to the platform.
 
@@ -89,11 +98,12 @@ root.
 
 ## Environment Variables
 
-| Variable           | Purpose                                 | Required?                                              |
-| ------------------ | --------------------------------------- | ------------------------------------------------------ |
-| `SUPABASE_PROFILE` | built-in profile name or YAML file path | no (falls back to `~/.supabase/profile` -> `supabase`) |
-| `SUPABASE_WORKDIR` | project directory the command acts on   | no (falls back to `--workdir`, then the ancestor walk) |
-| `SUPABASE_HOME`    | directory holding `telemetry.json`      | no (falls back to `~/.supabase`)                       |
+| Variable                        | Purpose                                                                                                                          | Required?                                              |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `SUPABASE_EXPERIMENTAL_COMPUTE` | command registration (`1` enable, `0` disable; unset/empty uses `experimental.compute`; other non-empty values disable the tree) | no                                                     |
+| `SUPABASE_PROFILE`              | built-in profile name or YAML file path                                                                                          | no (falls back to `~/.supabase/profile` -> `supabase`) |
+| `SUPABASE_WORKDIR`              | project directory the command acts on                                                                                            | no (falls back to `--workdir`, then the ancestor walk) |
+| `SUPABASE_HOME`                 | directory holding `telemetry.json`                                                                                               | no (falls back to `~/.supabase`)                       |
 
 ## Telemetry Events Fired
 
