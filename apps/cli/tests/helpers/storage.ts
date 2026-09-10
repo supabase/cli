@@ -27,10 +27,9 @@ import {
 /**
  * One Storage gateway / Management API mock route.
  *
- * Routes are matched in registration order and **consumed** once matched (like
- * gock mocks), so pagination and recursive flows register one route per expected
- * call. `when` further narrows a match by the parsed request body (e.g. paging by
- * `offset`). `persist` keeps a route matchable across calls (e.g. api-keys).
+ * Routes match in registration order and are consumed once matched, so pagination
+ * or recursive flows need one route per expected call unless `persist` is set.
+ * `when` narrows a match by the parsed request body.
  */
 export interface StorageRoute {
   readonly method: string;
@@ -89,11 +88,10 @@ export interface SetupStorageOptions {
 }
 
 /**
- * Builds the layer + recorded state for a `storage` command integration test.
- * Mirrors the seed-buckets setup: a recording `HttpClient` for the Storage
- * gateway, a config.toml on disk, a project-ref resolver, a lazy Management API
- * factory (api-keys), tracked telemetry + linked-project cache, and the
- * `--local` scoped-global flag value.
+ * Builds the layer and recorded state for a `storage` command integration test:
+ * a recording `HttpClient` for the Storage gateway, an on-disk `config.toml`,
+ * project-ref resolution, tracked telemetry/linked-project cache, and a lazy
+ * Management API factory for api-keys.
  */
 export function setupStorage(workdir: string, opts: SetupStorageOptions) {
   if (opts.toml !== undefined) {
@@ -178,9 +176,8 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     resolveForLink: () =>
       opts.linkedFails === true ? Effect.fail(notLinked()) : Effect.succeed(projectRefRef),
     resolveOptional: () => Effect.succeed(Option.some(projectRefRef)),
-    // Gives an explicit `--project-ref` flag top precedence, same as Go's
-    // `flags.LoadProjectRef` — short-circuits BEFORE `linkedFails`, so a test
-    // can prove the flag resolves a ref even for an "unlinked" workdir.
+    // An explicit `--project-ref` flag takes precedence and short-circuits before
+    // `linkedFails`, so a test can resolve a ref even for an "unlinked" workdir.
     loadProjectRef: (flagValue: Option.Option<string>) =>
       Option.isSome(flagValue) && flagValue.value.length > 0
         ? Effect.succeed(flagValue.value)
@@ -216,15 +213,15 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
       make: CommandPlatformApi.pipe(Effect.provide(managementApi.layer)),
     }),
     Layer.succeed(YesFlag, opts.yes ?? false),
-    // `storage rm` confirms deletions via `promptYesNo`; model an
-    // interactive user answering via `confirm` (other storage commands ignore it).
+    // `storage rm` confirms deletions via `promptYesNo`, answered by `confirm`;
+    // other storage commands ignore it.
     mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
     mockStdin(
       opts.stdinIsTty ?? true,
       opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined,
     ),
-    // `cp` resolves relative local paths against the original cwd (Go's
-    // `utils.CurrentDirAbs`); point it at the temp workdir for tests.
+    // `cp` resolves relative local paths against the original cwd; point it at
+    // the temp workdir for tests.
     mockRuntimeInfo({ cwd: workdir }),
     // `resolveYes` scans the raw argv for an explicit `--yes=false`.
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),

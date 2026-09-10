@@ -32,8 +32,6 @@ interface TestResult {
 
 const results: TestResult[] = [];
 
-// --- Native ---
-
 console.log(`\n${"=".repeat(60)}`);
 console.log("Native binary tests");
 console.log("=".repeat(60));
@@ -58,8 +56,6 @@ const arch = process.arch === "arm64" ? "arm64" : "x64";
     results.push({ name, status: "fail" });
   }
 }
-
-// --- Release tarball ---
 
 console.log(`\n${"=".repeat(60)}`);
 console.log("Release tarball test");
@@ -91,8 +87,6 @@ console.log("=".repeat(60));
   }
 }
 
-// --- Scoop ---
-
 console.log(`\n${"=".repeat(60)}`);
 console.log("Scoop test");
 console.log("=".repeat(60));
@@ -108,7 +102,6 @@ if (!hasScoop) {
   const manifest = path.join(root, "dist", "supabase.json");
 
   try {
-    // Generate the manifest with local file:/// URLs
     console.log("Generating Scoop manifest...");
     await $`bun run apps/cli/scripts/update-scoop.ts --version ${version} --local`.cwd(root);
 
@@ -132,8 +125,6 @@ if (!hasScoop) {
     results.push({ name: "scoop", status: "fail" });
   }
 }
-
-// --- Summary ---
 
 console.log(`\n${"=".repeat(60)}`);
 console.log("Windows Smoke Test Summary");
