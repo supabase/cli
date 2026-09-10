@@ -511,13 +511,10 @@ describe("runtime input owner", () => {
   it.live("provides readable Vector config retaining runtime environment placeholders", () =>
     withPlatform(
       Effect.gen(function* () {
-        // Arrange
         const { fs, resolveConfigPath } = yield* vectorFixture();
 
-        // Act
         const configPath = yield* resolveConfigPath();
 
-        // Assert
         const configText = yield* fs.readFileString(configPath);
         const config = yield* Effect.try(() => Bun.YAML.parse(configText));
         expect(config).toMatchObject({
@@ -533,19 +530,16 @@ describe("runtime input owner", () => {
     ),
   );
 
-  it.live("cleanup removes the returned Vector config file", () =>
+  it.live("removes the returned Vector config file on cleanup", () =>
     withPlatform(
       Effect.gen(function* () {
-        // Arrange
         const { fs, owner, resolveConfigPath } = yield* vectorFixture();
         const configPath = yield* resolveConfigPath();
 
         expect(yield* fs.exists(configPath)).toBe(true);
 
-        // Act
         yield* owner.cleanupAll;
 
-        // Assert
         expect(yield* fs.exists(configPath)).toBe(false);
       }),
     ),
@@ -554,18 +548,15 @@ describe("runtime input owner", () => {
   it.live("recreates readable Vector config after cleanup", () =>
     withPlatform(
       Effect.gen(function* () {
-        // Arrange
         const { fs, owner, resolveConfigPath } = yield* vectorFixture();
         const firstConfigPath = yield* resolveConfigPath();
 
         yield* owner.cleanupAll;
         expect(yield* fs.exists(firstConfigPath)).toBe(false);
 
-        // Act
         const configPath = yield* resolveConfigPath();
         const config = yield* fs.readFileString(configPath);
 
-        // Assert
         const parsed = yield* Effect.try(() => Bun.YAML.parse(config));
         expect(parsed).toMatchObject({
           api: { address: "${VECTOR_API_ADDRESS}" },

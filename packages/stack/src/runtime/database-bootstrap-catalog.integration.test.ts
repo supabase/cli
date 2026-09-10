@@ -62,7 +62,6 @@ describe("database bootstrap catalog", () => {
       }).pipe(Effect.exit);
       const missingError = errorOf(missing);
       expect(missingError).toMatchObject({
-        _tag: "StackPreparationError",
         message: "Managed database password is unavailable for bootstrap",
       });
       expect(missingError).toBeInstanceOf(StackPreparationError);
@@ -82,7 +81,6 @@ describe("database bootstrap catalog", () => {
       }).pipe(Effect.exit);
       const missingError = errorOf(missing);
       expect(missingError).toMatchObject({
-        _tag: "StackPreparationError",
         message: "Managed JWT secret is unavailable for database bootstrap",
       });
       expect(missingError).toBeInstanceOf(StackPreparationError);
@@ -109,7 +107,6 @@ describe("database bootstrap catalog", () => {
       }).pipe(Effect.exit);
       const invalidError = errorOf(invalid);
       expect(invalidError).toMatchObject({
-        _tag: "StackPreparationError",
         message: "Auth JWT expiry must be a finite positive integer",
       });
       expect(invalidError).toBeInstanceOf(StackPreparationError);
