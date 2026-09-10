@@ -360,6 +360,18 @@ export function mockOutput(
                 : JSON.stringify(event),
           });
         }),
+      result: (data: unknown) =>
+        Effect.sync(() => {
+          if (opts.format === "json") {
+            rawChunks.push({ text: `${JSON.stringify(data)}\n`, stream: "stdout" });
+          } else if (opts.format === "stream-json") {
+            events.push({
+              type: "result",
+              data,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }),
       success: (message: string, data?: Record<string, unknown>) =>
         Effect.sync(() => {
           messages.push({ type: "success", message, data });
