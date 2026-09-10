@@ -19,7 +19,7 @@ import {
   mockTty,
   processEnvLayer,
 } from "../../../tests/helpers/mocks.ts";
-import { mockTelemetryStateTracked } from "../../../tests/helpers/command-mocks.ts";
+import { mockTelemetryStateTracked, useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import { postgresImageForDbMajorVersion } from "../../shared/services/services.shared.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
@@ -30,6 +30,11 @@ import { servicesCommand } from "./services.command.ts";
 import { services } from "./services.handler.ts";
 
 const LOCAL_POSTGRES_VERSION = dockerfileServiceImageRaw("pg").split(":")[1] ?? "";
+
+// Isolated default workdir: `process.cwd()` would read the developer's real
+// `apps/cli/supabase/.temp/` state (e.g. the pinned `postgres-version` written
+// by a local `supabase start`), making these tests machine-dependent.
+const defaultWorkdir = useTempWorkdir("supabase-services-");
 
 function setup(
   opts: {
@@ -67,7 +72,7 @@ function setup(
           dashboardUrl: "https://supabase.com/dashboard",
           accessToken: Option.none(),
           projectId: Option.none(),
-          workdir: opts.workdir ?? process.cwd(),
+          workdir: opts.workdir ?? defaultWorkdir.current,
           explicitWorkdir: false,
           userAgent: "SupabaseCLI/test",
         }),

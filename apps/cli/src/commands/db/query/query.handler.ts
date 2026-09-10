@@ -35,9 +35,9 @@ import {
   orderedKeys,
   renderJson,
   renderTablewriter,
-  resolveAgentMode,
   toCsv,
 } from "./query.format.ts";
+import { resolveAgentMode } from "../../../command-internal/agent-mode.ts";
 
 /** The output formats `db query` selects: `json|table|csv`. */
 type ResolvedFormat = "json" | "table" | "csv";

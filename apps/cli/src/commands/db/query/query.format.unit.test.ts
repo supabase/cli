@@ -11,7 +11,6 @@ import {
   orderedKeys,
   renderJson,
   renderTablewriter,
-  resolveAgentMode,
   toCsv,
 } from "./query.format.ts";
 
@@ -326,15 +325,6 @@ describe("findNonFiniteJsonValue", () => {
     expect(findNonFiniteJsonValue([[Number.NaN]])).toBe("NaN");
     expect(findNonFiniteJsonValue([[Number.POSITIVE_INFINITY]])).toBe("+Inf");
     expect(findNonFiniteJsonValue([[1], [Number.NEGATIVE_INFINITY]])).toBe("-Inf");
-  });
-});
-
-describe("resolveAgentMode", () => {
-  it("honors the explicit flag and falls back to detection on auto", () => {
-    expect(resolveAgentMode("yes", Option.none())).toBe(true);
-    expect(resolveAgentMode("no", Option.some("cursor"))).toBe(false);
-    expect(resolveAgentMode("auto", Option.some("cursor"))).toBe(true);
-    expect(resolveAgentMode("auto", Option.none())).toBe(false);
   });
 });
 

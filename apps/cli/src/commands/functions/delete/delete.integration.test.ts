@@ -2,8 +2,6 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Stdio } from "effect";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { CurrentAnalyticsContext } from "../../../shared/telemetry/analytics-context.ts";
-import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import {
   buildTestRuntime,
   mockCommandSettings,
@@ -12,31 +10,11 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockContextualAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { functionsDeleteHandler } from "./delete.command.ts";
 import { functionsDelete } from "./delete.handler.ts";
 
-const tempRoot = useTempWorkdir("supabase-functions-delete-legacy-");
-
-// `withCommandTelemetry` threads `flags`/`command` through
-// `CurrentAnalyticsContext`, not `capture()`'s own args, so this merges it manually.
-function mockContextualAnalytics() {
-  const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
-  const layer = Layer.succeed(
-    Analytics,
-    Analytics.of({
-      capture: (event: string, properties: Record<string, unknown> = {}) =>
-        Effect.gen(function* () {
-          const context = yield* CurrentAnalyticsContext;
-          captured.push({ event, properties: { ...context, ...properties } });
-        }),
-      identify: () => Effect.void,
-      alias: () => Effect.void,
-      groupIdentify: () => Effect.void,
-    }),
-  );
-  return { layer, captured };
-}
+const tempRoot = useTempWorkdir("supabase-functions-delete-");
 
 // Strips ANSI color codes so assertions are stable regardless of color support.
 // eslint-disable-next-line no-control-regex

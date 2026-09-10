@@ -4,7 +4,7 @@ import { Context } from "effect";
 import type { NonInteractiveError } from "./errors.ts";
 import type { OutputFormat, StreamEvent } from "./types.ts";
 
-interface OutputTask {
+export interface OutputTask {
   readonly message: (message: string) => Effect.Effect<void>;
   readonly succeed: (message?: string) => Effect.Effect<void>;
   readonly fail: (message?: string) => Effect.Effect<void>;

@@ -108,7 +108,10 @@ export function dohFetch(opts: DohFetchOptions): typeof globalThis.fetch {
       return innerFetch(input, init);
     }
 
-    const ips = await Effect.runPromise(resolver(host));
+    // The request's abort signal must reach the lookup too, or an abort during
+    // resolution leaves the resolver fiber running until the DoH server answers.
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const ips = await Effect.runPromise(resolver(host), { signal: signal ?? undefined });
     const firstIp = ips[0];
     if (firstIp === undefined) {
       // resolver guarantees a non-empty result; this is a safety net.
@@ -117,15 +120,20 @@ export function dohFetch(opts: DohFetchOptions): typeof globalThis.fetch {
 
     const { url, serverName, hostHeader } = buildDohRequest(originalUrl, firstIp);
 
+    // `init.headers` may be a plain record, a WHATWG `Headers` instance
+    // (supabase-js), or an entries array; spreading a `Headers` instance yields
+    // zero entries, so rebuild through the constructor. A `Request` input with
+    // no `init.headers` carries its headers on the request itself.
+    const headers = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined),
+    );
+    headers.set("Host", hostHeader);
     // Bun's fetch sends `tls.serverName` as the SNI extension and validates
     // the peer certificate against it, not against the IP used as the URL
     // authority.
     const rewrittenInit: BunFetchRequestInit = {
       ...init,
-      headers: {
-        ...init?.headers,
-        Host: hostHeader,
-      },
+      headers,
       tls: { serverName },
     };
 
