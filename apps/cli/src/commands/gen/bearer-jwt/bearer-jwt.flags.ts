@@ -89,21 +89,12 @@ function rfc3339FlagError(trimmedValue: string): Error {
 }
 
 /**
- * `--exp`, parsed the same way pflag's RFC3339 time flag does, at flag-parse
- * time. The input is trimmed before parsing and before it's re-embedded in
- * the error message. Any failure (syntax, an out-of-range calendar
- * component, or an out-of-range zone offset) raises the same wrapped
- * `invalid argument "<val>" for "--exp" flag: ...` message.
- *
- * The zone-offset range check accepts `+24:00`/60-minute offsets (`>`, not
- * `>=`) and rejects `+99:99` outright, unlike `Date.parse`, which returns
- * `NaN` for the latter — silently minting a token whose `exp`/`iat` claims
- * serialize as `null` instead of failing the command.
- *
- * Fractional seconds are accepted even though RFC3339 has no fractional
- * directive, truncated (not rounded) to 9 digits, and returned unfloored as
- * an exact {@link BearerJwtInstant} so `buildBearerJwtClaims` can floor only
- * the final `exp`/`iat`.
+ * Parses `--exp` as an RFC3339 instant at flag-parse time. Every failure (syntax, calendar
+ * component, or zone offset out of range) raises the same
+ * `invalid argument "<val>" for "--exp" flag: ...` message. Offsets are range-checked rather than
+ * left to `Date.parse`, which returns `NaN` for `+99:99` and would mint a token with `null`
+ * `exp`/`iat` claims. Fractional seconds are truncated to 9 digits and returned unfloored so
+ * `buildBearerJwtClaims` floors only the final claims.
  */
 export function parseBearerJwtExp(value: string): BearerJwtInstant {
   const trimmedValue = value.trim();

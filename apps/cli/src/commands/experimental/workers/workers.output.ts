@@ -9,12 +9,6 @@ import {
 import { WorkersEnvNotSupportedError } from "./workers.errors.ts";
 
 /**
- * Emits a command's payload in the format `-o`/`--output` asked for.
- *
- * Returns whether it emitted anything, so the caller can skip its own text
- * rendering, which would otherwise also write to stdout and corrupt the payload.
- */
-/**
  * Which `-o` values these commands answer with a payload.
  *
  * An allowlist, not a denylist, so an unrecognized future `-o` value falls
@@ -27,6 +21,12 @@ function emitsPayloadFor(goFormat: string | undefined): boolean {
   return goFormat !== undefined && PAYLOAD_FORMATS.has(goFormat);
 }
 
+/**
+ * Emits a command's payload in the format `-o`/`--output` asked for.
+ *
+ * Returns whether it emitted anything, so the caller can skip its own text
+ * rendering, which would otherwise also write to stdout and corrupt the payload.
+ */
 export const emitWorkersMachineOutput = Effect.fnUntraced(function* (
   payload: Record<string, unknown>,
 ) {

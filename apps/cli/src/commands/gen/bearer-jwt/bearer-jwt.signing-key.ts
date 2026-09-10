@@ -53,16 +53,11 @@ const consolePromptText = Effect.fnUntraced(function* (label: string) {
 });
 
 /**
- * Narrows an untrusted JSON record (a `signing_keys_path` entry, or a pasted
- * stdin JWK) into `Jwk`'s shape, defaulting each missing field the way a Go
- * zero-value struct would.
- *
- * Throws a bare `Error` with the unwrapped `encoding/json` type-mismatch
- * text the moment any field has the wrong JSON type; each call site wraps it
- * with its own prefix. Checks fields in a fixed order rather than the
- * document's own key order, so on a payload with multiple malformed fields
- * the reported field may not always match a real decoder — accepted gap,
- * every field is still rejected either way.
+ * Narrows an untrusted JSON record (a `signing_keys_path` entry or a pasted stdin JWK) into
+ * `Jwk`, defaulting missing fields to their zero values. Throws a bare `Error` with the
+ * established type-mismatch text on the first wrongly-typed field; call sites add their own
+ * prefix. Fields are checked in a fixed order, so with several malformed fields the reported one
+ * is deterministic rather than document-ordered.
  */
 function normalizeStoredJwk(record: Record<string, unknown>): Jwk {
   const keyOps = readOptionalStringArray(record, "key_ops");
@@ -154,19 +149,13 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
 });
 
 /**
- * Branches B/C (reached when `[auth].signing_keys_path` is configured): a
- * non-TTY prompts for a kid by exact match, falling back to the first key on
- * a blank answer; a real TTY presents an interactive picker instead.
+ * Picks a signing key when `[auth].signing_keys_path` is configured: a non-TTY prompts for a kid
+ * by exact match (blank answer selects the first key); a TTY shows an interactive picker.
  *
- * Both the picker and its "Selected key ID: ..." line are routed to stderr
- * explicitly rather than the shared `promptSelect`/`info` defaults, since
- * this command's stdout is the signed-token payload even in text mode (see
- * `bearer-jwt.handler.ts`) and clack's own defaults write to stdout.
- *
- * The picker tries the ambient `Output` first (what every test here mocks),
- * falling back to a fresh {@link textOutputLayer} only when that raises
- * `NonInteractiveError` (json/stream-json layers reject prompts outright),
- * so the picker still renders on a real TTY under a non-text ambient layer.
+ * The picker and its "Selected key ID" line go to stderr because stdout is the signed-token
+ * payload even in text mode. The picker tries the ambient `Output` first and falls back to a
+ * fresh {@link textOutputLayer} only on `NonInteractiveError`, so it still renders on a real TTY
+ * under a json/stream-json layer.
  */
 const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
   availableKeys: ReadonlyArray<Jwk>,
