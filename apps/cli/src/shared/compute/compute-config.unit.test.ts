@@ -1,11 +1,7 @@
-// oxlint-disable effecttsgo/node-builtin-import -- temporary filesystem fixtures use native setup APIs.
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { it } from "@effect/vitest";
-import { Effect, Exit } from "effect";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { Effect, Exit, FileSystem, Path } from "effect";
+import { describe, expect, test } from "vitest";
 import {
   readComputeSection,
   ComputeAlreadyConfiguredError,
@@ -94,17 +90,17 @@ describe("readComputeSection", () => {
 });
 
 describe("planComputeEntry + commitComputeEntry", () => {
-  let dir: string;
-  let configPath: string;
-
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "supabase-compute-config-"));
-    configPath = join(dir, "config.toml");
-  });
-
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
+  const withConfig = <A, E, R>(
+    run: (configPath: string, fs: FileSystem.FileSystem, path: Path.Path) => Effect.Effect<A, E, R>,
+  ) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-compute-config-" });
+        return yield* run(path.join(dir, "config.toml"), fs, path);
+      }),
+    ).pipe(Effect.provide(BunServices.layer));
 
   /** plan + commit — the pairing `new` performs once it has decided to write. */
   const writeComputeEntry = (options: Parameters<typeof planComputeEntry>[0]) =>
@@ -119,84 +115,94 @@ describe("planComputeEntry + commitComputeEntry", () => {
     { label: "a value past the safe integer range", instances: 1e21 },
     { label: "not a number at all", instances: Number.NaN },
   ])("refuses $label rather than rendering it", ({ instances }) =>
-    Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        writeComputeEntry({
-          configPath,
-          name: "api",
-          existingCompute: {},
-          patch: { runtime: "node", instances },
-        }).pipe(Effect.provide(BunServices.layer)),
-      );
+    withConfig((configPath, fs) =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          writeComputeEntry({
+            configPath,
+            name: "api",
+            existingCompute: {},
+            patch: { runtime: "node", instances },
+          }).pipe(Effect.provide(BunServices.layer)),
+        );
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      // Refused before anything reaches disk, the way every other unsafe write is.
-      expect(existsSync(configPath)).toBe(false);
-    }),
+        expect(Exit.isFailure(exit)).toBe(true);
+        // Refused before anything reaches disk, the way every other unsafe write is.
+        expect(yield* fs.exists(configPath)).toBe(false);
+      }),
+    ),
   );
 
   it.live("writes a whole, non-negative count unquoted", () =>
-    Effect.gen(function* () {
-      yield* writeComputeEntry({
-        configPath,
-        name: "api",
-        existingCompute: {},
-        patch: { runtime: "node", instances: 0 },
-      }).pipe(Effect.provide(BunServices.layer));
+    withConfig((configPath, fs) =>
+      Effect.gen(function* () {
+        yield* writeComputeEntry({
+          configPath,
+          name: "api",
+          existingCompute: {},
+          patch: { runtime: "node", instances: 0 },
+        }).pipe(Effect.provide(BunServices.layer));
 
-      expect(readFileSync(configPath, "utf8")).toContain("instances = 0");
-    }),
+        expect(yield* fs.readFileString(configPath)).toContain("instances = 0");
+      }),
+    ),
   );
 
   it.live("creates the file when there is none yet", () =>
-    Effect.gen(function* () {
-      yield* writeComputeEntry({
-        configPath,
-        name: "api",
-        existingCompute: {},
-        patch: { runtime: "node" },
-      }).pipe(Effect.provide(BunServices.layer));
+    withConfig((configPath, fs) =>
+      Effect.gen(function* () {
+        yield* writeComputeEntry({
+          configPath,
+          name: "api",
+          existingCompute: {},
+          patch: { runtime: "node" },
+        }).pipe(Effect.provide(BunServices.layer));
 
-      expect(readFileSync(configPath, "utf8")).toBe('[compute.api]\nruntime = "node"\n');
-    }),
+        expect(yield* fs.readFileString(configPath)).toBe('[compute.api]\nruntime = "node"\n');
+      }),
+    ),
   );
 
   it.live("appends to an existing file without touching the rest of it", () =>
-    Effect.gen(function* () {
-      writeFileSync(configPath, '# keep me\nproject_id = "demo"\n');
+    withConfig((configPath, fs) =>
+      Effect.gen(function* () {
+        yield* fs.writeFileString(configPath, '# keep me\nproject_id = "demo"\n');
 
-      yield* writeComputeEntry({
-        configPath,
-        name: "api",
-        existingCompute: {},
-        patch: { runtime: "node", size: "4gb" },
-      }).pipe(Effect.provide(BunServices.layer));
+        yield* writeComputeEntry({
+          configPath,
+          name: "api",
+          existingCompute: {},
+          patch: { runtime: "node", size: "4gb" },
+        }).pipe(Effect.provide(BunServices.layer));
 
-      expect(readFileSync(configPath, "utf8")).toBe(
-        '# keep me\nproject_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "4gb"\n',
-      );
-    }),
+        expect(yield* fs.readFileString(configPath)).toBe(
+          '# keep me\nproject_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "4gb"\n',
+        );
+      }),
+    ),
   );
 
   // `new` creates a compute; changing one that exists is a `config.toml` edit and
   // the file is the user's. Refusing is also what keeps writes append-only.
   it.live("refuses a compute that is already configured, leaving the file alone", () =>
-    Effect.gen(function* () {
-      const before = '# hand-written\n[compute.api]\nruntime = "node" # mine\n';
-      writeFileSync(configPath, before);
+    withConfig((configPath, fs) =>
+      Effect.gen(function* () {
+        const before = '# hand-written\n[compute.api]\nruntime = "node" # mine\n';
+        yield* fs.writeFileString(configPath, before);
 
-      const error = yield* Effect.flip(
-        writeComputeEntry({
-          configPath,
-          name: "api",
-          existingCompute: { api: { runtime: "node" } },
-          patch: { runtime: "deno" },
-        }).pipe(Effect.provide(BunServices.layer)),
-      );
+        const error = yield* Effect.flip(
+          writeComputeEntry({
+            configPath,
+            name: "api",
+            existingCompute: { api: { runtime: "node" } },
+            patch: { runtime: "deno" },
+          }).pipe(Effect.provide(BunServices.layer)),
+        );
 
-      expect(error).toBeInstanceOf(ComputeAlreadyConfiguredError);
-      expect(readFileSync(configPath, "utf8")).toBe(before);
-    }),
+        expect(error).toBeInstanceOf(ComputeAlreadyConfiguredError);
+        expect(yield* fs.readFileString(configPath)).toBe(before);
+      }),
+    ),
   );
 
   // How the entry is written — dotted, inline or a table — does not matter. The
@@ -212,21 +218,23 @@ describe("planComputeEntry + commitComputeEntry", () => {
       before: 'notes = """\n[compute.api]\nstill inside"""\n',
     },
   ])("refuses an entry written as $label without reading the file text", ({ before }) =>
-    Effect.gen(function* () {
-      writeFileSync(configPath, before);
+    withConfig((configPath, fs) =>
+      Effect.gen(function* () {
+        yield* fs.writeFileString(configPath, before);
 
-      const error = yield* Effect.flip(
-        writeComputeEntry({
-          configPath,
-          name: "api",
-          existingCompute: { api: { runtime: "node" } },
-          patch: { runtime: "node" },
-        }).pipe(Effect.provide(BunServices.layer)),
-      );
+        const error = yield* Effect.flip(
+          writeComputeEntry({
+            configPath,
+            name: "api",
+            existingCompute: { api: { runtime: "node" } },
+            patch: { runtime: "node" },
+          }).pipe(Effect.provide(BunServices.layer)),
+        );
 
-      expect(error).toBeInstanceOf(ComputeAlreadyConfiguredError);
-      expect(readFileSync(configPath, "utf8")).toBe(before);
-    }),
+        expect(error).toBeInstanceOf(ComputeAlreadyConfiguredError);
+        expect(yield* fs.readFileString(configPath)).toBe(before);
+      }),
+    ),
   );
 
   // An inline `[compute]` is sealed: TOML forbids extending it, so appending
@@ -240,21 +248,23 @@ describe("planComputeEntry + commitComputeEntry", () => {
       before: 'compute = { web = { runtime = "node" } }\n',
     },
   ])("refuses to append to $label, leaving the file alone", ({ before }) =>
-    Effect.gen(function* () {
-      writeFileSync(configPath, before);
+    withConfig((configPath, fs) =>
+      Effect.gen(function* () {
+        yield* fs.writeFileString(configPath, before);
 
-      const error = yield* Effect.flip(
-        writeComputeEntry({
-          configPath,
-          name: "api",
-          existingCompute: {},
-          patch: { runtime: "node" },
-        }).pipe(Effect.provide(BunServices.layer)),
-      );
+        const error = yield* Effect.flip(
+          writeComputeEntry({
+            configPath,
+            name: "api",
+            existingCompute: {},
+            patch: { runtime: "node" },
+          }).pipe(Effect.provide(BunServices.layer)),
+        );
 
-      expect(error).toBeInstanceOf(ComputeConfigWriteUnsafeError);
-      expect(readFileSync(configPath, "utf8")).toBe(before);
-    }),
+        expect(error).toBeInstanceOf(ComputeConfigWriteUnsafeError);
+        expect(yield* fs.readFileString(configPath)).toBe(before);
+      }),
+    ),
   );
 
   // The backstop is not limited to the inline case: a config.toml that does not
@@ -262,44 +272,48 @@ describe("planComputeEntry + commitComputeEntry", () => {
   // out after the scaffold is written is exactly what the plan/commit split
   // exists to avoid.
   it.live("refuses a config.toml that does not parse, leaving the file alone", () =>
-    Effect.gen(function* () {
-      const before = "this is not = = toml\n";
-      writeFileSync(configPath, before);
+    withConfig((configPath, fs) =>
+      Effect.gen(function* () {
+        const before = "this is not = = toml\n";
+        yield* fs.writeFileString(configPath, before);
 
-      const error = yield* Effect.flip(
-        writeComputeEntry({
-          configPath,
-          name: "api",
-          existingCompute: {},
-          patch: { runtime: "node" },
-        }).pipe(Effect.provide(BunServices.layer)),
-      );
+        const error = yield* Effect.flip(
+          writeComputeEntry({
+            configPath,
+            name: "api",
+            existingCompute: {},
+            patch: { runtime: "node" },
+          }).pipe(Effect.provide(BunServices.layer)),
+        );
 
-      expect(error).toBeInstanceOf(ComputeConfigWriteUnsafeError);
-      expect(readFileSync(configPath, "utf8")).toBe(before);
-    }),
+        expect(error).toBeInstanceOf(ComputeConfigWriteUnsafeError);
+        expect(yield* fs.readFileString(configPath)).toBe(before);
+      }),
+    ),
   );
 
   // Why rendering is separate from writing: `new` writes the starter files before
   // it records anything, so a failure that could only surface at the write would
   // leave a scaffold on disk that nothing records.
   it.live("renders without writing, and only writes when committed", () =>
-    Effect.gen(function* () {
-      writeFileSync(configPath, 'project_id = "demo"\n');
+    withConfig((configPath, fs) =>
+      Effect.gen(function* () {
+        yield* fs.writeFileString(configPath, 'project_id = "demo"\n');
 
-      const write = yield* planComputeEntry({
-        configPath,
-        name: "api",
-        existingCompute: {},
-        patch: { runtime: "node" },
-      }).pipe(Effect.provide(BunServices.layer));
+        const write = yield* planComputeEntry({
+          configPath,
+          name: "api",
+          existingCompute: {},
+          patch: { runtime: "node" },
+        }).pipe(Effect.provide(BunServices.layer));
 
-      expect(write.text).toContain("[compute.api]");
-      expect(readFileSync(configPath, "utf8")).toBe('project_id = "demo"\n');
+        expect(write.text).toContain("[compute.api]");
+        expect(yield* fs.readFileString(configPath)).toBe('project_id = "demo"\n');
 
-      yield* commitComputeEntry(write).pipe(Effect.provide(BunServices.layer));
-      expect(readFileSync(configPath, "utf8")).toContain("[compute.api]");
-    }),
+        yield* commitComputeEntry(write).pipe(Effect.provide(BunServices.layer));
+        expect(yield* fs.readFileString(configPath)).toContain("[compute.api]");
+      }),
+    ),
   );
 });
 

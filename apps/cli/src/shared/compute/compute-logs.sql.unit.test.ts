@@ -1,10 +1,9 @@
-// oxlint-disable effecttsgo/global-date -- fixed Date inputs exercise pure wire-window helpers.
 import { describe, expect, it } from "@effect/vitest";
+import { DateTime } from "effect";
 import { validateComputeNameMessage } from "./compute-runtimes.ts";
 import {
   ALL_COMPUTE_LOG_STREAMS,
   followWindow,
-  isoLogTimestamp,
   logWindow,
   COMPUTE_LOG_POLL_SECONDS,
   COMPUTE_LOG_STREAMS,
@@ -83,7 +82,7 @@ describe("compute name validation is the injection guard", () => {
 
 describe("logWindow", () => {
   it("always returns both bounds", () => {
-    const window = logWindow(new Date("2026-08-31T12:00:00.000Z"));
+    const window = logWindow(DateTime.makeUnsafe("2026-08-31T12:00:00.000Z"));
 
     // A lone bound yields a one-minute window server-side, and sending neither is
     // an outright error, so there is no valid single-bound call.
@@ -92,9 +91,11 @@ describe("logWindow", () => {
   });
 
   it("stays under the 24 hour span the server clamps at", () => {
-    const now = new Date("2026-08-31T12:00:00.000Z");
+    const now = DateTime.makeUnsafe("2026-08-31T12:00:00.000Z");
     const window = logWindow(now);
-    const spanMs = Date.parse(window.end) - Date.parse(window.start);
+    const spanMs =
+      DateTime.toEpochMillis(DateTime.makeUnsafe(window.end)) -
+      DateTime.toEpochMillis(DateTime.makeUnsafe(window.start));
 
     // Being clamped is worse than being rejected: the server rewrites `end` to
     // `start + 24h`, returning an older slice than the one asked for.
@@ -103,7 +104,7 @@ describe("logWindow", () => {
   });
 
   it("ends at the given instant", () => {
-    const now = new Date("2026-08-31T12:00:00.000Z");
+    const now = DateTime.makeUnsafe("2026-08-31T12:00:00.000Z");
 
     expect(logWindow(now).end).toBe("2026-08-31T12:00:00.000Z");
   });
@@ -115,21 +116,25 @@ describe("logWindow", () => {
  * green through exactly the change they exist to catch.
  */
 describe("followWindow", () => {
-  const now = new Date("2026-08-31T12:00:00.000Z");
+  const now = DateTime.makeUnsafe("2026-08-31T12:00:00.000Z");
 
   it("starts a grace period behind the newest line seen", () => {
-    const cursor = Date.parse("2026-08-31T11:59:30.000Z");
+    const cursor = DateTime.makeUnsafe("2026-08-31T11:59:30.000Z");
     const window = followWindow(now, cursor);
 
     // Guest lines are relayed late and out of order, so a window starting exactly
     // on the cursor drops every straggler permanently.
     expect(window.start).toBe("2026-08-31T11:58:30.000Z");
-    expect(Date.parse(window.start)).toBe(cursor - 60_000);
+    expect(DateTime.toEpochMillis(DateTime.makeUnsafe(window.start))).toBe(
+      DateTime.toEpochMillis(cursor) - 60_000,
+    );
   });
 
   it("reaches back further than one poll interval, so a line delayed a full cycle still lands", () => {
-    const cursor = now.getTime();
-    const reachMs = cursor - Date.parse(followWindow(now, cursor).start);
+    const cursor = now;
+    const reachMs =
+      DateTime.toEpochMillis(cursor) -
+      DateTime.toEpochMillis(DateTime.makeUnsafe(followWindow(now, cursor).start));
 
     expect(reachMs).toBeGreaterThan(COMPUTE_LOG_POLL_SECONDS * 1000);
   });
@@ -139,28 +144,21 @@ describe("followWindow", () => {
     // suspend resumes with a cursor days old. Unclamped, the server answers an
     // over-wide request by rewriting `end` to `start + 24h` — returning an older
     // slice rather than a truncated one, so the tail replays yesterday.
-    const staleCursor = Date.parse("2026-08-28T09:00:00.000Z");
+    const staleCursor = DateTime.makeUnsafe("2026-08-28T09:00:00.000Z");
     const window = followWindow(now, staleCursor);
 
-    expect(Date.parse(window.start)).toBe(now.getTime() - COMPUTE_LOG_WINDOW_MINUTES * 60_000);
-    expect(Date.parse(window.end) - Date.parse(window.start)).toBeLessThan(24 * 60 * 60 * 1000);
+    expect(DateTime.toEpochMillis(DateTime.makeUnsafe(window.start))).toBe(
+      DateTime.toEpochMillis(now) - COMPUTE_LOG_WINDOW_MINUTES * 60_000,
+    );
+    expect(
+      DateTime.toEpochMillis(DateTime.makeUnsafe(window.end)) -
+        DateTime.toEpochMillis(DateTime.makeUnsafe(window.start)),
+    ).toBeLessThan(24 * 60 * 60 * 1000);
   });
 
   it("ends at the given instant, whatever the cursor", () => {
-    expect(followWindow(now, Date.parse("2020-01-01T00:00:00.000Z")).end).toBe(
+    expect(followWindow(now, DateTime.makeUnsafe("2020-01-01T00:00:00.000Z")).end).toBe(
       "2026-08-31T12:00:00.000Z",
     );
-  });
-});
-
-describe("isoLogTimestamp", () => {
-  it("emits a Z suffix and no numeric offset", () => {
-    // The v1 DTO validates with `z.string().datetime()`, which requires the Z and
-    // rejects `+00:00`.
-    const formatted = isoLogTimestamp(new Date("2026-08-31T12:00:00.000Z"));
-
-    expect(formatted).toBe("2026-08-31T12:00:00.000Z");
-    expect(formatted.endsWith("Z")).toBe(true);
-    expect(formatted).not.toContain("+");
   });
 });

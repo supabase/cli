@@ -1,11 +1,7 @@
-// oxlint-disable effecttsgo/node-builtin-import -- temporary filesystem fixtures use native setup APIs.
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
-import { afterEach, beforeEach, describe, expect } from "vitest";
+import { describe, expect } from "vitest";
 import {
   displayPath,
   resolveComputeSource,
@@ -34,10 +30,10 @@ describe("compute directories", () => {
   it.live("resolve under supabase/compute/", () =>
     Effect.gen(function* () {
       expect(yield* runPath((path) => computeRootDir(path, PROJECT))).toBe(
-        join(PROJECT, "supabase", "compute"),
+        `${PROJECT}/supabase/compute`,
       );
       expect(yield* runPath((path) => computeDir(path, PROJECT, "api"))).toBe(
-        join(PROJECT, "supabase", "compute", "api"),
+        `${PROJECT}/supabase/compute/api`,
       );
     }),
   );
@@ -52,7 +48,7 @@ describe("compute directories", () => {
 
       expect(yield* sourceDir(undefined)).toBe(defaultDir);
       expect(yield* sourceDir("")).toBe(defaultDir);
-      expect(yield* sourceDir("packages/api")).toBe(join(PROJECT, "packages", "api"));
+      expect(yield* sourceDir("packages/api")).toBe(`${PROJECT}/packages/api`);
     }),
   );
 
@@ -84,15 +80,11 @@ describe("displayPath", () => {
   it.live("prefers the relative form, and falls back to absolute when it would climb out", () =>
     Effect.gen(function* () {
       expect(
-        yield* runPath((path) =>
-          displayPath(path, PROJECT, join(PROJECT, "supabase", "compute", "api")),
-        ),
-      ).toBe(join("supabase", "compute", "api"));
+        yield* runPath((path) => displayPath(path, PROJECT, `${PROJECT}/supabase/compute/api`)),
+      ).toBe("supabase/compute/api");
       expect(yield* runPath((path) => displayPath(path, PROJECT, PROJECT))).toBe(".");
       expect(
-        yield* runPath((path) =>
-          displayPath(path, join(PROJECT, "deep", "deeper"), "/elsewhere/api"),
-        ),
+        yield* runPath((path) => displayPath(path, `${PROJECT}/deep/deeper`, "/elsewhere/api")),
       ).toBe("/elsewhere/api");
     }),
   );
@@ -107,12 +99,12 @@ describe("resolveComputeSource", () => {
         yield* runFs(
           resolveComputeSource({ projectRoot: PROJECT, cwd, raw: "../../packages/api" }),
         ),
-      ).toBe(join(PROJECT, "packages", "api"));
+      ).toBe(`${PROJECT}/packages/api`);
       expect(
         yield* runFs(
           resolveComputeSource({ projectRoot: PROJECT, cwd: PROJECT, raw: "packages/api/" }),
         ),
-      ).toBe(join(PROJECT, "packages", "api"));
+      ).toBe(`${PROJECT}/packages/api`);
     }),
   );
 
@@ -151,66 +143,82 @@ describe("resolveComputeSource", () => {
 // symlink: a directory inside the project is free to point anywhere outside it,
 // and the starter files land wherever the path really resolves.
 describe("resolveComputeSource containment on a real filesystem", () => {
-  let project = "";
-  let outside = "";
-
-  beforeEach(() => {
-    const scratch = mkdtempSync(join(tmpdir(), "compute-paths-"));
-    project = join(scratch, "project");
-    outside = join(scratch, "outside");
-    mkdirSync(join(project, "packages"), { recursive: true });
-    mkdirSync(join(outside, "api"), { recursive: true });
-    mkdirSync(join(project, "supabase", "functions", "hello"), { recursive: true });
-  });
-
-  afterEach(() => {
-    rmSync(join(project, ".."), { recursive: true, force: true });
-  });
+  const withFixture = <A, E, R>(
+    run: (
+      project: string,
+      outside: string,
+      fs: FileSystem.FileSystem,
+      path: Path.Path,
+    ) => Effect.Effect<A, E, R>,
+  ) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const scratch = yield* fs.makeTempDirectoryScoped({ prefix: "compute-paths-" });
+        const project = path.join(scratch, "project");
+        const outside = path.join(scratch, "outside");
+        yield* fs.makeDirectory(path.join(project, "packages"), { recursive: true });
+        yield* fs.makeDirectory(path.join(outside, "api"), { recursive: true });
+        yield* fs.makeDirectory(path.join(project, "supabase", "functions", "hello"), {
+          recursive: true,
+        });
+        return yield* run(project, outside, fs, path);
+      }),
+    ).pipe(Effect.provide(BunServices.layer));
 
   it.live("resolves a genuine directory inside the project", () =>
-    Effect.gen(function* () {
-      expect(
-        yield* runFs(resolveComputeSource({ projectRoot: project, cwd: project, raw: "packages" })),
-      ).toBe(join(project, "packages"));
-    }),
+    withFixture((project, _outside, _fs, _path) =>
+      Effect.gen(function* () {
+        expect(
+          yield* runFs(
+            resolveComputeSource({ projectRoot: project, cwd: project, raw: "packages" }),
+          ),
+        ).toBe(`${project}/packages`);
+      }),
+    ),
   );
 
   it.live("refuses a path that reaches outside the project through a symlink", () =>
-    Effect.gen(function* () {
-      symlinkSync(outside, join(project, "packages", "external"));
+    withFixture((project, outside, fs, path) =>
+      Effect.gen(function* () {
+        yield* fs.symlink(outside, path.join(project, "packages", "external"));
 
-      const error = yield* Effect.flip(
-        runFs(
-          resolveComputeSource({
-            projectRoot: project,
-            cwd: project,
-            raw: join("packages", "external", "api"),
-          }),
-        ),
-      );
+        const error = yield* Effect.flip(
+          runFs(
+            resolveComputeSource({
+              projectRoot: project,
+              cwd: project,
+              raw: path.join("packages", "external", "api"),
+            }),
+          ),
+        );
 
-      expect(error).toBeInstanceOf(InvalidComputeSourceError);
-      expect(error.detail).toContain("resolves outside the project");
-    }),
+        expect(error).toBeInstanceOf(InvalidComputeSourceError);
+        expect(error.detail).toContain("resolves outside the project");
+      }),
+    ),
   );
 
   it.live("refuses a reserved directory reached through a symlink", () =>
-    Effect.gen(function* () {
-      symlinkSync(join(project, "supabase", "functions"), join(project, "fns"));
+    withFixture((project, _outside, fs, path) =>
+      Effect.gen(function* () {
+        yield* fs.symlink(path.join(project, "supabase", "functions"), path.join(project, "fns"));
 
-      const error = yield* Effect.flip(
-        runFs(
-          resolveComputeSource({
-            projectRoot: project,
-            cwd: project,
-            raw: join("fns", "hello"),
-          }),
-        ),
-      );
+        const error = yield* Effect.flip(
+          runFs(
+            resolveComputeSource({
+              projectRoot: project,
+              cwd: project,
+              raw: path.join("fns", "hello"),
+            }),
+          ),
+        );
 
-      expect(error).toBeInstanceOf(InvalidComputeSourceError);
-      expect(error.detail).toContain("supabase/functions/");
-    }),
+        expect(error).toBeInstanceOf(InvalidComputeSourceError);
+        expect(error.detail).toContain("supabase/functions/");
+      }),
+    ),
   );
 
   // A destination that does not exist yet is the normal case for `new`, and the
@@ -220,34 +228,40 @@ describe("resolveComputeSource containment on a real filesystem", () => {
   // entry if the user quoted it. Trimming it pointed the scaffold at a different
   // directory than the one asked for.
   it.live("keeps whitespace that is part of the directory name", () =>
-    Effect.gen(function* () {
-      expect(
-        yield* runFs(
-          resolveComputeSource({ projectRoot: project, cwd: project, raw: "packages/api " }),
-        ),
-      ).toBe(join(project, "packages", "api "));
-    }),
+    withFixture((project, _outside, _fs, _path) =>
+      Effect.gen(function* () {
+        expect(
+          yield* runFs(
+            resolveComputeSource({ projectRoot: project, cwd: project, raw: "packages/api " }),
+          ),
+        ).toBe(`${project}/packages/api `);
+      }),
+    ),
   );
 
   it.live.each([{ raw: "" }, { raw: "   " }, { raw: "\t" }])(
     "refuses an all-whitespace --source of $raw",
     ({ raw }) =>
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(
-          runFs(resolveComputeSource({ projectRoot: project, cwd: project, raw })),
-        );
-        expect(error).toBeInstanceOf(InvalidComputeSourceError);
-        expect(error.detail).toContain("is empty");
-      }),
+      withFixture((project, _outside, _fs, _path) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            runFs(resolveComputeSource({ projectRoot: project, cwd: project, raw })),
+          );
+          expect(error).toBeInstanceOf(InvalidComputeSourceError);
+          expect(error.detail).toContain("is empty");
+        }),
+      ),
   );
 
   it.live("accepts a destination that does not exist yet", () =>
-    Effect.gen(function* () {
-      expect(
-        yield* runFs(
-          resolveComputeSource({ projectRoot: project, cwd: project, raw: "packages/brand-new" }),
-        ),
-      ).toBe(join(project, "packages", "brand-new"));
-    }),
+    withFixture((project, _outside, _fs, _path) =>
+      Effect.gen(function* () {
+        expect(
+          yield* runFs(
+            resolveComputeSource({ projectRoot: project, cwd: project, raw: "packages/brand-new" }),
+          ),
+        ).toBe(`${project}/packages/brand-new`);
+      }),
+    ),
   );
 });

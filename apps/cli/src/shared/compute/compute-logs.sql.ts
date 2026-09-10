@@ -88,30 +88,20 @@ export const COMPUTE_LOG_POLL_SECONDS = 10;
 const COMPUTE_LOG_CURSOR_GRACE_SECONDS = 60;
 
 /**
- * Timestamps for the endpoint's `iso_timestamp_start`/`iso_timestamp_end`.
- *
- * The v1 DTO validates these with `z.string().datetime()`, which requires a
- * trailing `Z` and rejects numeric offsets — so this is `toISOString()` and must
- * stay that way.
- */
-export function isoLogTimestamp(date: Date): string {
-  return date.toISOString();
-}
-
-/**
- * A closed window ending at `now`.
+ * A closed window ending at `now`, with UTC ISO timestamps ending in `Z` as
+ * required by the logs API.
  *
  * Both bounds, always. Sending only a start yields a **one-minute** window
  * server-side (the lone bound is minute-rounded and the other derived from it),
  * and sending neither is an outright error — so there is no valid single-bound
  * call to make.
  */
-export function logWindow(now: Date): { readonly start: string; readonly end: string } {
+export function logWindow(now: DateTime.Utc): { readonly start: string; readonly end: string } {
   return {
     start: DateTime.formatIso(
-      DateTime.makeUnsafe(now.getTime() - COMPUTE_LOG_WINDOW_MINUTES * 60_000),
+      DateTime.makeUnsafe(DateTime.toEpochMillis(now) - COMPUTE_LOG_WINDOW_MINUTES * 60_000),
     ),
-    end: isoLogTimestamp(now),
+    end: DateTime.formatIso(now),
   };
 }
 
@@ -126,17 +116,20 @@ export function logWindow(now: Date): { readonly start: string; readonly end: st
  * so a resumed tail would silently start replaying yesterday.
  */
 export function followWindow(
-  now: Date,
-  newestSeenMs: number,
+  now: DateTime.Utc,
+  newestSeen: DateTime.Utc,
 ): { readonly start: string; readonly end: string } {
-  const earliest = now.getTime() - COMPUTE_LOG_WINDOW_MINUTES * 60_000;
+  const earliest = DateTime.toEpochMillis(now) - COMPUTE_LOG_WINDOW_MINUTES * 60_000;
   return {
     start: DateTime.formatIso(
       DateTime.makeUnsafe(
-        Math.max(newestSeenMs - COMPUTE_LOG_CURSOR_GRACE_SECONDS * 1000, earliest),
+        Math.max(
+          DateTime.toEpochMillis(newestSeen) - COMPUTE_LOG_CURSOR_GRACE_SECONDS * 1000,
+          earliest,
+        ),
       ),
     ),
-    end: isoLogTimestamp(now),
+    end: DateTime.formatIso(now),
   };
 }
 

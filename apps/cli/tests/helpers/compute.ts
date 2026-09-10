@@ -1,9 +1,6 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { makeApiClient } from "@supabase/api/effect";
-import { Effect, Layer, Option, Redacted } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Predicate, Redacted, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -81,15 +78,24 @@ export interface ComputeHttpRoutes {
 function respond(
   request: HttpClientRequest.HttpClientRequest,
   stub: StubResponse,
+  encodedBody: string,
 ): HttpClientResponse.HttpClientResponse {
   const hasBody = stub.body !== undefined;
   return HttpClientResponse.fromWeb(
     request,
-    new Response(hasBody ? JSON.stringify(stub.body) : "", {
+    new Response(hasBody ? encodedBody : "", {
       status: stub.status,
       headers: hasBody ? { "content-type": "application/json" } : { "content-type": "text/plain" },
     }),
   );
+}
+
+const jsonCodec = Schema.fromJsonString(Schema.Unknown);
+
+function isRouteSequence(
+  handler: RouteHandler,
+): handler is ReadonlyArray<StubResponse | StubTransportFailure> {
+  return Array.isArray(handler);
 }
 
 /**
@@ -102,7 +108,7 @@ export function mockComputeHttp(routes: ComputeHttpRoutes) {
   const remaining = new Map<string, Array<StubResponse | StubTransportFailure>>(
     Object.entries(routes).map(([route, handler]) => [
       route,
-      Array.isArray(handler) ? [...handler] : [handler as StubResponse | StubTransportFailure],
+      isRouteSequence(handler) ? [...handler] : [handler],
     ]),
   );
 
@@ -110,7 +116,9 @@ export function mockComputeHttp(routes: ComputeHttpRoutes) {
     request: HttpClientRequest.HttpClientRequest,
   ): Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError> =>
     Effect.suspend(() => {
-      const bytes = request.body._tag === "Uint8Array" ? request.body.body : new Uint8Array(0);
+      const bytes = Predicate.isTagged("Uint8Array")(request.body)
+        ? request.body.body
+        : new Uint8Array(0);
       const url = new URL(request.url);
       requests.push({
         method: request.method,
@@ -124,8 +132,19 @@ export function mockComputeHttp(routes: ComputeHttpRoutes) {
       const key = `${request.method} ${url.pathname}`;
       const queue = remaining.get(key);
       if (queue === undefined || queue.length === 0) {
-        return Effect.succeed(
-          respond(request, { status: 599, body: { error: `unstubbed route: ${key}` } }),
+        const stub = { status: 599, body: { error: `unstubbed route: ${key}` } };
+        return Schema.encodeEffect(jsonCodec)(stub.body).pipe(
+          Effect.map((encodedBody) => respond(request, stub, encodedBody)),
+          Effect.mapError(
+            (cause) =>
+              new HttpClientError.HttpClientError({
+                reason: new HttpClientError.TransportError({
+                  request,
+                  cause,
+                  description: "Failed to encode mocked JSON response",
+                }),
+              }),
+          ),
         );
       }
       // The last stub for a route keeps answering, so a poll loop does not have
@@ -141,7 +160,22 @@ export function mockComputeHttp(routes: ComputeHttpRoutes) {
           }),
         );
       }
-      return Effect.succeed(respond(request, stub));
+      if (stub.body === undefined) {
+        return Effect.succeed(respond(request, stub, ""));
+      }
+      return Schema.encodeEffect(jsonCodec)(stub.body).pipe(
+        Effect.map((encodedBody) => respond(request, stub, encodedBody)),
+        Effect.mapError(
+          (cause) =>
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({
+                request,
+                cause,
+                description: "Failed to encode mocked JSON response",
+              }),
+            }),
+        ),
+      );
     });
 
   const httpClientLayer = Layer.succeed(HttpClient.HttpClient, HttpClient.make(handle));
@@ -298,16 +332,18 @@ export function computeApiLogRow(options: {
 }
 
 /** A per-test temp project, optionally pre-seeded with files. */
-export function makeComputeProject(files: Readonly<Record<string, string>> = {}): {
-  readonly dir: string;
-} {
-  const dir = mkdtempSync(join(tmpdir(), "supabase-compute-"));
-  for (const [relativePath, contents] of Object.entries(files)) {
-    const absolutePath = join(dir, relativePath);
-    mkdirSync(dirname(absolutePath), { recursive: true });
-    writeFileSync(absolutePath, contents);
-  }
-  return { dir };
+export function makeComputeProject(files: Readonly<Record<string, string>> = {}) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-compute-" });
+    for (const [relativePath, contents] of Object.entries(files)) {
+      const absolutePath = path.join(dir, relativePath);
+      yield* fs.makeDirectory(path.dirname(absolutePath), { recursive: true });
+      yield* fs.writeFileString(absolutePath, contents);
+    }
+    return { dir };
+  });
 }
 
 /**
@@ -342,7 +378,15 @@ const testProjectRefLayer = (linked: boolean) =>
                 message: "Cannot find project ref. Have you run supabase link?",
               }),
             ),
-  } as unknown as ProjectRefResolver["Service"]);
+    resolveForLink: () =>
+      Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
+    resolveOptional: () =>
+      Effect.succeed(linked ? Option.some(COMPUTE_PROJECT_REF) : Option.none()),
+    loadProjectRef: () =>
+      Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
+    promptProjectRef: () =>
+      Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
+  });
 
 export interface ComputeSetupOptions {
   readonly workdir: string;
@@ -400,7 +444,7 @@ function mockComputeTelemetryState() {
       stitchLogin: () => Effect.void,
       clearDistinctId: Effect.void,
       resetIdentity: Effect.void,
-    } as unknown as TelemetryState["Service"]),
+    }),
     get flushed() {
       return flushed;
     },

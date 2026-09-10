@@ -16,11 +16,16 @@ This file applies to the `apps/cli` workspace. Read it fully before touching any
 
 ```
 src/
-├── commands/          # one directory per top-level command (see File Structure and Naming below)
+├── commands/          # command families; experimental/ groups opt-in implementations
 ├── command-internal/  # helpers used by ≥2 command families but not general-purpose infra (see Hoist Before You Duplicate)
 ├── shared/             # cross-cutting infra used by every command: output, telemetry, runtime, auth, cli, config, ...
 └── main.ts             # entry point: main.ts → cli/root.ts → commands/…
 ```
+
+Keep opt-in command implementations under `src/commands/experimental/` (for example,
+`compute/` and `stack/`). This folder organizes source code; it does not register an
+`experimental` command namespace. `src/cli/root.ts` owns the public command tree and
+feature-flag registration.
 
 ---
 
