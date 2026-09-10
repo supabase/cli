@@ -18,10 +18,6 @@ const markDelegated = Effect.serviceOption(GoProxyInvocation).pipe(
   ),
 );
 
-// ---------------------------------------------------------------------------
-// Binary resolution
-// ---------------------------------------------------------------------------
-
 const PLATFORM_CANDIDATES: Partial<Record<string, Partial<Record<string, ReadonlyArray<string>>>>> =
   {
     darwin: { arm64: ["darwin-arm64"], x64: ["darwin-x64"] },
@@ -35,10 +31,9 @@ const PLATFORM_CANDIDATES: Partial<Record<string, Partial<Record<string, Readonl
 const require = createRequire(import.meta.url);
 
 /**
- * Outcome of looking up `supabase-go`. The `notFound` variant carries the
- * list of locations the resolver checked so the user-facing error can be
- * specific about what was tried — no silent fallback that fork-bombs the
- * shim against itself via PATH (CLI-1488).
+ * Outcome of looking up `supabase-go`. `notFound` carries every location checked, so the error can
+ * be specific about what was tried, and callers never silently fall back to `supabase` on PATH
+ * (which would resolve to this shim itself and fork-bomb).
  */
 export type BinaryResolution =
   | { readonly found: string }
@@ -53,8 +48,8 @@ function resolveBinary(): BinaryResolution {
 
   const ext = process.platform === "win32" ? ".exe" : "";
 
-  // When running as a compiled standalone SFE (exec'd by the base shim via execFileSync),
-  // process.execPath is the SFE binary path. Look for supabase-go co-located next to it.
+  // When running as a compiled standalone binary (exec'd by the base shim), process.execPath is
+  // this binary's own path; look for supabase-go co-located next to it.
   const colocated = path.join(path.dirname(process.execPath), `supabase-go${ext}`);
   if (existsSync(colocated)) return { found: colocated };
   tried.push(`${colocated} (not found alongside the shim)`);
@@ -77,19 +72,15 @@ function resolveBinary(): BinaryResolution {
 }
 
 /**
- * Build a concrete `curl | tar` install snippet for the host platform, using
- * the version baked into this shim at build time (`CLI_VERSION`). The release
- * pipeline ships a `.tar.gz` for every (platform, arch) pair we support —
- * including Windows — so the snippet is uniform across hosts. Returns null
- * only when CLI_VERSION is the dev sentinel (we have no concrete URL) or the
- * host arch isn't one the release pipeline targets.
+ * Builds a `curl | tar` install snippet for the host platform, using the version baked into this
+ * shim at build time. Returns null when there's no concrete release URL (dev build) or the host
+ * arch isn't one the release pipeline targets.
  */
 function reinstallTarballSnippet(): ReadonlyArray<string> | null {
   if (CLI_VERSION === "0.0.0-dev") return null;
   const archSuffix = process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : null;
   if (archSuffix === null) return null;
-  // Map Node's `process.platform` to the release asset's OS slug. `win32` is
-  // historical (Win16 vs Win32); GitHub assets use the modern `windows` slug.
+  // Node's `process.platform` is `win32`; GitHub release assets use the modern `windows` slug.
   const osSlug = process.platform === "win32" ? "windows" : process.platform;
   const asset = `supabase_${CLI_VERSION}_${osSlug}_${archSuffix}.tar.gz`;
   return [
@@ -119,10 +110,6 @@ export function formatGoBinaryNotFoundError(tried: ReadonlyArray<string>): strin
     "  • Set SUPABASE_GO_BINARY to the absolute path of `supabase-go`.",
   ].join("\n");
 }
-
-// ---------------------------------------------------------------------------
-// Layer factory
-// ---------------------------------------------------------------------------
 
 /**
  * Creates a GoProxy layer.
@@ -178,10 +165,6 @@ export function makeGoProxyLayer(opts?: {
           Effect.scoped(
             Effect.gen(function* () {
               if (!("found" in resolved)) {
-                // CLI-1488: never silently fall back to `supabase` on PATH —
-                // when the shim is on PATH and `supabase-go` is not co-located,
-                // that fallback resolves to the shim itself and fork-bombs.
-                // Print a specific diagnostic and fail non-zero instead.
                 yield* Effect.sync(() => {
                   process.stderr.write(`${formatGoBinaryNotFoundError(resolved.notFound)}\n`);
                 });
@@ -194,32 +177,15 @@ export function makeGoProxyLayer(opts?: {
               }
               const binary = resolved.found;
 
-              // Hold the terminal-signals on the parent for the duration of
-              // the child's lifetime. Rationale:
-              //
-              // 1. Effect's Node/Bun ChildProcessSpawner defaults
-              //    `detached: true` on non-Windows (see NodeChildProcessSpawner.ts),
-              //    which puts the child in its own process group and makes it
-              //    miss tty signals. We explicitly pass `detached: false` below
-              //    so Ctrl+C → SIGINT → foreground pgrp reaches the Go binary,
-              //    and the Go CLI's own handlers (docker cleanup on `start`,
-              //    context cancellation, etc.) run as expected.
-              //
-              // 2. Without a userland listener, Bun/Node default-terminates
-              //    the parent on SIGINT with exit code 130, which would race
-              //    the child's graceful shutdown and lose its real exit code.
-              //    `processControl.holdSignals` installs no-op listeners that
-              //    disable the default action so the parent stays blocked on
-              //    `spawner.exitCode` and propagates the Go binary's exit
-              //    status verbatim.
-              //
-              // Scoped via `Effect.scoped` so listeners are always removed on
-              // normal completion, failure, or fiber interruption.
+              // Hold terminal signals on the parent for the child's lifetime: the child spawner
+              // defaults to `detached: true` on non-Windows, which would put the child in its own
+              // process group and miss tty signals, so `detached: false` below lets Ctrl+C reach
+              // the Go binary directly. Without a listener, Bun/Node would also default-terminate
+              // the parent on SIGINT before the child's real exit code is known.
               yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
-              // Only an instrumented caller that delegates the whole command
-              // suppresses child telemetry, because there the parent already
-              // emits `cli_command_executed`. Pure proxy commands have no
-              // parent event, so the child must stay free to report.
+              // Only an instrumented caller that delegates the whole command suppresses child
+              // telemetry: the parent already emits `cli_command_executed` there. Pure proxy
+              // commands have no parent event, so the child must stay free to report.
               const env = {
                 ...opts?.env,
                 ...execOpts?.env,
@@ -276,12 +242,10 @@ export function makeGoProxyLayer(opts?: {
                   ? { SUPABASE_NO_UPDATE_NOTIFIER: "1" }
                   : {}),
               };
-              // Capture stdout (pipe) while keeping stderr inherited, so the child's
-              // progress still reaches the user but its stdout is collected for
-              // wrapping rather than written to our stdout. stdin defaults to
-              // inherited (interactive); callers pass `"ignore"` to give the child a
-              // non-TTY stdin so it can't block on a prompt before the wrapper emits
-              // its machine-output envelope.
+              // Capture stdout while keeping stderr inherited, so progress still reaches the user
+              // while stdout is collected for wrapping. Callers pass stdin: "ignore" to give the
+              // child a non-TTY stdin so it can't block on a prompt before the wrapper emits its
+              // machine-output envelope.
               const command = ChildProcess.make(binary, [...globalArgs, ...args], {
                 cwd: execOpts?.cwd ?? opts?.cwd,
                 env,

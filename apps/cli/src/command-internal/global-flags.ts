@@ -5,29 +5,17 @@ import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { VALUE_CONSUMING_LONG_FLAGS, VALUE_CONSUMING_SHORT_FLAGS } from "./db-target-flags.ts";
 import { viperEnvBool, viperEnvBoolWithProjectFallback } from "./viper-env.ts";
 
-// The Effect CLI hoists global flags out of the token stream before the leaf
-// parse and builds ONE tree-wide registry, so a command cannot redeclare an
-// `output` global to vary its allowed values (the registry throws on duplicate
-// names). Go instead registers `--output` per command: resource commands accept
-// `env|pretty|json|toml|yaml`, while `db query` accepts `json|table|csv`. We
-// model that single global as the UNION of those value sets; each handler honors
-// only the values its Go counterpart does (e.g. `db query` reads `table`/`csv`,
-// resource commands ignore them and fall through to text). `table`/`csv` are
-// only meaningful to `db query`.
+// The CLI's global-flag registry is tree-wide, so `-o/--output` can't be redeclared per command to
+// vary its allowed values; this models it as the union of every command's accepted values, and
+// each handler honors only the subset it cares about (e.g. `db query` reads `table`/`csv`; other
+// commands ignore them and fall through to text).
 //
-// Every description string below is copied VERBATIM (including Go's own
-// lowercase, no-trailing-period house style for root persistent flags) from
-// `apps/cli-go/cmd/root.go:337-348` — this text is directly user-visible now
-// that native shell completion (CLI-1965) surfaces it in `__complete`
-// candidate descriptions, where a prior Go-binary passthrough used to emit
-// Go's own text byte-for-byte; before that, this only reached the TS-native
-// `--help` renderer, whose overall layout already diverges from cobra's, so
-// the mismatch was harder to notice (CLI-1965 review finding).
+// These flag description strings are user-visible in shell completion (`__complete` candidate
+// descriptions), so keep them accurate when changing a flag.
 /**
- * Every value the global `-o/--output` flag accepts — the single source of
- * truth for per-command `outputFormats` overrides that widen the wrapper's
- * enum check to "all values" (e.g. `config diff`'s handler-level rejection),
- * so a value added here automatically flows to those commands and their tests.
+ * Every value the global `-o/--output` flag accepts. Per-command `outputFormats` overrides (e.g.
+ * `config diff`'s handler-level rejection) widen against this list, so a value added here flows to
+ * those commands and their tests automatically.
  */
 export const GLOBAL_OUTPUT_FORMATS = [
   "env",
@@ -113,27 +101,12 @@ export const AgentFlag = GlobalFlag.setting("agent")({
 });
 
 /**
- * Every global/persistent flag declared above, mirroring the set Go registers on
- * the root command (`apps/cli-go/cmd/root.go:337-348`).
+ * Every global/persistent flag declared above.
  *
- * Adding a VALUE-taking flag here also means adding its name to
- * `PERSISTENT_VALUE_FLAG_NAMES` (`shared/cli/cobra-flag-groups.ts`): the
- * handler-side pflag scans read it directly, and the pre-parse scanners
- * (`globalFlagsWithValues` in `shared/cli/run.ts`, the `agent-output.ts`
- * predicates) derive their token set from it (`GLOBAL_VALUE_FLAG_TOKENS`),
- * so that one edit covers them all. The same obligation covers the CLI
- * library's own value-taking built-ins (`--log-level` — issue #6482;
- * `--completions` is scoped per `PERSISTENT_VALUE_FLAG_NAMES`'s doc). The
- * pre-parse scanners must run even for `--help`/`--version`/bare-group
- * invocations, which cobra serves before `PersistentPreRunE` and so never
- * expose parsed flag values to read instead. A flag missed in the shared
- * registry still fails silently rather than loudly: an unregistered value
- * flag does not consume its following token, so `supabase --new-flag
- * --workdir other <cmd>` makes the upgrade notice read/write
- * `other/supabase/.temp/cli-latest`, where Go — which lets `--new-flag` eat
- * `--workdir` — resolves against the cwd. Only the bare space-separated
- * spelling diverges (`--new-flag=x --workdir other` agrees), which is what
- * makes it easy to miss.
+ * A value-taking flag added here must also be added to `PERSISTENT_VALUE_FLAG_NAMES`
+ * (`shared/cli/cobra-flag-groups.ts`), which the handler-side pflag scans and pre-parse token
+ * scanners both derive their token set from. A flag missed there fails silently: an unregistered
+ * value flag won't consume its following token, so that token gets misread as positional.
  */
 export const GLOBAL_FLAGS = [
   OutputFlag,
@@ -149,28 +122,14 @@ export const GLOBAL_FLAGS = [
 ] as const;
 
 /**
- * Resolves the current value of every global/persistent flag above, keyed by
- * its own CLI flag name (each flag's `.id`, e.g. `debug`, `workdir`). Used by
- * `telemetry/command-telemetry.ts` to mirror Go's
- * `changedFlags()` walking `cmd.Parent()`'s `PersistentFlags()` in addition to
- * a command's own flags (`cmd/root_analytics.go:53-76`) — global flags here
- * live in a single Effect-context-wide registry rather than per-ancestor
- * `pflag.FlagSet`s, so this reads all of them unconditionally instead of
- * walking a parent chain (CLI-1896).
+ * Resolves the current value of every global/persistent flag above, keyed by its own CLI flag
+ * name. Used by `telemetry/command-telemetry.ts` as a fallback for a global flag not present in a
+ * handler's own `flags` record.
  *
- * Read via `Effect.serviceOption` (adds no `R` requirement) so a caller that
- * hasn't wired the global-flag context — e.g. a focused unit test — simply
- * gets an empty record instead of a missing-service defect; production always
- * provides every global flag through `Command.withGlobalFlags` at the CLI
- * root (`cli/root.ts`).
- *
- * Reads each flag individually (rather than looping `GLOBAL_FLAGS`)
- * because each `Setting<Id, A>` has a distinct value type `A` — a homogeneous
- * loop widens the union in a way `Effect.serviceOption` can't resolve back to
- * a single service lookup without an `as` cast, which this codebase forbids.
- * `global-flags.unit.test.ts` asserts the resolved id set stays exactly in
- * sync with `GLOBAL_FLAGS` — extend both together when adding a new
- * global flag.
+ * Reads via `Effect.serviceOption` so a caller without the global-flag context (e.g. a focused
+ * unit test) gets an empty record instead of a missing-service defect. Reads each flag
+ * individually, since each `Setting<Id, A>`'s distinct value type can't be looped over without an
+ * `as` cast; `global-flags.unit.test.ts` keeps the resolved id set in sync with `GLOBAL_FLAGS`.
  */
 export const globalFlagValues = Effect.gen(function* () {
   const values: Record<string, unknown> = {};
@@ -193,16 +152,11 @@ export const globalFlagValues = Effect.gen(function* () {
 const PFLAG_FALSE_VALUES = new Set(["0", "f", "F", "false", "FALSE", "False"]);
 
 /**
- * Raw argv truncated at the first bare `--` operand terminator. Both pflag/cobra
- * (verified against the pinned `apps/cli-go` versions: a value placed after `--`
- * never sets `cmd.Flags().Changed(...)`) and this CLI's own lexer
- * (`effect/unstable/cli/internal/lexer.ts`, which splits on `argv.indexOf("--")`
- * into parsed tokens vs. `trailingOperands`) stop parsing flags at the first `--`
- * — everything after is a positional operand, e.g. a migration name literally
- * called `--experimental=false` passed as `db pull -- --experimental=false`. The
- * argv-scanning `*ExplicitlyFalse` heuristics below must only look at the
- * flag-parsing region, or a positional operand that merely looks like a flag gets
- * mistaken for an explicit one.
+ * Raw argv truncated at the first bare `--` operand terminator. This CLI's own lexer stops parsing
+ * flags there too, so everything after is a positional operand, e.g. a migration name literally
+ * called `--experimental=false` passed as `db pull -- --experimental=false`. The argv-scanning
+ * `*ExplicitlyFalse` heuristics below must only look at this region, or a positional operand that
+ * merely looks like a flag gets mistaken for an explicit one.
  */
 const argsBeforeOperandTerminator = (args: ReadonlyArray<string>): ReadonlyArray<string> => {
   const terminatorIndex = args.indexOf("--");
@@ -210,21 +164,11 @@ const argsBeforeOperandTerminator = (args: ReadonlyArray<string>): ReadonlyArray
 };
 
 /**
- * Drops tokens that pflag would consume as a value-consuming flag's value in
- * space-separated form (`--flag value` / `-f value`), so the `--yes`/`--experimental`
- * argv scanners below don't mistake a consumed value token for an explicit
- * occurrence of the global flag. `--yes`/`--experimental` are global,
- * position-independent flags (bound anywhere in argv), so any LOCAL command's
- * bare value-consuming flag immediately before one of them "eats" it under real
- * pflag semantics — e.g. `db pull --password --experimental=false` parses as
- * `--password`'s value being the literal string `"--experimental=false"`, not a
- * changed `--experimental` (verified against the review finding on CLI-1957: the
- * repository's own argv scanner already documents and handles this exact case for
- * `resolveDbTargetFlags`/`changedLinkedLocalFlags`
- * (`command-internal/db-target-flags.ts`) and `extractChangedFlagNames`
- * (`telemetry/command-telemetry.ts`), which this reuses the
- * same `VALUE_CONSUMING_LONG_FLAGS`/`VALUE_CONSUMING_SHORT_FLAGS` registries for,
- * so the three scans can't drift out of sync).
+ * Drops tokens that pflag would consume as a value-consuming flag's value in space-separated form
+ * (`--flag value` / `-f value`), so the `--yes`/`--experimental`/`--debug` argv scanners below
+ * don't mistake a consumed value token for an explicit occurrence of the global flag — e.g.
+ * `db pull --password --experimental=false` treats `--experimental=false` as `--password`'s
+ * value, not a changed `--experimental`.
  */
 const nonValueConsumedTokens = (args: ReadonlyArray<string>): ReadonlyArray<string> => {
   const kept: Array<string> = [];
@@ -247,16 +191,10 @@ const nonValueConsumedTokens = (args: ReadonlyArray<string>): ReadonlyArray<stri
 };
 
 /**
- * True when the raw argv contains an explicit `--yes=<false>` (pflag's `ParseBool`
- * false set). Go binds `--yes` to viper, so a *set* pflag value wins over
- * `AutomaticEnv`; `YesFlag` is a plain boolean that can't distinguish an
- * explicit `--yes=false` from the omitted default, so we scan the raw argv (global
- * flags are position-independent) up to the first `--` operand terminator (see
- * {@link argsBeforeOperandTerminator}), skipping tokens consumed as another flag's
- * value (see {@link nonValueConsumedTokens}). Only `--yes=false` needs special
- * handling: for `--yes` / `--yes=true` the flag is already `true`, so `flag || env`
- * matches Go, and for an omitted flag the env fallback matches Go. Reading the raw
- * argv also sidesteps however the CLI parser coerces `--yes=false`.
+ * True when the raw argv contains an explicit `--yes=<false>`. A plain boolean flag can't
+ * distinguish an explicit `--yes=false` from the omitted default, so this scans the raw argv up to
+ * the first `--` operand terminator (see {@link argsBeforeOperandTerminator}), skipping tokens
+ * consumed as another flag's value (see {@link nonValueConsumedTokens}).
  */
 const yesFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean =>
   nonValueConsumedTokens(argsBeforeOperandTerminator(args)).some(
@@ -264,11 +202,8 @@ const yesFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean =>
   );
 
 /**
- * `--yes` resolved with Go's viper `AutomaticEnv` fallback: when the flag is not
- * passed, `SUPABASE_YES` is honored (`apps/cli-go/cmd/root.go:318-320` binds
- * every persistent flag, so `console.PromptYesNo` reading `viper.GetBool("YES")`
- * picks up the env var). An explicit `--yes` — including `--yes=false` — wins over
- * the env, matching viper's bound-pflag precedence. Prefer this over reading
+ * `--yes` resolved with an env fallback: when the flag isn't passed, `SUPABASE_YES` is honored. An
+ * explicit `--yes` (including `--yes=false`) wins over the env. Prefer this over reading
  * {@link YesFlag} directly anywhere a command auto-confirms a prompt.
  */
 export const resolveYes = Effect.gen(function* () {
@@ -282,15 +217,10 @@ export const resolveYes = Effect.gen(function* () {
 
 /**
  * `--yes` resolved with the project `.env` consulted too, for commands that load the nested
- * project env before prompting (`migration down`, `migration repair --all`). Go runs
- * `loadNestedEnv` — `godotenv.Load`, which only sets keys absent from the shell env —
- * inside `ParseDatabaseConfig` before `PromptYesNo` reads `viper.GetBool("YES")`
- * (`pkg/config/config.go:701`, `internal/utils/console.go:71`), so a `SUPABASE_YES` set
- * only in `supabase/.env` auto-confirms. Shell *presence* — any value, including `false`,
- * empty, or garbage — suppresses the file value entirely (see
- * {@link viperEnvBoolWithProjectFallback}). An explicit `--yes` (including
- * `--yes=false`) wins over both. `projectEnv` is the loaded map from
- * `loadProjectEnv`.
+ * project env before prompting (`migration down`, `migration repair --all`). Shell env
+ * *presence* (any value) suppresses the file value entirely (see
+ * {@link viperEnvBoolWithProjectFallback}); an explicit `--yes` wins over both. `projectEnv` is
+ * the loaded map from `loadProjectEnv`.
  */
 export const resolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
@@ -303,27 +233,11 @@ export const resolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
   });
 
 /**
- * Resolves the raw argv's *last* explicit `--experimental` occurrence to a boolean, or
- * `undefined` when the flag never appears before the first `--` operand terminator (see
- * {@link argsBeforeOperandTerminator}). `--experimental` is bound to viper the same way
- * `--yes` is (`apps/cli-go/cmd/root.go:318-334`): pflag/viper share ONE variable per flag,
- * so repeated occurrences collapse to whichever `Set()` call happened LAST — verified
- * empirically against the pinned `apps/cli-go` cobra@v1.10.2/pflag@v1.0.10/viper@v1.21.0
- * versions (`--experimental=false --experimental=true` resolves `viper.GetBool` to `true`,
- * and `--experimental=true --experimental=false` resolves to `false`). A plain
- * "does any occurrence say false" scan gets this backwards for the first ordering — it
- * would report `false` even though the final, authoritative value is `true` — so this
- * scans in argv order and keeps overwriting the result, same pattern as
- * {@link resolveDeclarativeFromArgs} (`diff-engine.ts:94-104`) uses for
- * `--declarative`/`--use-pg-delta`. `ExperimentalFlag` alone can't be used here: a
- * plain boolean can't distinguish an explicit `--experimental=false` from the omitted
- * default, and (independently) this CLI's flag parser resolves a repeated flag from its
- * FIRST occurrence rather than pflag's last-occurrence-wins, so the caller must reread
- * the raw argv rather than trust the parsed flag whenever `--experimental` is set at all.
- * Tokens consumed as another (local) flag's value are skipped (see
- * {@link nonValueConsumedTokens}) so e.g. `db pull --password --experimental=false` — where
- * pflag treats `--experimental=false` as `--password`'s space-separated value, not a changed
- * `--experimental` — doesn't falsely report an explicit occurrence.
+ * Resolves the raw argv's *last* explicit `--experimental` occurrence to a boolean, or `undefined`
+ * if it never appears before the first `--` operand terminator. Repeated occurrences resolve to
+ * the last one, the opposite of how this CLI's own flag parser resolves a repeat (first wins), so
+ * a caller must reread raw argv rather than trust the parsed flag. Tokens consumed as another
+ * flag's value are skipped (see {@link nonValueConsumedTokens}).
  */
 const experimentalFlagFromArgs = (args: ReadonlyArray<string>): boolean | undefined => {
   let result: boolean | undefined;
@@ -338,12 +252,9 @@ const experimentalFlagFromArgs = (args: ReadonlyArray<string>): boolean | undefi
 };
 
 /**
- * `--experimental` resolved with Go's viper `AutomaticEnv` fallback: the gate in
- * `rootCmd.PersistentPreRunE` reads `viper.GetBool("EXPERIMENTAL")`
- * (`apps/cli-go/cmd/root.go:94`), so `SUPABASE_EXPERIMENTAL` enables experimental
- * commands just like the flag. An explicit `--experimental` — including
- * `--experimental=false`, and the last of a repeated flag — wins over the env, matching
- * viper's bound-pflag precedence.
+ * `--experimental` resolved with an env fallback: `SUPABASE_EXPERIMENTAL` enables experimental
+ * commands when the flag isn't passed. An explicit `--experimental` (including
+ * `--experimental=false`, and the last of a repeated flag) wins over the env.
  */
 export const resolveExperimental = Effect.gen(function* () {
   const flag = yield* ExperimentalFlag;
@@ -358,15 +269,9 @@ export const resolveExperimental = Effect.gen(function* () {
 /**
  * `--experimental` resolved with the project `.env` consulted too, for commands that load the
  * nested project env before branching on the experimental gate (`db reset`,
- * `db schema declarative generate`/`sync`). Go's `ParseDatabaseConfig` /
- * `dbDeclarativeCmd.PersistentPreRunE` run `loadNestedEnv` — `godotenv.Load`, which only
- * sets keys absent from the shell env — before reading `viper.GetBool("EXPERIMENTAL")`, so
- * a `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` enables the experimental path.
- * Shell *presence* — any value, including `false`, empty, or garbage — suppresses the file
- * value entirely (see {@link viperEnvBoolWithProjectFallback}); an explicit
- * `--experimental` — including `--experimental=false`, and the last of a repeated flag —
- * wins over both, matching viper's bound-pflag precedence. `projectEnv` is the loaded map
- * from `loadProjectEnv`.
+ * `db schema declarative generate`/`sync`). Shell env *presence* suppresses the file value
+ * entirely (see {@link viperEnvBoolWithProjectFallback}); an explicit `--experimental` wins over
+ * both. `projectEnv` is the loaded map from `loadProjectEnv`.
  */
 export const resolveExperimentalWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
@@ -380,22 +285,11 @@ export const resolveExperimentalWithProjectEnv = (projectEnv: Record<string, str
   });
 
 /**
- * True when the LAST `--debug`/`--debug=<value>` occurrence in argv resolves to a pflag `false`
- * (`PFLAG_FALSE_VALUES`, matching `ParseBool`'s false set). pflag's `Value.Set` runs for every
- * occurrence in argv order, so the last one wins: `--debug=false --debug=true` (or a trailing
- * bare `--debug`) is `true` to Go/pflag, not `false` — the Effect parser itself resolves repeats
- * first-wins instead (binary-verified precedent for this exact pflag-vs-Effect divergence:
- * `apps/cli/src/commands/sso/sso.pflag-reconcile.ts:306-321`). `--debug` is bound to
- * viper the same way as `--yes`/`--experimental` (`apps/cli-go/cmd/root.go:318-334`).
- * {@link yesFlagExplicitlyFalse}/{@link experimentalFlagExplicitlyFalse} above have
- * the identical `Array.some` "any occurrence is false" gap (review: PRRT_kwDOErm0O86XKYiG) —
- * left as-is here as a pre-existing, cross-cutting fix spanning those two flags too, not folded
- * into this port (same scoping precedent as this file's own {@link resolveDebugWithProjectEnv}
- * doc comment for existing `DebugFlag` call sites). Like those siblings, this scans only the
- * flag-parsing region (see {@link argsBeforeOperandTerminator}) and skips tokens pflag would
- * consume as another flag's value (see {@link nonValueConsumedTokens}) — `db pull -- --debug=false`
- * and `db pull --password --debug=false` leave `--debug` unchanged to pflag, so `SUPABASE_DEBUG`
- * must still win.
+ * True when the LAST `--debug`/`--debug=<value>` occurrence in argv resolves to false. Tracks the
+ * last occurrence (unlike {@link yesFlagExplicitlyFalse}'s "any occurrence" check), since a
+ * trailing bare `--debug` after an earlier `--debug=false` must win. Scans only the flag-parsing
+ * region (see {@link argsBeforeOperandTerminator}) and skips tokens consumed as another flag's
+ * value (see {@link nonValueConsumedTokens}).
  */
 const debugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean => {
   let lastExplicitlyFalse = false;
@@ -410,28 +304,11 @@ const debugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean => {
 };
 
 /**
- * `--debug` resolved with Go's viper `AutomaticEnv` fallback (EVERY Go debug read goes through
- * `viper.GetBool("DEBUG")` — never the bare pflag — across the whole Go CLI, `apps/cli-go/cmd/
- * root.go:122,289`, `internal/utils/{connect,docker,edgeruntime,logger}.go`,
- * `internal/pgdelta/apply.go:332,342`, …) AND the project `.env` consulted too, for debug-gated
- * behavior that runs downstream of a command that has already loaded the nested project env
- * (e.g. `applyDeclarativePgDelta`, reached by `db diff`/`db pull` after
- * `ParseDatabaseConfig`; `buildShadowCatalogInputs`, reached by `db diff --from/--to
- * migrations` and `db schema declarative sync`). Go's `Config.Load` -> `loadNestedEnv` calls
- * `godotenv.Load`, which `os.Setenv`s every project `.env` key not already present in the shell
- * env (`godotenv@v1.5.1/godotenv.go:184-200`) — a REAL process-wide mutation that persists for
- * the rest of that Go process, so a later `viper.GetBool("DEBUG")` (e.g.
- * `pgdelta.ApplyDeclarative`, `apply.go:332,342`) sees a `SUPABASE_DEBUG` set only in
- * `supabase/.env`. This port's own `loadProjectEnv` is deliberately pure (no
- * `process.env` side effect, see its doc comment), so callers that need that same env-file
- * value for a `viper.GetBool`-shaped read must pass the loaded map through explicitly instead
- * — same shape as {@link resolveYesWithProjectEnv}/
- * {@link resolveExperimentalWithProjectEnv} above (review: PRRT_kwDOErm0O86XL_oz).
- * Shell *presence* — any value, including `false`, empty, or garbage — suppresses the file
- * value entirely; an explicit `--debug` — including `--debug=false` — wins over both, matching
- * viper's bound-pflag precedence. `projectEnv` is the loaded map from `loadProjectEnv`
- * (or `readDbToml`'s re-export of it). Existing bare {@link DebugFlag} call sites
- * are unaffected — this is additive, for call sites that opt in.
+ * `--debug` resolved with an env fallback, and the project `.env` consulted too, for debug-gated
+ * behavior downstream of a command that already loaded the nested project env. `loadProjectEnv`
+ * is deliberately pure, so callers pass the loaded map through explicitly — same shape as
+ * {@link resolveYesWithProjectEnv}. Shell env *presence* suppresses the file value; an explicit
+ * `--debug` wins over both.
  */
 export const resolveDebugWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
