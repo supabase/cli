@@ -40,14 +40,11 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
       rawArgs,
       goConfigCompat: functionsGoConfigCompat,
       edgeRuntimeVersion,
-      // Established styling: bold on the `Downloading function:` slug
-      // (stderr) — matches `bold`'s default TTY gate.
+      // Written to stderr, matching `bold`'s default TTY gate.
       styleEmphasis: (text) => bold(text),
-      // Established styling: aqua on the suggested `--legacy-bundle` command
-      // (stderr) — matches `aqua`'s default TTY gate.
+      // Written to stderr, matching `aqua`'s default TTY gate.
       styleAqua: (text) => aqua(text),
-      // Established styling: yellow on the `WARNING:` token before "Docker is
-      // not running" (stderr) — matches `yellow`'s default TTY gate.
+      // Written to stderr, matching `yellow`'s default TTY gate.
       styleWarning: (text) => yellow(text),
       resolveProjectRef: (projectRef) =>
         resolver.resolve(projectRef).pipe(
@@ -57,16 +54,10 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
             }),
           ),
         ),
-      // The delegated Go binary runs its own `Execute()` and would otherwise
-      // fire its own `cli_command_executed` on top of this command's own
-      // `withCommandTelemetry` wrapper. Suppress it so proxied
-      // invocations record exactly one event, matching Go (mirrors `db pull` /
-      // `db diff`'s delegated-call pattern).
-      //
-      // In machine-output mode the child's stdout is captured and discarded
-      // instead of inherited, matching `db pull`/`db diff`'s delegated-call
-      // pattern for the CLI-1546 "stdout is payload-only in machine mode"
-      // invariant — `downloadFunctions` emits the `Output` envelope itself.
+      // Suppresses the delegated binary's own `cli_command_executed` so a
+      // proxied invocation fires exactly one event. In machine-output mode its
+      // stdout is captured and discarded instead of inherited, since
+      // `downloadFunctions` emits the `Output` envelope itself.
       proxyDownload: (proxyFlags, projectRef, captureOutput) => {
         const args = makeGoProxyLegacyBundleArgs(proxyFlags.functionName, projectRef);
         const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
@@ -78,8 +69,7 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
       },
     });
 
-    // `--legacy-bundle` emits its own final summary inside `downloadFunctions`
-    // (untouched by this refactor) — nothing left to do here on that path.
+    // `--legacy-bundle` emits its own final summary inside `downloadFunctions`.
     if (flags.legacyBundle) {
       return;
     }

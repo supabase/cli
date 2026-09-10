@@ -8,11 +8,8 @@ import {
 /**
  * `--output env` cannot represent a payload containing a list.
  *
- * `encodeEnv` reproduces `godotenv.Marshal`, whose flattening does not descend
- * into slices — a `workers` array would land as a single `WORKERS=""` line
- * rather than one entry per worker. Refusing is the same call `functions list`
- * makes for the same reason, rather than emitting output that silently omits
- * the data.
+ * `encodeEnv`'s flattening does not descend into slices, so a `workers` array
+ * would land as a single empty `WORKERS=""` line instead of one entry per worker.
  */
 export class WorkersEnvNotSupportedError extends Data.TaggedError("WorkersEnvNotSupportedError")<{
   readonly message: string;
@@ -23,16 +20,11 @@ export class WorkersEnvNotSupportedError extends Data.TaggedError("WorkersEnvNot
 }
 
 /**
- * `--follow` was asked for alongside an output format that cannot express a
- * stream.
- *
- * `-o json|yaml|toml` and `--output-format json` each promise exactly one
- * terminal payload, and an unbounded tail has no last element to put in it.
- * Refused up front rather than at the first emission, for the same reason
- * {@link WorkersEnvNotSupportedError} is: discovering it later means
- * failing after the first query has been paid for.
- *
- * `--output-format stream-json` is the streaming machine format and is allowed.
+ * `--follow` cannot be combined with an output format that promises exactly
+ * one terminal payload (`-o json|yaml|toml`, `--output-format json`) — an
+ * unbounded tail has no last element to put in it. Refused up front so a
+ * query isn't paid for only to fail on the first emission. `--output-format
+ * stream-json` is unaffected.
  */
 export class WorkersFollowNotSupportedError extends Data.TaggedError(
   "WorkersFollowNotSupportedError",

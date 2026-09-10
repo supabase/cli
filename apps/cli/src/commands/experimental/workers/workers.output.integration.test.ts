@@ -6,11 +6,8 @@ import { makeWorkersProject, setupWorkers } from "../../../../tests/helpers/work
 import { emitWorkersMachineOutput } from "./workers.output.ts";
 
 /**
- * Every workers command refuses `-o env` up front, before it touches the
- * network, so the encoder's own env branch is a backstop rather than a path a
- * user reaches. It is worth pinning anyway: a new command that forgets the
- * refusal must not silently emit TOML under a flag that asked for env — it
- * raises the same refusal instead.
+ * The env branch here is unreachable in production (commands refuse `-o env`
+ * earlier); this pins it as a backstop against silently falling through to TOML.
  */
 describe("emitWorkersMachineOutput", () => {
   it.live("refuses -o env rather than falling through to the TOML encoder", () => {
