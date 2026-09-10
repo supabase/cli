@@ -113,7 +113,6 @@ describe("default rules — pass and fail fixtures", () => {
         "table_stats.csv": "name,seq_scans,estimated_row_count\npublic.t,500,2000\n",
       }),
     ).toEqual(Option.some("public.t"));
-    // estimated_row_count <= 1000 → excluded by the second predicate.
     expect(
       evalScalar(q, {
         "table_stats.csv": "name,seq_scans,estimated_row_count\npublic.t,500,500\n",
@@ -136,8 +135,6 @@ describe("default rules — pass and fail fixtures", () => {
   });
 
   it("evaluator mechanics: alias-qualified string + numeric AND predicate", () => {
-    // Generic query (not a default rule) covering `s.col` alias refs, string `=`,
-    // numeric `>`, and AND against the real vacuum_stats columns.
     const q =
       "SELECT LISTAGG(s.name, ',') FROM `vacuum_stats.csv` s WHERE s.expect_autovacuum = 'yes' AND s.rowcount > 1000";
     expect(
@@ -232,9 +229,6 @@ describe("csvq value semantics", () => {
   });
 
   it("string-compares a thousands-grouped to_char value (csvq parity quirk)", () => {
-    // `" 2,000"` is not strictly numeric (leading space, comma), so `rowcount > 1000`
-    // falls back to a string comparison: `" 2,000"` < `"1000"` → the row is excluded,
-    // exactly as csvq behaves on a `to_char`-formatted column.
     expect(
       evalScalar("SELECT LISTAGG(tbl, ',') FROM `vacuum_stats.csv` WHERE rowcount > 1000", {
         "vacuum_stats.csv": 'tbl,rowcount\npublic.t," 2,000"\n',
@@ -260,7 +254,6 @@ describe("comparison operators", () => {
   });
 
   it("string-compares when one side is a non-numeric string", () => {
-    // `name = 'postgres'` is a pure string comparison.
     expect(
       evalScalar("SELECT COUNT(*) FROM `t.csv` WHERE name = 'postgres'", {
         "t.csv": "name\npostgres\nother\n",
@@ -281,11 +274,9 @@ describe("arithmetic", () => {
     expect(evalScalar("SELECT COUNT(*) FROM `t.csv` WHERE a / b > 2", data)).toEqual(
       Option.some("1"),
     );
-    // Division by zero → NULL → row excluded.
     expect(evalScalar("SELECT COUNT(*) FROM `t.csv` WHERE a / 0 > 0", data)).toEqual(
       Option.some("0"),
     );
-    // Arithmetic on a non-numeric column → NULL → row excluded.
     expect(
       evalScalar("SELECT COUNT(*) FROM `t.csv` WHERE c * 1 > 0", { "t.csv": "c\nabc\n" }),
     ).toEqual(Option.some("0"));

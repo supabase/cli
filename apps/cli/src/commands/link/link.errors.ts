@@ -15,9 +15,8 @@ export class LinkProjectStatusNetworkError extends Data.TaggedError(
 )<{
   readonly message: string;
   /**
-   * Set when the failure was the generated client rejecting the response body
-   * (`SchemaError`) rather than a transport failure — an API response problem
-   * instead of a network one.
+   * Set when the failure was the generated client rejecting the response body (`SchemaError`)
+   * rather than a transport failure.
    */
   readonly decode?: boolean;
 }> {
@@ -29,8 +28,8 @@ export class LinkProjectStatusNetworkError extends Data.TaggedError(
 }
 
 /**
- * `GET /v1/projects/{ref}` returned a non-200, non-404 status. Byte-matches Go's
- * `"Unexpected error retrieving remote project status: " + body` (`link.go:252`).
+ * `GET /v1/projects/{ref}` returned a non-200, non-404 status; the message is
+ * `"Unexpected error retrieving remote project status: " + body`.
  */
 export class LinkProjectStatusError extends Data.TaggedError("LinkProjectStatusError")<{
   readonly status: number;
@@ -43,17 +42,15 @@ export class LinkProjectStatusError extends Data.TaggedError("LinkProjectStatusE
 }
 
 /**
- * The remote project is paused (`status == INACTIVE`). Message `"project is paused"`
- * with the dashboard unpause suggestion attached, mirroring `errProjectPaused`
- * + `utils.CmdSuggestion`.
+ * The remote project is paused (`status == INACTIVE`). Message `"project is paused"` with the
+ * dashboard unpause suggestion attached.
  */
 export class ProjectPausedError extends Data.TaggedError("ProjectPausedError")<{
   readonly message: string;
   readonly suggestion: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // The rendered remediation is "unpause it from the Supabase dashboard" —
-    // remote project state, not local config and not an entitlement failure.
+    // Remote project state, not local config or an entitlement failure.
     return {
       error_kind: CliErrorKind.UserActionable,
       error_category: CliErrorCategory.ProjectPaused,
@@ -76,9 +73,8 @@ export class LinkApiKeysNetworkError extends Data.TaggedError("LinkApiKeysNetwor
 }
 
 /**
- * `GET /v1/projects/{ref}/api-keys` returned a non-200 status. Byte-matches Go's
- * `ErrAuthToken` (`"Authorization failed for the access token and project ref pair"`)
- * formatted with the response body (`client.go:78`).
+ * `GET /v1/projects/{ref}/api-keys` returned a non-200 status; the message is
+ * `"Authorization failed for the access token and project ref pair"` plus the response body.
  */
 export class LinkAuthTokenError extends Data.TaggedError("LinkAuthTokenError")<{
   readonly status: number;
@@ -86,16 +82,14 @@ export class LinkAuthTokenError extends Data.TaggedError("LinkAuthTokenError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // The shared mapper wraps any non-200 in this tag; the status policy maps
-    // 401 → re-login, 404 → user-supplied ref not found, everything else →
-    // API status.
+    // 401 maps to re-login, 404 to an invalid user-supplied ref, everything else to API status.
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
 /**
- * The api-keys response contained no usable anon/service-role key. Byte-matches
- * `errMissingKey` (`"Anon key not found."`, `client.go:15`).
+ * The api-keys response contained no usable anon/service-role key; the message is
+ * `"Anon key not found."`.
  */
 export class LinkMissingKeyError extends Data.TaggedError("LinkMissingKeyError")<{
   readonly message: string;
@@ -105,10 +99,7 @@ export class LinkMissingKeyError extends Data.TaggedError("LinkMissingKeyError")
   }
 }
 
-/**
- * Both the `[ref-or-branch]` positional argument and `--project-ref` were given
- * (non-empty). TS-only surface (CLI-2167, no Go counterpart).
- */
+/** Both the `[ref-or-branch]` positional argument and `--project-ref` were given (non-empty). */
 export class LinkRefArgConflictError extends Data.TaggedError("LinkRefArgConflictError")<{
   readonly message: string;
 }> {
@@ -118,11 +109,9 @@ export class LinkRefArgConflictError extends Data.TaggedError("LinkRefArgConflic
 }
 
 /**
- * A non-ref-shaped value was given (treated as a branch name) but no linked
- * parent project could be resolved to search for that branch — none of
- * `SUPABASE_PROJECT_ID`, `supabase/.temp/linked-project.json`, or
- * `supabase/.temp/project-ref` yielded a candidate at all. TS-only surface
- * (CLI-2167, no Go counterpart).
+ * A non-ref-shaped value was given (treated as a branch name) but no linked parent project
+ * could be resolved to search for that branch — none of `SUPABASE_PROJECT_ID`,
+ * `supabase/.temp/linked-project.json`, or `supabase/.temp/project-ref` yielded a candidate.
  */
 export class LinkBranchNotLinkedError extends Data.TaggedError("LinkBranchNotLinkedError")<{
   readonly message: string;
@@ -133,10 +122,8 @@ export class LinkBranchNotLinkedError extends Data.TaggedError("LinkBranchNotLin
 }
 
 /**
- * A parent-project candidate exists (`SUPABASE_PROJECT_ID`,
- * `supabase/.temp/linked-project.json`, or `supabase/.temp/project-ref`) but
- * none of them is ref-shaped — corrupt or stale linked state. TS-only surface
- * (CLI-2167, no Go counterpart).
+ * A parent-project candidate exists (`SUPABASE_PROJECT_ID`, `supabase/.temp/linked-project.json`,
+ * or `supabase/.temp/project-ref`) but none of them is ref-shaped — corrupt or stale linked state.
  */
 export class LinkParentRefInvalidError extends Data.TaggedError("LinkParentRefInvalidError")<{
   readonly message: string;
@@ -146,10 +133,7 @@ export class LinkParentRefInvalidError extends Data.TaggedError("LinkParentRefIn
   }
 }
 
-/**
- * No branch with the given name/UUID exists on the resolved parent project.
- * TS-only surface (CLI-2167, no Go counterpart).
- */
+/** No branch with the given name/UUID exists on the resolved parent project. */
 export class LinkBranchNotFoundError extends Data.TaggedError("LinkBranchNotFoundError")<{
   readonly message: string;
 }> {
@@ -159,9 +143,8 @@ export class LinkBranchNotFoundError extends Data.TaggedError("LinkBranchNotFoun
 }
 
 /**
- * The resolved branch has no `project_ref` yet (e.g. `status: CREATING_PROJECT`).
- * Guards against silently falling through to an unrelated ref elsewhere in the
- * resolver chain. TS-only surface (CLI-2167, no Go counterpart).
+ * The resolved branch has no `project_ref` yet (e.g. `status: CREATING_PROJECT`). Guards
+ * against silently falling through to an unrelated ref elsewhere in the resolver chain.
  */
 export class LinkBranchNotReadyError extends Data.TaggedError("LinkBranchNotReadyError")<{
   readonly branch: string;
