@@ -29,14 +29,15 @@ import { schemaToCsvField } from "../../../command-internal/schema-flags.ts";
 import { findDropStatements } from "../../../command-internal/sql-split.ts";
 import { buildLocalDbContainerInputs } from "../../../command-internal/db-bootstrap/local-container-inputs.ts";
 import { currentStackBackend } from "../../experimental/stack/stack-backend.ts";
+import { StackApi } from "../../experimental/stack/stack.shared.ts";
 import {
   stackLocalDatabaseConn,
   stackRejectNativeDockerDiffEngine,
-} from "../../experimental/stack/stack-local-database.ts";
+} from "../../../command-internal/stack-local-database.ts";
 import {
   stackPrepareShadowSource,
   stackWithShadowDatabase,
-} from "../../experimental/stack/stack-shadow.ts";
+} from "../../../command-internal/stack-shadow.ts";
 import { isLocalDbRunning } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { waitForHealthyServices } from "../../../command-internal/db-bootstrap/health-check.ts";
 import { withShadowDatabase } from "../../../command-internal/db-bootstrap/shadow-cache.ts";
@@ -145,6 +146,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   const path = yield* Path.Path;
   const dnsResolver = yield* DnsResolverFlag;
   const debug = yield* DebugFlag;
+  const stackApi = yield* Effect.serviceOption(StackApi);
 
   // Resolved linked ref, captured so the post-run finalizer caches the project
   // (GET /v1/projects/{ref}).
@@ -270,18 +272,40 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           switch (classifyExplicitRef(ref)) {
             case "local": {
               const backend = yield* currentStackBackend;
-              const connection =
-                backend.kind === "stack"
-                  ? yield* stackLocalDatabaseConn.pipe(
-                      Effect.provideService(CommandSettings, cliSettings),
-                    )
-                  : {
-                      host: getHostname(),
-                      port: cfg.port,
-                      user: "postgres",
-                      password: cfg.password,
-                      database: "postgres",
-                    };
+              if (backend.kind !== "stack") {
+                const connection = {
+                  host: getHostname(),
+                  port: cfg.port,
+                  user: "postgres",
+                  password: cfg.password,
+                  database: "postgres",
+                };
+                return {
+                  kind: "database",
+                  ref: toPostgresURL(connection),
+                  connection,
+                  connectOptions: { isLocal: true, dnsResolver },
+                } satisfies PgDeltaDatabaseEndpoint;
+              }
+              if (Option.isNone(stackApi)) {
+                return yield* Effect.fail(
+                  new DbDiffDbNotRunningError({
+                    message: "supabase start is not running.",
+                  }),
+                );
+              }
+              const connection = yield* stackLocalDatabaseConn.pipe(
+                Effect.provideService(CommandSettings, cliSettings),
+                Effect.provideService(StackApi, stackApi.value),
+                Effect.mapError(
+                  (cause) =>
+                    new DbDiffDbNotRunningError({
+                      message: cause.message,
+                      daemonDown: cause.daemonDown,
+                      suggestion: cause.suggestion,
+                    }),
+                ),
+              );
               return {
                 kind: "database",
                 ref: toPostgresURL(connection),

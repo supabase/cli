@@ -31,7 +31,7 @@ import {
   resolvePgDeltaProjectId,
 } from "../../../../../command-internal/pgdelta.ts";
 import { writePgDeltaMigrations } from "../../../shared/pgdelta-migrations.write.ts";
-import { localEndpoint, resolveSmartTargetEndpoint } from "../declarative.smart-target.ts";
+import { resolveLocalTargetEndpoint, resolveSmartTargetEndpoint } from "../declarative.smart-target.ts";
 import {
   type DebugBundle,
   collectMigrationsList,
@@ -304,10 +304,13 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
           ),
         );
       }
-      const generated = yield* generateDeclarativeOutput(
-        { ...run, declarativeDir: stagedDir },
-        localEndpoint({ port: toml.port, password: toml.password }, dnsResolver),
-      );
+      const generated =         const generated = yield* generateDeclarativeOutput(
+          { ...run, declarativeDir: stagedDir },
+          yield* resolveLocalTargetEndpoint(
+            { port: toml.port, password: toml.password },
+            dnsResolver,
+          ),
+        );
       const written = yield* writeDeclarativeSchemas(fs, path, stagedDir, generated);
       yield* warnPreservedUnmanagedDeclarativeFiles(stagedDirRel, written);
       yield* output.raw(declarativeSchemaWrittenLine(stagedDirRel), "stderr");

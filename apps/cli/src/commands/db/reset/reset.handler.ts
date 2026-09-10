@@ -13,7 +13,11 @@ import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { aqua, yellow } from "../../../command-internal/colors.ts";
 import { resolveResetSeedConfig } from "../../../command-internal/db-bootstrap/db-setup.ts";
-import { resetLocalDatabase } from "../../../command-internal/db-bootstrap/reset-local-database.ts";
+import {
+  resetLocalDatabase,
+  stackLocalResetUnsupportedError,
+} from "../../../command-internal/db-bootstrap/reset-local-database.ts";
+import { currentStackBackend } from "../../experimental/stack/stack-backend.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import {
   applyProjectEnv,
@@ -186,6 +190,13 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     }
 
     const connType = target.connType ?? "local";
+
+    if (connType === "local") {
+      const backend = yield* currentStackBackend;
+      if (backend.kind === "stack") {
+        return yield* Effect.fail(stackLocalResetUnsupportedError());
+      }
+    }
 
     // `--project-ref` only applies to the linked target; it must not be silently ignored when
     // targeting `--local`/`--db-url`.

@@ -12,7 +12,7 @@ import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { linkedDbResolverRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
 import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 import { stackApiLayer } from "../experimental/stack/stack.shared.ts";
-import { ephemeralPostgresLayer } from "../experimental/stack/stack-shadow.ts";
+import { ephemeralPostgresLayer } from "../../command-internal/stack-shadow.ts";
 
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 

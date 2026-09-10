@@ -34,6 +34,7 @@ import { awaitStorageReady } from "./await-storage-ready.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
+import { currentStackBackend } from "../../commands/experimental/stack/stack-backend.ts";
 
 /** The local database container is not running. */
 class ResetLocalDbNotRunningError extends Data.TaggedError("ResetLocalDbNotRunningError")<{
@@ -43,6 +44,25 @@ class ResetLocalDbNotRunningError extends Data.TaggedError("ResetLocalDbNotRunni
     return actionability.startStack;
   }
 }
+
+/** Docker recreate would wipe leftover volumes while schema commands still target the stack. */
+class ResetLocalDbStackUnsupportedError extends Data.TaggedError(
+  "ResetLocalDbStackUnsupportedError",
+)<{
+  readonly message: string;
+  readonly suggestion?: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+export const stackLocalResetUnsupportedError = () =>
+  new ResetLocalDbStackUnsupportedError({
+    message: "db reset --local is not supported when the stack backend is enabled.",
+    suggestion:
+      "Stack data-dir reset is not implemented yet. Use --linked or --db-url, or disable [experimental].stack.",
+  });
 
 /** ` to version: X`, or `...` when resetting to the latest migration. */
 const toLogMessage = (version: string): string =>
@@ -64,6 +84,10 @@ const PLAIN_FULL_RESET: ResetLocalDatabaseInput = {
 export const resetLocalDatabase = Effect.fnUntraced(function* (
   input: ResetLocalDatabaseInput = PLAIN_FULL_RESET,
 ) {
+  const backend = yield* currentStackBackend;
+  if (backend.kind === "stack") {
+    return yield* Effect.fail(stackLocalResetUnsupportedError());
+  }
   const output = yield* Output;
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;

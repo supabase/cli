@@ -15,7 +15,7 @@ import { pgDeltaNextShadowLayer } from "../commands/db/shared/pgdelta-next-shado
 import { declarativeSeamLayer } from "../commands/db/shared/pgdelta.seam.layer.ts";
 import { localDockerEngineLayer } from "./db-bootstrap/local-db-running.ts";
 import { stackApiLayer } from "../commands/experimental/stack/stack.shared.ts";
-import { ephemeralPostgresLayer } from "../commands/experimental/stack/stack-shadow.ts";
+import { ephemeralPostgresLayer } from "./stack-shadow.ts";
 
 /** The in-process pg-delta engine — the only implementation. */
 const pgDeltaEngineLayer = pgDeltaNextEngineLayer;
