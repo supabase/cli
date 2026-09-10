@@ -133,8 +133,10 @@ describe("durable lifecycle controller", () => {
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
         const result = yield* fixture.controller.start();
-        expect(result.desiredLifecycle).toBe("running");
-        expect(result.definition).toBeDefined();
+        expect(result).toMatchObject({
+          desiredLifecycle: "running",
+          definition: { preparation: "background" },
+        });
         expect(fixture.state.calls).toEqual(["preflight", "launch:running"]);
         expect(yield* fixture.store.read(fixture.id)).toEqual(result);
       }),
@@ -305,8 +307,10 @@ describe("durable lifecycle controller", () => {
         yield* fixture.controller.start();
         fixture.state.calls.length = 0;
         const first = yield* fixture.controller.stop();
-        expect(first.desiredLifecycle).toBe("stopped");
-        expect(first.definition).toBeDefined();
+        expect(first).toMatchObject({
+          desiredLifecycle: "stopped",
+          definition: { preparation: "background" },
+        });
         expect(fixture.state.calls).toEqual(["cleanup:running"]);
         fixture.state.calls.length = 0;
         const second = yield* fixture.controller.stop();

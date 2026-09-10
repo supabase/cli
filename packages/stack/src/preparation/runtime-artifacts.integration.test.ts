@@ -109,7 +109,7 @@ const containerEngine = (
 });
 
 describe("runtime artifact preparation", () => {
-  it.live("constructs only the persisted container engine", () =>
+  it.live("does not create a native artifact store for a container runtime", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -120,10 +120,31 @@ describe("runtime artifact preparation", () => {
           runtime: { kind: "container", engine: "podman" },
         });
         expect(yield* fs.exists(path.join(root, "artifacts"))).toBe(false);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("creates the default native artifact cache below state root", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-artifact-native-" });
         yield* makeProductionRuntimeArtifactPreparer({
           stateRoot: root,
           runtime: { kind: "native" },
         });
+        expect(yield* fs.exists(path.join(root, "artifacts"))).toBe(true);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("places a native artifact cache in an explicit shared root", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-artifact-shared-" });
         const sharedRoot = path.join(root, "shared-artifacts");
         const isolatedStateRoot = path.join(root, "isolated-state");
         yield* makeProductionRuntimeArtifactPreparer({

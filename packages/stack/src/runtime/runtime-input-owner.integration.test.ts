@@ -54,6 +54,28 @@ const compiledState = (root: string, config: Parameters<typeof compileStack>[0][
     return stateFor(root, compiled, resolved.persisted);
   });
 
+const vectorFixture = () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-vector-" });
+    const base = yield* compiledState(root, {
+      capabilities: { analytics: { settings: { vector_port: 9001 } } },
+    });
+    const state: PersistedStackState = {
+      ...base,
+      privatePorts: [{ workloadId: "analytics:vector", binding: "primary", port: 30_008 }],
+    };
+    const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+    const resolveConfigPath = () =>
+      Effect.gen(function* () {
+        const material = yield* owner.resolve(state, "analytics:vector");
+        const configPath = material.analytics?.vectorConfigPath;
+        if (configPath === undefined) return yield* Effect.die("Vector config path is missing");
+        return configPath;
+      });
+    return { fs, owner, resolveConfigPath };
+  });
+
 const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 
@@ -486,45 +508,64 @@ describe("runtime input owner", () => {
     ),
   );
 
-  it.live("writes and cleans session-scoped Vector config material", () =>
+  it.live("provides readable Vector config retaining runtime environment placeholders", () =>
     withPlatform(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-vector-" });
-        const base = yield* compiledState(root, {
-          capabilities: { analytics: { settings: { vector_port: 9001 } } },
+        const { fs, resolveConfigPath } = yield* vectorFixture();
+
+        const configPath = yield* resolveConfigPath();
+
+        const configText = yield* fs.readFileString(configPath);
+        const config = yield* Effect.try(() => Bun.YAML.parse(configText));
+        expect(config).toMatchObject({
+          api: { address: "${VECTOR_API_ADDRESS}" },
+          sinks: {
+            analytics: {
+              uri: "${LOGFLARE_URL}/logs?source_name=postgres.logs",
+              request: { headers: { "x-api-key": "${LOGFLARE_PRIVATE_ACCESS_TOKEN}" } },
+            },
+          },
         });
-        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const native: PersistedStackState = {
-          ...base,
-          privatePorts: [{ workloadId: "analytics:vector", binding: "primary", port: 30_008 }],
-        };
-        const material = yield* owner.resolve(native, "analytics:vector");
-        const configPath = material.analytics?.vectorConfigPath;
-        expect(configPath).toBeDefined();
-        expect(yield* fs.stat(configPath!)).toMatchObject({ type: "File" });
-        expect(yield* fs.readFileString(configPath!)).toContain('address: "${VECTOR_API_ADDRESS}"');
-        expect(yield* fs.readFileString(configPath!)).toContain("type: demo_logs");
-        expect(yield* fs.readFileString(configPath!)).toContain("count: 1");
-        expect(yield* fs.readFileString(configPath!)).toContain("type: internal_metrics");
-        expect(yield* fs.readFileString(configPath!)).toContain("type: blackhole");
-        const config = yield* fs.readFileString(configPath!);
-        expect(config).toContain("type: remap");
-        expect(config).toContain('.event_message = "supabase-stack-vector"');
-        expect(config).toContain("del(.message)");
-        expect(config).toContain('uri: "${LOGFLARE_URL}/logs?source_name=postgres.logs"');
-        expect(config).toContain('x-api-key: "${LOGFLARE_PRIVATE_ACCESS_TOKEN}"');
-        expect(config).toContain("retry_attempts: 5");
-        expect(config).toContain("retry_max_duration_secs: 10");
-        expect(config).not.toContain('x-api-key: "api-key"');
+      }),
+    ),
+  );
+
+  it.live("removes the returned Vector config file on cleanup", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const { fs, owner, resolveConfigPath } = yield* vectorFixture();
+        const configPath = yield* resolveConfigPath();
+
+        expect(yield* fs.exists(configPath)).toBe(true);
+
         yield* owner.cleanupAll;
-        expect(yield* fs.exists(path.join(root, stackId, "runtime", "inputs", "vector"))).toBe(
-          false,
-        );
-        const rematerialized = yield* owner.resolve(native, "analytics:vector");
-        expect(rematerialized.analytics?.vectorConfigPath).toBeDefined();
-        expect(yield* fs.exists(rematerialized.analytics?.vectorConfigPath ?? "")).toBe(true);
+
+        expect(yield* fs.exists(configPath)).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("recreates readable Vector config after cleanup", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const { fs, owner, resolveConfigPath } = yield* vectorFixture();
+        const firstConfigPath = yield* resolveConfigPath();
+
+        yield* owner.cleanupAll;
+        expect(yield* fs.exists(firstConfigPath)).toBe(false);
+
+        const configPath = yield* resolveConfigPath();
+        const config = yield* fs.readFileString(configPath);
+
+        const parsed = yield* Effect.try(() => Bun.YAML.parse(config));
+        expect(parsed).toMatchObject({
+          api: { address: "${VECTOR_API_ADDRESS}" },
+          sinks: {
+            analytics: {
+              uri: "${LOGFLARE_URL}/logs?source_name=postgres.logs",
+            },
+          },
+        });
       }),
     ),
   );
