@@ -7,28 +7,14 @@ import {
 } from "../../command-internal/workdir-project.ts";
 import { shouldSearchAncestors } from "../../command-internal/workdir-search.ts";
 
-// Re-exported for existing `config` family importers — the pure helper
-// itself now lives in `workdir-project.ts` since `gen types` needs it
-// too (Hoist Before You Duplicate: used across ≥2 command families).
 export { relativeConfigPath };
 
 /**
- * Loads `supabase/config.{toml,json}` for the `config` command family
- * (`diff`, `pull`, `push`) with one shared failure shape: a parse failure
- * names the file that actually failed — `loadCliConfig` probes
- * `supabase/config.json` before falling back to `supabase/config.toml`
- * (`findCliProjectPaths`), so hardcoding the `.toml` name would mislabel a
- * broken `config.json` — a duplicate `[remotes.*].project_id` keeps its own
- * message, and a missing-file message is built by
- * `missingProjectConfigMessageEffect` (CLI-2285): it points at
- * `supabase init` only for a DEFAULTED workdir, and (via
- * `shouldSearchAncestors`) never climbs ancestors to find the config in
- * the first place when `cliSettings.explicitWorkdir` is true — an explicit
- * `--workdir`/`SUPABASE_WORKDIR` with no project of its own must fail rather
- * than silently loading an unrelated ancestor project's config. Every family
- * member keeps its own tagged error class; `makeError` builds it from the
- * shared message text, mirroring `resolveConfigTarget`'s per-family
- * error construction (`config.target.ts`).
+ * Loads `supabase/config.{toml,json}` for the `config` family (`diff`, `pull`, `push`) with one
+ * shared failure shape. A parse failure names the file that actually failed, since `config.json`
+ * is probed before falling back to `config.toml`. A missing-file message suggests `supabase init`
+ * only for a defaulted workdir; an explicit `--workdir`/`SUPABASE_WORKDIR` never climbs ancestors
+ * and fails instead of silently loading an unrelated project's config.
  */
 export function loadLocalConfig<E>(
   cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },

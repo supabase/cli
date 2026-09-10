@@ -10,9 +10,8 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { configPull } from "./pull.handler.ts";
 
 const config = {
-  // `config diff`'s settled vocabulary (CLI-2167): one flag that accepts
-  // either a project ref or a branch of the linked project — no separate
-  // `--target`.
+  // Accepts either a project ref or a branch name/UUID of the linked project; there's no
+  // separate --target flag.
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription(
       "Project ref of the Supabase project, or the name (or UUID) of one of its branches. Values that are exactly 20 lowercase letters are always treated as project refs.",
@@ -27,8 +26,7 @@ const config = {
   ),
   dryRun: Flag.boolean("dry-run").pipe(
     Flag.withDescription("Show what would be written without touching the config file."),
-    // Without an explicit default a boolean flag is REQUIRED by the parser
-    // (same rule pinned by `diff.e2e.test.ts` for `--exit-code`).
+    // Without an explicit default, a boolean flag is required by the parser.
     Flag.withDefault(false),
   ),
   force: Flag.boolean("force").pipe(
@@ -41,21 +39,17 @@ export type ConfigPullFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 const configPullHandler = (flags: ConfigPullFlags) =>
   configPull(flags).pipe(
-    // `--project-ref` accepts branch names here (CLI-2167 vocabulary), so its
-    // value is only safe to log verbatim when it is actually ref-shaped — a
-    // user-created branch name must never reach PostHog. Same guard as
-    // `link`/`config diff`. `--remote-label` is a free-form, user-chosen
-    // string and is NEVER safe to log verbatim.
+    // --project-ref accepts branch names too, so it's only safe to log verbatim when
+    // ref-shaped; a branch name must never reach PostHog. --remote-label is free-form user text
+    // and is never safe to log.
     withCommandTelemetry({
       flags,
       safeFlags:
         Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
           ? ["project-ref"]
           : [],
-      // Net-new TS command, no Go parity contract (CLI-2156): the handler
-      // itself rejects every `-o/--output` value with a message pointing at
-      // `--output-format`, so the full global choice set — single-sourced
-      // from the flag's own definition — is declared "allowed" here.
+      // The handler rejects every -o/--output value itself, so the full global choice set is
+      // declared "allowed" here rather than gated by this wrapper.
       outputFormats: GLOBAL_OUTPUT_FORMATS,
     }),
     withJsonErrorHandling,

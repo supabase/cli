@@ -33,9 +33,8 @@ function makeLayer(opts: {
     Layer.provide(Layer.succeed(ProfileFlag, profileFlag)),
     Layer.provide(Layer.succeed(WorkdirFlag, workdirFlag)),
     Layer.provide(Layer.succeed(CliArgs, { args: opts.argv ?? [] })),
-    // The layer reads `<homeDir>/.supabase/profile` through the real BunServices
-    // filesystem, so homeDir must default to a per-test directory — a shared
-    // fixed path would leak stale profile files between runs and machines.
+    // Reads <homeDir>/.supabase/profile through the real filesystem, so homeDir must be a
+    // per-test directory to avoid leaking stale profile files between runs.
     Layer.provide(
       mockRuntimeInfo({
         cwd: opts.cwd ?? "/test/cwd",
@@ -47,7 +46,7 @@ function makeLayer(opts: {
   );
 }
 
-// Profile load failures surface as layer-build failures (Go: PersistentPreRunE).
+// Profile load failures surface as layer-build failures.
 function configExit(opts: Parameters<typeof makeLayer>[0]) {
   return Effect.gen(function* () {
     return yield* CommandSettings;
@@ -172,8 +171,6 @@ describe("commandSettingsLayer", () => {
     );
   });
 
-  // Go fails hard on an unloadable profile — never falls back to the built-in
-  // `supabase` profile and its keyring token (supabase/cli#6091).
   it.effect(
     "fails when SUPABASE_PROFILE is neither a known name nor a readable file — Go parity",
     () =>
@@ -201,7 +198,6 @@ describe("commandSettingsLayer", () => {
     }).pipe(Effect.provide(makeLayer({ profileFlag: "SUPABASE-STAGING", cwd: tempRoot }))),
   );
 
-  // pflag `Changed`: an explicitly passed flag counts even at its default value.
   it.effect(
     "explicit --profile supabase shadows an unloadable SUPABASE_PROFILE — pflag Changed",
     () =>
@@ -277,8 +273,7 @@ describe("commandSettingsLayer", () => {
       expect(config.apiUrl).toBe("http://127.0.0.1:9999");
       expect(config.projectHost).toBe("localhost");
       expect(config.poolerHost).toBe("staging.example.com");
-      // Go reads `dashboard_url` from the profile (used by the connect-failure hint);
-      // the cli-e2e harness points it at the replay server for parity.
+      // dashboard_url feeds the connect-failure hint; cli-e2e points it at its replay server.
       expect(config.dashboardUrl).toBe("http://127.0.0.1:9999");
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot })));
   });
@@ -337,7 +332,8 @@ describe("commandSettingsLayer", () => {
     });
   });
 
-  // Files written by older lenient versions still exist and must fail like Go.
+  // Files written by older, more lenient CLI versions may still exist on disk and must
+  // still fail validation.
   it.effect("fails when the persisted profile file names an unloadable profile", () => {
     const home = join(tempRoot, "home");
     mkdirSync(join(home, ".supabase"), { recursive: true });
@@ -386,9 +382,8 @@ describe("commandSettingsLayer", () => {
     Effect.gen(function* () {
       const config = yield* CommandSettings;
       expect(config.workdir).toBe("/flag/workdir");
-      // An explicit non-empty --workdir is used verbatim — CLI-2285: this is
-      // what lets `shouldSearchAncestors` skip the second, un-Go-like
-      // ancestor climb inside `loadCliConfig`.
+      // An explicit --workdir is used verbatim, letting `shouldSearchAncestors` skip the
+      // second ancestor climb inside `loadCliConfig`.
       expect(config.explicitWorkdir).toBe(true);
     }).pipe(
       Effect.provide(
@@ -411,10 +406,6 @@ describe("commandSettingsLayer", () => {
     ),
   );
 
-  // A --workdir flag present but set to the EMPTY string is treated as
-  // absent here (distinct from `pflagWorkdirValue`'s handling of the
-  // same input elsewhere), so a non-empty SUPABASE_WORKDIR still wins and is
-  // still explicit.
   it.effect(
     "an empty --workdir flag falls through to SUPABASE_WORKDIR env, which is still explicit",
     () =>
@@ -433,9 +424,6 @@ describe("commandSettingsLayer", () => {
       ),
   );
 
-  // With no env either, the same empty --workdir flag falls all the way
-  // through to the ancestor walk-up, which is the defaulted (non-explicit)
-  // path.
   it.effect("an empty --workdir flag with no env falls through to the walk-up", () =>
     Effect.gen(function* () {
       const config = yield* CommandSettings;
@@ -444,12 +432,6 @@ describe("commandSettingsLayer", () => {
     }).pipe(Effect.provide(makeLayer({ workdirFlag: Option.some(""), cwd: tempRoot }))),
   );
 
-  // Every later reader of the resolved workdir — including the
-  // `Config.ProjectId` cwd-basename default — must see the real absolute
-  // directory, never the raw flag/env string. A relative `--workdir
-  // .`/`SUPABASE_WORKDIR=.` must therefore resolve to an absolute path
-  // here too, not stay `"."` (which would later basename to an empty
-  // project id).
   it.effect("resolves a relative --workdir flag against the real cwd", () =>
     Effect.gen(function* () {
       const config = yield* CommandSettings;
@@ -490,8 +472,6 @@ describe("commandSettingsLayer", () => {
     return Effect.gen(function* () {
       const config = yield* CommandSettings;
       expect(config.workdir).toBe(projectRoot);
-      // The ancestor climb found a config.toml — this resolution is the
-      // defaulted walk-up, not an explicit --workdir/SUPABASE_WORKDIR.
       expect(config.explicitWorkdir).toBe(false);
     }).pipe(Effect.provide(makeLayer({ cwd: nested })));
   });
@@ -500,8 +480,6 @@ describe("commandSettingsLayer", () => {
     Effect.gen(function* () {
       const config = yield* CommandSettings;
       expect(config.workdir).toBe(tempRoot);
-      // The climb never found a config.toml and fell back to cwd unchanged —
-      // still the defaulted path, not an explicit workdir.
       expect(config.explicitWorkdir).toBe(false);
     }).pipe(Effect.provide(makeLayer({ cwd: tempRoot }))),
   );

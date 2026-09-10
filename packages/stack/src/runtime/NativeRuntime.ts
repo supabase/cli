@@ -284,11 +284,9 @@ export const makeNativeRuntime = (
             ),
           );
           const outputFiber = yield* Effect.forkIn(consumed, startupScope);
-          // A one-shot process is complete only after both its exit and output
-          // streams have completed. Effect.all keeps the stream drain alive
-          // when the child exits before its pipes finish, while a stream
-          // failure interrupts the exit waiter and startup cleanup kills the
-          // exact child.
+          // A one-shot process finishes only once both its exit and output streams complete:
+          // Effect.all keeps draining after the child exits, and a drain failure interrupts the
+          // exit waiter while startup cleanup kills the exact child.
           const completed = Effect.all([exitCode.pipe(Effect.asVoid), Fiber.join(outputFiber)], {
             concurrency: "unbounded",
             discard: true,
@@ -379,10 +377,9 @@ export const makeNativeRuntime = (
             Effect.mapError((error) => processError(error, key, "spawn")),
           );
           resource.process = process;
-          // Keep one process-exit observation owned by the resource scope. The
-          // readiness race has waiter-owned fibers which may be interrupted;
-          // sharing an Effect.cached waiter would let that interruption poison
-          // the observation used by the long-lived workload watcher.
+          // The readiness race's waiter fibers can be interrupted, so exit observation is forked
+          // into the resource scope rather than shared via Effect.cached, which would let that
+          // interruption poison the long-lived workload watcher's view.
           const exitFiber = yield* Effect.forkIn(process.exitCode, resource.scope);
           const exitCode = Fiber.join(exitFiber);
           yield* Effect.forkIn(watchProcess(resource, process, exitCode), resource.scope);

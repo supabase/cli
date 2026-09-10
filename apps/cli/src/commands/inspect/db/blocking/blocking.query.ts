@@ -23,10 +23,9 @@ JOIN pg_catalog.pg_stat_activity ka
 WHERE NOT bl.granted`;
 
 /**
- * `inspect db blocking` — queries holding locks and the queries waiting on them.
- * Both statement columns are whitespace-collapsed; the row format
- * backtick-wraps every column EXCEPT `blocked_statement` (col 5), so
- * `blocking_statement` (col 2) uses the backtick variant and col 5 stays bare.
+ * `inspect db blocking` — queries holding locks and the queries waiting on them. Both statement
+ * columns are whitespace-collapsed; only `blocking_statement` (col 2) is backtick-wrapped —
+ * `blocked_statement` (col 5) stays bare.
  */
 export const blockingSpec: InspectQuerySpec = {
   name: "blocking",

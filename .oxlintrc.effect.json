@@ -4,5 +4,5 @@
   "options": {
     "denyWarnings": true
   },
-  "ignorePatterns": []
+  "ignorePatterns": ["apps/cli/src/shared/compute/stacks/**"]
 }

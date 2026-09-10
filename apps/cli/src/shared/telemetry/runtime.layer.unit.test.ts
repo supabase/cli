@@ -139,11 +139,9 @@ describe("telemetryRuntimeLayer", () => {
     );
   });
 
-  // CLI-1868 (telemetry enable/disable firing cli_command_executed on pre-toggle
-  // consent) depends on this exact property: `consent` is read from disk once
-  // at layer-construction time and does not reflect a later on-disk write —
-  // mirroring Go's PersistentPreRunE snapshot, which a command's own RunE
-  // (e.g. `telemetry disable`'s SetEnabled) cannot retroactively change.
+  // `consent` is read from disk once at layer-construction time and does not reflect a later
+  // on-disk write, so a command that rewrites telemetry.json mid-run doesn't retroactively
+  // change what that invocation already captured.
   it.live("captures consent once; a later on-disk write does not change it", () => {
     const homeDir = makeTempDir();
     const configPath = path.join(homeDir, "telemetry.json");
@@ -162,9 +160,8 @@ describe("telemetryRuntimeLayer", () => {
       const runtime = yield* TelemetryRuntime;
       expect(runtime.consent).toBe("granted");
 
-      // Simulates `disable`'s handler rewriting the file mid-command, after
-      // this layer already resolved `consent` — the already-built runtime
-      // must keep reporting the pre-toggle value.
+      // Simulates `disable` rewriting telemetry.json mid-command, after this layer already
+      // resolved `consent`.
       yield* Effect.sync(() =>
         writeFileSync(
           configPath,

@@ -15,8 +15,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { snippetsDownload } from "./download.handler.ts";
 
 const VALID_ID = "0b0d48f6-878b-4190-88d7-2ca33ed800bc";
-// Raw 32-hex form of VALID_ID, uppercase — a form `uuid.Parse` accepts
-// (google/uuid v1.6.0) that the old handler rejected before this fix.
+// Raw 32-hex form of VALID_ID, uppercase.
 const UPPER_HEX32_ID = "0B0D48F6878B419088D72CA33ED800BC";
 const INVALID_ID = "not-a-uuid"; // length 10 → "invalid UUID length: 10"
 const TOO_LONG_ID = "0b0d48f6-878b-4190-88d7-2ca33ed800bc-extra"; // length 42 (3 ungrouped: 32, 36, 38, 41)
@@ -40,10 +39,9 @@ const SNIPPET_RESPONSE: SnippetResponse = {
   content: { schema_version: "1.0.0", sql: SQL },
 };
 
-// `goOutput` is intentionally absent: the download handler does not consume
-// `OutputFlag` at all — it always prints the raw SQL unconditionally.
-// Threading a value through here would suggest a behaviour difference that
-// does not exist.
+// `goOutput` is absent: the download handler doesn't consume `OutputFlag` at
+// all — always prints raw SQL. Threading a value through would suggest a
+// behavior difference that doesn't exist.
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   status?: number;
@@ -81,10 +79,9 @@ describe("snippets download integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // `--output` is ignored entirely: no read of `OutputFlag`, no
-  // branching. This regression guards against a future refactor that adds
-  // branch-on-goOutput logic by mistake — if the flag is consumed, this
-  // assertion will diverge.
+  // `--output` is ignored entirely: no read of `OutputFlag`, no branching.
+  // Guards against a future refactor adding branch-on-goOutput logic by
+  // mistake — if the flag is consumed, this assertion diverges.
   it.live("text mode is unaffected by any Go `--output` value (Go parity)", () => {
     const out = mockOutput({ format: "text" });
     const telemetry = mockTelemetryStateTracked();
@@ -141,12 +138,9 @@ describe("snippets download integration", () => {
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
           expect(dump).toContain("SnippetsInvalidIdError");
-          // `uuid.Parse` returns `invalid UUID length: 10` for "not-a-uuid"
-          // (length 10), wrapped as `invalid snippet ID: %w`.
           expect(dump).toContain("invalid snippet ID: invalid UUID length: 10");
         }
         expect(api.requests).toHaveLength(0);
-        // Telemetry flush and linked-project caching still fire on this error path.
         expect(telemetry.flushed).toBe(true);
         expect(cache.cached).toBe(true);
       }).pipe(Effect.provide(layer));
@@ -177,7 +171,7 @@ describe("snippets download integration", () => {
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
         expect(dump).toContain("invalid snippet ID: invalid UUID format");
-        // The offending value must NOT be embedded in the error message.
+        // The offending value must not be embedded in the error message.
         expect(dump).not.toContain(WRONG_FORMAT_ID);
       }
     }).pipe(Effect.provide(layer));

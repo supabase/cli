@@ -1,24 +1,17 @@
 /**
- * Port of Go's `strconv.Quote` (the `%q` verb) over raw UTF-8 bytes, shared by
- * every error message that must reproduce a Go-side `%q` interpolation
- * byte-for-byte (snippets download's `invalid urn prefix: %q`, storage cp's
- * pflag `invalid argument %q … parsing %q`).
+ * `strconv.Quote` (the `%q` verb) over raw UTF-8 bytes, shared by every error message that must
+ * reproduce a `%q` interpolation byte-for-byte.
  *
- * Operating on bytes (not JS strings) matters twice over: Go slices like
- * `s[:9]` cut by byte and can split a multibyte rune — which `%q` then renders
- * as `\xNN` per orphan byte — and Go's escaping decisions are made per decoded
- * rune over those bytes. Callers with a whole JS string in hand encode it
- * first (`new TextEncoder().encode(s)`); note Bun's `process.argv` has already
- * replaced invalid UTF-8 argv bytes with U+FFFD by then, so byte-identical
- * output for *invalid-UTF-8 argv* is unattainable at that boundary — the
- * fidelity gap is JS-runtime-wide, not per-call-site.
+ * Operates on bytes, not JS strings: a byte slice can split a multibyte rune (rendered as `\xNN`
+ * per orphan byte), and escaping decisions are made per decoded rune over those bytes. Callers
+ * with a whole JS string encode it first; invalid UTF-8 in `process.argv` has already been
+ * replaced with U+FFFD by then, so byte-identical output for invalid-UTF-8 argv is unattainable at
+ * that boundary.
  */
 
 /**
- * `utf8.DecodeRune` semantics over a byte slice: returns the code point and
- * byte size at `i`, or `cp: -1` with `size: 1` for an invalid byte (invalid
- * lead, truncated/malformed continuation, overlong encoding, surrogate,
- * > U+10FFFF) — exactly the cases Go's `%q` renders as a lone `\xNN`.
+ * `utf8.DecodeRune` semantics over a byte slice: returns the code point and byte size at `i`, or
+ * `cp: -1` with `size: 1` for an invalid byte — exactly the cases rendered as a lone `\xNN`.
  */
 function decodeUtf8Rune(
   bytes: Uint8Array,
@@ -54,11 +47,9 @@ function decodeUtf8Rune(
   return { cp, size: extra + 1 };
 }
 
-// Go's `unicode.IsPrint` for runes ≥ 0x80: letters, marks, numbers,
-// punctuation, symbols (the ASCII range is handled explicitly in
-// goQuote). Unicode-table drift between the Go and JS engines is
-// possible but only affects which escape a garbage rune gets in one error
-// message.
+// Printable runes ≥ 0x80: letters, marks, numbers, punctuation, symbols (ASCII is handled
+// explicitly in goQuote). Unicode-table drift between engines only affects which escape a garbage
+// rune gets in one error message.
 const GO_PRINTABLE_RE = /[\p{L}\p{M}\p{N}\p{P}\p{S}]/u;
 
 const GO_ESCAPES: Readonly<Record<number, string>> = {
@@ -72,10 +63,8 @@ const GO_ESCAPES: Readonly<Record<number, string>> = {
 };
 
 /**
- * Go `%q` (`strconv.Quote`) over raw UTF-8 bytes (go1.26: `%q` of
- * `"12345678\xc3"` → `"12345678\xc3"`). Valid printable runes print
- * literally; control/non-printable ones use Go's `\a…\v` shorthands then
- * `\xNN` / `\uNNNN` / `\UNNNNNNNN`.
+ * `%q` (`strconv.Quote`) over raw UTF-8 bytes. Valid printable runes print literally;
+ * control/non-printable ones use the `\a…\v` shorthands then `\xNN`/`\uNNNN`/`\UNNNNNNNN`.
  */
 export function goQuote(bytes: Uint8Array): string {
   let out = '"';

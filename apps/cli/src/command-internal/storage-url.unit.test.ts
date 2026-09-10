@@ -54,7 +54,6 @@ describe("parseStorageUrl", () => {
   });
 });
 
-// Oracle: SplitBucketPrefix sub-tests in scheme_test.go
 describe("splitBucketPrefix", () => {
   it.each([
     ["", ["", ""]],
@@ -85,9 +84,7 @@ describe("detectScheme", () => {
   });
 });
 
-// Oracle: `go run` against Go 1.25's `net/url.Parse` directly (net/url/url.go's
-// `parseHost`) — used by `studio.api_url` validation, which needs the Host, not
-// just Scheme/Path, so the failures below matter beyond the storage commands.
+// Host validation here also backs `studio.api_url` validation.
 describe("goUrlParse (host validation)", () => {
   it("rejects an unterminated IPv6 literal", () => {
     expect(() => goUrlParse("http://[::1")).toThrow(GoUrlParseError);

@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer, Option } from "effect";
+import { Cause, Effect, Layer, Option } from "effect";
 import { GlobalFlag } from "effect/unstable/cli";
 import type { Command, Param, Primitive } from "effect/unstable/cli";
 import process from "node:process";
@@ -20,44 +20,15 @@ import {
 } from "../shared/telemetry/event-catalog.ts";
 import { standaloneAnalyticsConfigLayer } from "../shared/telemetry/standalone-analytics-config.layer.ts";
 import { analyticsLayer } from "../telemetry/analytics.layer.ts";
+import { formatCliError, normalizeCliError } from "../shared/output/normalize-error.ts";
 
 /**
- * Native TypeScript reimplementation of cobra's dynamic-completion protocol
- * (`spf13/cobra@v1.10.2/completions.go`). Cobra-generated
- * completion scripts (`supabase completion {bash,zsh,fish,powershell}`) call
- * back into `supabase __complete <args>` on every tab press — or
- * `supabase __completeNoDesc <args>` when the script was generated with
- * `--no-descriptions` (cobra's alias for the same hidden command). This module
- * bypasses Effect's structured argv parser entirely for that path (the args may
- * include partial/malformed flag tokens, e.g. `--de` mid-completion, that the
- * parser would reject) and instead reflects directly over `rootCommand` — the
- * live Effect CLI command tree — to compute candidates.
- *
- * Deliberate, documented simplifications relative to real cobra:
- * - No `--help`-style multi-paragraph usage error for zero completion args
- *   (`MinimumNArgs(1)` failure) — real generated shell scripts always pass at
- *   least one arg, so this path is realistically unreachable by real
- *   completion traffic.
- * - No "Completion ended with directive: ..." trailer or `[Debug] [Error] ...`
- *   diagnostics — both are cobra-side stderr-only text every real generated
- *   completion script discards (`2>/dev/null` or equivalent), so reproducing
- *   them has zero observable effect on any user.
- * - Mutually-exclusive flag-group hiding (cobra's `enforceFlagGroupsForCompletion`)
- *   is not reproduced — there is no equivalent flag-group annotation anywhere in
- *   this TS tree to mirror, and hand-building a shadow table carries a
- *   materially higher transcription-error risk than the small, stable tables
- *   below. Accepted as a documented gap.
- * - Deprecated commands/flags (cobra's `IsAvailableCommand()`/`MarkDeprecated`)
- *   are not filtered out of candidates — this TS tree has no "deprecated"
- *   concept distinct from `hidden` today (deprecation is only reflected in
- *   description text), so filtering it out here would require tree-level
- *   metadata this port doesn't own. Accepted as a documented gap, expected to
- *   shrink as the tree's own deprecated-alias cleanup lands separately.
+ * Implements the shell completion protocol that cobra-generated scripts (`supabase
+ * completion {bash,zsh,fish,powershell}`) call into via `supabase __complete`/
+ * `__completeNoDesc` on every tab press. Completion argv can contain partial or malformed
+ * flag tokens (e.g. `--de` mid-word), so this bypasses the structured CLI parser and
+ * reflects directly over `rootCommand` to compute candidates.
  */
-
-/* ========================================================================== */
-/* Types                                                                      */
-/* ========================================================================== */
 
 export interface CompletionCandidate {
   readonly name: string;
@@ -69,9 +40,7 @@ export interface CompletionResult {
   readonly directive: number;
 }
 
-/**
- * The subset of cobra's `ShellCompDirective` bit flags this port ever emits.
- */
+/** Bit flags for the shell completion protocol's directive value. */
 export const CompletionDirective = {
   Default: 0,
   NoFileComp: 4,
@@ -107,46 +76,24 @@ export interface ClassifyCompletionInput {
 }
 
 export interface CompleteDeps {
-  readonly root: Command.Command.Any;
+  readonly root: Command.Command.Any | undefined;
+  /** The routing failure that prevented selecting a command tree, if any. */
+  readonly routingFailure?: Cause.Cause<unknown>;
   readonly argv: ReadonlyArray<string>;
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly stdoutWrite: (message: string) => void;
+  readonly stderrWrite: (message: string) => void;
   readonly exit: (code: number) => void;
-  /**
-   * Fires the `cli_command_executed` telemetry capture for this request —
-   * see `captureCompleteTelemetryEffect`'s doc comment for what it
-   * records and why. Injected the same way `stdoutWrite`/`exit` already are,
-   * so tests can run `captureCompleteTelemetryEffect` against a mocked
-   * `Analytics` boundary without spawning a real subprocess or touching the
-   * real, consent-gated production layer `defaultCompleteDeps` wires by
-   * default — see `complete.integration.test.ts`.
-   */
+  /** Fires the `cli_command_executed` telemetry capture for this request. */
   readonly captureTelemetry: (exitCode: number, durationMs: number) => Promise<void>;
 }
 
-/* ========================================================================== */
-/* Internal command field access (`param-introspection.ts` precedent) */
-/* ========================================================================== */
-
 /**
- * `.config.flags` (a command's own declared flags), `.contextConfig.flags`
- * (flags inherited via `Command.withSharedFlags`), and `.globalFlags` (a
- * command's own declared global flags) are genuinely absent from the public
- * `Command`/`Command.Any` TypeScript interface — only `name`, `description`,
- * `shortDescription`, `alias`, `examples`, `subcommands`, `annotations`, and
- * `hidden` are public — but they exist at runtime (`internal/command.ts`'s
- * `makeCommand`, via `Object.assign`; that internal module is not importable
- * — its package.json export map entry is `null` — so there is no type-safe
- * import to reach for instead).
- *
- * A bare `as unknown as` here would silently paper over that gap (forbidden
- * by this repo's typing rules — see `CLAUDE.md`), so this narrows through a
- * runtime type guard instead, the same `"<field>" in value` shape
- * `param-introspection.ts`'s `isWrappedParam` already
- * establishes for the identical problem (an internal-only field the public
- * `effect/unstable/cli` types don't declare). If a future `effect` version
- * ever drops one of these fields, this throws instead of silently completing
- * against `undefined`.
+ * `config.flags`, `contextConfig.flags`, and `globalFlags` exist on `Command`
+ * at runtime but aren't part of its public type. Narrow through a runtime
+ * guard rather than an `as` cast, so a future `effect` upgrade that drops one
+ * of these fields throws here instead of silently completing against
+ * `undefined`.
  */
 interface CommandInternal {
   readonly config: { readonly flags: ReadonlyArray<Param.AnyFlag> };
@@ -173,19 +120,11 @@ function flattenSubcommands(command: Command.Command.Any): ReadonlyArray<Command
   return command.subcommands.flatMap((group) => group.commands);
 }
 
-/* ========================================================================== */
-/* Flag descriptors                                                          */
-/* ========================================================================== */
-
 /**
- * `Flag.choice`/`Flag.choiceWithValue`'s `choiceKeys` (the valid value set) is
- * attached to the `Choice`-tagged `Primitive<A>` via `Object.assign` at
- * runtime (`Primitive.choice`,
- * `.repos/effect/packages/effect/src/unstable/cli/Primitive.ts`) but carries
- * an `@internal` JSDoc tag and is absent from the public `Primitive<A>`
- * interface — the identical gap `CommandInternal` above already works
- * around for `Command`, so this reuses the same runtime type-guard idiom
- * instead of an `as` cast.
+ * `choiceKeys` (a `Choice` primitive's valid value set) is attached via
+ * `Object.assign` at runtime and isn't part of the public `Primitive<A>`
+ * type, so this narrows through the same runtime-guard idiom as
+ * `CommandInternal`.
  */
 interface ChoicePrimitive {
   readonly choiceKeys: ReadonlyArray<string>;
@@ -218,29 +157,10 @@ function flagDescriptorFromParam(param: Param.AnyFlag): FlagDescriptor | undefin
 }
 
 /**
- * The full in-scope flag list for `commandChain`'s last element (the resolved
- * command), ordered and grouped the way cobra's own completion path emits
- * flag-name candidates: `InheritedFlags().VisitAll` (every ancestor's global
- * and shared flags, as ONE pflag-alphabetically-sorted block), followed by
- * `NonInheritedFlags().VisitAll` (the resolved command's own global flags,
- * its own `--help`, the `--log-level`/`--wizard`/`--completions` built-ins,
- * root's own `--version`, and its own local flags, as a SECOND,
- * separately-sorted block) — pflag's `FlagSet.VisitAll` walks
- * `sortedFormalFlags`, which sorts strictly by each flag's canonical long
- * name: `db dump -` lists `--agent`, `--create-ticket`, `--debug`, ...
- * alphabetically, THEN a second alphabetical run starting `--data-only`,
- * `--db-url`, `--dry-run`, ... — not one merged alphabetical list and not
- * this tree's own declaration order.
- *
- * The resolved command's own local flags win on a canonical-name collision —
- * e.g. a command's own local `--output` (`db diff`'s file-path flag) must
- * shadow the global `--output` choice flag declared at root — by being
- * excluded from the inherited block entirely, mirroring pflag's
- * `InheritedFlags()`, which skips any persistent flag shadowed by a
- * same-named local one (rather than being present in both and "last write
- * wins": a `Map`'s insertion-order position does not move on a same-key
- * `.set()`, so a naive later-overwrite would leave the shadowed entry sitting
- * in the wrong (inherited) sort position instead of removing it).
+ * Returns in-scope flags as two alphabetically sorted blocks — inherited
+ * flags, then the command's own — the order completion scripts expect. A
+ * local flag shadows a same-named inherited one rather than appearing twice
+ * (e.g. `db diff`'s own file-path `--output` shadows the global choice flag).
  */
 export function collectInScopeFlags(
   root: Command.Command.Any,
@@ -259,19 +179,12 @@ export function collectInScopeFlags(
   const ownParams: Array<Param.AnyFlag> = [
     ...globalFlagParamsOf(finalCommand),
     GlobalFlag.Help.flag,
-    // The built-ins `--log-level`, `--wizard`, and `--completions` are part
-    // of every resolved command's real flag set (`GlobalFlag.BuiltIns`, shown
-    // in `--help`), so the strict flag walk must resolve them or a typed
-    // `--log-level error` poisons the whole line like an unknown flag
-    // (issue #6482). Unlike `--help`/root `--version`, whose short-circuit
-    // below ends the completion request, these three keep the line
-    // completing normally.
+    // These built-ins must resolve like any other known flag, or a typed
+    // `--log-level error` poisons the rest of the completion line.
     GlobalFlag.LogLevel.flag,
     GlobalFlag.Wizard.flag,
     GlobalFlag.Completions.flag,
-    // Cobra's `InitDefaultVersionFlag` only registers `--version`, and only on
-    // the root command (gated on `c.Version != ""`, and non-persistent) — it
-    // is never inherited by subcommands the way `--help` is.
+    // `--version` only applies to the root command; it isn't inherited by subcommands.
     ...(commandChain.length === 1 ? [GlobalFlag.Version.flag] : []),
     ...internalCommand(finalCommand).config.flags,
   ];
@@ -294,22 +207,12 @@ export function collectInScopeFlags(
   return [...inherited, ...own];
 }
 
-/* ========================================================================== */
-/* Flag-token resolution                                                     */
-/* ========================================================================== */
-
 /**
- * Resolves a bare flag token (`--project-ref`, `-p`, or a shorthand cluster
- * like `-po`, where cobra's rule is "the character immediately before the
- * value/`=`", i.e. the last character) to its owning in-scope flag. Mirrors
- * cobra's `checkIfFlagCompletion` heuristic (`completions.go:676-681,702-707`,
- * the documented `-asd` => `d` quirk from cobra issue #1257) for guessing
- * which flag the CURRENT or immediately PRECEDING token is mid-way through
- * value-completing — deliberately NOT the same algorithm as
- * `resolveShortFlagCluster`, which mirrors the real, strict
- * `ParseFlags()` parser instead (first character owns the value, not last).
- * See that function's doc comment for why the two differ and where each is
- * used.
+ * Resolves a bare flag token (`--project-ref`, `-p`, or a shorthand cluster like `-po`) to
+ * its owning in-scope flag, guessing which flag the current or preceding token is mid-way
+ * through value-completing by treating the character immediately before the value/`=` (the
+ * last character of a cluster) as the owner. This differs from `resolveShortFlagCluster`,
+ * which mirrors the strict parser's first-character rule; see that function's doc comment.
  */
 function resolveFlagFromToken(
   token: string,
@@ -326,57 +229,12 @@ function resolveFlagFromToken(
   return undefined;
 }
 
-/* ========================================================================== */
-/* Command-path resolution                                                   */
-/* ========================================================================== */
-
 /**
- * Descends from `root` through `trimmedArgs`, matching each non-flag token
- * against the current command's subcommand names/aliases (exact,
- * case-sensitive — no prefix or fuzzy matching). Mirrors cobra's `Find()`,
- * which strips flags before matching positional command names
- * (`completions.go:340`) via its own heuristic `stripFlags`
- * (`pflag@v1.0.9/flag.go`) — a cruder, command-tree-only pre-pass distinct
- * from the real flag parser `collectChangedFlagNames` mirrors:
- *
- * - A long flag (`--foo`) or a single-character short flag (`-f`) with no
- *   embedded `=` consumes the following token as its value UNLESS it's
- *   already known at this point in the descent to be boolean — this
- *   includes flags not yet in scope, e.g. a subcommand's own local flag
- *   typed before that subcommand is reached (`--db-url`, local to `db
- *   dump`, typed before `db`): `stripFlags`'s `hasNoOptDefVal` returns
- *   `false` for a name it can't find yet, so `!hasNoOptDefVal(...)` is
- *   `true` and it optimistically consumes a value anyway: `__complete
- *   --db-url postgres:// db dump --s` still offers `db dump`'s `--schema`,
- *   which requires descending past `--db-url postgres://` to reach `db
- *   dump` at all.
- * - Anything else flag-shaped — a multi-character shorthand cluster
- *   (`-rj`), a flag containing `=`, or a bare `--` — is skipped without
- *   consuming a value. A bare `--` additionally stops the descent
- *   entirely: it's pflag's end-of-flags sentinel, so no token at or after
- *   it can ever match a subcommand (verified empirically: `__complete --
- *   db ""` returns zero candidates with the Default directive, not `db`'s
- *   subcommands).
- * - A bare `-` is NOT flag-shaped at all — pflag's own `isFlagArg`
- *   (`command.go:750-753`) requires at least 2 characters, so cobra's
- *   `stripFlags` (`command.go:674-706`) silently drops it from its
- *   subcommand-name scan (it matches none of that function's `switch`
- *   cases) without either consuming a value OR stopping the descent, and —
- *   critically — WITHOUT removing it from the leftover args the way a
- *   matched command name is (`argsMinusFirstX` only ever strips the exact
- *   matched name). It therefore must stay in `leftoverArgs` here too, while
- *   still letting the descent continue past it: `db - dump --da` still
- *   descends past the bare `-` into `dump` and offers `--data-only`, while
- *   `sso - --debug a` returns zero candidates with the Default directive —
- *   the surviving `-` keeps the `len(finalArgs) == 0` subcommand-listing
- *   gate below closed.
- *
- * Descent stops at the first non-flag token that doesn't match a subcommand,
- * or at a `--` sentinel; that token and everything after it becomes
- * `leftoverArgs` — the *positional* leftover cobra's `finalArgs` represents
- * (`completions.go:397-399`), used to gate subcommand-name completion
- * (`len(finalArgs) == 0`). Flag tokens and their consumed values are never
- * part of `leftoverArgs`; a bare `-` is the one exception, per above.
+ * Descends from `root` through `trimmedArgs`, matching each non-flag token against the
+ * current command's subcommand names/aliases. A flag not yet known to be boolean is assumed
+ * to consume the next token as its value, even if the flag itself isn't in scope yet. A bare
+ * `--` stops the descent (end of flags); a bare `-` does not, but stays in `leftoverArgs`
+ * unlike a matched command name.
  */
 export function resolveCommandPath(
   root: Command.Command.Any,
@@ -395,14 +253,11 @@ export function resolveCommandPath(
       continue;
     }
 
-    if (token === "--") break; // pflag's end-of-flags sentinel: nothing at or after this can match a subcommand.
+    if (token === "--") break; // end of flags: nothing at or after this can match a subcommand.
 
     if (token === "-") {
-      // Not flag-shaped (pflag's `isFlagArg` requires length >= 2) and never
-      // a real subcommand name — skip it without consuming a value, without
-      // breaking the descent, and WITHOUT marking it consumed, so it survives
-      // into `leftoverArgs` exactly like real cobra's `finalArgs` does. See
-      // this function's doc comment for the empirical verification.
+      // Not flag-shaped and never a subcommand name; skip without stopping the descent, but
+      // leave it in `leftoverArgs` unlike a matched command name.
       index++;
       continue;
     }
@@ -412,13 +267,10 @@ export function resolveCommandPath(
       const isLong = token.startsWith("--");
       const isSingleCharShort = !isLong && token.length === 2;
       if (!token.includes("=") && (isLong || isSingleCharShort)) {
-        // The flags visible at this point of the descent are enough to tell
-        // whether this token consumes the next one as its value.
         const inScopeSoFar = collectInScopeFlags(root, commandChain);
         const resolved = resolveFlagFromToken(token, inScopeSoFar);
-        // An unrecognized flag is optimistically assumed to take a value too
-        // (see the doc comment above) — only a flag already known here to be
-        // boolean is exempt.
+        // An unrecognized flag is assumed to take a value too; only a flag already known
+        // here to be boolean is exempt.
         const takesValue = resolved === undefined || !resolved.isBoolean;
         if (takesValue && index + 1 < trimmedArgs.length) {
           consumedIndices.add(index + 1);
@@ -445,14 +297,8 @@ export function resolveCommandPath(
   return { commandChain, matchedPath, leftoverArgs };
 }
 
-/* ========================================================================== */
-/* Classification                                                            */
-/* ========================================================================== */
-
 /**
- * File-extension filtering for a small, fixed set of file-path flags — not
- * derived from anything generic, so a small matching lookup table here is
- * the right level of fidelity. Key =
+ * File-extension filtering for a small, fixed set of file-path flags. Key =
  * `<space-joined resolved command path (excluding "supabase")>:<flag name>`.
  */
 const COMPLETION_FLAG_FILE_EXTENSIONS: ReadonlyMap<string, ReadonlyArray<string>> = new Map([
@@ -463,30 +309,19 @@ const COMPLETION_FLAG_FILE_EXTENSIONS: ReadonlyMap<string, ReadonlyArray<string>
 ]);
 
 /**
- * The set of flags cobra treats as unconditionally required during
- * `__complete`/`__completeNoDesc`. A flag whose requirement is scoped inside
- * a `PreRun`/`PreRunE` hook (conditional on other flags or TTY state) never
- * applies to a real completion request, since completion never runs those
- * hooks — deliberately excluded here for that reason: `db dump:data-only`
- * (inside `PreRun`), `init:experimental` (inside `PreRun`), `projects
- * create:{org-id,db-password,region}` (inside `PreRunE`), `link:project-ref`
- * (inside `PreRunE`).
- *
- * Deliberately a hardcoded table, not derived from whether the TS flag is
- * `Flag.optional`-wrapped: several of these TS flags are intentionally
- * `Flag.optional` at parse time for validation-ordering reasons unrelated to
- * completion (e.g. `vanity-subdomains activate --desired-subdomain` — see
- * that command's own file comment), so "is this flag `Optional`-wrapped in
- * TS" is not a faithful proxy for "does cobra mark it required." Key =
- * `<matched command path>:<flag name>`.
+ * Flags treated as required during completion. A flag whose requirement is conditional on
+ * other flags or TTY state is excluded, since completion never evaluates those conditions.
+ * This is a hardcoded table rather than derived from `Flag.optional`, since some flags are
+ * `Flag.optional` at parse time for validation-ordering reasons unrelated to completion. Key
+ * = `<matched command path>:<flag name>`.
  */
 const COMPLETION_REQUIRED_FLAGS: ReadonlySet<string> = new Set([
-  "domains create:custom-hostname", // cmd/domains.go:100
-  "migration repair:status", // cmd/migration.go:122
-  "gen bearer-jwt:role", // cmd/gen.go:175
-  "sso add:type", // cmd/sso.go:165
-  "vanity-subdomains activate:desired-subdomain", // cmd/vanitySubdomains.go:67
-  "vanity-subdomains check-availability:desired-subdomain", // cmd/vanitySubdomains.go:69
+  "domains create:custom-hostname",
+  "migration repair:status",
+  "gen bearer-jwt:role",
+  "sso add:type",
+  "vanity-subdomains activate:desired-subdomain",
+  "vanity-subdomains check-availability:desired-subdomain",
 ]);
 
 function isRequiredCompletionFlag(matchedPath: ReadonlyArray<string>, flagName: string): boolean {
@@ -494,16 +329,9 @@ function isRequiredCompletionFlag(matchedPath: ReadonlyArray<string>, flagName: 
 }
 
 /**
- * Mirrors cobra's `InitDefaultCompletionCmd`, which registers
- * `ValidArgsFunction: NoFileCompletions` on the `completion` group command
- * itself and each of its `bash`/`zsh`/`fish`/`powershell` leaves.
- * `getCompletions` always calls a resolved command's own
- * `ValidArgsFunction` when one is registered, and that call OVERWRITES the
- * directive outright — for a leaf like `completion bash`, which has no
- * subcommands of its own to otherwise set NoFileComp, this is the ONLY
- * thing that sets it: `completion bash ""` returns the NoFileComp directive
- * with zero candidates, not Default. Key = space-joined `matchedPath`
- * (excluding "supabase").
+ * Commands whose completion always returns the `NoFileComp` directive with
+ * zero candidates, since they take no positional arguments to complete. Key =
+ * space-joined `matchedPath` (excluding "supabase").
  */
 const COMPLETION_NO_FILE_COMP_PATHS: ReadonlySet<string> = new Set([
   "completion",
@@ -530,47 +358,11 @@ function flagNameCandidates(
 }
 
 /**
- * A lightweight, string-only approximation of "which in-scope flags have
- * already been provided" (not a real flag parser, but close enough to mirror
- * pflag's actual `Set`-time behavior for the shapes real completion input
- * takes) — correct for the overwhelming majority of real completion inputs.
- *
- * Stops at a bare `--` the same way `findUnresolvedFlagToken` and
- * `resolveCommandPath` do — pflag's end-of-flags sentinel means
- * nothing at or after it is ever parsed as a flag, so nothing past it can be
- * "changed": `sso add -- --type --typ` still offers `--type`, since that
- * token is positional, past the terminator, and never reaches pflag's flag
- * parser at all.
- *
- * A LONG flag with no `=` that resolves to a non-boolean in-scope flag
- * consumes the immediately following token as its value — that token is
- * skipped here entirely, exactly like pflag's `parseLongArg`
- * (`pflag@v1.0.10/flag.go:1013-1023`), so a value that happens to look like a
- * flag (e.g. `--domains --type foo`, where `--type` is `--domains`'s value)
- * is never itself marked changed.
- *
- * A short-flag token walks its shorthand cluster exactly like
- * `pflag@v1.0.10`'s `parseSingleShortArg`: each character that resolves to a
- * boolean (`NoOptDefVal != ""`) flag is marked changed and the walk continues
- * to the next character in the SAME token; the first non-boolean character
- * (or a `=value` suffix) is also marked changed but ends the walk there,
- * since the rest of the token (or the next arg) is that flag's value, not
- * another shorthand: after `storage cp -rj 2`, both `-r`/`--recursive` and
- * `-j`/`--jobs` are "changed" — `--r<TAB>` offers nothing further — whereas
- * this function used to record only the cluster's last character.
- *
- * `classifyCompletion`'s `--help`/`--version` short-circuit reads THIS
- * set (`changedFlagNames.has("help"/"version")`) rather than scanning raw
- * tokens for a reason beyond DRY: pflag's `boolValue.Set` marks the flag
- * `Changed` on an explicit-value spelling too (`--help=false`), and cobra's
- * `helpOrVersionFlagPresent` checks `.Changed`, not the parsed value — so
- * `--help=false`/`--version=false` short-circuit exactly like a bare
- * `--help`/`--version`: `--help=false --d` and `--version=false br` both
- * return zero candidates with the NoFileComp directive — and this
- * function's name-collection above already marks a flag changed on ANY
- * spelling, explicit-value included. A raw token scan misses the terminator-
- * and value-consumption cases this function already handles instead (see
- * `classifyCompletion`'s call site for the specific repros).
+ * A lightweight, string-only approximation of "which in-scope flags have already been
+ * provided", accurate for the input shapes shells actually send. Stops at a bare `--`
+ * terminator; a value-taking flag consumes its following token so that value is never
+ * itself mistaken for a flag; an explicit `--help=false`/`--version=false` still counts
+ * as "provided", matching how "changed" flag state is tracked independent of its value.
  */
 function collectChangedFlagNames(
   trimmedArgs: ReadonlyArray<string>,
@@ -582,7 +374,7 @@ function collectChangedFlagNames(
     const token = trimmedArgs[index];
     index++;
     if (token === undefined) continue;
-    if (token === "--") break; // pflag's end-of-flags sentinel: nothing at or after this is parsed as a flag.
+    if (token === "--") break; // end of flags: nothing at or after this is parsed as a flag.
 
     if (token.startsWith("--")) {
       const rest = token.slice(2);
@@ -604,14 +396,9 @@ function collectChangedFlagNames(
 }
 
 /**
- * Walks a short-flag token's shorthand cluster (e.g. `-rj`, `-o=json`),
- * marking every shorthand consumed before — and including — the
- * value-consuming one as changed. Returns `true` when the cluster ends on a
- * non-boolean shorthand with no attached value (`-f`, or `-rf` ending on
- * `f`) — the caller must then skip the immediately following token, since
- * pflag consumes it as that shorthand's value rather than parsing it as its
- * own flag. See `collectChangedFlagNames`'s doc comment for the pflag
- * behavior this mirrors.
+ * Walks a short-flag cluster (e.g. `-rj`, `-o=json`), marking every shorthand up to and
+ * including the value-consuming one as changed. Returns `true` when the cluster ends on a
+ * non-boolean shorthand with no attached value, so the caller must skip the next token.
  */
 function markChangedShorthandCluster(
   token: string,
@@ -631,21 +418,10 @@ function markChangedShorthandCluster(
 }
 
 /**
- * Whether `trimmedArgs` contains a genuine, unconsumed pflag end-of-flags
- * sentinel — a bare `--` token that is NOT itself the value a preceding
- * value-taking flag already consumed. `--file --` consumes the `--` as
- * `--file`'s string value (`pflag@v1.0.10/flag.go:1013-1023`'s
- * `parseLongArg`, which grabs the very next token unconditionally); pflag's
- * sentinel check only ever inspects the CURRENT token being parsed, never
- * one already claimed as a preceding flag's value, so a consumed `--`
- * never disables later flag completion. A naive `trimmedArgs.includes("--")`
- * treats that consumed token as a terminator too, wrongly shutting off
- * flag-name/flag-value completion for the rest of the request: `db dump
- * --file -- --s` still offers `--schema`, not zero candidates, while `db
- * dump -- --s` — no preceding value flag to consume the `--` — correctly
- * returns zero candidates. Walks the same long/short consumption rules
- * `collectChangedFlagNames` does, reusing `resolveShortFlagCluster` for
- * the short-flag case.
+ * Whether `trimmedArgs` contains a genuine, unconsumed `--` terminator — one that isn't
+ * itself the value a preceding value-taking flag already consumed (e.g. `--file --`). A
+ * naive `trimmedArgs.includes("--")` would treat that consumed token as a terminator too,
+ * wrongly shutting off flag completion for the rest of the request.
  */
 function hasUnconsumedFlagTerminator(
   trimmedArgs: ReadonlyArray<string>,
@@ -679,19 +455,9 @@ function hasUnconsumedFlagTerminator(
 }
 
 /**
- * `--jobs` (`functions deploy`, `storage cp`) and `--last` (`migration down`,
- * `db reset`) are validated as `strconv.ParseUint(s, 0, 64)` values, which
- * reject a leading `-`/`+` outright — unlike this TS tree's plain signed
- * `Flag.integer("jobs"/"last")`. `isValidFlagValue` checks this table
- * BEFORE dispatching on `primitiveTag`, since it must catch `storage cp
- * --jobs` too, which is `Flag.string("jobs")` in TS (its own handler already
- * calls `parseUintBase0` directly at parse time, `cp.command.ts`)
- * rather than `Flag.integer` — a bare `primitiveTag` switch would never see
- * it: `functions deploy --jobs -1 --p`, `migration down --last -1 --d`, `db
- * reset --last -1 --d`, and `storage cp --jobs -1 --r` all return zero
- * candidates with the Default directive. Key = `<matched command
- * path>:<flag name>`, matching `COMPLETION_REQUIRED_FLAGS`'s
- * convention.
+ * Flags whose real validation rejects a leading `-`/`+`, unlike this tree's plain signed
+ * `Flag.integer`/`Flag.string` declarations — checked before `primitiveTag` dispatch since
+ * `storage cp --jobs` is declared as `Flag.string`. Key = `<matched command path>:<flag name>`.
  */
 const COMPLETION_UINT_FLAGS: ReadonlySet<string> = new Set([
   "functions deploy:jobs",
@@ -701,28 +467,18 @@ const COMPLETION_UINT_FLAGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * `--query-timeout` (`gen types`) and `--valid-for` (`gen bearer-jwt`) are
- * validated as `time.ParseDuration` values, unlike this TS tree's plain
- * `Flag.string("query-timeout"/"valid-for")` — same shape as
- * `COMPLETION_UINT_FLAGS` above, keyed the same way: `gen types
- * --query-timeout bogus --l` and `gen bearer-jwt --role anon --valid-for
- * bogus --p` both return zero candidates with the Default directive.
+ * Flags validated against Go duration syntax (see `isValidGoDuration`) rather than this
+ * tree's plain `Flag.string` declarations.
  */
 const COMPLETION_DURATION_FLAGS: ReadonlySet<string> = new Set([
   "gen types:query-timeout",
   "gen bearer-jwt:valid-for",
 ]);
 
-/**
- * `--exp` (`gen bearer-jwt`) is validated as a `time.Parse(time.RFC3339, s)`
- * value, unlike this TS tree's plain `Flag.string("exp")`: `gen bearer-jwt
- * --role anon --exp bogus --p` returns zero candidates with the Default
- * directive, while `--exp 2024-01-02T15:04:05Z --p` still offers
- * `--profile`/`--payload`.
- */
+/** `--exp` (`gen bearer-jwt`) is validated as an RFC 3339 timestamp, not a plain string. */
 const COMPLETION_RFC3339_FLAGS: ReadonlySet<string> = new Set(["gen bearer-jwt:exp"]);
 
-/** Nanosecond scale for each unit `time.ParseDuration`'s `unitMap` accepts (`time/format.go`). */
+/** Nanosecond scale for each unit the Go duration grammar accepts. */
 const GO_DURATION_UNIT_NANOS: ReadonlyMap<string, bigint> = new Map([
   ["ns", 1n],
   ["us", 1_000n],
@@ -734,9 +490,8 @@ const GO_DURATION_UNIT_NANOS: ReadonlyMap<string, bigint> = new Map([
   ["h", 3_600_000_000_000n],
 ]);
 
-// `time.ParseDuration` accumulates into a `uint64` and range-checks against
-// `1<<63` mid-parse, only narrowing to the `int64` max (`1<<63 - 1`) in the
-// final non-negative check — see `isValidGoDuration` below.
+// Go's duration grammar accumulates into a `uint64` (range-checked against `1<<63`
+// mid-parse) and narrows to the `int64` max in the final non-negative check below.
 const GO_DURATION_UINT64_OVERFLOW_BOUND = 1n << 63n;
 const GO_DURATION_MAX_INT64 = (1n << 63n) - 1n;
 
@@ -745,36 +500,11 @@ function isAsciiDigit(char: string | undefined): boolean {
 }
 
 /**
- * Faithful port of `time.ParseDuration` (`time/format.go`) — the exact
- * parser pflag runs for a `DurationVar` flag's `Set` — as a syntax-and-range
- * VERDICT (completion only needs a boolean, not the parsed `Duration`,
- * mirroring `isValidBase0Int64`'s own shape). An optional sign, then
- * either the literal `0` alone, or one or more `<int>[.<frac>]<unit>` terms
- * concatenated (`1h30m`, `1.5h`, `.5s`), accumulating nanoseconds: `BigInt`
- * for the integer/fraction accumulators (`uint64` semantics, mirrored
- * exactly — no JS `Number` precision loss), and a plain `Number`
- * multiply-then-`Math.trunc` for the one step done in `float64`
- * (`uint64(float64(f) * (float64(unit) / scale))`) — since a JS `number` IS
- * an IEEE-754 double, `Number(bigIntValue)` round-trips through the exact
- * same conversion `float64(f)` does, so this step is bit-for-bit identical,
- * not merely an approximation of it.
- *
- * This replaces an earlier regex-only grammar check whose own doc comment
- * dismissed the overflow bound as "unreachable through any realistic
- * completion input" — disputed and disproven on review: the `int64`
- * nanosecond range caps out at ~292 years, so `--query-timeout 2562048h`
- * (one hour past the real max, a plausible fat-fingered value, not a
- * contrived ~20-digit magnitude) is exactly the kind of input real
- * completion traffic can produce, and the old check silently accepted it.
- * `gen types --query-timeout 2562048h --l` returns zero candidates with the
- * Default directive, matching `bogus`. Cross-checked this implementation
- * against go1.26 `time.ParseDuration` across sign/fraction/multi-term/overflow
- * edge cases, including the exact `int64` boundary
- * (`2562047h47m16.854775807s` → valid, one ns more → invalid) and its
- * negative-side asymmetry (`-2562047h47m16.854775808s`, `int64` min, valid —
- * one ns more still invalid) — same two's-complement asymmetry
- * `isValidBase0Int64` already encodes for
- * `MAX_INT64_NEGATIVE_MAGNITUDE`.
+ * Validates the Go duration syntax (`1h30m`, `1.5h`, `.5s`) these flags accept, returning a
+ * boolean verdict rather than a parsed value. Uses `BigInt` for the integer/fraction
+ * accumulators to match Go's `uint64` overflow semantics exactly, and a plain `Number` for
+ * the one step Go performs in `float64` — a JS `number` is itself an IEEE-754 double, so
+ * this round-trips bit-for-bit rather than merely approximating it.
  */
 function isValidGoDuration(value: string): boolean {
   let rest = value;
@@ -790,8 +520,7 @@ function isValidGoDuration(value: string): boolean {
   while (rest.length > 0) {
     if (!(rest[0] === "." || isAsciiDigit(rest[0]))) return false;
 
-    // `leadingInt`: digits before the decimal point. Go returns an error
-    // immediately on overflow rather than continuing to consume digits.
+    // Digits before the decimal point; overflow fails immediately without consuming more.
     let i = 0;
     let intPart = 0n;
     while (isAsciiDigit(rest[i])) {
@@ -803,8 +532,7 @@ function isValidGoDuration(value: string): boolean {
     const hasIntDigits = i > 0;
     rest = rest.slice(i);
 
-    // `leadingFraction`: digits after `.`. Go does NOT error on overflow
-    // here — it just stops accumulating precision and keeps consuming.
+    // Digits after `.`; overflow here stops accumulating precision but keeps consuming.
     let fracPart = 0n;
     let scale = 1n;
     let hasFracDigits = false;
@@ -852,38 +580,17 @@ function isValidGoDuration(value: string): boolean {
     if (total > GO_DURATION_UINT64_OVERFLOW_BOUND) return false;
   }
 
-  // The final range check only runs for the non-negative case — the
-  // negative side already got the one-larger `1<<63` bound above, matching
-  // `int64`'s two's-complement asymmetry (see the doc comment).
+  // The negative side already got the larger `1<<63` bound above (int64's two's-complement
+  // asymmetry); only the non-negative case needs this final check.
   return negative || total <= GO_DURATION_MAX_INT64;
 }
 
 /**
- * Mirrors `time.Parse(time.RFC3339, s)` — `2006-01-02T15:04:05Z07:00`
- * — exact 4/2/2/2/2/2-digit date-time fields, a literal (case-sensitive) `T`
- * separator, an optional fractional-seconds run of any length introduced by
- * EITHER `.` or `,` (the `time` package accepts both spellings of the
- * decimal mark per RFC 3339/ISO 8601: `"2024-01-02T15:04:05,5Z"` parses
- * identically to `"...05.5Z"`; a bare separator with no following digit,
- * e.g. `",Z"`, still fails, and mixing both separators in one timestamp,
- * e.g. `".5,5Z"`, still fails too), and a `Z` or `±HH:MM` offset.
- * Hour/minute/second are bounded to `0-23`/`0-59`/`0-59` (rejects `":60"`
- * — no leap-second allowance — and `"25:"`). The offset's own hour/minute
- * fields are ALSO bounded, but not to that same 0-23/0-59 range: the
- * zone-offset parser independently caps the offset hour at 24 (not 23) and
- * the offset minute at 60 (not 59), each checked in isolation rather than as
- * a combined "total offset <= 24h": `"+24:00"`, `"+23:59"`, `"+24:60"`, and
- * `"+00:60"` all parse successfully; `"+25:00"` and `"+00:61"` both fail
- * with "time zone offset hour/minute out of range". Month/day validity
- * (including leap years, and short months like April's 30 days) is checked
- * by round-tripping the parsed year/month/day through `Date#setUTCFullYear`
- * and comparing what comes back — that method (unlike the `Date`
- * constructor or `Date.UTC`) does NOT special-case a 0-99 year into
- * 1900+year, so it stays correct for the accepted `"0000-01-02T15:04:05Z"`,
- * and its normal calendar-overflow behavior (Feb 29 rolling to Mar 1 in a
- * non-leap year, day 32 rolling into the next month, month 13 rolling into
- * the next year) exactly reproduces the same leap-year and day/month-bounds
- * rejections without hand-rolling the calendar math.
+ * Matches RFC 3339 (`2006-01-02T15:04:05Z07:00`): fractional seconds may use either `.` or
+ * `,`, and the offset's own hour/minute are independently capped at 24/60 (not the 0-23/0-59
+ * bounds used for the time fields themselves). Calendar validity is checked by round-tripping
+ * through `Date#setUTCFullYear`, which — unlike the `Date` constructor — doesn't special-case
+ * a 0-99 year into 1900+year.
  */
 const GO_RFC3339_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:[.,]\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
@@ -909,27 +616,16 @@ function isValidGoRfc3339(value: string): boolean {
 }
 
 /**
- * Go registers `--sql-paths` (`db reset`, `cmd/db.go:714`) as a plain
- * `StringArrayVar` — pflag stores each repeated occurrence verbatim, with NO
- * CSV parsing — unlike every OTHER variadic (`isVariadic`) string flag
- * reachable from this tree, which Go declares `StringSliceVar`/
- * `StringSliceVarP` (CSV-split per occurrence): `--domains` (sso
- * add/update), `--schema`/`--exclude` (db dump/diff/pull/lint, gen types, db
- * schema declarative generate/sync), `--config` (postgres-config
- * delete/update), `--db-unban-ip` (network-bans remove), `--db-allow-cidr`
- * (network-restrictions update), and `--exclude`/`--override-name`
- * (start/status). This is the one, small exception — kept as an exclusion
- * set rather than an inclusion table, since the inclusion side is the much
- * longer list. Key = `<matched command path>:<flag name>`.
+ * `db reset`'s `--sql-paths` stores each repeated occurrence verbatim, unlike every other
+ * variadic string flag in this tree, which CSV-splits each occurrence. Kept as a small
+ * exclusion set rather than an inclusion table, since the inclusion side is much longer.
+ * Key = `<matched command path>:<flag name>`.
  */
 const COMPLETION_NON_CSV_VARIADIC_FLAGS: ReadonlySet<string> = new Set(["db reset:sql-paths"]);
 
 /**
- * Validates a CSV-per-occurrence (`isVariadic`, pflag `StringSliceVar`)
- * flag's value the same way `parseStringSliceFlag` does at real parse
- * time — reused here directly rather than re-implemented, so the two never
- * drift: `sso add --domains 'a,"b' --type` — an unterminated quote — returns
- * zero candidates with the Default directive, not `--type`.
+ * Validates a CSV-per-occurrence variadic flag's value with `parseStringSliceFlag`, reused
+ * directly so the two never drift.
  */
 function isValidCsvFlagValue(value: string): boolean {
   try {
@@ -941,16 +637,10 @@ function isValidCsvFlagValue(value: string): boolean {
 }
 
 /**
- * `--output`/`-o` is a command-scoped enum: the root persistent flag
- * accepts `env|pretty|json|toml|yaml` while `db query`'s own local flag
- * accepts `json|table|csv` — two value sets that only overlap on `json`, on
- * what this TS tree models as a single global `OutputFlag` whose
- * `choiceKeys` is the union of both (`go-output-flag.ts`), so
- * `flag.choiceKeys` alone can't tell which enum applies at the resolved
- * command. This restores per-command validation: `--output table ""`
- * outside `db query`, and `db query --output env ""`, are BOTH rejected
- * with zero candidates and the Default directive, even though each value is
- * accepted on the OTHER side.
+ * `--output` is modeled as one global flag whose `choiceKeys` is the union of two distinct
+ * enums (`env|pretty|json|toml|yaml` everywhere else, `json|table|csv` for `db query`), so
+ * `flag.choiceKeys` alone can't tell which applies at the resolved command. This restores
+ * per-command validation.
  */
 function outputFlagChoiceKeys(matchedPath: ReadonlyArray<string>): ReadonlyArray<string> {
   return matchedPath.length === 2 && matchedPath[0] === "db" && matchedPath[1] === "query"
@@ -959,22 +649,11 @@ function outputFlagChoiceKeys(matchedPath: ReadonlyArray<string>): ReadonlyArray
 }
 
 /**
- * Validates a flag's value the way pflag's typed `Value.Set` does inside
- * `finalCmd.ParseFlags()` — e.g. `-o not-a-format` (a `Choice`-typed
- * `--output`) or `--debug=maybe` (a `Boolean`-typed `--debug`) fail to parse
- * in real pflag, and cobra reports the parse error instead of generating any
- * completions: both return zero candidates with the Default directive,
- * exactly like an unresolved flag name. The command-dependent overrides
- * (`COMPLETION_UINT_FLAGS`, `COMPLETION_DURATION_FLAGS`,
- * `COMPLETION_RFC3339_FLAGS`, `COMPLETION_NON_CSV_VARIADIC_FLAGS`)
- * are checked BEFORE the `primitiveTag` dispatch — a bare `FlagDescriptor`
- * can't express any of them on its own (all need `matchedPath`, and the uint
- * one specifically needs to catch a flag whose TS `primitiveTag` isn't
- * `"Integer"` at all, e.g. `storage cp --jobs`; the duration/RFC3339 ones
- * catch flags that are plain `Flag.string` in TS but a `Duration`/`Time`
- * pflag value). Every other primitive shape pflag can actually reject is
- * checked in the switch; `String`/`Path`/`Date`/etc. flags accept any string
- * there too, so the default case is unconditionally valid.
+ * Validates a flag's value; an invalid value returns zero candidates with the Default
+ * directive, exactly like an unresolved flag name. The command-dependent overrides
+ * (`COMPLETION_UINT_FLAGS`, `COMPLETION_DURATION_FLAGS`, `COMPLETION_RFC3339_FLAGS`,
+ * `COMPLETION_NON_CSV_VARIADIC_FLAGS`) are checked before the `primitiveTag` dispatch, since
+ * they key on `matchedPath`, which a bare `FlagDescriptor` can't express.
  */
 function isValidFlagValue(
   matchedPath: ReadonlyArray<string>,
@@ -1016,27 +695,12 @@ function isValidFlagValue(
 }
 
 /**
- * Walks a short-flag cluster (`-o`, `-ojson`, `-rj`, `-o=json`) the same way
- * pflag's `parseSingleShortArg` does (`pflag@v1.0.10/flag.go:1040-1114`) —
- * first character owns the value, not last. This is deliberately a
- * DIFFERENT algorithm from `resolveFlagFromToken`'s last-character
- * resolution: that function mirrors cobra's OWN separate, narrower
- * `checkIfFlagCompletion` heuristic, used only to guess "is the CURRENT or
- * PRECEDING token mid-way through being value-completed" — not to strictly
- * parse a token that's already fully typed. This function mirrors the real
- * strict parser (`finalCmd.ParseFlags()`) instead, used by
- * `findUnresolvedFlagToken`: `functions deploy -j4 --p` still offers
- * `--profile`/`--project-ref`/`--prune` — `-j4` is a fully valid, already-
- * resolved `--jobs=4`, not an unknown flag.
- *
- * Returns `undefined` if any character in the cluster doesn't resolve to an
- * in-scope flag shorthand. Otherwise returns the flag that ultimately owns
- * the cluster's (possibly absent) attached value — the first non-boolean
- * shorthand encountered, or the cluster's last shorthand if every character
- * in it is boolean — plus that attached value, which is `undefined` only
- * when there is nothing left in the token to attach (`-o` alone, or an
- * all-boolean cluster like `-rf`), meaning a following token supplies it
- * instead.
+ * Walks a short-flag cluster (`-o`, `-ojson`, `-rj`, `-o=json`), where the first non-boolean
+ * character owns the value, not the last — unlike `resolveFlagFromToken`'s completion guess,
+ * this strictly parses a complete token, so `-j4` resolves to `--jobs=4` rather than an
+ * unknown flag. Returns `undefined` if any character fails to resolve; the returned
+ * `attachedValue` is `undefined` only when nothing is left to attach, meaning a following
+ * token supplies it instead.
  */
 function resolveShortFlagCluster(
   token: string,
@@ -1063,66 +727,11 @@ function resolveShortFlagCluster(
 }
 
 /**
- * Finds the first token in `trimmedArgs` that either (a) looks like a flag
- * (starts with `-`, excluding the bare `-` positional pflag itself treats as
- * a non-flag argument) but does not resolve to anything in `inScopeFlags`,
- * (b) resolves to a real flag whose value `isValidFlagValue` rejects,
- * or (c) resolves to a real, non-boolean flag with NO value available at all
- * — no attached suffix and no following token — AND `toComplete` itself is a
- * bare flag-shaped token (starts with `-`).
- *
- * That last condition mirrors a real two-part cobra/pflag interaction:
- * cobra's `checkIfFlagCompletion` only rescues a trailing incomplete flag
- * from `ParseFlags()` (treating it as "the flag currently being
- * value-completed" instead of a parse error) when `toComplete` is EMPTY or
- * otherwise not itself flag-shaped (`completions.go:666-687`, the `prevArg`
- * branch, which strips the dangling flag out of `finalArgs` before
- * `ParseFlags` ever sees it). When `toComplete` IS flag-shaped, that rescue
- * never happens — `checkIfFlagCompletion` either returns immediately without
- * touching `finalArgs` (no `=`, `completions.go`'s "Normal flag completion"
- * early return) or extracts a flag name from `toComplete`'s OWN prefix
- * before its `=` (`completions.go`'s `flagWithEqual` branch) — neither path
- * strips a DIFFERENT, already-dangling flag earlier in `finalArgs`, so the
- * real `finalCmd.ParseFlags()` call (`completions.go:373-375`) fails
- * outright on it. Whether `toComplete` itself contains `=` is irrelevant:
- * that `=` only ever resolves `toComplete`'s own flag name, never rescues an
- * earlier dangling one: `__complete -o --d` returns zero candidates with
- * the Default directive — the `ParseFlags` error is "flag needs an
- * argument: 'o' in -o" — while `__complete -o ''` and `__complete -o pre`
- * both instead fall through to flag-VALUE completion for `--output`, per
- * `classifyCompletion`'s Case 2; `__complete sso add --type saml
- * --metadata-file --attribute-mapping-file=` ALSO returns zero candidates
- * with the Default directive — the `ParseFlags` error is "flag needs an
- * argument: --metadata-file" — even though the current token has an `=` and
- * identifies a wholly separate flag, not `--metadata-file`'s value.
- *
- * Long flags (`--foo`, `--foo=bar`) resolve via `resolveFlagFromToken`
- * (no first/last-character ambiguity for a `--name` token). Short flags
- * resolve via `resolveShortFlagCluster` instead — see that function's
- * doc comment for why this deliberately does NOT reuse
- * `resolveFlagFromToken`'s last-character heuristic here.
- *
- * Consumes a following token as a non-boolean flag's value the same way
- * `resolveCommandPath` does. A bare `--` ends the scan entirely without
- * itself counting as unresolved — pflag's own end-of-flags sentinel, after
- * which everything is positional, not a flag to validate (`pflag@v1.0.9`'s
- * `parseArgs`: `if s[1] == '-' { if len(s) == 2 { ... terminates the flags`).
- * Returns the offending token, or `undefined` if every flag-shaped token
- * resolves to a real flag with a valid, available value.
- *
- * Mirrors cobra's real two-phase design: `Find()` tolerantly skips flags it
- * doesn't recognize while walking for a subcommand name (see
- * `resolveCommandPath`, which only needs to know "does this consume a
- * value", not "is this real"), but the later `finalCmd.ParseFlags()` strictly
- * validates every remaining flag token — both that it resolves AND that its
- * value parses — against the fully-resolved command's complete flag set, and
- * fails outright on the first one that doesn't (`completions.go:373-375`) — a
- * failure so early it wins even over the `--help`/`--version` short-circuit
- * below: both `__complete --bogus --help ""` and `__complete --help --bogus
- * ""` report the unknown flag, not help; a bare `__complete --bogus ""`
- * returns zero candidates with the Default directive, not the root
- * subcommand list; `__complete -- ""` is unaffected and still lists every
- * root subcommand.
+ * Finds the first token that's flag-shaped but unresolved, resolves to a flag whose value
+ * fails `isValidFlagValue`, or is a non-boolean flag with no value available (only when
+ * `toComplete` is itself flag-shaped; otherwise a trailing flag is understood to be
+ * mid-value-completion). A bare `--` ends the scan without counting as unresolved. This
+ * check takes priority even over the `--help`/`--version` short-circuit below.
  */
 function findUnresolvedFlagToken(
   trimmedArgs: ReadonlyArray<string>,
@@ -1130,14 +739,8 @@ function findUnresolvedFlagToken(
   inScopeFlags: ReadonlyArray<FlagDescriptor>,
   matchedPath: ReadonlyArray<string>,
 ): string | undefined {
-  // See this function's doc comment: only a `toComplete` that's itself a
-  // bare flag-shaped token blocks cobra's "rescue" of a trailing,
-  // value-less flag — whether that token also contains `=` is irrelevant,
-  // since the `=` only ever resolves `toComplete`'s OWN flag name, never an
-  // earlier, different dangling flag. Every non-flag-shaped `toComplete`
-  // leaves the trailing flag for flag-VALUE completion instead, so a
-  // missing value at the end of `trimmedArgs` is not, by itself, unresolved
-  // in that case.
+  // A trailing flag with no value counts as unresolved only when `toComplete` is itself
+  // flag-shaped; otherwise it's understood to be mid-value-completion instead.
   const trailingMissingValueIsFatal = toComplete.startsWith("-");
 
   let index = 0;
@@ -1170,12 +773,8 @@ function findUnresolvedFlagToken(
 
     const cluster = resolveShortFlagCluster(token, inScopeFlags);
     if (cluster === undefined) return token;
-    // An attached value (`-o=json`, or a non-boolean's `-ojson`) must be
-    // validated BEFORE the boolean short-circuit below — pflag treats
-    // `-f=value` as an explicit value for a boolean shorthand too
-    // (`pflag@v1.0.10/flag.go:1005-1033`), so a boolean owner does not, on
-    // its own, mean "nothing to validate": `storage cp -r=maybe --j` returns
-    // zero candidates with the Default directive, not `--jobs`.
+    // An attached value (`-o=json`, or a non-boolean's `-ojson`) is validated before the
+    // boolean short-circuit below, since a boolean shorthand can also take an explicit value.
     if (cluster.attachedValue !== undefined) {
       if (!isValidFlagValue(matchedPath, cluster.flag, cluster.attachedValue)) return token;
       continue;
@@ -1208,30 +807,10 @@ function flagValueCompletion(
 }
 
 /**
- * Mirrors cobra's auto-registered `help` command's own `ValidArgsFunction`
- * (`command.go:1263-1310`, `InitDefaultHelpCmd`): `help` is a REAL subcommand
- * of root, and its `ValidArgsFunction` re-resolves everything typed after it
- * from root — via `c.Root().Find(args)` — then lists THAT resolved command's
- * own visible subcommands, filtered by `toComplete`'s prefix. `help db d`
- * therefore completes as if `d` were being completed inside `db` (`diff`,
- * `dump`), not as an argument to `help` itself.
- *
- * Mirrors cobra's `legacyArgs` validator (`args.go:28-37`) for the "unknown
- * command" error `Find` surfaces through `e`: it fires ONLY when the
- * resolved command is root itself (no real descent happened at all) AND a
- * token is left over — a token left over under any OTHER resolved command is
- * never an error there (subcommands "will always accept arbitrary
- * arguments"). On that error path cobra returns zero candidates, but still
- * with the NoFileComp directive, same as the success path: `help bogus d`
- * -> no candidates; `help db bogus d` -> still `db`'s subcommands, since
- * `db` is not root.
- *
- * `root` here is always `finalCommand` from the outer resolution: `help` has
- * no node anywhere in this TS tree (it is a synthesized candidate, not a
- * real `Command.Command.Any` — see the comment where Case 3 pushes it
- * below), so the outer `resolveCommandPath` call always stops at root
- * immediately when `trimmedArgs[0] === "help"`, making `finalCommand` and
- * real cobra's `c.Root()` the same command.
+ * `help <args>` completes as if `<args>` were being typed directly, so `help db d` offers
+ * `db`'s own subcommands (`diff`, `dump`) filtered by `d`. An unresolved leftover positional
+ * returns no candidates only when nothing beyond `help` resolved at all (e.g. `help bogus`);
+ * a leftover under any resolved command still lists that command's subcommands.
  */
 function helpArgumentCandidates(
   root: Command.Command.Any,
@@ -1249,8 +828,7 @@ function helpArgumentCandidates(
     name: sub.name,
     description: sub.shortDescription ?? sub.description,
   }));
-  // Cobra's help command is itself one of root's `Commands()`, so re-resolving
-  // to root also re-lists `help` (verified empirically: `help h` -> `help`).
+  // `help` is included when nothing after it resolved, since it's one of root's own subcommands.
   if (matchedPath.length === 0) {
     candidates.push({ name: "help", description: "Help about any command" });
   }
@@ -1263,39 +841,11 @@ function helpArgumentCandidates(
 }
 
 /**
- * Classifies a single completion request into candidates + directive,
- * mirroring cobra's `checkIfFlagCompletion` and the branch in
- * `getCompletions` that follows it:
- *
- * 0. A flag-shaped token that doesn't resolve to any in-scope flag
- *    short-circuits to no candidates with the Default directive — mirrors
- *    `finalCmd.ParseFlags()` failing outright on an unrecognized flag, which
- *    wins even over `--help`/`--version` below.
- * 0.5. An unmatched ROOT-level positional (`matchedPath.length === 0` — no
- *    real descent happened at all — with a genuine leftover positional token)
- *    ALSO short-circuits to no candidates with the Default directive, and
- *    wins over `--help`/`--version` too — mirrors `Command.Find`'s own
- *    `legacyArgs` validator (`cobra@v1.10.2/args.go:28-37`), which returns
- *    `unknown command %q` precisely when the resolved command is root, has
- *    subcommands (root always does), and has a leftover non-flag positional
- *    — an error `getCompletions` surfaces as zero candidates before doing
- *    anything else with `finalCmd`.
- * 1. `--help`/`-h` anywhere in `trimmedArgs` (or `--version`/`-v`, only when
- *    resolved to the root command) short-circuits to no candidates — these
- *    exit before any real completion runs.
- * 2. A genuine, unconsumed bare `--` anywhere in `trimmedArgs` disables ALL
- *    flag-name and flag-value completion (Cases 3/4 below) for the rest of
- *    this request — mirrors cobra's `flagCompletion` gate, which goes false
- *    the moment a previous `--` is already present (`completions.go:364-
- *    381`; see `hasUnconsumedFlagTerminator` below for why "unconsumed"
- *    matters).
- * 3. `toComplete` is a bare flag with no `=` → flag-NAME completion.
- * 4. `toComplete` (or the immediately preceding token) identifies a
- *    non-boolean flag's value slot → flag-VALUE completion.
- * 5. Otherwise → subcommand-name + required-flag (noun) completion; five
- *    specific leaf paths (`completion[ bash|zsh|fish|powershell]`) force the
- *    directive to NoFileComp regardless of what the subcommand walk above
- *    computed — see `COMPLETION_NO_FILE_COMP_PATHS`.
+ * Classifies a completion request into candidates + directive, in priority order: an
+ * unresolved/invalid flag-shaped token or unmatched root positional short-circuits first,
+ * ahead of `--help`/`--version`; an unconsumed `--` then disables flag-name/flag-value
+ * completion; otherwise a bare flag with no `=` gets flag-name completion, a flag's value
+ * slot gets flag-value completion, and everything else gets subcommand-name completion.
  */
 export function classifyCompletion(input: ClassifyCompletionInput): CompletionResult {
   const { finalCommand, matchedPath, leftoverArgs, trimmedArgs, toComplete, inScopeFlags } = input;
@@ -1305,57 +855,21 @@ export function classifyCompletion(input: ClassifyCompletionInput): CompletionRe
     return { candidates: [], directive: CompletionDirective.Default };
   }
 
-  // Mirrors cobra's `stripFlags` (`command.go:674-710`), which the
-  // `legacyArgs` validator below runs its leftover-count check against — a
-  // bare `-` (and an empty string) is dropped from consideration, NOT
-  // counted as a genuine leftover positional, even though
-  // `resolveCommandPath` deliberately leaves a bare `-` IN
-  // `leftoverArgs` for other purposes: `__complete - --d` still offers
-  // root's own `--debug`/`--dns-resolver`, since `stripFlags` drops the lone
-  // `-` and leaves zero real leftover commands to error on — root cause
-  // shared with the `nosuch --d` case below.
-  //
-  // Exempts `trimmedArgs[0] === "help"`: real cobra's `help` is a REAL child
-  // node of root (`InitDefaultHelpCmd`), so `Find(["help", ...])` resolves
-  // INTO the help command itself rather than stopping at root — this TS
-  // tree has no such node (see `helpArgumentCandidates`'s doc
-  // comment), so the outer resolution below always sees "help" as an
-  // immediate non-match and would otherwise misfire this same root-level
-  // check for every legitimate `help ...` request. Case 3's own
-  // `isAtRoot && trimmedArgs[0] === "help"` branch re-resolves `help`'s own
-  // arguments from root separately and already reproduces cobra's real
-  // unknown-command handling for THAT inner resolution
-  // (`helpArgumentCandidates`'s `matchedPath.length === 0 &&
-  // leftoverArgs.length > 0` check).
+  // A bare `-` or empty string doesn't count as a genuine leftover positional, even though
+  // `resolveCommandPath` keeps it in `leftoverArgs` for other purposes. `help` is exempted
+  // since `helpArgumentCandidates` handles its own leftover-positional case separately.
   const rootLeftoverPositionals = leftoverArgs.filter((arg) => arg !== "" && !arg.startsWith("-"));
   if (isAtRoot && trimmedArgs[0] !== "help" && rootLeftoverPositionals.length > 0) {
-    // Mirrors cobra's `Command.Find` -> `legacyArgs` (`args.go:28-37`):
-    // resolving to root itself (no descent at all) with a leftover
-    // positional is an "unknown command" error there, unlike a leftover
-    // positional under any OTHER resolved command, which is never an error:
-    // `nosuch --d` returns zero candidates with the Default directive —
-    // even ahead of the `--help`/`--version` short-circuit below, i.e.
-    // `nosuch --help` is ALSO zero candidates, not the help short-circuit's
-    // NoFileComp — while `db bogus --d`, where `db` itself resolves, still
-    // offers `db`'s own `--debug`/`--dns-resolver` normally.
+    // Resolving to root itself with a leftover positional is treated as an unknown command; a
+    // leftover positional under any other resolved command is not an error.
     return { candidates: [], directive: CompletionDirective.Default };
   }
 
-  // `collectChangedFlagNames` (not a raw token scan) is load-bearing here: it
-  // already stops at a genuine, unconsumed `--` terminator and already skips
-  // a token consumed as a PRECEDING non-boolean flag's value — exactly the
-  // two cases pflag's own `Changed` tracking respects and a bare
-  // `trimmedArgs.some(...)` token scan does not: `db dump -- --help ""`
-  // still offers `db dump`'s own completions, not the help short-circuit —
-  // `--help` is positional, past the terminator; `--workdir --version br`
-  // still completes `branches`, not the version short-circuit — `--version`
-  // is consumed as `--workdir`'s string value, never parsed as a flag at all.
+  // `collectChangedFlagNames`, not a raw token scan, correctly treats a positional `--help`
+  // past a `--` terminator, or one consumed as a preceding flag's value, as not present.
   const changedFlagNames = collectChangedFlagNames(trimmedArgs, inScopeFlags);
 
-  // `version` is gated on `isAtRoot`: cobra's `--version` flag lives on the
-  // root command only (see `collectInScopeFlags`'s comment) — `help` is
-  // NOT gated the same way since every command registers its own local
-  // `--help` (present in `inScopeFlags`/`changedFlagNames` at every depth).
+  // `--version` only applies at root; `--help` is available at every depth.
   if (changedFlagNames.has("help") || (isAtRoot && changedFlagNames.has("version"))) {
     return { candidates: [], directive: CompletionDirective.NoFileComp };
   }
@@ -1366,13 +880,8 @@ export function classifyCompletion(input: ClassifyCompletionInput): CompletionRe
 
   const toCompleteIsFlag = toComplete.startsWith("-");
   const toCompleteEqualsIndex = toComplete.indexOf("=");
-  // Once a genuine, unconsumed bare `--` sentinel has already appeared,
-  // cobra never does flag-name or flag-value completion again for the rest
-  // of the request: `db dump -- --s` returns zero candidates with the
-  // Default directive, not `--schema`. See
-  // `hasUnconsumedFlagTerminator`'s doc comment for why a raw
-  // `trimmedArgs.includes("--")` over-triggers when a preceding value-taking
-  // flag consumed that `--` as its own value instead.
+  // Once a genuine `--` terminator has appeared, flag-name/flag-value completion never runs
+  // again for the rest of the request.
   const hasFlagTerminator = hasUnconsumedFlagTerminator(trimmedArgs, inScopeFlags);
 
   // Case 1: flag-NAME completion.
@@ -1380,8 +889,7 @@ export function classifyCompletion(input: ClassifyCompletionInput): CompletionRe
     const requiredCandidates = requiredFlags.flatMap((flag) =>
       flagNameCandidates(flag, toComplete),
     );
-    // Once ANY required flag is still unset, ONLY required flags are
-    // offered — this exactly mirrors cobra.
+    // If any required flag is still unset, only required flags are offered.
     if (requiredCandidates.length > 0) {
       return { candidates: requiredCandidates, directive: CompletionDirective.NoFileComp };
     }
@@ -1394,14 +902,8 @@ export function classifyCompletion(input: ClassifyCompletionInput): CompletionRe
   // Case 2: flag-VALUE completion.
   if (!hasFlagTerminator) {
     if (toCompleteIsFlag) {
-      // toCompleteEqualsIndex !== -1 here — the no-`=` branch above returns.
-      // Cobra's checkIfFlagCompletion treats ANY `--flag=value` token
-      // (including a boolean's) as flag-value completion — the "reset to
-      // noun completion for a boolean" only applies in the separate no-`=`
-      // two-token case handled by the `else` branch below
-      // (`completions.go`'s `!flagWithEqual` guard around that reset):
-      // `--debug=maybe` returns zero candidates with the Default directive,
-      // not the root command list.
+      // A `--flag=value` token is always treated as flag-value completion, even for a
+      // boolean flag.
       const resolved = resolveFlagFromToken(
         toComplete.slice(0, toCompleteEqualsIndex),
         inScopeFlags,
@@ -1412,35 +914,21 @@ export function classifyCompletion(input: ClassifyCompletionInput): CompletionRe
     if (
       precedingToken !== undefined &&
       precedingToken.startsWith("-") &&
-      // A bare `-` is excluded — pflag's `isFlagArg` (`command.go:750-753`)
-      // requires at least 2 characters, so real cobra's own equivalent
-      // "preceding token is flag-shaped" check never fires for it either,
-      // and this must fall through to Case 3 instead of hard-stopping:
-      // `help db - d` still lists `db`'s subcommands `diff`/`dump`, not
-      // zero candidates.
+      // A bare `-` is excluded, so it falls through to Case 3 instead of hard-stopping.
       precedingToken !== "-" &&
       !precedingToken.includes("=")
     ) {
       const resolved = resolveFlagFromToken(precedingToken, inScopeFlags);
       if (resolved === undefined) {
-        // Cobra's checkIfFlagCompletion errors out here (a `flagCompError`
-        // short-circuits `getCompletions` outright) rather than falling
-        // through to noun completion — an unresolved trailing flag (per
-        // that function's OWN last-character heuristic, not
-        // `findUnresolvedFlagToken`'s strict first-character parse)
-        // before an empty/non-flag toComplete is a hard stop: `-ojson ""`
-        // returns zero candidates with the Default directive, even though
-        // `-ojson` is a perfectly valid `-o=json` under real pflag parsing
-        // — cobra's own heuristic looks at `-ojson`'s LAST character, `n`,
-        // which resolves to nothing.
+        // An unresolved trailing flag before an empty/non-flag toComplete is a hard stop,
+        // not a fall-through to noun completion.
         return { candidates: [], directive: CompletionDirective.Default };
       }
       if (!resolved.isBoolean) {
         return flagValueCompletion(matchedPath, resolved.name);
       }
-      // A resolved BOOLEAN precedingToken falls through to Case 3 — it
-      // never consumed a value, so this wasn't really flag-value
-      // completion.
+      // A resolved boolean precedingToken falls through to Case 3, since it never
+      // consumed a value.
     }
   }
 
@@ -1448,21 +936,14 @@ export function classifyCompletion(input: ClassifyCompletionInput): CompletionRe
   const candidates: Array<CompletionCandidate> = [];
   let directive: number = CompletionDirective.Default;
 
-  // `help` is a real cobra subcommand with its own `ValidArgsFunction` that
-  // completes a SECOND, independent command-path lookup from root — see
-  // `helpArgumentCandidates`'s doc comment. `isAtRoot &&
-  // trimmedArgs[0] === "help"` exactly identifies "this request is `help
-  // ...`": `help` isn't a node anywhere in this tree, so the outer
-  // `resolveCommandPath` call always stops at root immediately when
-  // it's the first token.
+  // A `help ...` request is resolved separately, since `help` isn't a real command node
+  // in this tree.
   if (isAtRoot && trimmedArgs[0] === "help") {
     return helpArgumentCandidates(finalCommand, trimmedArgs.slice(1), toComplete);
   }
 
-  // Once any flag or extra positional token has already appeared before this
-  // position, subcommand-name completion is suppressed entirely (cobra's
-  // `len(finalArgs) == 0` gate) — including the directive it would otherwise
-  // set, which stays at `Default` in that case (`completions.go:489,499-522`).
+  // Any flag or extra positional token before this position suppresses subcommand-name
+  // completion entirely, leaving the directive at Default.
   if (leftoverArgs.length === 0) {
     const visibleSubcommands = flattenSubcommands(finalCommand).filter((sub) => !sub.unlisted);
     if (visibleSubcommands.length > 0) {
@@ -1471,22 +952,13 @@ export function classifyCompletion(input: ClassifyCompletionInput): CompletionRe
         name: sub.name,
         description: sub.shortDescription ?? sub.description,
       }));
-      // Cobra's `InitDefaultHelpCmd` (`command.go:1100,1263-1266`) auto-registers a
-      // `help` subcommand on whichever command `ExecuteC()` is called against —
-      // here, always the root — but never recursively on descendants:
-      // `__complete db ""` does NOT surface it, only `__complete ""` does.
-      // This TS tree has no explicit `help` command node to walk, so
-      // synthesize the one candidate cobra would otherwise contribute,
-      // matching its literal `Short` text.
+      // `help` isn't a real command node in this tree; synthesize it as a candidate, but
+      // only at root, not recursively on descendants.
       if (isAtRoot) {
         subcommandCandidates.push({ name: "help", description: "Help about any command" });
       }
-      // Cobra's own `Commands()` — what its subcommand-name completion walks —
-      // sorts alphabetically by name whenever `EnableCommandSorting` (the
-      // default) is on. This tree's subcommand declarations already happen to
-      // be listed alphabetically, so this sort is a no-op everywhere except at
-      // the root, where it places the synthetic "help" entry above in its
-      // correct alphabetical position.
+      // Sorted alphabetically so the synthetic "help" entry lands in its correct position
+      // at root; a no-op everywhere else, since subcommands are already declared in order.
       subcommandCandidates.sort((a, b) => a.name.localeCompare(b.name));
       for (const candidate of subcommandCandidates) {
         if (candidate.name.startsWith(toComplete)) {
@@ -1496,16 +968,13 @@ export function classifyCompletion(input: ClassifyCompletionInput): CompletionRe
     }
   }
 
-  // Unconditional append in cobra — not gated on `leftoverArgs`.
+  // Required flags are always offered here, regardless of `leftoverArgs`.
   for (const flag of requiredFlags) {
     candidates.push(...flagNameCandidates(flag, toComplete));
   }
 
-  // Cobra always invokes a resolved command's own `ValidArgsFunction` (when
-  // registered) at the very end of `getCompletions`, and that call
-  // OVERWRITES whatever directive the subcommand walk above already set
-  // (`completions.go:564-579`) — see `COMPLETION_NO_FILE_COMP_PATHS`'s
-  // doc comment for which paths this applies to and why.
+  // Overrides whatever directive the subcommand walk above set; see
+  // `COMPLETION_NO_FILE_COMP_PATHS`.
   if (COMPLETION_NO_FILE_COMP_PATHS.has(matchedPath.join(" "))) {
     directive = CompletionDirective.NoFileComp;
   }
@@ -1513,22 +982,17 @@ export function classifyCompletion(input: ClassifyCompletionInput): CompletionRe
   return { candidates, directive };
 }
 
-/* ========================================================================== */
-/* Orchestration                                                             */
-/* ========================================================================== */
-
 /**
- * The pure, deps-free completion algorithm: resolves the command path,
- * collects in-scope flags, and classifies the request. Returns `undefined`
- * when `argv[0]` isn't a completion request, or when cobra's `args` (i.e.
- * `argv.slice(1)`) is empty — mirroring cobra's own `MinimumNArgs(1)` failure
- * (see the module doc comment for why that case isn't otherwise reproduced).
+ * The pure, deps-free completion algorithm: resolves the command path, collects in-scope
+ * flags, and classifies the request. Returns `undefined` when `argv[0]` isn't a completion
+ * request, or when there are no args to classify.
  */
 export function respondToComplete(
-  root: Command.Command.Any,
+  root: Command.Command.Any | undefined,
   argv: ReadonlyArray<string>,
 ): CompletionResult | undefined {
   if (argv[0] !== "__complete" && argv[0] !== "__completeNoDesc") return undefined;
+  if (root === undefined) return undefined;
 
   const args = argv.slice(1);
   if (args.length === 0) return undefined;
@@ -1549,10 +1013,6 @@ export function respondToComplete(
     inScopeFlags,
   });
 }
-
-/* ========================================================================== */
-/* Response formatting                                                       */
-/* ========================================================================== */
 
 const GO_TRUE_BOOL_SPELLINGS: ReadonlySet<string> = new Set([
   "1",
@@ -1578,12 +1038,9 @@ function parseGoBool(value: string): boolean | undefined {
 }
 
 /**
- * Cobra's real, undocumented-to-users-but-real `getEnvConfig` behavior:
- * `argv[0] === "__completeNoDesc"` always wins; otherwise
- * `SUPABASE_COMPLETION_DESCRIPTIONS` (program-specific) is checked first,
- * falling back to the generic `COBRA_COMPLETION_DESCRIPTIONS` when unset or
- * empty. An unparseable value (per `strconv.ParseBool`'s accepted
- * spellings) is ignored, leaving the `argv[0]`-derived default in place.
+ * `argv[0] === "__completeNoDesc"` always wins; otherwise `SUPABASE_COMPLETION_DESCRIPTIONS`
+ * is checked first, falling back to `COBRA_COMPLETION_DESCRIPTIONS` when unset or empty. An
+ * unparseable value is ignored, leaving the `argv[0]`-derived default in place.
  */
 export function resolveIncludeDescriptions(
   argv0: string | undefined,
@@ -1604,16 +1061,15 @@ function formatCompletionLine(
 ): string {
   if (!includeDescriptions) return candidate.name.trim();
   const firstDescriptionLine = (candidate.description ?? "").split("\n")[0] ?? "";
-  // `.trim()` on the whole joined string (not just the description) is what
-  // makes a candidate with no description end up as a bare name with no
-  // trailing tab, not `"name\t"` — reproduces cobra's exact `TrimSpace` step.
+  // Trimming the whole joined string, not just the description, drops the trailing tab
+  // when there's no description.
   return `${candidate.name}\t${firstDescriptionLine}`.trim();
 }
 
 /**
- * Formats a completion result the way cobra's generated shell scripts expect:
- * one line per candidate (`name` or `name\tdescription`), then a final
- * `:<directive>` line. Every line ends with `\n`.
+ * Formats a completion result as the shell completion protocol expects: one line per
+ * candidate (`name` or `name\tdescription`), then a final `:<directive>` line, each ending
+ * with `\n`.
  */
 export function formatCompletionResponse(
   response: CompletionResult,
@@ -1626,41 +1082,12 @@ export function formatCompletionResponse(
   return lines.map((line) => `${line}\n`).join("");
 }
 
-/* ========================================================================== */
-/* Entry point                                                               */
-/* ========================================================================== */
-
 /**
- * The `cli_command_executed` capture for a `__complete`/`__completeNoDesc`
- * request. This event fires for every resolved command, including cobra's
- * hidden `__complete`, regardless of the handler's own outcome — this
- * interceptor is the only thing that fires it for a completion request,
- * since nothing else in the completion path runs a command handler.
- * `command` is always the literal `"__complete"`, never
- * `"__completeNoDesc"`: cobra registers `__completeNoDesc` as an ALIAS of
- * `__complete` (`completions.go:234`), and the recorded value is derived
- * from the command's own primary name, not the alias it was invoked as.
- * `output_format` is the fixed literal `"text"`: `__complete` is
- * `DisableFlagParsing: true`, so there is no resolved `--output`/`-o` value
- * to mirror here.
- *
- * Deliberately narrower than `withCommandTelemetry`
- * (`telemetry/command-telemetry.ts`): that wrapper is
- * shaped for a real Effect `Command` handler running inside `runCli`'s full
- * runtime (`CommandRuntime`/`Output`/`ProcessControl`/`Stdio`), none of which
- * exist here — this interceptor runs before Effect's argv parser, before
- * `runCli` ever bootstraps. This also deliberately does NOT reproduce
- * profile loading, the workdir change, or the GitHub upgrade check — none of
- * that has any bearing on the analytics contract, and real generated
- * completion scripts discard this process's stderr outright, so reproducing
- * the upgrade message would be a pure regression. Do not "fix" this back
- * toward that fuller behavior.
- *
- * Only requires `Analytics` from context (not the concrete production
- * layer) so tests can provide `mockAnalytics()` directly instead of the
- * real, consent-gated `analyticsLayer` — see
- * `captureCompleteTelemetry` below for the production wiring, and
- * `complete.integration.test.ts` for the test double usage.
+ * Fires the `cli_command_executed` telemetry capture for a `__complete`/`__completeNoDesc`
+ * request — the only thing that captures it, since no command handler runs on this path.
+ * `command` is always `"__complete"` (never the alias); `output_format` is fixed to `"text"`
+ * since `__complete` disables flag parsing. Intentionally skips profile/workdir/upgrade
+ * bootstrapping, since none of it affects analytics and scripts discard this process's stderr.
  */
 export function captureCompleteTelemetryEffect(
   exitCode: number,
@@ -1684,27 +1111,19 @@ export function captureCompleteTelemetryEffect(
 
 const COMPLETE_TELEMETRY_TIMEOUT = "2 seconds";
 
-// `analyticsLayer` on its own still needs `CliSettings | RuntimeInfo | Tty`
-// (via the `telemetryRuntimeLayer` it folds in) on top of the `FileSystem`/
-// `Path` platform layer — `shared/cli/run.ts` normally supplies those as part
-// of its own much larger composed tree. `standaloneAnalyticsConfigLayer`
-// packages the same small set for a caller running outside that tree.
+// `analyticsLayer` needs `CliSettings`/`RuntimeInfo`/`Tty` plus a platform layer;
+// `standaloneAnalyticsConfigLayer` packages that small set for a caller outside the full
+// CLI runtime tree.
 const completeAnalyticsLayer = analyticsLayer.pipe(
   Layer.provide(standaloneAnalyticsConfigLayer),
   Layer.provide(BunServices.layer),
 );
 
 /**
- * Production default for `CompleteDeps.captureTelemetry`: runs
- * `captureCompleteTelemetryEffect` against the real, consent-gated
- * `analyticsLayer`.
- *
- * Best-effort and bounded: a missing consent, network hiccup, or DNS failure
- * must never hang or fail a user's tab press. `deps.exit` (see
- * `tryComplete` below) ultimately calls `process.exit`, which kills the
- * process immediately without waiting for pending async work — callers must
- * `await` this BEFORE exiting, or the capture will very likely never reach
- * PostHog.
+ * Production default for `CompleteDeps.captureTelemetry`. Best-effort and bounded: a missing
+ * consent, network hiccup, or DNS failure must never hang or fail a user's tab press. Callers
+ * must `await` this before exiting, since `process.exit` kills the process without waiting
+ * for pending async work.
  */
 function captureCompleteTelemetry(exitCode: number, durationMs: number): Promise<void> {
   return Effect.runPromise(
@@ -1717,15 +1136,10 @@ function captureCompleteTelemetry(exitCode: number, durationMs: number): Promise
 }
 
 /**
- * Entry-point interceptor with the same shape/contract as the old
- * `tryCompletePassthrough`: runs before Effect's CLI argv parser, returns
- * `false` immediately (no side effects) when `deps.argv[0]` isn't a
- * completion request, otherwise fully handles it and returns `true`. Async
- * only because of `deps.captureTelemetry` above — every other helper in this
- * file (`respondToComplete` and everything it calls) stays pure and
- * synchronous; awaiting the capture here, before `deps.exit(...)`, is what
- * lets it actually reach PostHog (see `captureCompleteTelemetry`'s doc
- * comment).
+ * Runs before Effect's CLI argv parser, returning `false` immediately when `deps.argv[0]`
+ * isn't a completion request, otherwise fully handling it and returning `true`. Async only
+ * because it awaits `deps.captureTelemetry` before `deps.exit(...)`, so the capture actually
+ * reaches PostHog before the process exits.
  */
 export async function tryComplete(deps: CompleteDeps): Promise<boolean> {
   if (deps.argv[0] !== "__complete" && deps.argv[0] !== "__completeNoDesc") return false;
@@ -1733,6 +1147,13 @@ export async function tryComplete(deps: CompleteDeps): Promise<boolean> {
   const startedAt = Date.now();
   const response = respondToComplete(deps.root, deps.argv);
   if (response === undefined) {
+    if (deps.routingFailure !== undefined) {
+      const error = Cause.findErrorOption(deps.routingFailure);
+      const message = Option.isSome(error)
+        ? formatCliError(normalizeCliError(error.value))
+        : Cause.pretty(deps.routingFailure);
+      deps.stderrWrite(`${message}\n`);
+    }
     await deps.captureTelemetry(1, Date.now() - startedAt);
     deps.exit(1);
     return true;
@@ -1745,13 +1166,20 @@ export async function tryComplete(deps: CompleteDeps): Promise<boolean> {
   return true;
 }
 
-export function defaultCompleteDeps(root: Command.Command.Any): CompleteDeps {
+export function defaultCompleteDeps(
+  root?: Command.Command.Any,
+  routingFailure?: Cause.Cause<unknown>,
+): CompleteDeps {
   return {
     root,
+    routingFailure,
     argv: process.argv.slice(2),
     env: process.env,
     stdoutWrite: (message) => {
       process.stdout.write(message);
+    },
+    stderrWrite: (message) => {
+      process.stderr.write(message);
     },
     exit: (code) => {
       process.exit(code);

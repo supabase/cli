@@ -1,37 +1,9 @@
 /**
- * `db test` is a hidden alias that reuses `test db`'s flag config and
- * assembled handler verbatim (see `test.command.ts`). The core pgTAP
- * enable/disable + `pg_prove` docker-invocation behavior is already
- * exhaustively covered by `../../../shared/test-db.integration.test.ts` (calling the
- * same `testDb` this alias ultimately runs), so this file focuses on
- * what is actually NEW/alias-specific:
- *
- * 1. The alias still produces correct behavior end-to-end through
- *    `runTestDbCommand` (one golden path + one failure path), proving
- *    the delegation itself is wired correctly.
- * 2. The `cli_command_executed` telemetry `command` property records the
- *    ACTUAL invoked path — `"db test"`, not `"test db"` — which differs
- *    between the two entry points even though the handler is identical. This
- *    is proven by dispatching through the REAL exported `dbTestCommand`
- *    (via `Command.runWith` on a minimal root, mirroring
- *    `../../../../shared/cli/hidden-flag.unit.test.ts`'s pattern) rather than
- *    hand-building a runtime layer with a test-supplied `commandPath` — a
- *    regression in `test.command.ts`'s own `testDbRuntimeLayer(["db",
- *    "test"])` wiring would otherwise silently corrupt product analytics
- *    without failing any test.
- * 3. The non-text branch of `onRunFailure` (json/stream-json: stderr + exit
- *    code 1, no Effect failure) — shared code that had no prior coverage
- *    from either entry point.
- *
- * Mocking follows the same established patterns already used elsewhere in
- * this codebase rather than inventing a new one: the domain-level fakes
- * (`DbConfigResolver` / `DbConnection` / `DockerRun`) mirror
- * `../../../shared/test-db.integration.test.ts`; the instrumentation-level fakes
- * (`Analytics` reading `CurrentAnalyticsContext`, `Stdio.layerTest`,
- * `commandRuntimeLayer`) mirror `../../../telemetry/command-telemetry.unit.test.ts`;
- * and the telemetry-wiring test's ambient layer (satisfying
- * `testDbRuntimeLayer`'s own requirements so it actually builds) mirrors
- * `../../../shared/test-db.layers.unit.test.ts`'s `ambientStubs()`.
+ * `db test` is a hidden alias that reuses `test db`'s flag config and handler verbatim (see
+ * `test.command.ts`). The core pgTAP behavior is already covered by
+ * `../../../shared/test-db.integration.test.ts`, so this file only covers alias-specific
+ * behavior: end-to-end delegation, telemetry recording `"db test"` (not `"test db"`) as the
+ * invoked path, and the non-text `onRunFailure` branch.
  */
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -229,8 +201,6 @@ describe("db test (alias) integration", () => {
         "create extension if not exists pgtap with schema extensions",
         "drop extension if exists pgtap",
       ]);
-      // docker.run was reached with the expected pg_prove invocation and
-      // returned exit 0 (no failure surfaced above).
       expect(docker.lastOpts?.cmd[0]).toBe("pg_prove");
     }).pipe(Effect.provide(layer));
   });
@@ -238,14 +208,8 @@ describe("db test (alias) integration", () => {
   it.live(
     "dispatches through the real `dbTestCommand` and records `db test`, not `test db`, as the telemetry command",
     () => {
-      // `--local --linked` together fail INSIDE `testDb` (mutual
-      // exclusivity) before any DB/docker IO, so this can dispatch through the
-      // REAL command tree — proving `test.command.ts`'s own
-      // `testDbRuntimeLayer(["db", "test"])` wiring — without needing a
-      // real Postgres or Docker. `withCommandTelemetry` still
-      // captures `cli_command_executed` on the way out (it wraps the whole
-      // handler in `Effect.exit`), so mutating `test.command.ts` to pass
-      // `["test", "db"]` instead makes this assertion fail.
+      // `--local --linked` fail inside `testDb` (mutual exclusivity) before any DB/docker IO,
+      // so this can dispatch through the real command tree without a real Postgres or Docker.
       const args = ["db", "test", "--local", "--linked"];
       const analytics = mockContextualAnalytics();
       const layer = Layer.mergeAll(
@@ -259,9 +223,9 @@ describe("db test (alias) integration", () => {
         CliOutput.layer(textCliOutputFormatter()),
         Stdio.layerTest({ args: Effect.succeed(args) }),
         Layer.succeed(CliArgs, { args }),
-        // `dbCommand` is the whole `db` subtree, so the root's R
-        // includes every sibling subcommand's global-flag/Go-delegation
-        // requirements too, even though this test only dispatches `db test`.
+        // `dbCommand` is the whole `db` subtree, so its R includes every sibling subcommand's
+        // global-flag/Go-delegation requirements too, even though this test only dispatches
+        // `db test`.
         Layer.succeed(AgentFlag, "auto"),
         Layer.succeed(CreateTicketFlag, false),
         Layer.succeed(DebugFlag, false),
@@ -302,8 +266,8 @@ describe("db test (alias) integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(runTestDbCommand(flags()));
       expect(exit._tag).toBe("Failure");
-      // Unlike the json-mode branch below (which hand-writes exit 1), text
-      // mode must let the failed Effect itself drive the process exit code.
+      // Text mode lets the failed Effect itself drive the process exit code, unlike the
+      // json-mode branch below, which hand-writes exit 1.
       expect(processControl.exitCode).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
@@ -313,9 +277,8 @@ describe("db test (alias) integration", () => {
     () => {
       const { layer, out, processControl } = setup({ format: "json", exitCode: 1 });
       return Effect.gen(function* () {
-        // Succeeds (no thrown/failed Effect) so a JSON error envelope is
-        // never appended after the TAP stream — established output
-        // contract: stderr + exit 1, never corrupting stdout.
+        // Succeeds (no thrown/failed Effect), so a JSON error envelope is never appended
+        // after the TAP stream.
         yield* runTestDbCommand(flags());
         expect(out.stderrText).toContain("error running container: exit 1");
         expect(processControl.exitCode).toBe(1);

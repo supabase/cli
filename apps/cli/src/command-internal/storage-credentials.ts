@@ -1,4 +1,3 @@
-import { defaultJwtSecret, generateJwt } from "../shared/stack-constants.ts";
 import { Effect, FileSystem, Path } from "effect";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
@@ -7,8 +6,15 @@ import { resolveApiExternalUrl } from "./api-url.ts";
 import { validateApiPort, validateApiTlsPresence } from "./config-validate.ts";
 import { loadProjectEnv } from "./db-config.toml-read.ts";
 import { mapTenantApiKeysError } from "./get-tenant-api-keys.ts";
+import { generateGoJwt } from "./go-jwt.ts";
 import { getHostname } from "./hostname.ts";
-import { envOverride, envOverrideBool, envOverridePort } from "./local-config-values.ts";
+import {
+  decryptAuthSecret,
+  envOverride,
+  envOverrideBool,
+  envOverridePort,
+  resolveJwtSecret,
+} from "./local-config-values.ts";
 import { KONG_LOCAL_CA_CERT } from "./kong-local-ca-cert.ts";
 import { extractServiceKeys } from "./tenant-keys.ts";
 import {
@@ -19,21 +25,16 @@ import {
 } from "./storage-credentials.errors.ts";
 
 /**
- * Resolves the Storage gateway base URL + service-role key (+ local Kong CA),
- * mirroring `client.NewStorageAPI`.
- * Shared by `seed buckets` and `storage ls/cp/mv/rm`.
+ * Resolves Storage gateway credentials (base URL, service-role key, and local
+ * CA) for `seed buckets` and `storage ls/cp/mv/rm`.
  *
- * - `projectRef === ""` (local): base URL from `api.external_url` (else
- * `<scheme>://<host>:<api.port>`), with the `SUPABASE_API_*` env/dotenv
- * overrides folded in first (see {@link resolveLocalApiConfig}), service-role
- * key derived from `auth.{service_role_key,jwt_secret}`, and the Kong CA when
- * the URL is https.
- * - remote: base URL `https://<ref>.<projectHost>`; key from
- * `SUPABASE_AUTH_SERVICE_ROLE_KEY` else `tenant.GetApiKeys`.
- *
- * Requires `CommandSettings` (workdir, projectHost) and — only on the remote
- * branch — `CommandPlatformApiFactory` (lazy, so the local path never touches the
- * Management API).
+ * Local (`projectRef === ""`): URL from `api.external_url` or
+ * `<scheme>://<host>:<api.port>`, and key from
+ * `auth.service_role_key`/`auth.jwt_secret`, both after
+ * `SUPABASE_API_*`/`SUPABASE_AUTH_*` overrides (see
+ * {@link resolveLocalApiConfig} and {@link resolveLocalServiceRoleKey}).
+ * Remote: URL is `https://<ref>.<projectHost>`; key from
+ * `SUPABASE_AUTH_SERVICE_ROLE_KEY` or the project's api-keys endpoint.
  */
 
 /** Structural subset of `@supabase/config`'s CliConfig used here. */
@@ -65,15 +66,9 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
   readonly projectRef: string;
   readonly config: StorageConfigView;
   /**
-   * Already-resolved project env map for the `SUPABASE_API_*` fold, when the
-   * caller has one in scope (`seedBucketsRun`, `start`) — same
-   * passthrough idea as `seedBucketsRun`'s own `resolvedConfig`. Either
-   * walk's shape works — a map that omits ambient-shadowed keys
-   * (`loadProjectEnv`) or one that overlays ambient values
-   * (`resolveProjectEnvironmentValues`) — since the override helpers'
-   * `map[name] ?? process.env[name]` lookup resolves both identically. When
-   * omitted (the `storage` commands), the local branch loads the nested
-   * project dotenv walk itself.
+   * Already-resolved project env map for the `SUPABASE_API_*`/`SUPABASE_AUTH_*`
+   * overrides, when the caller has one in scope. When omitted, this loads the
+   * project dotenv itself.
    */
   readonly projectEnvValues?: Readonly<Record<string, string>>;
 }) {
@@ -81,14 +76,11 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
 
   if (opts.projectRef !== "") {
     const baseUrl = `https://${opts.projectRef}.${cliSettings.projectHost}`;
-    // Go: `viper.IsSet("AUTH_SERVICE_ROLE_KEY")` → use the env-provided key and
-    // skip the tenant lookup.
     const envKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
     if (envKey !== undefined && envKey.length > 0) {
       return { baseUrl, apiKey: envKey, localKongCa: undefined } satisfies StorageCredentials;
     }
-    // Resolve the Management API client lazily so the local path never triggers
-    // auth (`tenant.GetApiKeys`).
+    // Resolved lazily so the local path never triggers auth.
     const api = yield* (yield* CommandPlatformApiFactory).make;
     const keys = extractServiceKeys(
       yield* api.v1.getProjectApiKeys({ ref: opts.projectRef, reveal: true }).pipe(
@@ -100,8 +92,6 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
         ),
       ),
     );
-    // `tenant.GetApiKeys` fails with `errMissingKey` ("Anon key not found.")
-    // when the response yields nothing.
     if (keys.anon === "" && keys.serviceRole === "") {
       return yield* new StorageMissingApiKeyError({ message: "Anon key not found." });
     }
@@ -121,13 +111,10 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
     ));
   const api = yield* resolveLocalApiConfig(opts.config.api, projectEnvValues);
   const baseUrl = resolveApiExternalUrl(api, getHostname());
-  const apiKey = yield* resolveLocalServiceRoleKey(opts.config.auth);
+  const apiKey = yield* resolveLocalServiceRoleKey(opts.config.auth, projectEnvValues);
 
-  // `status.NewKongClient` installs unconditionally for the local client; its
-  // embedded CA only matters for https. `(*api).Validate` resolves cert_path /
-  // key_path and validates the pairing only when `api.enabled && api.tls.enabled`.
-  // Inject a CA whenever the resolved URL is https
-  // (the scheme derives from `api.tls.enabled` alone).
+  // Validate the cert/key pairing only when the API and TLS are both enabled;
+  // inject a CA whenever the resolved URL is https.
   let localKongCa: string | undefined;
   const validatedCa =
     api.enabled && api.tls.enabled
@@ -146,23 +133,19 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
 });
 
 /**
- * Fold the `SUPABASE_API_*` env/dotenv overrides into the `[api]` fields the
- * local gateway derives its base URL and TLS material from. Every other local
- * consumer of these fields already reads them post-override
- * (`local-config-values.ts`'s resolvers, `start.handler.ts`'s
- * `effectiveLocalStorageConfig`); without this fold, a stack brought up with
- * e.g. `SUPABASE_API_PORT=54331` is unreachable here because the gateway URL
- * falls back to the raw `config.toml` port (#6452). `projectEnvValues` is the
- * nested project dotenv map (caller-supplied or loaded by
- * `resolveStorageCredentials`), so a value set only in
- * `supabase/.env`(.local) counts; a caller that already folded these overrides
- * (`start`) re-resolves the same map to the same values, so the fold is
- * idempotent. A malformed port/bool override or an enabled API whose resolved
- * port is `0` (`validateApiPort` — the canonical branch) is an
- * invalid-config hard failure, same as the sibling resolvers.
- * `[remotes.*]` never merges on the local path (`loadCliConfig` receives no
- * `projectRef` here), so the remote-over-env precedence those resolvers apply
- * does not arise.
+ * Converts a thrown config-load validation error (from `envOverride*`,
+ * `decryptAuthSecret`, `resolveJwtSecret`, `validateApi*`) into a tagged
+ * `StorageConfigError`, preserving the original message.
+ */
+const toStorageConfigError = (cause: unknown) =>
+  new StorageConfigError({
+    message: cause instanceof Error ? cause.message : String(cause),
+  });
+
+/**
+ * Folds `SUPABASE_API_*` overrides into `[api]` before deriving the gateway
+ * URL, so a stack started with an overridden port stays reachable here
+ * instead of falling back to the raw `config.toml` value.
  */
 const resolveLocalApiConfig = (
   api: StorageConfigView["api"],
@@ -193,89 +176,68 @@ const resolveLocalApiConfig = (
       validateApiPort(resolved.enabled, resolved.port);
       return resolved;
     },
-    // A malformed port/bool override or the canonical zero-port rejection
-    // collapses into the tagged storage config error, preserving the helper's
-    // message — the same collapse every other consumer of these throwing
-    // helpers applies (`wrapDbConfigOverride` → `DbConfigLoadError`),
-    // keeping this Effect error channel tagged.
-    catch: (cause) =>
-      new StorageConfigError({
-        message: cause instanceof Error ? cause.message : String(cause),
-      }),
+    catch: toStorageConfigError,
   });
 
 /**
- * Validate-only entry point for `seedBucketsRun`'s empty-config
- * short-circuit: decodes the `SUPABASE_API_*` overrides and runs the canonical
- * `[api]` config-load checks (`validateApiPort`, then the
- * `validateApiTlsPresence` pairing rule) without building credentials —
- * the cert/key file reads stay on the seeding path (`validateLocalKongTls`),
- * where the established message precedence (jwt-secret length before TLS
- * presence) is preserved. The resolved view is discarded; the seeding path
- * re-resolves through `resolveStorageCredentials`.
+ * Resolves the service-role key for the local Storage gateway:
+ * - jwt secret: `SUPABASE_AUTH_JWT_SECRET` → `auth.jwt_secret` →
+ *   `defaultJwtSecret`, rejected if shorter than 16 chars.
+ * - service-role key: `SUPABASE_AUTH_SERVICE_ROLE_KEY` →
+ *   `auth.service_role_key` → signed from the resolved jwt secret.
+ *
+ * An explicit `service_role_key = ""` is treated as unset and regenerated.
  */
-export const validateLocalApiOverrides = Effect.fnUntraced(function* (
-  api: StorageConfigView["api"],
+const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (
+  auth: StorageConfigView["auth"],
   projectEnvValues: Readonly<Record<string, string>>,
 ) {
-  const resolved = yield* resolveLocalApiConfig(api, projectEnvValues);
-  if (resolved.enabled && resolved.tls.enabled) {
-    yield* Effect.try({
-      try: () => validateApiTlsPresence(resolved.tls.cert_path, resolved.tls.key_path),
-      catch: (cause) =>
-        new StorageConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
-  }
-});
-
-/**
- * Resolve the service-role key for the local Storage gateway, mirroring Go's
- * `(*auth).generateAPIKeys` + the Viper
- * `AutomaticEnv`/`SUPABASE_` prefix precedence:
- * - jwt secret: `SUPABASE_AUTH_JWT_SECRET` → `auth.jwt_secret` → `defaultJwtSecret`;
- * a resolved secret shorter than 16 chars is rejected;
- * - service-role key: `SUPABASE_AUTH_SERVICE_ROLE_KEY` → `auth.service_role_key`
- * → sign from the resolved secret.
- *
- * Empty checks use length, so an explicit `service_role_key = ""` is regenerated
- * like Go (not sent as the empty string).
- */
-const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (auth: {
-  readonly jwt_secret?: string;
-  readonly service_role_key?: string;
-}) {
-  const envSecret = process.env["SUPABASE_AUTH_JWT_SECRET"];
-  const configuredSecret =
-    envSecret !== undefined && envSecret.length > 0 ? envSecret : auth.jwt_secret;
-
-  let jwtSecret: string;
-  if (configuredSecret === undefined || configuredSecret.length === 0) {
-    jwtSecret = defaultJwtSecret;
-  } else if (configuredSecret.length < 16) {
-    return yield* new StorageConfigError({
-      message: "Invalid config for auth.jwt_secret. Must be at least 16 characters",
-    });
-  } else {
-    jwtSecret = configuredSecret;
-  }
-
-  const envKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
-  const configuredKey = envKey !== undefined && envKey.length > 0 ? envKey : auth.service_role_key;
+  const jwtSecret = yield* Effect.try({
+    try: () =>
+      resolveJwtSecret(
+        decryptAuthSecret(
+          envOverride("SUPABASE_AUTH_JWT_SECRET", auth.jwt_secret, projectEnvValues),
+          projectEnvValues,
+        ),
+      ),
+    catch: toStorageConfigError,
+  });
+  const configuredKey = yield* Effect.try({
+    try: () =>
+      decryptAuthSecret(
+        envOverride("SUPABASE_AUTH_SERVICE_ROLE_KEY", auth.service_role_key, projectEnvValues),
+        projectEnvValues,
+      ),
+    catch: toStorageConfigError,
+  });
   return configuredKey !== undefined && configuredKey.length > 0
     ? configuredKey
-    : generateJwt(jwtSecret, "service_role");
+    : generateGoJwt(jwtSecret, "service_role");
 });
 
 /**
- * Validate + resolve the local Kong TLS config, mirroring `(*api).Validate`:
- * cert without key (or vice-versa) errors; both
- * present and readable returns the cert PEM; neither returns the embedded CA.
- *
- * Only called when `api.enabled && api.tls.enabled` (Go gates both path
- * resolution and validation on `c.Api.Enabled`). The CLI uses only the CA cert,
- * but Go reads the key to validate the pairing, so this mirrors that.
+ * Runs the local config-load validations (API overrides, auth secret
+ * decryption, TLS presence) without building credentials, for `seed
+ * buckets`'s empty-config short-circuit.
+ */
+export const validateLocalStorageConfig = Effect.fnUntraced(function* (
+  config: StorageConfigView,
+  projectEnvValues: Readonly<Record<string, string>>,
+) {
+  const api = yield* resolveLocalApiConfig(config.api, projectEnvValues);
+  yield* resolveLocalServiceRoleKey(config.auth, projectEnvValues);
+  if (api.enabled && api.tls.enabled) {
+    yield* Effect.try({
+      try: () => validateApiTlsPresence(api.tls.cert_path, api.tls.key_path),
+      catch: toStorageConfigError,
+    });
+  }
+});
+
+/**
+ * Validates the local Kong TLS cert/key pairing: cert without key (or vice
+ * versa) errors; both present and readable returns the cert PEM; neither
+ * returns the embedded CA. Only called when the API and TLS are both enabled.
  */
 const validateLocalKongTls = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -284,19 +246,14 @@ const validateLocalKongTls = Effect.fnUntraced(function* (
   certPath: string | undefined,
   keyPath: string | undefined,
 ) {
-  // The canonical presence rule lives in `config-validate.ts`; only the
-  // file reads below are this caller's own I/O.
+  // Presence validation lives in `config-validate.ts`; this only does the file I/O.
   yield* Effect.try({
     try: () => validateApiTlsPresence(certPath, keyPath),
-    catch: (cause) =>
-      new StorageConfigError({
-        message: cause instanceof Error ? cause.message : String(cause),
-      }),
+    catch: toStorageConfigError,
   });
 
   if (certPath !== undefined && certPath.length > 0) {
-    // TLS paths join unconditionally with the supabase dir — NO IsAbs guard
-    // (`path.Join` absorbs a leading "/").
+    // Cert/key paths join unconditionally with the supabase dir, even if they look absolute.
     const absCert = path.join(workdir, "supabase", certPath);
     const certContent = yield* fs.readFileString(absCert).pipe(
       Effect.catchTag(
@@ -324,12 +281,10 @@ const validateLocalKongTls = Effect.fnUntraced(function* (
 });
 
 /**
- * Builds a `typeof globalThis.fetch` that injects `tls.ca` into every request,
- * trusting the provided CA PEM for HTTPS connections to the local Kong gateway.
- * Mirrors `newLocalClient`.
- *
- * Bun's fetch accepts `{ tls: { ca: string } }` via `BunFetchRequestInit`, which
- * extends `RequestInit`; no `as` cast is needed.
+ * Returns a fetch that injects `tls.ca` into every request, trusting the
+ * given CA PEM for HTTPS connections to the local Kong gateway. Bun's fetch
+ * accepts `{ tls: { ca } }` via `BunFetchRequestInit`, which extends
+ * `RequestInit`, so no `as` cast is needed.
  */
 function kongCaFetch(ca: string): typeof globalThis.fetch {
   const fetchImpl = async (
@@ -343,11 +298,10 @@ function kongCaFetch(ca: string): typeof globalThis.fetch {
 }
 
 /**
- * The `FetchHttpClient.Fetch` override to provide for Storage gateway calls: a
- * CA-trusting fetch for a local https gateway, plain `globalThis.fetch`
- * otherwise. Storage calls never use DoH in Go (`newLocalClient` /
- * `newRemoteClient` use `status.NewKongClient` / `http.DefaultClient`), so the
- * DoH-wrapped shared client is always overridden at the gateway scope.
+ * `FetchHttpClient.Fetch` override for Storage gateway calls: a CA-trusting
+ * fetch for a local https gateway, plain `globalThis.fetch` otherwise. Storage
+ * calls never use DNS-over-HTTPS, so this always replaces the shared
+ * DoH-wrapped client at the gateway scope.
  */
 export function storageGatewayFetch(localKongCa: string | undefined): typeof globalThis.fetch {
   return localKongCa !== undefined ? kongCaFetch(localKongCa) : globalThis.fetch;

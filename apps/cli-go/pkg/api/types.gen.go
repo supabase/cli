@@ -7741,8 +7741,9 @@ type SslEnforcementResponseOutput struct {
 // StorageConfigResponseOutput defines model for StorageConfigResponse_Output.
 type StorageConfigResponseOutput struct {
 	Capabilities struct {
-		IcebergCatalog bool `json:"iceberg_catalog"`
-		ListV2         bool `json:"list_v2"`
+		IcebergCatalog   bool `json:"iceberg_catalog"`
+		ListV2           bool `json:"list_v2"`
+		ObjectVersioning bool `json:"object_versioning"`
 	} `json:"capabilities"`
 	External struct {
 		UpstreamTarget StorageConfigResponseOutputExternalUpstreamTarget `json:"upstreamTarget"`

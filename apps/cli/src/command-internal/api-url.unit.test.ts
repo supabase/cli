@@ -3,9 +3,6 @@ import { describe, expect, it } from "vitest";
 import { resolveStudioApiUrl } from "./api-url.ts";
 
 describe("resolveStudioApiUrl", () => {
-  // Go's `Config.Validate` (`pkg/config/config.go:1074-1078`): a default
-  // `studio.api_url` (`http://127.0.0.1`) has host `127.0.0.1`, matching the
-  // default hostname, so it's rewritten to the resolved API external URL.
   it("rewrites the default studio.api_url to the API external URL", () => {
     expect(resolveStudioApiUrl("http://127.0.0.1", "127.0.0.1", "http://127.0.0.1:54321")).toBe(
       "http://127.0.0.1:54321",
@@ -25,8 +22,6 @@ describe("resolveStudioApiUrl", () => {
   });
 
   it("leaves a value with the matching host but an explicit port untouched", () => {
-    // Go's `parsed.Host` includes the port when one is present, so `127.0.0.1:3000`
-    // does not equal the bare `Hostname` `127.0.0.1` and is not rewritten.
     expect(
       resolveStudioApiUrl("http://127.0.0.1:3000", "127.0.0.1", "http://127.0.0.1:54321"),
     ).toBe("http://127.0.0.1:3000");

@@ -15,11 +15,9 @@ import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 
 /**
- * Runtime layer for `supabase migration new`. The leanest of the migration
- * runtimes: no DB connection, no Management API, no Docker. Just the resolved CLI
- * config (for `--workdir`), telemetry-state flush, piped stdin, and the command
- * runtime span. `Output`, `Analytics`, `Stdio`, `FileSystem`, `Path`, `Clock`,
- * and `Tty` come from the root layer.
+ * Runtime layer for `supabase migration new`: the resolved CLI config, telemetry
+ * flush, and piped stdin, with no DB connection, Management API, or Docker.
+ * `Output`, `Analytics`, `FileSystem`, `Path`, `Clock`, and `Tty` come from the root.
  */
 export const migrationNewRuntimeLayer = Layer.mergeAll(
   cliSettings,
@@ -37,17 +35,10 @@ const dbConfig = dbConfigLayer.pipe(
 
 /**
  * Runtime layer for the DB-touching migration subcommands (`list` / `fetch` /
- * `repair` / `up` / `down`). Mirrors `pull.layers.ts` minus the
- * pg-delta / migra stack (no Docker, edge-runtime, SSL probe, or shadow seam):
- * the db-config resolver + connection, the lazy linked-resolver auth stack
- * (project-ref + linked-project cache), the shared identity stitcher, telemetry
- * flush, piped stdin (for the migration confirm prompt, which reads
- * stdin), and the command runtime span. `Output`, `Analytics`, `Stdio`,
- * `FileSystem`, `Path`, `Clock`, `Tty`, and `YesFlag` come from the root.
+ * `repair` / `up` / `down`).
  *
- * `identityStitchLayer` is provided by the SAME reference to `dbConfig` and
- * the linked resolver so Effect memoises one shared identity-stitch attempt
- * (CLAUDE.md invariant 5).
+ * `identityStitchLayer` is provided by the same reference to `dbConfig` and the
+ * linked resolver so Effect memoizes one shared identity-stitch attempt.
  */
 export const migrationDbRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
   Layer.mergeAll(
@@ -64,12 +55,9 @@ export const migrationDbRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
 const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
 
 /**
- * Runtime layer for `supabase migration squash` — `migrationDbRuntimeLayer`'s bundle
- * plus the three services only squash needs: `DockerRun` (the `pg_dump` one-shot
- * container + the shadow's PG15+ one-shot setup jobs), `HttpClient` (the native shadow's
- * health-check wait), and `DebugLogger` (used on the
- * `LoadLocalVersions` fallback). `ChildProcessSpawner`/`RuntimeInfo`/`Tty`/`FileSystem`/
- * `Path` come from the root layer, same as `db diff`.
+ * Runtime layer for `supabase migration squash`: `migrationDbRuntimeLayer`'s bundle
+ * plus `DockerRun` (pg_dump and the shadow's setup jobs), `HttpClient` (the shadow's
+ * health-check wait), and `DebugLogger` (the `loadLocalVersions` fallback).
  */
 export const migrationSquashRuntimeLayer = Layer.mergeAll(
   migrationDbRuntimeLayer(["migration", "squash"]),

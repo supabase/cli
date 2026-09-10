@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Data, Deferred, Effect, Option, Queue, Scope } from "effect";
+import { Data, Deferred, Effect, Option, Predicate, Queue, Scope } from "effect";
 import { connect as connectNet, createServer, type Server, type Socket } from "node:net";
 import { makeHttpGateway } from "./HttpGateway.ts";
 import { makeTcpGateway } from "./TcpGateway.ts";
@@ -67,9 +67,11 @@ describe("gateway startup transport adoption", () => {
         });
         const backendPort = yield* listen(backend);
         const listener = yield* bindHostListener("127.0.0.1", 0, "database");
-        if (listener.binding.kind !== "tcp") return;
+        if (listener.binding.kind !== "tcp")
+          return yield* Effect.die("database listener did not expose TCP binding");
         const address = listener.binding.server.address();
-        if (typeof address !== "object" || address === null) return;
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("TCP listener did not expose an address");
         const accepted = yield* Deferred.make<Socket>();
         listener.binding.server.once("connection", (socket) =>
           Deferred.doneUnsafe(accepted, Effect.succeed(socket)),
@@ -119,9 +121,11 @@ describe("gateway startup transport adoption", () => {
         });
         const backendPort = yield* listen(backend);
         const listener = yield* bindHostListener("127.0.0.1", 0, "database");
-        if (listener.binding.kind !== "tcp") return;
+        if (listener.binding.kind !== "tcp")
+          return yield* Effect.die("database listener did not expose TCP binding");
         const address = listener.binding.server.address();
-        if (typeof address !== "object" || address === null) return;
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("TCP listener did not expose an address");
         const firstAccepted = yield* Deferred.make<Socket>();
         const secondAccepted = yield* Deferred.make<Socket>();
         listener.binding.server.once("connection", (socket) =>
@@ -194,9 +198,11 @@ describe("gateway startup transport adoption", () => {
         });
         const backendPort = yield* listen(backend);
         const listener = yield* bindHostListener("127.0.0.1", 0, "api");
-        if (listener.binding.kind !== "http") return;
+        if (listener.binding.kind !== "http")
+          return yield* Effect.die("API listener did not expose HTTP binding");
         const address = listener.binding.server.address();
-        if (typeof address !== "object" || address === null) return;
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("HTTP listener did not expose an address");
         const client = yield* socketAt(address.port);
         const upgradeQueued = yield* Deferred.make<void>();
         const activationStarted = yield* Deferred.make<void>();
@@ -228,9 +234,11 @@ describe("gateway startup transport adoption", () => {
         );
         yield* Deferred.await(upgradeQueued);
         const pendingEvents = listener.binding.pendingEvents;
-        if (pendingEvents === undefined) return;
+        if (pendingEvents === undefined)
+          return yield* Effect.die("HTTP listener did not expose pending events");
         const captured = yield* Queue.take(pendingEvents.queue);
-        if (captured._tag !== "upgrade") return yield* Effect.die("upgrade event was not captured");
+        if (!Predicate.isTagged(captured, "upgrade"))
+          return yield* Effect.die("upgrade event was not captured");
         if (captured.head.byteLength === 0 && captured.socket.readableLength === 0) {
           const bytesBuffered = yield* Deferred.make<void>();
           captured.socket.once("readable", () => Deferred.doneUnsafe(bytesBuffered, Effect.void));
@@ -276,9 +284,11 @@ describe("gateway startup transport adoption", () => {
         });
         const backendPort = yield* listen(backend);
         const listener = yield* bindHostListener("127.0.0.1", 0, "api");
-        if (listener.binding.kind !== "http") return;
+        if (listener.binding.kind !== "http")
+          return yield* Effect.die("API listener did not expose HTTP binding");
         const address = listener.binding.server.address();
-        if (typeof address !== "object" || address === null) return;
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("HTTP listener did not expose an address");
         const client = yield* socketAt(address.port, true);
         const handshakeReady = yield* Deferred.make<void>();
         const responseReady = yield* Deferred.make<Buffer>();
@@ -329,9 +339,11 @@ describe("gateway startup transport adoption", () => {
           });
           const backendPort = yield* listen(backend);
           const listener = yield* bindHostListener("127.0.0.1", 0, "api");
-          if (listener.binding.kind !== "http") return;
+          if (listener.binding.kind !== "http")
+            return yield* Effect.die("API listener did not expose HTTP binding");
           const address = listener.binding.server.address();
-          if (typeof address !== "object" || address === null) return;
+          if (typeof address !== "object" || address === null)
+            return yield* Effect.die("HTTP listener did not expose an address");
           const client = yield* socketAt(address.port);
           const upgradeQueued = yield* Deferred.make<void>();
           const clientClosed = yield* Deferred.make<void>();

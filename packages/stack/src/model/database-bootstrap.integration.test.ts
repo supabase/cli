@@ -156,14 +156,15 @@ describe("database bootstrap", () => {
       );
       expect(runtime.transactions).toBe(2);
       expect(runtime.operations[0]).toContain("pg_advisory_xact_lock");
-      expect(runtime.operations.join(" ")).not.toContain("password-a");
-      expect(runtime.operations.join(" ")).not.toContain("password-b");
-      expect(runtime.operations.join(" ")).not.toContain("jwt-a");
-      expect(runtime.operations.join(" ")).not.toContain("jwt-b");
+      const operationText = runtime.operations.join(" ");
+      expect(operationText).not.toContain("password-a");
+      expect(operationText).not.toContain("password-b");
+      expect(operationText).not.toContain("jwt-a");
+      expect(operationText).not.toContain("jwt-b");
     }),
   );
 
-  it.live("rolls back every bootstrap change and can retry after a transaction failure", () =>
+  it.live("rolls back every bootstrap change after a transaction failure", () =>
     Effect.gen(function* () {
       const runtime = yield* makeSession({ failOnce: "role" });
       const first = yield* runDatabaseBootstrap(
@@ -176,7 +177,17 @@ describe("database bootstrap", () => {
       expect(runtime.state.schemaOwners).toEqual(new Map());
       expect(runtime.state.passwords).toEqual(new Map());
       expect(runtime.state.settings).toEqual(new Map());
+    }),
+  );
 
+  it.live("can retry bootstrap successfully after a transaction failure", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeSession({ failOnce: "role" });
+      const first = yield* runDatabaseBootstrap(
+        runtime.session,
+        options("secret-password", "secret-jwt"),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(first)).toBe(true);
       yield* runDatabaseBootstrap(runtime.session, options("secret-password", "secret-jwt"));
       expect(runtime.state.schemas).toEqual(new Set(["_realtime"]));
       expect(runtime.state.schemaOwners).toEqual(new Map([["_realtime", "postgres"]]));

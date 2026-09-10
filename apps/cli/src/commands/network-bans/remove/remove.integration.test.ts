@@ -16,8 +16,8 @@ import {
 import { networkBansRemoveDbUnbanIpFlag } from "./remove.command.ts";
 import { networkBansRemove } from "./remove.handler.ts";
 
-// Runs the real `--db-unban-ip` flag pipeline (pflag StringSlice CSV parity —
-// `cmd/bans.go:48`) so these scenarios cover raw CLI values → request body.
+// Runs the real --db-unban-ip flag pipeline so these scenarios cover raw CLI values
+// through to the request body.
 const parseDbUnbanIp = (rawValues: ReadonlyArray<string>) =>
   networkBansRemoveDbUnbanIpFlag.parse({ flags: { "db-unban-ip": rawValues }, arguments: [] }).pipe(
     Effect.map(([, values]) => values),
@@ -239,9 +239,6 @@ describe("network-bans remove integration", () => {
   it.live(
     "surfaces the unresolved-ref error, not the invalid-IP error, when both are wrong",
     () => {
-      // Go resolves the project ref in PersistentPreRunE, before RunE's IP
-      // validation ever runs (cmd/root.go:108-114 vs internal/bans/update/update.go:12-25),
-      // so a bad ref must win over a bad IP — this is the regression CLI-1856 guards.
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
       const cliSettings = mockCommandSettings({

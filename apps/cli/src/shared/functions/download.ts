@@ -44,8 +44,7 @@ import {
 import { FunctionsApiStatusError, FunctionsApiTransportError } from "./functions-api.errors.ts";
 
 const legacyEntrypointPath = "file:///src/index.ts";
-// Go: `utils.DockerDenoDir`/`utils.DockerEszipDir` (`internal/utils/deno.go:34-35`)
-// — fixed container-side paths for the docker-unbundle path, unrelated to
+// Fixed container-side paths for the docker-unbundle path, unrelated to
 // deploy's `toDockerPath` host-mirroring scheme.
 const DOCKER_DENO_DIR = "/home/deno";
 const DOCKER_ESZIP_DIR = "/root/eszips";
@@ -58,6 +57,14 @@ export interface DownloadFunctionsOptions {
   readonly legacyBundle: boolean;
 }
 
+export interface DownloadFunctionsResult {
+  readonly projectRef: string;
+  /** Downloaded slugs, in download order. Empty when the project has none. */
+  readonly slugs: ReadonlyArray<string>;
+  /** `true` when the remote project has no functions at all. */
+  readonly empty: boolean;
+}
+
 interface DownloadRuntimeDependencies {
   readonly api: ApiClient;
   readonly projectRoot: string;
@@ -68,47 +75,36 @@ interface DownloadDockerRuntimeDependencies extends DownloadRuntimeDependencies 
   readonly rawArgs: ReadonlyArray<string>;
   /**
    * Optional shell-specific styling hook for the `Downloading function:`
-   * progress line — mirrors `deploy.ts`'s `DeployFunctionsDependencies.styleEmphasis`.
-   * Defaults to identity (plain text); the CLI injects Go's bold
-   * styling here so this shared module stays free of CLI-specific
-   * rendering. Go: `utils.Bold(slug)` (`downloadOne`, `download.go:219`).
+   * progress line. Defaults to identity (plain text); the CLI injects bold
+   * styling here so this shared module stays free of CLI-specific rendering.
    */
   readonly styleEmphasis?: (text: string) => string;
   /**
    * Optional shell-specific styling hook for the `--legacy-bundle` command
    * suggested inside {@link suggestLegacyBundle} — same isolation rationale
-   * as {@link styleEmphasis}, just a different Go colour. Go:
-   * `utils.Aqua("supabase functions download --legacy-bundle "+slug)`
-   * (`suggestLegacyBundle`, `download.go:315`).
+   * as {@link styleEmphasis}.
    */
   readonly styleAqua?: (text: string) => string;
   /**
    * Optional shell-specific styling hook for the `WARNING:` token on the
    * "Docker is not running" fallback line — same isolation rationale as
-   * {@link styleEmphasis}. Go: `utils.Yellow("WARNING:")` (`download.go:146`).
+   * {@link styleEmphasis}.
    */
   readonly styleWarning?: (text: string) => string;
 }
 
-/**
- * What {@link resolveEdgeRuntimeImage} needs to resolve the Docker
- * edge-runtime image tag — split out so it's declared once instead of
- * duplicated across `DownloadFunctionsDependencies`'s fields.
- */
+/** What {@link resolveEdgeRuntimeImage} needs to resolve the Docker edge-runtime image tag. */
 interface EdgeRuntimeImageDependencies {
   readonly projectRoot: string;
   /**
-   * `undefined` for library callers; the CLI injects
-   * `functionsGoConfigCompat` so this file never imports the command tree
-   * directly — see {@link FunctionsGoConfigCompat}.
+   * `undefined` for library callers; the CLI injects this so this file
+   * never imports the command tree directly — see {@link FunctionsGoConfigCompat}.
    */
   readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
   /**
-   * Fallback edge-runtime image tag used when the project config doesn't pin
-   * `edge_runtime.deno_version` to `1` (which forces the older
-   * `DENO1_EDGE_RUNTIME_VERSION`) — mirrors `deploy.ts`'s own
-   * `edgeRuntimeVersion` dependency, read via
-   * `resolveEdgeRuntimeVersionPin` by the shell-specific handler.
+   * Fallback edge-runtime image tag used when the project config doesn't
+   * pin `edge_runtime.deno_version` to `1`. Mirrors `deploy.ts`'s own
+   * `edgeRuntimeVersion` dependency.
    */
   readonly edgeRuntimeVersion: string;
 }
@@ -124,12 +120,9 @@ export interface DownloadFunctionsDependencies<
     projectRef: Option.Option<string>,
   ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
   /**
-   * `captureOutput` is `true` whenever `output.format !== "text"`: the Go
-   * child's raw stdout must not reach the terminal (it would corrupt the
-   * JSON/NDJSON envelope, CLI-1546's "stdout is payload-only in machine
-   * mode" invariant), so the dependency must capture/discard it (e.g. via
-   * `GoProxy.execCapture`) instead of inheriting stdio. Only invoked
-   * for `--legacy-bundle` today — `--use-docker` now runs natively (CLI-1963).
+   * `true` whenever `output.format !== "text"`: the child's raw stdout must
+   * not reach the terminal (it would corrupt the JSON/NDJSON envelope), so
+   * the dependency must capture/discard it instead of inheriting stdio.
    */
   readonly proxyDownload: (
     flags: DownloadFunctionsOptions,
@@ -138,9 +131,8 @@ export interface DownloadFunctionsDependencies<
   ) => Effect.Effect<void, ProxyError, ProxyRequirements>;
 }
 
-// `--legacy-bundle` is the only case `downloadFunctions()` still delegates to
-// the Go binary for (CLI-1963) — `functionName` is the one remaining piece of
-// user input the delegating branch needs to forward.
+// `--legacy-bundle` is the only case `downloadFunctions()` still delegates
+// to the Go binary; `functionName` is the one remaining input to forward.
 export function makeGoProxyLegacyBundleArgs(
   functionName: Option.Option<string>,
   projectRef: string,
@@ -195,17 +187,11 @@ function validateSlug(slug: string): Effect.Effect<void, InvalidFunctionSlugErro
 }
 
 /**
- * Go parity (`downloadAll`, `apps/cli-go/internal/functions/download/download.go:172-188`,
- * CLI-1891): the Management API's function list is untrusted — a malicious or
- * compromised response (or a MITM) could return a slug containing `..` or `/`
- * segments, which every downloader below joins into a filesystem path
- * (the docker-unbundle temp eszip path, and the server-side path's functions
- * directory) before any validation of its own. This is the single point of
- * entry that must reject it, rather than relying on each downstream
- * path-construction site to defend itself — same rule Go's own comment states.
- * Distinct from {@link validateSlug} (used for the user-supplied `<Function
- * name>` argument), which fails with a plain `InvalidFunctionSlugError` and no
- * "failed to download function" prefix or suggestion.
+ * The Management API's function list is untrusted: a malicious or
+ * compromised response could return a slug containing `..`/`/` segments,
+ * which every downloader below joins into a filesystem path unvalidated.
+ * This is the single point of entry that must reject it — distinct from
+ * {@link validateSlug} (the user-supplied `<Function name>` argument).
  */
 function validateRemoteSlug(
   slug: string,
@@ -217,7 +203,6 @@ function validateRemoteSlug(
 
   return Effect.fail(
     Object.assign(new Error(`failed to download function ${slug}: ${invalidFunctionSlugDetail}`), {
-      // Go: `utils.Aqua(f.Slug)` (`download.go:185`).
       suggestion: `The Supabase API returned an unexpected function slug (${styleAqua(slug)}). Retry the command, and if this keeps happening, verify your network connection is not being intercepted before contacting Supabase support.`,
     }),
   );
@@ -709,33 +694,13 @@ const listRemoteFunctionSlugs = Effect.fnUntraced(function* (api: ApiClient, pro
       if (!Array.isArray(parsed)) {
         throw new Error("expected functions list response to be an array");
       }
-      // Go: `FunctionResponse.Slug` (`apps/cli-go/pkg/api/types.gen.go:6465`)
-      // is a required, non-pointer `string` — a list entry with a missing or
-      // `null` "slug" decodes to the zero value `""` rather than erroring
-      // (`encoding/json`'s documented null-into-non-pointer no-op), and that
-      // empty slug then fails loudly downstream (`validateRemoteSlug`,
-      // matching Go's own per-item `ValidateFunctionSlug` in `downloadAll`,
-      // `download.go:182-188`) instead of silently vanishing from the list.
-      // Coercing here (rather than filtering the entry out, as before)
-      // preserves that "always surface an unexpected API response, never
-      // silently download fewer functions than requested" invariant — the
-      // exact CLI-1891 threat model `validateRemoteSlug` exists for (review
-      // round on CLI-1963's `functions download` port).
+      // A missing/null "slug" coerces to "" here (rather than being filtered
+      // out) so it fails loudly downstream via `validateRemoteSlug`, instead
+      // of silently vanishing from the list.
       //
-      // A "slug" present but typed as something other than string/null is a
-      // different case: Go's generated client decodes the *entire* array in
-      // one `json.Unmarshal` call (`ParseV1ListAllFunctionsResponse`,
-      // `apps/cli-go/pkg/api/client.gen.go:22186-22208`), and a type mismatch
-      // on any single element fails that whole call — confirmed empirically
-      // (`json.Unmarshal([]byte(`+"`"+`[{"slug":"ok"},{"slug":123}]`+"`"+`), &dest)`
-      // returns a `*json.UnmarshalTypeError`; `dest` is partially populated in
-      // memory, but `ParseV1ListAllFunctionsResponse` returns before ever
-      // assigning `response.JSON200`, discarding it), so `V1ListAllFunctionsWithResponse`
-      // returns an error and `downloadAll` fails with "failed to list
-      // functions: ..." before downloading anything — not after downloading
-      // the earlier, well-formed entries. Throwing here (rather than
-      // coercing to `""` like the missing/null case above) preserves that
-      // same fail-before-any-download ordering.
+      // A "slug" typed as something other than string/null throws here,
+      // failing the whole list call before any function is downloaded —
+      // never after some entries have already been fetched.
       return parsed.map((value) => {
         const slug = getObjectProperty(value, "slug");
         if (slug === null || slug === undefined) {
@@ -830,28 +795,11 @@ const downloadBody = Effect.fnUntraced(function* (
   );
 });
 
-// Go: `downloadOne` (`apps/cli-go/internal/functions/download/download.go:218-245`)
-// sends this request with no `Accept` header set at all (contrast
-// `downloadBody` above, which requests `multipart/form-data` for the
-// server-side path). This operation's generated contract marks its response
-// `kind: "json"` (`packages/api/src/generated/contracts.ts`), so
-// `executeRaw` would otherwise default to `Accept: application/json` here
-// (`buildRequest`'s unconditional `acceptJson` for json-kind operations,
-// `packages/api/src/internal/client.ts`) and risk a negotiated JSON response
-// instead of the raw eszip body — overriding to `*/*` (no preference) is the
-// closest equivalent this API surface has to Go sending no header at all.
-// Go explicitly decodes a brotli `Content-Encoding` itself because Go's
-// `http.Transport` only auto-decodes `gzip`; this TS CLI's transport
-// (`effect/unstable/http`'s `FetchHttpClient`, backed by the platform
-// `fetch`) already transparently decodes `br` per the Fetch spec — while
-// still reporting `Content-Encoding: br` on the exposed `Response.headers`
-// (confirmed empirically: a `fetch()` against a real `Content-Encoding: br`
-// response returns already-decompressed bytes from `arrayBuffer()`).
-// Re-running `brotliDecompressSync` here would therefore throw on
-// already-decoded bytes, so this reads the body as-is and does not
-// re-implement Go's manual decode step. Error prefix ("failed to get
-// function body") is deliberately distinct from `downloadBody`'s ("failed to
-// download function") — the two Go call sites use different wording.
+// Overrides `Accept: */*` so `executeRaw` doesn't default to
+// `Accept: application/json` for this json-kind operation and risk a
+// negotiated JSON response instead of the raw eszip body. The HTTP transport
+// already transparently decodes `Content-Encoding: br`, so this reads the
+// body as-is with no manual decompression step.
 const downloadEszipBody = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
@@ -889,31 +837,24 @@ function suggestLegacyBundle(
   slug: string,
   styleAqua: (text: string) => string = (text) => text,
 ): string {
-  // Go: `suggestLegacyBundle` (`download.go:314-316`) — verbatim, including
-  // the source's own "trying running" wording and its leading newline. Go
-  // wraps only the suggested command itself in `utils.Aqua`, not the whole
-  // sentence — `styleAqua` mirrors that scope exactly.
+  // Preserves the established "trying running" wording (not a typo) and
+  // leading newline; `styleAqua` wraps only the suggested command, not the
+  // whole sentence.
   return `\nIf your function is deployed using CLI < 1.120.0, trying running ${styleAqua(`supabase functions download --legacy-bundle ${slug}`)} instead.`;
 }
 
 function suggestDenoV2(styleEmphasis: (text: string) => string = (text) => text): string {
-  // Go: `suggestDenoV2` (`download.go:306-312`), verbatim including its
-  // trailing newline. Go bolds `utils.ConfigPath` via `utils.Bold` — the
-  // same hook `styleEmphasis` already covers for the slug above
-  // (`downloadOne`, `download.go:219`).
+  // Preserves the established trailing newline; `styleEmphasis` covers the
+  // config path the same way it covers the slug above.
   return `Please use deno v2 in ${styleEmphasis("supabase/config.toml")} to download this Function:\n\n[edge_runtime]\ndeno_version = 2\n`;
 }
 
 /**
- * Attaches Go's `suggestLegacyBundle` hint to any Docker-extraction failure —
- * matches `downloadWithDockerUnbundle`'s `CmdSuggestion +=
- * suggestLegacyBundle(slug)` (`download.go:211-214`), which runs whenever
- * `extractOne` fails for *any* reason (network/volume creation, container
- * create/start, log streaming, container inspect), not just a non-zero exit
- * code. `ensureDockerNetwork`/`ensureDockerNamedVolume` already prefix their
- * own "failed to create docker network/volume: ..." context on the failures
- * they raise themselves (`functions-docker.ts`), so this only normalizes
- * (never re-prefixes) whatever `describeContainerCliFailure` reports.
+ * Attaches the legacy-bundle hint to any Docker-extraction failure —
+ * network/volume creation, container create/start, log streaming, or a
+ * non-zero exit code alike. Only normalizes (never re-prefixes) whatever
+ * {@link describeContainerCliFailure} reports, since
+ * `ensureDockerNetwork`/`ensureDockerNamedVolume` prefix their own context.
  */
 function withLegacyBundleSuggestion(slug: string, styleAqua?: (text: string) => string) {
   return (cause: unknown): Error =>
@@ -923,12 +864,10 @@ function withLegacyBundleSuggestion(slug: string, styleAqua?: (text: string) => 
 }
 
 /**
- * Same as {@link withLegacyBundleSuggestion}, plus a `step` prefix — for
- * `runChildProcess` itself, whose own failure (a spawn error, or the
- * `PlatformError` `functions-docker.ts`'s hoisted `collectByteStream` erases
- * to `unknown`) carries no context of its own about which command was
- * running, unlike `ensureDockerNetwork`/`ensureDockerNamedVolume`'s
- * self-describing errors.
+ * Same as {@link withLegacyBundleSuggestion}, plus a `step` prefix: unlike
+ * `ensureDockerNetwork`/`ensureDockerNamedVolume`'s self-describing errors,
+ * `runChildProcess`'s own failure carries no context about which command
+ * was running.
  */
 function withDockerStepFailure(step: string, slug: string, styleAqua?: (text: string) => string) {
   return (cause: unknown): Error =>
@@ -937,15 +876,9 @@ function withDockerStepFailure(step: string, slug: string, styleAqua?: (text: st
     });
 }
 
-// Go: `Config.EdgeRuntime.Image` (`extractOne`, `download.go:271`) resolves
-// from `edge_runtime.deno_version` — `1` pins the older
-// `DENO1_EDGE_RUNTIME_VERSION`, anything else (including unset) uses the
-// project's configured/default tag (`resolveEdgeRuntimeVersion`, shared with
-// `deploy.ts`). Resolved once per invocation by the caller
-// (`downloadFunctions`), not once per slug — Go's `Config` is likewise loaded
-// once, before any per-function work. `loadFunctionsCliConfig` (CLI
-// path only) runs the same `Config.Validate`/dotenv/env-override pipeline
-// `start`/`stop`/`status` already go through — see `functions-config.ts`.
+// `deno_version = 1` pins the older `DENO1_EDGE_RUNTIME_VERSION`; anything
+// else (including unset) uses the project's configured/default tag.
+// Resolved once per invocation by the caller, not once per slug.
 const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
   dependencies: EdgeRuntimeImageDependencies,
   projectRef: string,
@@ -962,11 +895,9 @@ const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
   return {
     projectId: context.projectId,
     denoVersion: context.denoVersion,
-    // `edgeRuntimeImage` applies the tag VERBATIM (Go's `replaceImageTag`) —
-    // a `.temp/edge-runtime-version` pin flows through unmodified, `v` prefix
-    // or not (see the helper's doc in `functions.shared.ts`). Registry
-    // mapping + pull-with-retry happens per-container, right before
-    // `ensureDockerNetwork`, matching Go's `DockerStart` (see the caller).
+    // `edgeRuntimeImage` applies the tag verbatim; a `.temp/edge-runtime-version`
+    // pin flows through unmodified. Registry mapping + pull-with-retry happens
+    // per-container, right before `ensureDockerNetwork` (see the caller).
     rawImage: edgeRuntimeImage(edgeRuntimeVersion),
     projectEnvValues: context.projectEnvValues,
   };
@@ -981,26 +912,19 @@ interface EdgeRuntimeImage {
 }
 
 /**
- * `EdgeRuntimeImage` plus the pull-resolved reference, once per invocation
- * (not once per slug — see {@link downloadFunctions}'s own resolve site):
- * the image is identical for every function being downloaded, so resolving
- * it inside the per-slug loop would multiply both the cache-check subprocess
- * count and, on a registry outage, the retry-backoff sleep (up to ~36s) by
- * the function count. Go's own `DockerStart` DOES run per-container (once
- * per `extractOne`), but its image-cache check is an in-process Engine API
- * call, not a fork+exec — the per-slug cost that justifies hoisting here has
- * no Go equivalent to stay faithful to.
+ * `EdgeRuntimeImage` plus the pull-resolved reference, resolved once per
+ * invocation (not once per slug — see {@link downloadFunctions}'s own
+ * resolve site): the image is identical for every function, so resolving it
+ * per-slug would multiply both the cache-check subprocess count and, on a
+ * registry outage, the retry-backoff sleep (up to ~36s) by the function count.
  */
 interface PulledEdgeRuntimeImage extends EdgeRuntimeImage {
   readonly image: string;
 }
 
-// Go: `downloadWithDockerUnbundle`/`extractOne`
-// (`download.go:198-282`) — downloads the function body as an eszip, writes
-// it to a temp file, then runs the edge-runtime image's `unbundle`
-// subcommand against it, mounting the *shared* `supabase/functions`
-// directory (not the slug's own subdirectory — `download_test.go:267-271`
-// asserts this explicitly).
+// Downloads the function body as an eszip, writes it to a temp file, then
+// runs the edge-runtime image's `unbundle` subcommand against it, mounting
+// the shared `supabase/functions` directory (not the slug's own subdirectory).
 const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   dependencies: DownloadDockerRuntimeDependencies,
   edgeRuntimeImage: PulledEdgeRuntimeImage,
@@ -1011,12 +935,8 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   const styleEmphasis = dependencies.styleEmphasis ?? ((text: string) => text);
   const styleAqua = dependencies.styleAqua ?? ((text: string) => text);
 
-  // Go: `downloadOne` (`download.go:219`) — lowercase "function", distinct
-  // from the server-side path's "Downloading Function:" (capital F,
-  // `downloadWithServerSideUnbundle`, `download.go:329`). Both Go call sites
-  // bold the slug (`utils.Bold`); this path is new in CLI-1963, so it picks
-  // up the styling hook now. `downloadSingle`'s server-side path below has
-  // the identical gap, but predates this PR (#5527) — left as-is here.
+  // Lowercase "function", distinct from the server-side path's "Downloading
+  // Function:" (capital F) below — an established text difference, not a typo.
   yield* output.raw(`Downloading function: ${styleEmphasis(slug)}\n`, "stderr");
 
   const eszip = yield* downloadEszipBody(dependencies.api, projectRef, slug);
@@ -1037,23 +957,13 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
       ),
   });
 
-  // Go: the `defer fsys.Remove(eszipPath)` cleanup is registered right after
-  // the write and covers the whole of `extractOne`, including the container
-  // run — it fires on every return path, success or failure
-  // (`download.go:203-209`). `Effect.ensuring` below is the equivalent: it
-  // wraps every step from here on so a failure resolving the network/volume,
-  // spawning Docker, or a non-zero container exit all still clean up the
-  // temp eszip, matching Go instead of only doing so on the happy path.
+  // `Effect.ensuring` below wraps every step from here on so a failure
+  // resolving the network/volume, spawning Docker, or a non-zero container
+  // exit all still clean up the temp eszip file, not just the happy path.
   //
-  // Go gates this on `viper.GetBool("DEBUG")` (`download.go:203`), which
-  // resolves an explicit `--debug=false` to `false` (cleanup runs) — a plain
-  // presence check would get that backwards, so this reads the last explicit
-  // occurrence's boolean value instead (`explicitBooleanLongFlag`), falling
-  // back to `false` (cleanup runs) when `--debug` never appears. `SUPABASE_DEBUG`
-  // env-var fallback is a separate, pre-existing gap shared with every other
-  // presence-only `--debug` read this file family used to have
-  // (e.g. `deploy.ts`) and the CLI's debug logger itself, none of which
-  // currently honor it either — left open rather than fixed piecemeal here.
+  // An explicit `--debug=false` must still run cleanup, so this reads the
+  // flag's last explicit boolean value rather than a plain presence check,
+  // falling back to `false` (cleanup runs) when `--debug` never appears.
   const debugEnabled = explicitBooleanLongFlag(dependencies.rawArgs, "debug") ?? false;
   const cleanupEszip = debugEnabled
     ? Effect.void
@@ -1069,14 +979,11 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   const dockerEszipPath = posix.join(DOCKER_ESZIP_DIR, eszipFileName);
   const dockerOutputPath = posix.join(DOCKER_DENO_DIR, slug);
 
-  // Go: `viper.GetString("network-id")` else `NetId` (`docker.go:379-383`) —
-  // `--network-id` is a persistent root flag (`cmd/root.go:328`), not
-  // registered on `functions download` itself. `lastExplicitLongFlagValue`
-  // preserves the "explicitly cleared" vs "never touched" distinction
-  // `resolveDockerNetworkMode` needs to decide whether `SUPABASE_NETWORK_ID`
-  // applies — see that function's own doc comment. `SUPABASE_NETWORK_ID`
-  // (env or project dotenv) is CLI-only — same Go-viper-parity gate
-  // as `projectEnvValues` itself (`undefined` for library callers).
+  // `--network-id` is a persistent root flag, not registered on `functions
+  // download` itself. `lastExplicitLongFlagValue` preserves the "explicitly
+  // cleared" vs "never touched" distinction `resolveDockerNetworkMode` needs
+  // — see that function's own doc comment. `SUPABASE_NETWORK_ID` is CLI-only,
+  // like `projectEnvValues` (`undefined` for library callers).
   const networkMode = resolveDockerNetworkMode({
     explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
     envOverride:
@@ -1096,12 +1003,10 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
       Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)),
     );
 
-    // Bind order matches `extractOne` (`download.go:260-266`) exactly. Go's
-    // `DockerStart` drops the named-volume bind entirely on Bitbucket
-    // (`internal/utils/docker.go:400-405`) rather than just skipping its
-    // explicit creation — `docker run -v <name>:...` would otherwise still
-    // implicitly create the named volume, which Bitbucket's restricted Docker
-    // environment doesn't allow, same carve-out as `deploy.ts`'s
+    // On Bitbucket, the named-volume bind is dropped entirely (not just its
+    // explicit creation skipped): `docker run -v <name>:...` would otherwise
+    // still implicitly create the volume, which Bitbucket's restricted
+    // Docker environment doesn't allow — same carve-out as `deploy.ts`'s
     // `buildDockerBinds`.
     const binds = [
       ...(process.env["BITBUCKET_CLONE_DIR"] === undefined ? [cacheVolume.bind] : []),
@@ -1116,14 +1021,10 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
       containerArgs: ["unbundle", "--eszip", dockerEszipPath, "--output", dockerOutputPath],
     };
 
-    // Go pipes the container's stdout/stderr straight to `os.Stdout`/`getErrorLogger()`
-    // while the container runs (`DockerRunOnceWithConfig`, copied live via the
-    // log stream) — `runChildProcess`'s `onStdout`/`onStderr` tee each chunk
-    // to `output.raw` as it arrives instead of buffering the whole run.
-    // Go pipes the container's stdout straight to `os.Stdout`
-    // (`download.go:279`); machine-output modes must keep stdout
-    // payload-only (CLI-1546), so this mirrors `deploy.ts`'s own
-    // `bundleFunctionWithDocker` routing.
+    // Each chunk tees to `output.raw` live instead of buffering the whole
+    // run. Container stdout routes to real stdout only in text mode —
+    // machine-output modes must keep stdout payload-only — mirroring
+    // `deploy.ts`'s own Docker routing.
     const result = yield* runChildProcess("docker", buildFunctionsDockerRunArgs(spec), {
       stdout: "pipe",
       stderr: "pipe",
@@ -1136,15 +1037,9 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     );
 
     if (result.exitCode !== 0) {
-      // Go's `getErrorLogger` (deno-v1 only) sets `CmdSuggestion =
-      // suggestDenoV2()` (assignment) as soon as a full stderr line reads
-      // "invalid eszip v2" (case-insensitive), then `downloadWithDockerUnbundle`
-      // appends `suggestLegacyBundle` (`+=`) once extraction has failed
-      // (`download.go:213,284-304`). Go's own implementation races these two
-      // goroutines (the pipe writer is never closed) — this resolves that
-      // race deterministically to the common (non-race) ordering instead of
-      // reproducing the nondeterminism. The line match is exact (not a
-      // substring) to match Go's `strings.EqualFold(line, "invalid eszip v2")`.
+      // Detects a full stderr line reading "invalid eszip v2"
+      // (case-insensitive, exact match not substring) to append the deno-v2
+      // suggestion ahead of the legacy-bundle one — deno-v1 containers only.
       const invalidEszipV2 =
         denoVersion === 1 &&
         result.stderr
@@ -1158,10 +1053,8 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
         }),
       );
     }
-    // Go: `downloadWithDockerUnbundle` has no final "Downloaded Function ..."
-    // print, unlike `RunLegacy`/`downloadWithServerSideUnbundle` — its only
-    // stdout/stderr text is "Downloading function: ..." above plus whatever
-    // the `unbundle` container itself wrote.
+    // No final "Downloaded Function ..." print here, unlike the server-side
+    // path below — only "Downloading function: ..." plus the container's own output.
     return slug;
   });
 
@@ -1236,6 +1129,25 @@ const downloadSingle = Effect.fnUntraced(function* (
   return slug;
 });
 
+/**
+ * Mutates `error` in place via `Object.assign` and returns the same object,
+ * so every caller's `_tag`/`instanceof` check on this loop's heterogeneous
+ * error classes stays unchanged. Field name matches the established
+ * `MigrationFetchWriteError.writtenSoFar` precedent, read by
+ * `pull.aggregate.ts`'s `hasWrittenSoFar` duck-type so `supabase pull` can
+ * report partial progress. Omitted entirely (not an empty array) when
+ * nothing had downloaded yet, since the duck-type checks presence, not
+ * non-emptiness.
+ */
+function attachDownloadWrittenSoFar<E extends object>(
+  error: E,
+  downloadedSoFar: ReadonlyArray<string>,
+): E {
+  return downloadedSoFar.length === 0
+    ? error
+    : Object.assign(error, { writtenSoFar: [...downloadedSoFar] });
+}
+
 export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError, ProxyRequirements>(
   flags: DownloadFunctionsOptions,
   dependencies: DownloadFunctionsDependencies<
@@ -1254,50 +1166,41 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
       yield* validateSlug(flags.functionName.value);
     }
 
-    // `--legacy-bundle` is the only case still delegated to the Go binary
-    // after CLI-1963: it requires installing/upgrading a real Deno binary on
-    // the host (`InstallOrUpgradeDeno`) and shelling out to an embedded Deno
-    // script — a Deno-host-binary-management subsystem with no precedent
-    // anywhere else in this codebase or the Go CLI itself. See CLI-1963 for
-    // the parity-audit rationale on why porting it is tracked separately.
-    // `--use-docker` (default `true`) now runs natively below, matching
-    // Go's own dispatcher, which falls through to the *same* native
-    // server-side downloader when Docker isn't running rather than
-    // delegating anywhere (`download.go:138-148`).
+    // `--legacy-bundle` still delegates to the Go binary: it requires
+    // installing/upgrading a Deno binary on the host and shelling out to an
+    // embedded Deno script, with no other precedent in this codebase.
+    // `--use-docker` (default `true`) runs natively below and falls through
+    // to the same server-side downloader when Docker isn't running.
     if (flags.legacyBundle) {
       const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
 
       if (output.format === "text") {
         yield* dependencies.proxyDownload(flags, projectRef, false);
-        return;
+        // The slug list is never resolved in text mode here, so this result
+        // is not meaningful — callers never read it (the orchestrator never
+        // sets `legacyBundle: true`).
+        return { projectRef, slugs: [], empty: false };
       }
 
-      // Resolve the slug list *before* delegating, mirroring Go's own
-      // `downloadAll` (which also lists before looping through downloads,
-      // `apps/cli-go/internal/functions/download/download.go`). The
-      // delegated Go child never emits the TS `Output` envelope itself
-      // (CLI-1546: stdout is payload-only in machine mode, so its raw text
-      // is captured/discarded below, not inherited) — this list is purely
-      // for the JSON payload. Resolving it first means a transient listing
-      // failure is reported before any download side effect, instead of
-      // masking an already-successful delegated download with a later,
-      // unrelated listing failure.
+      // Resolved before delegating: this list is purely for the JSON
+      // payload (the delegated child's own stdout is captured/discarded, not
+      // inherited, since it never emits the `Output` envelope). Resolving it
+      // first means a transient listing failure is reported before any
+      // download side effect, rather than masking an already-successful
+      // delegated download with an unrelated listing failure after the fact.
       const slugs = Option.isSome(flags.functionName)
         ? [flags.functionName.value]
         : yield* listRemoteFunctionSlugs(dependencies.api, projectRef);
 
-      // Mirrors the native path's empty-project short-circuit just below:
-      // an empty project has nothing to delegate, so report it the same way
-      // ("No functions found.") instead of still invoking the Go child (an
-      // unnecessary Docker/subprocess round-trip) and reporting a
-      // misleading "Downloaded Edge Function source." success with an
-      // empty slug list.
+      // Mirrors the native path's empty-project short-circuit below: an
+      // empty project has nothing to delegate, so this reports "No functions
+      // found." instead of invoking the Go child unnecessarily.
       if (slugs.length === 0) {
         yield* output.success("No functions found.", {
           function_slugs: [],
           project_ref: projectRef,
         });
-        return;
+        return { projectRef, slugs: [], empty: true };
       }
 
       yield* dependencies.proxyDownload(flags, projectRef, true);
@@ -1306,37 +1209,22 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
         function_slugs: slugs,
         project_ref: projectRef,
       });
-      return;
+      return { projectRef, slugs, empty: false };
     }
 
     const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
 
-    // Go: `flags.LoadConfig(fsys)` runs unconditionally at the very top of
-    // `Run`, before checking `useDocker`, before checking whether Docker
-    // itself is running, and before any API/filesystem side effect
-    // (`download.go:135-138`) — an invalid `supabase/config.toml` (e.g. a bad
+    // Resolved unconditionally here, before checking `useDocker` or whether
+    // Docker is running: an invalid `supabase/config.toml` (e.g. a bad
     // `edge_runtime.deno_version`) must fail up front regardless of
-    // `--use-api`/`--use-docker`/Docker's running state, not only on the
-    // Docker happy path. Resolving unconditionally here (rather than nested
-    // inside the `isDockerRunning()` branch below) keeps that ordering: a
-    // config error now surfaces even when `--use-api` was passed or Docker is
-    // down, matching Go instead of silently skipping validation and
-    // proceeding straight to `listRemoteFunctionSlugs`/`downloadSingle`.
+    // `--use-api`/`--use-docker`/Docker's state, not only on the Docker path.
     const resolvedEdgeRuntimeImage = yield* resolveEdgeRuntimeImage(dependencies, projectRef);
 
-    // Go: `Run` resolves ONE downloader for the entire invocation, before any
-    // per-function work — including before listing when no slug is given
-    // (`download.go:138-153`), so this warning can print even when the
-    // project turns out to have zero functions. Mirrors Go's
-    // `if useApi { useDocker = false }` (`cmd/functions.go:51-53`), which
-    // reads the resolved flag value, not `pflag.Changed`.
-    // Single source of truth for "use the Docker downloader": `undefined`
-    // means the native server-side path runs instead, whether because
-    // `--use-api` (or `--use-docker=false`) resolved that way or because
-    // Docker isn't running. Deliberately not a separate `useDocker: boolean`
-    // alongside this — a boolean that could disagree with whether an image
-    // was actually resolved would let the loop below silently downgrade to
-    // the server-side path while claiming to honor `--use-docker`.
+    // Resolved once for the entire invocation, before any per-function work,
+    // so the "Docker is not running" warning can print even for a project
+    // with zero functions. `edgeRuntimeImage === undefined` is the single
+    // source of truth for "use the server-side path" instead of a separate
+    // boolean that could silently disagree with whether an image resolved.
     const styleWarning = dependencies.styleWarning ?? ((text: string) => text);
     const edgeRuntimeImage: EdgeRuntimeImage | undefined =
       !flags.useApi && flags.useDocker
@@ -1351,30 +1239,20 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
       ? [flags.functionName.value]
       : yield* listRemoteFunctionSlugs(dependencies.api, projectRef);
 
+    // The standalone `functionsDownload` handler emits the final summary;
+    // this only computes and returns the result.
     if (slugs.length === 0) {
-      if (output.format === "text") {
-        yield* output.raw(`No functions found in project  ${projectRef}\n`, "stderr");
-        return;
-      }
-      yield* output.success("No functions found.", { function_slugs: [], project_ref: projectRef });
-      return;
+      return { projectRef, slugs: [], empty: true };
     }
 
     if (output.format === "text" && Option.isNone(flags.functionName)) {
       yield* output.raw(`Found ${slugs.length} function(s) to download\n`, "stderr");
     }
 
-    // Go: `DockerStart` -> `DockerResolveImageIfNotCached` (`internal/utils/docker.go:326-386`)
-    // — resolved ONCE here, for the whole invocation, not once per slug
-    // inside the loop below: the image is identical for every function, so
-    // per-slug resolution would multiply both the cache-check subprocess
-    // count and, on a registry outage, the retry-backoff sleep (up to ~36s)
-    // by the function count — see `PulledEdgeRuntimeImage`'s own doc comment
-    // for why this diverges from Go's per-container `DockerStart` without
-    // losing parity (Go's cache check is in-process, not a fork+exec). The
-    // `--legacy-bundle` suggestion on a resolve failure uses the first slug
-    // as a representative example, since no single slug is "the" one being
-    // processed yet at this point.
+    // Resolved once for the whole invocation, not once per slug — see
+    // `PulledEdgeRuntimeImage`'s own doc comment. The `--legacy-bundle`
+    // suggestion on a resolve failure uses the first slug as a
+    // representative example, since none is "the" one being processed yet.
     const styleAqua = dependencies.styleAqua ?? ((text: string) => text);
     const pulledEdgeRuntimeImage: PulledEdgeRuntimeImage | undefined =
       edgeRuntimeImage === undefined
@@ -1388,38 +1266,36 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
           };
 
     const downloaded: string[] = [];
+    // Absolute directory path per fully-downloaded slug, separate from
+    // `downloaded` (bare slugs): a caller upstream (`pull.aggregate.ts`'s
+    // `hasWrittenSoFar`) needs an on-disk path.
+    const downloadedPaths: string[] = [];
     for (const slug of slugs) {
-      // Go: CLI-1891, `downloadAll`'s per-item validation runs before any
-      // per-slug network/filesystem work (`download.go:182-188`). A
-      // user-supplied slug is already validated above (`validateSlug`); this
-      // covers slugs sourced from the Management API's function list, which
-      // this threat model treats as untrusted (a malicious/compromised
-      // response, or a MITM).
-      if (Option.isNone(flags.functionName)) {
-        yield* validateRemoteSlug(slug, styleAqua);
-      }
-      if (pulledEdgeRuntimeImage !== undefined) {
-        downloaded.push(
-          yield* downloadWithDockerUnbundle(dependencies, pulledEdgeRuntimeImage, projectRef, slug),
-        );
-      } else {
-        downloaded.push(yield* downloadSingle(dependencies, projectRef, slug));
-      }
+      yield* Effect.gen(function* () {
+        // A user-supplied slug is already validated above; this covers
+        // slugs sourced from the Management API's function list, which is
+        // untrusted (a malicious/compromised response, or a MITM).
+        if (Option.isNone(flags.functionName)) {
+          yield* validateRemoteSlug(slug, styleAqua);
+        }
+        if (pulledEdgeRuntimeImage !== undefined) {
+          downloaded.push(
+            yield* downloadWithDockerUnbundle(
+              dependencies,
+              pulledEdgeRuntimeImage,
+              projectRef,
+              slug,
+            ),
+          );
+        } else {
+          downloaded.push(yield* downloadSingle(dependencies, projectRef, slug));
+        }
+        downloadedPaths.push(resolve(dependencies.projectRoot, "supabase", "functions", slug));
+      }).pipe(Effect.mapError((error) => attachDownloadWrittenSoFar(error, downloadedPaths)));
     }
 
-    if (output.format !== "text") {
-      yield* output.success("Downloaded Edge Function source.", {
-        function_slugs: downloaded,
-        project_ref: projectRef,
-      });
-      return;
-    }
-
-    if (Option.isNone(flags.functionName)) {
-      yield* output.raw(
-        `Successfully downloaded all functions from project ${projectRef}\n`,
-        "stderr",
-      );
-    }
+    // The standalone `functionsDownload` handler emits the final summary;
+    // this only computes and returns the result.
+    return { projectRef, slugs: downloaded, empty: false };
   });
 }

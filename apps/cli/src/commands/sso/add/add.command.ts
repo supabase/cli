@@ -8,8 +8,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
 import { ssoAdd } from "./add.handler.ts";
 
-// `--domains` is a CSV string-slice flag; malformed CSV fails at parse time
-// with pflag's exact diagnostic (see `stringSliceFlag`).
+// `--domains` is a CSV string-slice flag; malformed CSV reports pflag's diagnostic (see `stringSliceFlag`).
 export const ssoAddDomainsFlag = stringSliceFlag(
   "domains",
   "Comma separated list of email domains to associate with the added identity provider.",
@@ -20,8 +19,7 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  // `--type` is required — leave off `Flag.optional` so the CLI parser
-  // enforces presence at parse time.
+  // No `Flag.optional`: `--type` is required, enforced by the CLI parser.
   type: Flag.choice("type", ["saml"] as const).pipe(
     Flag.withAlias("t"),
     Flag.withDescription("Type of identity provider (according to supported protocol)."),
@@ -78,10 +76,7 @@ export const ssoAddCommand = Command.make("add", config).pipe(
         flags,
         safeFlags: ["project-ref"],
         config,
-        // `--type` registers `-t` (Flag.withAlias above); without this, `-t saml`
-        // never resolves to the canonical `type` name in extractChangedFlagNames,
-        // so it wouldn't appear in telemetry at all — the canonical name must be
-        // reported regardless of shorthand.
+        // Maps the `-t` alias back to `type` so telemetry records it as changed.
         aliases: { t: "type" },
       }),
       withJsonErrorHandling,

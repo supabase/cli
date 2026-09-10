@@ -1,21 +1,8 @@
 /**
- * renderGlamourTable - Reproduces the byte output of glamour's `RenderTable`
- * using `styles.AsciiStyle` for the markdown tables this CLI emits.
- *
- * Output shape (each line terminated by "\n"):
- *
- *   <blank line>
- *   <2-space prefix><nothing>            <- decorative empty line Glamour emits
- *      <space><header-cell><space>|<space><header-cell><space>|...<space>
- *   <2-space prefix><dashes>|<dashes>|...<dashes>
- *      <space><data-cell><space>|<space>...<space>
- *   ...
- *   <blank line>
- *
- * Each cell is padded to the column width: max(len(header), max(len(row[i]))).
- * The padded cell is wrapped with " ... " (one space either side), so the cell
- * width in the output is colWidth + 2. The separator row uses dashes of the
- * same width, joined by "|".
+ * Renders the CLI's established ASCII table format: a blank line, a decorative empty line, the
+ * header row, a dash separator, each data row, and a trailing blank line — every line ending in
+ * "\n". Each cell is padded to `max(len(header), max(len(row[i])))` and wrapped with one space
+ * on each side; the separator uses dashes of the same width, joined by "|".
  */
 export function renderGlamourTable(
   headers: ReadonlyArray<string>,

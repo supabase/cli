@@ -15,11 +15,8 @@ import {
 import { sslEnforcementCommand } from "./ssl-enforcement.command.ts";
 
 // See postgres-config.experimental-gate.integration.test.ts for the full
-// rationale: this proves `--experimental` is wired into the actual
-// `.command.ts` handler pipeline AND runs before
-// `managementApiRuntimeLayer`'s eager access-token resolution
-// (the `IsExperimental` check precedes `IsManagementAPI` in
-// `apps/cli-go/cmd/root.go:91-109`).
+// rationale: proves `--experimental` is wired into the real command pipeline
+// and runs before `managementApiRuntimeLayer`'s eager access-token resolution.
 
 const tempRoot = useTempWorkdir("supabase-ssl-enforcement-experimental-int-");
 
@@ -40,12 +37,9 @@ function setup() {
     out,
     api,
     cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-    // The "gate open" case builds the real `managementApiRuntimeLayer`
-    // inline inside the command; its cliSettings/credentials layers read real
-    // files under homeDir and ambient env — an ambient SUPABASE_ACCESS_TOKEN,
-    // SUPABASE_EXPERIMENTAL, or OS keyring entry on the machine running the
-    // test would make these assertions non-deterministic. Isolate both, keeping
-    // only the keyring kill-switch set.
+    // The "gate open" case builds the real `managementApiRuntimeLayer` inline,
+    // so isolate homeDir/env — a real ambient token or keyring entry would
+    // make these assertions non-deterministic.
     runtimeInfo: isolatedHomeLayer(tempRoot.current, { SUPABASE_NO_KEYRING: "1" }),
   });
   const layer = Layer.mergeAll(

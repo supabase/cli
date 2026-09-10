@@ -1,4 +1,4 @@
-// Verbatim copies of the Go pg_dump scripts (`apps/cli-go/pkg/migration/scripts/`).
+// pg_dump scripts, kept byte-identical to `apps/cli-go/pkg/migration/scripts/`.
 // These embed the dump pipelines byte-for-byte; `pg-dump.env.unit.test.ts`
 // asserts equality against the Go `.sh` sources. Do not hand-edit — regenerate from Go.
 

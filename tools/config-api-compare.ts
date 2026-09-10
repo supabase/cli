@@ -1,32 +1,21 @@
 /**
- * Diffs `@supabase/config`'s compiled `.d.ts` surface between a PR's base and
- * head commits — a per-PR type-surface signal with zero committed artifacts
- * (CLI-2234; replaces the checked-in `packages/config/api-report/` mirror).
+ * Diffs `@supabase/config`'s compiled `.d.ts` surface between a PR's base and head commits.
  *
  * Usage:
  *   bun tools/config-api-compare.ts [--base <ref>]
  *
- * Base ref resolution, in order: `--base`, then `GITHUB_BASE_REF` (prefixed
- * `origin/`), then `origin/develop`. Resolves `git merge-base HEAD <base>`,
- * fetching `origin/<branch>` at depth 1 first when the ref is missing locally
- * (a shallow CI clone only has the PR's own commits). If HEAD's own checkout
- * is also shallow, a depth-1 base fetch still can't produce a common
- * ancestor — the tool then unshallows (or deepens) the checkout and retries
- * once more before giving up and skipping the compare.
+ * Base ref resolution, in order: `--base`, then `GITHUB_BASE_REF` under `origin/`, then
+ * `origin/develop`. Resolves `git merge-base HEAD <base>`, fetching a missing base ref at depth 1
+ * first; if HEAD's own checkout is also shallow, unshallows (or deepens) and retries once before
+ * skipping the compare.
  *
- * Emits declarations twice with the same compiler settings — head from
- * `packages/config/src` directly, base from a `git archive` of the
- * merge-base extracted into `packages/config/.api-compare/base/` (so
- * dependency resolution walks up to `packages/config/node_modules` using the
- * CURRENT install, no second `pnpm install` needed) — then diffs the two
- * `.d.ts` trees.
+ * Emits declarations twice with the same compiler settings — head from `packages/config/src`
+ * directly, base from a `git archive` of the merge-base extracted under `packages/config` (so
+ * dependency resolution reuses the current install) — then diffs the two `.d.ts` trees.
  *
- * Advisory at PR time (a base-vs-head diff has no acceptance artifact to
- * gate on); the hard release-time gate is `tools/config-release-gate.ts`,
- * run by `.github/workflows/release-config.yml` (CLI-2233).
+ * Advisory only; the hard release-time gate is `tools/config-release-gate.ts`.
  *
- * Exit codes: 0 identical (or compare skipped), 1 surface differs, 2 tool
- * failure.
+ * Exit codes: 0 identical (or compare skipped), 1 surface differs, 2 tool failure.
  */
 
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
@@ -87,23 +76,8 @@ type MergeBaseResolution =
   | { readonly kind: "skip"; readonly reason: string };
 
 /**
- * Resolves `git merge-base HEAD <baseRef>`. A shallow CI checkout only has
- * the PR's own commits, so `<baseRef>` can be locally unresolvable — when
- * it's an `origin/<branch>` ref, fetch that branch at depth 1 and retry
- * before giving up.
- *
- * A depth-1 base fetch only helps when the base ref itself was simply never
- * fetched; it cannot produce a common ancestor when HEAD's own checkout is
- * shallow too (the `check` job's default `actions/checkout` depth), since
- * neither side's shallow history reaches the other's. In that case, unshallow
- * (or deepen, if `--unshallow` errors because the checkout is already
- * complete) the repository, refetch the base ref in full, and retry once
- * more. If a merge-base still can't be resolved, this is an advisory check —
- * skip the compare instead of failing the tool.
- *
- * A non-`origin/` ref (e.g. an explicit `--base <sha>`) that doesn't resolve
- * locally is a caller error, not something this tool can fetch its way out
- * of.
+ * Resolves `git merge-base HEAD <baseRef>`. Fetches a missing `origin/<branch>` ref at depth 1,
+ * unshallowing the checkout if that still isn't enough to find a common ancestor.
  */
 async function resolveMergeBase(baseRef: string): Promise<MergeBaseResolution> {
   const attempt = await runGit(["merge-base", "HEAD", baseRef], repoRoot);
@@ -240,18 +214,10 @@ async function archiveAndExtract(
 }
 
 /**
- * Materializes the base revision's `packages/config/src` (plus its
- * declaration-emit config) under `baseExtractDir`, INSIDE `packages/config`,
- * so tsc's node_modules walk from there reaches `packages/config/node_modules`
- * with the CURRENT install — no second `pnpm install` needed.
- *
- * `tsconfig.build.json` is always the HEAD copy (tooling, not part of the
- * compared surface, and required so `tsconfig.declarations.json`'s own
- * `"extends": "./tsconfig.build.json"` resolves inside the extracted tree).
- * `tsconfig.declarations.json` is the base revision's own copy when it has
- * one; a merge-base that predates this file (e.g. still on the checked-in
- * `api-report/` mirror, or older) falls back to the HEAD copy for the emit
- * settings.
+ * Materializes the base revision's `packages/config/src` under `baseExtractDir`, inside
+ * `packages/config`, so tsc's node_modules walk reaches the current install. `tsconfig.build.json`
+ * stays the head copy so `extends` resolves; the declarations config uses the base's own copy
+ * when present, else the head copy.
  */
 async function extractBaseTree(mergeBase: string, baseExtractDir: string): Promise<void> {
   await mkdir(baseExtractDir, { recursive: true });
@@ -293,14 +259,10 @@ interface EmitResult {
 }
 
 /**
- * Spawns this package's own `node_modules/.bin/tsc` directly rather than
- * `pnpm exec tsc` (the same corepack-avoidance lesson as the old
- * `api-report.unit.test.ts`: a bun-shimmed `PATH` can route `pnpm`'s launcher
- * through Bun's `node:sqlite`-less Node-compat layer). `noEmitOnError`
- * defaults to false, so declarations are emitted even when the base tree's
- * old source doesn't type-check cleanly against the current install's
- * (newer) dependencies — a genuinely empty output is the only signal treated
- * as a hard failure by the caller.
+ * Spawns this package's own `node_modules/.bin/tsc` directly: a bun-shimmed `PATH` can route
+ * `pnpm exec tsc` through Bun's `node:sqlite`-less Node-compat layer. `noEmitOnError` defaults to
+ * false, so declarations still emit against an old, non-type-checking base tree; only a fully
+ * empty output counts as failure.
  */
 async function emitDeclarations(
   projectPath: string,

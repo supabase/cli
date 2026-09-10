@@ -17,9 +17,7 @@ import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.t
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import { ssoList } from "./list.handler.ts";
 
-// Mirrors what the Management API returns: neither `saml.id` nor
-// `domains[].id` is part of the provider response (nor of Go's
-// `api.ListProvidersResponse`).
+// Neither `saml.id` nor `domains[].id` is part of the actual provider response.
 const PROVIDER_ITEM = {
   id: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
   saml: {
@@ -153,8 +151,8 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Some projects still echo the nested IDs the spec dropped. Go ignores them
-  // (no struct field), so they must neither break decoding nor reach `-o json`.
+  // Some projects still echo nested IDs the schema dropped; these must not
+  // break decoding or reach `-o json`.
   it.live("ignores nested saml.id / domains[].id when the API still sends them", () => {
     const item = {
       ...PROVIDER_ITEM,

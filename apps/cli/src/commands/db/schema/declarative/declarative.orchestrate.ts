@@ -34,7 +34,7 @@ export interface DeclarativeRunContext {
   readonly linkedProjectRef?: string;
 }
 
-/** The output of a declarative-to-migrations diff. Mirrors Go's `SyncResult`. */
+/** The output of a declarative-to-migrations diff. */
 export interface DeclarativeSyncResult {
   readonly diffSQL: string;
   readonly files: ReadonlyArray<PgDeltaRenderedFile>;

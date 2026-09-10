@@ -1,28 +1,11 @@
 import type { DocsFlag } from "./docs-spec.ts";
 
 /**
- * Static data for the docs spec generator — information the Effect command
- * tree cannot express structurally:
- *
- * - Docs-site section tags: envelope compatibility only (the site's
- *   navigation comes from `common-cli-sections.json`, not from tags).
- * - Experimental leaves: each appends the root `--experimental` flag with
- *   `required: true` to its flag list.
- * - Deprecated commands: visible in `--help` (with a "(deprecated)" suffix)
- *   but excluded from the published reference.
- * - Flag defaults: `Flag.withDefault` captures the value in a closure
- *   (`Param.ts`: `map(optional(self), Option.getOrElse(...))`), so defaults
- *   that differ from the type's zero value are recorded here, keyed
- *   `"<doc id> <flag id>"`.
- *
- * The values were frozen from the retired Go generator's output when the
- * pipeline was re-pointed at the TS tree, and every entry was verified
- * against it while both generators coexisted.
- * Flag display types derive purely from the Effect tree — Go-only scalar
- * typing (uint/duration/time) was deliberately not ported, so the reference
- * shows the TS types `--help` shows.
- * `buildDocsSpec` validates every key here against the walked tree and
- * fails the build on stale entries.
+ * Static data for the docs spec generator — information the Effect command tree cannot
+ * express structurally: docs-site section tags, `--experimental`-required leaves, deprecated
+ * commands to exclude from the reference (though still shown in `--help`), and flag defaults
+ * that `Flag.withDefault` only captures in a closure. `buildDocsSpec` validates every key here
+ * against the walked tree and fails the build on stale entries.
  */
 
 export interface DocsInfoTag {
@@ -61,12 +44,14 @@ export const DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
   "supabase-orgs": ["management-api"],
   "supabase-postgres-config": ["management-api"],
   "supabase-projects": ["management-api"],
+  "supabase-pull": ["other-commands"],
   "supabase-secrets": ["management-api"],
   "supabase-seed": ["local-dev"],
   "supabase-services": ["local-dev"],
   "supabase-snippets": ["management-api"],
   "supabase-ssl-enforcement": ["management-api"],
   "supabase-sso": ["management-api"],
+  "supabase-stack": ["local-dev"],
   "supabase-start": ["local-dev"],
   "supabase-status": ["local-dev"],
   "supabase-stop": ["local-dev"],
@@ -75,6 +60,7 @@ export const DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
   "supabase-test": ["local-dev"],
   "supabase-unlink": ["local-dev"],
   "supabase-vanity-subdomains": ["management-api"],
+  "supabase-whoami": ["management-api"],
 };
 
 /** Leaves that require `--experimental`. */
@@ -188,6 +174,8 @@ export const DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
   "supabase-migration-squash local": "true",
   "supabase-migration-up local": "true",
   "supabase-seed-buckets local": "true",
+  "supabase-stack-start preparation": "background",
+  "supabase-stack-start runtime": "auto",
   "supabase-storage-cp cache-control": "max-age=3600",
   "supabase-storage-cp content-type": "auto-detect",
   "supabase-storage-cp jobs": "1",
@@ -233,10 +221,9 @@ export const DOCS_CHOICE_OVERRIDES: Readonly<Record<string, ReadonlyArray<string
 
 /**
  * Flags excluded from the published reference, keyed `"<doc id> <flag id>"`.
- * Cobra hid deprecated flags from help and docs; the Effect port keeps
- * `--include-raw-output` parse-visible for compatibility (see
- * `commands/domains/SIDE_EFFECTS.md`), so the docs exclusion is restored
- * here. Validated at build time like the other tables.
+ * `--include-raw-output` stays parse-visible for compatibility (see
+ * `commands/domains/SIDE_EFFECTS.md`) but is hidden from docs here. Validated at build time
+ * like the other tables.
  */
 export const DOCS_EXCLUDED_FLAGS: ReadonlySet<string> = new Set([
   "supabase-domains-activate include-raw-output",
@@ -247,11 +234,10 @@ export const DOCS_EXCLUDED_FLAGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Usage argument overrides, keyed by doc id — for commands whose published
- * argument rendering cannot be derived from the Effect tree. Both were
- * hand-written cobra `Use` strings: the parser accepts zero occurrences
- * (`secrets set --env-file` passes no positionals; `storage rm` validates in
- * the handler), but the documented shape is required.
+ * Usage argument overrides, keyed by doc id, for commands whose published argument rendering
+ * can't be derived from the Effect tree: the parser accepts zero occurrences here
+ * (`secrets set --env-file` passes no positionals; `storage rm` validates in the handler), but
+ * the documented shape is required.
  */
 export const DOCS_ARG_OVERRIDES: Readonly<Record<string, string>> = {
   "supabase-secrets-set": "<NAME=VALUE> ...",

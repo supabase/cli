@@ -148,7 +148,6 @@ describe("planCatalogUpdate", () => {
     expect(plan.target).toBe("default");
     expect(plan.source).toContain(`"postgres",\n    "17.6.1.169",`);
     expect(plan.source).toContain(`"ghcr.io/supabase/cli/postgres:17.6.1.169@${DIGEST_A}"`);
-    // The additional line must survive untouched.
     expect(plan.source).toContain(`"15.14.1.168":`);
     expect(plan.source).toContain(`sha256:${"f".repeat(64)}`);
   });
@@ -167,7 +166,6 @@ describe("planCatalogUpdate", () => {
     expect(plan.target).toBe("additional");
     expect(plan.source).toContain(`"15.14.1.169":`);
     expect(plan.source).toContain(`"ghcr.io/supabase/cli/postgres:15.14.1.169@${DIGEST_B}"`);
-    // The 17.x default is the regression this guards: it must not move.
     expect(plan.source).toContain(`"postgres",\n    "17.6.1.168",`);
     expect(plan.source).toContain(`sha256:${"9".repeat(64)}`);
   });
@@ -240,7 +238,6 @@ describe("planCatalogUpdate", () => {
     expect(plan.kind).toBe("updated");
     if (plan.kind !== "updated") return;
     expect(plan.previousVersion).toBe("v16.2");
-    // postgres keeps both of its own pins.
     expect(plan.source).toContain(`"17.6.1.168",`);
     expect(plan.source).toContain(`"15.14.1.168":`);
   });
@@ -276,8 +273,7 @@ describe("against the real catalog", () => {
         version: "99.99.99",
         digest: DIGEST_A,
       });
-      // 99.x is a line no service carries, so postgres (multi-line) skips while
-      // every single-line service bumps. Either way it must be recognised.
+      // 99.x is a line no service carries: multi-line postgres skips, single-line services bump.
       expect(
         bumped.kind === "updated" || bumped.kind === "unmodelled-release-line",
         `${service} was not addressable in the real catalog`,

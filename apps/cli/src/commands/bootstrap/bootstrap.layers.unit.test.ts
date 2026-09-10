@@ -1,14 +1,4 @@
-/**
- * Layer-exposure test for `bootstrapRuntimeLayer`.
- *
- * Verifies that `IdentityStitch` is exposed at the top level of the
- * runtime layer so that `withCommandTelemetry` can read
- * `stitchedDistinctId()` via `Effect.serviceOption(IdentityStitch)` and
- * attribute the `cli_command_executed` event to the gotrue id.
- *
- * See `db/lint/lint.layers.unit.test.ts` for the canonical pattern and a
- * detailed explanation of the bug this guards against.
- */
+/** See `db/lint/lint.layers.unit.test.ts` for the canonical pattern this test follows. */
 
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
@@ -55,11 +45,8 @@ import { bootstrapRuntimeLayer } from "./bootstrap.layers.ts";
 
 const tempRoot = useTempWorkdir("supabase-bootstrap-layers-");
 
-/**
- * Stub layer satisfying every external service required by
- * `bootstrapRuntimeLayer` from the root runtime. Services under test are
- * left as `Effect.die` no-ops — layer construction must not invoke them.
- */
+// Stub layer for every external service `bootstrapRuntimeLayer` needs from the root runtime.
+// Services under test are `Effect.die` no-ops — layer construction must not invoke them.
 function ambientStubs() {
   const analytics = mockAnalytics();
   const out = mockOutput();
@@ -74,11 +61,9 @@ function ambientStubs() {
     Layer.succeed(CliArgs, { args: [] }),
   );
 
-  // Bootstrap's runtime layer provides CommandPlatformApi, CommandPlatformApiFactory,
-  // and ProjectRefResolver by building them from real sub-layers. These
-  // stubs are present so that the Effect type system sees those services as
-  // satisfiable in the outer ambient context; the runtime layer's own provisions
-  // take precedence at runtime.
+  // These stubs exist only so the Effect type system sees CommandPlatformApi,
+  // CommandPlatformApiFactory, and ProjectRefResolver as satisfiable in the outer context; the
+  // runtime layer's own provisions take precedence at runtime.
   const heavyServiceStubs = Layer.mergeAll(
     Layer.succeed(CommandPlatformApi, {
       v1: new Proxy({}, { get: () => () => Effect.die("not needed for layer-exposure test") }),
@@ -104,12 +89,9 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the REAL commandSettingsLayer against
-    // the real filesystem — see isolatedHomeLayer's docs. Bootstrap's
-    // commandPlatformApiLayer additionally eagerly validates the access token at
-    // layer-construction time, so inject a valid token via the isolated env —
-    // the same mechanism the cli-e2e harness uses (SUPABASE_ACCESS_TOKEN env
-    // var, CLAUDE.md invariant 4 dual-mode profile).
+    // Builds the real `commandSettingsLayer` against the real filesystem (see
+    // `isolatedHomeLayer`'s docs). `commandPlatformApiLayer` eagerly validates the access token at
+    // construction time, so inject a valid one via the isolated env (`SUPABASE_ACCESS_TOKEN`).
     isolatedHomeLayer(tempRoot.current, { SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     mockTty(),
     mockProcessControl().layer,

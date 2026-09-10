@@ -15,11 +15,9 @@ interface State {
   readonly distinct_id?: string;
   readonly schema_version: number;
   /**
-   * Exact decoded `schema_version` token, carried for re-serialization and
-   * stripped from the written JSON by {@link serializeTelemetryState}.
-   * Go decodes the field into a 64-bit `int` and `json.Marshal` re-emits it
-   * verbatim; a JS `Number` above 2^53 rounds (9007199254740993 → …992) and
-   * would persist the altered version.
+   * Exact decoded `schema_version` token, carried for re-serialization and stripped from the
+   * written JSON by {@link serializeTelemetryState}. `schema_version` is a 64-bit int on disk; a
+   * JS `Number` above 2^53 rounds (9007199254740993 → …992) and would persist the altered value.
    */
   readonly schemaVersionToken?: string;
 }
@@ -32,11 +30,9 @@ function telemetryPath(env: Record<string, string | undefined>, pathSvc: Path.Pa
 }
 
 /**
- * Serializes the state like Go's `json.Marshal` of `State` (`state.go:25-31`):
- * a carried exact `schema_version` token is spliced back in verbatim via
- * `JSON.rawJSON` (review r3683813242 — `Number` rounds valid int64 tokens
- * above 2^53, so `9007199254740993` would persist as `…992` where Go
- * re-encodes the decoded `int` exactly). Field order matches Go's struct.
+ * Serializes the state, splicing a carried exact `schema_version` token back in verbatim via
+ * `JSON.rawJSON` — `Number` rounds valid int64 tokens above 2^53, so `9007199254740993` would
+ * otherwise persist as `…992`.
  */
 function serializeTelemetryState(state: State): string {
   const { schemaVersionToken, ...fields } = state;
@@ -48,50 +44,41 @@ export interface PriorState {
   readonly enabled: boolean;
   readonly device_id: string;
   readonly session_id: string;
-  /** Epoch millis of `session_last_active`, from the Go-shape parse below. */
+  /** Epoch millis of `session_last_active`, from the RFC3339Nano parse below. */
   readonly sessionLastActiveMs: number;
   readonly distinct_id?: string;
   /**
-   * Exact raw token of the decoded non-zero `schema_version`, absent when Go
-   * would fall back to the `SchemaVersion` constant (`state.go:103-106`).
-   * Kept as the token — not a `Number` — so re-serialization is int64-exact.
+   * Exact raw token of the decoded non-zero `schema_version`, absent when the loader falls back
+   * to the `SCHEMA_VERSION` constant. Kept as the token — not a `Number` — so re-serialization is
+   * int64-exact.
    */
   readonly schemaVersionToken?: string;
 }
 
-// Go's `time.Parse(time.RFC3339Nano, …)` shape: date, `T`, time, optional
-// fraction, `Z` or a `±hh:mm` offset. JS `new Date(…)` alone accepts far more
-// (bare dates, RFC 2822, …) that Go rejects as malformed. The fractional
-// separator is `.` OR `,` — Go's parser accepts either (`commaOrPeriod`,
-// `time/format.go`; verified against go1.26: `…T00:00:00,1Z` parses) — while
-// the digits after it stay mandatory (`…T00:00:00,Z` is rejected).
+// The on-disk RFC3339Nano shape: date, `T`, time, optional fraction, `Z` or a `±hh:mm` offset.
+// JS `new Date(…)` alone accepts far more (bare dates, RFC 2822, …) that this format rejects as
+// malformed. The fractional separator is `.` or `,`, but the digits after it stay mandatory
+// (`…T00:00:00,Z` is rejected).
 const RFC3339_RE =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:[.,](\d+))?(?:Z|([+-])(\d{2}):(\d{2}))$/;
 
 const DAYS_PER_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
 
-// Gregorian leap rule, mirroring Go's `isLeap` (`time/time.go`).
+// Gregorian leap rule.
 function daysInMonth(year: number, month: number): number {
   if (month === 2 && year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) return 29;
   return DAYS_PER_MONTH[month - 1] ?? 0;
 }
 
 /**
- * Component-level port of Go's `time.Parse(time.RFC3339Nano, …)`
- * (`parseSessionLastActive`, `state.go:69-85`): validates like Go and, when
- * valid, returns the epoch milliseconds of the parsed instant. `Date.parse` /
- * `new Date(…)` cannot stand in for it in either direction (verified against
- * go1.26 and Bun 1.3):
- * - JS silently normalizes valid-range day overflow (`2025-02-29` → Mar 1,
- *   `2025-04-31` → May 1) and hour 24 (`T24:00:00Z` → next day) that Go
- *   rejects as "day/hour out of range";
- * - JS rejects forms Go accepts — a `,` fractional separator, and zone
- *   offsets bounded at hour 24 / minute 60 (`+24:00` and `+05:60` both
- *   parse) — where JS returns NaN.
- * The epoch therefore also has to come from these components, NOT from a
- * second `new Date(string)` pass: a Go-valid form JS cannot parse would
- * NaN there and wrongly count as session-expired (see the rotation check in
- * `loadOrCreateTelemetryState`).
+ * Validates an RFC3339Nano timestamp against the on-disk format's rules and, when valid, returns
+ * the epoch milliseconds of the parsed instant. `Date.parse`/`new Date(…)` cannot stand in for it
+ * in either direction: JS silently normalizes valid-range day overflow (`2025-02-29` → Mar 1,
+ * `T24:00:00Z` → next day) that this format rejects, and it rejects forms this format accepts (a
+ * `,` fractional separator; zone offsets bounded at hour 24/minute 60) by returning NaN instead.
+ * The epoch therefore also has to come from these components, not a second `new Date(string)`
+ * pass, since a valid form JS can't parse would NaN there and wrongly count as session-expired
+ * (see the rotation check in `loadOrCreateTelemetryState`).
  */
 function parseGoRfc3339Ms(text: string): number | undefined {
   const match = RFC3339_RE.exec(text);
@@ -111,8 +98,8 @@ function parseGoRfc3339Ms(text: string): number | undefined {
   const date = new Date(0);
   date.setUTCFullYear(year, month - 1, day);
   date.setUTCHours(hour, minute, second, 0);
-  // Go reads at most 9 fractional digits (nanoseconds); ms precision is
-  // exact for the 30-minute comparison this feeds.
+  // At most 9 fractional digits (nanoseconds) are read; ms precision is exact for the 30-minute
+  // comparison this feeds.
   const fractionMs = match[7] !== undefined ? Number(`0.${match[7].slice(0, 9)}`) * 1000 : 0;
   const offsetMs =
     match[8] !== undefined
@@ -130,20 +117,13 @@ const GO_INT64_MAX = 2n ** 63n - 1n;
 const INT64_TOKEN_RE = /^-?\d+$/;
 
 /**
- * Whether a raw JSON number token would decode into a Go signed 64-bit
- * integer. Go decodes both the consent-form unix millis (`int64`,
- * `state.go:69-85`) and `schema_version` (`int`, 64-bit on every supported
- * platform, `state.go:41`) by unmarshaling the RAW JSON number token, which
- * accepts only lexically-integer decimal tokens within the int64 range:
- * integer-VALUED tokens like `1.0`, `2.0`, and `1e3` are UnmarshalTypeErrors,
- * as are integer tokens outside [-2^63, 2^63-1] (verified against go1.26:
- * `json.Unmarshal` into `int64` rejects `1.0`/`1e3`/`1e100`/
- * `9223372036854775808`, and the repo's own `decodeState` maps each to
- * `errMalformedState` → full regeneration, `state.go:87-90`). `JSON.parse`
- * collapses those tokens to plain integer Numbers, so parsed VALUES alone
- * cannot reproduce Go — validation runs on the raw token text, with exact
- * BigInt bounds (the doubles for int64-max and int64-max+1 are
- * indistinguishable; the tokens are not).
+ * Whether a raw JSON number token would decode into a signed 64-bit integer, the type both the
+ * consent-form unix millis and `schema_version` are stored as on disk. That format accepts only
+ * lexically-integer decimal tokens within the int64 range: integer-valued tokens like `1.0`,
+ * `2.0`, and `1e3` are rejected, as are integer tokens outside [-2^63, 2^63-1]. `JSON.parse`
+ * collapses those tokens to plain integer Numbers, so parsed values alone can't reproduce this —
+ * validation runs on the raw token text, with exact BigInt bounds (the doubles for int64-max and
+ * int64-max+1 are indistinguishable; the tokens are not).
  */
 function isInt64Token(token: string): boolean {
   return (
@@ -154,17 +134,14 @@ function isInt64Token(token: string): boolean {
 const JSON_WS = new Set([" ", "\t", "\n", "\r"]);
 
 /**
- * Scans the ROOT object of an already-syntax-validated JSON text (it runs
- * only after `JSON.parse(text)` has succeeded) and returns every
- * `[key, raw value token]` pair in source order — INCLUDING duplicate keys.
- * `JSON.parse` collapses duplicates to the final occurrence before any user
- * code runs (even a stage-3 source-access reviver only ever sees the final
- * token), but Go's `encoding/json` decodes every occurrence in order, so
- * reproducing its behaviour needs the full occurrence list. Keys are
- * unescaped (Go matches the escaped key `"\u0063onsent"` to the `consent`
- * field). Only depth-1 pairs are emitted: a nested `{"x":{"enabled":"bad"}}` never shadows
- * a root field, matching Go's struct decoding. Returns `undefined` when the
- * root is not an object.
+ * Scans the root object of an already-syntax-validated JSON text (it runs only after
+ * `JSON.parse(text)` has succeeded) and returns every `[key, raw value token]` pair in source
+ * order — including duplicate keys, which `JSON.parse` collapses to the final occurrence before
+ * any user code runs. The on-disk format decodes every occurrence in order, so reproducing that
+ * needs the full occurrence list. Keys are unescaped (so the escaped key `"\u0063onsent"`
+ * matches the `consent` field). Only depth-1 pairs are emitted: a nested
+ * `{"x":{"enabled":"bad"}}` never shadows a root field. Returns `undefined` when the root is
+ * not an object.
  */
 function scanRootJsonEntries(
   text: string,
@@ -233,25 +210,16 @@ function scanRootJsonEntries(
 }
 
 /**
- * Go's single `json.Unmarshal` into `rawState` (`state.go:34-42`) records an
- * `UnmarshalTypeError` for EVERY wrong-typed occurrence of a known field —
- * even when a later duplicate is valid and overwrites the value — and any
- * such error classifies the whole file as malformed (verified against the
- * repo's own `decodeState` on go1.26:
- * `{"consent":false,"consent":"denied",…}` fails to decode while
- * `{"enabled":true,"enabled":false,…}` decodes cleanly with `Enabled=false`).
- * JSON `null` decodes into every field without error (nil for the pointer
- * fields, no-op for the rest); `session_last_active` is `json.RawMessage` and
- * unknown keys are skipped untyped — any token is fine for those.
+ * A wrong-typed occurrence of a known field — even one shadowed by a later valid duplicate — is
+ * enough to classify the whole file as malformed on this on-disk format
+ * (`{"consent":false,"consent":"denied",…}` fails to decode while
+ * `{"enabled":true,"enabled":false,…}` decodes cleanly with `enabled: false`). JSON `null`
+ * decodes into every field without error; `session_last_active` is untyped raw JSON and unknown
+ * keys are skipped untyped — any token is fine for those.
  *
- * DOCUMENTED BOUND (review r3689624837): `encoding/json` also matches field
- * names case-INsensitively when no exact match exists, so Go would treat a
- * hand-edited `"Enabled": …` as the `enabled` field where this port (here and
- * in `lastToken`/`lastNonNullToken`) treats it as unknown. Both CLIs only
- * ever WRITE canonical lowercase keys, so case-variant keys require a
- * hand-edited file; this emulation intentionally stops at exact tag names —
- * do not extend it to fold casing (that path ends at reproducing
- * `strings.EqualFold`'s Unicode simple folding).
+ * Known bound: this only matches exact lowercase field names. Both CLIs only ever write
+ * canonical lowercase keys, so a case-variant key (`"Enabled": …`) requires a hand-edited file and
+ * is treated as unknown here rather than folded to `enabled`.
  */
 function hasGoDecodableFieldTokens(
   entries: ReadonlyArray<readonly [key: string, token: string]>,
@@ -290,10 +258,9 @@ function lastToken(
 }
 
 /**
- * Raw token of the last NON-NULL occurrence of `key`. This is Go's effective
- * value for the non-pointer `rawState` fields: JSON `null` is a decode no-op
- * (the field keeps its previous value), so `{"device_id":"a","device_id":null}`
- * keeps `"a"` where `JSON.parse` surfaces `null` (verified against go1.26).
+ * Raw token of the last non-null occurrence of `key`. JSON `null` is a decode no-op (the field
+ * keeps its previous value), so `{"device_id":"a","device_id":null}` keeps `"a"` where
+ * `JSON.parse` surfaces `null`.
  */
 function lastNonNullToken(
   entries: ReadonlyArray<readonly [key: string, token: string]>,
@@ -319,27 +286,21 @@ function lastNonNullString(
 }
 
 /**
- * Faithful port of Go's `decodeState` (`internal/telemetry/state.go:87-115`):
- * ALL-OR-NOTHING. Go decodes the whole file or classifies it as
- * `errMalformedState` — it never salvages individual fields. A file missing
- * (or mistyping) any required piece — an `enabled` bool (or a
- * `granted`/`denied` `consent`), a parseable `session_last_active`, and
- * non-empty `device_id` AND `session_id` — is treated as wholly malformed, so
- * `LoadOrCreateState` recreates EVERYTHING fresh: `enabled` back to `true`,
- * new `device_id`, new `session_id`. Notably, a corrupt file that still says
- * `"enabled": false` does NOT stay disabled.
+ * Decodes the on-disk telemetry state: all-or-nothing, never salvaging individual fields. A file
+ * missing (or mistyping) any required piece — an `enabled` bool (or a `granted`/`denied`
+ * `consent`), a parseable `session_last_active`, and non-empty `device_id` and `session_id` — is
+ * treated as wholly malformed, so the caller recreates everything fresh: `enabled` back to
+ * `true`, new `device_id`, new `session_id`. A corrupt file that still says `"enabled": false`
+ * does not stay disabled.
  *
- * Go's unmarshal strictness is reproduced at the TOKEN level, over EVERY
- * occurrence of every root field ({@link scanRootJsonEntries} +
- * {@link hasGoDecodableFieldTokens}): `JSON.parse` collapses `2.0` → `2`,
- * `1e3` → `1000`, and duplicated keys down to their final occurrence, so
- * parsed values alone would preserve files Go rejects as wholly malformed —
- * non-integer number tokens, magnitudes outside the int64 range, and
- * wrong-typed non-final duplicates (`{"consent":false,"consent":"denied"}`)
- * alike. (Unix millis in-range but beyond ECMAScript's ±8.64e15 `Date` range
- * do NOT regenerate: the epoch is kept as a plain number, so — like Go's
- * `time.UnixMilli` — the state is preserved and the far-future comparison
- * simply never expires the session.)
+ * Strictness is reproduced at the token level, over every occurrence of every root field
+ * ({@link scanRootJsonEntries} + {@link hasGoDecodableFieldTokens}): `JSON.parse` collapses
+ * `2.0` → `2`, `1e3` → `1000`, and duplicated keys down to their final occurrence, so parsed
+ * values alone would preserve files this format rejects as wholly malformed — non-integer number
+ * tokens, magnitudes outside the int64 range, and wrong-typed non-final duplicates
+ * (`{"consent":false,"consent":"denied"}`) alike. Unix millis in-range but beyond ECMAScript's
+ * ±8.64e15 `Date` range do not regenerate: the epoch is kept as a plain number, so the state is
+ * preserved and the far-future comparison simply never expires the session.
  */
 export function readExistingState(text: string): PriorState | undefined {
   try {
@@ -347,17 +308,13 @@ export function readExistingState(text: string): PriorState | undefined {
     if (!isRecord(parsed)) return undefined;
     const record = parsed;
 
-    // Per-OCCURRENCE typing first: Go's single-shot unmarshal fails on any
-    // wrong-typed occurrence — including one shadowed by a later valid
-    // duplicate that `JSON.parse` would surface (`state.go:88-91`).
+    // Per-occurrence typing first: fails on any wrong-typed occurrence, including one shadowed
+    // by a later valid duplicate that `JSON.parse` would surface.
     const entries = scanRootJsonEntries(text);
     if (entries === undefined || !hasGoDecodableFieldTokens(entries)) return undefined;
 
-    // Go's `parseConsent` (`state.go:52-67`): a non-null `consent` must be
-    // `granted`/`denied` (and unlocks the unix-millis timestamp form);
-    // otherwise a bool `enabled` is required. Field TYPING — a non-boolean
-    // `enabled`, a non-string `consent`, on any occurrence — was already
-    // validated above.
+    // A non-null `consent` must be `granted`/`denied` (and unlocks the unix-millis timestamp
+    // form); otherwise a bool `enabled` is required. Field typing was already validated above.
     let enabled: boolean;
     let allowUnixMillis = false;
     const consent = record.consent;
@@ -377,10 +334,9 @@ export function readExistingState(text: string): PriorState | undefined {
       return undefined;
     }
 
-    // Go's `parseSessionLastActive` (`state.go:69-85`): an RFC3339Nano string,
-    // or — only on the consent form — integer unix millis (`time.UnixMilli`).
-    // The field is `json.RawMessage`, so plain last-occurrence overwrite
-    // applies (nulls included) and only the FINAL token is ever parsed.
+    // An RFC3339Nano string, or — only on the consent form — integer unix millis. The field is
+    // untyped raw JSON, so plain last-occurrence overwrite applies (nulls included) and only the
+    // final token is ever parsed.
     const rawLastActive = record.session_last_active;
     let sessionLastActiveMs: number;
     if (typeof rawLastActive === "string") {
@@ -399,9 +355,8 @@ export function readExistingState(text: string): PriorState | undefined {
       return undefined;
     }
 
-    // Go: `if raw.DeviceID == "" || raw.SessionID == ""` → "missing identity".
-    // Effective values are the last NON-NULL occurrences — `null` decodes as
-    // a no-op into these non-pointer string fields.
+    // Empty `device_id`/`session_id` means missing identity. Effective values are the last
+    // non-null occurrences — `null` decodes as a no-op into these fields.
     const deviceId = lastNonNullString(entries, "device_id");
     if (deviceId === undefined || deviceId === "") return undefined;
     const sessionId = lastNonNullString(entries, "session_id");
@@ -409,11 +364,10 @@ export function readExistingState(text: string): PriorState | undefined {
 
     const distinctId = lastNonNullString(entries, "distinct_id");
 
-    // `SchemaVersion int`: absent (or only null occurrences) → zero value;
-    // Go keeps a decoded file's non-zero schema_version (`state.go:103-106`).
-    // The zero test and the kept value both use the exact TOKEN — `BigInt`
-    // for the comparison, the raw text for re-serialization — because
-    // `Number` rounds valid int64 magnitudes above 2^53.
+    // Absent (or only null occurrences) means zero value; a decoded file's non-zero
+    // schema_version is kept. The zero test and the kept value both use the exact token — BigInt
+    // for the comparison, the raw text for re-serialization — since `Number` rounds valid int64
+    // magnitudes above 2^53.
     const schemaVersionToken = lastNonNullToken(entries, "schema_version");
     const keptSchemaVersionToken =
       schemaVersionToken !== undefined && BigInt(schemaVersionToken) !== 0n
@@ -447,13 +401,10 @@ export const loadOrCreateTelemetryState = Effect.fn("telemetry.loadOrCreateState
   const now = opts.now ?? new Date();
   const nowIso = now.toISOString();
 
-  // The expiry comparison uses the epoch computed by `parseGoRfc3339Ms`
-  // during decode — NOT a `new Date(string)` re-parse. Go-valid forms JS
-  // cannot parse (comma fraction `…00,5Z`, offsets `+24:00`/`+05:60`)
-  // would NaN there and read as expired, rotating `session_id` where Go —
-  // which decoded the instant fine — retains it inside the 30-minute
-  // window (`LoadOrCreateState`, `state.go:140-148`; verified against the
-  // Go binary: a recent `…00,5Z` keeps the seeded session id).
+  // The expiry comparison uses the epoch computed by `parseGoRfc3339Ms` during decode, not a
+  // `new Date(string)` re-parse — a valid form JS can't parse (comma fraction `…00,5Z`, offsets
+  // `+24:00`/`+05:60`) would NaN there and wrongly read as expired, rotating `session_id` even
+  // though the instant decoded fine and is still inside the 30-minute window.
   const priorActiveMs = prior?.sessionLastActiveMs;
   const expired =
     priorActiveMs === undefined || now.getTime() - priorActiveMs > SESSION_ROTATION_MS;
@@ -465,9 +416,8 @@ export const loadOrCreateTelemetryState = Effect.fn("telemetry.loadOrCreateState
       !expired && prior?.session_id !== undefined ? prior.session_id : crypto.randomUUID(),
     session_last_active: nowIso,
     ...(prior?.distinct_id !== undefined ? { distinct_id: prior.distinct_id } : {}),
-    // Go keeps a decoded file's non-zero schema_version (`state.go:103-106`).
-    // The numeric field is for in-memory readers; the exact token rides
-    // along for the write so magnitudes above 2^53 round-trip like Go.
+    // A decoded file's non-zero schema_version is kept. The numeric field is for in-memory
+    // readers; the exact token rides along for the write so magnitudes above 2^53 round-trip.
     schema_version:
       prior?.schemaVersionToken !== undefined ? Number(prior.schemaVersionToken) : SCHEMA_VERSION,
     ...(prior?.schemaVersionToken !== undefined
@@ -497,11 +447,9 @@ export const setTelemetryEnabled = Effect.fn("telemetry.setEnabled")(function* (
 });
 
 /**
- * Re-derives the current telemetry state (reusing `loadOrCreateTelemetryState`'s
- * read / session-rotation / merge — no third copy of that logic) and writes it
- * back with the `distinct_id` field set (`stitchLogin`) or removed
- * (`clearDistinctId`). Mirrors Go's `SaveState(s.state, fsys)` after mutating
- * `s.state.DistinctID` (`service.go:141-150`).
+ * Re-derives the current telemetry state (reusing `loadOrCreateTelemetryState`'s read /
+ * session-rotation / merge, rather than a third copy of that logic) and writes it back with the
+ * `distinct_id` field set (`stitchLogin`) or removed (`clearDistinctId`).
  */
 const persistDistinctId = Effect.fn("telemetry.persistDistinctId")(function* (
   distinctId: string | undefined,
@@ -529,18 +477,15 @@ const persistIdentityReset = Effect.fn("telemetry.persistIdentityReset")(functio
 });
 
 /**
- * Writes `<SUPABASE_HOME or ~/.supabase>/telemetry.json` on every command run.
- * Mirrors Go's `LoadOrCreateState` (`apps/cli-go/internal/telemetry/state.go:74-98`):
+ * Writes `<SUPABASE_HOME or ~/.supabase>/telemetry.json` on every command run:
  *
  *  - Reuses an existing `device_id` if the file is present.
  *  - Rotates `session_id` if `session_last_active` is older than 30 minutes.
- *  - Always sets `enabled: true` on a fresh state (matches Go — the field is
- *    only flipped to `false` if the user has run `supabase telemetry disable`,
- *    in which case the prior value is preserved). The
- *    `SUPABASE_TELEMETRY_DISABLED` / `DO_NOT_TRACK` env vars suppress event
- *    delivery, not state-file writes.
- *  - Always writes — Go persists the state file even when telemetry is
- *    disabled; only event delivery is suppressed.
+ *  - Always sets `enabled: true` on a fresh state — the field is only flipped to `false` if the
+ *    user has run `supabase telemetry disable`, in which case the prior value is preserved. The
+ *    `SUPABASE_TELEMETRY_DISABLED`/`DO_NOT_TRACK` env vars suppress event delivery, not
+ *    state-file writes.
+ *  - Always writes, even when telemetry is disabled; only event delivery is suppressed.
  *
  * Best-effort: filesystem or JSON parse errors are swallowed.
  */
@@ -561,15 +506,14 @@ export const telemetryStateLayer = Layer.effect(
     return TelemetryState.of({
       flush: provide(loadOrCreateTelemetryState()).pipe(Effect.asVoid, Effect.ignore),
       stitchLogin: (distinctId: string) =>
-        // Mirrors Go's `StitchLogin`: the in-memory stamp always happens so
-        // subsequent captures in this process carry the user's id; the alias
-        // (which merges pre-login history) and the `telemetry.json` write only
-        // happen in persistent runtimes. The alias is fire-and-forget so a
-        // PostHog delivery error never prevents the `distinct_id` persist.
+        // The in-memory stamp always happens so subsequent captures in this process carry the
+        // user's id; the alias (which merges pre-login history) and the `telemetry.json` write
+        // only happen in persistent runtimes. The alias is fire-and-forget so a PostHog delivery
+        // error never prevents the `distinct_id` persist.
         Effect.gen(function* () {
-          // Alias only the first identity this device ever sees — re-aliasing
-          // on re-login would merge a second user into the device's existing
-          // person graph in PostHog. Stamp and persist always.
+          // Alias only the first identity this device ever sees — re-aliasing on re-login would
+          // merge a second user into the device's existing person graph in PostHog. Stamp and
+          // persist always.
           const current = runtime.identity.current();
           const firstIdentity = current === undefined || current.length === 0;
           runtime.identity.stamp(distinctId);

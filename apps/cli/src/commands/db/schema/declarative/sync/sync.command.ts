@@ -14,11 +14,8 @@ const config = {
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
-    // Go registers `--schema` as a cobra `StringSliceVarP`
-    // (`apps/cli-go/cmd/db_schema_declarative.go:484`, deleted in CLI-1970;
-    // last present at commit 7b469f5b3), which CSV-splits each
-    // occurrence so `-s public,auth` includes the two schemas separately. Mirror
-    // the `gen types` / `db lint` parsing so quoted commas are handled the same way.
+    // CSV-splits each occurrence so `-s public,auth` includes the two schemas separately, same
+    // as `gen types`/`db lint`'s quoted-comma parsing.
     Flag.mapTryCatch(
       (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
@@ -33,10 +30,8 @@ const config = {
     Flag.withDescription("Name for the generated migration file."),
     Flag.optional,
   ),
-  // cobra's `MarkFlagsMutuallyExclusive("apply", "no-apply")` keys off `flag.Changed`,
-  // not the value (`cmd/db_schema_declarative.go:561`), so model presence with `Option`
-  // so `--apply=false --no-apply` still trips the conflict. The apply decision below
-  // reads the resolved value via `Option.getOrElse`.
+  // Mutually exclusive with `--no-apply`, keyed off presence not value, so model with `Option`
+  // so `--apply=false --no-apply` still trips the conflict.
   apply: Flag.boolean("apply").pipe(
     Flag.withDescription("Apply the generated migration to the local database without prompting."),
     Flag.optional,
@@ -88,10 +83,8 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
             "no-apply": merged.noApply,
             transient: merged.transient,
           },
-          // Go registers `--schema`/`-s` (StringSliceVarP) and `--file`/`-f`
-          // (StringVarP) (`cmd/db_schema_declarative.go:484-485`); telemetry reports
-          // changed flags by canonical `flag.Name` via `pflag.Visit`, so map the
-          // shorthands so `sync -s public -f out.sql` logs `schema`/`file`.
+          // Telemetry reports changed flags by canonical name, so map the shorthands: `sync
+          // -s public -f out.sql` must log `schema`/`file`.
           aliases: { s: "schema", f: "file" },
         }),
         withJsonErrorHandling,

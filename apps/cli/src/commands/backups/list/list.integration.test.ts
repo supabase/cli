@@ -132,8 +132,6 @@ describe("backups list integration", () => {
     const { layer, out } = setup({ goOutput: "json", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
-      // Byte-identical to `encoding/json` output: alphabetical struct-field
-      // order, and a nil Backups slice serializes as `null`.
       expect(out.stdoutText).toBe(
         `{
   "backups": null,
@@ -152,7 +150,6 @@ describe("backups list integration", () => {
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("region: ap-southeast-1");
-      // yaml.v3 lowercases the whole field name (CLI-1975).
       expect(out.stdoutText).toContain("walgenabled: true");
     }).pipe(Effect.provide(layer));
   });
@@ -161,7 +158,6 @@ describe("backups list integration", () => {
     const { layer, out } = setup({ goOutput: "toml", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
-      // BurntSushi emits PascalCase field names (CLI-1975).
       expect(out.stdoutText).toContain('Region = "ap-southeast-1"');
       expect(out.stdoutText).toContain("WalgEnabled = true");
     }).pipe(Effect.provide(layer));
@@ -171,8 +167,6 @@ describe("backups list integration", () => {
     const { layer, out } = setup({ goOutput: "toml", response: LOGICAL_RESPONSE });
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.none() });
-      // Byte-exact (CLI-1975): primitives first, then the Backups
-      // array-of-tables and the (empty) PhysicalBackupData table.
       expect(out.stdoutText).toBe(`PitrEnabled = true
 Region = "ap-southeast-1"
 WalgEnabled = true

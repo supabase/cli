@@ -16,24 +16,16 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import { startCommand } from "./start.command.ts";
 
-// `--exclude`/`-x` is a string-slice flag (CLI-2005), so malformed CSV
-// aborts flag parsing before the handler runs — before any Docker
-// interaction — with the exact `invalid argument %q for %q flag: %v` line
-// on stderr. Because the flag has a shorthand, the diagnostic frames BOTH
-// spellings (`-x, --exclude`) regardless of which one the user typed.
-// These scenarios run the whole command tree (`Command.runWith`), mirroring
-// the network-bans/network-restrictions prior art from CLI-1983.
+// Malformed CSV aborts flag parsing before the handler runs, with pflag's exact
+// `invalid argument %q for %q flag: %v` line on stderr — a shorthand flag frames both spellings
+// (`-x, --exclude`). These run the whole command tree (`Command.runWith`), not just the flag parser.
 
 const tempRoot = useTempWorkdir("supabase-start-string-slice-int-");
 
-// `withGlobalFlags` must come AFTER `withSubcommands`: it only excludes each
-// global flag's context requirement from the R accumulated on the command
-// SO FAR, and `withSubcommands` unions in every subcommand's own requirements
-// (including `start`'s handler-chain reads of `DebugFlag`/
-// `NetworkIdFlag`/`DnsResolverFlag`/`ProfileFlag`/
-// `WorkdirFlag`/`YesFlag`). Reversing the order leaves those
-// context tags in `Command.runWith`'s Environment type even though this
-// parse-failure path never reaches the handler at runtime.
+// `withGlobalFlags` must come after `withSubcommands`: it excludes each global flag's context
+// requirement only from what's already accumulated, so subcommand requirements need to be unioned
+// in first. Reversing the order would leave those context tags in `Command.runWith`'s Environment
+// type, even though this parse-failure path never reaches the handler.
 const testRoot = Command.make("supabase").pipe(
   Command.withSubcommands([startCommand]),
   Command.withGlobalFlags(GLOBAL_FLAGS),
@@ -75,9 +67,8 @@ function setup() {
 }
 
 describe("start --exclude flag (pflag CSV parity)", () => {
-  // Verified against pflag's actual output (CLI-2005): the rendered line is
-  // identical for both spellings — pflag always frames a shorthand flag as
-  // `-x, --exclude`.
+  // Both spellings render the identical diagnostic line: pflag always frames a shorthand
+  // flag as `-x, --exclude`.
   const spellings: ReadonlyArray<{ readonly name: string; readonly flag: string }> = [
     { name: "--exclude", flag: "--exclude" },
     { name: "-x", flag: "-x" },

@@ -50,25 +50,20 @@ describe("resolveKongNginxWorkerProcesses", () => {
 });
 
 describe("buildKongEmailTemplateBind", () => {
-  // Resolution (workdir-relative joins, the notification-specific legacy
-  // supabase/-relative fallback, absolute-path passthrough, containment, and
-  // read-verification) all moved to `start.handler.ts`'s
-  // `resolveKongEmailTemplateMounts` (CLI-2339's Kong-mount hardening pass) —
-  // see that function's own test coverage in `start.integration.test.ts` and
-  // `config-validate.unit.test.ts`'s `resolveEmailTemplateContentPath`
-  // suite. This function is now a pure formatter over an already-resolved
-  // `mount.resolvedPath`; the remaining tests below only cover that formatting.
+  // Resolution and containment checks live in `start.handler.ts`'s
+  // `resolveKongEmailTemplateMounts`; this function only formats an
+  // already-resolved `mount.resolvedPath`.
 
-  test("builds the bind string from an already-resolved resolvedPath (start.go:531-538)", () => {
+  test("builds the bind string from an already-resolved resolvedPath", () => {
     expect(buildKongEmailTemplateBind({ id: "invite", resolvedPath: "/work/invite.html" })).toBe(
-      "/work/invite.html:/home/kong/templates/email/invite.html:rw",
+      "/work/invite.html:/home/kong/templates/email/invite.html:rw,z",
     );
   });
 
   test("drops the extension when resolvedPath has none", () => {
     expect(
       buildKongEmailTemplateBind({ id: "invite_notification", resolvedPath: "/work/invite" }),
-    ).toBe("/work/invite:/home/kong/templates/email/invite_notification:rw");
+    ).toBe("/work/invite:/home/kong/templates/email/invite_notification:rw,z");
   });
 });
 
@@ -188,10 +183,6 @@ describe("buildKongContainerSpec", () => {
   });
 
   test("mounts every resolved email template bind (start.go:544-558)", () => {
-    // Every entry here is already resolved+containment-checked+read-verified by the
-    // caller (`start.handler.ts`'s `resolveKongEmailTemplateMounts`) — there is no
-    // "unconfigured" entry to filter downstream anymore, since the caller omits those
-    // entirely before this input is ever built.
     const spec = buildKongContainerSpec({
       ...base,
       emailTemplateMounts: [
@@ -200,8 +191,8 @@ describe("buildKongContainerSpec", () => {
       ],
     });
     expect(spec.binds).toEqual([
-      "/work/invite.html:/home/kong/templates/email/invite.html:rw",
-      "/abs/recovery.html:/home/kong/templates/email/recovery_notification.html:rw",
+      "/work/invite.html:/home/kong/templates/email/invite.html:rw,z",
+      "/abs/recovery.html:/home/kong/templates/email/recovery_notification.html:rw,z",
     ]);
   });
 

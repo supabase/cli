@@ -15,20 +15,12 @@ import {
 } from "./edge-runtime.service.ts";
 
 /**
- * A spawner that answers every `docker` invocation
- * `startStackEdgeRuntimeContainer`'s call chain makes
- * (`ensureDockerNamedVolume`/`ensureDockerNetwork`/the create → cp → start
- * bring-up itself) with success, recording every invocation's argv (plus its
- * `stdin` option, for the `docker cp` archive) for assertions — same shape as
- * `health-check.unit.test.ts`'s `mockHealthSpawner`. Secret
- * values are delivered to the `create` call via `--env-file`/a bind-mounted
- * script, not this spawned process's own environment (see
- * `edge-runtime.service.ts`'s header for why), so there is nothing to capture
- * beyond argv and stdin. Note `startStackEdgeRuntimeContainer` never issues a
- * `docker exec ... kong reload` — that only happens in `functions serve`'s own
- * `restartEdgeRuntime`-equivalent wrapper (`shared/functions/serve.ts`'s
- * `startEdgeRuntime`), not in the shared bring-up core this module calls
- * directly — see the "does not reload Kong" test below.
+ * Answers every `docker` invocation with success, recording each call's argv
+ * and `stdin` option (for `docker cp` archives) for assertions.
+ *
+ * Never issues `docker exec ... kong reload` — that only happens in
+ * `functions serve`'s own wrapper, not this shared bring-up core (see the
+ * "does not reload Kong" test below).
  */
 function mockDockerSpawner(
   handler?: (args: ReadonlyArray<string>) => { exitCode: number; stderr?: string },
@@ -73,7 +65,7 @@ function mockDockerSpawner(
       return calls;
     },
     get runCall() {
-      // The container-level `docker create` (`docker volume create` starts with "volume").
+      // Excludes `docker volume create`, whose first arg is "volume", not "create".
       return calls.find((call) => call.args[0] === "create");
     },
   };
@@ -85,8 +77,7 @@ function baseInput(workdir: string): EdgeRuntimeBringUpInput {
     networkId: "supabase_network_proj",
     image: "registry.example.com/supabase/edge-runtime:v1.74.2",
     workdir,
-    // `authenticator:postgres@127.0.0.1:54322/postgres` — password "postgres", matching every
-    // other service's `dbUrl` input shape (`LocalConfigValues.dbUrl`).
+    // Matches every other service's `dbUrl` input shape (`LocalConfigValues.dbUrl`).
     dbUrl: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
     apiPort: 54321,
     edgeRuntimePolicy: "oneshot",
@@ -123,9 +114,8 @@ function envEntries(runCall: {
 describe("startStackEdgeRuntimeContainer", () => {
   const tempWorkdir = useTempWorkdir("supabase-edge-runtime-service-int-");
 
-  // An empty functions directory — every scenario here has zero declared
-  // functions (`configDeclaredFunctions`/`configFunctions` in `baseInput`),
-  // so nothing under it is ever read; it only needs to exist.
+  // Only needs to exist — every scenario here has zero declared functions,
+  // so nothing under it is read.
   beforeEach(() => {
     mkdirSync(join(tempWorkdir.current, "supabase", "functions"), { recursive: true });
   });
@@ -209,7 +199,6 @@ describe("startStackEdgeRuntimeContainer", () => {
         const runCall = mock.runCall!;
         const ulimitIndex = runCall.args.indexOf("--ulimit");
         expect(runCall.args[ulimitIndex + 1]).toBe(edgeRuntimeNofileUlimit("darwin").arg);
-        // Off Linux the raise is never clamped, so no clamp warning is emitted.
         expect(out.messages.filter((message) => message.type === "warn")).toEqual([]);
       }),
   );
@@ -320,7 +309,6 @@ describe("startStackEdgeRuntimeContainer", () => {
           .filter((step) => step === "create" || step === "cp" || step === "start");
         expect(containerSteps).toEqual(["create", "cp", "start"]);
 
-        // No bind delivers /root/index.ts — the single-file host bind is what broke #6254.
         const createArgs = mock.runCall!.args;
         const bindValues = createArgs.flatMap((arg, index) =>
           createArgs[index - 1] === "-v" ? [arg] : [],
@@ -444,7 +432,6 @@ describe("startStackEdgeRuntimeContainer", () => {
           'failed to copy edge runtime main service into container: destination "supabase_edge_runtime_proj:/" must be a directory',
         );
         expect(mock.calls.some((call) => call.args[0] === "start")).toBe(false);
-        // Removal stays with the callers, matching `docker run -d` behavior.
         expect(mock.calls.some((call) => call.args[0] === "container")).toBe(false);
       }),
   );
@@ -479,18 +466,16 @@ describe("startStackEdgeRuntimeContainer", () => {
           "start-secrets",
           "supabase_edge_runtime_proj",
         );
-        // Simulates a leftover from an earlier invocation (e.g. `functions serve`'s watch-mode
-        // restart loop) that was never reclaimed — `writeDockerEnvFile`'s own header explains why
-        // this path is deterministic/reused rather than a fresh mkdtemp per call.
+        // Simulates a stale leftover from an earlier invocation; `writeDockerEnvFile` reuses
+        // this path deterministically rather than a fresh mkdtemp each call.
         mkdirSync(join(stagingDir, "env"), { recursive: true });
         writeFileSync(join(stagingDir, "env", "docker.env"), "STALE=1");
 
         const input = {
           ...baseInput(tempWorkdir.current),
-          // A multiline secret with a name that fails `validateDockerMultilineEnvNames` (must
-          // match a shell variable name) — this throws before any of THIS invocation's staging
-          // writes happen, proving cleanup covers the whole staging-write window, not just a
-          // failure at (or after) the docker create/cp/start steps.
+          // An invalid shell-variable name fails before this invocation's staging writes
+          // happen, so cleanup must cover the whole staging-write window, not just
+          // create/cp/start failures.
           edgeRuntimeSecrets: { "1BAD_NAME": "line one\nline two" },
         };
 

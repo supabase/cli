@@ -5,7 +5,7 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
-import { mintConfigTargetErrors } from "../config.target.ts";
+import { mintConfigTargetErrors } from "../../../command-internal/project-target.ts";
 
 /**
  * Tagged errors for `supabase config push`.
@@ -66,12 +66,8 @@ export class ConfigPushWorkdirError extends Data.TaggedError(
   }
 }
 
-// --- branch/UUID resolution (CLI-2289) --------------------------------------
-//
-// `--project-ref` accepts a project ref, or the name (or UUID) of one of its
-// branches — mirrors `config diff`'s own error set 1:1, under push's own
-// names (`diff.errors.ts`).
-
+// --project-ref accepts a project ref, or the name (or UUID) of one of its branches; mirrors
+// config diff's own error set under push's own names.
 const targetErrors = mintConfigTargetErrors("ConfigPush");
 
 /** `--project-ref` named a branch the parent project does not have. */
@@ -119,28 +115,19 @@ export class ConfigPushBranchResolveStatusError extends Data.TaggedError(
   }
 }
 
-// --- live branch detection (CLI-2168) ---------------------------------------
-//
-// The `getProject` probe that tells the user whether `ref` is the linked
-// project or one of its branches is entirely best-effort: a 404 is the
-// branch signal (handled by `classifyProjectLookupError`), and any
-// OTHER outcome — a timeout, a transport failure, or a non-200/404 status
-// (e.g. a scoped token that can write service config but can't read the
-// project record) — degrades to an uncertain target rather than aborting the
-// push. There is deliberately no error class for this probe: it never fails
-// the command.
+// The getProject probe that tells the user whether ref is the linked project or a branch is
+// entirely best-effort: a 404 is the branch signal, and any other outcome (a timeout, a
+// transport failure, or an unexpected status) degrades to an uncertain target rather than
+// aborting the push. There is no error class for this probe — it never fails the command.
 
-// --- branch confirmation gate (CLI-2168) ------------------------------------
-
-/** The user declined the branch confirmation gate. Mirrors `projects
- * delete`/`db reset`'s identical top-level "are you sure" cancellation
- * shape — declining now FAILS (exit 1), matching every other top-level
- * confirmation gate in this codebase; the per-service `keep()` prompts below
- * are unrelated and still exit 0 on decline. `suggestion` always names the
- * `--yes`/`SUPABASE_YES` escape hatch — the interactive prompt label already
- * carries an inline hint, but a machine-mode or non-TTY decline never renders
- * that label at all (`promptYesNo` returns the default silently), so
- * this is the only place those callers see it. */
+/**
+ * The user declined the branch confirmation gate. Mirrors `projects delete`/`db reset`'s
+ * identical top-level "are you sure" cancellation shape: declining fails (exit 1), matching
+ * every other top-level confirmation gate in this codebase; the per-service `keep()` prompts
+ * below are unrelated and still exit 0 on decline. `suggestion` always names the
+ * `--yes`/`SUPABASE_YES` escape hatch, since a machine-mode or non-TTY decline never renders the
+ * interactive prompt's own inline hint.
+ */
 export class ConfigPushCancelledError extends Data.TaggedError("ConfigPushCancelledError")<{
   readonly message: string;
   readonly suggestion?: string;
@@ -149,8 +136,6 @@ export class ConfigPushCancelledError extends Data.TaggedError("ConfigPushCancel
     return actionability.cancelled;
   }
 }
-
-// --- cost matrix (list addons) ---------------------------------------------
 
 export class ConfigPushListAddonsNetworkError extends Data.TaggedError(
   "ConfigPushListAddonsNetworkError",
@@ -170,8 +155,6 @@ export class ConfigPushListAddonsStatusError extends Data.TaggedError(
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
-
-// --- effective project config read (GET /v2/projects/{ref}/config) --------
 
 /**
  * Transport failure or undecodable response reading the project's effective
@@ -204,12 +187,11 @@ export class ConfigPushConfigReadStatusError extends Data.TaggedError(
 }
 
 /**
- * The effective project config read returned 200 with NO block populated at
- * all (`scope.present` empty) — a scoped or otherwise restricted token most
- * plausibly produces this. Pushing against an empty remote view would mean
- * treating every locally declared property as a fresh write with no remote
- * value to compare against, so this aborts before touching any resource
- * rather than risk that.
+ * The effective project config read returned 200 with no block populated at all
+ * (`scope.present` empty) — a scoped or otherwise restricted token most plausibly produces
+ * this. Pushing against an empty remote view would mean treating every locally declared
+ * property as a fresh write with no remote value to compare against, so this aborts before
+ * touching any resource rather than risk that.
  */
 export class ConfigPushConfigEmptyError extends Data.TaggedError(
   "ConfigPushConfigEmptyError",
@@ -218,8 +200,6 @@ export class ConfigPushConfigEmptyError extends Data.TaggedError(
     return actionability.accountAccess;
   }
 }
-
-// --- api --------------------------------------------------------------------
 
 export class ConfigPushApiUpdateNetworkError extends Data.TaggedError(
   "ConfigPushApiUpdateNetworkError",
@@ -238,8 +218,6 @@ export class ConfigPushApiUpdateStatusError extends Data.TaggedError(
   }
 }
 
-// --- db.settings ------------------------------------------------------------
-
 export class ConfigPushDbUpdateNetworkError extends Data.TaggedError(
   "ConfigPushDbUpdateNetworkError",
 )<DecodableNetworkErrorArgs> {
@@ -256,8 +234,6 @@ export class ConfigPushDbUpdateStatusError extends Data.TaggedError(
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
-
-// --- db.network_restrictions ------------------------------------------------
 
 export class ConfigPushNetworkRestrictionsUpdateNetworkError extends Data.TaggedError(
   "ConfigPushNetworkRestrictionsUpdateNetworkError",
@@ -276,8 +252,6 @@ export class ConfigPushNetworkRestrictionsUpdateStatusError extends Data.TaggedE
   }
 }
 
-// --- db.ssl_enforcement -----------------------------------------------------
-
 export class ConfigPushSslEnforcementUpdateNetworkError extends Data.TaggedError(
   "ConfigPushSslEnforcementUpdateNetworkError",
 )<DecodableNetworkErrorArgs> {
@@ -294,8 +268,6 @@ export class ConfigPushSslEnforcementUpdateStatusError extends Data.TaggedError(
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
-
-// --- auth -------------------------------------------------------------------
 
 export class ConfigPushAuthUpdateNetworkError extends Data.TaggedError(
   "ConfigPushAuthUpdateNetworkError",
@@ -314,8 +286,6 @@ export class ConfigPushAuthUpdateStatusError extends Data.TaggedError(
   }
 }
 
-// --- storage ----------------------------------------------------------------
-
 export class ConfigPushStorageUpdateNetworkError extends Data.TaggedError(
   "ConfigPushStorageUpdateNetworkError",
 )<DecodableNetworkErrorArgs> {
@@ -332,8 +302,6 @@ export class ConfigPushStorageUpdateStatusError extends Data.TaggedError(
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
-
-// --- experimental.webhooks --------------------------------------------------
 
 export class ConfigPushEnableWebhookNetworkError extends Data.TaggedError(
   "ConfigPushEnableWebhookNetworkError",

@@ -1,9 +1,8 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
-import { experimentalStackStart } from "./start.handler.ts";
+import { stackStart } from "./start.handler.ts";
 
 const config = {
   stack: Flag.string("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
@@ -25,29 +24,25 @@ const config = {
   ),
 } as const;
 
-export type ExperimentalStackStartFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type StackStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const experimentalStackStartCommand = Command.make("start", config).pipe(
+export const stackStartCommand = Command.make("start", config).pipe(
   Command.withDescription(
     "Create or resume a managed local Supabase stack from supabase/config.toml. " +
-      "Configure values in that file or with explicit env(NAME) references; automatic SUPABASE_* section overrides are not applied.",
+      "Values support explicit env(NAME) references and automatic SUPABASE_* overrides.",
   ),
   Command.withShortDescription("Start a managed local stack"),
   Command.withExamples([
     {
-      command: "supabase experimental stack start",
+      command: "supabase stack start",
       description: "Start the current project stack",
     },
     {
-      command: "supabase experimental stack start --stack feature-a --runtime docker",
+      command: "supabase stack start --stack feature-a --runtime docker",
       description: "Start a named Docker stack",
     },
   ]),
   Command.withHandler((flags) =>
-    experimentalStackStart(flags).pipe(
-      withCommandTelemetry({ flags, config }),
-      withJsonErrorHandling,
-    ),
+    stackStart(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
-  Command.provide(commandRuntimeLayer(["experimental", "stack", "start"])),
 );

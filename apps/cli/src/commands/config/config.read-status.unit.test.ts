@@ -1,17 +1,9 @@
 import { describe, expect, test } from "vitest";
 
-import { configReadStatusMessage, unexpectedStatusMessage } from "./config.read-status.ts";
+import { configReadStatusMessage } from "./config.read-status.ts";
 
 const REF = "abcdefghijklmnopqrst";
 const API_HOST = "https://api.supabase.com";
-
-describe("unexpectedStatusMessage", () => {
-  test("shapes the generic unexpected-status message", () => {
-    expect(unexpectedStatusMessage(500, '{"message":"boom"}')).toBe(
-      'unexpected status 500: {"message":"boom"}',
-    );
-  });
-});
 
 describe("configReadStatusMessage", () => {
   test("401 points at re-authenticating", () => {
@@ -33,11 +25,6 @@ describe("configReadStatusMessage", () => {
   });
 
   test("404 strips control characters from a hostile api host before embedding it inline", () => {
-    // `apiHost` traces back to a `SUPABASE_PROFILE` YAML file's `api_url:`
-    // value — validated as a well-formed `http(s)://` URL, but not stripped
-    // of embedded control characters (`profile-load.ts` keeps the raw
-    // matched string). A crafted profile must not be able to inject terminal
-    // control sequences via this message, same as `ref` already can't.
     const hostileHost = "https://api.supabase.com\x1b[31mFAKE\x1b[0m";
     const message = configReadStatusMessage(404, '{"message":"not found"}', REF, hostileHost);
     expect(message).not.toContain("\x1b");

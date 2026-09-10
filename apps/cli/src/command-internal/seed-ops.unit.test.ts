@@ -34,12 +34,9 @@ function fakeSeedSession(opts: { restoreRoleSql?: string } = {}) {
   return { session, calls };
 }
 
-// Glob matching itself is `pathMatch` (`../../../shared/path-match.ts`),
-// a faithful port of Go's `path.Match` already covered by
-// `path-match.unit.test.ts` (including the `^`-only negation / `!`-is-literal
-// rule this file used to duplicate — and get wrong — in a local `matchPattern`).
-// This exercises that the seed pipeline's own glob resolution (`getPendingSeeds`)
-// actually uses it end to end, per `config.Glob.Files` → `fs.Glob` → `path.Match`.
+// Exercises that `getPendingSeeds`'s glob resolution actually uses `pathMatch`
+// (`../../../shared/path-match.ts`) end to end; pattern-matching semantics are covered by
+// `path-match.unit.test.ts`.
 describe("getPendingSeeds (glob character classes)", () => {
   it.effect(
     "treats a leading `!` in a bracket class as literal, not negation (Go path.Match parity)",
@@ -51,9 +48,7 @@ describe("getPendingSeeds (glob character classes)", () => {
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        // `[!a]` is a positive class of the literal members `!` and `a` — only a
-        // leading `^` negates. So this pattern matches `a.sql`, not `b.sql` (the old
-        // shell-style bug negated on `!` too, and would have matched `b.sql` instead).
+        // `[!a]` is a positive class of `!` and `a`; only a leading `^` negates.
         const pending = yield* getPendingSeeds(session, fs, path, ["[!a].sql"], dir);
         expect(pending.map((seed) => seed.path)).toEqual(["a.sql"]);
         rmSync(dir, { recursive: true, force: true });
@@ -67,9 +62,8 @@ describe("getPendingSeeds (glob character classes)", () => {
   it.effect(
     "warns Go's bad-pattern message for an unterminated bracket class, not a bogus no-match",
     () => {
-      // An unclosed `[` is malformed per Go's `path.Match` grammar (`ErrBadPattern`), which
-      // `fs.Glob` reports as `failed to glob files: syntax error in pattern` — not the
-      // generic `no files matched pattern` a same-shaped but well-formed glob would get.
+      // An unclosed `[` is malformed, so `fs.Glob` reports a syntax error, not a bogus
+      // "no files matched" for a well-formed-but-empty pattern.
       const dir = mkdtempSync(join(tmpdir(), "seed-glob-"));
       const { session } = fakeSeedSession();
       const out = mockOutput({ format: "text" });
@@ -107,9 +101,6 @@ const runSeed = (
 
 describe("seedData (dirty parse)", () => {
   it.effect("fails on an unreadable dirty seed instead of refreshing its hash", () => {
-    // `ExecBatchWithCache` reads + parses the file UNCONDITIONALLY before the
-    // dirty check, so a dirty seed pointing at a missing file must fail (and leave
-    // the previous hash) rather than silently upserting the new hash.
     const dir = mkdtempSync(join(tmpdir(), "seed-"));
     const { session, calls } = fakeSeedSession();
     return runSeed(session, dir, [{ path: "missing.sql", hash: "newhash", dirty: true }]).pipe(
@@ -117,10 +108,6 @@ describe("seedData (dirty parse)", () => {
       Effect.tap((exit) =>
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
-          // The hash upsert is a `query`; the only execs that ran are the
-          // schema/table creation (whose DDL also mentions `seed_files`), so assert
-          // no parameterized `query` ran rather than substring-matching the table name
-          // (the read-only provisioning probe is param-free).
           expect(calls.some((c) => c.kind === "query" && c.params !== undefined)).toBe(false);
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -131,13 +118,9 @@ describe("seedData (dirty parse)", () => {
   it.effect(
     "rejects an oversized seed statement when SUPABASE_SCANNER_BUFFER_SIZE is configured (Go SeedFile.ExecBatchWithCache parity)",
     () => {
-      // Go's SeedFile.ExecBatchWithCache parses through the same parseFile every
-      // other file type does, so an oversized statement must abort the seed run —
-      // same as migration-apply.unit.test.ts's equivalent case for migrations.
       const dir = mkdtempSync(join(tmpdir(), "seed-scanner-"));
-      // Raw text must exceed the 4096-byte floor Go's bufio.Scanner starts at
-      // regardless of the configured limit (see migration-apply.unit.test.ts's
-      // equivalent case for the exact same 4096-byte floor).
+      // The seed text must exceed the 4096-byte scanner floor regardless of the configured
+      // limit (see migration-apply.unit.test.ts's equivalent case).
       writeFileSync(join(dir, "big.sql"), `select '${"x".repeat(5000)}';`);
       const { session, calls } = fakeSeedSession();
       const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
@@ -164,10 +147,7 @@ describe("seedData (dirty parse)", () => {
     return runSeed(session, dir, [{ path: "data.sql", hash: "newhash", dirty: true }]).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
-          // Go's CreateSeedTable scopes the lock timeout to the DDL transaction
-          // (BEGIN + SET LOCAL + COMMIT) so it never leaks into the seed SQL below.
           expect(calls.some((c) => c.sql === "SET LOCAL lock_timeout = '4s'")).toBe(true);
-          // Statements are NOT executed for a dirty seed, but the hash IS upserted.
           expect(calls.some((c) => c.sql.includes("insert into t"))).toBe(false);
           expect(
             calls.some(
@@ -181,8 +161,6 @@ describe("seedData (dirty parse)", () => {
   });
 
   it.effect("re-asserts the stepped-down role before the seed_files upsert", () => {
-    // A seed's own `reset role` reverts a stepped-down session to the login role,
-    // which used to fail the CLI's hash upsert with 42501 (supabase/cli#6236).
     const dir = mkdtempSync(join(tmpdir(), "seed-"));
     writeFileSync(join(dir, "data.sql"), "set role r;\ninsert into t values (1);\nreset role;");
     const { session, calls } = fakeSeedSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
@@ -212,7 +190,6 @@ describe("seedData (dirty parse)", () => {
         Effect.sync(() => {
           const sqls = calls.map((c) => c.sql);
           const resetAt = sqls.indexOf("reset role");
-          // Injected immediately, so the following insert runs as postgres again.
           expect(sqls[resetAt + 1]).toBe("SET SESSION ROLE postgres");
           expect(sqls.indexOf("insert into t values (1)")).toBeGreaterThan(resetAt + 1);
           rmSync(dir, { recursive: true, force: true });

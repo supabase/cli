@@ -70,18 +70,16 @@ export const projectsList = Effect.fn("projects.list")(function* (_flags: Projec
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  // The linked ref is loaded purely as a marker — a not-linked error is
-  // ignored, no prompt fires. `resolveOptional` never fails or prompts.
+  // Loaded purely as a marker for the "linked" column; `resolveOptional` never fails or prompts.
   const linkedRef = yield* resolver.resolveOptional(Option.none());
 
   yield* Effect.gen(function* () {
     const fetching =
       output.format === "text" ? yield* output.task("Fetching projects...") : undefined;
 
-    // `executeRaw` returns the undecoded response: the generated
-    // `V1ProjectWithDatabaseResponse.ref` schema enforces `isMinLength(20)` +
-    // `^[a-z]+$`, which the cli-e2e replay fixtures (literal `__PROJECT_REF__`)
-    // cannot satisfy. Auth / URL / headers are still handled by the API client.
+    // `executeRaw` skips response decoding: the generated `ref` schema requires 20+ lowercase
+    // letters, which placeholder refs in test fixtures don't satisfy. Auth, URL, and headers
+    // still go through the API client.
     const response = yield* api.executeRaw(operationDefinitions.v1ListAllProjects, {}).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.mapError(
@@ -122,22 +120,14 @@ export const projectsList = Effect.fn("projects.list")(function* (_flags: Projec
     }
     yield* fetching?.clear() ?? Effect.void;
 
-    // Established behavior: prints the not-linked message to stderr when no
-    // ref resolves, then renders the table anyway. "supabase link" is
-    // colored via `Aqua` — plain on a non-TTY — and uses no backticks,
-    // unlike the resolver's hard-fail message.
+    // Prints the not-linked message to stderr but still renders the table below.
     if (Option.isNone(linkedRef)) {
       yield* output.raw("Cannot find project ref. Have you run supabase link?\n", "stderr");
     }
 
-    // CLI-2167 follow-up: after `link <branch>`, `linkedRef` is the BRANCH's
-    // own ref, which never matches a row here (this endpoint only returns
-    // real projects), so the "you are here" marker silently vanished. An
-    // exact match always wins outright; only when it misses do we fall back
-    // to the PARENT chain (env → `linked-project.json` → `project-ref` file)
-    // and mark that ref's row instead. `linkedRef` itself (used below for the
-    // stderr message and the linked-project-cache write) is untouched — only
-    // the marker comparison changes. TS-only QoL, no Go counterpart.
+    // `markerRef` decides which row shows as linked, since a linked branch's own ref never
+    // matches a project row here. An exact match on `linkedRef` wins outright; only when it
+    // misses do we fall back to the parent chain (env → linked-project.json → project-ref file).
     let markerRef = linkedRef;
     if (Option.isSome(linkedRef)) {
       const hasExactMatch = parsed.some(
@@ -170,8 +160,8 @@ export const projectsList = Effect.fn("projects.list")(function* (_flags: Projec
       return;
     }
     if (goFmt === "toml") {
-      // The list is built with `append`, so an empty list stays a nil slice
-      // and BurntSushi emits nothing for the wrapper.
+      // Passing `undefined` (not an empty array) omits the wrapper entirely when there are no
+      // projects.
       yield* output.raw(
         encodeGoToml(
           { projects: projects.length > 0 ? projects : undefined },
@@ -181,8 +171,6 @@ export const projectsList = Effect.fn("projects.list")(function* (_flags: Projec
       return;
     }
 
-    // goFmt is undefined or "pretty" — defer to TS --output-format for
-    // JSON/stream-json, otherwise render the Glamour-styled table.
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("", { projects });
       return;

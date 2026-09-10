@@ -137,8 +137,6 @@ describe("sslOptionFor", () => {
   });
 
   it("uses plaintext for sslmode=disable and sslmode=allow on a remote connection", () => {
-    // pgconn's `allow` fallback list is `{nil, tlsConfig}` — a non-TLS primary —
-    // so an `allow` DSN to a plaintext-only endpoint must connect without TLS.
     expect(sslOptionFor("disable", false, undefined)).toBe(false);
     expect(sslOptionFor("allow", false, undefined)).toBe(false);
   });
@@ -150,8 +148,6 @@ describe("sslOptionFor", () => {
   });
 
   it("verifies the CA chain but skips hostname for verify-ca (pgconn parity)", () => {
-    // pgconn's verify-ca verifies the chain but not the hostname, so Node must
-    // keep rejectUnauthorized but disable the identity check.
     const ssl = sslOptionFor("verify-ca", false, undefined);
     expect(ssl).toMatchObject({ rejectUnauthorized: true });
     if (typeof ssl === "object" && ssl !== null) {
@@ -162,7 +158,6 @@ describe("sslOptionFor", () => {
 
   it("attaches the client cert (cert/key/passphrase) to every TLS mode (pgconn parity)", () => {
     const clientCert = { cert: "CERT", key: "KEY", passphrase: "pw" };
-    // verify-full / verify-ca / require|prefer all carry the client certificate.
     expect(sslOptionFor("verify-full", false, undefined, undefined, clientCert)).toMatchObject({
       cert: "CERT",
       key: "KEY",
@@ -172,7 +167,6 @@ describe("sslOptionFor", () => {
       cert: "CERT",
       key: "KEY",
     });
-    // Plaintext modes carry no client cert.
     expect(sslOptionFor("disable", false, undefined, undefined, clientCert)).toBe(false);
   });
 
@@ -184,8 +178,6 @@ describe("sslOptionFor", () => {
   });
 
   it("carries the servername for non-verifying TLS modes too (Go enables sslsni by default)", () => {
-    // Go keeps the original hostname as the TLS ServerName for every TLS mode
-    // when DoH swaps in a resolved IP, so require/prefer must send SNI as well.
     expect(sslOptionFor("require", false, "db.example.com")).toEqual({
       rejectUnauthorized: false,
       servername: "db.example.com",
@@ -224,9 +216,6 @@ describe("sslConfigsFor (pgconn fallback list)", () => {
   });
 
   it("prefer and unset are TLS only (ConnectByUrl strips the plaintext fallback)", () => {
-    // pgconn's raw list is `{tlsConfig, nil}`, but Go's ConnectByUrl removes the
-    // plaintext fallback when the primary is TLS, so a default remote connection
-    // fails rather than downgrading to plaintext.
     expect(sslConfigsFor("prefer", false, undefined)).toEqual([{ rejectUnauthorized: false }]);
     expect(sslConfigsFor(undefined, false, undefined)).toEqual([{ rejectUnauthorized: false }]);
   });
@@ -241,14 +230,12 @@ describe("sslConfigsFor (pgconn fallback list)", () => {
 
   it("loads sslrootcert into the verifying modes and promotes require → verify-ca", () => {
     const ca = "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----";
-    // require + a root cert behaves like verify-ca (chain verified, hostname skipped).
     const required = sslConfigsFor("require", false, undefined, ca);
     expect(required).toHaveLength(1);
     expect(required[0]).toMatchObject({ rejectUnauthorized: true, ca });
     expect((required[0] as { checkServerIdentity?: unknown }).checkServerIdentity).toBeTypeOf(
       "function",
     );
-    // verify-full keeps full verification but pins the CA.
     expect(sslConfigsFor("verify-full", false, undefined, ca)).toEqual([
       { rejectUnauthorized: true, ca },
     ]);
@@ -256,18 +243,14 @@ describe("sslConfigsFor (pgconn fallback list)", () => {
 
   it("does not attach a CA to non-verifying modes", () => {
     const ca = "ca-bundle";
-    // prefer stays unverified even with a root cert (pgconn: InsecureSkipVerify).
     expect(sslConfigsFor("prefer", false, undefined, ca)).toEqual([{ rejectUnauthorized: false }]);
   });
 
   it("forces a single plaintext attempt for a unix-socket host regardless of sslmode", () => {
-    // pgconn skips TLS for a unix NetworkAddress, so a socket DSN connects in
-    // plaintext even though the host is not the local services hostname (isLocal=false).
     expect(sslConfigsFor("require", false, undefined, undefined, "/var/run/postgresql")).toEqual([
       false,
     ]);
     expect(sslConfigsFor("verify-full", false, undefined, "ca", "/tmp/.s.PGSQL")).toEqual([false]);
-    // A non-socket host still follows the normal sslmode fallback list.
     expect(sslConfigsFor("require", false, undefined, undefined, "db.example.com")).toEqual([
       { rejectUnauthorized: false },
     ]);
@@ -338,8 +321,6 @@ describe("buildPoolConfig", () => {
   const base = { user: "postgres", password: "pw", port: 5432, database: "postgres", host: "h" };
 
   it("disables idle reaping (idleTimeoutMillis 0) and pins one connection (max 1) for a remote config", () => {
-    // The `db pull` bug: `PgClient.make` left idleTimeoutMillis unset (node-postgres
-    // default 10s), reaping the stepped-down connection during a long idle.
     const c = buildPoolConfig(
       { ...base },
       "db.example.com",
@@ -351,7 +332,6 @@ describe("buildPoolConfig", () => {
     expect(c.idleTimeoutMillis).toBe(0);
     expect(c.max).toBe(1);
     expect(c.application_name).toBe("@effect/sql-pg");
-    // carries the raw client config fields through
     expect(c).toMatchObject({ host: "db.example.com", connectionTimeoutMillis: 10_000 });
   });
 
@@ -369,9 +349,6 @@ describe("buildPoolConfig", () => {
   });
 
   it("installs the step-down verify hook only when required", () => {
-    // Every NEW physical connection (initial + silent redials) runs the step-down
-    // before pg-pool hands it to a checkout, mirroring Go's per-connection
-    // AfterConnect.
     const remote = buildPoolConfig({ ...base }, "db.example.com", 5432, false, 10, true);
     expect(remote.verify).toBe(poolStepDownVerify);
     const local = buildPoolConfig({ ...base }, "127.0.0.1", 54322, false, 2, false);
@@ -419,8 +396,7 @@ describe("installPoolErrorSwallow", () => {
 });
 
 describe("acquireProbedPool", () => {
-  // Tiny fake at the driver boundary: records query/end calls. Standing in for a
-  // real `pg.Pool` proves the pool is always `.end()`ed — the leak this fixes.
+  // Tiny fake at the driver boundary recording query/end calls, standing in for a real `pg.Pool`.
   function makeFakePool(query: () => Promise<unknown>) {
     const calls = { query: 0, end: 0 };
     const pool = {
@@ -444,13 +420,10 @@ describe("acquireProbedPool", () => {
     );
     expect(Exit.isFailure(exit)).toBe(true);
     expect(fake.calls.query).toBe(1);
-    // The finalizer, installed the moment the pool exists, closes it on failure.
     expect(fake.calls.end).toBe(1);
   });
 
   it("ends the pool when the connect probe times out (black-holed host)", async () => {
-    // A never-resolving probe models a black-holed host: `timeoutOrElse` fires and
-    // the already-installed finalizer still closes the pool + its in-flight dial.
     const fake = makeFakePool(() => new Promise<unknown>(() => {}));
     const exit = await Effect.runPromiseExit(
       acquireProbedPool(() => fake.pool, 0.05).pipe(Effect.scoped),
@@ -464,13 +437,11 @@ describe("acquireProbedPool", () => {
     const observed = await Effect.runPromise(
       Effect.gen(function* () {
         const pool = yield* acquireProbedPool(() => fake.pool, 2);
-        // While the scope is open the pool is live and not yet ended.
         return { isSamePool: pool === fake.pool, endWhileOpen: fake.calls.end };
       }).pipe(Effect.scoped),
     );
     expect(observed.isSamePool).toBe(true);
     expect(observed.endWhileOpen).toBe(0);
-    // Closing the scope ends the pool exactly once.
     expect(fake.calls.end).toBe(1);
   });
 });
@@ -484,7 +455,6 @@ describe("isUnixSocketHost", () => {
   });
 
   it("treats an uppercase Windows drive path as a socket, lowercase as TCP (pgconn parity)", () => {
-    // pgconn's isAbsolutePath accepts `A-Z:\…` (uppercase drive only); `c:\…` is TCP.
     expect(isUnixSocketHost("C:\\pgsql")).toBe(true);
     expect(isUnixSocketHost("c:\\pgsql")).toBe(false);
     expect(isUnixSocketHost("C:")).toBe(false);
@@ -710,8 +680,7 @@ describe("batchFailureError", () => {
   });
 
   it("keeps a partially written batch on the statement path, blaming statement 0", () => {
-    // A poisoned batch is corked, so the server acknowledged nothing and `completed`
-    // is always 0 — the failure can only be reported against the batch's first statement.
+    // A poisoned batch is corked, so `completed` stays 0 and statement 0 is blamed.
     const error = batchFailureError(
       new Error("serialization blew up"),
       {

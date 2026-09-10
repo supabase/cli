@@ -10,6 +10,7 @@ import { afterEach, beforeEach, vi } from "vitest";
 
 import {
   mockCommandSettings,
+  mockLocalDockerEngineUnavailableLayer,
   mockShadowContainerCliSpawner,
   useShadowCacheDisabled,
 } from "../../../../tests/helpers/command-mocks.ts";
@@ -33,11 +34,9 @@ import { declarativeSeamLayer } from "./pgdelta.seam.layer.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
 
 /**
- * Integration coverage for the fully-native `declarativeSeamLayer` (CLI-1970) —
- * `generate`/`sync`'s own integration tests stub `DeclarativeSeam` entirely
- * (per its own service doc comment), so this file is the only place the real
- * local-database bring-up composition gets exercised end-to-end, with a fake
- * `DbConnection`/`DockerRun`.
+ * Integration coverage for the fully-native `declarativeSeamLayer`: `generate`/`sync`'s own
+ * tests stub `DeclarativeSeam` entirely, so this file is the only place the real local-database
+ * bring-up composition is exercised end-to-end, with a fake `DbConnection`/`DockerRun`.
  */
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
@@ -119,6 +118,7 @@ function setup(
     // `seam` itself resolves — `Layer.provide` fully resolves each requirement it can
     // satisfy as it's applied, so `BunServices.layer` only ever fills in `FileSystem`/`Path`.
     Layer.provide(shadowSpawner.layer),
+    Layer.provide(mockLocalDockerEngineUnavailableLayer),
     Layer.provide(BunServices.layer),
   );
 

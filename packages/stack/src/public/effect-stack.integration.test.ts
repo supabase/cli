@@ -60,6 +60,7 @@ import {
 import type { LogQuery, StackLogBatch, StackLogEntry } from "./Logs.ts";
 import {
   createStack,
+  findStack,
   inspectStack,
   listStacks,
   makeHandle,
@@ -77,6 +78,7 @@ import {
   type ContainerCommandRunner,
 } from "../runtime/ContainerEngine.ts";
 import { ContainerEngineResolver } from "../runtime/ContainerEngineResolver.ts";
+import { runGit } from "../../tests/helpers/git.ts";
 
 const defaultDatabaseVersion = catalogEntryFor("database:database").defaultVersion;
 const defaultDatabaseMajor = defaultDatabaseVersion.split(".")[0];
@@ -85,6 +87,12 @@ const defaultRestVersion = catalogEntryFor("rest:rest").defaultVersion;
 const stackId = StackIdSchema.make(
   "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 );
+
+const expectPresent = <A>(value: A | undefined, description: string): A => {
+  expect(value, description).toBeDefined();
+  if (value === undefined) throw new Error(`Expected ${description}`);
+  return value;
+};
 
 const runningStatus: StackStatus = {
   id: stackId,
@@ -116,11 +124,7 @@ const stoppedState = (): PersistedStackState => ({
   identity: {
     stackId,
     projectRoot: "/tmp/project",
-    checkoutRoot: "/tmp/project",
-    workspaceId: "workspace",
-    checkoutId: "checkout",
     branchContext: "branch",
-    localProjectKey: "key",
     stackName: "stack",
   },
   runtime: { kind: "native" },
@@ -596,6 +600,151 @@ describe("Effect stack lifecycle handoff", () => {
         yield* stack.stop();
         expect((yield* stack.status()).lifecycle).toBe("unconfigured");
         expect((yield* stack.logs()).entries).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.live("isolates parallel stacks by project root, branch context, and name", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = path.dirname(project);
+        const monorepoA = path.join(project, "apps", "one");
+        const monorepoB = path.join(project, "apps", "two");
+        const detachedWorktreeA = path.join(root, "chat-worktree-a");
+        const detachedWorktreeB = path.join(root, "chat-worktree-b");
+        const plainProject = path.join(root, "plain-project");
+        yield* fs.makeDirectory(monorepoA, { recursive: true });
+        yield* fs.makeDirectory(monorepoB, { recursive: true });
+        yield* fs.makeDirectory(plainProject);
+        yield* runGit(project, ["init", "-b", "main"]);
+        yield* runGit(project, ["config", "user.email", "stack-tests@example.test"]);
+        yield* runGit(project, ["config", "user.name", "Stack Tests"]);
+        yield* fs.writeFileString(path.join(project, "README.md"), "identity\n");
+        yield* runGit(project, ["add", "README.md"]);
+        yield* runGit(project, ["commit", "-m", "initial"]);
+        yield* runGit(project, ["worktree", "add", "--detach", detachedWorktreeA, "HEAD"]);
+        yield* runGit(project, ["worktree", "add", "--detach", detachedWorktreeB, "HEAD"]);
+
+        const [sameA, sameB, namedA, namedB, monoA, monoB, siblingA, siblingB, plainA, plainB] =
+          yield* Effect.all(
+            [
+              createStack({ projectRoot: project }),
+              createStack({ projectRoot: project }),
+              createStack({ projectRoot: project, name: "preview-a" }),
+              createStack({ projectRoot: project, name: "preview-b" }),
+              createStack({ projectRoot: monorepoA }),
+              createStack({ projectRoot: monorepoB }),
+              createStack({ projectRoot: detachedWorktreeA }),
+              createStack({ projectRoot: detachedWorktreeB }),
+              createStack({ projectRoot: plainProject, name: "preview-a" }),
+              createStack({ projectRoot: plainProject, name: "preview-b" }),
+            ],
+            { concurrency: 10 },
+          );
+        yield* runGit(project, ["checkout", "-b", "feat-a"]);
+        const feature = yield* createStack({ projectRoot: project });
+        yield* runGit(project, ["checkout", "main"]);
+
+        expect(sameA.id).toBe(sameB.id);
+        expect(
+          new Set([
+            sameA.id,
+            namedA.id,
+            namedB.id,
+            feature.id,
+            monoA.id,
+            monoB.id,
+            siblingA.id,
+            siblingB.id,
+            plainA.id,
+            plainB.id,
+          ]).size,
+        ).toBe(10);
+        const found = yield* findStack({ projectRoot: project });
+        expect(Option.getOrUndefined(found)?.id).toBe(sameA.id);
+        expect((yield* listStacks({ projectRoot: project })).map(({ id }) => id).sort()).toEqual(
+          [sameA.id, namedA.id, namedB.id, feature.id].sort(),
+        );
+        expect((yield* listStacks({ projectRoot: monorepoA })).map(({ id }) => id)).toEqual([
+          monoA.id,
+        ]);
+        const detachedA = yield* listStacks({ projectRoot: detachedWorktreeA });
+        const detachedB = yield* listStacks({ projectRoot: detachedWorktreeB });
+        expect(detachedA.map(({ id }) => id)).toEqual([siblingA.id]);
+        expect(detachedB.map(({ id }) => id)).toEqual([siblingB.id]);
+        expect(detachedA[0]?.branchContext).toBe("detached");
+        expect(detachedB[0]?.branchContext).toBe("detached");
+        expect(siblingA.id).not.toBe(siblingB.id);
+        expect(
+          (yield* listStacks({ projectRoot: plainProject })).map(({ id }) => id).sort(),
+        ).toEqual([plainA.id, plainB.id].sort());
+      }),
+    ),
+  );
+
+  it.live("does not relocate a stack when a linked Git worktree moves", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = path.dirname(project);
+        const linked = path.join(root, "linked-project");
+        yield* runGit(project, ["init", "-b", "main"]);
+        yield* runGit(project, ["config", "user.email", "stack-tests@example.test"]);
+        yield* runGit(project, ["config", "user.name", "Stack Tests"]);
+        yield* fs.writeFileString(path.join(project, "README.md"), "identity\n");
+        yield* runGit(project, ["add", "README.md"]);
+        yield* runGit(project, ["commit", "-m", "initial"]);
+        yield* runGit(project, ["worktree", "add", "--detach", linked, "HEAD"]);
+        const original = yield* createStack({ projectRoot: linked });
+        const moved = path.join(root, "moved-project");
+        yield* runGit(project, ["worktree", "move", linked, moved]);
+
+        const movedBeforeCreate = yield* findStack({ projectRoot: moved });
+        expect(Option.isNone(movedBeforeCreate)).toBe(true);
+        const replacement = yield* createStack({ projectRoot: moved });
+        expect(replacement.id).not.toBe(original.id);
+        const movedCanonical = yield* fs.realPath(moved);
+        expect(yield* listStacks({ projectRoot: moved })).toEqual([
+          expect.objectContaining({ id: replacement.id, projectRoot: movedCanonical }),
+        ]);
+      }),
+    ),
+  );
+
+  it.live("does not adopt state when a removed worktree basename is reused elsewhere", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = path.dirname(project);
+        const oldParent = path.join(root, "old-parent");
+        const newParent = path.join(root, "new-parent");
+        const oldWorktree = path.join(oldParent, "session");
+        const newWorktree = path.join(newParent, "session");
+        yield* fs.makeDirectory(oldParent);
+        yield* fs.makeDirectory(newParent);
+        yield* runGit(project, ["init", "-b", "main"]);
+        yield* runGit(project, ["config", "user.email", "stack-tests@example.test"]);
+        yield* runGit(project, ["config", "user.name", "Stack Tests"]);
+        yield* fs.writeFileString(path.join(project, "README.md"), "identity\n");
+        yield* runGit(project, ["add", "README.md"]);
+        yield* runGit(project, ["commit", "-m", "initial"]);
+        yield* runGit(project, ["worktree", "add", "--detach", oldWorktree, "HEAD"]);
+        const original = yield* createStack({ projectRoot: oldWorktree });
+        yield* runGit(project, ["worktree", "remove", "--force", oldWorktree]);
+        yield* runGit(project, ["worktree", "add", "--detach", newWorktree, "HEAD"]);
+
+        const replacement = yield* createStack({ projectRoot: newWorktree });
+        expect(replacement.id).not.toBe(original.id);
+        expect((yield* listStacks({ projectRoot: newWorktree })).map(({ id }) => id)).toEqual([
+          replacement.id,
+        ]);
+        expect((yield* listStacks()).map(({ id }) => id).sort()).toEqual(
+          [original.id, replacement.id].sort(),
+        );
       }),
     ),
   );
@@ -1678,13 +1827,12 @@ describe("Effect stack lifecycle handoff", () => {
             environment: env,
           });
           const owner = yield* readOwnerMetadata(env.stateRoot, stack.id, env);
-          expect(owner).toBeDefined();
-          if (owner === undefined) return;
+          const originalOwner = expectPresent(owner, "owner metadata");
           const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
           const incompatibleOwner = yield* Schema.encodeEffect(
             Schema.fromJsonString(Schema.Unknown),
           )({
-            ...owner,
+            ...originalOwner,
             rpcRelease: "stack-rpc-v0@0.0.1",
           }).pipe(
             Effect.mapError(
@@ -1714,7 +1862,7 @@ describe("Effect stack lifecycle handoff", () => {
           const status = yield* restarted.start({ config: lifecycleConfig() });
           const currentOwner = yield* readOwnerMetadata(env.stateRoot, stack.id, env);
           expect(currentOwner?.rpcRelease).toBe(STACK_RPC_RELEASE);
-          expect(currentOwner?.ownerSessionId).not.toBe(owner.ownerSessionId);
+          expect(currentOwner?.ownerSessionId).not.toBe(originalOwner.ownerSessionId);
           expect(status.id).toBe(stack.id);
           expect(status.runtime).toEqual({ kind: "native" });
           expect((yield* restarted.status()).lifecycle).toBe("running");
@@ -1887,8 +2035,7 @@ describe("Effect stack lifecycle handoff", () => {
               }),
             ),
           );
-          // Register exact cleanup before launching the replacement. The cached effect makes the
-          // explicit assertion below and scope finalization share one stop/destroy transition.
+          // Cache the stop/destroy effect so the assertion below and the finalizer share one transition.
           yield* Effect.addFinalizer(() => cleanupRecovered.pipe(Effect.ignore));
           yield* replaced.start();
           expect((yield* readOwnerMetadata(env.stateRoot, openId, env))?.rpcRelease).toBe(
@@ -1919,12 +2066,11 @@ describe("Effect stack lifecycle handoff", () => {
         const ownerHandle = yield* openStack(stack.id);
         yield* Effect.addFinalizer(() => ownerHandle.stop().pipe(Effect.ignore));
         const owner = yield* readOwnerMetadata(env.stateRoot, stack.id, env);
-        expect(owner).toBeDefined();
-        if (owner === undefined) return;
+        const currentOwner = expectPresent(owner, "owner metadata");
         const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
         const incompatibleOwner = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
           {
-            ...owner,
+            ...currentOwner,
             rpcRelease: "stack-rpc-v0@0.0.1",
           },
         ).pipe(

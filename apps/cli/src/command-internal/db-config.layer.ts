@@ -66,8 +66,7 @@ const unbanErrorMapper = mapHttpError({
   statusMessage: (status, body) => `unexpected remove bans status ${status}: ${body}`,
 });
 
-/** `utils.IsLocalDatabase`. Compares against the resolved local
- * services hostname (`utils.Config.Hostname`), not a hard-coded loopback. */
+/** Compares against the resolved local services hostname, not a hard-coded loopback. */
 function isLocalDatabase(
   host: string,
   localHost: string,
@@ -78,7 +77,7 @@ function isLocalDatabase(
   return host === localHost && (port === dbPort || port === shadowPort);
 }
 
-/** Best-effort TCP reachability probe (Go dials direct host:5432 with a 5s timeout). */
+/** Best-effort TCP reachability probe with a 5s timeout. */
 const tcpReachable = (host: string, port: number): Effect.Effect<boolean> =>
   Effect.callback<boolean>((resume) => {
     const socket = net.connect({ host, port });
@@ -93,12 +92,11 @@ const tcpReachable = (host: string, port: number): Effect.Effect<boolean> =>
     Effect.timeoutOrElse({ duration: TCP_PROBE_TIMEOUT, orElse: () => Effect.succeed(false) }),
   );
 
-// POST /v1/projects/{ref}/cli/login-role → mint a temporary postgres role.
-// The Management API client is built lazily via `CommandPlatformApiFactory.make`
-// (not the eager `CommandPlatformApi` stack), so the access token is resolved
-// only here — when a temp role is actually minted. `--linked --password` returns
-// before reaching this, so it stays auth-free (`NewDbConfigWithPassword`);
-// `--local` / `--db-url` never build this layer at all.
+// POST /v1/projects/{ref}/cli/login-role → mint a temporary postgres role. The Management API
+// client is built lazily via `CommandPlatformApiFactory.make` (not the eager
+// `CommandPlatformApi` stack), so the access token is resolved only here — when a temp role is
+// actually minted. `--linked --password` returns before reaching this, so it stays auth-free;
+// `--local`/`--db-url` never build this layer at all.
 const initLoginRole = Effect.fnUntraced(function* (ref: string, conn: PgConnInput) {
   const output = yield* Output;
   const api = yield* (yield* CommandPlatformApiFactory).make;
@@ -120,9 +118,8 @@ const listAndUnban = Effect.fnUntraced(function* (ref: string) {
     .pipe(Effect.catch(unbanErrorMapper));
 });
 
-// Verify-connect with backoff while the pooler refreshes the temp password
-// (`initPoolerLogin` → `backoff.RetryNotify`). On attempt ≥ 3, clear any
-// network ban on the requester (Go's notify callback).
+// Verify-connect with backoff while the pooler refreshes the temp password. On attempt ≥ 3,
+// clear any network ban on the requester.
 const waitForTempRole = Effect.fnUntraced(function* (
   ref: string,
   conn: PgConnInput,
@@ -131,15 +128,12 @@ const waitForTempRole = Effect.fnUntraced(function* (
   const dbConn = yield* DbConnection;
   const debug = yield* DebugLogger;
   const attempt = (n: number): Effect.Effect<void, DbConfigError, CommandPlatformApiFactory> =>
-    // The temp-role probe always targets the remote Supavisor pooler, so it
-    // connects with TLS (Go's pooler path goes through `ConnectByUrl`) and
-    // honors `--dns-resolver` (`ConnectByConfigStream` installs the DoH
-    // resolver for this remote connect too).
+    // The temp-role probe always targets the remote Supavisor pooler, so it connects with TLS
+    // and honors `--dns-resolver`.
     Effect.scoped(dbConn.connect(conn, { isLocal: false, dnsResolver }).pipe(Effect.asVoid)).pipe(
       Effect.catch((cause) => {
-        // `backoff.WithMaxRetries(b, 8)` allows 8 retries after the
-        // initial attempt → 9 total attempts. `n` is 1-based, so give up only
-        // after attempt 9 (`n > MAX_RETRIES`), not at attempt 8.
+        // 8 retries after the initial attempt allows 9 total attempts. `n` is 1-based, so give
+        // up only after attempt 9 (`n > MAX_RETRIES`), not at attempt 8.
         if (n > MAX_RETRIES) {
           return Effect.fail(
             new Errors.DbConfigConnectTempRoleError({
@@ -148,21 +142,17 @@ const waitForTempRole = Effect.fnUntraced(function* (
             }),
           );
         }
-        // Mirrors Go's notify callback: from the 3rd failure onward, clear any
-        // network ban on the requester. NOTE: Go's exponential backoff applies
-        // ±50% jitter (RandomizationFactor=0.5); we use a deterministic curve —
-        // intentional, jitter only matters under concurrent pooler refreshes.
+        // From the 3rd failure onward, clear any network ban on the requester. Uses a
+        // deterministic backoff curve rather than jittered, since jitter only matters under
+        // concurrent pooler refreshes.
         const unban = n >= 3 ? listAndUnban(ref) : Effect.void;
         const delayMs = Math.min(
           Duration.toMillis(BACKOFF_INITIAL) * 1.5 ** (n - 1),
           Duration.toMillis(BACKOFF_MAX),
         );
         return Effect.gen(function* () {
-          // Go runs the unban inside `backoff.RetryNotify`'s notify callback,
-          // which cannot abort the retry — `NewErrorCallback` only logs a callback
-          // error and continues. So a transient
-          // ban-list/unban failure must NOT propagate out of the retry loop; log it
-          // to --debug like Go, then discard.
+          // A transient ban-list/unban failure must not propagate out of the retry loop; log
+          // it to --debug, then discard.
           yield* unban.pipe(
             Effect.tapError((banError) => debug.debug(banError.message)),
             Effect.ignore,
@@ -177,9 +167,8 @@ const waitForTempRole = Effect.fnUntraced(function* (
 });
 
 /**
- * Parse + validate the configured pooler connection string. Returns `None`
- * (treated as "no pooler", → IPv6 error) on any validation failure, matching
- * `GetPoolerConfig`, which logs and returns `nil`.
+ * Parse + validate the configured pooler connection string. Returns `None` (treated as "no
+ * pooler" → IPv6 error) on any validation failure.
  */
 const poolerConfigFrom = Effect.fnUntraced(function* (
   ref: string,
@@ -193,12 +182,12 @@ const poolerConfigFrom = Effect.fnUntraced(function* (
   return Option.none();
 });
 
-// Resolve the DB password with viper's precedence: `--password` flag →
-// `SUPABASE_DB_PASSWORD` shell env → project `.env*` value. `loadProjectEnv`
-// already excludes shell-set keys, so the shell value still wins over the file.
-// `workdir` is an explicit parameter (never `CommandSettings.workdir`) so callers
-// whose real workdir has diverged from that cwd-walked value (e.g. `bootstrap`,
-// after its own `process.chdir`) still resolve against the correct directory.
+// Resolve the DB password with this precedence: `--password` flag → `SUPABASE_DB_PASSWORD`
+// shell env → project `.env*` value. `loadProjectEnv` already excludes shell-set keys, so the
+// shell value still wins over the file. `workdir` is an explicit parameter (never
+// `CommandSettings.workdir`) so callers whose real workdir has diverged from that cwd-walked
+// value (e.g. `bootstrap`, after its own `process.chdir`) still resolve against the correct
+// directory.
 const resolveDbPassword = Effect.fnUntraced(function* (
   passwordFlag: Option.Option<string>,
   workdir: string,
@@ -215,11 +204,9 @@ const resolveDbPassword = Effect.fnUntraced(function* (
 });
 
 /**
- * Resolve the IPv4 transaction pooler connection for `ref` (Go's
- * `GetPoolerConfig` + `initPoolerLogin`). Returns `None` when no pooler URL is
- * configured or it fails validation (`GetPoolerConfig` returns nil), so the
- * caller can keep the original error. With a password, uses it directly; without
- * one, mints a temp login role and verify-connects through the pooler.
+ * Resolve the IPv4 transaction pooler connection for `ref`. Returns `None` when no pooler URL is
+ * configured or it fails validation, so the caller can keep the original error. With a password,
+ * uses it directly; without one, mints a temp login role and verify-connects through the pooler.
  *
  * `workdir`/`poolerHost` are explicit parameters (see {@link resolveDbPassword}).
  */
@@ -229,10 +216,9 @@ const resolvePoolerConn = Effect.fnUntraced(function* (
   poolerHost: string,
   dnsResolver: "native" | "https",
   password: string,
-  // `ResolvePoolerConfigForFallback` (container-fallback only) falls back to
-  // the Management API's primary pooler config when no `.temp/pooler-url` is saved;
-  // the resolve-time IPv6 path (`NewDbConfigWithPassword` → `GetPoolerConfig`) uses
-  // the saved URL only and errors otherwise, so this defaults off.
+  // The container-fallback path falls back to the Management API's primary pooler config when
+  // no `.temp/pooler-url` is saved; the resolve-time IPv6 path uses the saved URL only and
+  // errors otherwise, so this defaults off.
   fetchFromApi = false,
   // For an ad-hoc `--project-id` ref the saved `.temp/pooler-url` belongs to the
   // (possibly different) linked workdir, so ignore it and resolve the pooler for
@@ -243,11 +229,10 @@ const resolvePoolerConn = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const debug = yield* DebugLogger;
-  // Linked-path read: merge the `[remotes.<ref>]` override (Go's pooler
-  // resolution runs after LoadConfig(ref) already merged), so this matches the
-  // ref-aware read on the main linked branch rather than validating base config.
-  // For an ad-hoc `--project-id` ref, skip the saved workdir pooler URL because
-  // it belongs to the linked project, not necessarily the explicit ref.
+  // Linked-path read: merge the `[remotes.<ref>]` override, so this matches the ref-aware read
+  // on the main linked branch rather than validating base config. For an ad-hoc `--project-id`
+  // ref, skip the saved workdir pooler URL because it belongs to the linked project, not
+  // necessarily the explicit ref.
   const tomlValues = yield* readDbToml(fs, path, workdir, ref, {
     resolveVaultSecrets,
   });
@@ -256,9 +241,8 @@ const resolvePoolerConn = Effect.fnUntraced(function* (
     : Option.getOrUndefined(tomlValues.poolerConnectionString);
   if (connectionString === undefined) {
     if (!fetchFromApi) return Option.none<PgConnInput>();
-    // No saved pooler URL → fetch the primary pooler config from the Management
-    // API (`GetPoolerConfigPrimary`). Any API failure
-    // means "no fallback", so swallow it to `None`.
+    // No saved pooler URL → fetch the primary pooler config from the Management API. Any API
+    // failure means "no fallback", so swallow it to `None`.
     const api = yield* (yield* CommandPlatformApiFactory).make;
     const configsOpt = yield* api.v1.getPoolerConfig({ ref }).pipe(Effect.option);
     if (Option.isNone(configsOpt)) return Option.none<PgConnInput>();
@@ -296,19 +280,16 @@ const resolvePoolerConn = Effect.fnUntraced(function* (
 });
 
 /**
- * Resolves the linked project's connection: dial the direct host, and — when
- * unreachable (the common case, since new Supabase projects have IPv6-only
- * direct DB hosts) — transparently fall back to the project's IPv4 transaction
- * pooler (`flags.NewDbConfigWithPassword`).
+ * Resolves the linked project's connection: dial the direct host, and — when unreachable (the
+ * common case, since new Supabase projects have IPv6-only direct DB hosts) — transparently fall
+ * back to the project's IPv4 transaction pooler.
  *
- * `workdir`/`projectHost`/`poolerHost` are explicit parameters rather than read
- * from `CommandSettings` so this is safely callable from a context whose real
- * workdir has diverged from `CommandSettings.workdir`'s cwd-walked value — e.g.
- * `bootstrap`, whose own `process.chdir` happens after that layer is built (see
- * `bootstrap.handler.ts`'s workdir comments). Exported as `resolveLinkedConn`
- * so `bootstrap` can call it directly with its own local `workdir`/`projectRef`/
- * `created.dbPassword`, without going through `DbConfigResolver`/
- * `ProjectRefResolver` (both keyed off the ambient, potentially-stale
+ * `workdir`/`projectHost`/`poolerHost` are explicit parameters rather than read from
+ * `CommandSettings`, so this is safely callable from a context whose real workdir has diverged
+ * from `CommandSettings.workdir`'s cwd-walked value — e.g. `bootstrap`, whose own
+ * `process.chdir` happens after that layer is built. `bootstrap` calls this directly with its
+ * own local `workdir`/`projectRef`/`created.dbPassword`, without going through
+ * `DbConfigResolver`/`ProjectRefResolver` (both keyed off the ambient, potentially-stale
  * `CommandSettings.workdir`).
  */
 export const resolveLinkedConn = Effect.fnUntraced(function* (
@@ -365,15 +346,14 @@ export const resolveLinkedConn = Effect.fnUntraced(function* (
     return yield* initLoginRole(ref, base);
   }
 
-  // Direct host unreachable (IPv6-only network) → try the pooler. For an ad-hoc
-  // `--project-id` ref the command already holds a Management API token, so fall
-  // back to the API pooler config (and ignore the workdir's saved pooler URL)
-  // rather than failing with the IPv6 "run supabase link" suggestion. An explicit
-  // `--project-ref` on a non-ad-hoc `db` command keeps `ignoreSavedUrl` at the
-  // saved-URL-first default (the tenant-mismatch check in `poolerConfigFrom` still
-  // rejects a stale saved URL for a DIFFERENT ref), but independently requests the
-  // same API fetch via `fetchPoolerFromApi` so an unlinked or mismatched-tenant
-  // workdir doesn't dead-end in the IPv6 "run supabase link" error.
+  // Direct host unreachable (IPv6-only network) → try the pooler. For an ad-hoc `--project-id`
+  // ref the command already holds a Management API token, so fall back to the API pooler config
+  // (and ignore the workdir's saved pooler URL) rather than failing with the IPv6 suggestion. An
+  // explicit `--project-ref` on a non-ad-hoc `db` command keeps `ignoreSavedUrl` at the
+  // saved-URL-first default (the tenant-mismatch check in `poolerConfigFrom` still rejects a
+  // stale saved URL for a different ref), but independently requests the same API fetch via
+  // `fetchPoolerFromApi` so an unlinked or mismatched-tenant workdir doesn't dead-end in the
+  // IPv6 error.
   const poolerConn = yield* resolvePoolerConn(
     ref,
     workdir,
@@ -404,14 +384,12 @@ export const dbConfigLayer = Layer.effect(
     const debug = yield* DebugLogger;
     const output = yield* Output;
     const dbConn = yield* DbConnection;
-    // `resolveLinkedConn`/`resolvePoolerConn` (etc.) are standalone functions
-    // that yield their own `FileSystem`/`Path`/`DebugLogger`/`Output`/
-    // `DbConnection` (so bootstrap can call them directly from its own
-    // ambient context). Calling them from here would otherwise leak those
-    // services into `resolve`/`resolvePoolerFallback`'s R (the interface promises
-    // `never`), so every call site below re-closes the gap by additionally
-    // providing this layer of already-resolved values alongside
-    // `linkedDbResolverRuntimeLayer`.
+    // `resolveLinkedConn`/`resolvePoolerConn` (etc.) are standalone functions that yield their
+    // own `FileSystem`/`Path`/`DebugLogger`/`Output`/`DbConnection` (so bootstrap can call them
+    // directly from its own ambient context). Calling them from here would otherwise leak those
+    // services into `resolve`/`resolvePoolerFallback`'s R (the interface promises `never`), so
+    // every call site below re-closes the gap by additionally providing this layer of
+    // already-resolved values alongside `linkedDbResolverRuntimeLayer`.
     const localAmbientServices = Layer.mergeAll(
       Layer.succeed(FileSystem.FileSystem, fs),
       Layer.succeed(Path.Path, path),
@@ -420,10 +398,9 @@ export const dbConfigLayer = Layer.effect(
       Layer.succeed(DbConnection, dbConn),
     );
 
-    // Profile context for the connect-failure suggestion (`SetConnectSuggestion`
-    // reads the ambient `CurrentProfile`). Snapshot it once
-    // and attach it to every resolved connection so the driver layer can render Go's
-    // hint on a refused/auth/IPv6 connect error.
+    // Profile context for the connect-failure suggestion. Snapshot it once and attach it to
+    // every resolved connection so the driver layer can render a hint on a refused/auth/IPv6
+    // connect error.
     const suggestionContext: ConnectSuggestionContext = {
       dashboardUrl: cliSettings.dashboardUrl,
       profileName: cliSettings.profile,
@@ -442,18 +419,17 @@ export const dbConfigLayer = Layer.effect(
       Layer.succeed(WorkdirFlag, yield* WorkdirFlag),
       Layer.succeed(OutputFlag, yield* OutputFlag),
       Layer.succeed(DebugFlag, yield* DebugFlag),
-      // `linkedDbResolverRuntimeLayer`'s platform-API factory provides a DoH
-      // fetch layer that reads `DnsResolverFlag`; snapshot it so the lazily
-      // built linked stack stays fully self-provided (`resolve`'s R stays `never`).
+      // `linkedDbResolverRuntimeLayer`'s platform-API factory provides a DoH fetch layer that
+      // reads `DnsResolverFlag`; snapshot it so the lazily built linked stack stays fully
+      // self-provided (`resolve`'s R stays `never`).
       Layer.succeed(DnsResolverFlag, yield* DnsResolverFlag),
       Layer.succeed(RuntimeInfo, yield* RuntimeInfo),
       Layer.succeed(Analytics, yield* Analytics),
       Layer.succeed(TelemetryRuntime, yield* TelemetryRuntime),
       Layer.succeed(Tty, yield* Tty),
       Layer.succeed(Output, yield* Output),
-      // The per-command identity stitcher, shared with the linked stack's lazy
-      // platform-API factory + linked-project cache (Go's single root-context
-      // `sync.Once`). Provided to this layer by each command runtime.
+      // The per-command identity stitcher, shared with the linked stack's lazy platform-API
+      // factory + linked-project cache. Provided to this layer by each command runtime.
       Layer.succeed(IdentityStitch, yield* IdentityStitch),
       // Optional (absent in handler tests): the lazy rebuild of
       // `commandSettingsLayer` reads it for explicit `--profile` detection, so
@@ -476,14 +452,12 @@ export const dbConfigLayer = Layer.effect(
     const resolve = (flags: DbConfigFlags) =>
       Effect.gen(function* () {
         const resolveVaultSecrets = flags.resolveVaultSecrets ?? true;
-        // Config is read per branch, NOT unconditionally up front: the linked branch
-        // resolves the ref first and reads the `[remotes.<ref>]`-merged config (below).
-        // A base read here would validate base config (db.major_version, deno_version,
-        // …) before the ref is known, failing a linked run Go accepts (Go validates
-        // the merged config after LoadProjectRef). Only `--db-url`/`--local` read base
-        // config — Go's direct/local `LoadConfig`, which never merges a remote block.
-        // `utils.Config.Hostname` (`GetHostname()`): honors
-        // `SUPABASE_SERVICES_HOSTNAME` / a tcp `DOCKER_HOST` in dev-container or
+        // Config is read per branch, not unconditionally up front: the linked branch resolves
+        // the ref first and reads the `[remotes.<ref>]`-merged config (below). A base read here
+        // would validate base config (db.major_version, deno_version, …) before the ref is
+        // known, failing a linked run that should succeed once the ref is known. Only
+        // `--db-url`/`--local` read base config, since neither merges a remote block.
+        // Honors `SUPABASE_SERVICES_HOSTNAME` / a tcp `DOCKER_HOST` in dev-container or
         // remote-Docker setups, defaulting to 127.0.0.1.
         const localHost = getHostname();
 
@@ -492,10 +466,8 @@ export const dbConfigLayer = Layer.effect(
           const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, undefined, {
             resolveVaultSecrets,
           });
-          // Go's direct path runs `LoadConfig` before `pgconn.ParseConfig`,
-          // so the project `.env*` files
-          // populate the environment that the libpq `PG*` fallbacks read. Layer the
-          // project env under the shell env (`loadProjectEnv` already excludes
+          // The project `.env*` files populate the environment that the libpq `PG*` fallbacks
+          // read. Layer the project env under the shell env (`loadProjectEnv` already excludes
           // shell-set keys, so the shell still wins) and feed it to the parser.
           const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
           const conn = parseConnectionString(flags.dbUrl.value, layeredParseEnv(projectEnv));
@@ -515,10 +487,9 @@ export const dbConfigLayer = Layer.effect(
             tomlValues.port,
             tomlValues.shadowPort,
           );
-          // Go routes a local direct URL through `ConnectLocalPostgres`,
-          // which fills an empty password from the local
-          // `[db].password` config so a passwordless local DSL like
-          // `postgresql://postgres@127.0.0.1:54322/postgres` still authenticates.
+          // A local direct URL fills an empty password from the local `[db].password` config,
+          // so a passwordless local DSN like `postgresql://postgres@127.0.0.1:54322/postgres`
+          // still authenticates.
           return {
             conn:
               isLocal && conn.password.length === 0
@@ -528,32 +499,26 @@ export const dbConfigLayer = Layer.effect(
           };
         }
 
-        // --linked. The lazy Management API runtime (project-ref resolver + lazy
-        // platform API factory) is provided here at runtime so it is only built on
-        // this branch — `--local` and `--db-url` never touch it. The factory resolves
-        // the access token only on first use (minting a temp role), so a
-        // `--linked --password` invocation stays auth-free, matching Go.
+        // --linked. The lazy Management API runtime (project-ref resolver + lazy platform API
+        // factory) is provided here at runtime so it is only built on this branch —
+        // `--local`/`--db-url` never touch it. The factory resolves the access token only on
+        // first use (minting a temp role), so a `--linked --password` invocation stays
+        // auth-free.
         if (flags.connType === "linked") {
           const linked = yield* Effect.gen(function* () {
             const projectRef = yield* ProjectRefResolver;
-            // Go's ParseDatabaseConfig resolves the linked ref via the HARD `LoadProjectRef` —
-            // load-or-fail with no
-            // prompt, format validation, and `failed to load project ref` on a real
-            // `.temp/project-ref` read error. Use `loadProjectRef` (not the soft
-            // `resolveOptional`, which swallows that read error to None): an unlinked
-            // workdir fails with ErrNotLinked, a bad ref with the invalid-ref error, and an
-            // unreadable ref file surfaces the filesystem problem — matching Go for every
-            // caller of this resolver (`test db --linked`, dump, declarative).
+            // Load-or-fail with no prompt: use `loadProjectRef` (not the soft
+            // `resolveOptional`, which swallows a read error to `None`) — an unlinked workdir
+            // fails with a not-linked error, a bad ref with the invalid-ref error, and an
+            // unreadable ref file surfaces the filesystem problem, for every caller of this
+            // resolver (`test db --linked`, dump, declarative).
             const ref = yield* projectRef.loadProjectRef(flags.linkedProjectRef ?? Option.none());
-            // `ParseDatabaseConfig` runs `LoadProjectRef` → `LoadConfig` →
-            // `NewDbConfigWithPassword`, so
-            // the `[remotes.<ref>]`-merged config (e.g. an unsupported remote
-            // `db.major_version` / `edge_runtime.deno_version`) is validated as a pure
-            // config error BEFORE any network work. The base read in `resolve` above
-            // only validates remote `project_id`s, not the ref-merged block — so
-            // validate the merged config here, before `resolveLinked`'s TCP probe /
-            // pooler / temp-role Management API calls, rather than letting those mask
-            // (or run side effects ahead of) the real config error.
+            // The `[remotes.<ref>]`-merged config (e.g. an unsupported remote
+            // `db.major_version`/`edge_runtime.deno_version`) is validated as a pure config
+            // error before any network work. The base read in `resolve` above only validates
+            // remote `project_id`s, not the ref-merged block — so validate the merged config
+            // here, before the TCP probe / pooler / temp-role Management API calls, rather than
+            // letting those mask (or run side effects ahead of) the real config error.
             yield* readDbToml(fs, path, cliSettings.workdir, ref, {
               resolveVaultSecrets,
             });
@@ -574,12 +539,10 @@ export const dbConfigLayer = Layer.effect(
                 fetchPoolerFromApi: Option.isSome(flags.linkedProjectRef ?? Option.none()),
               },
             );
-            // NB: the linked-project telemetry cache (GET /v1/projects/{ref}) is NOT
-            // issued here. The reference caches it in a post-run hook
-            // (`ensureProjectGroupsCached`) — i.e. AFTER the
-            // command's own API calls — so each linked command owns that GET in its
-            // post-run finalizer (see e.g. advisors/query handlers). Issuing it mid-
-            // resolve reordered the request log ahead of the command's GETs.
+            // The linked-project telemetry cache (GET /v1/projects/{ref}) is not issued here:
+            // it's cached in a post-run hook, after the command's own API calls, so each linked
+            // command owns that GET in its post-run finalizer. Issuing it mid-resolve would
+            // reorder the request log ahead of the command's GETs.
             return { conn: resolved, ref };
           }).pipe(
             Effect.provide(
@@ -610,13 +573,11 @@ export const dbConfigLayer = Layer.effect(
         };
       });
 
-    // `RunWithPoolerFallback`: when a
-    // linked dump's pg_dump container fails with an IPv6 connectivity error (the
-    // direct host is reachable from the CLI process but not from inside Docker), it
-    // resolves the project's IPv4 transaction pooler and retries once. This exposes
-    // that pooler resolution (`ResolvePoolerConfigForFallback`) for the dump
-    // handler to invoke on demand. Returns `None` when the path is not pooler-eligible
-    // (`--linked` only) or no pooler URL is configured, so the caller keeps the
+    // When a linked dump's pg_dump container fails with an IPv6 connectivity error (the direct
+    // host is reachable from the CLI process but not from inside Docker), it resolves the
+    // project's IPv4 transaction pooler and retries once. This exposes that pooler resolution
+    // for the dump handler to invoke on demand. Returns `None` when the path is not
+    // pooler-eligible (`--linked` only) or no pooler URL is configured, so the caller keeps the
     // original container error.
     const resolvePoolerFallback = (flags: DbConfigFlags) =>
       Effect.gen(function* () {
@@ -631,8 +592,8 @@ export const dbConfigLayer = Layer.effect(
           const password = adHocProjectRef
             ? (Option.getOrUndefined(flags.password ?? Option.none()) ?? "")
             : yield* resolveDbPassword(flags.password ?? Option.none(), cliSettings.workdir);
-          // Container-fallback: fetch the primary pooler config from the Management API
-          // when no `.temp/pooler-url` is saved (`ResolvePoolerConfigForFallback`).
+          // Container-fallback: fetch the primary pooler config from the Management API when
+          // no `.temp/pooler-url` is saved.
           return yield* resolvePoolerConn(
             ref,
             cliSettings.workdir,
@@ -653,9 +614,8 @@ export const dbConfigLayer = Layer.effect(
         );
       });
 
-    // Attach the connect-failure suggestion context to every resolved connection in
-    // one place (Go sets it ambiently via `CurrentProfile`), so each connecting
-    // command inherits `SetConnectSuggestion` hint without per-call-site wiring.
+    // Attach the connect-failure suggestion context to every resolved connection in one place,
+    // so each connecting command inherits the hint without per-call-site wiring.
     const withSuggestion = (conn: PgConnInput): PgConnInput => ({
       ...conn,
       suggestionContext,

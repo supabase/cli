@@ -4,10 +4,8 @@ import { test } from "../../../../tests/helpers/live.ts";
 
 const LIVE_TIMEOUT_MS = 120_000;
 
-// This is the entry point for the broader edge-functions coverage tracked in
-// CLI-1834 (deploy + invoke over :443 / {ref}.supabase.red), which needs the
-// project's gateway reachable from the host — author those here as they become
-// runnable on the full stack.
+// TODO(CLI-1834): add deploy + invoke coverage over :443 / {ref}.supabase.red once the project's
+// gateway is reachable from the host.
 describe("supabase functions list (live)", () => {
   test(
     "lists edge functions for the project",

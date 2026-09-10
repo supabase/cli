@@ -78,13 +78,8 @@ describe("docsStripOverlayHeading", () => {
 
 describe("buildDocsSpec", () => {
   it("never publishes an unlisted command subtree", () => {
-    // The guarantee is that `Command.unlisted` keeps a family out of the public
-    // docs reference. Nothing pinned it, for the `experimental` family or for the
-    // older `db test|branch|remote` precedent, so a future refactor could quietly
-    // start publishing them.
-    //
-    // Derived from the tree rather than matching a `supabase-experimental*`
-    // prefix, so it covers every unlisted subtree that exists now or later.
+    // Walks the tree rather than matching a `supabase-experimental*` prefix, so it also
+    // catches any other unlisted subtree, present or future.
     const { spec } = builtSpec();
     const emitted = new Set(spec.commands.map((command) => command.id));
 
@@ -127,6 +122,14 @@ describe("buildDocsSpec", () => {
     ]);
   });
 
+  it("excludes the gated Compute commands from the default docs spec", () => {
+    const { spec } = builtSpec();
+    const computeCommands = spec.commands.filter((command) =>
+      command.id.startsWith("supabase-compute"),
+    );
+    expect(computeCommands).toEqual([]);
+  });
+
   it("keeps every load-bearing per-command field shape", () => {
     const { spec } = builtSpec();
     for (const command of spec.commands) {
@@ -157,6 +160,15 @@ describe("buildDocsSpec", () => {
     const { byId } = builtSpec();
     expect(byId.get("supabase-completion")?.subcommands).toContain("supabase-completion-zsh");
     expect(byId.get("supabase-issue")?.tags).toEqual(["other-commands"]);
+  });
+
+  it("includes the top-level whoami command in the Management API reference", () => {
+    const whoami = builtSpec().byId.get("supabase-whoami");
+    expect(whoami).toBeDefined();
+    expect(whoami?.tags).toEqual(["management-api"]);
+    expect(whoami?.usage).toBe("supabase whoami [flags]");
+    expect(whoami?.subcommands).toEqual([]);
+    expect(whoami?.description).toBe("Show information about the currently logged-in user.");
   });
 
   it("renders link with its overlay description and flag display names", () => {
@@ -374,9 +386,8 @@ describe("build guards fail loudly", () => {
         overlays,
         examples: { "supabase-lonk": [{ id: "a", code: "x" }] },
       });
-    // the stale-table throw fires first on this synthetic tree; assert the
-    // content guard directly by checking its message is reachable when the
-    // table validation is satisfied — covered via the real-tree fixture below.
+    // The synthetic tree fails table validation before it reaches content validation; the
+    // content guard is asserted separately below against the real tree.
     expect(build).toThrow(/stale static-table entries/);
     const { content } = builtSpec();
     const badExamples = { ...content.examples, "supabase-not-a-command": [{ id: "a" }] };

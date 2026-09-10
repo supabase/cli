@@ -37,9 +37,8 @@ describe("saveDebugBundle", () => {
   });
 
   it.effect("fails (does not return a path) when the debug directory cannot be created", () => {
-    // Plant a regular file where the `debug` directory needs to be, so the recursive
-    // makeDirectory fails — Go's SaveDebugBundle returns an error here rather than
-    // claiming a bundle was saved.
+    // Plants a regular file where the `debug` directory needs to be, so the recursive
+    // makeDirectory fails.
     const root = mkdtempSync(join(tmpdir(), "debug-fail-"));
     const tempDir = join(root, "pgdelta");
     writeFileSync(join(root, "pgdelta"), "not a directory");
@@ -81,8 +80,6 @@ describe("collectMigrationsList", () => {
   it.effect(
     "swallows an unreadable migrations dir (returns []) so it never masks the primary error",
     () => {
-      // Go's CollectMigrationsList returns nil on a read error; the debug bundle just
-      // omits migration copies rather than replacing the in-flight diff/apply error.
       const root = mkdtempSync(join(tmpdir(), "collect-fail-"));
       const migrationsPath = join(root, "migrations");
       writeFileSync(migrationsPath, "not a directory");

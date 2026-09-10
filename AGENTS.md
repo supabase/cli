@@ -28,7 +28,7 @@ These workspaces should generally follow this structure:
 - Standard scripts: `test`, `types:check`
 - Standard devDependencies: `@tsconfig/bun`, `@types/bun`, `typescript`
 
-Generic linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`knip`) are repo-wide, not per-package: the tools are root devDependencies configured by `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). Effect-specific linting covers `packages/stack` and all files under `apps/cli/src/commands/experimental/stack` through `.oxlintrc.effect.json`; run it with the root `lint:effect:check` or `lint:effect:fix` scripts. The root `check:all`/`fix:all` scripts are the sole repo-wide quality entrypoints and use Turbo to orchestrate the root-owned generic `lint:*`/`fmt:*`/`knip:*` scripts and package `types:check` targets; `fix:all` runs the Effect lint fix after those generic fixes complete. Package-local work can run `pnpm types:check` and the package's test scripts; `pnpm exec oxlint`, `pnpm exec oxfmt`, and `pnpm exec knip-bun` from the repo root also work directly.
+Generic linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`knip`) are repo-wide, not per-package: the tools are root devDependencies configured by `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). Effect-specific linting covers `packages/stack`, all files under `apps/cli/src/commands/experimental/stack` and `apps/cli/src/commands/experimental/compute`, the shared `apps/cli/src/shared/compute` runtime helpers (excluding embedded starter templates), the Compute test fixture helper, and the shared `apps/cli/src/command-internal/experimental-feature.ts` helper through `.oxlintrc.effect.json`; run it with the root `lint:effect:check` or `lint:effect:fix` scripts. The root `check:all`/`fix:all` scripts are the sole repo-wide quality entrypoints and use Turbo to orchestrate the root-owned generic `lint:*`/`fmt:*`/`knip:*` scripts and package `types:check` targets; `fix:all` runs the Effect lint fix after those generic fixes complete. Package-local work can run `pnpm types:check` and the package's test scripts; `pnpm exec oxlint`, `pnpm exec oxfmt`, and `pnpm exec knip-bun` from the repo root also work directly.
 
 Expected exceptions:
 
@@ -53,7 +53,7 @@ Expected exceptions:
 - `CliConfig` — the full config-file document (`supabase/config.toml`/`.json`), the local superset
   including local-only sections.
 - `ProjectConfig` — the hosted-project subset: a sparse overlay of the hosted sections (api, auth,
-  db, realtime, storage, workers, experimental) describing what a Supabase project looks like on
+  db, realtime, storage, compute, experimental) describing what a Supabase project looks like on
   the platform.
 - `CliSettings` — the CLI's own runtime settings (platform `apiUrl`, access token, telemetry flags,
   `supabaseHome`, …), owned by `apps/cli`.
@@ -176,6 +176,7 @@ Expected failures in Effect code must be represented in the typed error channel.
 - Use `Effect.try`, `Effect.tryPromise`, or callback adapters only at foreign boundaries, and map failures into a declared domain error.
 - Reserve defects (`Effect.die` or an uncaught throw) for genuinely impossible internal invariants and programmer bugs.
 - Standalone process entrypoints and public non-Effect adapters may throw or reject after translating the typed Effect failure at the outer boundary.
+- The string literal passed to `Data.TaggedError("...")` is that error's telemetry identity in PostHog: it flows into `error_fingerprint` (as `tag:<TagName>`) on the `cli_command_executed` event. Renaming the error _class_ is fine at any time; changing the string literal is not — it silently splits that error's history into two fingerprints, with no error and no warning. If a rename tool offers to update the string literal along with the class name, decline it. `apps/cli/src/shared/telemetry/error-tag-stability.unit.test.ts` enforces this by comparing every `Data.TaggedError("...")` tag under `apps/cli/src` against a committed snapshot.
 
 ### Causes and recovery
 
@@ -235,6 +236,54 @@ pnpm test
 ```
 
 If a workspace exposes a different script set, use that workspace's `package.json` as the source of truth.
+
+## Comments
+
+Comments exist for the next reader, not as the author's audit trail. Code states what happens; a comment states only the why that the code cannot carry. Most code needs no comment at all.
+
+### When to comment
+
+Write a comment only for one of these:
+
+- An invariant or constraint the types cannot express and that a later edit could silently break.
+- A workaround for an external quirk (Docker, Postgres, an OS, a library), naming the symptom it avoids.
+- A decision that would otherwise read as a bug, in one or two sentences.
+- A pointer to where the full rationale lives: an ADR under `docs/adr/`, a `SIDE_EFFECTS.md`, a `docs/` page, or an upstream issue URL.
+
+If the rationale needs more than three lines, it does not belong in a comment. Move it to an ADR or a docs page and leave a one-line pointer.
+
+### How to comment
+
+- Prefer JSDoc (`/** … */`) on exported symbols. Lead with a one-sentence summary. Use `@param`, `@returns`, `@throws`, `@see`, `@deprecated`, `@example`, and `{@link}` where they carry the information more compactly than prose; skip `@param`/`@returns` when the name and type already say it.
+- Skip JSDoc on internal helpers whose name and signature are self-explanatory. A helper that needs a paragraph to explain wants a better name or a smaller scope, not a comment.
+- Keep inline `//` comments to one or two lines, placed above the statement they explain.
+- Describe behavior in its own terms and in the present tense.
+- Published packages (`@supabase/config`) ship JSDoc to consumers through `.d.ts`, so every public export there carries a one-line summary.
+- This repo is public. Nothing internal (see "Pull Requests") goes into a comment.
+
+### Never write
+
+- Narration of the code: "loop over the rows", "return early if empty", "call the API".
+- Provenance and history: Go file:line citations, commit SHAs, PR numbers, review-round notes, "previously", "no longer", "was renamed", "deleted in …". Git holds history.
+- Evidence trails: "verified empirically", "confirmed by grepping every call site", "surveyed N call sites". Encode the evidence as a test instead.
+- Ticket IDs as provenance. `CLI-1234` belongs only in a `TODO(CLI-1234):` or when it is the only home a decision has and no ADR exists.
+- Emphasis: ALL-CAPS words, "deliberately", "DELIBERATE divergence", "crucially", "exactly". State the constraint once, plainly.
+- Meta-commentary on the code's own shape: "not exported, callers reference it structurally", "hoisted to file scope so both suites share it", "kept separate on purpose".
+- Section banners such as `// ---- Helpers ----`. Reorder or split the file instead.
+- Restatements of docs. If a `SIDE_EFFECTS.md` or an ADR already explains it, link it.
+- Go-parity framing. See "Source of Truth" in `apps/cli/AGENTS.md`.
+
+### Tests
+
+The test name carries the intent. Comment only non-obvious fixture setup, in one line. Do not annotate assertions with the reasoning behind them; put that reasoning into the test name or a more specific assertion.
+
+### Directive comments
+
+`// oxlint-disable-next-line`, `// @ts-expect-error`, `/// <reference …>`, shebangs, and similar are instructions to tools, not prose. Keep them, and give every lint disable a short reason after `--`. The same goes for tool-facing JSDoc tags: `@public` tells knip an export is intentionally unused, `@internal` and `@deprecated` carry meaning for consumers. Keep them even when trimming the rest of a doc comment.
+
+### Size check
+
+A source file whose comment lines exceed a quarter of its code lines almost certainly holds prose that belongs in docs. Trim it before merging.
 
 ## Workspace graph and task execution
 

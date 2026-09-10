@@ -106,8 +106,8 @@ describe("resolveImage", () => {
   });
 
   it.live("fails when the docker CLI is present but exits non-zero", () => {
-    // Regression guard: `spawner.exitCode` SUCCEEDS with the code, so a probe
-    // that only maps spawn errors would wave a broken docker through.
+    // `spawner.exitCode` succeeds with the code, so a probe that only maps spawn errors would
+    // wave a broken docker through.
     const mock = mockSpawner((args) =>
       args[0] === "--version" ? { exitCode: 1 } : { exitCode: 0 },
     );
@@ -140,8 +140,6 @@ describe("resolveImage", () => {
       Effect.map((error) => {
         expect(error.message).toContain(`failed to resolve ${IMAGE}`);
         expect(error.message).toContain("Cannot connect to the Docker daemon");
-        // The registry-pin hint must NOT appear here: no registry pin can fix
-        // an unreachable daemon, and suggesting one misdirects CI triage.
         expect(error.message).not.toContain("SUPABASE_INTERNAL_IMAGE_REGISTRY");
         expect(mock.spawned.some((args) => args[0] === "pull")).toBe(false);
       }),
@@ -149,8 +147,6 @@ describe("resolveImage", () => {
   });
 
   it.live("moves to the next registry when a pull attempt outlives its share", () => {
-    // The point of handing the deadline INTO the resolver: one wedged
-    // candidate must not consume the budget the fallbacks behind it need.
     const pulled: Array<string> = [];
     const mock = mockSpawner((args) => {
       if (args[0] === "--version") return { exitCode: 0 };

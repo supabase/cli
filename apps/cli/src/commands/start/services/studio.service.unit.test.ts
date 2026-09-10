@@ -34,7 +34,6 @@ describe("buildStudioEnv", () => {
   test("mirrors Go's TestBuildStudioEnv fixture", () => {
     const env = buildStudioEnv(baseEnvInput);
 
-    // The exact 8 assertions this fixture makes.
     expect(env["SUPABASE_ANON_KEY"]).toBe("anon-key");
     expect(env["SUPABASE_SERVICE_KEY"]).toBe("service-role-key");
     expect(env["SUPABASE_PUBLISHABLE_KEY"]).toBe("sb_publishable_test");
@@ -44,8 +43,6 @@ describe("buildStudioEnv", () => {
     expect(env["SUPABASE_URL"]).toBe("http://test-kong:8000");
     expect(env["STUDIO_PG_META_URL"]).toBe("http://test-pgmeta:8080");
 
-    // Every other key `buildStudioEnv` emits, covered here for full
-    // parity.
     expect(env).toEqual({
       CURRENT_CLI_VERSION: "test-version",
       STUDIO_PG_META_URL: "http://test-pgmeta:8080",
@@ -75,8 +72,6 @@ describe("buildStudioEnv", () => {
   });
 
   test("LOGFLARE_PRIVATE_ACCESS_TOKEN is always Go's hardcoded 'api-key', regardless of input", () => {
-    // `analytics.api_key` isn't a `config.toml`-configurable field —
-    // there is no input field for it at all.
     const env = buildStudioEnv(baseEnvInput);
     expect(env["LOGFLARE_PRIVATE_ACCESS_TOKEN"]).toBe("api-key");
   });
@@ -140,10 +135,6 @@ describe("buildStudioContainerSpec", () => {
       retries: 3,
     });
 
-    // pg-meta URL wiring: a distinct `pgMetaContainerName` (resolved by the
-    // caller via `serviceContainerName("pg_meta", projectId)`) flows
-    // through to STUDIO_PG_META_URL exactly like it does in
-    // `buildStudioEnv`.
     expect(spec.env["STUDIO_PG_META_URL"]).toBe("http://test-pgmeta:8080");
   });
 
@@ -157,7 +148,6 @@ describe("buildStudioContainerSpec", () => {
       "/project/supabase/functions/hello:/home/deno/functions/hello:ro",
       "/project/supabase/snippets:/project/supabase/snippets:rw",
     ]);
-    // The snippets bind's container-side path also backs SNIPPETS_MANAGEMENT_FOLDER.
     expect(spec.env["SNIPPETS_MANAGEMENT_FOLDER"]).toBe("/project/supabase/snippets");
   });
 

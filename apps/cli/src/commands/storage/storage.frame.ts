@@ -25,10 +25,8 @@ import {
 } from "./storage.errors.ts";
 
 /**
- * Shared plumbing for the four `storage` subcommands. Each handler resolves the
- * project ref (the value of `--local` decides local vs linked, mirroring Go's
- * `storage.go:21-32`), then uses these helpers for the parts Go shares via
- * `utils.Config` + `client.NewStorageAPI`.
+ * Shared plumbing for the four `storage` subcommands: resolving the project ref
+ * (`--local`'s value decides local vs linked) and building the gateway client.
  */
 
 const decodeDefaultCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
@@ -40,21 +38,12 @@ interface LoadedStorageConfig {
 }
 
 /**
- * Load `supabase/config.toml`: a parse failure aborts
- * (`StorageConfigError`); a missing file falls back to the embedded
- * defaults — EXCEPT for a LOCAL target (`projectRef === ""`) with an
- * explicitly-set `--workdir`/`SUPABASE_WORKDIR`, where it hard-fails instead
- * (`StorageMissingProjectConfigError`): the embedded default `api.port`
- * could otherwise retarget a local `storage rm -r` (or any other operation)
- * at a different, possibly running, local stack. A REMOTE target
- * (`--project-ref`/`--linked`) never hard-fails on this, explicit workdir or
- * not: `resolveStorageCredentials` doesn't read `config` at all on that
- * path (Management API credentials only), so a config-less workdir poses no
- * such risk there — it would only cost the (cosmetic) `[remotes.*]` override
- * line. A DEFAULTED workdir keeps the established tolerant fallback either
- * way. When a `[remotes.<name>]` block matches the linked ref, `appliedRemote`
- * carries its name so the caller can print the `Loading config override:`
- * line.
+ * Loads `supabase/config.toml`, falling back to the embedded defaults when it's
+ * missing — except for a local target with an explicit `--workdir`, which raises
+ * `StorageMissingProjectConfigError` instead (see that error's doc for why). A
+ * remote target never hard-fails this way, since credential resolution doesn't
+ * read `config` at all. `appliedRemote` is set when a `[remotes.<name>]` block
+ * matches the linked ref.
  */
 export const loadStorageConfig = Effect.fnUntraced(function* (
   cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
@@ -92,13 +81,7 @@ export const loadStorageConfig = Effect.fnUntraced(function* (
   } satisfies LoadedStorageConfig;
 });
 
-/**
- * Validates the resolved `--workdir`/`SUPABASE_WORKDIR` exists and is a
- * directory (`validateWorkdirIsDirectory`), mapping into the shared
- * `StorageWorkdirError` — hoisted here (rather than duplicated across
- * `ls`/`mv`/`rm`/`cp`) since `ls`/`mv` don't otherwise need `FileSystem` in
- * scope.
- */
+/** Validates the resolved `--workdir`/`SUPABASE_WORKDIR` exists and is a directory. */
 export const assertStorageWorkdir = Effect.fnUntraced(function* (workdir: string) {
   const fs = yield* FileSystem.FileSystem;
   yield* validateWorkdirIsDirectory(workdir, fs).pipe(
@@ -107,18 +90,11 @@ export const assertStorageWorkdir = Effect.fnUntraced(function* (workdir: string
 });
 
 /**
- * Resolve Storage credentials and run `body` against a freshly-built gateway,
- * with the `FetchHttpClient.Fetch` override applied to the gateway calls only
- * (CA-trusting for a local https gateway, plain `globalThis.fetch` otherwise).
- *
- * The credential lookup (the `--linked` api-keys call) runs BEFORE the override
- * scope, so it still honors `--dns-resolver https` through the Management API
- * client — mirroring Go, where Storage uses `status.NewKongClient` /
- * `http.DefaultClient` while `tenant.GetApiKeys` uses the DoH-wrapped client.
- *
- * `makeStorageGateway` only constructs the client object (no network), so
- * building it inside the override scope is fine; the override is read per request
- * from the fiber context when a gateway call executes.
+ * Resolves Storage credentials and runs `body` against a freshly-built gateway, with
+ * `FetchHttpClient.Fetch` overridden for gateway calls only (CA-trusting for a local
+ * https gateway, otherwise plain `fetch`). Credential lookup runs before that
+ * override scope, so it still honors `--dns-resolver https` through the Management
+ * API client.
  */
 export const connectStorageGateway = <E, R>(
   opts: { readonly projectRef: string; readonly config: CliConfig; readonly userAgent: string },
@@ -143,12 +119,9 @@ export const connectStorageGateway = <E, R>(
   });
 
 /**
- * Go `client.ParseStorageURL` as an Effect: returns the object path or fails
- * with the tagged `StorageInvalidUrlError` (pattern mismatch) /
- * `StorageUrlParseError` (url-parse failure, wrapped like Go's
- * `failed to parse storage url: %w`). Used by `ls`, `mv`, and `rm`; `cp` parses
- * `src`/`dst` with `goUrlParse` directly (it branches on the scheme and
- * wraps as `failed to parse src url` / `failed to parse dst url`).
+ * Parses a storage URL into its object path, failing with `StorageInvalidUrlError`
+ * on a pattern mismatch or `StorageUrlParseError` on a URL-parse failure. Used by
+ * `ls`, `mv`, and `rm`; `cp` parses `src`/`dst` directly.
  */
 export const parseStorageUrlEffect = (objectUrl: string) =>
   Effect.try({

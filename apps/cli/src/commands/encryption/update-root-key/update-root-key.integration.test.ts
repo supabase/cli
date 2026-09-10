@@ -20,7 +20,6 @@ interface SetupOpts {
   readonly status?: number;
   readonly network?: "fail";
   readonly projectId?: Option.Option<string>;
-  // stdin
   readonly stdinIsTty?: boolean;
   readonly pipedInput?: string;
   readonly promptPasswordResponses?: ReadonlyArray<string>;
@@ -66,12 +65,9 @@ describe("encryption update-root-key integration", () => {
       const put = api.requests.find((r) => r.method === "PUT");
       expect(put?.url).toContain(`/v1/projects/${VALID_REF}/pgsodium`);
       expect(put?.body).toEqual({ root_key: "new-key" });
-      // Prompt to stderr, trailing newline to stdout (defer Println),
-      // finished notice to stderr.
       expect(out.stderrText).toContain("Enter a new root key: ");
-      // The command path is wrapped in ANSI (aqua) in colour-capable
-      // environments, so assert on the tokens around it — same convention as
-      // `db/reset/reset.integration.test.ts`'s aqua'd branch name.
+      // ANSI wraps the command path in colour-capable environments, so assert on
+      // the surrounding tokens instead of the full string.
       expect(out.stderrText).toContain("Finished ");
       expect(out.stderrText).toContain("supabase root-key update");
       expect(out.stdoutText).toBe("\n");
@@ -106,7 +102,6 @@ describe("encryption update-root-key integration", () => {
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.message).toBe("");
       expect(success?.data).toEqual({ root_key: "new-key" });
-      // json mode reserves stdout for the structured result — no prompt newline.
       expect(out.stdoutText).toBe("");
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));

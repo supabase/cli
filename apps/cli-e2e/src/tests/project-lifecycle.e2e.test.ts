@@ -61,10 +61,10 @@ describe("init", () => {
 });
 
 describe("link", () => {
-  // Not using testBehaviour here because the testBehaviour `run` fixture always
-  // injects SUPABASE_PROJECT_ID, which the new Go CLI accepts as a substitute for
-  // --project-ref in non-TTY mode, bypassing the required-flag check. A raw test
-  // lets us omit projectId so the CLI correctly requires the --project-ref flag.
+  // Not using testBehaviour here because its `run` fixture always injects
+  // SUPABASE_PROJECT_ID, which the CLI accepts as a substitute for
+  // --project-ref in non-TTY mode. A raw test omits it so the CLI correctly
+  // requires the --project-ref flag.
   test("exits non-zero without --project-ref in non-TTY", async () => {
     const serverUrl = inject("replayServerUrl") as string;
     const dir = makeTempDir("cli-e2e-link-no-ref-");
@@ -80,8 +80,7 @@ describe("link", () => {
   });
 
   // The testBehaviour run fixture always injects SUPABASE_PROJECT_ID, which the
-  // new Go CLI accepts in place of --project-ref, bypassing the required-flag
-  // check. Link therefore proceeds to the API and succeeds.
+  // CLI accepts in place of --project-ref, so link proceeds to the API and succeeds.
   testBehaviour("links when only SUPABASE_PROJECT_ID is set in non-TTY", async ({ run }) => {
     const result = await run(["link"]);
     expect(result.exitCode).toBe(0);
@@ -120,9 +119,8 @@ describe("link", () => {
     expect(result.stderr).toContain("Internal Server Error");
   });
 
-  // link makes concurrent Management API calls after the initial project-status and
-  // api-keys calls. The concurrent service calls fail silently (non-fatal). Only
-  // the first two sequential calls need fixture entries.
+  // link's concurrent service calls (after project-status and api-keys) fail
+  // silently, so only the first two sequential calls need fixture entries.
   testBehaviour.skipIf(isRecording)(
     "links project successfully",
     async ({ run, projectRef, workspace }) => {
@@ -151,9 +149,7 @@ describe("unlink", () => {
     expect(result.stderr).toContain("supabase link");
   });
 
-  // The success path (pre-populate project-ref → unlink succeeds) is omitted: the
-  // unlink handler deletes the database-password keyring entry on success. On
-  // Linux CI (no D-Bus session bus) the keyring call returns an unhandled error
-  // and the command exits 1. The not-linked error path above gives meaningful
-  // coverage; deeper success-path behaviour is covered by unlink.integration.test.ts.
+  // The success path is omitted: unlink deletes a keyring entry on success, and
+  // Linux CI (no D-Bus session bus) makes that call exit 1. See
+  // unlink.integration.test.ts for success-path coverage.
 });

@@ -32,9 +32,8 @@ interface SetupOpts {
   removeFails?: boolean;
 }
 
-// Wraps the real Bun FileSystem but forces `remove` to fail, so the
-// temp-dir-removal error branch can be exercised deterministically (cross-platform,
-// independent of filesystem permissions).
+// Wraps the real Bun FileSystem but forces `remove` to fail, so the temp-dir-removal
+// error branch is exercised deterministically, independent of filesystem permissions.
 const failingRemoveFsLayer = Layer.effect(
   FileSystem.FileSystem,
   Effect.gen(function* () {
@@ -103,8 +102,8 @@ describe("unlink integration", () => {
   });
 
   it.live("succeeds when no credential is stored (keyring not-found ignored)", () => {
-    // The tracked credentials mock returns `true`; a real not-found returns
-    // `false` without erroring — either way unlink succeeds.
+    // The mock returns true here; a real not-found returns false without erroring —
+    // either way unlink succeeds.
     const { layer, out, workdir } = setup();
     seedProjectRef(workdir, VALID_REF);
     return Effect.gen(function* () {
@@ -135,7 +134,6 @@ describe("unlink integration", () => {
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("CredentialDeleteError");
       }
-      // The temp dir is still removed before the credential delete is attempted.
       expect(existsSync(join(workdir, "supabase", ".temp"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -162,7 +160,6 @@ describe("unlink integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        // errors.Join parity — both failure messages are surfaced, not just the first.
         expect(json).toContain("failed to remove temp directory");
         expect(json).toContain("failed to delete project credential");
       }

@@ -151,7 +151,7 @@ export interface PrepareStackResult {
 
 export interface EffectStack {
   readonly id: StackId;
-  // These methods intentionally create a fresh scoped RPC invocation per call.
+  // Each of these methods opens a fresh scoped RPC invocation per call.
   // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly status: () => Effect.Effect<StackStatus, StackStatusError>;
   // oxlint-disable-next-line effecttsgo/lazy-effect

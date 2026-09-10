@@ -15,12 +15,8 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import { vanitySubdomainsCommand } from "./vanity-subdomains.command.ts";
 
-// See postgres-config.experimental-gate.integration.test.ts for the full
-// rationale: this proves `--experimental` is wired into the actual
-// `.command.ts` handler pipeline AND runs before
-// `managementApiRuntimeLayer`'s eager access-token resolution
-// (the `IsExperimental` check precedes `IsManagementAPI` in
-// `apps/cli-go/cmd/root.go:91-109`).
+// See postgres-config.experimental-gate.integration.test.ts: this proves `--experimental`
+// gates the command pipeline before `managementApiRuntimeLayer`'s eager access-token resolution.
 
 const tempRoot = useTempWorkdir("supabase-vanity-subdomains-experimental-int-");
 
@@ -38,23 +34,15 @@ function setup() {
     out,
     api,
     cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-    // `RuntimeInfo` is ambient (not provided by `managementApiRuntimeLayer`
-    // itself), so the real `commandCredentialsLayer` built inline inside the
-    // command for the "gate open" case resolves ITS `RuntimeInfo` from this
-    // layer. Point homeDir at this test's isolated tempRoot so the layer's
-    // file-based token fallback (`<homeDir>/.supabase/access-token`) can't pick
-    // up a stray token left at the shared default `/tmp/supabase-cli-test-home`.
+    // Points homeDir at this test's isolated tempRoot so the "gate open" case's real
+    // `commandCredentialsLayer` can't pick up a stray token from the shared default home.
     runtimeInfo: mockRuntimeInfo({ homeDir: tempRoot.current }),
   });
   const layer = Layer.mergeAll(
     runtime,
     CliOutput.layer(textCliOutputFormatter()),
-    // The "gate open" case reaches the real `managementApiRuntimeLayer`
-    // (provided inline inside the command, not by this test's mocked runtime),
-    // which reads credentials/env directly — an ambient SUPABASE_ACCESS_TOKEN,
-    // SUPABASE_EXPERIMENTAL, or OS keyring entry on the machine running the
-    // test would make these assertions non-deterministic. Wipe process.env
-    // down to just this and disable the keyring fallback.
+    // Wipes ambient SUPABASE_ACCESS_TOKEN/SUPABASE_EXPERIMENTAL/keyring so the "gate open"
+    // case's real `managementApiRuntimeLayer` can't pick up host state.
     processEnvLayer({ SUPABASE_NO_KEYRING: "1" }),
     Layer.succeed(
       TelemetryRuntime,
@@ -79,12 +67,8 @@ function setup() {
 }
 
 describe("vanity-subdomains experimental gate (Go PersistentPreRunE parity)", () => {
-  // `check-availability` and `activate` deliberately OMIT `--desired-subdomain`:
-  // Go marks it required (`cmd/vanitySubdomains.go:67,69`) but cobra validates
-  // required flags only after `PersistentPreRunE` (`cobra@v1.10.2
-  // command.go:985,1005`), so the gate error must win when both flags are
-  // missing. The TS flag is optional at parse time (enforced in the handler)
-  // precisely so this ordering holds — these cases assert it end to end.
+  // `check-availability` and `activate` omit `--desired-subdomain`: it's optional at parse
+  // time, so the experimental gate error wins when both flags are missing.
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "get", args: ["vanity-subdomains", "get"] },
     {

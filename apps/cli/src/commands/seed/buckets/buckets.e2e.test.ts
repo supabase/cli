@@ -12,7 +12,7 @@ const E2E_TIMEOUT_MS = 30_000;
  * network-free paths of `seed buckets`:
  *  - an empty `[storage]` config is a no-op (exit 0, no stdout);
  *  - `--local --linked` is rejected by the mutually-exclusive flag check.
- * Bucket/object seeding parity is covered by the integration + unit suites.
+ * Bucket/object seeding is covered by the integration and unit suites.
  */
 describe("supabase seed buckets", () => {
   let projectDir: string;
@@ -50,9 +50,8 @@ describe("supabase seed buckets", () => {
     );
   });
 
-  // Go registers --linked/--local on seedCmd.PersistentFlags() (seed.go:27-29),
-  // so they're accepted BEFORE the subcommand too. These two cases exercise the
-  // real parser boundary, which the in-process suites bypass.
+  // --linked/--local are accepted before the subcommand token too; these two
+  // cases exercise the real parser boundary, which the in-process suites bypass.
   test(
     "accepts --local before the subcommand (Go PersistentFlags)",
     { timeout: E2E_TIMEOUT_MS },
@@ -60,7 +59,6 @@ describe("supabase seed buckets", () => {
       const { exitCode, stdout, stderr } = await runSupabase(["seed", "--local", "buckets"], {
         cwd: projectDir,
       });
-      // Parsed (no "Unrecognized flag") and routed to the local no-op path.
       expect(`${stdout}${stderr}`).not.toContain("Unrecognized flag");
       expect(exitCode).toBe(0);
       expect(stdout.trim()).toBe("");

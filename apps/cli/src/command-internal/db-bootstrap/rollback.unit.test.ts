@@ -14,12 +14,8 @@ afterEach(() => {
 });
 
 /**
- * Mirrors `docker-lifecycle.unit.test.ts`'s `mockSpawner`: every
- * command spawned (list/stop/prune) answers with the same fixed
- * `exitCode`/`stdout`/`stderr`, which is enough to drive
- * `dockerRemoveAll` through either its success path (empty container
- * list, every prune exits 0) or its very first failure branch (a non-zero
- * `docker ps` exit).
+ * Every spawned command answers with the same fixed `exitCode`/`stdout`/`stderr`, enough to
+ * drive `dockerRemoveAll` through either its success path or its first failure branch.
  */
 function mockSpawner(
   opts: {
@@ -75,15 +71,8 @@ describe("rollbackStart", () => {
         "/tmp/rollback-unit-test-workdir",
         false,
       );
-      // Go's start-failure path prints "Stopping containers..." to stderr
-      // before tearing down (`docker.go:97` with `w == os.Stderr`,
-      // `start.go:77`); no other stderr output on success without --debug.
       expect(stderr).toHaveBeenCalledTimes(1);
       expect(stderr).toHaveBeenCalledWith("Stopping containers...\n");
-      // dockerRemoveAll's own list (its `onContainersListed` hook feeds
-      // cleanupStartSecrets the same container names, no second `ps`
-      // call) -> container prune -> network prune; no stop calls (empty list)
-      // and no volume prune (deleteVolumes: false).
       expect(mock.spawned.map((args) => args[0])).toEqual(["ps", "container", "network"]);
     });
   });
@@ -112,8 +101,6 @@ describe("rollbackStart", () => {
     const mock = mockSpawner({ exitCode: 1, stderr: "permission denied" });
     const stderr = captureStderr();
     return Effect.gen(function* () {
-      // Never fails — Effect.Effect<void, never> — a rollback failure is
-      // logged, never propagated (Go's `fmt.Fprintln(os.Stderr, err)` swallow).
       yield* rollbackStart(
         mock.spawner,
         "com.supabase.cli.project=my-app",

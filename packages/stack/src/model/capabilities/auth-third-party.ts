@@ -1,10 +1,4 @@
-/**
- * Closed mapping for the third-party issuer rules used by Auth.ResolveJWKS.
- *
- * This module is deliberately pure: network discovery and JWKS retrieval are
- * owned by the runtime owner, while validation and issuer construction remain
- * deterministic and testable during compilation.
- */
+/** Closed mapping for the third-party issuer rules used by Auth.ResolveJWKS. */
 
 type ThirdPartyProviderName = "firebase" | "auth0" | "aws_cognito" | "clerk" | "workos";
 

@@ -1,7 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { Crypto, Data, Effect, FileSystem, Path, Schema } from "effect";
-// Node's fd3 readiness channel has no FileSystem abstraction; this is the
-// process-entrypoint boundary where the descriptor is intentionally used.
+// Node's fd3 readiness channel has no FileSystem abstraction, so it's used directly here.
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import * as NodeFs from "node:fs";
 import {
@@ -34,8 +33,8 @@ const reportSupervisorFailure = (error: unknown, readiness: ReadinessState): voi
   if (!readiness.written)
     try {
       const conflict = error instanceof StackOwnershipConflictError;
-      // The descriptor is owned by the parent launcher and intentionally
-      // written directly at this standalone process boundary.
+      // The descriptor is owned by the parent launcher, written directly at this process
+      // boundary.
       NodeFs.writeSync(
         3,
         `${Schema.encodeSync(Schema.fromJsonString(SupervisorReadySchema))({ ok: false, code: conflict ? "ownership-conflict" : "failed", message: error instanceof Error ? error.message : "Supervisor failed" })}\n`,

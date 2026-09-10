@@ -41,26 +41,19 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  // -----------------------------------------------------------------------
-  // Branch-name resolution: defaults to the current git branch when the arg
-  // is omitted, prompting Y/N first. The decline path returns
-  // `context.Canceled` — tag-error and short-circuit before resolving the
-  // project ref so the linked-project cache write does not fire.
-  // -----------------------------------------------------------------------
+  // Branch-name resolution defaults to the current git branch when the arg is omitted, after a
+  // Y/N prompt. Declining short-circuits before resolving the project ref, so the linked-project
+  // cache write never fires.
   let branchName = Option.getOrElse(flags.name, () => "");
-  // An explicit `--git-branch` flag takes precedence over the auto-detected
-  // branch (the flag sets `body.GitBranch`, guarded during auto-detect).
+  // An explicit `--git-branch` flag takes precedence over the auto-detected branch.
   let gitBranchForBody = Option.getOrUndefined(flags.gitBranch);
 
   if (branchName.length === 0) {
     const gitBranch = yield* detectGitBranch();
     if (Option.isSome(gitBranch) && gitBranch.value.length > 0) {
-      // Established prompt behavior: `--yes`/`SUPABASE_YES` auto-confirms
-      // with the `<title> [Y/n] y` stderr echo instead of blocking a TTY,
-      // and a non-TTY stdin prints the label and scans one piped line
-      // (100ms) before falling back to the Yes default —
-      // `echo n | supabase branches create` cancels. The branch name is
-      // wrapped in `utils.Aqua`.
+      // `--yes`/`SUPABASE_YES` auto-confirms with a `<title> [Y/n] y` stderr echo; non-TTY
+      // stdin scans one piped line (100ms) before falling back to Yes — `echo n | supabase
+      // branches create` cancels.
       const yes = yield* resolveYes;
       const confirmed = yield* promptYesNo(
         output,
@@ -84,9 +77,9 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
     });
   }
 
-  // `branches` is PARENT-scoped: after `supabase link <branch>`,
-  // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
-  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
+  // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
+  // holds the branch's own ref, and the platform 403s on that ref for every branches-management
+  // endpoint.
   const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
 
   yield* Effect.gen(function* () {
@@ -107,8 +100,7 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
       })
       .pipe(
         Effect.tapError(() => creating?.fail() ?? Effect.void),
-        // On any non-201 status (including gated 4xx), run the plan-gate
-        // check before mapping the error.
+        // Runs the plan-gate check before mapping the error, even for a gated 4xx.
         Effect.catch(
           gateMapError(
             { projectRef: ref, featureKey: "branching_limit" },
@@ -134,8 +126,7 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
-    // Established output: "Created preview branch:" writes to stdout, then
-    // the table or the encoded payload.
+    // "Created preview branch:" always writes first, then the table or encoded payload.
     if (goFmt === "json") {
       yield* output.raw("Created preview branch:\n");
       yield* output.raw(encodeGoJson(created));
