@@ -1011,29 +1011,32 @@ describe("db dump integration", () => {
     });
   };
 
-  it.live("dump --local on the stack backend fails instead of using Docker when no stack exists", () => {
-    const { layer, docker } = setup({ isLocal: true, stdout: "-- schema\n" });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(dbDump(flags({ local: Option.some(true) })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failMessage(exit)).toContain("Could not determine the stack runtime");
-      expect(docker.lastOpts).toBeUndefined();
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layer,
-          stackBackendLayer("stack"),
-          Layer.succeed(StackApi, {
-            createStack: unusedDump,
-            findStack: () => Effect.succeed(Option.none()),
-            discoverStacks: unusedDump,
-            openStack: unusedDump,
-            inspectStack: unusedDump,
-          }),
+  it.live(
+    "dump --local on the stack backend fails instead of using Docker when no stack exists",
+    () => {
+      const { layer, docker } = setup({ isLocal: true, stdout: "-- schema\n" });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(dbDump(flags({ local: Option.some(true) })));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failMessage(exit)).toContain("Could not determine the stack runtime");
+        expect(docker.lastOpts).toBeUndefined();
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            Layer.succeed(StackApi, {
+              createStack: unusedDump,
+              findStack: () => Effect.succeed(Option.none()),
+              discoverStacks: unusedDump,
+              openStack: unusedDump,
+              inspectStack: unusedDump,
+            }),
+          ),
         ),
-      ),
-    );
-  });
+      );
+    },
+  );
 
   it.live("dump --local on a docker stack never uses PGHOST=db", () => {
     const { layer, docker } = setup({
@@ -1046,7 +1049,13 @@ describe("db dump integration", () => {
       expect(docker.lastOpts?.env["PGHOST"]).toBe("host.docker.internal");
       expect(docker.lastOpts?.env["PGHOST"]).not.toBe("db");
     }).pipe(
-      Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), dumpStackApi({ kind: "container", engine: "docker" }))),
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          stackBackendLayer("stack"),
+          dumpStackApi({ kind: "container", engine: "docker" }),
+        ),
+      ),
     );
   });
 
@@ -1063,7 +1072,11 @@ describe("db dump integration", () => {
       expect(docker.lastOpts?.env["PGHOST"]).toBe("host.docker.internal");
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(layer, stackBackendLayer("stack"), dumpStackApi({ kind: "container", engine: "docker" })),
+        Layer.mergeAll(
+          layer,
+          stackBackendLayer("stack"),
+          dumpStackApi({ kind: "container", engine: "docker" }),
+        ),
       ),
     );
   });

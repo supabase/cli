@@ -201,6 +201,7 @@ DbResetSeedFlagsError
 DbResetTargetFlagsError
 DbResetVersionFlagsError
 DbSetupError
+DbStartFromBackupUnsupportedError
 DeclarativeApplyError
 DeclarativeCompatibilityError
 DeclarativeDiffError
@@ -279,6 +280,7 @@ GenTypesWorkdirError
 GoChildExitError
 HealthCheckProbeError
 HealthCheckTimeoutError
+HostPostgresClientError
 ImagePrepullError
 InitConfigExistsError
 InitExperimentalRequiredError
@@ -421,6 +423,7 @@ PullOutputFlagUnsupportedError
 PullParentRefInvalidError
 PullUncommittedChangesError
 PullWorkdirError
+ResetLocalDbFailedError
 ResetLocalDbNotRunningError
 ResetReplicationSlotsError
 RestartServicesError
@@ -488,7 +491,9 @@ SsoUpdateNetworkError
 SsoUpdateNotFoundError
 SsoUpdateUnexpectedStatusError
 StackConfigError
+StackNativeEngineError
 StackRoutingError
+StackRuntimeUnavailableError
 StartBackupVolumeExistsError
 StartConfigLoadError
 StartInvalidConfigError

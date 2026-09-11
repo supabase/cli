@@ -52,6 +52,8 @@ stack = true
       expect(yield* resolve({ args: ["stop"], cwd: root, env: {} })).toBe("stack");
       expect(yield* resolve({ args: ["status"], cwd: root, env: {} })).toBe("legacy");
       expect(yield* resolve({ args: ["db", "diff"], cwd: root, env: {} })).toBe("stack");
+      expect(yield* resolve({ args: ["db", "test"], cwd: root, env: {} })).toBe("stack");
+      expect(yield* resolve({ args: ["test", "db"], cwd: root, env: {} })).toBe("stack");
       expect(yield* resolve({ args: ["migration", "squash"], cwd: root, env: {} })).toBe("stack");
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
   });

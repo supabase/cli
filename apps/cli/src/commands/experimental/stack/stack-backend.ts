@@ -13,7 +13,7 @@ import {
 export type StackBackend = "legacy" | "stack";
 
 /** Commands that consult experimental.stack for local database and shadow routing. */
-const STACK_BACKEND_COMMANDS = new Set(["start", "stop", "db", "migration"]);
+const STACK_BACKEND_COMMANDS = new Set(["start", "stop", "db", "migration", "test"]);
 
 export class StackRoutingError extends Data.TaggedError("StackRoutingError")<{
   readonly message: string;

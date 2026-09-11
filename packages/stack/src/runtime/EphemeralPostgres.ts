@@ -659,18 +659,18 @@ const startContainer = (
 ): Effect.Effect<void, EphemeralPostgresError, FileSystem.FileSystem | Path.Path | Scope.Scope> =>
   Effect.gen(function* () {
     if (cluster.resources.kind !== "container") return;
+    const resources = cluster.resources;
     const image = cluster.image;
     if (image === undefined)
       return yield* ephemeralError("Ephemeral Postgres image is unavailable");
-    const networkId = cluster.resources.networkId;
-    const volumeId = cluster.resources.volumeId;
+    const networkId = resources.networkId;
+    const volumeId = resources.volumeId;
     if (networkId === undefined || volumeId === undefined)
       return yield* ephemeralError("Ephemeral Postgres volume is unavailable");
     yield* Effect.gen(function* () {
-      if (cluster.resources.kind !== "container") return;
-      if (cluster.resources.containerId !== undefined) {
-        yield* cluster.resources.engine
-          .startContainer(cluster.resources.containerId)
+      if (resources.containerId !== undefined) {
+        yield* resources.engine
+          .startContainer(resources.containerId)
           .pipe(
             Effect.mapError((cause) =>
               ephemeralError("Unable to start ephemeral Postgres", { cause }),
@@ -686,37 +686,43 @@ const startContainer = (
             password,
           }),
         );
-        const created = yield* cluster.resources.engine
-          .createContainer({
-            name: resourceName(cluster.identity, "database"),
-            image,
-            labels: {
-              stackId: cluster.identity,
-              ownerSessionId: cluster.identity.slice(0, 32),
-              workloadId: DATABASE_WORKLOAD_ID,
-              role: "workload",
-            },
-            network: networkId,
-            mounts: [],
-            volumeMounts: [
-              {
-                volume: volumeId,
-                target: `${CONTAINER_PGDATA_PARENT}/${PGDATA_DIR_NAME}`,
-                readOnly: false,
+        const created = yield* Effect.uninterruptibleMask((restore) =>
+          restore(
+            resources.engine.createContainer({
+              name: resourceName(cluster.identity, "database"),
+              image,
+              labels: {
+                stackId: cluster.identity,
+                ownerSessionId: cluster.identity.slice(0, 32),
+                workloadId: DATABASE_WORKLOAD_ID,
+                role: "workload",
               },
-            ],
-            publications: [{ address: "127.0.0.1", hostPort: cluster.port, containerPort: 5432 }],
-            role: "workload",
-            command: postgresArgs(5432, cluster.runtime, options.postgresSettings),
-            envFile,
-          })
-          .pipe(
+              network: networkId,
+              mounts: [],
+              volumeMounts: [
+                {
+                  volume: volumeId,
+                  target: `${CONTAINER_PGDATA_PARENT}/${PGDATA_DIR_NAME}`,
+                  readOnly: false,
+                },
+              ],
+              publications: [{ address: "127.0.0.1", hostPort: cluster.port, containerPort: 5432 }],
+              role: "workload",
+              command: postgresArgs(5432, cluster.runtime, options.postgresSettings),
+              envFile,
+            }),
+          ).pipe(
             Effect.mapError((cause) =>
               ephemeralError("Unable to create ephemeral Postgres", { cause }),
             ),
-          );
-        cluster.resources.containerId = created.id;
-        yield* cluster.resources.engine
+            Effect.tap((created) =>
+              Effect.sync(() => {
+                resources.containerId = created.id;
+              }),
+            ),
+          ),
+        );
+        yield* resources.engine
           .startContainer(created.id)
           .pipe(
             Effect.mapError((cause) =>
@@ -1001,14 +1007,16 @@ export const createEphemeralPostgresCluster = (
     };
     yield* Effect.addFinalizer(() => destroyCluster(cluster));
     if (cluster.resources.kind === "container") {
-      const engine = cluster.resources.engine;
+      const resources = cluster.resources;
+      const engine = resources.engine;
       const engineKind = cluster.runtime.kind === "container" ? cluster.runtime.engine : "docker";
-      const network = yield* engine
-        .createNetwork({
-          name: resourceName(identity, "network"),
-          labels: { stackId: identity, ownerSessionId: identity.slice(0, 32), role: "network" },
-        })
-        .pipe(
+      yield* Effect.uninterruptibleMask((restore) =>
+        restore(
+          engine.createNetwork({
+            name: resourceName(identity, "network"),
+            labels: { stackId: identity, ownerSessionId: identity.slice(0, 32), role: "network" },
+          }),
+        ).pipe(
           Effect.mapError(
             (cause) =>
               new ContainerEngineError({
@@ -1017,14 +1025,20 @@ export const createEphemeralPostgresCluster = (
                 cause,
               }),
           ),
-        );
-      cluster.resources.networkId = network.id;
-      const volume = yield* engine
-        .createVolume({
-          name: resourceName(identity, "database-volume"),
-          labels: { stackId: identity, workloadId: DATABASE_WORKLOAD_ID, role: "volume" },
-        })
-        .pipe(
+          Effect.tap((created) =>
+            Effect.sync(() => {
+              resources.networkId = created.id;
+            }),
+          ),
+        ),
+      );
+      yield* Effect.uninterruptibleMask((restore) =>
+        restore(
+          engine.createVolume({
+            name: resourceName(identity, "database-volume"),
+            labels: { stackId: identity, workloadId: DATABASE_WORKLOAD_ID, role: "volume" },
+          }),
+        ).pipe(
           Effect.mapError(
             (cause) =>
               new ContainerEngineError({
@@ -1033,8 +1047,13 @@ export const createEphemeralPostgresCluster = (
                 cause,
               }),
           ),
-        );
-      cluster.resources.volumeId = volume.id;
+          Effect.tap((created) =>
+            Effect.sync(() => {
+              resources.volumeId = created.id;
+            }),
+          ),
+        ),
+      );
     }
     if (options.restoreFrom !== undefined) {
       if (runtime.kind === "native") yield* restoreNative(cluster, options.restoreFrom);
