@@ -1526,7 +1526,11 @@ describe("db start stack backend", () => {
   const STACK_ID = StackIdSchema.make("b".repeat(64));
   const unused = () => Effect.die("unused");
 
-  function mockStackApi(opts: { readonly existing?: boolean; readonly databaseReady?: boolean }) {
+  function mockStackApi(opts: {
+    readonly existing?: boolean;
+    readonly unconfigured?: boolean;
+    readonly databaseReady?: boolean;
+  }) {
     const startConfigs: Array<unknown> = [];
     const stack: EffectStack = {
       id: STACK_ID,
@@ -1594,7 +1598,8 @@ describe("db start stack backend", () => {
                 name: "default",
                 branchContext: "main",
                 runtime: { kind: "native" as const },
-                desiredLifecycle: "stopped" as const,
+                desiredLifecycle:
+                  opts.unconfigured === true ? ("unconfigured" as const) : ("stopped" as const),
               })
             : Option.none(),
         ),
@@ -1629,6 +1634,22 @@ describe("db start stack backend", () => {
         Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
       );
       expect(stack.startConfigs).toEqual([undefined]);
+    });
+  });
+
+  it.live("applies the postgres-only overlay when an unconfigured identity already exists", () => {
+    const { layer } = setup();
+    const stack = mockStackApi({ existing: true, unconfigured: true });
+    return Effect.gen(function* () {
+      yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
+      );
+      expect(stack.startConfigs).toHaveLength(1);
+      expect(stack.startConfigs[0]).toMatchObject({
+        capabilities: {
+          rest: { enabled: false },
+        },
+      });
     });
   });
 
