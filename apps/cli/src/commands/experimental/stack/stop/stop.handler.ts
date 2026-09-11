@@ -1,4 +1,4 @@
-import { Effect, Match, Option } from "effect";
+import { Effect, Match, Option, Result } from "effect";
 import {
   type StackDescriptor,
   type OpenStackError,
@@ -69,11 +69,56 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
     const settings = yield* CommandSettings;
     const stackApi = yield* StackApi;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
+    const stopAll = flags.all;
     yield* rejectStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
+    if (stopAll && (Option.isSome(flags.stack) || Option.isSome(flags.stackId)))
+      return yield* new StackCommandStopError({
+        reason: "flags",
+        message: "--all cannot be combined with --stack or --stack-id",
+      });
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
     }).pipe(Effect.mapError(mapTargetError));
+
+    if (stopAll) {
+      const discovered = yield* stackApi.discoverStacks().pipe(Effect.mapError(stopError));
+      for (const issue of discovered.errors)
+        yield* output.warn(`Skipping managed stack ${issue.id}: ${issue.error.message}`);
+      const stopping = yield* output.task(
+        `Stopping ${discovered.stacks.length} managed stack(s)...`,
+      );
+      const results = yield* Effect.forEach(
+        discovered.stacks,
+        (descriptor) =>
+          stackApi.openStack(descriptor.id).pipe(
+            Effect.flatMap((stack) => stack.stop()),
+            Effect.result,
+            Effect.map((result) => ({ descriptor, result })),
+          ),
+        { concurrency: 1 },
+      );
+      const failed = results.flatMap(({ descriptor, result }) =>
+        Result.isFailure(result) ? [{ descriptor, error: result.failure }] : [],
+      );
+      if (failed.length > 0 || discovered.errors.length > 0) {
+        const message = `Stopped ${discovered.stacks.length - failed.length} managed stack(s); failed to stop ${failed.length} and skipped ${discovered.errors.length}: ${[
+          ...failed.map(({ descriptor, error }) => `${descriptor.id}: ${error.message}`),
+          ...discovered.errors.map(({ id, error }) => `${id}: ${error.message}`),
+        ].join("; ")}`;
+        yield* stopping.fail(message);
+        return yield* new StackCommandStopError({
+          reason: "lifecycle",
+          message,
+          cause: { failures: failed, discovery: discovered.errors },
+        });
+      }
+      yield* stopping.clear();
+      if (output.format === "text")
+        yield* output.raw(`Stopped ${discovered.stacks.length} managed stack(s).\n`);
+      else yield* output.success("", { stopped: discovered.stacks.map(({ id }) => id) });
+      return;
+    }
 
     const id = Option.isSome(flags.stackId) ? flags.stackId.value : undefined;
     const targetOption =

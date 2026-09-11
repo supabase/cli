@@ -13,10 +13,17 @@ import {
   mockProcessControl,
   mockRuntimeInfo,
   mockTelemetryRuntime,
+  mockStdin,
+  mockTty,
   processEnvLayer,
 } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { DebugFlag, ProfileFlag, WorkdirFlag } from "../../../command-internal/global-flags.ts";
+import {
+  DebugFlag,
+  ProfileFlag,
+  WorkdirFlag,
+  YesFlag,
+} from "../../../command-internal/global-flags.ts";
 import {
   EventCommandExecuted,
   PropCommand,
@@ -45,6 +52,9 @@ function setup() {
       Layer.succeed(DebugFlag, false),
       Layer.succeed(ProfileFlag, "supabase"),
       Layer.succeed(WorkdirFlag, Option.none()),
+      Layer.succeed(YesFlag, false),
+      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+      mockStdin(false),
       mockRuntimeInfo({ cwd: root, homeDir: root }),
       mockTelemetryRuntime({
         configDir: join(root, ".supabase"),
@@ -76,6 +86,25 @@ describe("stack command telemetry", () => {
           expect.objectContaining({ type: "success", data: { found: false } }),
         ]),
       );
+    }).pipe(
+      Effect.provide(fixture.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(fixture.root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("records the destroy command identity on invalid target input", () => {
+    const fixture = setup();
+    const command = stackCommand.pipe(Command.provide(fixture.layer));
+    return Effect.gen(function* () {
+      yield* Command.runWith(command, { version: "0.0.0-test" })([
+        "destroy",
+        "--stack-id",
+        "invalid",
+      ]).pipe(Effect.flip);
+      const event = fixture.analytics.captured.find(
+        (candidate) => candidate.event === EventCommandExecuted,
+      );
+      expect(event?.properties[PropCommand]).toBe("stack destroy");
     }).pipe(
       Effect.provide(fixture.layer),
       Effect.ensuring(Effect.sync(() => rmSync(fixture.root, { recursive: true, force: true }))),

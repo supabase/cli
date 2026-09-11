@@ -1,6 +1,7 @@
 import { Effect, Match, Option } from "effect";
 import {
   isStackError,
+  type StackConfig,
   type StackStatus,
   type StackRuntimePreference,
 } from "@supabase/stack/effect";
@@ -18,6 +19,7 @@ import {
 import { loadStackConfig } from "../stack-config.ts";
 import type { StackStartFlags } from "./start.command.ts";
 import { StackCommandStartError } from "./start.errors.ts";
+import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";
 
 const statusPayload = (status: StackStatus) => ({
   id: status.id,
@@ -55,6 +57,71 @@ const eagerlyActivate = <
   value: T,
 ): T => (value.enabled === false ? value : Object.assign({}, value, { activation: "eager" }));
 
+const validateExclusions = (exclusions: ReadonlyArray<string>) => {
+  const unknown = exclusions.filter(
+    (name) =>
+      name !== "database" &&
+      !STACK_START_EXCLUDABLE_CAPABILITIES.some((capability) => capability === name),
+  );
+  if (unknown.length > 0)
+    return Effect.fail(
+      new StackCommandStartError({
+        reason: "flags",
+        message: `Unknown stack capabilities in --exclude: ${unknown.map((name) => JSON.stringify(name)).join(", ")}`,
+        suggestion: `Choose from ${STACK_START_EXCLUDABLE_CAPABILITIES.join(", ")}.`,
+      }),
+    );
+  if (exclusions.includes("database"))
+    return Effect.fail(
+      new StackCommandStartError({
+        reason: "flags",
+        message: "The database capability cannot be excluded from a stack.",
+        suggestion: "Remove database from --exclude.",
+      }),
+    );
+  return Effect.void;
+};
+
+const applyExclusions = (config: StackConfig, exclusions: ReadonlyArray<string>): StackConfig => {
+  if (exclusions.length === 0) return config;
+  const excluded = new Set(exclusions);
+  const capabilities = config.capabilities;
+  const gatewayCapabilities = [
+    "rest",
+    "auth",
+    "realtime",
+    "storage",
+    "functions",
+    "analytics",
+  ] as const;
+  const apiGatewayDisabled = gatewayCapabilities.every(
+    (name) => excluded.has(name) || capabilities?.[name]?.enabled === false,
+  );
+  return {
+    ...config,
+    capabilities: {
+      ...capabilities,
+      ...(excluded.has("rest") ? { rest: { enabled: false as const } } : {}),
+      ...(excluded.has("auth") ? { auth: { enabled: false as const } } : {}),
+      ...(excluded.has("realtime") ? { realtime: { enabled: false as const } } : {}),
+      ...(excluded.has("storage") ? { storage: { enabled: false as const } } : {}),
+      ...(excluded.has("functions") ? { functions: { enabled: false as const } } : {}),
+      ...(excluded.has("studio") ? { studio: { enabled: false as const } } : {}),
+      ...(excluded.has("mail") ? { mail: { enabled: false as const } } : {}),
+      ...(excluded.has("analytics") ? { analytics: { enabled: false as const } } : {}),
+      ...(excluded.has("pooler") ? { pooler: { enabled: false as const } } : {}),
+    },
+    ...(apiGatewayDisabled
+      ? {
+          listeners: {
+            ...config.listeners,
+            api: { enabled: false as const },
+          },
+        }
+      : {}),
+  };
+};
+
 const mapTargetError = (error: StackTargetError) =>
   new StackCommandStartError({
     reason: error.reason,
@@ -71,6 +138,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const resolver = yield* StackTargetResolver;
     const stackApi = yield* StackApi;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
+    yield* validateExclusions(flags.exclude);
     yield* rejectStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
@@ -95,42 +163,43 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           }),
       ),
     );
+    const configuredStart = applyExclusions(config, flags.exclude);
     const startConfig = flags.eager
       ? {
-          ...config,
+          ...configuredStart,
           capabilities: {
-            ...config.capabilities,
-            ...(config.capabilities?.rest === undefined
+            ...configuredStart.capabilities,
+            ...(configuredStart.capabilities?.rest === undefined
               ? {}
-              : { rest: eagerlyActivate(config.capabilities.rest) }),
-            ...(config.capabilities?.auth === undefined
+              : { rest: eagerlyActivate(configuredStart.capabilities.rest) }),
+            ...(configuredStart.capabilities?.auth === undefined
               ? {}
-              : { auth: eagerlyActivate(config.capabilities.auth) }),
-            ...(config.capabilities?.realtime === undefined
+              : { auth: eagerlyActivate(configuredStart.capabilities.auth) }),
+            ...(configuredStart.capabilities?.realtime === undefined
               ? {}
-              : { realtime: eagerlyActivate(config.capabilities.realtime) }),
-            ...(config.capabilities?.storage === undefined
+              : { realtime: eagerlyActivate(configuredStart.capabilities.realtime) }),
+            ...(configuredStart.capabilities?.storage === undefined
               ? {}
-              : { storage: eagerlyActivate(config.capabilities.storage) }),
-            ...(config.capabilities?.functions === undefined
+              : { storage: eagerlyActivate(configuredStart.capabilities.storage) }),
+            ...(configuredStart.capabilities?.functions === undefined
               ? {}
-              : { functions: eagerlyActivate(config.capabilities.functions) }),
-            ...(config.capabilities?.studio === undefined
+              : { functions: eagerlyActivate(configuredStart.capabilities.functions) }),
+            ...(configuredStart.capabilities?.studio === undefined
               ? {}
-              : { studio: eagerlyActivate(config.capabilities.studio) }),
-            ...(config.capabilities?.mail === undefined
+              : { studio: eagerlyActivate(configuredStart.capabilities.studio) }),
+            ...(configuredStart.capabilities?.mail === undefined
               ? {}
-              : { mail: eagerlyActivate(config.capabilities.mail) }),
-            ...(config.capabilities?.analytics === undefined
+              : { mail: eagerlyActivate(configuredStart.capabilities.mail) }),
+            ...(configuredStart.capabilities?.analytics === undefined
               ? {}
-              : { analytics: eagerlyActivate(config.capabilities.analytics) }),
-            ...(config.capabilities?.pooler === undefined
+              : { analytics: eagerlyActivate(configuredStart.capabilities.analytics) }),
+            ...(configuredStart.capabilities?.pooler === undefined
               ? {}
-              : { pooler: eagerlyActivate(config.capabilities.pooler) }),
+              : { pooler: eagerlyActivate(configuredStart.capabilities.pooler) }),
           },
           preparation: flags.preparation,
         }
-      : { ...config, preparation: flags.preparation };
+      : { ...configuredStart, preparation: flags.preparation };
     const runtime: StackRuntimePreference | undefined = target.runtime;
     // The package's public Effect API reads SUPABASE_HOME only at its runtime
     // composition boundary and launches the detached owner through the compiled

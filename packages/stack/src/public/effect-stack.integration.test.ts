@@ -60,6 +60,7 @@ import {
 import type { LogQuery, StackLogBatch, StackLogEntry } from "./Logs.ts";
 import {
   createStack,
+  discoverStacks,
   findStack,
   inspectStack,
   listStacks,
@@ -1126,6 +1127,29 @@ describe("Effect stack lifecycle handoff", () => {
 
         expect(listed).toHaveLength(1);
         expect(listed[0]?.id).toBe(valid.id);
+      }),
+    ),
+  );
+
+  it.live("retains healthy stacks while reporting unreadable registry entries", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const env = yield* StackRuntimeEnvironment;
+        const healthy = yield* createStack({ projectRoot: project });
+        const corruptProject = path.join(project, "corrupt");
+        yield* fs.makeDirectory(corruptProject);
+        const corrupt = yield* createStack({ projectRoot: corruptProject });
+        const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: corrupt.id });
+        yield* fs.writeFileString(paths.stateDocument, "{ malformed");
+
+        const discovered = yield* discoverStacks();
+
+        expect(discovered.stacks.map(({ id }) => id)).toEqual([healthy.id]);
+        expect(discovered.errors).toHaveLength(1);
+        expect(discovered.errors[0]?.id).toBe(corrupt.id);
+        expect(discovered.errors[0]?.error).toBeInstanceOf(StackStateInvalidError);
       }),
     ),
   );

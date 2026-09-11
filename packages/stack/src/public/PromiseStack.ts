@@ -3,6 +3,7 @@ import { Crypto, Effect, FileSystem, Layer, Option, Path, Redacted, Schema, Stre
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   createStack as createEffectStack,
+  discoverStacks as discoverEffectStacks,
   findStack as findEffectStack,
   inspectStack as inspectEffectStack,
   listStacks as listEffectStacks,
@@ -11,6 +12,8 @@ import {
   type CreateStackOptions,
   type FindStackOptions,
   type ListStacksOptions,
+  type StackDiscoveryResult,
+  type StackDiscoveryIssue,
   type PrepareStackOptions,
   type StartStackOptions,
 } from "./EffectStack.ts";
@@ -62,6 +65,7 @@ interface PromiseStackApi {
   readonly openStack: (id: StackId) => Promise<PromiseStack>;
   readonly findStack: (options: FindStackOptions) => Promise<StackDescriptor | undefined>;
   readonly listStacks: (options?: ListStacksOptions) => Promise<ReadonlyArray<StackDescriptor>>;
+  readonly discoverStacks: (options?: ListStacksOptions) => Promise<StackDiscoveryResult>;
   readonly inspectStack: (id: StackId) => Promise<StackInspection>;
 }
 
@@ -174,6 +178,7 @@ export const makePromiseApi = (
     findStack: (options) =>
       run(findEffectStack(options)).then((value) => Option.getOrUndefined(value)),
     listStacks: (options) => run(listEffectStacks(options)),
+    discoverStacks: (options) => run(discoverEffectStacks(options)),
     inspectStack: (id) => run(inspectEffectStack(id)),
   };
 };
@@ -183,6 +188,14 @@ export const createStack = defaultApi.createStack;
 export const openStack = defaultApi.openStack;
 export const findStack = defaultApi.findStack;
 export const listStacks = defaultApi.listStacks;
+export const discoverStacks = defaultApi.discoverStacks;
 export const inspectStack = defaultApi.inspectStack;
 
-export type { CreateStackOptions, FindStackOptions, ListStacksOptions, PreparedCapability };
+export type {
+  CreateStackOptions,
+  FindStackOptions,
+  ListStacksOptions,
+  PreparedCapability,
+  StackDiscoveryIssue,
+  StackDiscoveryResult,
+};

@@ -55,6 +55,12 @@ runtime. `docker` and `native` select the requested runtime without fallback.
 `--preparation` controls background versus
 on-demand artifact preparation, and `--eager` requests enabled capabilities be
 activated before the command returns.
+`--exclude` accepts repeated or comma-separated capability names (`rest`, `auth`, `realtime`,
+`storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`) and disables those services
+in the effective start configuration. The database cannot be excluded. Exclusions are applied in
+memory and persisted with the stack state; the project configuration file is unchanged. If all
+API gateway capabilities are disabled, the API listener is disabled as well. Eager activation never
+re-enables an excluded capability.
 
 The command owns only the start request. Once the package reports readiness,
 the detached stack owner remains alive after the CLI process exits. If the CLI

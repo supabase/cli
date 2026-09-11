@@ -222,7 +222,7 @@ stack = true
         "stack",
         "",
       ])?.candidates.map(({ name }) => name);
-      expect(stackCommands).toEqual(["start", "stop"]);
+      expect(stackCommands).toEqual(["destroy", "start", "stop"]);
 
       expect(completionFlags(backend, "status")).toContain("--override-name");
     }
