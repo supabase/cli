@@ -78,17 +78,22 @@ const KONG_FUNCTIONS_CONFIG = JSON.stringify({
 });
 const CUSTOM_FUNCTION = `import { sharedValue } from "../_shared/value.ts";
 
-Deno.serve(() => new Response("ok", {
-  headers: {
-    "X-Custom-Id": "abc123",
-    "X-Function-Slug": Deno.env.get("SUPABASE_FUNCTION_SLUG") ?? "",
-    "X-Shared-Import": sharedValue,
-    "X-Shared": Deno.env.get("SHARED") ?? "",
-    "X-Function-Only": Deno.env.get("FUNCTION_ONLY") ?? "",
-    "X-Global-Only": Deno.env.get("GLOBAL_ONLY") ?? "",
-    "Access-Control-Expose-Headers": "X-Custom-Id",
-  },
-}));`;
+Deno.serve((req) => {
+  if (req.headers.get("x-reject-before-body") === "true") {
+    return new Response("rejected", { status: 400 });
+  }
+  return new Response("ok", {
+    headers: {
+      "X-Custom-Id": "abc123",
+      "X-Function-Slug": Deno.env.get("SUPABASE_FUNCTION_SLUG") ?? "",
+      "X-Shared-Import": sharedValue,
+      "X-Shared": Deno.env.get("SHARED") ?? "",
+      "X-Function-Only": Deno.env.get("FUNCTION_ONLY") ?? "",
+      "X-Global-Only": Deno.env.get("GLOBAL_ONLY") ?? "",
+      "Access-Control-Expose-Headers": "X-Custom-Id",
+    },
+  });
+});`;
 const NESTED_FUNCTION = `Deno.serve(() => new Response("ok", {
   headers: {
     "X-Function-Slug": Deno.env.get("SUPABASE_FUNCTION_SLUG") ?? "",
@@ -340,7 +345,7 @@ describe("functions serve runtime template (offline)", () => {
   );
 
   test.skipIf(!dockerAvailable)(
-    "preserves function env and CORS headers and exposes JWT errors through Kong",
+    "preserves function env and CORS headers, exposes JWT errors, and returns early responses through Kong",
     { timeout: SERVE_OFFLINE_TEST_TIMEOUT_MS },
     async () => {
       const imageDeadline = resolveDeadline();
@@ -492,6 +497,14 @@ describe("functions serve runtime template (offline)", () => {
         expect(aliasResponse.headers.get("x-shared-import")).toBe("shared-import-ok");
         expect(nestedResponse.status).toBe(200);
         expect(nestedResponse.headers.get("x-function-slug")).toBe("nested-worker-path");
+        const earlyResponse = await fetch(`${functionsUrl}/custom`, {
+          method: "POST",
+          headers: { "x-reject-before-body": "true" },
+          body: new Uint8Array(128 * 1024),
+          signal: AbortSignal.timeout(5_000),
+        });
+        expect(earlyResponse.status).toBe(400);
+        expect(await earlyResponse.text()).toBe("rejected");
         const runtimeLogs = containerLogs(runtimeContainer);
         expect(runtimeLogs).toContain("Functions config:");
         expect(runtimeLogs).toContain('"custom"');
