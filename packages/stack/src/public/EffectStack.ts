@@ -178,26 +178,16 @@ export interface PrepareStackResult {
 
 export interface EffectStack {
   readonly id: StackId;
-  // Each of these methods opens a fresh scoped RPC invocation per call.
-  // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly status: () => Effect.Effect<StackStatus, StackStatusError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly credentials: () => Effect.Effect<EffectStackCredentials, StackCredentialsError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
+  readonly status: Effect.Effect<StackStatus, StackStatusError>;
+  readonly credentials: Effect.Effect<EffectStackCredentials, StackCredentialsError>;
   readonly prepare: (
     options?: PrepareStackOptions,
   ) => Effect.Effect<PrepareStackResult, PrepareStackError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly start: (options?: StartStackOptions) => Effect.Effect<StackStatus, StackStartError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly stop: () => Effect.Effect<void, StackStopError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly destroy: () => Effect.Effect<void, DestroyStackError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly resetDatabase: () => Effect.Effect<StackStatus, ResetDatabaseError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
+  readonly stop: Effect.Effect<void, StackStopError>;
+  readonly destroy: Effect.Effect<void, DestroyStackError>;
+  readonly resetDatabase: Effect.Effect<StackStatus, ResetDatabaseError>;
   readonly logs: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackLogsError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly followLogs: (query?: LogQuery) => Stream.Stream<StackLogEntry, StackLogsError>;
 }
 
@@ -215,7 +205,9 @@ const descriptor = (state: PersistedStackState, id: StackId): StackDescriptor =>
 
 const environment = () =>
   Effect.serviceOption(StackRuntimeEnvironment).pipe(
-    Effect.map(Option.getOrElse(defaultRuntimeEnvironment)),
+    Effect.flatMap((configured) =>
+      Option.isSome(configured) ? Effect.succeed(configured.value) : defaultRuntimeEnvironment,
+    ),
   );
 
 const isCapabilityName = (value: unknown): value is CapabilityName =>
@@ -392,7 +384,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
             ownerSessionId: owner.ownerSessionId,
             rpcRelease: owner.rpcRelease,
           });
-          const stop = yield* Effect.exit(client.stop());
+          const stop = yield* Effect.exit(client.stop);
           if (
             Exit.isSuccess(stop) &&
             !stop.value.ok &&
@@ -544,39 +536,67 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
         }),
       ),
     );
-    const destroy = (): Effect.Effect<void, DestroyStackError> =>
+    const destroy: Effect.Effect<void, DestroyStackError> = Effect.suspend(() =>
       options.readPersistedState.pipe(
         Effect.mapError(destroyError),
         Effect.flatMap((state) =>
           Option.isNone(state) ? Effect.fail(stackNotFound()) : destroyAndAwaitOwner,
         ),
-      );
-    const status = (): Effect.Effect<StackStatus, StackStatusError> => {
-      const rpcStatus = invoke((rpc) => rpc.status(undefined), statusError);
-      return rpcStatus.pipe(
-        Effect.catchTag("StackOwnershipConflictError", (ownershipError) =>
-          options.readOfflineState.pipe(
-            Effect.mapError(statusError),
-            Effect.flatMap((state): Effect.Effect<StackStatus, StackStatusError> => {
-              if (Option.isNone(state)) return Effect.fail(stackNotFound());
-              if (isStoppedState(state.value))
-                return statusFor(id, state.value, [], new Set<CapabilityName>(), "stopped");
-              return Effect.fail(
-                new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
-              );
-            }),
-            Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
+      ),
+    );
+    const status: Effect.Effect<StackStatus, StackStatusError> = Effect.suspend(
+      (): Effect.Effect<StackStatus, StackStatusError> => {
+        const rpcStatus = invoke((rpc) => rpc.status(undefined), statusError);
+        return rpcStatus.pipe(
+          Effect.catchTag("StackOwnershipConflictError", (ownershipError) =>
+            options.readOfflineState.pipe(
+              Effect.mapError(statusError),
+              Effect.flatMap((state): Effect.Effect<StackStatus, StackStatusError> => {
+                if (Option.isNone(state)) return Effect.fail(stackNotFound());
+                if (isStoppedState(state.value))
+                  return statusFor(id, state.value, [], new Set<CapabilityName>(), "stopped");
+                return Effect.fail(
+                  new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
+                );
+              }),
+              Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
+            ),
           ),
+        );
+      },
+    );
+    const credentials: Effect.Effect<EffectStackCredentials, StackCredentialsError> =
+      Effect.suspend((): Effect.Effect<EffectStackCredentials, StackCredentialsError> =>
+        invoke((rpc) => rpc.credentials(undefined), credentialsError).pipe(
+          Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
+            const offline: Effect.Effect<never, StackCredentialsError> =
+              options.readOfflineState.pipe(
+                Effect.mapError(credentialsError),
+                Effect.flatMap((state): Effect.Effect<never, StackCredentialsError> =>
+                  Option.isNone(state)
+                    ? Effect.fail(stackNotFound())
+                    : isStoppedState(state.value)
+                      ? Effect.fail(
+                          new StackNotRunningError({
+                            stackId: id,
+                            message: "Stack is not running",
+                          }),
+                        )
+                      : Effect.fail(ownershipError),
+                ),
+                Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
+              );
+            return offline;
+          }),
         ),
       );
-    };
-    const credentials = (): Effect.Effect<EffectStackCredentials, StackCredentialsError> =>
-      invoke((rpc) => rpc.credentials(undefined), credentialsError).pipe(
-        Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
-          const offline: Effect.Effect<never, StackCredentialsError> =
-            options.readOfflineState.pipe(
-              Effect.mapError(credentialsError),
-              Effect.flatMap((state): Effect.Effect<never, StackCredentialsError> =>
+    const resetDatabase: Effect.Effect<StackStatus, ResetDatabaseError> = Effect.suspend(
+      (): Effect.Effect<StackStatus, ResetDatabaseError> =>
+        invoke((rpc) => rpc.resetDatabase(undefined), resetDatabaseError).pipe(
+          Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
+            const offline: Effect.Effect<never, ResetDatabaseError> = options.readOfflineState.pipe(
+              Effect.mapError(resetDatabaseError),
+              Effect.flatMap((state): Effect.Effect<never, ResetDatabaseError> =>
                 Option.isNone(state)
                   ? Effect.fail(stackNotFound())
                   : isStoppedState(state.value)
@@ -590,9 +610,10 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
               ),
               Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
             );
-          return offline;
-        }),
-      );
+            return offline;
+          }),
+        ),
+    );
     const start = (startOptions?: StartStackOptions) => {
       return invoke(
         (rpc) =>
@@ -614,28 +635,6 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
         ),
       );
     };
-    const resetDatabase = (): Effect.Effect<StackStatus, ResetDatabaseError> =>
-      invoke((rpc) => rpc.resetDatabase(undefined), resetDatabaseError).pipe(
-        Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
-          const offline: Effect.Effect<never, ResetDatabaseError> = options.readOfflineState.pipe(
-            Effect.mapError(resetDatabaseError),
-            Effect.flatMap((state): Effect.Effect<never, ResetDatabaseError> =>
-              Option.isNone(state)
-                ? Effect.fail(stackNotFound())
-                : isStoppedState(state.value)
-                  ? Effect.fail(
-                      new StackNotRunningError({
-                        stackId: id,
-                        message: "Stack is not running",
-                      }),
-                    )
-                  : Effect.fail(ownershipError),
-            ),
-            Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
-          );
-          return offline;
-        }),
-      );
     const logsStateError = (error: StackError): StackLogsError =>
       isNarrowError(error, STACK_LOGS_ERROR_TAGS)
         ? error
@@ -645,7 +644,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
         // Subscribe to the owner control connection before sending stop so a
         // fast shutdown cannot race the close witness.
         const closeFiber = yield* Effect.forkChild(owner.awaitClose(), { startImmediately: true });
-        const response = yield* owner.stop().pipe(Effect.exit);
+        const response = yield* owner.stop.pipe(Effect.exit);
         if (Exit.isFailure(response)) {
           yield* Fiber.interrupt(closeFiber);
           return yield* Effect.failCause(response.cause);
@@ -670,7 +669,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
       Effect.mapError(stopError),
       Effect.flatMap(({ client }) => stopOwner(client)),
     );
-    const stop = () =>
+    const stop: Effect.Effect<void, StackStopError> = Effect.suspend(() =>
       resolveClient(false, "maintenance").pipe(
         Effect.mapError(stopError),
         Effect.flatMap(({ client }) => stopOwner(client)),
@@ -686,7 +685,8 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
             Effect.catchTag("StackOwnershipConflictError", () => launchAndStop),
           ),
         ),
-      );
+      ),
+    );
     const prepare = (
       prepareOptions?: PrepareStackOptions,
     ): Effect.Effect<PrepareStackResult, PrepareStackError> => options.prepare(prepareOptions);

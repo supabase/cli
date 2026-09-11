@@ -1,10 +1,21 @@
-// oxlint-disable effecttsgo/prefer-schema-over-json -- raw child-process fixture payloads are protocol JSON, not product serialization.
 import { NodeServices, NodeSocket } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Data, Deferred, Effect, Exit, Fiber, FileSystem, Path, Ref, Stream } from "effect";
-import { ChildProcess } from "effect/unstable/process";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
-import { spawnSync } from "node:child_process";
+import {
+  Cause,
+  Data,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Path,
+  Ref,
+  Schedule,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { fileURLToPath } from "node:url";
 import { LogStoreError, makeLogStore, type LogStore } from "../supervisor/LogStore.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
@@ -21,6 +32,8 @@ import {
 } from "./NativeProcess.ts";
 
 const stackId = StackIdSchema.make("d".repeat(64));
+const encodeJson = (value: unknown): string =>
+  Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(value);
 
 class ProcessTreeTestError extends Data.TaggedError("ProcessTreeTestError")<{
   readonly message: string;
@@ -161,29 +174,121 @@ describe("native runtime", { timeout: 15_000 }, () => {
   it.live("publishes an unexpected native workload exit after readiness", () =>
     withPlatform(
       Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-exit-" });
+        const triggerPath = path.join(root, "trigger");
+        const readySignal = yield* Deferred.make<void>();
+        const logStore = yield* makeLogStore({ path: path.join(root, "logs.json") });
+        const signaledLogStore = signalOnLog(logStore, "watch-ready", readySignal);
         let startedProcess: NativeProcess | undefined;
         const runtime = yield* makeNativeRuntime({
-          resolveProcess: () => Effect.succeed(processPlan(fixtureProcess("native-watch"))),
+          resolveProcess: () =>
+            Effect.succeed({
+              startup: [],
+              main: {
+                executable: process.execPath,
+                args: [
+                  "-e",
+                  `const fs=require("node:fs"); fs.watch(${JSON.stringify(root)}, () => { if (fs.existsSync(${JSON.stringify(triggerPath)})) process.exit(1) }); process.stdout.write("watch-ready\\n")`,
+                ],
+              },
+            }),
+          logStore: signaledLogStore,
           waitForReadiness: (_key, _workload, process) =>
             Effect.sync(() => {
               startedProcess = process;
-            }),
+            }).pipe(Effect.andThen(Deferred.await(readySignal))),
         });
         const ready = yield* runtime.start(keyFor("watch"), workload("watch"));
         expect(ready.state).toBe("ready");
         expect(startedProcess).toBeDefined();
-        if (startedProcess !== undefined) {
-          yield* startedProcess.kill;
-          yield* startedProcess.exitCode.pipe(Effect.exit);
-          yield* Effect.yieldNow;
-        }
-        const observed = yield* runtime.observe(stackId);
+        yield* fs.writeFileString(triggerPath, "exit");
+        if (startedProcess !== undefined) yield* startedProcess.exitCode;
+        const observed = yield* runtime.observe(stackId).pipe(
+          Effect.tap(() => Effect.yieldNow),
+          Effect.repeat({
+            until: (values) => values[0]?.state === "failed",
+            schedule: Schedule.forever,
+          }),
+          Effect.timeout("5 seconds"),
+        );
         expect(observed).toEqual([
-          expect.objectContaining({ workloadId: keyFor("watch").workloadId, state: "failed" }),
+          expect.objectContaining({
+            workloadId: keyFor("watch").workloadId,
+            state: "failed",
+            error: "Native workload exited before an explicit stop (code 1)",
+          }),
         ]);
         yield* runtime.remove(keyFor("watch"));
       }),
     ),
+  );
+
+  it.live("reports the signal that terminated a native workload", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const native = yield* spawnNativeProcess({
+          executable: process.execPath,
+          args: ["-e", 'process.kill(process.pid, "SIGTERM")'],
+        });
+        const stderr = yield* native.stderr.pipe(Stream.decodeText, Stream.runCollect);
+        expect(yield* native.exitCode).toBe(1);
+        expect(Array.from(stderr).join("")).toContain(
+          "Native workload exited due to signal SIGTERM",
+        );
+      }),
+    ),
+  );
+
+  it.live.each([
+    { name: "SIGTERM stops", signal: "SIGTERM", closeScope: false },
+    { name: "SIGINT stops", signal: "SIGINT", closeScope: false },
+    { name: "scope closures", signal: "SIGTERM", closeScope: true },
+  ] as const)(
+    "does not report unexpected exits during concurrent $name",
+    ({ signal, closeScope }) =>
+      withPlatform(
+        Effect.forEach(
+          Array.from({ length: 25 }),
+          () =>
+            Effect.scoped(
+              Effect.gen(function* () {
+                const ready = yield* Deferred.make<void>();
+                const processScope = yield* Effect.acquireRelease(Scope.make("parallel"), (scope) =>
+                  Scope.close(scope, Exit.void),
+                );
+                const native = yield* spawnNativeProcess({
+                  gracefulStopSignal: signal,
+                  executable: process.execPath,
+                  args: ["-e", 'process.stdout.write("ready\\n"); setInterval(() => {}, 1000)'],
+                }).pipe(Effect.provideService(Scope.Scope, processScope));
+                const stdout = yield* native.stdout.pipe(
+                  Stream.decodeText,
+                  Stream.splitLines,
+                  Stream.runForEach((line) =>
+                    line === "ready" ? Deferred.succeed(ready, undefined) : Effect.void,
+                  ),
+                  Effect.forkChild({ startImmediately: true }),
+                );
+                const stderr = yield* Effect.forkChild(
+                  native.stderr.pipe(Stream.decodeText, Stream.runCollect),
+                  { startImmediately: true },
+                );
+                yield* Deferred.await(ready).pipe(Effect.timeout("10 seconds"));
+                yield* closeScope ? Scope.close(processScope, Exit.void) : native.kill;
+                const stderrOutput = yield* Fiber.join(stderr);
+                yield* Fiber.join(stdout);
+                expect(Array.from(stderrOutput).join("")).not.toContain(
+                  "Native workload exited due to signal",
+                );
+                expect(yield* native.isRunning).toBe(false);
+              }),
+            ),
+          { concurrency: 4, discard: true },
+        ),
+      ),
+    { timeout: 60_000 },
   );
 
   it.live("keeps a ready workload after the losing exit observer is interrupted", () =>
@@ -450,7 +555,7 @@ describe("native runtime", { timeout: 15_000 }, () => {
           command: process.execPath,
           args: [
             "-e",
-            `process.env.PGPASSWORD="host-secret"; const { runNativeLauncher } = await import(${JSON.stringify(launcherPath)}); runNativeLauncher()`,
+            `process.env.PGPASSWORD="host-secret"; const { runNativeLauncher } = await import(${encodeJson(launcherPath)}); runNativeLauncher()`,
           ],
         };
         const runtime = yield* makeNativeRuntime({
@@ -745,7 +850,7 @@ describe("native runtime", { timeout: 15_000 }, () => {
             if (typeof address === "object" && address !== null) {
               process.stdout.write(\`TARGET_READY \${address.port}\\n\`);
             }
-            const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendantCode)}], {
+            const child = spawn(process.execPath, ["-e", ${encodeJson(descendantCode)}], {
               stdio: ["ignore", "pipe", "inherit"]
             });
             child.stdout.on("data", (chunk) => {
@@ -755,13 +860,13 @@ describe("native runtime", { timeout: 15_000 }, () => {
         `;
         const ownerCode = `
           const { spawn } = require("node:child_process");
-          const launcherProcess = spawn(${JSON.stringify(targetLauncher.command)}, ${JSON.stringify(targetLauncher.args)}, {
+          const launcherProcess = spawn(${encodeJson(targetLauncher.command)}, ${encodeJson(targetLauncher.args)}, {
             detached: true,
             stdio: ["ignore", "inherit", "inherit", "pipe", "pipe"]
           });
-          launcherProcess.stdio[4].end(JSON.stringify({
-            executable: ${JSON.stringify(runtimeCommand)},
-            args: ["-e", ${JSON.stringify(targetCode)}]
+        launcherProcess.stdio[4].end(JSON.stringify({
+            executable: ${encodeJson(runtimeCommand)},
+            args: ["-e", ${encodeJson(targetCode)}]
           }));
           setInterval(() => {}, 1000);
         `;
@@ -899,13 +1004,13 @@ describe("native runtime", { timeout: 15_000 }, () => {
       const launcherArgs = defaultNativeProcessLauncher().args;
       const ownerCode = `
         const { spawn } = require("node:child_process");
-        const launcherProcess = spawn(${JSON.stringify(process.execPath)}, ${JSON.stringify(launcherArgs)}, {
+        const launcherProcess = spawn(${encodeJson(process.execPath)}, ${encodeJson(launcherArgs)}, {
           detached: true,
           stdio: ["ignore", "inherit", "inherit", "pipe", "pipe"]
         });
         launcherProcess.stdio[4].end(JSON.stringify({
-          executable: ${JSON.stringify(process.execPath)},
-          args: ["-e", ${JSON.stringify(options.targetCode)}],
+          executable: ${encodeJson(process.execPath)},
+          args: ["-e", ${encodeJson(options.targetCode)}],
           gracefulStopSignal: "SIGINT",
           gracefulStopTimeoutMs: ${String(options.gracefulStopTimeoutMs)}
         }));
@@ -988,7 +1093,12 @@ describe("native runtime", { timeout: 15_000 }, () => {
     ),
   );
 
-  it.live("terminates descendants after a native workload exits normally", () =>
+  it.live.each([
+    { name: "normal workload exit", mode: "exit" },
+    { name: "a graceful stop", mode: "graceful" },
+    { name: "a forced stop", mode: "forced" },
+    { name: "a scope closing an unresponsive workload", mode: "scope" },
+  ] as const)("terminates descendants after $name", ({ mode }) =>
     withPlatform(
       Effect.gen(function* () {
         let launcherPid: number | undefined;
@@ -1007,22 +1117,27 @@ describe("native runtime", { timeout: 15_000 }, () => {
         `;
           const targetCode = `
           const { spawn } = require("node:child_process");
-          const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendantCode)}], {
+          ${mode === "forced" || mode === "scope" ? 'process.on("SIGTERM", () => {});' : ""}
+          const child = spawn(process.execPath, ["-e", ${encodeJson(descendantCode)}], {
             stdio: ["ignore", "pipe", "inherit"]
           });
           child.stdout.on("data", (chunk) => {
             process.stdout.write(chunk);
-            if (chunk.toString().includes("DESC_READY ")) {
+            if (${String(mode === "exit")} && chunk.toString().includes("DESC_READY ")) {
               process.stdout.write("DIRECT_EXITING\\n");
               process.exit(0);
             }
           });
           child.on("error", () => process.exit(1));
         `;
+          const processScope = yield* Effect.acquireRelease(Scope.make("parallel"), (scope) =>
+            Scope.close(scope, Exit.void),
+          );
           const native = yield* spawnNativeProcess({
             executable: process.execPath,
             args: ["-e", targetCode],
-          });
+            gracefulStopTimeout: "100 millis",
+          }).pipe(Effect.provideService(Scope.Scope, processScope));
           launcherPid = Number(native.pid);
           const output = yield* native.stdout.pipe(
             Stream.decodeText,
@@ -1046,16 +1161,20 @@ describe("native runtime", { timeout: 15_000 }, () => {
             .runRaw(() => Effect.void, { onOpen: Deferred.succeed(opened, undefined) })
             .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
           yield* Deferred.await(opened).pipe(Effect.timeout("5 seconds"));
-          yield* Deferred.await(workloadExited).pipe(Effect.timeout("5 seconds"));
-          expect(yield* native.exitCode).toBe(0);
+          if (mode === "exit") {
+            yield* Deferred.await(workloadExited).pipe(Effect.timeout("5 seconds"));
+            expect(yield* native.exitCode).toBe(0);
+          } else {
+            yield* mode === "scope" ? Scope.close(processScope, Exit.void) : native.kill;
+            expect(yield* native.isRunning).toBe(false);
+          }
           yield* Fiber.join(closed).pipe(
             Effect.timeoutOrElse({
               duration: "5 seconds",
               orElse: () =>
                 Effect.fail(
                   new ProcessTreeTestError({
-                    message:
-                      "native launcher left descendant listener alive after normal workload exit",
+                    message: `native launcher left descendant listener alive after ${mode}`,
                   }),
                 ),
             }),
@@ -1063,9 +1182,18 @@ describe("native runtime", { timeout: 15_000 }, () => {
           yield* Fiber.interrupt(output);
         }).pipe(
           Effect.ensuring(
-            Effect.sync(() => {
-              if (launcherPid !== undefined && process.platform !== "win32")
-                spawnSync("kill", ["-KILL", `-${launcherPid}`], { stdio: "ignore" });
+            Effect.gen(function* () {
+              if (launcherPid !== undefined && process.platform !== "win32") {
+                const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+                yield* spawner
+                  .exitCode(
+                    ChildProcess.make("kill", ["-KILL", `-${launcherPid}`], {
+                      stdout: "ignore",
+                      stderr: "ignore",
+                    }),
+                  )
+                  .pipe(Effect.ignore);
+              }
             }),
           ),
         );

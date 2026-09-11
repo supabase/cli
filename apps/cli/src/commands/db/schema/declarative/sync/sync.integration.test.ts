@@ -87,44 +87,43 @@ interface SetupOpts {
 
 const SYNC_STACK_ID = StackIdSchema.make("e".repeat(64));
 const unusedSync = () => Effect.die("unused");
+const unusedSyncEffect = Effect.die("unused");
 const STACK_APPLY_PORT = 54329;
 
 function syncStackApi(workdir: string, port: number) {
   const stack: EffectStack = {
     id: SYNC_STACK_ID,
-    status: () =>
-      Effect.succeed({
-        id: SYNC_STACK_ID,
-        lifecycle: "running",
-        desiredLifecycle: "running",
-        runtime: { kind: "native" },
-        endpoints: {},
-        versions: {},
-        capabilities: CAPABILITY_NAMES.map((name) => ({
-          name,
-          activation: name === "database" ? "eager" : "lazy",
-          state: name === "database" ? "ready" : "dormant",
-        })),
-        artifacts: [],
-      }),
-    credentials: () =>
-      Effect.succeed({
-        database: {
-          url: Redacted.make(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
-          password: Redacted.make("postgres"),
-        },
-        api: {
-          publishableKey: "anon",
-          secretKey: Redacted.make("service"),
-          anonJwt: "anon",
-          serviceRoleJwt: Redacted.make("service"),
-        },
-      }),
+    status: Effect.succeed({
+      id: SYNC_STACK_ID,
+      lifecycle: "running",
+      desiredLifecycle: "running",
+      runtime: { kind: "native" },
+      endpoints: {},
+      versions: {},
+      capabilities: CAPABILITY_NAMES.map((name) => ({
+        name,
+        activation: name === "database" ? "eager" : "lazy",
+        state: name === "database" ? "ready" : "dormant",
+      })),
+      artifacts: [],
+    }),
+    credentials: Effect.succeed({
+      database: {
+        url: Redacted.make(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
+        password: Redacted.make("postgres"),
+      },
+      api: {
+        publishableKey: "anon",
+        secretKey: Redacted.make("service"),
+        anonJwt: "anon",
+        serviceRoleJwt: Redacted.make("service"),
+      },
+    }),
     prepare: unusedSync,
     start: unusedSync,
-    stop: unusedSync,
-    destroy: unusedSync,
-    resetDatabase: unusedSync,
+    stop: unusedSyncEffect,
+    destroy: unusedSyncEffect,
+    resetDatabase: unusedSyncEffect,
     logs: unusedSync,
     followLogs: () => Stream.empty,
   };

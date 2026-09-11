@@ -979,16 +979,17 @@ describe("db dump integration", () => {
 
   const DUMP_STACK_ID = StackIdSchema.make("d".repeat(64));
   const unusedDump = () => Effect.die("unused");
+  const unusedDumpEffect = Effect.die("unused");
   const dumpStackApi = (runtime: { kind: "native" } | { kind: "container"; engine: "docker" }) => {
     const stack: EffectStack = {
       id: DUMP_STACK_ID,
-      status: unusedDump,
-      credentials: unusedDump,
+      status: unusedDumpEffect,
+      credentials: unusedDumpEffect,
       prepare: unusedDump,
       start: unusedDump,
-      stop: unusedDump,
-      destroy: unusedDump,
-      resetDatabase: unusedDump,
+      stop: unusedDumpEffect,
+      destroy: unusedDumpEffect,
+      resetDatabase: unusedDumpEffect,
       logs: unusedDump,
       followLogs: () => Stream.empty,
     };

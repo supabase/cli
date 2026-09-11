@@ -92,7 +92,7 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
         discovered.stacks,
         (descriptor) =>
           stackApi.openStack(descriptor.id).pipe(
-            Effect.flatMap((stack) => stack.stop()),
+            Effect.flatMap((stack) => stack.stop),
             Effect.result,
             Effect.map((result) => ({ descriptor, result })),
           ),
@@ -176,7 +176,7 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
     const target = targetOption.value;
     const stack = yield* stackApi.openStack(target.id).pipe(Effect.mapError(stopError));
     const stopping = yield* output.task(`Stopping stack ${target.id}...`);
-    yield* stack.stop().pipe(
+    yield* stack.stop.pipe(
       Effect.tapError((error) => stopping.fail(error.message)),
       Effect.tap(() => stopping.clear()),
       Effect.mapError(stopError),

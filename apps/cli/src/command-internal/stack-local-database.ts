@@ -30,9 +30,7 @@ const startFailed = (cause: { readonly message: string }) =>
 
 const databaseReady = (stack: EffectStack) =>
   Effect.gen(function* () {
-    const status = yield* stack
-      .status()
-      .pipe(Effect.mapError((cause) => notRunning(cause.message)));
+    const status = yield* stack.status.pipe(Effect.mapError((cause) => notRunning(cause.message)));
     const database = status.capabilities.find((capability) => capability.name === "database");
     if (status.lifecycle !== "running" || database?.state !== "ready") return Option.none();
     return Option.some({ stack, runtime: status.runtime });
@@ -128,9 +126,9 @@ export const stackLocalDatabaseUrl: Effect.Effect<string, LocalDbRunningError, C
   Effect.gen(function* () {
     const opened = yield* openProjectStack();
     if (Option.isNone(opened)) return yield* notRunning();
-    const credentials = yield* opened.value.stack
-      .credentials()
-      .pipe(Effect.mapError((cause) => notRunning(cause.message)));
+    const credentials = yield* opened.value.stack.credentials.pipe(
+      Effect.mapError((cause) => notRunning(cause.message)),
+    );
     return Redacted.value(credentials.database.url);
   });
 
@@ -183,7 +181,7 @@ export const stackEnsureLocalDatabaseStarted: Effect.Effect<
     : yield* api.value
         .createStack({ projectRoot: cliSettings.workdir })
         .pipe(Effect.mapError(startFailed));
-  const status = yield* stack.status().pipe(Effect.mapError(startFailed));
+  const status = yield* stack.status.pipe(Effect.mapError(startFailed));
   const database = status.capabilities.find((capability) => capability.name === "database");
   if (status.lifecycle === "running" && database?.state === "ready") return;
   yield* stack.start({ config }).pipe(Effect.mapError(startFailed));
@@ -215,7 +213,7 @@ export const stackEnsurePostgresOnlyStarted: Effect.Effect<
     return "started";
   }
   const stack = yield* api.value.openStack(existing.value.id).pipe(Effect.mapError(startFailed));
-  const status = yield* stack.status().pipe(Effect.mapError(startFailed));
+  const status = yield* stack.status.pipe(Effect.mapError(startFailed));
   const database = status.capabilities.find((capability) => capability.name === "database");
   if (status.lifecycle === "running" && database?.state === "ready") return "already-running";
   yield* stack.start().pipe(Effect.mapError(startFailed));

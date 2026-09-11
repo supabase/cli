@@ -930,7 +930,9 @@ export const createEphemeralPostgresCluster = (
     const runtime = resolvedRuntime(options.runtime);
     const release = yield* resolveEphemeralPostgresRelease(options.version);
     const env = yield* Effect.serviceOption(StackRuntimeEnvironment).pipe(
-      Effect.map(Option.getOrElse(defaultRuntimeEnvironment)),
+      Effect.flatMap((configured) =>
+        Option.isSome(configured) ? Effect.succeed(configured.value) : defaultRuntimeEnvironment,
+      ),
     );
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;

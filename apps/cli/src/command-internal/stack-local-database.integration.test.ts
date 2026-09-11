@@ -10,42 +10,41 @@ const tmp = useTempWorkdir("stack-local-db-");
 const STACK_ID = StackIdSchema.make("a".repeat(64));
 
 const unused = () => Effect.die("unused");
+const unusedEffect = Effect.die("unused");
 
 const stack: EffectStack = {
   id: STACK_ID,
-  status: () =>
-    Effect.succeed({
-      id: STACK_ID,
-      lifecycle: "running",
-      desiredLifecycle: "running",
-      runtime: { kind: "native" },
-      endpoints: {},
-      versions: {},
-      capabilities: CAPABILITY_NAMES.map((name) => ({
-        name,
-        activation: name === "database" ? "eager" : "lazy",
-        state: name === "database" ? "ready" : "dormant",
-      })),
-      artifacts: [],
-    }),
-  credentials: () =>
-    Effect.succeed({
-      database: {
-        url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
-        password: Redacted.make("secret"),
-      },
-      api: {
-        publishableKey: "anon",
-        secretKey: Redacted.make("service"),
-        anonJwt: "anon",
-        serviceRoleJwt: Redacted.make("service"),
-      },
-    }),
+  status: Effect.succeed({
+    id: STACK_ID,
+    lifecycle: "running",
+    desiredLifecycle: "running",
+    runtime: { kind: "native" },
+    endpoints: {},
+    versions: {},
+    capabilities: CAPABILITY_NAMES.map((name) => ({
+      name,
+      activation: name === "database" ? "eager" : "lazy",
+      state: name === "database" ? "ready" : "dormant",
+    })),
+    artifacts: [],
+  }),
+  credentials: Effect.succeed({
+    database: {
+      url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
+      password: Redacted.make("secret"),
+    },
+    api: {
+      publishableKey: "anon",
+      secretKey: Redacted.make("service"),
+      anonJwt: "anon",
+      serviceRoleJwt: Redacted.make("service"),
+    },
+  }),
   prepare: unused,
   start: unused,
-  stop: unused,
-  destroy: unused,
-  resetDatabase: unused,
+  stop: unusedEffect,
+  destroy: unusedEffect,
+  resetDatabase: unusedEffect,
   logs: unused,
   followLogs: () => Stream.empty,
 };

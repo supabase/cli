@@ -57,18 +57,17 @@ function setup(options: {
   const state = { destroyed: 0, opened: 0 };
   const stack: EffectStack = {
     id,
-    status: () => Effect.die("unused"),
-    credentials: () => Effect.die("unused"),
+    status: Effect.die("unused"),
+    credentials: Effect.die("unused"),
     prepare: () => Effect.die("unused"),
     start: () => Effect.die("unused"),
-    stop: () => Effect.die("unused"),
-    destroy: () =>
-      options.destroyContainerFailure
-        ? Effect.fail(new ContainerEngineError({ message: "container engine unavailable" }))
-        : options.destroyFailure
-          ? Effect.fail(new StackDestructionError({ message: "destroy failed" }))
-          : Effect.sync(() => void state.destroyed++),
-    resetDatabase: () => Effect.die("unused"),
+    stop: Effect.die("unused"),
+    destroy: options.destroyContainerFailure
+      ? Effect.fail(new ContainerEngineError({ message: "container engine unavailable" }))
+      : options.destroyFailure
+        ? Effect.fail(new StackDestructionError({ message: "destroy failed" }))
+        : Effect.sync(() => void state.destroyed++),
+    resetDatabase: Effect.die("unused"),
     logs: () => Effect.die("unused"),
     followLogs: () => Stream.empty,
   };

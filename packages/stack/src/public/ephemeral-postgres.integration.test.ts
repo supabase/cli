@@ -38,13 +38,6 @@ const dockerAvailable = (): boolean =>
 
 const artifactCacheRoot = join(tmpdir(), "supabase-stack-test-artifacts");
 
-const testEnvironment = (stateRoot: string) =>
-  Layer.succeed(StackRuntimeEnvironment, {
-    ...defaultRuntimeEnvironment(),
-    stateRoot,
-    artifactCacheRoot,
-  });
-
 const secrets = {
   databasePassword: Redacted.make(PASSWORD),
   jwtSecret: Redacted.make(JWT_SECRET),
@@ -66,7 +59,16 @@ const withIsolatedRoot = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     yield* Effect.addFinalizer(() => fs.remove(root, { recursive: true }).pipe(Effect.ignore));
     const stateRoot = path.join(root, "managed", "stacks");
     yield* fs.makeDirectory(stateRoot, { recursive: true });
-    return yield* effect.pipe(Effect.provide(testEnvironment(stateRoot)));
+    const defaults = yield* defaultRuntimeEnvironment;
+    return yield* effect.pipe(
+      Effect.provide(
+        Layer.succeed(StackRuntimeEnvironment, {
+          ...defaults,
+          stateRoot,
+          artifactCacheRoot,
+        }),
+      ),
+    );
   });
 
 const writeForeignMarkerTar = (tarPath: string, marker: unknown) =>

@@ -6682,7 +6682,8 @@ type JitAccessResponseOutput struct {
 
 // JitAuthorizeAccessResponseOutput defines model for JitAuthorizeAccessResponse_Output.
 type JitAuthorizeAccessResponseOutput struct {
-	UserId   openapi_types.UUID `json:"user_id"`
+	Act      *string             `json:"act,omitempty"`
+	UserId   *openapi_types.UUID `json:"user_id,omitempty"`
 	UserRole struct {
 		AllowedNetworks *struct {
 			AllowedCidrs *[]struct {

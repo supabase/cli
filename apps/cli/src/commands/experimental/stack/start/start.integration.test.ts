@@ -95,13 +95,13 @@ function fakeStack(
 ) {
   return {
     id: StackIdSchema.make(id),
-    status: () => Effect.succeed(status(id)),
-    credentials: () => Effect.die("credentials not used in start test"),
+    status: Effect.succeed(status(id)),
+    credentials: Effect.die("credentials not used in start test"),
     prepare: () => Effect.die("prepare not used in start test"),
     start,
-    stop: () => Effect.void,
-    destroy: () => Effect.die("destroy not used in start test"),
-    resetDatabase: () => Effect.die("resetDatabase not used in start test"),
+    stop: Effect.void,
+    destroy: Effect.die("destroy not used in start test"),
+    resetDatabase: Effect.die("resetDatabase not used in start test"),
     logs: () => Effect.die("logs not used in start test"),
     followLogs: () => Stream.empty,
   } satisfies EffectStack;
@@ -566,14 +566,12 @@ enabled = false
       ...fakeStack("c".repeat(64), () =>
         Effect.fail(new ContainerEngineError({ message: "Docker is unavailable" })),
       ),
-      stop: () => {
+      stop: Effect.sync(() => {
         stopped = true;
-        return Effect.void;
-      },
-      destroy: () =>
-        Effect.sync(() => {
-          destroyed = true;
-        }),
+      }),
+      destroy: Effect.sync(() => {
+        destroyed = true;
+      }),
     } satisfies EffectStack;
     const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
@@ -601,14 +599,12 @@ enabled = false
     let destroyed = false;
     const stack = {
       ...fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64)))),
-      stop: () => {
+      stop: Effect.sync(() => {
         stopped = true;
-        return Effect.void;
-      },
-      destroy: () =>
-        Effect.sync(() => {
-          destroyed = true;
-        }),
+      }),
+      destroy: Effect.sync(() => {
+        destroyed = true;
+      }),
     } satisfies EffectStack;
     const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
@@ -720,14 +716,12 @@ enabled = false
             return yield* Effect.never.pipe(Effect.as(status("7".repeat(64))));
           }),
         ),
-        stop: () => {
+        stop: Effect.sync(() => {
           stopped = true;
-          return Effect.void;
-        },
-        destroy: () =>
-          Effect.sync(() => {
-            destroyed = true;
-          }),
+        }),
+        destroy: Effect.sync(() => {
+          destroyed = true;
+        }),
       } satisfies EffectStack;
       const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
       const fiber = yield* Effect.forkChild(Effect.provide(stackStart(flags()), setup.layer));

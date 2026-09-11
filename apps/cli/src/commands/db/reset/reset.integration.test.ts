@@ -397,58 +397,56 @@ const RESET_STACK_ID = StackIdSchema.make("c".repeat(64));
 function mockResetStackApi(opts: { readonly workdir: string; readonly ready: boolean }) {
   let resetCalls = 0;
   const unused = () => Effect.die("unused");
+  const unusedEffect = Effect.die("unused");
   const stack: EffectStack = {
     id: RESET_STACK_ID,
-    status: () =>
-      Effect.succeed({
+    status: Effect.succeed({
+      id: RESET_STACK_ID,
+      lifecycle: opts.ready ? "running" : "stopped",
+      desiredLifecycle: opts.ready ? "running" : "stopped",
+      runtime: { kind: "native" },
+      endpoints: {},
+      versions: {},
+      capabilities: CAPABILITY_NAMES.map((name) => ({
+        name,
+        activation: name === "database" ? "eager" : "lazy",
+        state: name === "database" && opts.ready ? "ready" : "stopped",
+      })),
+      artifacts: [],
+    }),
+    credentials: Effect.succeed({
+      database: {
+        url: Redacted.make("postgresql://postgres:postgres@127.0.0.1:54329/postgres"),
+        password: Redacted.make("postgres"),
+      },
+      api: {
+        publishableKey: "anon",
+        secretKey: Redacted.make("service"),
+        anonJwt: "anon",
+        serviceRoleJwt: Redacted.make("service"),
+      },
+    }),
+    prepare: unused,
+    start: unused,
+    stop: unusedEffect,
+    destroy: unusedEffect,
+    resetDatabase: Effect.sync(() => {
+      resetCalls++;
+      return {
         id: RESET_STACK_ID,
-        lifecycle: opts.ready ? "running" : "stopped",
-        desiredLifecycle: opts.ready ? "running" : "stopped",
-        runtime: { kind: "native" },
+        lifecycle: "running" as const,
+        desiredLifecycle: "running" as const,
+        runtime: { kind: "native" as const },
         endpoints: {},
         versions: {},
         capabilities: CAPABILITY_NAMES.map((name) => ({
           name,
-          activation: name === "database" ? "eager" : "lazy",
-          state: name === "database" && opts.ready ? "ready" : "stopped",
+          activation: name === "database" ? ("eager" as const) : ("lazy" as const),
+          state: name === "database" ? ("ready" as const) : ("dormant" as const),
         })),
         artifacts: [],
-      }),
-    credentials: () =>
-      Effect.succeed({
-        database: {
-          url: Redacted.make("postgresql://postgres:postgres@127.0.0.1:54329/postgres"),
-          password: Redacted.make("postgres"),
-        },
-        api: {
-          publishableKey: "anon",
-          secretKey: Redacted.make("service"),
-          anonJwt: "anon",
-          serviceRoleJwt: Redacted.make("service"),
-        },
-      }),
-    prepare: unused,
-    start: unused,
-    stop: unused,
-    destroy: unused,
-    resetDatabase: () =>
-      Effect.sync(() => {
-        resetCalls++;
-        return {
-          id: RESET_STACK_ID,
-          lifecycle: "running" as const,
-          desiredLifecycle: "running" as const,
-          runtime: { kind: "native" as const },
-          endpoints: {},
-          versions: {},
-          capabilities: CAPABILITY_NAMES.map((name) => ({
-            name,
-            activation: name === "database" ? ("eager" as const) : ("lazy" as const),
-            state: name === "database" ? ("ready" as const) : ("dormant" as const),
-          })),
-          artifacts: [],
-        };
-      }),
+      };
+    }),
     logs: unused,
     followLogs: () => Stream.empty,
   };

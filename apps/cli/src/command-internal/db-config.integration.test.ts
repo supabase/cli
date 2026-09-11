@@ -183,42 +183,41 @@ describe("dbConfigResolver (local + db-url)", () => {
   it.effect("local mode: uses the stack credentials URL when the stack backend is on", () => {
     const dir = withWorkdir(["[db]", "port = 55555", 'password = "hunter2"', ""].join("\n"));
     const unused = () => Effect.die("unused");
+    const unusedEffect = Effect.die("unused");
     const stackId = StackIdSchema.make("a".repeat(64));
     const stack: EffectStack = {
       id: stackId,
-      status: () =>
-        Effect.succeed({
-          id: stackId,
-          lifecycle: "running",
-          desiredLifecycle: "running",
-          runtime: { kind: "native" },
-          endpoints: {},
-          versions: {},
-          capabilities: CAPABILITY_NAMES.map((name) => ({
-            name,
-            activation: name === "database" ? "eager" : "lazy",
-            state: name === "database" ? "ready" : "dormant",
-          })),
-          artifacts: [],
-        }),
-      credentials: () =>
-        Effect.succeed({
-          database: {
-            url: Redacted.make("postgresql://postgres:stack-secret@127.0.0.1:54329/postgres"),
-            password: Redacted.make("stack-secret"),
-          },
-          api: {
-            publishableKey: "anon",
-            secretKey: Redacted.make("service"),
-            anonJwt: "anon",
-            serviceRoleJwt: Redacted.make("service"),
-          },
-        }),
+      status: Effect.succeed({
+        id: stackId,
+        lifecycle: "running",
+        desiredLifecycle: "running",
+        runtime: { kind: "native" },
+        endpoints: {},
+        versions: {},
+        capabilities: CAPABILITY_NAMES.map((name) => ({
+          name,
+          activation: name === "database" ? "eager" : "lazy",
+          state: name === "database" ? "ready" : "dormant",
+        })),
+        artifacts: [],
+      }),
+      credentials: Effect.succeed({
+        database: {
+          url: Redacted.make("postgresql://postgres:stack-secret@127.0.0.1:54329/postgres"),
+          password: Redacted.make("stack-secret"),
+        },
+        api: {
+          publishableKey: "anon",
+          secretKey: Redacted.make("service"),
+          anonJwt: "anon",
+          serviceRoleJwt: Redacted.make("service"),
+        },
+      }),
       prepare: unused,
       start: unused,
-      stop: unused,
-      destroy: unused,
-      resetDatabase: unused,
+      stop: unusedEffect,
+      destroy: unusedEffect,
+      resetDatabase: unusedEffect,
       logs: unused,
       followLogs: () => Stream.empty,
     };

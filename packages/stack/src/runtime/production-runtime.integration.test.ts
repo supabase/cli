@@ -1,4 +1,3 @@
-// oxlint-disable effecttsgo/prefer-schema-over-json -- generated shell fixtures use protocol JSON quoting, not product serialization.
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -17,9 +16,8 @@ import {
   Stream,
 } from "effect";
 import * as TestClock from "effect/testing/TestClock";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- fixture controls raw HTTP responses and connection failure timing.
 import { createServer, type ServerResponse } from "node:http";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
 import { createServer as createNetServer } from "node:net";
 import type { StackLogEntry } from "../public/Logs.ts";
 import type { CapabilityName } from "../public/Capability.ts";
@@ -67,6 +65,9 @@ import {
 import type { RuntimeEnvFileOwner } from "./RuntimeEnvFile.ts";
 import { makeRuntimeEnvFileOwner } from "./RuntimeEnvFile.ts";
 import { probeReadiness } from "./ReadinessProbe.ts";
+
+const encodeJson = (value: unknown): string =>
+  Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(value);
 
 const stackId = StackIdSchema.make("a".repeat(64));
 
@@ -165,7 +166,7 @@ const writeNativeDatabaseFixture = (
       'const net = require("node:net");',
       "const args = process.argv.slice(1);",
       'const port = Number(args[args.indexOf("-p") + 1]);',
-      `fs.appendFileSync(${JSON.stringify(eventsPath)}, "postgres-start|data=" + process.env.PGDATA + "|user=" + process.env.POSTGRES_USER + "|db=" + process.env.POSTGRES_DB + "|password=" + process.env.POSTGRES_PASSWORD + "|args=" + args.join(" ") + "\\n");`,
+      `fs.appendFileSync(${encodeJson(eventsPath)}, "postgres-start|data=" + process.env.PGDATA + "|user=" + process.env.POSTGRES_USER + "|db=" + process.env.POSTGRES_DB + "|password=" + process.env.POSTGRES_PASSWORD + "|args=" + args.join(" ") + "\\n");`,
       "const server = net.createServer((socket) => socket.end());",
       'server.listen(port, "127.0.0.1");',
       "const stop = () => server.close(() => process.exit(0));",
@@ -176,7 +177,7 @@ const writeNativeDatabaseFixture = (
       main,
       `#!/bin/sh
 set -eu
-exec ${JSON.stringify(process.execPath)} -e ${JSON.stringify(helperScript)} -- "$@"
+exec ${encodeJson(process.execPath)} -e ${encodeJson(helperScript)} -- "$@"
 `,
     );
     yield* fs.chmod(main, 0o755);
@@ -205,7 +206,7 @@ fi
       migrate,
       `#!/bin/sh
 . "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/.runtime-env.sh"
-printf 'realtime-migrate|RELEASE_DISTRIBUTION=%s\\n' "\${RELEASE_DISTRIBUTION:-missing}" >> ${JSON.stringify(eventsPath)}
+printf 'realtime-migrate|RELEASE_DISTRIBUTION=%s\\n' "\${RELEASE_DISTRIBUTION:-missing}" >> ${encodeJson(eventsPath)}
 `,
     );
     yield* fs.chmod(migrate, 0o755);
@@ -695,6 +696,112 @@ describe("production runtime", () => {
           expect(error?.message).toContain("OIDC discovery request failed");
           expect(error?.cause).toBeInstanceOf(StackPreparationError);
         }
+        yield* runtime.driver.stop({ stackId, workloadId: database.id });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("follows redirects while resolving Auth OIDC metadata", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-production-oidc-lazy-",
+        });
+        const oidc = createServer((request, response) => {
+          if (request.url === "/.well-known/openid-configuration") {
+            response.writeHead(302, { Location: "/discovery" }).end();
+          } else if (request.url === "/discovery") {
+            response.setHeader("content-type", "application/json");
+            response.end(JSON.stringify({ jwks_uri: `${issuer}/keys` }));
+          } else if (request.url === "/keys") {
+            response.writeHead(302, { Location: "/keys-final" }).end();
+          } else {
+            response.setHeader("content-type", "application/json");
+            response.end(JSON.stringify({ keys: [{ kty: "RSA", n: "n", e: "AQAB" }] }));
+          }
+        });
+        yield* listenForNativeReadiness(oidc);
+        const oidcAddress = oidc.address();
+        if (typeof oidcAddress !== "object" || oidcAddress === null)
+          return yield* Effect.die("OIDC server did not expose an address");
+        const issuer = `http://127.0.0.1:${oidcAddress.port}`;
+        const readinessServer = createNetServer((socket) => socket.end());
+        yield* listenForNativeReadiness(readinessServer);
+        const address = readinessServer.address();
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("Database readiness server did not expose an address");
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "container", engine: "docker" },
+          config: {
+            capabilities: {
+              auth: {
+                enabled: true,
+                settings: {
+                  third_party: {
+                    workos: { enabled: true, issuer_url: issuer },
+                  },
+                },
+              },
+            },
+          },
+        });
+        const resolved = yield* resolveSecrets(
+          { declarations: compiled.secrets },
+          undefined,
+          "stopped",
+        );
+        const current = {
+          value: {
+            ...stateFor(resolved.persisted, { kind: "container", engine: "docker" }),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+            },
+            desiredLifecycle: "running" as const,
+            definition: compiled.definition,
+            privatePorts: [
+              { workloadId: "database:database", binding: "primary", port: address.port },
+              { workloadId: "auth:auth", binding: "primary", port: oidcAddress.port },
+            ],
+          },
+        } satisfies { value: PersistedStackState };
+        const database = compiled.executionPlan.workloads.find(
+          ({ id }) => id === "database:database",
+        );
+        const auth = compiled.executionPlan.workloads.find(({ id }) => id === "auth:auth");
+        if (database === undefined || auth === undefined)
+          return yield* Effect.die("Expected database and Auth workloads");
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const runtime = yield* makeProductionRuntime({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "oidc-lazy",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          containerEngine: ownerInputContainerEngine([]),
+          artifactPreparer: {
+            prepare: (_runtime, workload) =>
+              Effect.succeed({
+                workloadId: workload.id,
+                capability: workload.capability,
+                version: "test",
+                outcome: "cached" as const,
+                image: workload.selected.kind === "container" ? workload.selected.image : undefined,
+              }),
+          },
+          logStore: memoryLogStore([]),
+          bootstrapDatabase: () => Effect.void,
+        });
+        const databaseReady = yield* runtime.driver.start(
+          { stackId, workloadId: database.id },
+          database,
+        );
+        expect(databaseReady.state).toBe("ready");
+        const authResult = yield* runtime.driver.start({ stackId, workloadId: auth.id }, auth);
+        expect(authResult.state).toBe("ready");
         yield* runtime.driver.stop({ stackId, workloadId: database.id });
       }),
     ).pipe(Effect.provide(NodeServices.layer)),

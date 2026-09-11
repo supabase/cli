@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path, Redacted } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path, Redacted, Schema } from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import { compileStack, type CompiledStack } from "../model/Compiler.ts";
 import { StackPreparationError } from "../public/Errors.ts";
@@ -12,6 +12,14 @@ import { makeRuntimeInputOwner } from "./RuntimeInputOwner.ts";
 import { resolveContainerResolutionFor } from "./WorkloadRuntimeSpec.ts";
 
 const stackId = StackIdSchema.make("f".repeat(64));
+const jsonSchema = Schema.fromJsonString(Schema.Unknown);
+
+const encodeJson = (value: unknown): string => Schema.encodeSync(jsonSchema)(value);
+const decodeJson = (value: string): unknown => Schema.decodeSync(jsonSchema)(value);
+const decodeJwks = (value: string): { readonly keys: ReadonlyArray<unknown> } =>
+  Schema.decodeUnknownSync(Schema.Struct({ keys: Schema.Array(Schema.Unknown) }))(
+    decodeJson(value),
+  );
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
@@ -120,8 +128,7 @@ describe("runtime input owner", () => {
         });
         yield* fs.writeFileString(
           path.join(root, "keys.json"),
-          // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- dynamic JWK fixture JSON
-          JSON.stringify([
+          encodeJson([
             { ...first, alg: "ES256", kid: "ec-key" },
             { ...second, alg: "RS256", kid: "rsa-key" },
           ]),
@@ -162,14 +169,14 @@ describe("runtime input owner", () => {
             ),
         });
         const material = yield* owner.resolve(state, "auth:auth");
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- inspect generated JWT fixture
-        expect(JSON.parse(material.auth?.jwtKeys ?? "[]")).toHaveLength(2);
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- inspect generated JWKS fixture
-        const jwks = JSON.parse(material.auth?.jwks ?? "{}");
+        expect(decodeJson(material.auth?.jwtKeys ?? "[]")).toHaveLength(2);
+        const jwks = decodeJwks(material.auth?.jwks ?? '{"keys":[]}');
         expect(jwks.keys).toHaveLength(3);
-        expect(jwks.keys.every((key: Record<string, unknown>) => !Object.hasOwn(key, "d"))).toBe(
-          true,
-        );
+        expect(
+          jwks.keys.every(
+            (key) => typeof key === "object" && key !== null && !Object.hasOwn(key, "d"),
+          ),
+        ).toBe(true);
       }),
     ),
   );
@@ -185,8 +192,7 @@ describe("runtime input owner", () => {
         });
         yield* fs.writeFileString(
           path.join(root, "keys.json"),
-          // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- dynamic JWK fixture JSON
-          JSON.stringify([
+          encodeJson([
             { ...valid, alg: "ES256" },
             { kty: "EC", alg: "ES256", d: "bad" },
           ]),
@@ -244,8 +250,7 @@ describe("runtime input owner", () => {
           "https://securetoken.google.com/demo/.well-known/openid-configuration",
           "https://issuer.example/keys",
         ]);
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- inspect generated JWKS fixture
-        expect(JSON.parse(material.auth?.jwks ?? "{}").keys).toHaveLength(2);
+        expect(decodeJwks(material.auth?.jwks ?? '{"keys":[]}').keys).toHaveLength(2);
       }),
     ),
   );
@@ -262,8 +267,9 @@ describe("runtime input owner", () => {
           },
         });
         const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- inspect generated JWKS fixture
-        const jwks = JSON.parse((yield* owner.resolve(state, "auth:auth")).auth?.jwks ?? "{}");
+        const jwks = decodeJwks(
+          (yield* owner.resolve(state, "auth:auth")).auth?.jwks ?? '{"keys":[]}',
+        );
         expect(jwks.keys).toEqual([
           {
             kty: "oct",
@@ -494,10 +500,8 @@ describe("runtime input owner", () => {
         const failed = yield* owner.resolve(state, "auth:auth").pipe(Effect.exit);
         const error = errorOf(failed);
         expect(error?.message).toContain("OIDC discovery request failed");
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- assert sanitized diagnostic payload
-        expect(JSON.stringify(error)).not.toContain("secret-token");
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- assert sanitized diagnostic payload
-        expect(JSON.stringify(error)).not.toContain("fragment");
+        expect(encodeJson(error)).not.toContain("secret-token");
+        expect(encodeJson(error)).not.toContain("fragment");
       }),
     ),
   );

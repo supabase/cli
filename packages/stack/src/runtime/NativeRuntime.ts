@@ -189,7 +189,9 @@ export const makeNativeRuntime = (
               state: resource.stopRequested ? "stopped" : "failed",
               ...(resource.stopRequested
                 ? {}
-                : { error: "Native workload exited before an explicit stop" }),
+                : {
+                    error: `Native workload exited before an explicit stop (code ${String(result.value)})`,
+                  }),
             }
           : {
               ...resource.key,

@@ -1,6 +1,5 @@
 import { Effect, Exit, FiberSet, Scope } from "effect";
 import { createServer, Socket, type Server } from "node:net";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
 import type { Duplex } from "node:stream";
 import type { Fiber } from "effect/Fiber";
 import { GatewayActivationError } from "../public/Errors.ts";
