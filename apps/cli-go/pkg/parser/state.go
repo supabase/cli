@@ -192,19 +192,47 @@ func (s *EscapeState) Next(r rune, data []byte) State {
 type AtomicState struct {
 	prev      State
 	delimiter []byte
+	// A keyword delimiter (END) has matched at an identifier boundary; the body
+	// only closes once the next rune shows it is not the start of a longer
+	// identifier such as endpoint.
+	closing bool
 }
 
 func (s *AtomicState) Next(r rune, data []byte) State {
+	if s.closing {
+		s.closing = false
+		if !isIdentifierRune(r) {
+			// END confirmed: the rune after it belongs to the ready state.
+			state := &ReadyState{}
+			return state.Next(r, data)
+		}
+	}
 	// If we are in a quoted state, the current delimiter doesn't count.
 	if curr := s.prev.Next(r, data); curr != nil {
 		s.prev = curr
 	}
-	if _, ok := s.prev.(*ReadyState); ok {
-		window := data[len(data)-len(s.delimiter):]
-		// Treat delimiter as case insensitive
-		if strings.EqualFold(string(window), string(s.delimiter)) {
+	if _, ok := s.prev.(*ReadyState); ok && s.endsWithDelimiter(data) {
+		if !isIdentifierRune(rune(s.delimiter[0])) {
+			// Punctuation delimiters such as ) close immediately.
 			return &ReadyState{}
 		}
+		s.closing = true
 	}
 	return s
+}
+
+// Reports whether data ends with the delimiter. A keyword delimiter must also
+// start at an identifier boundary, so a column named pending does not close a
+// BEGIN ATOMIC body; the opener applies the same rule in isBeginAtomic.
+func (s *AtomicState) endsWithDelimiter(data []byte) bool {
+	offset := len(data) - len(s.delimiter)
+	// Treat delimiter as case insensitive
+	if offset < 0 || !strings.EqualFold(string(data[offset:]), string(s.delimiter)) {
+		return false
+	}
+	if offset == 0 || !isIdentifierRune(rune(s.delimiter[0])) {
+		return true
+	}
+	r, _ := utf8.DecodeLastRune(data[:offset])
+	return !isIdentifierRune(r)
 }

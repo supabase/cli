@@ -193,6 +193,53 @@ SELECT 1;`,
 		}
 	})
 
+	t.Run("ignores identifiers ending in end", func(t *testing.T) {
+		names := []string{"pending", "pending_change", "append", "legend", "END_"}
+		for _, name := range names {
+			t.Run(name, func(t *testing.T) {
+				sql := []string{`create or replace function public.probe_splitter() returns integer
+language sql
+immutable
+begin atomic
+  select 1 as ` + name + `;
+end;`, `
+select 2;`}
+				checkSplit(t, sql)
+			})
+		}
+	})
+
+	t.Run("ignores identifiers starting with end", func(t *testing.T) {
+		names := []string{"endpoint", "end_date", "ended_at", "endx"}
+		for _, name := range names {
+			t.Run(name, func(t *testing.T) {
+				sql := []string{`create function public.probe_splitter() returns integer
+language sql
+begin atomic
+  select ` + name + ` from public.t;
+  select 1;
+end;`, `
+select 2;`}
+				checkSplit(t, sql)
+			})
+		}
+	})
+
+	t.Run("closes on end followed by a newline or comment", func(t *testing.T) {
+		sql := []string{`begin atomic
+  select 1;
+end
+;`, `
+begin atomic select 1; end -- done
+;`}
+		checkSplit(t, sql)
+	})
+
+	t.Run("still closes a parenthesised group on the closing paren", func(t *testing.T) {
+		sql := []string{"select (1; 2);", " select 3;"}
+		checkSplit(t, sql)
+	})
+
 	t.Run("does not treat schema-qualified atomic function names as begin atomic", func(t *testing.T) {
 		sql := []string{`CREATE OR REPLACE FUNCTION public.atomic_example()
 RETURNS INTEGER
