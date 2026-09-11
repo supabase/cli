@@ -123,7 +123,7 @@ describe("workload runtime catalog", () => {
       const storage = planned("storage:storage");
       expect(runtimeSpecFor(storage)?.env(configured, storage, 5000)).toMatchObject({
         FILE_SIZE_LIMIT: "52428800",
-        ENABLE_IMAGE_TRANSFORMATION: "false",
+        ENABLE_IMAGE_TRANSFORMATION: "true",
         S3_PROTOCOL_ENABLED: "true",
         S3_PROTOCOL_ACCESS_KEY_ID: "625729a08b95bf1b7ff351a663f3a23c",
         STORAGE_S3_REGION: "local",
@@ -298,7 +298,7 @@ describe("workload runtime catalog", () => {
         runtime: { kind: "native" },
         config: {
           capabilities: {
-            analytics: { enabled: true, settings: { vector_port: 9001 } },
+            analytics: { enabled: true, settings: {} },
             studio: { enabled: true },
           },
         },

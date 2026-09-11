@@ -866,7 +866,14 @@ const resolveEffectiveCliConfig = (
   const edge = config.edge_runtime;
   const apiSchemasOverride = envOverride("SUPABASE_API_SCHEMAS", undefined, env);
   const apiExtraSearchPathOverride = envOverride("SUPABASE_API_EXTRA_SEARCH_PATH", undefined, env);
-  const imagePresent = section(section(document, "storage"), "image_transformation") !== undefined;
+  const imageDocument = section(section(document, "storage"), "image_transformation");
+  const imageEnabledOverride = envOverride(
+    "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
+    undefined,
+    env,
+  );
+  const imageEnabledExplicit =
+    imageDocument?.enabled !== undefined || imageEnabledOverride !== undefined;
   const resolvedApi = {
     ...api,
     enabled: envOverrideBool("SUPABASE_API_ENABLED", api.enabled, "api.enabled", env),
@@ -903,7 +910,7 @@ const resolveEffectiveCliConfig = (
       String(storage.file_size_limit),
       env,
     ),
-    image_transformation: imagePresent
+    image_transformation: imageEnabledExplicit
       ? {
           ...storage.image_transformation,
           enabled: envOverrideBool(
@@ -998,13 +1005,6 @@ const resolveEffectiveCliConfig = (
       env,
     ),
     backend: envOverrideAnalyticsBackend(analytics.backend, env),
-    vector_port:
-      resolvedPort(
-        "SUPABASE_ANALYTICS_VECTOR_PORT",
-        analytics.vector_port ?? 0,
-        "analytics.vector_port",
-        env,
-      ) || undefined,
     gcp_project_id: envOverride("SUPABASE_ANALYTICS_GCP_PROJECT_ID", analytics.gcp_project_id, env),
     gcp_project_number: envOverride(
       "SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER",
@@ -1135,9 +1135,12 @@ const configInput = (
   const dbMajorVersion = db.major_version;
   const dbSettings = db.settings;
   const realtimeResolved = realtime;
-  const imageTransformationPresent =
-    section(section(document, "storage"), "image_transformation") !== undefined;
-  const storageResolved = imageTransformationPresent
+  const imageTransformationDocument = section(section(document, "storage"), "image_transformation");
+  const imageTransformationExplicit =
+    imageTransformationDocument?.enabled !== undefined ||
+    envOverride("SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED", undefined, listenerEnvValues) !==
+      undefined;
+  const storageResolved = imageTransformationExplicit
     ? storage
     : { ...storage, image_transformation: undefined };
   const edgeEnabled = config.edge_runtime.enabled;
@@ -1179,7 +1182,15 @@ const configInput = (
     mail.pop3_port ?? 0,
     listenerEnvValues,
   );
-  const poolerEnabled = pooler.enabled;
+  const poolerDocument = section(section(document, "db"), "pooler");
+  const poolerEnabledOverride = envOverride(
+    "SUPABASE_DB_POOLER_ENABLED",
+    undefined,
+    listenerEnvValues,
+  );
+  const poolerEnabledExplicit =
+    poolerDocument?.enabled !== undefined || poolerEnabledOverride !== undefined;
+  const poolerEnabled = poolerEnabledExplicit ? pooler.enabled : undefined;
   const poolerPort = envNestedPortOrConfigured(
     "SUPABASE_DB_POOLER_PORT",
     document,
@@ -1252,16 +1263,20 @@ const configInput = (
       }),
       analytics: capability(analyticsEnabled, {
         backend: analyticsResolved.backend,
-        vector_port: analyticsResolved.vector_port,
         gcp_project_id: analyticsResolved.gcp_project_id,
         gcp_project_number: analyticsResolved.gcp_project_number,
         gcp_jwt_path: analyticsResolved.gcp_jwt_path,
       }),
-      pooler: capability(poolerEnabled, {
-        pool_mode: poolerResolved.pool_mode,
-        default_pool_size: poolerResolved.default_pool_size,
-        max_client_conn: poolerResolved.max_client_conn,
-      }),
+      pooler:
+        poolerEnabled !== false
+          ? {
+              settings: {
+                pool_mode: poolerResolved.pool_mode,
+                default_pool_size: poolerResolved.default_pool_size,
+                max_client_conn: poolerResolved.max_client_conn,
+              },
+            }
+          : { enabled: false as const },
     },
     listeners: {
       api: apiListener(

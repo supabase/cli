@@ -18,8 +18,9 @@ Stacks are managed identities: closing a handle does not stop a running stack. C
 handle starts nothing, and a stopped stack retains no Supervisor, workload, container, network, or
 listener. Status and retained logs remain available directly from durable state while stopped; a
 later start on the same handle launches a fresh Supervisor.
-With no configuration override, all capabilities are enabled, PostgreSQL is the only eager
-capability, and every other capability is lazy. Starting the stack therefore launches only
+With no configuration override, all capabilities and their companion workloads (including
+imgproxy and Vector) are enabled, PostgreSQL is the only eager capability, and every other
+capability is lazy. Starting the stack therefore launches only
 PostgreSQL by default; capabilities configured as eager join its startup dependency closure.
 The remaining lazy capabilities activate through the stack's listeners on demand for the current
 running session.

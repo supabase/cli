@@ -485,11 +485,8 @@ export const makeRuntimeInputOwner = (
               const gcpPath = isRecord(analyticsSettings)
                 ? settingValue(state, analyticsSettings.gcp_jwt_path)
                 : "";
-              const vectorPort = isRecord(analyticsSettings)
-                ? settingValue(state, analyticsSettings.vector_port)
-                : "";
               const vectorConfigPath =
-                vectorPort.length > 0 ? yield* writeVectorConfig(state) : undefined;
+                workloadId === "analytics:vector" ? yield* writeVectorConfig(state) : undefined;
               return gcpPath.length === 0 && vectorConfigPath === undefined
                 ? undefined
                 : {

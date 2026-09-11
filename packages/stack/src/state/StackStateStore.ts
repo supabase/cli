@@ -113,6 +113,7 @@ const normalizeDurableState = (raw: Readonly<Record<string, unknown>>): unknown 
     ["database", ["network_restrictions", "ssl_enforcement", "vault"]],
     ["rest", ["auto_expose_new_tables", "tls"]],
     ["storage", ["analytics"]],
+    ["analytics", ["vector_port"]],
   ];
   for (const [capability, keys] of obsolete) {
     const module = capabilities[capability];

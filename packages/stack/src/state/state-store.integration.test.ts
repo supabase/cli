@@ -231,6 +231,13 @@ describe("atomic stack state", () => {
                   analytics: { enabled: false },
                 },
               },
+              analytics: {
+                ...encoded.definition?.capabilities.analytics,
+                settings: {
+                  ...encoded.definition?.capabilities.analytics.settings,
+                  vector_port: 9001,
+                },
+              },
             },
           },
         };

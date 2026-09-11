@@ -122,7 +122,7 @@ describe("complete workload catalog", () => {
       const result = yield* compile({
         capabilities: {
           storage: { settings: { image_transformation: { enabled: true } } },
-          analytics: { settings: { vector_port: 9001 } },
+          analytics: { settings: {} },
         },
       });
       expect(result.executionPlan.workloads.length).toBeGreaterThan(10);
@@ -143,7 +143,7 @@ describe("complete workload catalog", () => {
       const result = yield* compile({
         capabilities: {
           storage: { settings: { image_transformation: { enabled: true } } },
-          analytics: { settings: { vector_port: 9001 } },
+          analytics: { settings: {} },
         },
       });
       for (const id of ["studio:pgmeta", "analytics:vector"] as const) {
@@ -166,25 +166,28 @@ describe("complete workload catalog", () => {
     }),
   );
 
-  it.live("materialized settings control optional companion workloads", () =>
+  it.live("enables companion workloads by default and honors explicit disablement", () =>
     Effect.gen(function* () {
       const defaults = yield* compile({});
       expect(defaults.executionPlan.workloads.some(({ id }) => id === "storage:imgproxy")).toBe(
-        false,
+        true,
       );
       expect(defaults.executionPlan.workloads.some(({ id }) => id === "analytics:vector")).toBe(
-        false,
+        true,
       );
       expect(defaults.executionPlan.workloads).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ id: "storage:storage", dependencies: ["database:database"] }),
+          expect.objectContaining({
+            id: "storage:storage",
+            dependencies: ["database:database", "storage:imgproxy"],
+          }),
         ]),
       );
 
       const enabled = yield* compile({
         capabilities: {
           storage: { settings: { image_transformation: { enabled: true } } },
-          analytics: { settings: { vector_port: 9001 } },
+          analytics: { settings: {} },
         },
       });
       expect(enabled.executionPlan.workloads.some(({ id }) => id === "storage:imgproxy")).toBe(
@@ -210,6 +213,20 @@ describe("complete workload catalog", () => {
           }),
         ]),
       );
+
+      const disabled = yield* compile({
+        capabilities: {
+          storage: { settings: { image_transformation: { enabled: false } } },
+          analytics: { enabled: false },
+          studio: { enabled: false },
+        },
+      });
+      expect(disabled.executionPlan.workloads.some(({ id }) => id === "storage:imgproxy")).toBe(
+        false,
+      );
+      expect(disabled.executionPlan.workloads.some(({ id }) => id === "analytics:vector")).toBe(
+        false,
+      );
     }),
   );
 
@@ -218,7 +235,7 @@ describe("complete workload catalog", () => {
       const result = yield* compileContainer({
         capabilities: {
           storage: { settings: { image_transformation: { enabled: true } } },
-          analytics: { settings: { vector_port: 9001 } },
+          analytics: { settings: {} },
         },
       });
       const images = new Map(

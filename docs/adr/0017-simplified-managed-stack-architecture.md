@@ -154,6 +154,12 @@ may launch the current Supervisor and start again. The first admitted lifecycle 
 to completion; concurrent lifecycle mutations fail immediately with a conflict
 rather than joining or queueing.
 
+Capability modules own the new stack's defaults. All capabilities are enabled
+by default, including Pooler, with image transformation available through
+Storage's imgproxy workload and Vector included with Analytics. The CLI preserves
+explicit enablement overrides while leaving omitted values to the package;
+the shared CLI configuration's defaults remain unchanged for other commands.
+
 PostgreSQL is the only eager capability by default. Start prepares and launches
 only the eager dependency closure, so the PostgreSQL readiness barrier remains
 the default startup path. Capabilities configured for lazy activation start when

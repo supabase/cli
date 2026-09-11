@@ -565,7 +565,7 @@ const optionalWorkloadConfig = (
   capabilities: {
     storage: { settings: { image_transformation: { enabled: true } } },
     functions: { settings: { functions: { [functionSlug]: { verify_jwt: false } } } },
-    analytics: { settings: { vector_port: 9001, api_key: analyticsApiKey } },
+    analytics: { settings: { api_key: analyticsApiKey } },
   },
   listeners: { smtp: { enabled: true } },
 });
@@ -584,7 +584,7 @@ const allEagerConfig = (analyticsApiKey: string): PromiseStackConfig => ({
     mail: { activation: "eager" },
     analytics: {
       activation: "eager",
-      settings: { vector_port: 9001, api_key: analyticsApiKey },
+      settings: { api_key: analyticsApiKey },
     },
     pooler: { activation: "eager" },
   },

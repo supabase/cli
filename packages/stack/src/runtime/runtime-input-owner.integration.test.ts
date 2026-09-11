@@ -58,7 +58,7 @@ const vectorFixture = () =>
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-vector-" });
     const base = yield* compiledState(root, {
-      capabilities: { analytics: { settings: { vector_port: 9001 } } },
+      capabilities: { analytics: { settings: {} } },
     });
     const state: PersistedStackState = {
       ...base,

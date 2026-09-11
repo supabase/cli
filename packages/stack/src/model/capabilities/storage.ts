@@ -81,7 +81,7 @@ export const StorageModule: CapabilityModule<StorageSettings> = {
   settings: StorageSettingsSchema,
   defaultSettings: {
     file_size_limit: "50MiB",
-    image_transformation: { enabled: false },
+    image_transformation: { enabled: true },
     buckets: {},
     s3_protocol: {
       enabled: true,
