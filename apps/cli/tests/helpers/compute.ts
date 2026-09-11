@@ -100,7 +100,7 @@ function isRouteSequence(
  * build-context upload, so a test can assert the whole request sequence — mint
  * the slot, PUT the bytes, deploy, poll — in the order it happened.
  */
-export function mockComputeHttp(routes: ComputeHttpRoutes) {
+function mockComputeHttp(routes: ComputeHttpRoutes) {
   const requests: Array<RecordedRequest> = [];
   const remaining = new Map<string, Array<StubResponse | StubTransportFailure>>(
     Object.entries(routes).map(([route, handler]) => [
