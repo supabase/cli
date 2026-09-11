@@ -49,9 +49,9 @@ Compute private-alpha allow-list — an unenrolled project answers 404.
 ### The query
 
 SQL in **ClickHouse dialect** against the project's unified `logs` table, filtered
-on `log_attributes['worker']` and `log_attributes['source']`. It does **not** filter
-the top-level `source` column: compute rows carry an empty string there, because the
-Compute Logflare source is not enrolled as a category in the generic logs path.
+on `log_attributes['worker']` and the top-level `subservice` column. It does **not**
+filter the top-level `source` column: compute rows carry an empty string there, because
+the Compute Logflare source is not enrolled as a category in the generic logs path.
 
 ### The window
 

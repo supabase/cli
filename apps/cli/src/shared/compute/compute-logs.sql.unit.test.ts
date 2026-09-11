@@ -12,11 +12,13 @@ import {
 } from "./compute-logs.sql.ts";
 
 describe("computeLogsQuery", () => {
-  it("filters on log_attributes, never the source column", () => {
+  it("filters on the subservice column, never the source column", () => {
     const sql = computeLogsQuery({ name: "api", streams: ALL_COMPUTE_LOG_STREAMS, tail: 100 });
 
     expect(sql).toContain("log_attributes['worker'] = 'api'");
-    expect(sql).toContain("log_attributes['source'] in (");
+    expect(sql).toContain("subservice as stream");
+    expect(sql).toContain("and subservice in (");
+    expect(sql).not.toContain("log_attributes['source']");
     expect(sql).not.toMatch(/(?:^|\s)where source =/);
     expect(sql).not.toMatch(/(?:^|\s)and source =/);
   });
