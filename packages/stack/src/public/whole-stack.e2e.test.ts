@@ -25,7 +25,7 @@ import { NodeServices } from "@effect/platform-node";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 
-import { connect as connectTcp } from "node:net";
+import { Socket } from "node:net";
 import { tmpdir } from "node:os";
 
 import { WebSocket } from "ws";
@@ -39,11 +39,16 @@ import type { PromiseStackCredentials } from "./Credentials.ts";
 import type { StackLogEntry } from "./Logs.ts";
 import type { PromiseStackConfig } from "./PromiseStack.ts";
 import type { StackEndpoint, StackStatus } from "./Status.ts";
-const E2E_TIMEOUT_MS = 15 * 60000;
-const REQUEST_TIMEOUT_MS = 60000;
+
+const E2E_TIMEOUT_MS = 15 * 60_000;
+
+const REQUEST_TIMEOUT_MS = 60_000;
+
 const hostRuntime = ManagedRuntime.make(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer));
 afterAll(() => hostRuntime.dispose());
+
 const { join } = hostRuntime.runSync(Path.Path);
+
 const runNode = <A, E>(
   program: Effect.Effect<
     A,
@@ -51,6 +56,7 @@ const runNode = <A, E>(
     FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawner.ChildProcessSpawner
   >,
 ) => hostRuntime.runPromise(program);
+
 const execFile = (command: string, args: ReadonlyArray<string>, _options: { encoding: "utf8" }) =>
   runNode(
     Effect.gen(function* () {
@@ -77,16 +83,24 @@ const execFile = (command: string, args: ReadonlyArray<string>, _options: { enco
       return { stdout };
     }).pipe(Effect.scoped),
   );
+
 const withFs = <A, E>(operation: (fs: FileSystem.FileSystem) => Effect.Effect<A, E>) =>
   runNode(Effect.flatMap(FileSystem.FileSystem, operation));
+
 const access = (path: string) => withFs((fs) => fs.access(path));
+
 const mkdir = (path: string, options?: { recursive?: boolean }) =>
   withFs((fs) => fs.makeDirectory(path, options));
+
 const readText = (path: string) => withFs((fs) => fs.readFileString(path));
+
 const readdir = (path: string) => withFs((fs) => fs.readDirectory(path));
+
 const writeFile = (path: string, data: string) => withFs((fs) => fs.writeFileString(path, data));
+
 const rm = (path: string, options: { recursive: boolean; force: boolean }) =>
   withFs((fs) => fs.remove(path, options));
+
 const mkdtemp = (prefix: string) =>
   runNode(
     Effect.gen(function* () {
@@ -98,25 +112,31 @@ const mkdtemp = (prefix: string) =>
       });
     }),
   );
+
 const randomId = () =>
   hostRuntime.runSync(Effect.flatMap(Crypto.Crypto, (crypto) => crypto.randomUUIDv4));
+
 const queryTimestamp = (offset: number) =>
   DateTime.formatIso(DateTime.makeUnsafe(hostRuntime.runSync(Clock.currentTimeMillis) + offset));
+
 const ANALYTICS_QUERY_RETRY_SCHEDULE = Schedule.spaced("1 second").pipe(
   Schedule.upTo({ duration: "3 minutes" }),
 );
+
 const MAILPIT_DELIVERY_RETRY_SCHEDULE = Schedule.spaced("250 millis").pipe(
   Schedule.upTo({ duration: "30 seconds" }),
 );
 // Studio's first lazy request can start four workloads sequentially (4 × 30s).
-const LAZY_STUDIO_ACTIVATION_TIMEOUT_MS = 180000;
+const LAZY_STUDIO_ACTIVATION_TIMEOUT_MS = 180_000;
 // Pooler is activated by the first TCP connection and may take longer than the normal
 // query deadline while its migration and tenant bootstrap processes run.
 const LAZY_POOLER_ACTIVATION_TIMEOUT = "30 seconds";
+
 const ALL_RUNTIME_CASES = [
   { name: "native", runtime: { kind: "native" as const } },
   { name: "Docker", runtime: { kind: "container" as const, engine: "docker" as const } },
 ] as const;
+
 const SELECTED_RUNTIME = Option.getOrUndefined(
   Effect.runSync(Config.option(Config.string("SUPABASE_STACK_E2E_RUNTIME"))),
 );
@@ -126,13 +146,17 @@ if (
   SELECTED_RUNTIME !== "container"
 )
   throw new Error(`Unsupported stack E2E runtime: ${SELECTED_RUNTIME}`);
+
 const RUNTIME_CASES = ALL_RUNTIME_CASES.filter(
   ({ runtime }) => SELECTED_RUNTIME === undefined || runtime.kind === SELECTED_RUNTIME,
 );
+
 const databaseCatalog = catalogEntryFor("database:database");
+
 const NON_DEFAULT_DATABASE_RELEASES = Object.keys(databaseCatalog.releases).filter(
   (version) => version !== databaseCatalog.defaultVersion,
 );
+
 const BASE_WORKLOAD_IDS = [
   "analytics:analytics",
   "analytics:vector",
@@ -148,6 +172,7 @@ const BASE_WORKLOAD_IDS = [
   "studio:pgmeta",
   "studio:studio",
 ] as const;
+
 const OPTIONAL_STORAGE_ANALYTICS_WORKLOAD_IDS = [
   "database:database",
   "analytics:vector",
@@ -155,6 +180,7 @@ const OPTIONAL_STORAGE_ANALYTICS_WORKLOAD_IDS = [
   "storage:imgproxy",
   "storage:storage",
 ] as const;
+
 const ALL_EAGER_WORKLOAD_IDS = [
   "analytics:analytics",
   "analytics:vector",
@@ -170,6 +196,7 @@ const ALL_EAGER_WORKLOAD_IDS = [
   "studio:pgmeta",
   "studio:studio",
 ] as const;
+
 const dockerOwnedResourceCount = async (
   stackId: string,
   kind: "containers" | "networks" | "volumes",
@@ -187,6 +214,7 @@ const dockerOwnedResourceCount = async (
   const result = await execFile("docker", args, { encoding: "utf8" });
   return result.stdout.trim().length === 0 ? 0 : result.stdout.trim().split("\n").length;
 };
+
 const dockerOwnedWorkloadIds = async (stackId: string): Promise<ReadonlyArray<string>> => {
   const listed = await execFile(
     "docker",
@@ -226,11 +254,13 @@ const nativeWorkloadIds = async (stackId: string): Promise<ReadonlyArray<string>
     ),
   ].sort();
 };
+
 const ownedWorkloadIds = async (
   mode: (typeof RUNTIME_CASES)[number],
   stackId: string,
 ): Promise<ReadonlyArray<string>> =>
   mode.runtime.kind === "container" ? dockerOwnedWorkloadIds(stackId) : nativeWorkloadIds(stackId);
+
 const expectOwnedWorkloads = async (
   mode: (typeof RUNTIME_CASES)[number],
   stackId: string,
@@ -238,6 +268,7 @@ const expectOwnedWorkloads = async (
 ): Promise<void> => {
   expect(await ownedWorkloadIds(mode, stackId)).toEqual([...expected].sort());
 };
+
 const supervisorPids = async (stackId: string): Promise<ReadonlyArray<number>> => {
   const result = await execFile("ps", ["-axo", "pid=,command="], { encoding: "utf8" });
   return result.stdout.split("\n").flatMap((line) => {
@@ -251,6 +282,7 @@ const supervisorPids = async (stackId: string): Promise<ReadonlyArray<number>> =
       : [];
   });
 };
+
 const supervisorPid = async (stackId: string): Promise<number> => {
   const matches = await supervisorPids(stackId);
   if (matches.length !== 1)
@@ -259,6 +291,7 @@ const supervisorPid = async (stackId: string): Promise<number> => {
   if (pid === undefined) throw new Error(`Supervisor process for ${stackId} has no PID`);
   return pid;
 };
+
 const nativeDatabaseSharedMemoryId = async (lockPath: string): Promise<number> => {
   const lines = (await readText(lockPath)).split("\n");
   const sharedMemoryId = Number(lines[6]?.trim().split(/\s+/u)[1]);
@@ -266,6 +299,7 @@ const nativeDatabaseSharedMemoryId = async (lockPath: string): Promise<number> =
     throw new Error("Native database lock did not contain a valid shared-memory ID");
   return sharedMemoryId;
 };
+
 const nativeDatabaseSharedMemoryExists = async (
   sharedMemoryId: number,
 ): Promise<boolean | undefined> => {
@@ -285,6 +319,7 @@ const nativeDatabaseSharedMemoryExists = async (
     throw cause;
   }
 };
+
 const waitForProcessExit = (pid: number): Promise<void> => {
   const exited = Effect.try({
     try: () => {
@@ -319,21 +354,26 @@ class E2ERequestError extends Data.TaggedError("E2ERequestError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
+
 const isJsonObject = (value: unknown): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
 const websocketDataText = (data: WebSocket.RawData): string => {
   if (typeof data === "string") return data;
   if (Buffer.isBuffer(data)) return data.toString("utf8");
   if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
   return Buffer.concat(data).toString("utf8");
 };
+
 const endpoint = (status: StackStatus, name: keyof StackStatus["endpoints"]): StackEndpoint => {
   const value = status.endpoints[name];
   if (value === undefined) throw new Error(`Expected ${name} listener in stack status`);
   return value;
 };
+
 const capabilityState = (status: StackStatus, name: string): string | undefined =>
   status.capabilities.find((capability) => capability.name === name)?.state;
+
 const expectDefaultLazyState = (status: StackStatus): void => {
   expect(status.lifecycle).toBe("running");
   expect(capabilityState(status, "database")).toBe("ready");
@@ -371,6 +411,7 @@ const activate = async <A>(
   await Effect.runPromise(waitUntilReady);
   return result;
 };
+
 const request = (base: string, path: string, init: RequestInit = {}): Promise<Response> => {
   const url = new URL(path, `${base.replace(/\/$/u, "")}/`);
   const program = Effect.gen(function* () {
@@ -421,13 +462,24 @@ const request = (base: string, path: string, init: RequestInit = {}): Promise<Re
 const connect = (endpoint: StackEndpoint): Promise<void> =>
   Effect.runPromise(
     Effect.callback<void, E2ERequestError>((resume) => {
-      const socket = connectTcp(endpoint.port, endpoint.address);
-      const onConnect = () => resume(Effect.void);
+      const socket = new Socket();
+      let settled = false;
+      const finish = (result: Effect.Effect<void, E2ERequestError>) => {
+        if (settled) return;
+        settled = true;
+        socket.off("connect", onConnect);
+        socket.off("error", onError);
+        socket.destroy();
+        resume(result);
+      };
+      const onConnect = () => finish(Effect.void);
       const onError = (cause: Error) =>
-        resume(Effect.fail(new E2ERequestError({ message: cause.message, cause })));
+        finish(Effect.fail(new E2ERequestError({ message: cause.message, cause })));
       socket.once("connect", onConnect);
       socket.once("error", onError);
+      socket.connect(endpoint.port, endpoint.address);
       return Effect.sync(() => {
+        settled = true;
         socket.off("connect", onConnect);
         socket.off("error", onError);
         socket.destroy();
@@ -443,6 +495,7 @@ const expectEndpointsRefused = async (endpoints: ReadonlyArray<StackEndpoint>): 
     ).rejects.toThrow();
   }
 };
+
 const expectRuntimeInputsAbsent = async (
   stack: Pick<TestStack, "stateRoot" | "id">,
 ): Promise<void> => {
@@ -464,6 +517,7 @@ const expectRuntimeInputsAbsent = async (
     }
   }
 };
+
 const throwCapabilityDiagnostics = async (
   stack: TestStack,
   capabilityName: string,
@@ -499,12 +553,15 @@ const throwCapabilityDiagnostics = async (
     { cause },
   );
 };
+
 const jsonValue = async (response: Response): Promise<unknown> => response.json();
+
 const jsonObject = async (response: Response): Promise<JsonObject> => {
   const value = await jsonValue(response);
   if (!isJsonObject(value)) throw new Error("Expected a JSON object response");
   return Object.fromEntries(Object.entries(value));
 };
+
 const databaseQuery = async (
   url: string,
   statement: string,
@@ -540,6 +597,7 @@ const databaseQuery = async (
     throw new Error(`databaseQuery failed for ${target}: ${statement}`, { cause });
   }
 };
+
 const apiHeaders = (
   credentials: PromiseStackCredentials,
   token: string = credentials.api.anonJwt,
@@ -547,8 +605,10 @@ const apiHeaders = (
   apikey: credentials.api.publishableKey,
   Authorization: `Bearer ${token}`,
 });
+
 const serviceHeaders = (credentials: PromiseStackCredentials): Record<string, string> =>
   apiHeaders(credentials, credentials.api.serviceRoleJwt);
+
 const functionSource = (table: string, marker: string): string => `
 Deno.serve(async () => {
   console.log("${marker}");
@@ -583,33 +643,44 @@ Deno.serve(async () => {
   });
 });
 `;
+
 const waitForSocket = (
   socket: WebSocket,
   predicate: (value: JsonObject) => boolean,
 ): Promise<JsonObject> =>
   Effect.runPromise(
     Effect.callback<JsonObject, E2ERequestError>((resume) => {
+      let settled = false;
+      const finish = (result: Effect.Effect<JsonObject, E2ERequestError>) => {
+        if (settled) return;
+        settled = true;
+        socket.off("message", onMessage);
+        socket.off("error", onError);
+        socket.off("close", onClose);
+        resume(result);
+      };
       const onMessage = (data: WebSocket.RawData) => {
         try {
           const value: unknown = JSON.parse(websocketDataText(data));
           if (isJsonObject(value) && predicate(value))
-            resume(Effect.succeed(Object.fromEntries(Object.entries(value))));
+            finish(Effect.succeed(Object.fromEntries(Object.entries(value))));
         } catch {
           // Realtime can send non-JSON protocol frames.
         }
       };
       const onError = () =>
-        resume(
+        finish(
           Effect.fail(new E2ERequestError({ message: "Realtime WebSocket failed while waiting" })),
         );
       const onClose = () =>
-        resume(
+        finish(
           Effect.fail(new E2ERequestError({ message: "Realtime WebSocket closed while waiting" })),
         );
       socket.on("message", onMessage);
       socket.on("error", onError);
       socket.on("close", onClose);
       return Effect.sync(() => {
+        settled = true;
         socket.off("message", onMessage);
         socket.off("error", onError);
         socket.off("close", onClose);
@@ -624,19 +695,36 @@ const openSocket = (url: string): Promise<WebSocket> =>
         handshakeTimeout: REQUEST_TIMEOUT_MS,
         perMessageDeflate: false,
       });
-      let opened = false;
+      let settled = false;
+      const cleanup = () => {
+        socket.off("open", onOpen);
+        socket.off("error", onError);
+        socket.off("close", cleanup);
+      };
+      const terminate = () => {
+        socket.off("open", onOpen);
+        // Terminating an unfinished handshake emits an error before close.
+        socket.once("close", cleanup);
+        socket.terminate();
+      };
       const onOpen = () => {
-        opened = true;
+        if (settled) return;
+        settled = true;
+        cleanup();
         resume(Effect.succeed(socket));
       };
-      const onError = (cause: Error) =>
+      const onError = (cause: Error) => {
+        if (settled) return;
+        settled = true;
+        terminate();
         resume(Effect.fail(new E2ERequestError({ message: cause.message, cause })));
+      };
       socket.once("open", onOpen);
       socket.once("error", onError);
       return Effect.sync(() => {
-        socket.off("open", onOpen);
-        socket.off("error", onError);
-        if (!opened) socket.terminate();
+        if (settled) return;
+        settled = true;
+        terminate();
       });
     }),
   );
@@ -648,12 +736,14 @@ const makeRealtimeUrl = (api: StackEndpoint, apikey: string): string => {
   url.search = new URLSearchParams({ apikey, vsn: "1.0.0" }).toString();
   return url.toString();
 };
+
 const onePixelPng = Uint8Array.from(
   atob(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   ),
   (character) => character.charCodeAt(0),
 );
+
 const optionalWorkloadConfig = (
   functionSlug: string,
   analyticsApiKey: string,
@@ -665,6 +755,7 @@ const optionalWorkloadConfig = (
   },
   listeners: { smtp: { enabled: true } },
 });
+
 const allEagerConfig = (analyticsApiKey: string): PromiseStackConfig => ({
   capabilities: {
     rest: { activation: "eager" },
@@ -685,6 +776,7 @@ const allEagerConfig = (analyticsApiKey: string): PromiseStackConfig => ({
   },
   listeners: { smtp: { enabled: true } },
 });
+
 const queryAnalyticsMarker = async (
   api: StackEndpoint,
   analyticsApiKey: string,
@@ -742,6 +834,7 @@ type WholeStackScenario = Readonly<{
   studio: StackEndpoint;
   mailUi: StackEndpoint;
 }>;
+
 const arrangeWholeStackDatabase = async (scenario: WholeStackScenario): Promise<void> => {
   const { credentials, markers, table } = scenario;
   await databaseQuery(
@@ -763,6 +856,7 @@ const arrangeWholeStackDatabase = async (scenario: WholeStackScenario): Promise<
   );
   expect(directRows).toEqual([{ id: 1, payload: markers.first }]);
 };
+
 const verifyWholeStackDatabaseLogs = async (stack: TestStack): Promise<void> => {
   expect((await stack.logs({ capabilities: ["database"], tail: 1 })).entries).not.toHaveLength(0);
   const logIterator = stack
@@ -776,6 +870,7 @@ const verifyWholeStackDatabaseLogs = async (stack: TestStack): Promise<void> => 
     await logIterator.return?.();
   }
 };
+
 const exerciseWholeStackRestAndAuth = async (
   scenario: WholeStackScenario,
 ): Promise<{
@@ -820,6 +915,7 @@ const exerciseWholeStackRestAndAuth = async (
   );
   return { restPath, accessToken };
 };
+
 const exerciseWholeStackRealtime = async (
   scenario: WholeStackScenario,
   accessToken: string,
@@ -890,6 +986,7 @@ const exerciseWholeStackRealtime = async (
     await Promise.allSettled(socketWaiters);
   }
 };
+
 const exerciseWholeStackStorage = async (scenario: WholeStackScenario): Promise<void> => {
   const { api, bucket, credentials, stack } = scenario;
   await activate(stack, "storage", async () => {
@@ -909,6 +1006,7 @@ const exerciseWholeStackStorage = async (scenario: WholeStackScenario): Promise<
     expect((await downloaded.arrayBuffer()).byteLength).toBeGreaterThan(0);
   });
 };
+
 const exerciseWholeStackFunctions = async (scenario: WholeStackScenario): Promise<void> => {
   const { api, credentials, functionSlug, markers, projectRoot, stack, table } = scenario;
   const functionPath = `/functions/v1/${functionSlug}`;
@@ -974,6 +1072,7 @@ const exerciseWholeStackFunctions = async (scenario: WholeStackScenario): Promis
     await throwCapabilityDiagnostics(stack, "functions", "Functions flow", cause);
   }
 };
+
 const exerciseWholeStackAuxiliary = async (scenario: WholeStackScenario): Promise<URL> => {
   const { api, credentials, mailUi, pooler, stack, studio } = scenario;
   await activate(stack, "mail", async () => {
@@ -1003,6 +1102,7 @@ const exerciseWholeStackAuxiliary = async (scenario: WholeStackScenario): Promis
   expect(poolerRows).toEqual([{ answer: 42 }]);
   return poolerUrl;
 };
+
 const assertWholeStackReady = async (
   scenario: WholeStackScenario,
   status: StackStatus,
@@ -1017,6 +1117,7 @@ const assertWholeStackReady = async (
   }
   await expectOwnedWorkloads(scenario.mode, scenario.stack.id, BASE_WORKLOAD_IDS);
 };
+
 const reactivateWholeStackCapabilities = async (
   scenario: WholeStackScenario,
   restPath: string,
@@ -1058,6 +1159,7 @@ const reactivateWholeStackCapabilities = async (
     });
   });
 };
+
 const restartWholeStackFromPersistedData = async (
   scenario: WholeStackScenario,
   endpointSnapshot: Readonly<Record<string, number | undefined>>,
@@ -1082,6 +1184,7 @@ const restartWholeStackFromPersistedData = async (
   ).toEqual([{ payload: markers.first }]);
   await reactivateWholeStackCapabilities(scenario, restPath, functionPath, poolerUrl);
 };
+
 const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Promise<void> => {
   const identity = randomId().replaceAll("-", "").slice(0, 20).toLowerCase();
   const table = `stack_e2e_${identity}`;

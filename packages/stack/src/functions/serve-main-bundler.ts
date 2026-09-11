@@ -10,7 +10,8 @@ class ServeMainBundleError extends Data.TaggedError("ServeMainBundleError")<{
 /** Absolute path to the stack-owned Edge Runtime main service template. */
 export const serveMainEntrypoint = fileURLToPath(new URL("./serve.main.ts", import.meta.url));
 
-const bundleServeMainTemplateEffect = Effect.gen(function* () {
+/** Produces one offline ES module with jose and path helpers inlined. */
+export const bundleServeMainTemplate = Effect.gen(function* () {
   const result = yield* Effect.tryPromise({
     try: () =>
       build({
@@ -42,7 +43,3 @@ const bundleServeMainTemplateEffect = Effect.gen(function* () {
     ),
   ),
 );
-
-/** Produces one offline ES module with jose and path helpers inlined. */
-export const bundleServeMainTemplate = (): Promise<string> =>
-  Effect.runPromise(bundleServeMainTemplateEffect);

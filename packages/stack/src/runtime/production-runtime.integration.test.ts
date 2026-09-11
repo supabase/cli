@@ -26,9 +26,6 @@ import type { StackRuntime } from "../public/Runtime.ts";
 import { NetworkPortSchema } from "../public/Status.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
-
-const encodeJson = (value: unknown): string =>
-  Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(value);
 import { resolveSecrets } from "../state/SecretStore.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
 import type { SupervisorIngress } from "../supervisor/Ingress.ts";
@@ -68,6 +65,9 @@ import {
 import type { RuntimeEnvFileOwner } from "./RuntimeEnvFile.ts";
 import { makeRuntimeEnvFileOwner } from "./RuntimeEnvFile.ts";
 import { probeReadiness } from "./ReadinessProbe.ts";
+
+const encodeJson = (value: unknown): string =>
+  Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(value);
 
 const stackId = StackIdSchema.make("a".repeat(64));
 

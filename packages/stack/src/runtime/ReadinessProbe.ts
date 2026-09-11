@@ -97,7 +97,6 @@ const httpAttempt = (target: ReadinessTarget) => {
         ? cause
         : runtimeError(target, "Readiness HTTP request failed", cause),
     ),
-    Effect.provide(NodeHttpClient.layerNodeHttp),
   );
 };
 
@@ -157,16 +156,19 @@ export const probeReadiness = (
       options.deadline ?? DEFAULT_READINESS_DEADLINE,
       "Readiness deadline",
     );
-    const attempt = target.mode === "http" ? httpAttempt(target) : tcpAttempt(target);
-    // A zero deadline runs one immediate probe with no retry delay; a positive deadline can
-    // interrupt whichever owned request/socket is still active.
-    if (Duration.isZero(deadline)) return yield* attempt;
-    const schedule =
-      retries === undefined
-        ? Schedule.spaced(retryDelay)
-        : Schedule.spaced(retryDelay).pipe(Schedule.upTo({ times: retries }));
-    yield* Effect.timeoutOrElse(Effect.retry(attempt, schedule), {
-      duration: deadline,
-      orElse: () => Effect.fail(runtimeError(target, "Readiness deadline exceeded")),
-    });
+    const withReadinessBudget = <R>(attempt: Effect.Effect<void, RuntimeDriverError, R>) => {
+      // A zero deadline runs one probe; a positive deadline interrupts the active request/socket.
+      if (Duration.isZero(deadline)) return attempt;
+      const schedule =
+        retries === undefined
+          ? Schedule.spaced(retryDelay)
+          : Schedule.spaced(retryDelay).pipe(Schedule.upTo({ times: retries }));
+      return Effect.timeoutOrElse(Effect.retry(attempt, schedule), {
+        duration: deadline,
+        orElse: () => Effect.fail(runtimeError(target, "Readiness deadline exceeded")),
+      });
+    };
+    return yield* target.mode === "http"
+      ? withReadinessBudget(httpAttempt(target)).pipe(Effect.provide(NodeHttpClient.layerNodeHttp))
+      : withReadinessBudget(tcpAttempt(target));
   });

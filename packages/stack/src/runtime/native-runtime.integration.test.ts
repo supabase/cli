@@ -844,7 +844,7 @@ describe("native runtime", { timeout: 15_000 }, () => {
             detached: true,
             stdio: ["ignore", "inherit", "inherit", "pipe", "pipe"]
           });
-          launcherProcess.stdio[4].end(JSON.stringify({
+        launcherProcess.stdio[4].end(JSON.stringify({
             executable: ${encodeJson(runtimeCommand)},
             args: ["-e", ${encodeJson(targetCode)}]
           }));
@@ -963,7 +963,7 @@ describe("native runtime", { timeout: 15_000 }, () => {
         if (typeof address === "object" && address !== null) {
           process.stdout.write("TARGET_READY " + address.port + "\\n");
         }
-            const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendantCode)}], {
+        const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendantCode)}], {
           stdio: ["ignore", "pipe", "inherit"]
         });
         child.stdout.on("data", (chunk) => {
@@ -984,13 +984,13 @@ describe("native runtime", { timeout: 15_000 }, () => {
       const launcherArgs = defaultNativeProcessLauncher().args;
       const ownerCode = `
         const { spawn } = require("node:child_process");
-          const launcherProcess = spawn(${encodeJson(process.execPath)}, ${encodeJson(launcherArgs)}, {
+        const launcherProcess = spawn(${encodeJson(process.execPath)}, ${encodeJson(launcherArgs)}, {
           detached: true,
           stdio: ["ignore", "inherit", "inherit", "pipe", "pipe"]
         });
-          launcherProcess.stdio[4].end(JSON.stringify({
-            executable: ${encodeJson(process.execPath)},
-            args: ["-e", ${encodeJson(options.targetCode)}],
+        launcherProcess.stdio[4].end(JSON.stringify({
+          executable: ${encodeJson(process.execPath)},
+          args: ["-e", ${encodeJson(options.targetCode)}],
           gracefulStopSignal: "SIGINT",
           gracefulStopTimeoutMs: ${String(options.gracefulStopTimeoutMs)}
         }));

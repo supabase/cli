@@ -21,7 +21,7 @@ describe("stack-owned functions bootstrap", () => {
       yield* fs.writeFileString(path.join(root, "hello", "index.ts"), "export default 1");
       const secret = "bootstrap-test-secret";
       let serveOptions: ServeOptions | undefined;
-      const bundled = yield* Effect.tryPromise(() => bundleServeMainTemplate());
+      const bundled = yield* bundleServeMainTemplate;
       const sandbox = {
         Deno: {
           env: {

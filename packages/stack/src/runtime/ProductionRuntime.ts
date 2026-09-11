@@ -343,12 +343,17 @@ const bootstrapContent =
   typeof SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
     ? Effect.succeed(SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE)
     : Effect.tryPromise({
-        try: () =>
-          import("../functions/serve-main-bundler.ts").then(({ bundleServeMainTemplate }) =>
-            bundleServeMainTemplate(),
-          ),
+        try: () => import("../functions/serve-main-bundler.ts"),
         catch: (cause) => preparationError("Unable to bundle functions bootstrap", cause),
-      });
+      }).pipe(
+        Effect.flatMap(({ bundleServeMainTemplate }) =>
+          bundleServeMainTemplate.pipe(
+            Effect.mapError((cause) =>
+              preparationError("Unable to bundle functions bootstrap", cause),
+            ),
+          ),
+        ),
+      );
 
 const mapDriverError = (
   key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
