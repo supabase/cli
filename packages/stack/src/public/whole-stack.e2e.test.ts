@@ -61,6 +61,7 @@ const NON_DEFAULT_DATABASE_RELEASES = Object.keys(databaseCatalog.releases).filt
 );
 const BASE_WORKLOAD_IDS = [
   "analytics:analytics",
+  "analytics:vector",
   "auth:auth",
   "database:database",
   "functions:edge-runtime",
@@ -68,6 +69,7 @@ const BASE_WORKLOAD_IDS = [
   "pooler:pooler",
   "realtime:realtime",
   "rest:rest",
+  "storage:imgproxy",
   "storage:storage",
   "studio:pgmeta",
   "studio:studio",
