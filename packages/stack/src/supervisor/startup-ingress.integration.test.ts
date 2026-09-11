@@ -93,7 +93,7 @@ const makeStartupFixture = () =>
     const store = yield* makeStackStateStore({ stateRoot: root });
     yield* store.initialize(stackId, {
       format: "supabase-stack-state-v1",
-      identity: { ...identity, stackId },
+      identity,
       runtime: { kind: "native" },
       desiredLifecycle: "unconfigured",
       ports: [],

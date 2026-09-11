@@ -1,14 +1,12 @@
 import { Schema } from "effect";
 import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
 import { catalogEntryFor } from "../WorkloadCatalog.ts";
-import { NetworkPortSchema } from "../../public/Status.ts";
 
 const version = catalogEntryFor("analytics:analytics").defaultVersion;
 
 const Secret = Schema.Redacted(Schema.String);
 export const AnalyticsSettingsSchema = Schema.Struct({
   backend: Schema.optionalKey(Schema.Literals(["postgres", "bigquery"] as const)),
-  vector_port: Schema.optionalKey(NetworkPortSchema),
   gcp_project_id: Schema.optionalKey(Schema.String),
   gcp_project_number: Schema.optionalKey(Schema.String),
   gcp_jwt_path: Schema.optionalKey(Schema.String),
@@ -20,7 +18,6 @@ export const AnalyticsModule: CapabilityModule<AnalyticsSettings> = {
   settings: AnalyticsSettingsSchema,
   defaultSettings: {
     backend: "postgres",
-    vector_port: undefined,
     gcp_project_id: "local",
     gcp_project_number: "0",
     gcp_jwt_path: undefined,
@@ -45,8 +42,4 @@ export const AnalyticsModule: CapabilityModule<AnalyticsSettings> = {
   routes: [{ listener: "api", protocol: "http" }],
   secretPolicy: () => "managed",
   managedSecretSlots: ["analytics.settings.api_key"],
-  selectWorkloads: (settings, workloads) => {
-    const enabled = typeof settings.vector_port === "number";
-    return workloads.filter((entry) => enabled || entry.name !== "vector");
-  },
 };

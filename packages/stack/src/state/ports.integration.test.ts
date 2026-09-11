@@ -56,7 +56,7 @@ const state = (
   privatePorts: PersistedStackState["privatePorts"] = [],
 ): PersistedStackState => ({
   format: "supabase-stack-state-v1",
-  identity: { ...value, stackId: id },
+  identity: value,
   runtime: { kind: "native" },
   desiredLifecycle: "running",
   ports,

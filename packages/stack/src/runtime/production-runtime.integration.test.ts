@@ -76,7 +76,6 @@ const stateFor = (
 ): PersistedStackState => ({
   format: "supabase-stack-state-v1",
   identity: {
-    stackId,
     projectRoot: "/tmp/production-runtime",
     branchContext: "ordinary-workspace",
     stackName: "production-runtime",
@@ -2093,7 +2092,7 @@ describe("production runtime", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("ignores obsolete private bindings while retaining requested lazy bindings", () =>
+  it.live("ignores obsolete inspector bindings while retaining requested bindings", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -2106,16 +2105,19 @@ describe("production runtime", () => {
         if (address === null || typeof address === "string")
           return yield* Effect.die("occupied listener has no TCP address");
         const port = yield* Schema.decodeEffect(NetworkPortSchema)(address.port).pipe(Effect.orDie);
-        const previous = yield* compileStack({ projectRoot: root, runtime: { kind: "native" } });
+        const previous = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+          config: { capabilities: { functions: { settings: { inspector: { mode: "run" } } } } },
+        });
         const disabled = yield* compileStack({
           projectRoot: root,
           runtime: { kind: "native" },
-          config: { capabilities: { mail: { enabled: false } } },
         });
         const requestedLazy = yield* compileStack({
           projectRoot: root,
           runtime: { kind: "native" },
-          config: { capabilities: { mail: { activation: "lazy" } } },
+          config: { capabilities: { functions: { settings: { inspector: { mode: "run" } } } } },
         });
         const secrets = Object.fromEntries(
           disabled.secrets.map((entry) => [
@@ -2131,7 +2133,7 @@ describe("production runtime", () => {
               projectRoot: root,
             },
             definition: previous.definition,
-            privatePorts: [{ workloadId: "mail:mail", binding: "smtp", port }],
+            privatePorts: [{ workloadId: "functions:edge-runtime", binding: "inspector", port }],
             secrets,
           },
         } satisfies { value: PersistedStackState };

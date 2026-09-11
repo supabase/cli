@@ -117,8 +117,10 @@ import {
 } from "../supervisor/Launcher.ts";
 import {
   ContainerEngineResolver,
+  defaultContainerEngineResolver,
   type ContainerEngineResolverShape,
 } from "../runtime/ContainerEngineResolver.ts";
+import type { ContainerEngineFailure } from "../runtime/ContainerEngine.ts";
 import { statusFor } from "../supervisor/StatusProjection.ts";
 import { EMPTY_LOG_CURSOR, readRetainedLogs, selectLogBatch } from "../supervisor/LogStore.ts";
 import {
@@ -156,6 +158,25 @@ export interface PreparedCapability {
   readonly version: string;
   readonly outcome: "cached" | "downloaded" | "pulled";
 }
+
+const selectDefaultRuntime = (
+  resolver: ContainerEngineResolverShape | undefined,
+): Effect.Effect<StackRuntime, ContainerEngineError, ChildProcessSpawnerService> => {
+  return (resolver ?? defaultContainerEngineResolver).isInstalled("docker").pipe(
+    Effect.map((installed): StackRuntime =>
+      installed ? { kind: "container", engine: "docker" } : { kind: "native" },
+    ),
+    Effect.mapError(
+      (error: ContainerEngineFailure) =>
+        new ContainerEngineError({
+          engine: "docker",
+          message: `Unable to determine whether Docker is installed: ${error.message}`,
+          cause: error,
+        }),
+    ),
+  );
+};
+
 export interface PrepareStackResult {
   readonly capabilities: ReadonlyArray<PreparedCapability>;
 }
@@ -186,8 +207,8 @@ export interface EffectStack {
 const optionOf = <A>(value: A | undefined): Option.Option<A> =>
   value === undefined ? Option.none() : Option.some(value);
 
-const descriptor = (state: PersistedStackState): StackDescriptor => ({
-  id: StackIdSchema.make(state.identity.stackId),
+const descriptor = (state: PersistedStackState, id: StackId): StackDescriptor => ({
+  id,
   projectRoot: state.identity.projectRoot,
   name: state.identity.stackName,
   branchContext: state.identity.branchContext,
@@ -526,23 +547,20 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
           Option.isNone(state) ? Effect.fail(stackNotFound()) : destroyAndAwaitOwner,
         ),
       );
-    const status = () => {
+    const status = (): Effect.Effect<StackStatus, StackStatusError> => {
       const rpcStatus = invoke((rpc) => rpc.status(undefined), statusError);
       return rpcStatus.pipe(
         Effect.catchTag("StackOwnershipConflictError", (ownershipError) =>
           options.readOfflineState.pipe(
             Effect.mapError(statusError),
-            Effect.flatMap((state) =>
-              Option.isNone(state)
-                ? Effect.fail(stackNotFound())
-                : isStoppedState(state.value)
-                  ? statusFor(state.value, [], new Set<CapabilityName>(), "stopped").pipe(
-                      Effect.mapError(statusError),
-                    )
-                  : Effect.fail(
-                      new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
-                    ),
-            ),
+            Effect.flatMap((state): Effect.Effect<StackStatus, StackStatusError> => {
+              if (Option.isNone(state)) return Effect.fail(stackNotFound());
+              if (isStoppedState(state.value))
+                return statusFor(id, state.value, [], new Set<CapabilityName>(), "stopped");
+              return Effect.fail(
+                new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
+              );
+            }),
             Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
           ),
         ),
@@ -710,13 +728,9 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
     } satisfies EffectStack;
   });
 
-const stateInitial = (
-  identity: StackIdentity,
-  stackId: StackId,
-  runtime: StackRuntime,
-): PersistedStackState => ({
+const stateInitial = (identity: StackIdentity, runtime: StackRuntime): PersistedStackState => ({
   format: "supabase-stack-state-v1",
-  identity: toPersistedIdentity(identity, stackId),
+  identity: toPersistedIdentity(identity),
   runtime,
   desiredLifecycle: "unconfigured",
   ports: [],
@@ -977,14 +991,25 @@ export const createStack = (
     });
     const stackId = yield* deriveStackId(identity);
     const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
+    const persisted = yield* store
+      .read(stackId)
+      .pipe(
+        Effect.catch((error) =>
+          isMissingStateRemnantError(error)
+            ? Effect.map(Effect.void, () => undefined)
+            : Effect.fail(error),
+        ),
+      );
+    const resolverOption = yield* Effect.serviceOption(ContainerEngineResolver).pipe(
+      Effect.map(Option.getOrUndefined),
+    );
     const requestedRuntime: StackRuntime =
       options.runtime?.kind === "container"
         ? { kind: "container", engine: options.runtime.engine ?? "docker" }
-        : { kind: "native" };
-    const current = yield* store.initialize(
-      stackId,
-      stateInitial(identity, stackId, requestedRuntime),
-    );
+        : options.runtime?.kind === "native"
+          ? { kind: "native" }
+          : (persisted?.runtime ?? (yield* selectDefaultRuntime(resolverOption)));
+    const current = yield* store.initialize(stackId, stateInitial(identity, requestedRuntime));
     const runtimeMismatch =
       options.runtime !== undefined &&
       (current.runtime.kind !== requestedRuntime.kind ||
@@ -999,9 +1024,6 @@ export const createStack = (
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const containerEngineResolver = yield* Effect.serviceOption(ContainerEngineResolver).pipe(
-      Effect.map(Option.getOrUndefined),
-    );
     const dependencies = handleDependencies({
       environment: env,
       store,
@@ -1010,7 +1032,7 @@ export const createStack = (
       path,
       crypto,
       spawner,
-      containerEngineResolver,
+      containerEngineResolver: resolverOption,
     });
     return yield* makeHandle(stackId, dependencies);
   });
@@ -1063,7 +1085,7 @@ export const findStack = (
     });
     const id = yield* deriveStackId(identity);
     const state = yield* (yield* makeStackStateStore({ stateRoot: env.stateRoot })).read(id);
-    return state === undefined ? Option.none() : Option.some(descriptor(state));
+    return state === undefined ? Option.none() : Option.some(descriptor(state, id));
   });
 
 export const listStacks = (
@@ -1104,7 +1126,7 @@ export const listStacks = (
         state !== undefined &&
         (projectRoot === undefined || state.identity.projectRoot === projectRoot)
       )
-        result.push(descriptor(state));
+        result.push(descriptor(state, entry));
     }
     return result;
   });
@@ -1219,13 +1241,13 @@ export const inspectStack = (
     const metadata = yield* readOwnerMetadata(env.stateRoot, id, env);
     if (metadata === undefined)
       return {
-        descriptor: descriptor(state),
+        descriptor: descriptor(state, id),
         owner: (yield* ownerLockExists(env.stateRoot, id)) ? "unreachable" : "absent",
         ...(configDrift === undefined ? {} : { configDrift }),
       };
     if (metadata.rpcRelease !== STACK_RPC_RELEASE)
       return {
-        descriptor: descriptor(state),
+        descriptor: descriptor(state, id),
         owner: "incompatible",
         ...(configDrift === undefined ? {} : { configDrift }),
       };
@@ -1243,18 +1265,18 @@ export const inspectStack = (
       const failure = Cause.findErrorOption(status.cause);
       if (Option.isSome(failure) && isOwnerUnreachable(failure.value))
         return {
-          descriptor: descriptor(state),
+          descriptor: descriptor(state, id),
           owner: "unreachable",
           ...(configDrift === undefined ? {} : { configDrift }),
         };
       return {
-        descriptor: descriptor(state),
+        descriptor: descriptor(state, id),
         owner: "running",
         ...(configDrift === undefined ? {} : { configDrift }),
       };
     }
     return {
-      descriptor: descriptor(state),
+      descriptor: descriptor(state, id),
       owner: "running",
       status: status.value,
       ...(configDrift === undefined ? {} : { configDrift }),

@@ -787,9 +787,11 @@ export const makeProductionRuntime = (
           yield* Ref.set(hostRoute, route);
         }
         if (input.state.runtime.kind === "native") {
+          const usableListeners = new Set(input.plan.routes.map(({ listener }) => listener));
           for (const assignment of input.state.ports) {
             const listener = input.definition.listeners[assignment.field];
             if (
+              !usableListeners.has(assignment.field) ||
               !listener.enabled ||
               (listener.port === "automatic"
                 ? assignment.intent !== "automatic"
@@ -809,7 +811,7 @@ export const makeProductionRuntime = (
             );
           }
           const requestedPrivate = new Set(
-            privateBindingIntentsFor(input.plan).map(privateBindingKey),
+            privateBindingIntentsFor(input.plan, candidateState).map(privateBindingKey),
           );
           for (const assignment of input.state.privatePorts) {
             if (!requestedPrivate.has(privateBindingKey(assignment))) continue;

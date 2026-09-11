@@ -18,8 +18,9 @@ Stacks are managed identities: closing a handle does not stop a running stack. C
 handle starts nothing, and a stopped stack retains no Supervisor, workload, container, network, or
 listener. Status and retained logs remain available directly from durable state while stopped; a
 later start on the same handle launches a fresh Supervisor.
-With no configuration override, all capabilities are enabled, PostgreSQL is the only eager
-capability, and every other capability is lazy. Starting the stack therefore launches only
+With no configuration override, all capabilities and their companion workloads (including
+imgproxy and Vector) are enabled, PostgreSQL is the only eager capability, and every other
+capability is lazy. Starting the stack therefore launches only
 PostgreSQL by default; capabilities configured as eager join its startup dependency closure.
 The remaining lazy capabilities activate through the stack's listeners on demand for the current
 running session.
@@ -80,8 +81,10 @@ Docker modes. It begins from the PostgreSQL-only default, progressively activate
 realistic traffic, and verifies stop/start cycles, stable ports, and persistent data. The
 CLI is not involved in these runtime tests.
 
-Podman is supported only on local Linux hosts and must be selected explicitly; the runtime does not
-auto-detect container engines.
+When `runtime` is omitted for a new stack, the package selects Docker when the Docker client is
+installed and native otherwise. The check runs `docker --version`, so a stopped Docker daemon still
+selects Docker. Existing stacks reuse their persisted runtime without probing; native, Docker, and
+Podman preferences remain explicit when supplied. Podman is supported only on local Linux hosts.
 
 Stack identity is the length-delimited SHA-256 tuple of the canonical project root, Git branch
 context (or `ordinary-workspace` outside Git), and stack name. Separate worktree roots, branches,
@@ -89,7 +92,10 @@ projects in a monorepo, and named stacks therefore receive separate managed stat
 resolution is read-only; moving a project creates a new identity.
 
 `createTestStack` gives each test stack a unique temporary project root and identity while sharing
-the managed state root used by ordinary package callers. Automatic ports therefore
+the managed state root used by ordinary package callers. It uses the same runtime selection as
+`createStack`: an installed Docker client selects Docker even when its daemon is stopped. Pass
+`runtime: { kind: "native" }` or an explicit container runtime for reproducible test environments.
+Automatic ports therefore
 coordinate across all default callers. Helper project roots and identities remain isolated; a
 temporary test stack is excluded from listings scoped to another project root but appears in an
 unfiltered package `listStacks()` result. A failed destroy retains the affected project root and

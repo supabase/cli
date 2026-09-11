@@ -1,9 +1,21 @@
 // oxlint-disable effecttsgo/prefer-schema-over-json -- raw child-process fixture payloads are protocol JSON, not product serialization.
 import { NodeServices, NodeSocket } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Data, Deferred, Effect, Exit, Fiber, FileSystem, Path, Ref, Stream } from "effect";
+import {
+  Cause,
+  Data,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Path,
+  Ref,
+  Schedule,
+  Stream,
+} from "effect";
 import { ChildProcess } from "effect/unstable/process";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- raw process-tree cleanup fixture.
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { LogStoreError, makeLogStore, type LogStore } from "../supervisor/LogStore.ts";
@@ -161,27 +173,100 @@ describe("native runtime", { timeout: 15_000 }, () => {
   it.live("publishes an unexpected native workload exit after readiness", () =>
     withPlatform(
       Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-exit-" });
+        const triggerPath = path.join(root, "trigger");
+        const readySignal = yield* Deferred.make<void>();
+        const logStore = yield* makeLogStore({ path: path.join(root, "logs.json") });
+        const signaledLogStore = signalOnLog(logStore, "watch-ready", readySignal);
         let startedProcess: NativeProcess | undefined;
         const runtime = yield* makeNativeRuntime({
-          resolveProcess: () => Effect.succeed(processPlan(fixtureProcess("native-watch"))),
+          resolveProcess: () =>
+            Effect.succeed({
+              startup: [],
+              main: {
+                executable: process.execPath,
+                args: [
+                  "-e",
+                  `const fs=require("node:fs"); fs.watch(${JSON.stringify(root)}, () => { if (fs.existsSync(${JSON.stringify(triggerPath)})) process.exit(1) }); process.stdout.write("watch-ready\\n")`,
+                ],
+              },
+            }),
+          logStore: signaledLogStore,
           waitForReadiness: (_key, _workload, process) =>
             Effect.sync(() => {
               startedProcess = process;
-            }),
+            }).pipe(Effect.andThen(Deferred.await(readySignal))),
         });
         const ready = yield* runtime.start(keyFor("watch"), workload("watch"));
         expect(ready.state).toBe("ready");
         expect(startedProcess).toBeDefined();
-        if (startedProcess !== undefined) {
-          yield* startedProcess.kill;
-          yield* startedProcess.exitCode.pipe(Effect.exit);
-          yield* Effect.yieldNow;
-        }
-        const observed = yield* runtime.observe(stackId);
+        yield* fs.writeFileString(triggerPath, "exit");
+        if (startedProcess !== undefined) yield* startedProcess.exitCode;
+        const observed = yield* runtime.observe(stackId).pipe(
+          Effect.tap(() => Effect.yieldNow),
+          Effect.repeat({
+            until: (values) => values[0]?.state === "failed",
+            schedule: Schedule.forever,
+          }),
+          Effect.timeout("5 seconds"),
+        );
         expect(observed).toEqual([
-          expect.objectContaining({ workloadId: keyFor("watch").workloadId, state: "failed" }),
+          expect.objectContaining({
+            workloadId: keyFor("watch").workloadId,
+            state: "failed",
+            error: "Native workload exited before an explicit stop (code 1)",
+          }),
         ]);
         yield* runtime.remove(keyFor("watch"));
+      }),
+    ),
+  );
+
+  it.live("reports the signal that terminated a native workload", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const native = yield* spawnNativeProcess({
+          executable: process.execPath,
+          args: ["-e", 'process.kill(process.pid, "SIGTERM")'],
+        });
+        const stderr = yield* native.stderr.pipe(Stream.decodeText, Stream.runCollect);
+        expect(yield* native.exitCode).toBe(1);
+        expect(Array.from(stderr).join("")).toContain(
+          "Native workload exited due to signal SIGTERM",
+        );
+      }),
+    ),
+  );
+
+  it.live("does not report a diagnostic for an explicit native stop", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const ready = yield* Deferred.make<void>();
+        const native = yield* spawnNativeProcess({
+          executable: process.execPath,
+          args: ["-e", 'process.stdout.write("ready\\n"); setInterval(() => {}, 1000)'],
+        });
+        const stdout = yield* native.stdout.pipe(
+          Stream.decodeText,
+          Stream.splitLines,
+          Stream.runForEach((line) =>
+            line === "ready" ? Deferred.succeed(ready, undefined) : Effect.void,
+          ),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const stderr = yield* Effect.forkChild(
+          native.stderr.pipe(Stream.decodeText, Stream.runCollect),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(ready).pipe(Effect.timeout("3 seconds"));
+        yield* native.kill;
+        const stderrOutput = yield* Fiber.join(stderr);
+        yield* Fiber.join(stdout);
+        expect(Array.from(stderrOutput).join("")).not.toContain(
+          "Native workload exited due to signal SIGTERM",
+        );
       }),
     ),
   );
