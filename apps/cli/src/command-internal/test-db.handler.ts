@@ -260,7 +260,9 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
     // already streamed to stdout.
     if (exitCode !== 0) {
       return yield* Effect.fail(
-        new TestDbRunError({ message: `error running container: exit ${exitCode}` }),
+        new TestDbRunError({
+          message: `error running ${useHostProve ? "pg_prove" : "container"}: exit ${exitCode}`,
+        }),
       );
     }
 

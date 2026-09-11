@@ -4,6 +4,7 @@ import type { PgConnInput } from "../../../command-internal/db-connection.servic
 import { buildSchemaDumpEnv, type DumpOptions } from "../../../command-internal/pg-dump.env.ts";
 import { dumpSchemaScript } from "../../../command-internal/pg-dump.scripts.ts";
 import {
+  pgDumpClientExitMessage,
   streamPgDumpWithClient,
   type PgDumpClient,
 } from "../../../command-internal/pg-dump.run.ts";
@@ -45,18 +46,19 @@ export const squashDumpSchema = Effect.fnUntraced(function* <E>(params: SquashDu
     excludeTable: [],
     columnInsert: false,
   };
+  const client = params.client ?? { kind: "container" as const };
   const result = yield* streamPgDumpWithClient({
     image: params.image,
     script: dumpSchemaScript,
     env: buildSchemaDumpEnv(params.conn, opt),
     onStdout: params.onStdout,
     projectEnvValues: params.projectEnvValues,
-    client: params.client ?? { kind: "container" },
+    client,
   });
   if (result.exitCode !== 0) {
     return yield* Effect.fail(
       new MigrationSquashDumpError({
-        message: `error running container: exit ${result.exitCode}`,
+        message: pgDumpClientExitMessage(client, result.exitCode),
       }),
     );
   }

@@ -57,14 +57,14 @@ One-shot `docker run --rm <pg_prove image>`, where the image is `supabase/pg_pro
 
 ## Exit Codes
 
-| Code | Condition                                                                                            |
-| ---- | ---------------------------------------------------------------------------------------------------- |
-| `0`  | all pgTAP tests pass                                                                                 |
-| `1`  | `pg_prove` exits non-zero (test failures) — `error running container: exit N`                        |
-| `1`  | `pg_prove` ran no tests (`Result: NOTESTS`) — `no pgTAP tests found in <paths>`; Go exits `0` here   |
-| `1`  | `--db-url` / `--linked` / `--local` set together (mutually exclusive)                                |
-| `1`  | database connection failure / pgTAP enable failure / docker failure / `--linked` auth or IPv6 errors |
-| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                             |
+| Code | Condition                                                                                                                            |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | all pgTAP tests pass                                                                                                                 |
+| `1`  | `pg_prove` exits non-zero (test failures) — `error running container: exit N`, or `error running pg_prove: exit N` on a native stack |
+| `1`  | `pg_prove` ran no tests (`Result: NOTESTS`) — `no pgTAP tests found in <paths>`; Go exits `0` here                                   |
+| `1`  | `--db-url` / `--linked` / `--local` set together (mutually exclusive)                                                                |
+| `1`  | database connection failure / pgTAP enable failure / docker failure / `--linked` auth or IPv6 errors                                 |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                             |
 
 ## Telemetry Events Fired
 

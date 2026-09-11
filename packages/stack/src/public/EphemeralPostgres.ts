@@ -45,11 +45,8 @@ export interface EffectEphemeralPostgres {
   /** Catalog identity hashed into CLI shadow-cache keys. */
   readonly artifactIdentity: string;
   readonly url: Redacted.Redacted<string>;
-  // Fresh invocation each call so the closure observes the cluster's current lifecycle.
-  // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly start: () => Effect.Effect<void, EphemeralPostgresError, EphemeralPostgresServices>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly stop: () => Effect.Effect<void, EphemeralPostgresError>;
+  readonly start: Effect.Effect<void, EphemeralPostgresError, EphemeralPostgresServices>;
+  readonly stop: Effect.Effect<void, EphemeralPostgresError>;
   readonly exportPgData: (
     tarPath: string,
   ) => Effect.Effect<void, EphemeralPostgresError, EphemeralPostgresServices>;

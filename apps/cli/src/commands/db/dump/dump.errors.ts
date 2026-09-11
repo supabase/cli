@@ -44,8 +44,9 @@ export class DbDumpOpenFileError extends Data.TaggedError("DbDumpOpenFileError")
 }
 
 /**
- * The pg_dump container exited non-zero; message text
- * (`"error running container: exit " + code`) is an established output contract.
+ * pg_dump exited non-zero. Container dumps keep
+ * `"error running container: exit " + code`; native PATH dumps use
+ * `"error running pg_dump: exit " + code` (or `pg_dumpall`).
  */
 export class DbDumpRunError extends Data.TaggedError("DbDumpRunError")<{
   readonly message: string;

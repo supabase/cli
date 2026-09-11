@@ -76,9 +76,12 @@ const hostClientVersion = (command: string) =>
       );
       const [exitCode, stdout, stderr] = yield* Effect.all(
         [
-          handle.exitCode.pipe(Effect.map(Number)),
-          collectText(handle.stdout),
-          collectText(handle.stderr),
+          handle.exitCode.pipe(
+            Effect.map(Number),
+            Effect.mapError(() => missingClient(command)),
+          ),
+          collectText(handle.stdout.pipe(Stream.mapError(() => missingClient(command)))),
+          collectText(handle.stderr.pipe(Stream.mapError(() => missingClient(command)))),
         ],
         { concurrency: "unbounded" },
       );

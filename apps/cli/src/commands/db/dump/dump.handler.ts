@@ -35,7 +35,10 @@ import {
   buildSchemaDumpEnv,
   expandScript,
 } from "../../../command-internal/pg-dump.env.ts";
-import { streamPgDumpWithClient } from "../../../command-internal/pg-dump.run.ts";
+import {
+  pgDumpClientExitMessage,
+  streamPgDumpWithClient,
+} from "../../../command-internal/pg-dump.run.ts";
 import {
   dumpConnForHostClient,
   rewriteDumpHostForToolContainer,
@@ -381,7 +384,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     if (result.exitCode !== 0) {
       return yield* Effect.fail(
         new DbDumpRunError({
-          message: `error running container: exit ${result.exitCode}`,
+          message: pgDumpClientExitMessage(dumpClient, result.exitCode),
           ...(isIPv6ConnectivityError(result.stderr) ? { suggestion: ipv6Suggestion() } : {}),
         }),
       );

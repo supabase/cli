@@ -258,8 +258,8 @@ export const makePromiseApi = (
           runtime: handle.runtime,
           artifactIdentity: handle.artifactIdentity,
           url: Redacted.value(handle.url),
-          start: () => invoke(handle.start()),
-          stop: () => invoke(handle.stop()),
+          start: () => invoke(handle.start),
+          stop: () => invoke(handle.stop),
           exportPgData: (tarPath) => invoke(handle.exportPgData(tarPath)),
           destroy: close,
         };

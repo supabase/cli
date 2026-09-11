@@ -43,8 +43,8 @@ const mockEphemeral = () => {
         runtime: { kind: "native" as const },
         artifactIdentity: "native:17.6.1",
         url: Redacted.make("postgresql://postgres:postgres@127.0.0.1:59999/postgres"),
-        start: () => Effect.void,
-        stop: () => Effect.void,
+        start: Effect.void,
+        stop: Effect.void,
         exportPgData: (tarPath: string) =>
           Effect.gen(function* () {
             exports.push(tarPath);
@@ -239,8 +239,8 @@ describe("stackAcquireShadowDatabase", () => {
             runtime: { kind: "native" as const },
             artifactIdentity: "native:17.6.1",
             url: Redacted.make("postgresql://postgres:postgres@127.0.0.1:59999/postgres"),
-            start: () => Effect.void,
-            stop: () => Effect.void,
+            start: Effect.void,
+            stop: Effect.void,
             exportPgData: () =>
               Effect.fail(
                 new EphemeralPostgresError({ message: "export failed", reason: "snapshot" }),
@@ -306,8 +306,8 @@ describe("stackAcquireShadowDatabase", () => {
           runtime: { kind: "native" as const },
           artifactIdentity: "native:17.6.1",
           url: Redacted.make("postgresql://postgres:postgres@127.0.0.1:59999/postgres"),
-          start: () => Effect.void,
-          stop: () => Effect.void,
+          start: Effect.void,
+          stop: Effect.void,
           exportPgData: () => Effect.void,
         });
       },

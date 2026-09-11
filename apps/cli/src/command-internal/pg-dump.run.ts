@@ -82,6 +82,11 @@ export type PgDumpClient =
       readonly expectedMajor: number;
     };
 
+export const pgDumpClientExitMessage = (client: PgDumpClient, exitCode: number): string =>
+  client.kind === "host"
+    ? `error running ${client.command}: exit ${exitCode}`
+    : `error running container: exit ${exitCode}`;
+
 /** Container dump, or PATH `pg_dump`/`pg_dumpall` when the stack engine is native. */
 export const streamPgDumpWithClient = Effect.fnUntraced(function* <E>(params: {
   readonly image: string;
