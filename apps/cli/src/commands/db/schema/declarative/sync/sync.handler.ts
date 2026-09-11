@@ -1,4 +1,4 @@
-import { Cause, Clock, Effect, Exit, FileSystem, Option, Path, Ref, Result } from "effect";
+import { Cause, Clock, Effect, Exit, FileSystem, Option, Path, Result } from "effect";
 
 import {
   DnsResolverFlag,
@@ -38,7 +38,6 @@ import { writePgDeltaMigrations } from "../../../shared/pgdelta-migrations.write
 import { localEndpoint, resolveSmartTargetEndpoint } from "../declarative.smart-target.ts";
 import {
   type DebugBundle,
-  type DebugBundleResult,
   collectMigrationsList,
   debugBundleMessage,
   formatDebugId,
@@ -223,18 +222,8 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
           onFailure: (error) =>
             output
               .raw(`Warning: failed to save debug artifacts: ${error.message}\n`, "stderr")
-              .pipe(
-                Effect.as({
-                  directory: "",
-                  migrationSqlSaved: false,
-                } satisfies DebugBundleResult),
-              ),
-          onSuccess: (result) =>
-            result.migrationSqlSaved
-              ? Effect.succeed(result)
-              : output
-                  .raw("Warning: failed to save generated SQL debug artifact.\n", "stderr")
-                  .pipe(Effect.as(result)),
+              .pipe(Effect.as("")),
+          onSuccess: (directory) => Effect.succeed(directory),
         }),
       );
 
@@ -420,8 +409,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
                   Effect.matchEffect({
                     // Prints nothing when the debug bundle itself fails to save.
                     onFailure: () => Effect.void,
-                    onSuccess: ({ directory }) =>
-                      output.raw(debugBundleMessage(directory), "stderr"),
+                    onSuccess: (directory) => output.raw(debugBundleMessage(directory), "stderr"),
                   }),
                 );
               }),
@@ -663,7 +651,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
                 });
         yield* output.raw(`${red(`Transient apply failed: ${applyError.message}`)}\n`, "stderr");
         const migrations = yield* collectMigrationsList(fs, path, migrationsDir);
-        const debugBundle = yield* saveApplyDebugBundle({
+        const debugDir = yield* saveApplyDebugBundle({
           id: `${formatDebugId(yield* Clock.currentTimeMillis)}-transient-apply-error`,
           sourceRef: result.sourceRef,
           targetRef: result.targetRef,
@@ -671,8 +659,8 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
           error: applyError.message,
           migrations,
         });
-        if (debugBundle.directory.length > 0) {
-          yield* output.raw(debugBundleMessage(debugBundle.directory), "stderr");
+        if (debugDir.length > 0) {
+          yield* output.raw(debugBundleMessage(debugDir), "stderr");
         }
         return yield* Effect.fail(applyError);
       }
@@ -745,8 +733,6 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
 
     // Step 8: apply the migration to the local database (native).
     let applyAttempted = false;
-    const appliedSegments = yield* Ref.make(0);
-    const sqlMayHaveCommitted = yield* Ref.make(false);
     const applyExit = yield* ensureLocalPostgresImageCurrent.pipe(
       Effect.andThen(
         Effect.sync(() => {
@@ -757,8 +743,6 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         applyMigrationToLocal(
           { port: toml.port, password: toml.password, dnsResolver },
           migrationPaths,
-          Ref.update(appliedSegments, (count) => count + 1),
-          Ref.set(sqlMayHaveCommitted, true),
         ),
       ),
       Effect.exit,
@@ -786,7 +770,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     );
     const ts = formatDebugId(yield* Clock.currentTimeMillis);
     const migrations = yield* collectMigrationsList(fs, path, migrationsDir);
-    const debugBundle = yield* saveApplyDebugBundle({
+    const debugDir = yield* saveApplyDebugBundle({
       id: `${ts}-apply-error`,
       sourceRef: result.sourceRef,
       targetRef: result.targetRef,
@@ -823,7 +807,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
             `${red(`Database reset also failed: ${resetError.message}`)}\n`,
             "stderr",
           );
-          const resetDebugBundle = yield* saveApplyDebugBundle({
+          const resetDebugDir = yield* saveApplyDebugBundle({
             id: `${ts}-after-reset`,
             sourceRef: result.sourceRef,
             targetRef: result.targetRef,
@@ -833,17 +817,11 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
           });
           // Guards each saved-path line so a bundle that failed to save doesn't print a path
           // that doesn't exist.
-          if (debugBundle.directory.length > 0) {
-            yield* output.raw(
-              `\nDebug information saved to ${bold(debugBundle.directory)}\n`,
-              "stderr",
-            );
+          if (debugDir.length > 0) {
+            yield* output.raw(`\nDebug information saved to ${bold(debugDir)}\n`, "stderr");
           }
-          if (resetDebugBundle.directory.length > 0) {
-            yield* output.raw(
-              `Debug information saved to ${bold(resetDebugBundle.directory)}\n`,
-              "stderr",
-            );
+          if (resetDebugDir.length > 0) {
+            yield* output.raw(`Debug information saved to ${bold(resetDebugDir)}\n`, "stderr");
           }
           yield* output.raw(debugBundleMessage(""), "stderr");
           return yield* Effect.fail(resetError);
@@ -852,47 +830,8 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         return;
       }
     }
-    const appliedSegmentCount = yield* Ref.get(appliedSegments);
-    const sqlCommitted = yield* Ref.get(sqlMayHaveCommitted);
-    let keepGeneratedFiles = appliedSegmentCount > 0 || sqlCommitted;
-    if (appliedSegmentCount > 0) {
-      yield* output.raw(
-        "Generated migration files were kept because one or more segments were already recorded in migration history.\n",
-        "stderr",
-      );
-    } else if (sqlCommitted) {
-      yield* output.raw(
-        "Generated migration files were kept because SQL from this apply may already have been committed.\n",
-        "stderr",
-      );
-    } else if (tty.stdinIsTty && !yes) {
-      keepGeneratedFiles = yield* output.promptConfirm("Keep the generated migration file(s)?", {
-        defaultValue: false,
-      });
-    }
-    if (!keepGeneratedFiles) {
-      if (!debugBundle.migrationSqlSaved) {
-        yield* output.raw(
-          "Generated migration files were kept because debug artifacts could not be saved.\n",
-          "stderr",
-        );
-      } else {
-        for (const migrationPath of migrationPaths) {
-          yield* fs
-            .remove(migrationPath)
-            .pipe(
-              Effect.catch((error) =>
-                output.raw(
-                  `Warning: failed to remove generated migration ${migrationPath}: ${error.message}\n`,
-                  "stderr",
-                ),
-              ),
-            );
-        }
-      }
-    }
-    if (debugBundle.directory.length > 0) {
-      yield* output.raw(debugBundleMessage(debugBundle.directory), "stderr");
+    if (debugDir.length > 0) {
+      yield* output.raw(debugBundleMessage(debugDir), "stderr");
     }
     return yield* Effect.fail(applyError);
   }).pipe(
@@ -970,17 +909,17 @@ const applyRenderedSqlToLocal = (
 ) =>
   Effect.gen(function* () {
     const session = yield* connectToLocal(local);
-    yield* applyRenderedSqlUnits(session, files, (message) => {
-      return new DeclarativeApplyError({ message });
-    });
+    yield* applyRenderedSqlUnits(
+      session,
+      files,
+      (message) => new DeclarativeApplyError({ message }),
+    );
   }).pipe(Effect.scoped);
 
-/** Connects once and applies the ordered migration files (Go's `applyMigrationToLocal`). */
+/** Connects once and applies the ordered migration files. */
 const applyMigrationToLocal = (
   local: { port: number; password: string; dnsResolver: "native" | "https" },
   migrationPaths: ReadonlyArray<string>,
-  onMigrationRecorded: Effect.Effect<void>,
-  onStatementsCommitted: Effect.Effect<void>,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -993,8 +932,6 @@ const applyMigrationToLocal = (
         path,
         migrationPath,
         (message) => new DeclarativeApplyError({ message }),
-        onStatementsCommitted,
       );
-      yield* onMigrationRecorded;
     }
   }).pipe(Effect.scoped);

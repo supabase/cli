@@ -89,16 +89,10 @@ interface SetupOpts {
   renderedFiles?: ReadonlyArray<PgDeltaRenderedFile>;
   removals?: PgDeltaRemovalSummary;
   planErrors?: ReadonlyArray<PgDeltaEngineError>;
-  cleanupDeleteFails?: boolean;
-  debugSqlWriteFails?: boolean;
   declarativeReadFails?: boolean;
 }
 
-const fileSystemFault = (
-  method: "readDirectory" | "remove" | "writeFile",
-  target: string,
-  description: string,
-) =>
+const fileSystemFault = (method: "readDirectory", target: string, description: string) =>
   new PlatformError(
     new SystemError({
       _tag: "Unknown",
@@ -111,7 +105,7 @@ const fileSystemFault = (
 
 const fileSystemFaultLayer = (
   workdir: string,
-  opts: Pick<SetupOpts, "cleanupDeleteFails" | "debugSqlWriteFails" | "declarativeReadFails">,
+  opts: Pick<SetupOpts, "declarativeReadFails">,
 ): Layer.Layer<FileSystem.FileSystem> =>
   Layer.effect(
     FileSystem.FileSystem,
@@ -124,16 +118,6 @@ const fileSystemFaultLayer = (
                 fileSystemFault("readDirectory", target, "simulated declarative read failure"),
               )
             : real.readDirectory(target),
-        remove: (target, options) =>
-          opts.cleanupDeleteFails === true &&
-          target.startsWith(join(workdir, "supabase", "migrations")) &&
-          target.endsWith(".sql")
-            ? Effect.fail(fileSystemFault("remove", target, "simulated cleanup failure"))
-            : real.remove(target, options),
-        writeFileString: (target, content, options) =>
-          opts.debugSqlWriteFails === true && target.endsWith("generated-migration.sql")
-            ? Effect.fail(fileSystemFault("writeFile", target, "simulated debug SQL write failure"))
-            : real.writeFileString(target, content, options),
       }),
     ),
   ).pipe(Layer.provide(BunServices.layer));
@@ -355,11 +339,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     processControl.layer,
     alwaysReadyHttpClientLayer,
     machineErrorContextLayer,
-    ...(opts.cleanupDeleteFails === true ||
-    opts.debugSqlWriteFails === true ||
-    opts.declarativeReadFails === true
-      ? [fileSystemFaultLayer(workdir, opts)]
-      : []),
+    ...(opts.declarativeReadFails === true ? [fileSystemFaultLayer(workdir, opts)] : []),
     dockerRun,
   );
   return {
@@ -1734,7 +1714,7 @@ describe("db schema declarative sync integration", () => {
     });
   });
 
-  it.effect("failed image preflight saves diagnostics before deleting the generated file", () => {
+  it.effect("failed image preflight saves diagnostics and keeps the generated file", () => {
     seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       yes: true,
@@ -1747,49 +1727,32 @@ describe("db schema declarative sync integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(stripAnsi(s.out.stderrText)).toContain("Migration apply preflight failed");
-      expect(migrationEntries(tmp.current)).toEqual([]);
+      expect(migrationEntries(tmp.current)).toHaveLength(1);
       expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta", "debug"))).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("declining reset can retain or delete the generated migration", () => {
+  it.effect("declining reset keeps the generated migration", () => {
     seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      stdinIsTty: true,
+      applyFails: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;",
+      promptConfirmResponses: [false],
+    });
     return Effect.gen(function* () {
-      const keep = setup(tmp.current, {
-        stdinIsTty: true,
-        applyFails: true,
-        diffSql: "ALTER TABLE a ADD COLUMN b int;",
-        promptConfirmResponses: [false, true],
-      });
-      yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
-        Effect.provide(keep.layer),
+      const exit = yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
         Effect.exit,
       );
+      expect(Exit.isFailure(exit)).toBe(true);
       expect(migrationEntries(tmp.current)).toHaveLength(1);
-
-      for (const entry of migrationEntries(tmp.current)) {
-        yield* FileSystem.FileSystem.pipe(
-          Effect.flatMap((fs) => fs.remove(join(tmp.current, "supabase", "migrations", entry))),
-        );
-      }
-      const remove = setup(tmp.current, {
-        stdinIsTty: true,
-        applyFails: true,
-        diffSql: "ALTER TABLE a ADD COLUMN c int;",
-        promptConfirmResponses: [false, false],
-      });
-      yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
-        Effect.provide(remove.layer),
-        Effect.exit,
-      );
-      expect(migrationEntries(tmp.current)).toEqual([]);
-      expect(remove.out.promptConfirmCalls.map((call) => call.message)).toContain(
-        "Keep the generated migration file(s)?",
-      );
-    }).pipe(Effect.provide(BunServices.layer));
+      expect(s.out.promptConfirmCalls.map((call) => call.message)).toEqual([
+        "Would you like to reset the local database and reapply all migrations? (local data will be lost)",
+      ]);
+    }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("noninteractive failed apply deletes every generated segment", () => {
+  it.effect("noninteractive failed apply keeps every generated segment", () => {
     seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       applyFails: true,
@@ -1815,41 +1778,37 @@ describe("db schema declarative sync integration", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(migrationEntries(tmp.current)).toEqual([]);
+      expect(migrationEntries(tmp.current)).toHaveLength(2);
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("failed apply keeps generated files after a no-transaction statement committed", () => {
-    seedDeclarative(tmp.current);
-    const s = setup(tmp.current, {
-      stdinIsTty: true,
-      applyFailurePrefix: "ALTER TYPE",
-      promptConfirmResponses: [false],
-      renderedFiles: [
-        {
-          sequence: 1,
-          name: "enum_values",
-          sql: "-- pg-delta: transaction=false\nSELECT 1;\nALTER TYPE mood ADD VALUE 'fine';",
-          transactionMode: "none",
-        },
-      ],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
-        Effect.exit,
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(migrationEntries(tmp.current)).toHaveLength(1);
-      expect(s.dbExec.some((sql) => sql.includes("SELECT 1"))).toBe(true);
-      expect(s.out.stderrText).toContain("SQL from this apply may already have been committed");
-      expect(s.out.stderrText).not.toContain(
-        "one or more segments were already recorded in migration history",
-      );
-      expect(s.out.promptConfirmCalls.map((call) => call.message)).not.toContain(
-        "Keep the generated migration file(s)?",
-      );
-    }).pipe(Effect.provide(s.layer));
-  });
+  it.effect(
+    "failed no-transaction apply keeps the generated file after earlier statements ran",
+    () => {
+      seedDeclarative(tmp.current);
+      const s = setup(tmp.current, {
+        stdinIsTty: true,
+        applyFailurePrefix: "ALTER TYPE",
+        promptConfirmResponses: [false],
+        renderedFiles: [
+          {
+            sequence: 1,
+            name: "enum_values",
+            sql: "-- pg-delta: transaction=false\nSELECT 1;\nALTER TYPE mood ADD VALUE 'fine';",
+            transactionMode: "none",
+          },
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
+          Effect.exit,
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(migrationEntries(tmp.current)).toHaveLength(1);
+        expect(s.dbExec.some((sql) => sql.includes("SELECT 1"))).toBe(true);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("failed apply preserves all segments after an earlier segment was recorded", () => {
     seedDeclarative(tmp.current);
@@ -1884,12 +1843,6 @@ describe("db schema declarative sync integration", () => {
           expect.stringContaining("supabase_migrations.schema_migrations"),
         ]),
       );
-      expect(s.out.stderrText).toContain(
-        "one or more segments were already recorded in migration history",
-      );
-      expect(s.out.promptConfirmCalls.map((call) => call.message)).not.toContain(
-        "Keep the generated migration file(s)?",
-      );
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1906,49 +1859,6 @@ describe("db schema declarative sync integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(migrationEntries(tmp.current)).toHaveLength(1);
-      expect(s.out.stderrText).toContain(
-        "Generated migration files were kept because debug artifacts could not be saved.",
-      );
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("failed debug SQL write retains generated files", () => {
-    seedDeclarative(tmp.current);
-    const s = setup(tmp.current, {
-      applyFails: true,
-      debugSqlWriteFails: true,
-      diffSql: "ALTER TABLE a ADD COLUMN b int;",
-    });
-    return Effect.gen(function* () {
-      const exit = yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
-        Effect.exit,
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(migrationEntries(tmp.current)).toHaveLength(1);
-      expect(s.out.stderrText).toContain(
-        "Generated migration files were kept because debug artifacts could not be saved.",
-      );
-      expect(s.out.stderrText).toContain("failed to save generated SQL debug artifact");
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("cleanup deletion failure warns and preserves the original apply error", () => {
-    seedDeclarative(tmp.current);
-    const s = setup(tmp.current, {
-      applyFails: true,
-      cleanupDeleteFails: true,
-      diffSql: "ALTER TABLE a ADD COLUMN b int;",
-    });
-    return Effect.gen(function* () {
-      const exit = yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
-        Effect.exit,
-      );
-      expect(failError(exit)).toMatchObject({
-        _tag: "DeclarativeApplyError",
-        message: expect.stringContaining("boom"),
-      });
-      expect(migrationEntries(tmp.current)).toHaveLength(1);
-      expect(s.out.stderrText).toContain("Warning: failed to remove generated migration");
     }).pipe(Effect.provide(s.layer));
   });
 });

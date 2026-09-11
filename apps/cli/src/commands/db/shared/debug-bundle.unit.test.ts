@@ -24,10 +24,9 @@ describe("saveDebugBundle", () => {
     const root = mkdtempSync(join(tmpdir(), "debug-"));
     const tempDir = join(root, "supabase", ".temp", "pgdelta");
     return save(root, tempDir, join(root, "supabase", "migrations"), "20240101-000000").pipe(
-      Effect.tap(({ directory, migrationSqlSaved }) =>
+      Effect.tap((directory) =>
         Effect.sync(() => {
           expect(directory).toBe(join(tempDir, "debug", "20240101-000000"));
-          expect(migrationSqlSaved).toBe(true);
           expect(existsSync(join(directory, "generated-migration.sql"))).toBe(true);
           expect(readFileSync(join(directory, "error.txt"), "utf8")).toBe("boom");
           rmSync(root, { recursive: true, force: true });

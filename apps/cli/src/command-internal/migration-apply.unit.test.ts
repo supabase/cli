@@ -115,7 +115,6 @@ const executedSql = (
 const run = (
   session: DbSession,
   migrationPath: string,
-  onStatementsCommitted?: Effect.Effect<void>,
 ): Effect.Effect<void, TestError | DbConnectError> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -126,7 +125,6 @@ const run = (
       path,
       migrationPath,
       (message) => new TestError({ message }),
-      onStatementsCommitted,
     );
   }).pipe(Effect.provide(BunServices.layer));
 
@@ -527,90 +525,6 @@ describe("applyMigrationFile", () => {
           if (Exit.isFailure(exit)) {
             expect(JSON.stringify(exit.cause)).toContain("At statement: 1");
           }
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.effect("does not notify after a no-transaction SET preamble when later SQL fails", () => {
-    const dir = mkdtempSync(join(tmpdir(), "apply-"));
-    const file = join(dir, "20240101120000_drop_subscription.sql");
-    writeFileSync(
-      file,
-      "-- pg-delta: transaction=false\n" +
-        "SET check_function_bodies = off;\n" +
-        "DROP SUBSCRIPTION app_events;\n" +
-        "RESET ALL;",
-    );
-    const { session } = fakeSession({ failOn: "DROP SUBSCRIPTION" });
-    let committed = 0;
-    return run(
-      session,
-      file,
-      Effect.sync(() => {
-        committed += 1;
-      }),
-    ).pipe(
-      Effect.exit,
-      Effect.tap((exit) =>
-        Effect.sync(() => {
-          expect(Exit.isFailure(exit)).toBe(true);
-          expect(committed).toBe(0);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.effect("notifies after a no-transaction statement commits before a later failure", () => {
-    const dir = mkdtempSync(join(tmpdir(), "apply-"));
-    const file = join(dir, "20240101120000_drop_subscription.sql");
-    writeFileSync(
-      file,
-      "-- pg-delta: transaction=false\n" +
-        "CREATE TABLE widgets (id bigint);\n" +
-        "DROP SUBSCRIPTION app_events;\n" +
-        "RESET ALL;",
-    );
-    const { session } = fakeSession({ failOn: "DROP SUBSCRIPTION" });
-    let committed = 0;
-    return run(
-      session,
-      file,
-      Effect.sync(() => {
-        committed += 1;
-      }),
-    ).pipe(
-      Effect.exit,
-      Effect.tap((exit) =>
-        Effect.sync(() => {
-          expect(Exit.isFailure(exit)).toBe(true);
-          expect(committed).toBe(1);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.effect("notifies after flushing a batch before a pipeline-incompatible failure", () => {
-    const dir = mkdtempSync(join(tmpdir(), "apply-"));
-    const file = join(dir, "20240101120000_add_index.sql");
-    writeFileSync(file, "create table a (id int);\nCREATE INDEX CONCURRENTLY a_idx ON a(id);");
-    const { session } = fakeSession({ failOn: "CONCURRENTLY" });
-    let committed = 0;
-    return run(
-      session,
-      file,
-      Effect.sync(() => {
-        committed += 1;
-      }),
-    ).pipe(
-      Effect.exit,
-      Effect.tap((exit) =>
-        Effect.sync(() => {
-          expect(Exit.isFailure(exit)).toBe(true);
-          expect(committed).toBe(1);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),

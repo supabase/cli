@@ -19,11 +19,6 @@ export interface DebugBundle {
   readonly migrations?: ReadonlyArray<string>;
 }
 
-export interface DebugBundleResult {
-  readonly directory: string;
-  readonly migrationSqlSaved: boolean;
-}
-
 /** The debug-bundle id layout `20060102-150405` (UTC). */
 export function formatDebugId(millis: number): string {
   const digits = new Date(millis).toISOString().replace(/\D/gu, "").slice(0, 14);
@@ -34,11 +29,7 @@ const writeBestEffort = (
   fs: FileSystem.FileSystem,
   filePath: string,
   content: string,
-): Effect.Effect<boolean> =>
-  fs.writeFileString(filePath, content).pipe(
-    Effect.as(true),
-    Effect.catch(() => Effect.succeed(false)),
-  );
+): Effect.Effect<void> => fs.writeFileString(filePath, content).pipe(Effect.ignore);
 
 const copyBestEffort = (fs: FileSystem.FileSystem, from: string, to: string): Effect.Effect<void> =>
   fs.readFileString(from).pipe(
@@ -47,10 +38,9 @@ const copyBestEffort = (fs: FileSystem.FileSystem, from: string, to: string): Ef
   );
 
 /**
- * Writes a debug bundle to `<tempDir>/debug/<id>/` and reports whether the generated SQL was
- * persisted successfully. Creating the top-level directory is fatal (so callers don't claim a
- * bundle was saved), while every individual artifact write is best-effort (a failed copy must
- * not mask the original error).
+ * Writes a debug bundle to `<tempDir>/debug/<id>/` and returns the directory. Creating the
+ * top-level directory is fatal (so callers don't claim a bundle was saved), while every
+ * individual artifact write is best-effort (a failed copy must not mask the original error).
  */
 export const saveDebugBundle = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -80,14 +70,9 @@ export const saveDebugBundle = Effect.fnUntraced(function* (
       path.join(debugDir, "target-catalog.json"),
     );
   }
-  const migrationSqlSaved =
-    bundle.migrationSql !== undefined && bundle.migrationSql.length > 0
-      ? yield* writeBestEffort(
-          fs,
-          path.join(debugDir, "generated-migration.sql"),
-          bundle.migrationSql,
-        )
-      : false;
+  if (bundle.migrationSql !== undefined && bundle.migrationSql.length > 0) {
+    yield* writeBestEffort(fs, path.join(debugDir, "generated-migration.sql"), bundle.migrationSql);
+  }
   if (bundle.error !== undefined && bundle.error.length > 0) {
     yield* writeBestEffort(fs, path.join(debugDir, "error.txt"), bundle.error);
   }
@@ -98,7 +83,7 @@ export const saveDebugBundle = Effect.fnUntraced(function* (
       yield* copyBestEffort(fs, path.join(migrationsDir, name), path.join(migrationsOut, name));
     }
   }
-  return { directory: debugDir, migrationSqlSaved } satisfies DebugBundleResult;
+  return debugDir;
 });
 
 /** Collects local migration filenames for a debug bundle. */
