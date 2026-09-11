@@ -5,7 +5,7 @@
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import { Socket } from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
-import { createReadStream, readFileSync } from "node:fs";
+import { createReadStream, readFileSync, writeSync } from "node:fs";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import { spawn } from "node:child_process";
 
@@ -220,7 +220,7 @@ export const runNativeLauncher = (): void => {
       stdio: ["ignore", "inherit", "inherit"],
     });
     child.on("error", () => process.exit(127));
-    child.on("exit", (code) => {
+    child.on("exit", (code, signal) => {
       childExited = true;
       if (gracefulTimeout !== undefined) clearTimeout(gracefulTimeout);
       if (ownerLossGraceful) {
@@ -228,6 +228,7 @@ export const runNativeLauncher = (): void => {
         return;
       }
       ownerPipe.destroy();
+      if (signal !== null) writeSync(2, `Native workload exited due to signal ${signal}\n`);
       process.exit(code ?? 1);
     });
   }
