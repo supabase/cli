@@ -267,16 +267,14 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       });
     }
 
-    // Resolved before anything is written, so cancelling any prompt leaves nothing
-    // behind. With nowhere to ask, the defaults stand — only the name has no fallback.
-    const runtime = yield* resolveRuntime({ explicit: flags.runtime, canPrompt });
-    const size = yield* resolveSize({ explicit: flags.size, canPrompt });
-    const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
-    const instances = recordedInstances(flags.instances);
-
-    // Validated before anything is written: this is the directory the starter files
-    // land in, so a value naming the project root, `supabase/`, or anywhere outside
-    // the project must never reach the write below. `--source` resolves against the
+    // Validated before the dials are asked for, not just before the write: nothing
+    // about the destination depends on the runtime, size or exposure, so a run that
+    // is going to be refused for its destination is refused without asking three
+    // questions first.
+    //
+    // This is the directory the starter files land in, so a value naming the project
+    // root, `supabase/`, or anywhere outside the project must never reach the write
+    // below. `--source` resolves against the
     // directory the user typed it in, the way a shell would: `--source generated`
     // from `apps/web` means `apps/web/generated`.
     const destination = Option.isSome(flags.source)
@@ -310,6 +308,13 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
         suggestion: `Remove ${shown} yourself if you meant to replace it, or pick a different compute name.`,
       });
     }
+
+    // Resolved before anything is written, so cancelling any prompt leaves nothing
+    // behind. With nowhere to ask, the defaults stand — only the name has no fallback.
+    const runtime = yield* resolveRuntime({ explicit: flags.runtime, canPrompt });
+    const size = yield* resolveSize({ explicit: flags.size, canPrompt });
+    const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
+    const instances = recordedInstances(flags.instances);
 
     // Recorded as forward slashes whatever platform wrote it: `config.toml` is
     // shared, and `path.relative` yields backslashes on Windows that POSIX

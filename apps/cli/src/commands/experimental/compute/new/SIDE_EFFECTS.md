@@ -71,7 +71,10 @@ and before anything reaches disk — because editing an entry the user owns is
 not this command's job.
 
 Nothing at the destination is ever removed or overwritten: a destination that
-exists and is not empty is refused, and clearing it is left to the user.
+exists and is not empty is refused, and clearing it is left to the user. That
+refusal, and a bad `--source`, are both checked before the runtime, size and
+exposure are asked for — none of them depend on the destination, so a run that is
+going to be refused for it is refused without asking three questions first.
 `--source` is refused when it resolves to the project root, `supabase/`,
 `supabase/functions/`, `supabase/migrations/`, or outside the project. Symlinks
 are resolved first, so a path inside the project that points outside it is
