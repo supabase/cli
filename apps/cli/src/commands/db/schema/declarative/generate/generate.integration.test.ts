@@ -41,7 +41,7 @@ import { GoProxy } from "../../../../../command-internal/go-proxy.service.ts";
 import { CommandPlatformApi } from "../../../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../../../auth/command-platform-api-factory.service.ts";
 import { dockerRunLayer } from "../../../../../command-internal/docker-run.layer.ts";
-import { stackBackendLayer } from "../../../../experimental/stack/stack-backend.ts";
+import { stackBackendLayer } from "../../../../../command-internal/stack-backend.ts";
 import { DbConfigResolver } from "../../../../../command-internal/db-config.service.ts";
 import {
   type DbSession,

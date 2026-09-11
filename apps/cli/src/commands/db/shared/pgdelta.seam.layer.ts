@@ -13,8 +13,8 @@ import { startLocalDatabase } from "../../../command-internal/db-bootstrap/start
 import { resolveLocalProjectId, localDbContainerId } from "../../../command-internal/docker-ids.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
-import { currentStackBackend } from "../../experimental/stack/stack-backend.ts";
-import { StackApi, stackApiLayer } from "../../experimental/stack/stack.shared.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
 import { stackEnsureLocalDatabaseStarted } from "../../../command-internal/stack-local-database.ts";
 
 const shadowDockerCause = (stderr: string): { readonly docker: "daemon" } | Record<never, never> =>

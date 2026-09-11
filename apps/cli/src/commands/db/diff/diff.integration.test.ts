@@ -63,7 +63,7 @@ import {
 } from "../shared/pgdelta-engine.service.ts";
 import type { DbDiffFlags } from "./diff.command.ts";
 import { dbDiff } from "./diff.handler.ts";
-import { stackBackendLayer } from "../../experimental/stack/stack-backend.ts";
+import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackNativeEngineError } from "../../../command-internal/stack-local-database.ts";
 import { PGADMIN_DESKTOP_NOTE_PREFIX, PGADMIN_DIFF_HEADER } from "./pgadmin-diff.ts";
 

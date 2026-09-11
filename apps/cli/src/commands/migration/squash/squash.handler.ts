@@ -43,7 +43,7 @@ import { DbConnection, type PgConnInput } from "../../../command-internal/db-con
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { errorMessage, relativizeErrorMessage } from "../../../command-internal/error-message.ts";
-import { currentStackBackend } from "../../experimental/stack/stack-backend.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { stackWithShadowDatabase } from "../../../command-internal/stack-shadow.ts";
 import {
   dumpConnForHostClient,

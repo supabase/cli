@@ -4,7 +4,7 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { startLocalDatabase } from "../../../command-internal/db-bootstrap/start-local-database.ts";
 import { stackEnsurePostgresOnlyStarted } from "../../../command-internal/stack-local-database.ts";
-import { currentStackBackend } from "../../experimental/stack/stack-backend.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { DbStartFromBackupUnsupportedError } from "./start.errors.ts";
 import type { DbStartFlags } from "./start.command.ts";
 

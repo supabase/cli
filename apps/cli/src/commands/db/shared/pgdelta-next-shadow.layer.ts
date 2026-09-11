@@ -49,7 +49,7 @@ import {
   type PgDeltaNextShadowInput,
 } from "./pgdelta-next-shadow.service.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
-import { currentStackBackend } from "../../experimental/stack/stack-backend.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import {
   stackAcquireShadowDatabase,
   stackMigrateShadow,

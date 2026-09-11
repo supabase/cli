@@ -40,7 +40,7 @@ import {
   dumpConnForHostClient,
   rewriteDumpHostForToolContainer,
 } from "../../../command-internal/postgres-client.run.ts";
-import { currentStackBackend } from "../../experimental/stack/stack-backend.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { stackRequireProjectRuntime } from "../../../command-internal/stack-local-database.ts";
 import { viperEnvStringWithProjectFallback } from "../../../command-internal/viper-env.ts";
 import { runWithPoolerFallback } from "../shared/pooler-fallback.ts";

@@ -4,19 +4,14 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
-import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
 import type { EffectStack } from "@supabase/stack/effect";
 import type { StackRuntime } from "@supabase/stack/effect";
 import { parseConnectionString } from "./db-config.parse.ts";
 import type { PgConnInput } from "./db-connection.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
-import {
-  LocalDbRunningError,
-  isLocalDbRunning,
-  type LocalDockerEngine,
-} from "./db-bootstrap/local-db-running.ts";
-import { currentStackBackend } from "../commands/experimental/stack/stack-backend.ts";
-import { StackApi } from "../commands/experimental/stack/stack.shared.ts";
+import { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
+import { currentStackBackend } from "./stack-backend.ts";
+import { StackApi } from "./stack-api.ts";
 import { loadStackConfig } from "../commands/experimental/stack/stack-config.ts";
 import { postgresOnlyStackStartConfig } from "../commands/experimental/stack/start/start.options.ts";
 
@@ -144,25 +139,6 @@ export const stackLocalDatabaseConn: Effect.Effect<
   }
   return conn;
 });
-
-const stackLocalDatabaseIsRunning: Effect.Effect<boolean, LocalDbRunningError, CommandSettings> =
-  openProjectStack().pipe(Effect.map(Option.isSome));
-
-export const resolveLocalDatabaseIsRunning = (
-  spawner: ChildProcessSpawnerType["Service"],
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  workdir: string,
-  configuredProjectId: string | undefined,
-): Effect.Effect<boolean, LocalDbRunningError, CommandSettings | LocalDockerEngine> =>
-  Effect.gen(function* () {
-    const backend = yield* currentStackBackend;
-    if (backend.kind === "legacy")
-      return yield* isLocalDbRunning(spawner, fs, path, workdir, configuredProjectId);
-    const api = yield* Effect.serviceOption(StackApi);
-    if (Option.isNone(api)) return false;
-    return yield* stackLocalDatabaseIsRunning.pipe(Effect.provideService(StackApi, api.value));
-  });
 
 export const stackEnsureLocalDatabaseStarted: Effect.Effect<
   void,

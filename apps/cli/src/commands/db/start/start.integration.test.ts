@@ -34,8 +34,8 @@ import { DbConnection, type DbSession } from "../../../command-internal/db-conne
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
 import { dbStart } from "./start.handler.ts";
 import type { DbStartFlags } from "./start.command.ts";
-import { stackBackendLayer } from "../../experimental/stack/stack-backend.ts";
-import { StackApi } from "../../experimental/stack/stack.shared.ts";
+import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
 import { CAPABILITY_NAMES, StackIdSchema, type EffectStack } from "@supabase/stack/effect";
 
 const DEFAULT_FLAGS: DbStartFlags = { fromBackup: Option.none() };

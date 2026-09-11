@@ -38,7 +38,7 @@ import { resolveResetSeedConfig } from "./db-setup.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
-import { currentStackBackend } from "../../commands/experimental/stack/stack-backend.ts";
+import { currentStackBackend } from "../stack-backend.ts";
 import { stackLocalDatabaseConn, stackOpenReadyProject } from "../stack-local-database.ts";
 
 /** The local database container is not running. */

@@ -13,8 +13,7 @@ import { identityStitchLayer } from "../../../command-internal/identity-stitch.t
 import { linkedProjectCacheLayer } from "../../../telemetry/linked-project-cache.layer.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { stackApiLayer } from "../../experimental/stack/stack.shared.ts";
-
+import { stackApiLayer } from "../../../command-internal/stack-api.ts";
 /**
  * Runtime layer for `supabase db dump`.
  *

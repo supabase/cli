@@ -8,7 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option } from "effect";
 import { respondToComplete } from "../../../cli/complete.ts";
 import { rootCommandForFeatures } from "../../../cli/root.ts";
-import { StackRoutingError, resolveStackBackend } from "./stack-backend.ts";
+import { StackRoutingError, resolveStackBackend } from "../../../command-internal/stack-backend.ts";
 
 const resolve = (input: Parameters<typeof resolveStackBackend>[0]) =>
   resolveStackBackend(input).pipe(Effect.provide(BunServices.layer));

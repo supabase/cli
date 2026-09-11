@@ -1,14 +1,14 @@
 import { CliConfigSchema } from "@supabase/config/effect";
 import { Context, Data, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import * as SmolToml from "smol-toml";
-import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
-import { resolveExperimentalFeature } from "../../../command-internal/experimental-feature.ts";
-import { extractCommandPath, hasRootVersionFlag, rootFlagTokens } from "../../../shared/cli/run.ts";
+import { resolveWorkdir } from "../config/command-settings.layer.ts";
+import { resolveExperimentalFeature } from "./experimental-feature.ts";
+import { extractCommandPath, hasRootVersionFlag, rootFlagTokens } from "../shared/cli/run.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-} from "../../../shared/telemetry/error-actionability.ts";
+} from "../shared/telemetry/error-actionability.ts";
 
 export type StackBackend = "legacy" | "stack";
 

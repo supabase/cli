@@ -35,8 +35,8 @@ import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
 import type { DbDumpFlags } from "./dump.command.ts";
 import { dbDump } from "./dump.handler.ts";
-import { stackBackendLayer } from "../../experimental/stack/stack-backend.ts";
-import { StackApi } from "../../experimental/stack/stack.shared.ts";
+import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
 import { StackIdSchema, type EffectStack } from "@supabase/stack/effect";
 
 const LOCAL_CONN: PgConnInput = {

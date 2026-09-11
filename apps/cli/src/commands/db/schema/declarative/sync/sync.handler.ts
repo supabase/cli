@@ -11,7 +11,7 @@ import { Tty } from "../../../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
 import { resetLocalDatabase } from "../../../../../command-internal/db-bootstrap/reset-local-database.ts";
 import { stackLocalDatabaseConn } from "../../../../../command-internal/stack-local-database.ts";
-import { currentStackBackend } from "../../../../experimental/stack/stack-backend.ts";
+import { currentStackBackend } from "../../../../../command-internal/stack-backend.ts";
 import { bold, red, yellow } from "../../../../../command-internal/colors.ts";
 import { DbConnection } from "../../../../../command-internal/db-connection.service.ts";
 import { getHostname } from "../../../../../command-internal/hostname.ts";

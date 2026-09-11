@@ -2,10 +2,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Redacted, Stream } from "effect";
 import { CAPABILITY_NAMES, StackIdSchema, type EffectStack } from "@supabase/stack/effect";
 import { mockCommandSettings, useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
-import { stackBackendLayer } from "../commands/experimental/stack/stack-backend.ts";
+import { stackBackendLayer } from "./stack-backend.ts";
 import { stackLocalDatabaseUrl } from "./stack-local-database.ts";
-import { StackApi } from "../commands/experimental/stack/stack.shared.ts";
-
+import { StackApi } from "./stack-api.ts";
 const tmp = useTempWorkdir("stack-local-db-");
 const STACK_ID = StackIdSchema.make("a".repeat(64));
 

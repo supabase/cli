@@ -5,7 +5,7 @@ import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { getRegistryImageUrl } from "./docker-registry.ts";
 import { DockerRun } from "./docker-run.service.ts";
-import { currentStackBackend } from "../commands/experimental/stack/stack-backend.ts";
+import { currentStackBackend } from "./stack-backend.ts";
 import { requireHostPostgresClient, streamHostCommand } from "./postgres-client.run.ts";
 
 /**
